@@ -31,23 +31,25 @@ _EVIDENCE_PATH_IDS: tuple[str, ...] = (
 
 
 def _current_commit() -> str:
-    """Return the current source commit SHA, empty string if unavailable."""
+    """Return the running Gateway commit, empty when deployment is unavailable."""
     try:
-        from aletheia.update.git_ops import current_commit as _git_commit
-        sha = _git_commit()
-        return sha if isinstance(sha, str) else ""
+        from aletheia.agent_runtime.build_info import get_boot_commit
+
+        sha = get_boot_commit()
+        if sha:
+            return sha
     except Exception:
         pass
-    # Packaged runtime: read from release manifest via update state
     try:
-        from aletheia.update.packaged import current_selection, _paths, _read_json
-        selection = current_selection()
-        current = selection.get("current")
-        if isinstance(current, str) and current:
-            manifest_path = _paths()["releases"] / current / "release-manifest.json"
-            manifest = _read_json(manifest_path, required=False)
-            sha = manifest.get("git_sha")
-            return sha if isinstance(sha, str) and sha else ""
+        from aletheia.storage.sqlite import get_db
+
+        row = get_db().execute(
+            "SELECT boot_commit FROM runtime_sessions "
+            "WHERE ended_at IS NULL AND boot_commit IS NOT NULL "
+            "ORDER BY started_at DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+        if row and row["boot_commit"]:
+            return str(row["boot_commit"])
     except Exception:
         pass
     return ""
@@ -76,7 +78,7 @@ def ensure_evidence_epochs(*, commit_sha: str | None = None) -> dict[str, str]:
     """Ensure one open policy epoch per evidence path, keyed to the deployed build.
 
     Returns a mapping ``{path_id: epoch_id}`` for the registered/existing epochs.
-    Raises no exception on partial failure; each path is registered independently.
+    Registration fails closed when the running deployment SHA is unavailable.
 
     The epoch *rotates* only when the deployed commit SHA changes, so the same
     build creates at most one epoch per path across multiple Gateway restarts.
@@ -84,6 +86,8 @@ def ensure_evidence_epochs(*, commit_sha: str | None = None) -> dict[str, str]:
     from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
 
     sha = commit_sha if commit_sha is not None else _current_commit()
+    if not sha:
+        raise ValueError("running deployment commit is unavailable")
     result: dict[str, str] = {}
 
     for path_id in _EVIDENCE_PATH_IDS:
@@ -188,9 +192,8 @@ def evidence_epoch_summary() -> dict[str, Any]:
         "checked_at": now,
         "paths": paths,
         "all_anchored": all(p["status"] == "open" for p in paths),
-        "all_sha_consistent": all(
-            p.get("sha_consistent") is True
-            for p in paths
-            if p["status"] == "open"
+        "all_sha_consistent": (
+            all(p["status"] == "open" for p in paths)
+            and all(p.get("sha_consistent") is True for p in paths)
         ),
     }

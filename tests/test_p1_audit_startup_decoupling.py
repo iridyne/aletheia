@@ -1,9 +1,8 @@
 """P1 regression: Gateway startup must not block when .audit.lock is held or slow.
 
-Two properties under test:
-1. write_audit() returns False (best-effort skip) rather than hanging when
-   .audit.lock is already held by a competing process for longer than the
-   acquire timeout.
+Tests:
+1. Ordinary write_audit() waits for lock release instead of dropping a
+   safety-relevant record under contention.
 2. init_scheduler()'s audit mirror is dispatched to a background thread and does
    not block the function's return even when the audit write itself is slow.
 """
@@ -48,15 +47,16 @@ def _hold_audit_lock(tmp_path: Path, held_event: threading.Event, release_event:
         fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
 
+
+
+
+
 @pytest.mark.skipif(
     __import__("os").name == "nt", reason="POSIX-only lock test"
 )
-def test_write_audit_does_not_block_when_lock_held(tmp_path, monkeypatch):
-    """write_audit must return within the lock timeout, not hang indefinitely."""
+def test_write_audit_waits_for_lock_and_preserves_record(tmp_path):
+    """Contention may delay an audit write, but must not discard it."""
     import aletheia.files.jsonl as jmod
-
-    # Shorten the timeout so the test runs fast
-    monkeypatch.setattr(jmod, "_AUDIT_LOCK_ACQUIRE_TIMEOUT_SEC", 0.3)
 
     held = threading.Event()
     release = threading.Event()
@@ -64,53 +64,22 @@ def test_write_audit_does_not_block_when_lock_held(tmp_path, monkeypatch):
         target=_hold_audit_lock, args=(tmp_path, held, release), daemon=True
     )
     holder.start()
-    held.wait(timeout=5)
+    assert held.wait(timeout=5)
+    releaser = threading.Timer(0.2, release.set)
+    releaser.start()
 
     start = time.monotonic()
-    # write_audit must NOT block for longer than ~2x the timeout
     result = jmod.write_audit(
         {"event_type": "startup_test", "timestamp": "2026-01-01T00:00:00"}
     )
     elapsed = time.monotonic() - start
 
-    release.set()
     holder.join(timeout=2)
+    releaser.cancel()
 
-    # Should have returned quickly (best-effort skip) rather than hanging
-    assert elapsed < 2.0, f"write_audit blocked for {elapsed:.2f}s — timeout not enforced"
-    # When lock could not be acquired, write returns False
-    assert result is False
-
-
-@pytest.mark.skipif(
-    __import__("os").name == "nt", reason="POSIX-only lock test"
-)
-def test_write_audits_deduplicated_does_not_block_when_lock_held(tmp_path, monkeypatch):
-    """write_audits_deduplicated must return promptly when lock is contested."""
-    import aletheia.files.jsonl as jmod
-
-    monkeypatch.setattr(jmod, "_AUDIT_LOCK_ACQUIRE_TIMEOUT_SEC", 0.3)
-
-    held = threading.Event()
-    release = threading.Event()
-    holder = threading.Thread(
-        target=_hold_audit_lock, args=(tmp_path, held, release), daemon=True
-    )
-    holder.start()
-    held.wait(timeout=5)
-
-    start = time.monotonic()
-    result = jmod.write_audits_deduplicated([
-        {"id": "evt-1", "event_type": "test", "timestamp": "2026-01-01T00:00:00"}
-    ])
-    elapsed = time.monotonic() - start
-
-    release.set()
-    holder.join(timeout=2)
-
-    assert elapsed < 2.0, f"write_audits_deduplicated blocked for {elapsed:.2f}s"
-    # Nothing was written because lock was unavailable
-    assert result == set()
+    assert elapsed >= 0.15
+    assert result is True
+    assert jmod.verify_audit_chain()["records"] == 1
 
 
 def test_write_audit_succeeds_normally_without_contention(tmp_path):

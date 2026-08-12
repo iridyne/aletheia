@@ -176,26 +176,20 @@ def _get_last_audit_hash(*, use_cache: bool = True) -> str:
     return _last_audit_hash
 
 
-# Maximum time write_audit / write_audits_deduplicated will wait for the
-# cross-process .audit.lock before giving up.  A slow recovery scan or a
-# stale lock held by a crashed process must not block the Gateway from
-# emitting "gateway_started" or other startup events indefinitely.
-_AUDIT_LOCK_ACQUIRE_TIMEOUT_SEC = 5.0
-
 
 class _AuditLockTimeout(OSError):
-    """Raised when the cross-process audit lock cannot be acquired in time."""
+    """Raised when a bounded cross-process audit lock cannot be acquired."""
+
 
 
 @contextmanager
 def _exclusive_file_lock(lock_path: Path, *, timeout_sec: float | None = None):
     """Cross-process exclusive lock used to serialize audit hash-chain writes.
 
-    When *timeout_sec* is given (and > 0) the call raises :class:`_AuditLockTimeout`
-    instead of blocking forever if the lock cannot be acquired within that window.
-    On POSIX this is implemented with ``LOCK_NB`` + a short sleep retry loop so the
-    calling thread stays responsive.  On Windows the same spin-wait wraps
-    ``LK_NBLCK``.
+    When *timeout_sec* is given (and > 0) the call raises
+    :class:`_AuditLockTimeout` instead of blocking forever if the lock cannot be
+    acquired within that window. Normal audit writes deliberately omit it: a
+    safety-relevant mutation must not lose its audit record under contention.
     """
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+b") as lock_file:
@@ -337,10 +331,7 @@ def write_audits_deduplicated(events: list[dict]) -> set[str]:
     completed: set[str] = set()
     try:
         with _audit_hash_lock:
-            with _exclusive_file_lock(
-                _log_dir() / ".audit.lock",
-                timeout_sec=_AUDIT_LOCK_ACQUIRE_TIMEOUT_SEC,
-            ):
+            with _exclusive_file_lock(_log_dir() / ".audit.lock"):
                 _repair_incomplete_final_line(audit_path, events)
                 completed = _audit_record_ids(audit_path, set(event_ids))
                 prev_hash = _get_last_audit_hash(use_cache=False)
@@ -356,10 +347,7 @@ def write_audits_deduplicated(events: list[dict]) -> set[str]:
                     _last_audit_hash = prev_hash
                     completed.add(event_id)
     except _AuditLockTimeout as e:
-        logger.warning(
-            "audit jsonl batch write skipped: could not acquire lock within %.1fs (%s)",
-            _AUDIT_LOCK_ACQUIRE_TIMEOUT_SEC, e,
-        )
+        logger.warning("audit jsonl batch lock timed out: %s", e)
     except OSError as e:
         logger.warning("audit jsonl batch write failed: %s", e)
     return completed
@@ -397,10 +385,7 @@ def write_audit(
     jsonl_written = False
     try:
         with _audit_hash_lock:
-            with _exclusive_file_lock(
-                _log_dir() / ".audit.lock",
-                timeout_sec=_AUDIT_LOCK_ACQUIRE_TIMEOUT_SEC,
-            ):
+            with _exclusive_file_lock(_log_dir() / ".audit.lock"):
                 audit_path = _log_dir() / "audit.jsonl"
                 # An ordinary event has no durable identity tying it to an
                 # earlier short write, so it may only finish a complete JSON
@@ -418,9 +403,9 @@ def write_audit(
                 jsonl_written = True
     except _AuditLockTimeout as e:
         logger.warning(
-            "audit jsonl write skipped: could not acquire lock within %.1fs (%s) "
-            "(event_type=%s)",
-            _AUDIT_LOCK_ACQUIRE_TIMEOUT_SEC, e, event.get("event_type", "?"),
+            "audit jsonl write lock timed out: %s (event_type=%s)",
+            e,
+            event.get("event_type", "?"),
         )
     except OSError as e:
         logger.warning("audit jsonl write failed: %s (event_type=%s)",

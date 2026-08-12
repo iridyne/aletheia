@@ -23,10 +23,11 @@ def _minimal_status(**overrides):
     from aletheia.cli.control_cmd import build_control_status
 
     defaults = dict(
-        _current_commit=lambda: "abc1234567890000",
-        _master_commit=lambda: "abc1234567890000",
+        _deployed_commit=lambda: "abc1234567890000",
+        _disk_commit=lambda: "abc1234567890000",
+        _cached_master_commit=lambda: "abc1234567890000",
         _cfg_commit=lambda: "abc1234567890000",
-        _open_experiments=lambda: [],
+        _open_experiments=lambda: {"available": True, "items": []},
         _open_policy_epochs=lambda limit=10: [],
         _evidence_epochs=lambda: {
             "all_anchored": True,
@@ -42,8 +43,9 @@ def _minimal_status(**overrides):
 
     import aletheia.cli.control_cmd as cmd_mod
     with (
-        patch.object(cmd_mod, "_current_commit", defaults["_current_commit"]),
-        patch.object(cmd_mod, "_master_commit", defaults["_master_commit"]),
+        patch.object(cmd_mod, "_deployed_commit", defaults["_deployed_commit"]),
+        patch.object(cmd_mod, "_disk_commit", defaults["_disk_commit"]),
+        patch.object(cmd_mod, "_cached_master_commit", defaults["_cached_master_commit"]),
         patch.object(cmd_mod, "_cfg_commit", defaults["_cfg_commit"]),
         patch.object(cmd_mod, "_open_experiments", defaults["_open_experiments"]),
         patch.object(cmd_mod, "_open_policy_epochs", defaults["_open_policy_epochs"]),
@@ -63,8 +65,8 @@ def test_control_status_has_all_sections():
     data = _minimal_status()
 
     required = {"as_of", "sha", "gateway_running", "runtime", "authority",
-                "active_experiments", "open_policy_epochs", "evidence_epochs",
-                "window_continuity"}
+                "active_experiments", "active_experiments_available",
+                "open_policy_epochs", "evidence_epochs", "window_continuity"}
     assert required.issubset(data.keys()), (
         f"Missing keys: {required - set(data.keys())}"
     )
@@ -77,9 +79,10 @@ def test_control_status_has_all_sections():
 def test_sha_section_deployed_matches_config():
     sha = "abc1234567890123"
     data = _minimal_status(
-        _current_commit=lambda: sha,
+        _deployed_commit=lambda: sha,
+        _disk_commit=lambda: sha,
         _cfg_commit=lambda: sha,
-        _master_commit=lambda: sha,
+        _cached_master_commit=lambda: sha,
     )
     assert data["sha"]["deployed_head_short"] == sha[:12]
     assert data["sha"]["deployed_matches_config"] is True
@@ -88,21 +91,22 @@ def test_sha_section_deployed_matches_config():
 
 def test_sha_section_config_disagrees():
     data = _minimal_status(
-        _current_commit=lambda: "new_sha_0000000000000",
+        _deployed_commit=lambda: "new_sha_0000000000000",
         _cfg_commit=lambda: "old_sha_1111111111111",
-        _master_commit=lambda: "",
+        _cached_master_commit=lambda: "",
     )
     assert data["sha"]["deployed_matches_config"] is False
 
 
 def test_sha_section_not_available_when_empty():
     data = _minimal_status(
-        _current_commit=lambda: "",
+        _deployed_commit=lambda: "",
+        _disk_commit=lambda: "",
         _cfg_commit=lambda: "",
-        _master_commit=lambda: "",
+        _cached_master_commit=lambda: "",
     )
     assert data["sha"]["deployed_head_short"] == "not_available"
-    assert data["sha"]["master_head_short"] == "not_available"
+    assert data["sha"]["cached_master_head_short"] == "not_available"
     assert data["sha"]["deployed_matches_config"] is None
 
 
@@ -117,9 +121,11 @@ def test_active_experiments_populated_from_db():
         "stage": "paper",
         "status": "active",
         "started_at": "2026-08-01T00:00:00",
-        "policy_epoch": "epoch-1234",
+        "concurrent_policy_epoch": "epoch-1234",
     }
-    data = _minimal_status(_open_experiments=lambda: [fake_experiment])
+    data = _minimal_status(
+        _open_experiments=lambda: {"available": True, "items": [fake_experiment]}
+    )
 
     exps = data["active_experiments"]
     assert len(exps) == 1
@@ -129,8 +135,23 @@ def test_active_experiments_populated_from_db():
 
 
 def test_active_experiments_empty_when_none():
-    data = _minimal_status(_open_experiments=lambda: [])
+    data = _minimal_status(
+        _open_experiments=lambda: {"available": True, "items": []}
+    )
+    assert data["active_experiments_available"] is True
     assert data["active_experiments"] == []
+
+
+def test_active_experiments_unavailable_is_not_empty_success():
+    data = _minimal_status(
+        _open_experiments=lambda: {
+            "available": False,
+            "items": [],
+            "error": "OperationalError",
+        }
+    )
+    assert data["active_experiments_available"] is False
+    assert data["active_experiments_error"] == "OperationalError"
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +194,7 @@ def test_evidence_epochs_reflected_in_status():
 
 def test_window_continuity_all_good():
     data = _minimal_status(
-        _current_commit=lambda: "sha123",
+        _deployed_commit=lambda: "sha123",
         _cfg_commit=lambda: "sha123",
         _evidence_epochs=lambda: {"all_anchored": True, "all_sha_consistent": True, "paths": []},
     )
@@ -185,7 +206,7 @@ def test_window_continuity_all_good():
 
 def test_window_continuity_flags_sha_mismatch():
     data = _minimal_status(
-        _current_commit=lambda: "newsha_abc",
+        _deployed_commit=lambda: "newsha_abc",
         _cfg_commit=lambda: "oldsha_xyz",
         _evidence_epochs=lambda: {"all_anchored": True, "all_sha_consistent": False, "paths": []},
     )
@@ -203,8 +224,8 @@ def test_sha_values_come_from_git_not_hardcoded():
     sha_a = "aaaa0000000000000000"
     sha_b = "bbbb1111111111111111"
 
-    data_a = _minimal_status(_current_commit=lambda: sha_a, _cfg_commit=lambda: sha_a, _master_commit=lambda: sha_a)
-    data_b = _minimal_status(_current_commit=lambda: sha_b, _cfg_commit=lambda: sha_b, _master_commit=lambda: sha_b)
+    data_a = _minimal_status(_deployed_commit=lambda: sha_a, _cfg_commit=lambda: sha_a, _cached_master_commit=lambda: sha_a)
+    data_b = _minimal_status(_deployed_commit=lambda: sha_b, _cfg_commit=lambda: sha_b, _cached_master_commit=lambda: sha_b)
 
     assert data_a["sha"]["deployed_head_short"] == sha_a[:12]
     assert data_b["sha"]["deployed_head_short"] == sha_b[:12]

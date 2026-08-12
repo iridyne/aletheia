@@ -381,11 +381,9 @@ def apply_update(*, restart: bool = False) -> dict:
         if restart and frontend_deps_changed:
             _install_frontend_deps()
         if not rollback.get("ok"):
-            # #135: reset_hard failed — on-disk HEAD is still the broken NEW commit.
-            # Record the unverified HEAD in config so config never disagrees with
-            # the actual on-disk state (audit and UI honesty: the operator must
-            # see the unverified SHA, not the stale old SHA).
-            actual_head = git_ops.current_commit() or new
+            # Record the actual on-disk state after the failed reset. It may be
+            # the attempted commit, the old commit, or another concurrent value.
+            actual_head = git_ops.current_commit() or ""
             cfg.update.current_commit = actual_head
             save_config(cfg)
             write_audit(
@@ -486,8 +484,9 @@ def apply_update(*, restart: bool = False) -> dict:
                 _reinstall_deps()
             if frontend_deps_changed:
                 _install_frontend_deps()
-            # After rollback, record the actual HEAD so config stays honest.
-            actual_head_after_rollback = git_ops.current_commit() if rollback.get("ok") else new
+            # Always inspect disk after the rollback attempt. A failed reset can
+            # leave any HEAD, not necessarily the attempted new commit.
+            actual_head_after_rollback = git_ops.current_commit() or ""
             cfg.update.current_commit = actual_head_after_rollback
             save_config(cfg)
             recovery = _restart_gateway() if rollback.get("ok") else {"ok": False}

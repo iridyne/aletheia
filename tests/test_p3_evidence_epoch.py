@@ -150,11 +150,22 @@ def test_evidence_epoch_summary_sha_inconsistent_on_stale_epoch(db, monkeypatch)
             )
 
 
-def test_evidence_epoch_summary_not_registered(db):
-    """Summary shows not_registered when no epoch exists."""
+def test_evidence_epoch_summary_not_registered(db, monkeypatch):
+    """Absent epochs cannot report SHA consistency as healthy."""
+    import aletheia.learning.evidence_epoch as ev_mod
     from aletheia.learning.evidence_epoch import evidence_epoch_summary
 
+    monkeypatch.setattr(ev_mod, "_current_commit", lambda: "deployed-sha")
     summary = evidence_epoch_summary()
     for path in summary["paths"]:
         assert path["status"] == "not_registered"
     assert summary["all_anchored"] is False
+    assert summary["all_sha_consistent"] is False
+
+
+def test_ensure_evidence_epochs_rejects_missing_deployment_sha(db, monkeypatch):
+    import aletheia.learning.evidence_epoch as ev_mod
+
+    monkeypatch.setattr(ev_mod, "_current_commit", lambda: "")
+    with pytest.raises(ValueError, match="running deployment commit"):
+        ev_mod.ensure_evidence_epochs()

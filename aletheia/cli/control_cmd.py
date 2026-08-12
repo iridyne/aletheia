@@ -17,8 +17,8 @@ import typer
 control_app = typer.Typer(no_args_is_help=True, help="Machine governance control plane.")
 
 
-def _current_commit() -> str:
-    """Return on-disk HEAD SHA; empty on error."""
+def _disk_commit() -> str:
+    """Return on-disk source/release SHA; empty on error."""
     try:
         from aletheia.update.git_ops import current_commit as _git_sha, is_repo
         if is_repo():
@@ -38,8 +38,31 @@ def _current_commit() -> str:
     return ""
 
 
-def _master_commit() -> str:
-    """Return origin/master HEAD SHA; empty if offline or unavailable."""
+def _deployed_commit() -> str:
+    """Return the running Gateway boot SHA; empty when unavailable."""
+    try:
+        from aletheia.agent_runtime.build_info import get_boot_commit
+
+        sha = get_boot_commit()
+        if sha:
+            return sha
+    except Exception:
+        pass
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        row = get_db().execute(
+            "SELECT boot_commit FROM runtime_sessions "
+            "WHERE ended_at IS NULL AND boot_commit IS NOT NULL "
+            "ORDER BY started_at DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+        return str(row["boot_commit"]) if row and row["boot_commit"] else ""
+    except Exception:
+        return ""
+
+
+def _cached_master_commit() -> str:
+    """Return the cached origin/master tracking SHA; empty if unavailable."""
     try:
         from aletheia.update.git_ops import remote_commit
         return remote_commit("master") or ""
@@ -56,12 +79,13 @@ def _cfg_commit() -> str:
         return ""
 
 
-def _open_experiments() -> list[dict[str, Any]]:
+def _open_experiments() -> dict[str, Any]:
     try:
         from aletheia.learning.ledger import list_open_experiments
-        return list_open_experiments()
-    except Exception:
-        return []
+
+        return {"available": True, "items": list_open_experiments()}
+    except Exception as exc:
+        return {"available": False, "items": [], "error": type(exc).__name__}
 
 
 def _open_policy_epochs(limit: int = 10) -> list[dict[str, Any]]:
@@ -125,15 +149,18 @@ def _gateway_running() -> bool | None:
 
 def build_control_status() -> dict[str, Any]:
     """Collect all governance-relevant state into one serializable dict."""
-    deployed = _current_commit()
-    master = _master_commit()
+    deployed = _deployed_commit()
+    disk = _disk_commit()
+    master = _cached_master_commit()
     cfg_sha = _cfg_commit()
 
     sha_section = {
         "deployed_head": deployed,
         "deployed_head_short": deployed[:12] if deployed else "not_available",
-        "master_head": master,
-        "master_head_short": master[:12] if master else "not_available",
+        "disk_head": disk,
+        "disk_head_short": disk[:12] if disk else "not_available",
+        "cached_master_head": master,
+        "cached_master_head_short": master[:12] if master else "not_available",
         "config_recorded": cfg_sha,
         "config_recorded_short": cfg_sha[:12] if cfg_sha else "not_available",
         "deployed_matches_config": (
@@ -144,19 +171,23 @@ def build_control_status() -> dict[str, Any]:
             bool(deployed and master and deployed[:12] == master[:12])
             if deployed and master else None
         ),
+        "disk_matches_deployed": (
+            bool(disk and deployed and disk[:12] == deployed[:12])
+            if disk and deployed else None
+        ),
     }
 
     # Active hypotheses / open experiments
-    experiments = _open_experiments()
+    experiment_result = _open_experiments()
     active_hypotheses: list[dict[str, Any]] = []
-    for exp in experiments:
+    for exp in experiment_result["items"]:
         active_hypotheses.append({
             "experiment_id": exp.get("experiment_id"),
             "hypothesis_id": exp.get("hypothesis_id"),
             "stage": exp.get("stage"),
             "status": exp.get("status"),
             "started_at": exp.get("started_at"),
-            "policy_epoch": exp.get("policy_epoch"),
+            "policy_epoch": exp.get("concurrent_policy_epoch"),
         })
 
     # Policy epochs (most recent open)
@@ -182,6 +213,8 @@ def build_control_status() -> dict[str, Any]:
         "runtime": continuity,
         "authority": authority,
         "active_experiments": active_hypotheses,
+        "active_experiments_available": experiment_result["available"],
+        "active_experiments_error": experiment_result.get("error"),
         "open_policy_epochs": open_epochs,
         "evidence_epochs": evidence,
         "window_continuity": {
@@ -221,8 +254,9 @@ def status(
     paused = data.get("runtime", {}).get("paused")
     typer.echo(f"  Paused    : {paused}")
     typer.echo("╠═ SHA ════════════════════════════════════════════════╣")
-    typer.echo(f"  Deployed  : {sha['deployed_head_short']}{'  ✓ matches config' if sha.get('deployed_matches_config') else '  ⚠ config disagrees' if sha.get('deployed_matches_config') is False else ''}")
-    typer.echo(f"  Master    : {sha['master_head_short']}{'  (ahead)' if sha.get('deployed_matches_master') is False else '  (at HEAD)' if sha.get('deployed_matches_master') else ''}")
+    typer.echo(f"  Running   : {sha['deployed_head_short']}{'  ✓ matches config' if sha.get('deployed_matches_config') else '  ⚠ config disagrees' if sha.get('deployed_matches_config') is False else ''}")
+    typer.echo(f"  Disk      : {sha['disk_head_short']}{'  (same as running)' if sha.get('disk_matches_deployed') else '  (different from running)' if sha.get('disk_matches_deployed') is False else ''}")
+    typer.echo(f"  Cached master: {sha['cached_master_head_short']}{'  (same as running)' if sha.get('deployed_matches_master') else '  (different)' if sha.get('deployed_matches_master') is False else ''}")
     typer.echo(f"  Config    : {sha['config_recorded_short']}")
 
     # ─── Authority ─────────────────────────────────────────────────────────
@@ -238,7 +272,9 @@ def status(
     # ─── Active experiments / hypotheses ───────────────────────────────────
     typer.echo("╠═ Active Hypotheses ══════════════════════════════════╣")
     exps = data.get("active_experiments", [])
-    if not exps:
+    if not data.get("active_experiments_available"):
+        typer.echo("  (not available — experiment ledger query failed)")
+    elif not exps:
         typer.echo("  (none open)")
     else:
         for exp in exps:
@@ -252,7 +288,6 @@ def status(
 
     # ─── Evidence epoch window ─────────────────────────────────────────────
     typer.echo("╠═ Evidence Epochs ════════════════════════════════════╣")
-    all_ok = evidence.get("all_anchored") and evidence.get("all_sha_consistent")
     typer.echo(f"  Anchored : {evidence.get('all_anchored', False)}   SHA consistent: {evidence.get('all_sha_consistent', False)}")
     for path in evidence.get("paths", []):
         flag = "✓" if path.get("sha_consistent") else ("!" if path.get("sha_consistent") is False else "?")
