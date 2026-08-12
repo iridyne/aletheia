@@ -34,6 +34,8 @@ from aletheia.cli.funnel import funnel_app
 from aletheia.cli.sizing import sizing_app
 from aletheia.cli.thesis import thesis_app
 from aletheia.cli.dev import dev_app
+from aletheia.cli.evidence_cmd import evidence_app
+from aletheia.cli.control_cmd import control_app
 
 app = typer.Typer(
     name="aletheia",
@@ -59,6 +61,8 @@ app.add_typer(flow_app, name="flow", help="Deprecated alias for opportunity.", h
 app.add_typer(funnel_app, name="funnel", help="Read-only trade funnel audit.", hidden=True)
 app.add_typer(sizing_app, name="sizing", help="Read-only sizing trace audit.", hidden=True)
 app.add_typer(dev_app, name="dev", help="Isolated worktree development preview commands.")
+app.add_typer(evidence_app, name="evidence", help="Evidence epoch management and observation window anchoring.")
+app.add_typer(control_app, name="control", help="Machine governance control plane: SHA, epochs, authority, window continuity.")
 
 # Operator/debug tools with NO web equivalent — kept (only some subcommands; see code).
 app.add_typer(bitget_app, name="bitget", help="Bitget connection (test deprecated → dashboard; sync is a debug tool).")

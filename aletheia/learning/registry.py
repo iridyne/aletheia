@@ -106,6 +106,46 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
         "audit facts", "no blocking effect",
         is_learning_treatment=False, settings_supported=False,
     ),
+    # ─── Exit trailing evidence: 90/10 treatment/control holdout
+    # The trailing stop qualifications (protective_barrier.py) already assign
+    # paper positions to treatment (90%) vs. control (10%) using a stable
+    # position-keyed hash.  This path anchors the durable measurement cohort so
+    # PF, MFE→realized capture, tail, and regime slices are comparable across
+    # the epoch boundary recorded at each deploy.
+    LearningPath(
+        "exit_trailing_evidence",
+        "paper dynamic profit protection (trailing stop)",
+        "portfolio position manager / outcome closure",
+        "observe-only evidence collection; no live-trade authority",
+        ("observe",),
+        "trailing_evidence",
+        "cost-complete realized PnL: gross return, entry+exit fees, slippage",
+        "static baseline: no trailing stop (control arm)",
+        is_learning_treatment=False,
+        consumer_wired=True,
+        settings_supported=False,
+        measurement_supported=True,
+        behavior_contract_version="exit-trailing-evidence/v1",
+    ),
+    # ─── Entry correction v2: observes the entry quality after Alpha corrections
+    # Records the epoch boundary that anchors cost-complete entry outcomes for
+    # the Alpha corrections deployed in this build.  The operator assesses
+    # PF/MFE/tail/regime slices against the pre-correction baseline cohort.
+    LearningPath(
+        "entry_correction_v2",
+        "entry quality after Alpha corrections",
+        "opportunity evaluator / System Operator entry filter",
+        "observe-only evidence; no entry-path authority",
+        ("observe",),
+        "entry_evidence",
+        "cost-complete realized PnL: gross return, entry+exit fees, slippage",
+        "pre-correction entry baseline",
+        is_learning_treatment=False,
+        consumer_wired=False,
+        settings_supported=False,
+        measurement_supported=True,
+        behavior_contract_version="entry-correction-v2/v1",
+    ),
     # ─── Skeleton placeholder — see docs/archive/legacy/plans/learning/filter_parameter_tune_design.md
     #
     # filter_parameter_tune: the future home for prospective A/B experiments that
