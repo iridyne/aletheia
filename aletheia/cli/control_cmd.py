@@ -79,6 +79,18 @@ def _cfg_commit() -> str:
         return ""
 
 
+def _auto_deploy_commit() -> str:
+    """Return the last successfully activated stable Tag SHA."""
+    try:
+        from aletheia.update.auto import status
+
+        last = status().get("last_successful") or {}
+        sha = last.get("sha") if isinstance(last, dict) else None
+        return sha if isinstance(sha, str) else ""
+    except Exception:
+        return ""
+
+
 def _open_experiments() -> dict[str, Any]:
     try:
         from aletheia.learning.ledger import list_open_experiments
@@ -153,6 +165,15 @@ def build_control_status() -> dict[str, Any]:
     disk = _disk_commit()
     master = _cached_master_commit()
     cfg_sha = _cfg_commit()
+    auto_sha = _auto_deploy_commit()
+    if deployed and auto_sha == deployed:
+        recorded_sha, recorded_source = auto_sha, "auto_release_tag"
+    elif deployed and cfg_sha == deployed:
+        recorded_sha, recorded_source = cfg_sha, "config"
+    elif auto_sha:
+        recorded_sha, recorded_source = auto_sha, "auto_release_tag"
+    else:
+        recorded_sha, recorded_source = cfg_sha, "config" if cfg_sha else "not_available"
 
     sha_section = {
         "deployed_head": deployed,
@@ -163,6 +184,15 @@ def build_control_status() -> dict[str, Any]:
         "cached_master_head_short": master[:12] if master else "not_available",
         "config_recorded": cfg_sha,
         "config_recorded_short": cfg_sha[:12] if cfg_sha else "not_available",
+        "auto_recorded": auto_sha,
+        "auto_recorded_short": auto_sha[:12] if auto_sha else "not_available",
+        "runtime_recorded": recorded_sha,
+        "runtime_recorded_short": recorded_sha[:12] if recorded_sha else "not_available",
+        "runtime_recorded_source": recorded_source,
+        "deployed_matches_recorded": (
+            bool(deployed and recorded_sha and deployed[:12] == recorded_sha[:12])
+            if deployed and recorded_sha else None
+        ),
         "deployed_matches_config": (
             bool(deployed and cfg_sha and deployed[:12] == cfg_sha[:12])
             if deployed and cfg_sha else None
@@ -220,7 +250,7 @@ def build_control_status() -> dict[str, Any]:
         "window_continuity": {
             "evidence_anchored": evidence.get("all_anchored", False),
             "evidence_sha_consistent": evidence.get("all_sha_consistent", False),
-            "deployed_head_consistent": sha_section["deployed_matches_config"],
+            "deployed_head_consistent": sha_section["deployed_matches_recorded"],
         },
     }
 
@@ -254,10 +284,14 @@ def status(
     paused = data.get("runtime", {}).get("paused")
     typer.echo(f"  Paused    : {paused}")
     typer.echo("╠═ SHA ════════════════════════════════════════════════╣")
-    typer.echo(f"  Running   : {sha['deployed_head_short']}{'  ✓ matches config' if sha.get('deployed_matches_config') else '  ⚠ config disagrees' if sha.get('deployed_matches_config') is False else ''}")
+    typer.echo(f"  Running   : {sha['deployed_head_short']}{'  ✓ matches recorded deployment' if sha.get('deployed_matches_recorded') else '  ⚠ recorded deployment disagrees' if sha.get('deployed_matches_recorded') is False else ''}")
     typer.echo(f"  Disk      : {sha['disk_head_short']}{'  (same as running)' if sha.get('disk_matches_deployed') else '  (different from running)' if sha.get('disk_matches_deployed') is False else ''}")
     typer.echo(f"  Cached master: {sha['cached_master_head_short']}{'  (same as running)' if sha.get('deployed_matches_master') else '  (different)' if sha.get('deployed_matches_master') is False else ''}")
     typer.echo(f"  Config    : {sha['config_recorded_short']}")
+    typer.echo(
+        f"  Recorded  : {sha['runtime_recorded_short']} "
+        f"({sha['runtime_recorded_source']})"
+    )
 
     # ─── Authority ─────────────────────────────────────────────────────────
     typer.echo("╠═ Authority ══════════════════════════════════════════╣")

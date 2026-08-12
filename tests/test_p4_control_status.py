@@ -27,6 +27,7 @@ def _minimal_status(**overrides):
         _disk_commit=lambda: "abc1234567890000",
         _cached_master_commit=lambda: "abc1234567890000",
         _cfg_commit=lambda: "abc1234567890000",
+        _auto_deploy_commit=lambda: "",
         _open_experiments=lambda: {"available": True, "items": []},
         _open_policy_epochs=lambda limit=10: [],
         _evidence_epochs=lambda: {
@@ -47,6 +48,7 @@ def _minimal_status(**overrides):
         patch.object(cmd_mod, "_disk_commit", defaults["_disk_commit"]),
         patch.object(cmd_mod, "_cached_master_commit", defaults["_cached_master_commit"]),
         patch.object(cmd_mod, "_cfg_commit", defaults["_cfg_commit"]),
+        patch.object(cmd_mod, "_auto_deploy_commit", defaults["_auto_deploy_commit"]),
         patch.object(cmd_mod, "_open_experiments", defaults["_open_experiments"]),
         patch.object(cmd_mod, "_open_policy_epochs", defaults["_open_policy_epochs"]),
         patch.object(cmd_mod, "_evidence_epochs", defaults["_evidence_epochs"]),
@@ -96,6 +98,20 @@ def test_sha_section_config_disagrees():
         _cached_master_commit=lambda: "",
     )
     assert data["sha"]["deployed_matches_config"] is False
+
+
+def test_sha_section_uses_atomic_auto_deploy_provenance():
+    deployed = "new_sha_0000000000000"
+    data = _minimal_status(
+        _deployed_commit=lambda: deployed,
+        _cfg_commit=lambda: "old_sha_1111111111111",
+        _auto_deploy_commit=lambda: deployed,
+    )
+    assert data["sha"]["deployed_matches_config"] is False
+    assert data["sha"]["runtime_recorded"] == deployed
+    assert data["sha"]["runtime_recorded_source"] == "auto_release_tag"
+    assert data["sha"]["deployed_matches_recorded"] is True
+    assert data["window_continuity"]["deployed_head_consistent"] is True
 
 
 def test_sha_section_not_available_when_empty():
