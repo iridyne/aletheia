@@ -476,12 +476,28 @@ async def lifespan(app: FastAPI):
         # Runtime Session: one row per process lifecycle. Created AFTER migrations
         # (its table must exist) and after record_boot_commit (for the boot commit).
         # Core trading facts produced this boot inherit its identity. Best-effort.
+        runtime_session = None
         try:
             from aletheia.agent_runtime.runtime_session import start_runtime_session
 
-            start_runtime_session(cfg, runtime_context)
+            runtime_session = start_runtime_session(cfg, runtime_context)
         except Exception as e:
             logger.warning("Runtime session start failed (non-fatal): %s", e)
+        if runtime_session and runtime_session.get("durable") is True:
+            try:
+                from aletheia.learning.evidence_epoch import ensure_evidence_epochs
+
+                evidence_epochs = ensure_evidence_epochs()
+                if len(evidence_epochs) != 2:
+                    logger.warning(
+                        "Evidence epoch registration incomplete: %s", evidence_epochs
+                    )
+            except Exception as e:
+                logger.warning("Evidence epoch registration failed (non-fatal): %s", e)
+        else:
+            logger.warning(
+                "Evidence epoch registration skipped: runtime session is not durable"
+            )
         try:
             from aletheia.storage.event_store import get_event_store
 

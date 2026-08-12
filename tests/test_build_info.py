@@ -24,10 +24,30 @@ def test_record_boot_commit_captures_current(monkeypatch):
 
 
 def test_record_boot_commit_empty_becomes_none(monkeypatch):
-    # git unavailable / non-repo → current_commit() returns "" → store None.
+    from aletheia.update import packaged
+
+    # Neither a source checkout nor a packaged manifest can identify the build.
     monkeypatch.setattr(git_ops, "current_commit", lambda: "")
+    monkeypatch.setattr(packaged, "current_selection", lambda: {})
+    monkeypatch.setattr(packaged, "_current_release_git_sha", lambda _selection: None)
     build_info.record_boot_commit()
     assert build_info.get_boot_commit() is None
+
+
+def test_record_boot_commit_uses_packaged_release_manifest(monkeypatch):
+    from aletheia.update import packaged
+
+    monkeypatch.setattr(git_ops, "current_commit", lambda: "")
+    monkeypatch.setattr(packaged, "current_selection", lambda: {"current": "v1"})
+    monkeypatch.setattr(
+        packaged,
+        "_current_release_git_sha",
+        lambda selection: "packaged-sha" if selection["current"] == "v1" else None,
+    )
+
+    build_info.record_boot_commit()
+
+    assert build_info.get_boot_commit() == "packaged-sha"
 
 
 def test_no_drift_when_head_unchanged(monkeypatch):

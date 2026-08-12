@@ -84,34 +84,36 @@ def ensure_evidence_epochs(*, commit_sha: str | None = None) -> dict[str, str]:
     build creates at most one epoch per path across multiple Gateway restarts.
     """
     from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
+    from aletheia.storage.repositories import transaction
 
     sha = commit_sha if commit_sha is not None else _current_commit()
     if not sha:
         raise ValueError("running deployment commit is unavailable")
     result: dict[str, str] = {}
 
-    for path_id in _EVIDENCE_PATH_IDS:
-        try:
-            epoch = build_policy_epoch(
-                epoch_kind=f"evidence_anchor:{path_id}",
-                effective_values=_effective_values_for_path(path_id, commit_sha=sha),
-                affected_path_ids=(path_id,),
-                safety_required=False,
-            )
-            epoch_id = persist_policy_epoch(epoch)
-            result[path_id] = epoch_id
-            logger.debug(
-                "evidence epoch %s: path=%s commit=%s",
-                epoch_id[:12] if epoch_id else "?",
-                path_id,
-                sha[:12] if sha else "none",
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "evidence epoch registration failed for %s (non-fatal): %s",
-                path_id,
-                exc,
-            )
+    with transaction(immediate=True):
+        for path_id in _EVIDENCE_PATH_IDS:
+            try:
+                epoch = build_policy_epoch(
+                    epoch_kind=f"evidence_anchor:{path_id}",
+                    effective_values=_effective_values_for_path(path_id, commit_sha=sha),
+                    affected_path_ids=(path_id,),
+                    safety_required=False,
+                )
+                epoch_id = persist_policy_epoch(epoch)
+                result[path_id] = epoch_id
+                logger.debug(
+                    "evidence epoch %s: path=%s commit=%s",
+                    epoch_id[:12] if epoch_id else "?",
+                    path_id,
+                    sha[:12] if sha else "none",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "evidence epoch registration failed for %s (non-fatal): %s",
+                    path_id,
+                    exc,
+                )
 
     return result
 
