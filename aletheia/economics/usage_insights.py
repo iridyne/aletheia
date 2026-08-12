@@ -252,7 +252,8 @@ def _token_mix(llm_rows: list[dict[str, Any]]) -> tuple[dict[str, Any], int]:
             output_tokens=_number(totals["output_tokens"]) if available["output_tokens"] else None,
             total_tokens=(
                 _number(totals["input_tokens"] + totals["output_tokens"])
-                if available["input_tokens"] and available["output_tokens"]
+                if available["input_tokens"] == total
+                and available["output_tokens"] == total
                 else None
             ),
             reasoning_tokens=_number(totals["reasoning_tokens"]) if available["reasoning_tokens"] else None,
@@ -556,6 +557,7 @@ def _budgets(db: sqlite3.Connection, tables: set[str], end: datetime) -> tuple[d
         return _section("not_available", "No budget policies are declared.", rows=[]), 0, 0
     weekly_start = end - timedelta(days=7)
     events = _runtime_rows(db, (weekly_start.isoformat(), end.isoformat()))
+    _project_latest_litellm_estimates(db, events)
     rows, calculable = [], 0
     for policy in policies:
         duration = timedelta(days=1 if policy.get("window") == "daily" else 7)

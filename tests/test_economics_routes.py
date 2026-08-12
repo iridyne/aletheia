@@ -190,6 +190,7 @@ async def test_usage_insights_groups_return_only_their_progressive_sections(clie
 
 @pytest.mark.anyio
 async def test_usage_insights_projects_latest_litellm_price_without_rewriting_event(client):
+    from aletheia.economics.budgets import add_budget
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -209,6 +210,7 @@ async def test_usage_insights_projects_latest_litellm_price_without_rewriting_ev
         source="litellm_public_median:test",
         version="test",
     )
+    add_budget(scope="system", subject=None, usd_cap=10, window="daily")
 
     data = (await client.get("/api/economics/usage-insights?days=7")).json()
 
@@ -219,12 +221,39 @@ async def test_usage_insights_projects_latest_litellm_price_without_rewriting_ev
     assert event_day["input_tokens"] == 1_000_000
     assert event_day["output_tokens"] == 1_000_000
     assert event_day["estimated_cost_usd"] == pytest.approx(0.8)
+    assert data["budgets"]["rows"][0]["estimated_spent_usd"] == pytest.approx(0.8)
+    assert data["budgets"]["rows"][0]["unknown_event_count"] == 0
     stored = db.execute(
         "SELECT estimated_cost_usd,cost_status FROM runtime_cost_events WHERE id=?",
         ("historical-unpriced",),
     ).fetchone()
     assert stored["estimated_cost_usd"] is None
     assert stored["cost_status"] == "unknown"
+
+
+@pytest.mark.anyio
+async def test_usage_insights_withholds_total_tokens_when_event_coverage_is_partial(client):
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_llm_cost(
+        db,
+        event_id="complete-usage",
+        cost=0.1,
+        usage_json='{"normalized":{"input_tokens":10,"output_tokens":4}}',
+    )
+    _seed_llm_cost(
+        db,
+        event_id="input-only-usage",
+        cost=0.1,
+        usage_json='{"normalized":{"input_tokens":5}}',
+    )
+
+    data = (await client.get("/api/economics/usage-insights?days=1&group=summary")).json()
+
+    assert data["token_mix"]["input_tokens"] == 15
+    assert data["token_mix"]["output_tokens"] == 4
+    assert data["token_mix"]["total_tokens"] is None
 
 
 @pytest.mark.anyio

@@ -19,7 +19,7 @@ const insights: UsageInsightsResponse = {
   attribution: { status: 'not_available', reason: 'No runs.', rows: [] },
   tools: { status: 'not_available', reason: 'No tools.', rows: [], timing_coverage_pct: null, pricing_coverage_pct: null },
   reliability: {
-    status: 'not_available', reason: 'No sessions.', logical: {}, physical: {},
+    status: 'partial', reason: 'One attempt failed.', logical: {}, physical: { error_categories: [{ error_type: 'timeout', event_count: 2 }] },
     current_model_cooldown: {
       status: 'available', reason: 'Current in-process state; it is not a historical cooldown ledger.',
       current: true, fact_scope: 'current_in_process', as_of: '2026-08-10T00:00:00Z',
@@ -68,6 +68,10 @@ describe('Usage', () => {
     expect(html).toContain('Consumption &amp; spend · last 7 days')
     expect(html).toContain('Token composition')
     expect(html).toContain('Cost provenance')
+    expect(html).toContain('Reliability · last 7 days')
+    expect(html).toContain('Current model cooldown')
+    expect(html).toContain('test')
+    expect(html).toContain('timeout: 2')
     expect(html).toContain('usage-section skeleton')
     expect(html).not.toContain('Research yield · last 7 days')
   })
@@ -93,7 +97,9 @@ describe('Usage', () => {
     expect(html).toContain('N/A')
     expect(html).toContain('Research yield · last 7 days')
     expect(html).toContain('aria-pressed="true">1d')
-    expect(html).toContain('Reliability &amp; budgets · last 7 days')
+    expect(html).toContain('Reliability · last 7 days')
+    expect(html).toContain('Budgets · last 7 days')
+    expect(html.indexOf('Reliability · last 7 days')).toBeLessThan(html.indexOf('Budgets · last 7 days'))
     expect(html).not.toContain('Coverage radar')
   })
 
