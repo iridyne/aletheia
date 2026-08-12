@@ -63,7 +63,7 @@ CALLER_SPECS: dict[str, InferenceCallerSpec] = {
         _spec("agent_shell.synthesis", OutputMode.TEXT),
         _spec("dreaming.lesson_extraction", OutputMode.STRUCTURED),
         _spec("dreaming.nightly_consolidation", OutputMode.TEXT),
-        _spec("lesson_reviewer.judge", OutputMode.TEXT),
+        _spec("lesson_reviewer.judge", OutputMode.STRUCTURED),
         _spec("post_trade_reviewer.review", OutputMode.TEXT),
         _spec("research_agent.note", OutputMode.TEXT),
         _spec("research_worker.methodology", OutputMode.TEXT),
