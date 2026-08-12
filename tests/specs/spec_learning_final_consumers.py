@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -300,6 +301,7 @@ def test_ranker_learning_deltas_are_refrozen_behind_separate_authority(monkeypat
 
 def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanner: str,
                             complete: bool = True) -> None:
+    recent = datetime.now(timezone.utc).isoformat()
     db.execute(
         "INSERT INTO universe_forward_outcomes "
         "(id,outcome_candidate_key,member_id,snapshot_id,symbol,scanner_family,direction,horizon,"
@@ -308,8 +310,7 @@ def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanne
         (
             oid, f"candidate-{oid}" if complete else None, "member", "snapshot", symbol,
             scanner, direction, "24h", "2026-07-12T08:00:00+00:00",
-            "2026-07-12T09:00:00+00:00", "2026-07-12T09:00:00+00:00", 1.0,
-            "v1" if complete else None, "settled",
+            recent, recent, 1.0, "v1" if complete else None, "settled",
         ),
     )
 
