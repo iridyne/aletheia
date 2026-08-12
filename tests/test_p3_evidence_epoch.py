@@ -42,8 +42,13 @@ def test_exit_trailing_evidence_path_declared():
     from aletheia.learning.registry import get_learning_path
 
     path = get_learning_path("exit_trailing_evidence")
-    assert path.measurement_supported is True
+    # Evidence epoch paths are observation-only anchors, NOT closed influence loops.
+    # measurement_supported=False keeps them out of the Learning influence machinery
+    # (spec LC-S01 reserves that flag for universe_family_calibration only).
+    assert path.measurement_supported is False
     assert path.is_learning_treatment is False
+    assert path.consumer_wired is False
+    assert path.settings_supported is False
     assert path.behavior_contract_version == "exit-trailing-evidence/v1"
     assert "observe" in path.allowed_effects
 
@@ -52,8 +57,10 @@ def test_entry_correction_v2_path_declared():
     from aletheia.learning.registry import get_learning_path
 
     path = get_learning_path("entry_correction_v2")
-    assert path.measurement_supported is True
+    assert path.measurement_supported is False
     assert path.is_learning_treatment is False
+    assert path.consumer_wired is False
+    assert path.settings_supported is False
     assert path.behavior_contract_version == "entry-correction-v2/v1"
     assert "observe" in path.allowed_effects
 
