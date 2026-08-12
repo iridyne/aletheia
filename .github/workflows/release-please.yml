@@ -36,13 +36,20 @@ jobs:
         run: |
           set -euo pipefail
           release_please() {
-            npm exec --yes --package=release-please@17.6.0 -- \
-              release-please "$@" \
-              --token="$GITHUB_TOKEN" \
-              --repo-url="$GITHUB_REPOSITORY" \
-              --target-branch=master \
-              --config-file=release-please-config.json \
-              --manifest-file=.release-please-manifest.json
+            local attempt
+            for attempt in 1 2 3; do
+              if npm exec --yes --package=release-please@17.6.0 -- \
+                release-please "$@" \
+                --token="$GITHUB_TOKEN" \
+                --repo-url="$GITHUB_REPOSITORY" \
+                --target-branch=master \
+                --config-file=release-please-config.json \
+                --manifest-file=.release-please-manifest.json; then
+                return 0
+              fi
+              [ "$attempt" -eq 3 ] && return 1
+              sleep $((attempt * 5))
+            done
           }
           release_please github-release
           release_please release-pr
