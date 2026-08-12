@@ -1,5 +1,7 @@
 """Tests for universe allocator — scoring, quota, TTL, explore/exploit."""
 
+from types import SimpleNamespace
+
 import pytest
 from aletheia.universe.allocator import (
     compute_total_score, allocate_universe, compute_late_entry_penalty,
@@ -16,6 +18,39 @@ def cfg():
         explore_ratio=0.2,
         family_quota={"momentum": 0.30, "mean_reversion": 0.30, "volatility": 0.20, "derivatives": 0.20},
     )
+
+
+def _paper_calibration_identity(
+    *, multiplier: float = 1.1, target_horizon: str = "4h",
+) -> dict:
+    from aletheia.learning.hypotheses import (
+        HYPOTHESIS_FINGERPRINT_SCHEMA_VERSION,
+        hypothesis_fingerprint,
+    )
+    from aletheia.learning.registry import get_learning_path
+
+    path_id = "universe_family_calibration"
+    scope = {"family": "momentum", "direction": "short", "market_type": "perp"}
+    action = {"type": "opportunity_multiplier", "multiplier": multiplier}
+    source_cohort = "universe_forward_outcomes:clean_net:v2"
+    behavior_version = get_learning_path(path_id).behavior_contract_version
+    return {
+        "experiment_id": "paper-experiment",
+        "fingerprint": hypothesis_fingerprint(
+            path_id=path_id,
+            scope=scope,
+            action=action,
+            target_horizon=target_horizon,
+            source_cohort=source_cohort,
+            behavior_contract_version=behavior_version,
+        ),
+        "scope": scope,
+        "action": action,
+        "target_horizon": target_horizon,
+        "source_cohort": source_cohort,
+        "behavior_contract_version": behavior_version,
+        "fingerprint_schema_version": HYPOTHESIS_FINGERPRINT_SCHEMA_VERSION,
+    }
 
 
 def _scored_item(symbol, family, score, **kwargs):
@@ -246,6 +281,108 @@ def test_calibration_penalty_is_refrozen_without_candidate_identity(cfg):
     assert score_penalized == score_neutral
 
 
+def test_calibration_freezes_admitted_identity_when_live_action_flips(cfg, monkeypatch):
+    import aletheia.learning.experiments as experiments
+
+    feat = {
+        "feature_snapshot_id": "feature-1",
+        "market_type": "perp",
+        "tradability_score": 80.0,
+        "quote_volume_24h": 50_000_000,
+        "spread_bps": 5.0,
+        "data_freshness_sec": 200,
+    }
+    scanner = {
+        "opportunity_score": 70.0,
+        "scanner_family": "momentum",
+        "scanner_direction": "short",
+    }
+    calls: list[dict] = []
+
+    def _apply(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            value=kwargs["treatment"],
+            applied=True,
+            assignment="treatment",
+            reason="authorized",
+            exposure_id="paper-exposure",
+        )
+
+    monkeypatch.setattr(experiments, "apply_numeric_treatment", _apply)
+    identity = _paper_calibration_identity(multiplier=1.1, target_horizon="4h")
+
+    compute_total_score(
+        feat,
+        scanner,
+        cfg,
+        # Live evidence has flipped to a penalty, but the admitted Paper loop
+        # must keep its exact frozen boost identity and continue collecting.
+        calibration={"momentum:short:perp": 0.8},
+        scoring_cohort_key="run-1",
+        calibration_learning_identity=identity,
+        restrict_calibration_learning_scope=True,
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["scope"] == identity["scope"]
+    assert calls[0]["action"] == identity["action"]
+    assert calls[0]["target_horizon"] == identity["target_horizon"]
+    assert calls[0]["source_cohort"] == identity["source_cohort"]
+    assert calls[0]["expected_hypothesis_fingerprint"] == identity["fingerprint"]
+    assert calls[0]["expected_experiment_id"] == identity["experiment_id"]
+    assert calls[0]["treatment"] == pytest.approx(70.0 * 1.1)
+    assert calls[0]["manifest"]["live_proposed_multiplier"] == 0.9
+    assert calls[0]["manifest"]["proposed_multiplier"] == 1.1
+    assert feat["learning_exposure_id"] == "paper-exposure"
+    assert feat["learning_target_horizon"] == "4h"
+
+
+def test_calibration_keeps_admitted_loop_when_live_proposal_disappears(cfg, monkeypatch):
+    import aletheia.learning.experiments as experiments
+
+    feat = {
+        "feature_snapshot_id": "feature-1",
+        "market_type": "perp",
+        "tradability_score": 80.0,
+        "quote_volume_24h": 50_000_000,
+        "spread_bps": 5.0,
+        "data_freshness_sec": 200,
+    }
+    scanner = {
+        "opportunity_score": 70.0,
+        "scanner_family": "momentum",
+        "scanner_direction": "short",
+    }
+    calls: list[dict] = []
+
+    def _apply(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            value=kwargs["baseline"],
+            applied=False,
+            assignment="control",
+            reason="control_assignment",
+            exposure_id="paper-control-exposure",
+        )
+
+    monkeypatch.setattr(experiments, "apply_numeric_treatment", _apply)
+    compute_total_score(
+        feat,
+        scanner,
+        cfg,
+        calibration=None,
+        scoring_cohort_key="run-1",
+        calibration_learning_identity=_paper_calibration_identity(),
+        restrict_calibration_learning_scope=True,
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["action"]["multiplier"] == 1.1
+    assert calls[0]["manifest"]["live_proposed_multiplier"] == 1.0
+    assert feat["learning_exposure_id"] == "paper-control-exposure"
+
+
 def test_calibration_skips_scopes_outside_active_paper_loop(cfg, monkeypatch):
     import aletheia.learning.experiments as experiments
 
@@ -279,10 +416,13 @@ def test_calibration_skips_scopes_outside_active_paper_loop(cfg, monkeypatch):
         calibration={"momentum:short:perp": 1.2},
         scoring_cohort_key="run-1",
         scoring_audit_out=audit,
-        calibration_learning_scope={
-            "family": "momentum",
-            "direction": "long",
-            "market_type": "spot",
+        calibration_learning_identity={
+            **_paper_calibration_identity(),
+            "scope": {
+                "family": "momentum",
+                "direction": "long",
+                "market_type": "spot",
+            },
         },
         restrict_calibration_learning_scope=True,
     )

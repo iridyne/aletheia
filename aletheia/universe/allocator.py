@@ -52,6 +52,78 @@ def _calibration_key(family: str, direction: str | None, market_type: str | None
     return f"{family}:{direction or 'unknown'}:{market_type or 'spot'}"
 
 
+def _active_paper_calibration_parameters(
+    identity: dict | None,
+    scope: dict[str, str],
+) -> tuple[dict | None, str | None]:
+    """Resolve one canonical admitted UFC treatment, or fail closed.
+
+    Paper admission freezes the complete hypothesis identity. Retrospective
+    calibration may continue to move, but it must not rotate an admitted Paper
+    loop onto a new Shadow hypothesis with the same scope.
+    """
+    if not isinstance(identity, dict):
+        return None, "active_paper_identity_unavailable"
+    try:
+        from aletheia.learning.hypotheses import hypothesis_fingerprint
+        from aletheia.learning.registry import get_learning_path
+
+        frozen_scope = identity["scope"]
+        action = identity["action"]
+        experiment_id = identity["experiment_id"]
+        target_horizon = identity["target_horizon"]
+        source_cohort = identity["source_cohort"]
+        behavior_version = identity["behavior_contract_version"]
+        schema_version = identity["fingerprint_schema_version"]
+        if frozen_scope != scope:
+            return None, "outside_active_paper_scope"
+        if not isinstance(experiment_id, str) or not experiment_id:
+            raise ValueError("active Paper experiment identity is unavailable")
+        if not isinstance(action, dict):
+            raise ValueError("active Paper action is not an object")
+        multiplier = action.get("multiplier")
+        if (
+            action.get("type") != "opportunity_multiplier"
+            or type(multiplier) is not float
+            or multiplier not in {0.9, 1.1}
+        ):
+            raise ValueError("active Paper action is not a bounded UFC treatment")
+        expected_horizon = _FAMILY_CALIBRATION_HORIZON.get(
+            str(scope.get("family")), _DEFAULT_CALIBRATION_HORIZON
+        )
+        if target_horizon != expected_horizon:
+            raise ValueError("active Paper horizon is not canonical for its family")
+        if source_cohort != "universe_forward_outcomes:clean_net:v2":
+            raise ValueError("active Paper source cohort is not canonical")
+        if schema_version != 1:
+            raise ValueError("active Paper fingerprint schema is unsupported")
+        path = get_learning_path("universe_family_calibration")
+        if path.behavior_contract_version != behavior_version:
+            raise ValueError("active Paper behavior contract is not current")
+        fingerprint = hypothesis_fingerprint(
+            path_id="universe_family_calibration",
+            scope=frozen_scope,
+            action=action,
+            target_horizon=target_horizon,
+            source_cohort=source_cohort,
+            behavior_contract_version=behavior_version,
+            schema_version=schema_version,
+        )
+        if fingerprint != identity.get("fingerprint"):
+            raise ValueError("active Paper hypothesis fingerprint mismatch")
+        return {
+            "experiment_id": experiment_id,
+            "fingerprint": fingerprint,
+            "action": action,
+            "multiplier": multiplier,
+            "target_horizon": target_horizon,
+            "source_cohort": source_cohort,
+        }, None
+    except (KeyError, TypeError, ValueError):
+        logger.exception("Active Paper calibration identity is invalid")
+        return None, "active_paper_identity_invalid"
+
+
 def get_family_multipliers(
     max_step: float = 0.10,
     *,
@@ -192,7 +264,7 @@ def compute_total_score(
     *,
     calibration_evidence: dict[str, dict] | None = None,
     scoring_audit_out: dict[str, object] | None = None,
-    calibration_learning_scope: dict[str, str] | None = None,
+    calibration_learning_identity: dict | None = None,
     restrict_calibration_learning_scope: bool = False,
 ) -> float:
     """Compute the final total_score for universe ranking.
@@ -208,22 +280,49 @@ def compute_total_score(
     calibration_authority_applied = False
     calibration_assignment = "not_evaluated"
     calibration_reason = "not_configured"
-    if calibration:
-        exact_key = _calibration_key(
-            family,
-            scanner_result.get("scanner_direction") or scanner_result.get("direction"),
-            feat.get("market_type", "spot"),
-        )
-        evidence_key = exact_key if exact_key in calibration else family
-        raw_multiplier = float(calibration.get(evidence_key, 1.0))
+    if calibration or restrict_calibration_learning_scope:
+        direction = scanner_result.get("scanner_direction") or scanner_result.get("direction") or "unknown"
+        market_type = feat.get("market_type", "spot")
+        exact_key = _calibration_key(family, direction, market_type)
+        evidence_key = exact_key if exact_key in (calibration or {}) else family
+        raw_multiplier = float((calibration or {}).get(evidence_key, 1.0))
         # Historical calibration can propose only a bounded direction. It does
         # not receive score authority until a prospective treatment/control
         # verdict passes the shared experiment gate.
-        proposed_multiplier = 1.1 if raw_multiplier > 1.0 else 0.9 if raw_multiplier < 1.0 else 1.0
-        if proposed_multiplier != 1.0:
+        live_proposed_multiplier = (
+            1.1 if raw_multiplier > 1.0 else 0.9 if raw_multiplier < 1.0 else 1.0
+        )
+        scope = {
+            "family": family,
+            "direction": direction,
+            "market_type": market_type,
+        }
+        frozen = None
+        if restrict_calibration_learning_scope:
+            frozen, suppression_reason = _active_paper_calibration_parameters(
+                calibration_learning_identity,
+                scope,
+            )
+            if frozen is None:
+                calibration_assignment = "scope_suppressed"
+                calibration_reason = str(suppression_reason)
+        elif live_proposed_multiplier != 1.0:
+            frozen = {
+                "action": {
+                    "type": "opportunity_multiplier",
+                    "multiplier": live_proposed_multiplier,
+                },
+                "multiplier": live_proposed_multiplier,
+                "target_horizon": _FAMILY_CALIBRATION_HORIZON.get(
+                    family, _DEFAULT_CALIBRATION_HORIZON
+                ),
+                "source_cohort": "universe_forward_outcomes:clean_net:v2",
+            }
 
-            direction = scanner_result.get("scanner_direction") or scanner_result.get("direction") or "unknown"
-            market_type = feat.get("market_type", "spot")
+        if frozen is not None:
+            proposed_multiplier = float(frozen["multiplier"])
+            horizon = str(frozen["target_horizon"])
+            source_cohort = str(frozen["source_cohort"])
             feature_id = feat.get("feature_snapshot_id")
             # A feature snapshot may be intentionally reused for up to 30 minutes,
             # while each scanner run creates a distinct prospective allocation
@@ -245,62 +344,54 @@ def compute_total_score(
                 f"universe:cluster:{scoring_cohort_key}:{family}:{direction}:{market_type}"
                 if scoring_cohort_key else None
             )
-            horizon = _FAMILY_CALIBRATION_HORIZON.get(
-                family, _DEFAULT_CALIBRATION_HORIZON
-            )
-            scope = {
-                "family": family,
-                "direction": direction,
-                "market_type": market_type,
-            }
-            if (
-                restrict_calibration_learning_scope
-                and scope != calibration_learning_scope
-            ):
-                calibration_assignment = "scope_suppressed"
-                calibration_reason = "outside_active_paper_scope"
-            else:
-                from aletheia.learning.experiments import apply_numeric_treatment
+            from aletheia.learning.experiments import apply_numeric_treatment
 
-                influence = apply_numeric_treatment(
-                    path_id="universe_family_calibration",
-                    scope=scope,
-                    action={
-                        "type": "opportunity_multiplier",
-                        "multiplier": proposed_multiplier,
-                    },
-                    source_cohort="universe_forward_outcomes:clean_net:v2",
-                    target_horizon=horizon,
-                    candidate_key=candidate_key,
-                    baseline=float(opportunity),
-                    treatment=float(opportunity) * proposed_multiplier,
-                    consumer="universe_allocator",
-                    consumer_stage="opportunity_score",
-                    outcome_candidate_key=(
-                        f"{candidate_key}:{horizon}" if candidate_key else None
+            influence = apply_numeric_treatment(
+                path_id="universe_family_calibration",
+                scope=scope,
+                action=dict(frozen["action"]),
+                source_cohort=source_cohort,
+                target_horizon=horizon,
+                candidate_key=candidate_key,
+                baseline=float(opportunity),
+                treatment=float(opportunity) * proposed_multiplier,
+                consumer="universe_allocator",
+                consumer_stage="opportunity_score",
+                outcome_candidate_key=(
+                    f"{candidate_key}:{horizon}" if candidate_key else None
+                ),
+                manifest={
+                    "raw_multiplier": raw_multiplier,
+                    "live_proposed_multiplier": live_proposed_multiplier,
+                    "proposed_multiplier": proposed_multiplier,
+                    "source_evidence": dict(
+                        (calibration_evidence or {}).get(evidence_key) or {}
                     ),
-                    manifest={
-                        "raw_multiplier": raw_multiplier,
-                        "proposed_multiplier": proposed_multiplier,
-                        "source_evidence": dict(
-                            (calibration_evidence or {}).get(evidence_key) or {}
-                        ),
-                    },
-                    assignment_key=cluster_key,
-                )
-                opportunity = influence.value
-                calibration_effective_multiplier = (
-                    influence.value / float(raw_opportunity)
-                    if abs(float(raw_opportunity)) > 1e-12
-                    else 1.0
-                )
-                calibration_authority_applied = influence.applied
-                calibration_assignment = influence.assignment
-                calibration_reason = influence.reason
-                if candidate_key:
-                    feat["learning_candidate_key"] = candidate_key
-                    feat["learning_exposure_id"] = influence.exposure_id
-                    feat["learning_target_horizon"] = horizon
+                },
+                assignment_key=cluster_key,
+                expected_hypothesis_fingerprint=(
+                    str(frozen["fingerprint"])
+                    if restrict_calibration_learning_scope else None
+                ),
+                expected_experiment_id=(
+                    str(frozen["experiment_id"])
+                    if restrict_calibration_learning_scope else None
+                ),
+                suppress_shadow_if_paper_active=True,
+            )
+            opportunity = influence.value
+            calibration_effective_multiplier = (
+                influence.value / float(raw_opportunity)
+                if abs(float(raw_opportunity)) > 1e-12
+                else 1.0
+            )
+            calibration_authority_applied = influence.applied
+            calibration_assignment = influence.assignment
+            calibration_reason = influence.reason
+            if candidate_key:
+                feat["learning_candidate_key"] = candidate_key
+                feat["learning_exposure_id"] = influence.exposure_id
+                feat["learning_target_horizon"] = horizon
     # Operator-adjustable per-family weight. The PI Operator writes
     # cfg.scanner_weights via _action_adjust_scanner_weight (OL-C09) and the UI
     # shows it, but scoring never consumed it — the manual bias was inert. Empty
