@@ -402,6 +402,58 @@ def get_filter_controller():
     return build_filter_controller_report()
 
 
+@router.get("/filter-controller/persistent")
+def get_persistent_filter_controller():
+    """Fast persisted signal used by the Learning page; never recomputes replays."""
+    from dataclasses import asdict
+
+    from aletheia.analytics.filter_controller import compute_persistent_recommendations
+    from aletheia.config.loader import load_config
+    from aletheia.storage.sqlite import get_db
+
+    try:
+        cfg = load_config().controller
+        min_streak = int(getattr(cfg, "persistent_min_consecutive_runs", 3))
+        max_lookback = int(getattr(cfg, "persistent_max_runs_lookback", 10))
+        shadow_enabled = bool(getattr(cfg, "shadow_enabled", False))
+        observe_interval_hours = int(getattr(cfg, "observe_interval_hours", 6))
+    except Exception:
+        min_streak, max_lookback, shadow_enabled, observe_interval_hours = 3, 10, False, 6
+    persistent = [
+        asdict(item) for item in compute_persistent_recommendations(
+            min_consecutive_runs=min_streak,
+            max_runs_lookback=max_lookback,
+        )
+    ]
+    run_rows = get_db().execute(
+        "SELECT run_id, MAX(created_at) AS run_at FROM controller_recommendations "
+        "WHERE run_id IS NOT NULL GROUP BY run_id ORDER BY datetime(run_at) DESC LIMIT ?",
+        (max_lookback,),
+    ).fetchall()
+    runs_available = len(run_rows)
+    last_run_at = run_rows[0]["run_at"] if run_rows else None
+    return {
+        "persistent_recommendations": persistent,
+        "persistent_config": {
+            "min_consecutive_runs": min_streak,
+            "max_runs_lookback": max_lookback,
+        },
+        "runs_available": runs_available,
+        "last_run_at": last_run_at,
+        "schedule": {
+            "enabled": shadow_enabled,
+            "observe_interval_hours": observe_interval_hours,
+        },
+        "empty_reason": (
+            None if persistent
+            else "controller_disabled" if not shadow_enabled
+            else "no_controller_runs" if runs_available == 0
+            else "insufficient_run_history" if runs_available < min_streak
+            else "no_persistent_signals"
+        ),
+    }
+
+
 @router.get("/thesis-lineage")
 def get_thesis_lineage(
     days: int = 30,
@@ -1789,10 +1841,12 @@ def get_learning_funnel():
     db = get_db()
     query_errors: dict[str, str] = {}
 
-    # Full-table item_type distribution
+    # Current library distribution; archived/deprecated rows are historical, not open inventory.
     type_total: list[dict] = []
     for r in db.execute(
-        "SELECT item_type, COUNT(*) n FROM knowledge_items GROUP BY item_type ORDER BY n DESC"
+        "SELECT item_type, COUNT(*) n FROM knowledge_items "
+        "WHERE status = 'active' OR status IS NULL "
+        "GROUP BY item_type ORDER BY n DESC"
     ):
         type_total.append({"item_type": r["item_type"], "count": int(r["n"])})
 
@@ -1867,6 +1921,7 @@ def get_learning_funnel():
     layer3_guards_in_window = min(int(total_by_type.get("guard_candidate", 0)), 3)
 
     contradictions: list[dict] = []
+    active_guards_total: int | None = None
     contradictions_checked = True
     try:
         from aletheia.knowledge.manager import detect_contradictions
@@ -1886,7 +1941,9 @@ def get_learning_funnel():
                 "ORDER BY rowid DESC LIMIT 500"
             )
         ]
-        for guard in load_trading_guards(status="active"):
+        active_guards = load_trading_guards(status="active")
+        active_guards_total = len(active_guards)
+        for guard in active_guards:
             meta = guard.model_dump()
             applies = meta.get("applies_to") or {}
             symbols = applies.get("symbol") or [None]
@@ -1908,6 +1965,7 @@ def get_learning_funnel():
         contradictions = detect_contradictions(contradiction_items)
     except Exception:
         contradictions = []
+        active_guards_total = None
         contradictions_checked = False
         query_errors["contradictions"] = "read_failed"
 
@@ -1921,6 +1979,7 @@ def get_learning_funnel():
             "note": "PI reads up to 7 trade_case_study + up to 3 guard_candidate per cycle (L-Bug-A/A' fixed b9ad957)",
         },
         "ps_lessons": ps_summary,
+        "active_guards_total": active_guards_total,
         "serenity_opportunities_active": serenity_active,
         "contradictions": {
             "checked": contradictions_checked,

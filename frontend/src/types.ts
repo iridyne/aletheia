@@ -266,16 +266,32 @@ export interface StrategyRecord {
 
 export interface KnowledgeItem {
   id: string
-  item_type: string
+  item_type: KnowledgeItemType | string
   title: string
-  file_path: string | null
+  file_path?: string | null
   strategy_id: string | null
-  confidence: number | null
+  confidence: number | string | null
   status: string
   tags: string | null
   created_at: string
   updated_at: string | null
+  producer_run_id?: string | null
 }
+
+export type KnowledgeItemType =
+  | 'calibration_report'
+  | 'daily_review'
+  | 'dreaming_log'
+  | 'guard_candidate'
+  | 'operator_assessment'
+  | 'post_trade_review'
+  | 'reasoning_feedback'
+  | 'research_note'
+  | 'strategy_memory'
+  | 'system_action'
+  | 'trade_case_study'
+  | 'trading_guard'
+  | 'trading_memo'
 
 export interface AgentRun {
   id: string

@@ -80,6 +80,12 @@ async def test_dreaming_summary_excludes_archived_from_recent(client):
     assert resp.status_code == 200, resp.text
     data = resp.json()
 
+    assert "dreaming_job" in data
+    assert data["recent_knowledge_total"] == 1
+    assert {item["item_type"] for item in data["recent_knowledge_items"]} == {
+        "research_note",
+    }
+
     research_titles = {item["title"] for item in data["recent_research_notes"]}
     hypotheses_titles = {item["title"] for item in data["recent_strategy_hypotheses"]}
     deprecated_titles = {item["title"] for item in data["deprecated_memories"]}
@@ -104,3 +110,86 @@ async def test_dreaming_summary_excludes_archived_from_recent(client):
     assert "deprecated strategy" in deprecated_titles, (
         f"deprecated strategy must be in deprecated_memories; got {deprecated_titles}"
     )
+
+
+@pytest.mark.anyio
+async def test_all_knowledge_returns_mixed_active_types(client):
+    from aletheia.storage.models import KnowledgeItem
+    from aletheia.storage.repositories import insert_knowledge_item
+
+    insert_knowledge_item(KnowledgeItem(item_type="trade_case_study", title="case"))
+    insert_knowledge_item(KnowledgeItem(item_type="system_action", title="action"))
+    insert_knowledge_item(KnowledgeItem(item_type="research_note", title="old note", status="archived"))
+
+    resp = await client.get("/api/knowledge?type=all&limit=1000")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    items = body["items"]
+    assert body == {
+        "items": items,
+        "total": 2,
+        "limit": 1000,
+        "offset": 0,
+        "returned": 2,
+        "has_more": False,
+    }
+    assert {item["item_type"] for item in items} == {
+        "trade_case_study", "system_action",
+    }
+    assert all("content" not in item and "file_path" not in item for item in items)
+
+    page = (await client.get("/api/knowledge?type=all&limit=1&offset=1")).json()
+    assert page["total"] == 2
+    assert page["offset"] == 1
+    assert page["returned"] == 1
+    assert page["has_more"] is False
+
+    archived = (await client.get("/api/knowledge?type=all&status=archived&q=old")).json()
+    assert archived["total"] == 1
+    assert archived["items"][0]["title"] == "old note"
+
+
+@pytest.mark.anyio
+async def test_dreaming_summary_uses_persisted_run_artifact_links(client):
+    from aletheia.storage.models import AgentRun, AgentRunArtifact, KnowledgeItem
+    from aletheia.storage.repositories import (
+        insert_agent_run,
+        insert_agent_run_artifacts,
+        insert_knowledge_item,
+    )
+
+    run = AgentRun(agent_name="dreaming_agent", status="completed")
+    item = KnowledgeItem(item_type="dreaming_log", title="linked output")
+    insert_agent_run(run)
+    insert_knowledge_item(item)
+    insert_agent_run_artifacts([
+        AgentRunArtifact(run_id=run.id, artifact_type="dreaming_log", artifact_id=item.id),
+    ])
+
+    body = (await client.get("/api/dreaming/summary")).json()
+
+    assert body["recent_dreaming_runs"][0]["artifacts"] == [{
+        "artifact_type": "dreaming_log",
+        "artifact_id": item.id,
+        "created_at": body["recent_dreaming_runs"][0]["artifacts"][0]["created_at"],
+    }]
+    assert body["recent_knowledge_items"][0]["producer_run_id"] == run.id
+
+
+@pytest.mark.anyio
+async def test_knowledge_content_falls_back_to_inline_storage(client):
+    from aletheia.storage.models import KnowledgeItem
+    from aletheia.storage.repositories import insert_knowledge_item
+
+    item = KnowledgeItem(
+        item_type="system_action",
+        title="inline-only",
+        content="Persisted inline knowledge",
+    )
+    insert_knowledge_item(item)
+
+    resp = await client.get(f"/api/knowledge/{item.id}/content")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"id": item.id, "content": "Persisted inline knowledge"}

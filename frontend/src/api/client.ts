@@ -1,4 +1,4 @@
-import type { InfraEvent, SystemStatus, ThesisLineageRecord } from "../types";
+import type { InfraEvent, KnowledgeItem, SystemStatus, ThesisLineageRecord } from "../types";
 import type { GuardRow } from "../lib/guards";
 
 const BASE = "/api";
@@ -103,6 +103,12 @@ export interface LearningContributionProjection {
 			evaluated_at: string | null;
 			window_start: string | null;
 			window_end: string | null;
+			coverage?: {
+				status?: string;
+				required_consecutive_days?: number;
+				current_consecutive_market_days?: number;
+				missing_market_day_n?: number;
+			};
 		};
 		samples: {
 			raw_exposures: number;
@@ -211,6 +217,47 @@ export interface LearningContributionProjection {
 			catchup_due: boolean;
 		} | null;
 	} | null;
+}
+
+export interface DreamingSummary {
+	recent_research_notes: KnowledgeItem[];
+	recent_strategy_hypotheses: KnowledgeItem[];
+	deprecated_memories: KnowledgeItem[];
+	recent_dreaming_logs: KnowledgeItem[];
+	recent_daily_reviews: KnowledgeItem[];
+	recent_knowledge_items: KnowledgeItem[];
+	recent_knowledge_total: number;
+	recent_knowledge_returned: number;
+	recent_knowledge_truncated: boolean;
+	recent_dreaming_runs: Array<{
+		id: string; status: string; trigger_type?: string; started_at?: string;
+		ended_at?: string; model_provider?: string; tools_called?: string | string[];
+		outputs_created?: string | string[]; errors?: string | string[];
+		artifacts?: Array<{ artifact_type: string; artifact_id: string; created_at: string }>;
+	}>;
+	dreaming_job: {
+		status: string; last_started_at: string | null; last_succeeded_at: string | null;
+		next_due_at?: string | null; backlog_count: number | null;
+	} | null;
+}
+
+export interface KnowledgeCatalogResponse {
+	items: KnowledgeItem[];
+	total: number;
+	limit: number;
+	offset: number;
+	returned: number;
+	has_more: boolean;
+}
+
+export interface LearningFunnelProjection {
+	knowledge_items_by_type: Array<{ item_type: string; count: number }>;
+	pi_actual_visibility: { layer3_lesson_hits: number; layer3_guards_available: number; note: string };
+	ps_lessons: { availability: "available" | "unavailable"; total: number | null; by_status: Array<{ status: string; count: number }> | null; latest_created_at: string | null };
+	active_guards_total: number | null;
+	serenity_opportunities_active: number | null;
+	contradictions: { checked: boolean; count: number | null; items: unknown[]; note: string };
+	query_errors: Record<string, string>;
 }
 
 function cleanErrorText(value: unknown): string | null {
@@ -1729,28 +1776,7 @@ export const api = {
 		}>(`/analytics/opportunity-funnel/current-snapshot?hours=${hours}`),
 
 	getLearningFunnel: () =>
-		fetchJson<{
-			knowledge_items_by_type: Array<{ item_type: string; count: number }>;
-			pi_actual_visibility: {
-				layer3_lesson_hits: number;
-				layer3_guards_available: number;
-				note: string;
-			};
-			ps_lessons: {
-				availability: "available" | "unavailable";
-				total: number | null;
-				by_status: Array<{ status: string; count: number }> | null;
-				latest_created_at: string | null;
-			};
-			serenity_opportunities_active: number | null;
-			contradictions: {
-				checked: boolean;
-				count: number | null;
-				items: any[];
-				note: string;
-			};
-			query_errors: Record<string, string>;
-		}>("/analytics/learning-funnel"),
+		fetchJson<LearningFunnelProjection>("/analytics/learning-funnel"),
 	getLearningContribution: () =>
 		fetchJson<LearningContributionProjection>(
 			"/analytics/learning-contribution",
@@ -2144,7 +2170,7 @@ export const api = {
 	startAgentRun: (agent_name: string) =>
 		post("/agent-runs/start", { agent_name }),
 	getDreamingSummary: () =>
-		fetchJson<Record<string, any[]>>("/dreaming/summary"),
+		fetchJson<DreamingSummary>("/dreaming/summary"),
 	getOpportunities: () => fetchJson<any[]>("/opportunities"),
 	getProposals: () => fetchJson<any[]>("/proposals"),
 	getProposal: (id: string) => fetchJson<any>(`/proposals/${id}`),
@@ -2167,7 +2193,12 @@ export const api = {
 	// #95: removed dead setStrategyVenue() — it PATCHed /strategies/{id}/venue, a route
 	// deleted with the rules engine (Position C); no backend handler, no TSX caller.
 	getKnowledge: (type = "research_note") =>
-		fetchJson<any[]>(`/knowledge?type=${encodeURIComponent(type)}`),
+		fetchJson<KnowledgeItem[]>(`/knowledge?type=${encodeURIComponent(type)}`),
+	getAllKnowledge: (offset = 0, limit = 100, search = "", status = "active") => {
+		const q = new URLSearchParams({ type: "all", offset: String(offset), limit: String(limit), status });
+		if (search.trim()) q.set("q", search.trim());
+		return fetchJson<KnowledgeCatalogResponse>(`/knowledge?${q.toString()}`);
+	},
 	getStrategyMemory: () => fetchJson<any[]>("/knowledge/strategy-memory"),
 	getDreamingLogs: () => fetchJson<any[]>("/knowledge/dreaming-logs"),
 	getPostTradeReviews: () =>
@@ -2757,22 +2788,6 @@ export const api = {
 		fetchJson<GoLiveScorecard>("/analytics/go-live-scorecard"),
 	getFilterController: () =>
 		fetchJson<{
-			generated_at: string;
-			min_samples: number;
-			shadow_only: boolean;
-			signal_note?: string;
-			verdict_counts: Record<string, number>;
-			recommendations: Array<{
-				filter_name: string;
-				scanner_family: string;
-				stage: string;
-				current_value: string;
-				verdict: string;
-				suggested_direction: string;
-				error_signal: number | null;
-				n_samples: number;
-				reasoning: string;
-			}>;
 			// Cells whose overrestrictive_suspect verdict has held across N+ consecutive
 			// controller runs — the human-review signal. Not a Learning hypothesis.
 			persistent_recommendations: Array<{
@@ -2794,14 +2809,11 @@ export const api = {
 				min_consecutive_runs: number;
 				max_runs_lookback: number;
 			};
-			report_only_filters: Array<{
-				name: string;
-				stage: string;
-				reason: string;
-			}>;
-			tunable_filter_count: number;
-			total_filter_count: number;
-		}>("/analytics/filter-controller"),
+			runs_available: number;
+			last_run_at: string | null;
+			schedule: { enabled: boolean; observe_interval_hours: number };
+			empty_reason: "controller_disabled" | "no_controller_runs" | "insufficient_run_history" | "no_persistent_signals" | null;
+		}>("/analytics/filter-controller/persistent"),
 	getCostSummary: () => fetchJson<CostSummary>("/analytics/cost-summary"),
 	getConfidenceCalibration: () =>
 		fetchJson<CalibrationReport>("/analytics/confidence-calibration"),

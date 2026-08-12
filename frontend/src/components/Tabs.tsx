@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState, type KeyboardEvent } from 'react'
 
 /**
  * Minimal tab control (hand-rolled, no dependency). Used by every multi-tab page
@@ -35,6 +35,7 @@ export interface TabsProps {
 
 export default function Tabs({ tabs, initial, value, onChange }: TabsProps) {
   const [internal, setInternal] = useState(initial || tabs[0]?.id)
+  const groupId = useId()
   const isControlled = value !== undefined
   const active = isControlled ? value : internal
   const setActive = (id: string) => {
@@ -42,23 +43,45 @@ export default function Tabs({ tabs, initial, value, onChange }: TabsProps) {
     onChange?.(id)
   }
   const current = tabs.find(t => t.id === active) || tabs[0]
+  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+    const buttons = Array.from(event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])
+    const index = buttons.indexOf(event.currentTarget)
+    if (index < 0 || buttons.length === 0) return
+    event.preventDefault()
+    const next = event.key === 'Home' ? 0
+      : event.key === 'End' ? buttons.length - 1
+      : event.key === 'ArrowRight' ? (index + 1) % buttons.length
+      : (index - 1 + buttons.length) % buttons.length
+    buttons[next].focus()
+    buttons[next].click()
+  }
   return (
     <div>
       <div className="tab-bar" role="tablist">
         {tabs.map(t => (
           <button
             key={t.id}
+            id={`${groupId}-tab-${t.id}`}
             role="tab"
             aria-selected={t.id === active}
+            aria-controls={`${groupId}-panel-${t.id}`}
+            tabIndex={t.id === active ? 0 : -1}
             className={`tab ${t.id === active ? 'tab-active' : ''}`}
             onClick={() => setActive(t.id)}
+            onKeyDown={onKeyDown}
           >
             {t.label}
             {t.badge != null && <span className="tab-badge">{t.badge}</span>}
           </button>
         ))}
       </div>
-      <div className="tab-panel">{current?.render()}</div>
+      <div
+        id={`${groupId}-panel-${current?.id}`}
+        className="tab-panel"
+        role="tabpanel"
+        aria-labelledby={`${groupId}-tab-${current?.id}`}
+      >{current?.render()}</div>
     </div>
   )
 }

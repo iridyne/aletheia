@@ -1606,11 +1606,55 @@ def get_market_data_coverage(response: Response):
 
 
 @router.get("/knowledge")
-def get_knowledge(type: str = Query(default="research_note")):
+def get_knowledge(
+    type: str = Query(default="research_note"),
+    limit: int = Query(default=50, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+    q: str = Query(default="", max_length=200),
+    status: str = Query(default="active"),
+):
     _ensure_db()
+    if type == "all":
+        db = get_db()
+        if status not in {"active", "archived", "deprecated", "all"}:
+            raise HTTPException(400, "Invalid knowledge status")
+        clauses: list[str] = []
+        params: list[object] = []
+        if status == "active":
+            clauses.append("(ki.status = 'active' OR ki.status IS NULL)")
+        elif status != "all":
+            clauses.append("ki.status = ?")
+            params.append(status)
+        search = q.strip()
+        if search:
+            clauses.append("(ki.title LIKE ? OR ki.tags LIKE ? OR ki.item_type LIKE ?)")
+            pattern = f"%{search}%"
+            params.extend((pattern, pattern, pattern))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        total = int(db.execute(
+            f"SELECT COUNT(*) FROM knowledge_items ki {where}", params,
+        ).fetchone()[0])
+        rows = db.execute(
+            "SELECT ki.id, ki.item_type, ki.title, ki.confidence, ki.status, "
+            "ki.strategy_id, ki.tags, ki.created_at, ki.updated_at, "
+            "(SELECT ara.run_id FROM agent_run_artifacts ara "
+            " WHERE ara.artifact_id = ki.id AND ara.artifact_type = ki.item_type "
+            " ORDER BY ara.created_at DESC LIMIT 1) AS producer_run_id "
+            f"FROM knowledge_items ki {where} ORDER BY ki.rowid DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        ).fetchall()
+        items = [dict(row) for row in rows]
+        return {
+            "items": items,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "returned": len(items),
+            "has_more": offset + len(items) < total,
+        }
     if type not in VALID_KNOWLEDGE_TYPES:
         raise HTTPException(400, f"Invalid knowledge type. Choose from: {sorted(VALID_KNOWLEDGE_TYPES)}")
-    return repo.list_knowledge_items(item_type=type)
+    return repo.list_knowledge_items(item_type=type, limit=limit)
 
 
 @router.get("/knowledge/research-notes")
@@ -1886,12 +1930,40 @@ def get_dreaming_summary():
         params=("daily_review", cutoff_24h),
         limit=10,
     )
+    recent_knowledge_items = [dict(row) for row in get_db().execute(
+        "SELECT ki.id, ki.item_type, ki.title, ki.confidence, ki.status, "
+        "ki.strategy_id, ki.tags, ki.created_at, ki.updated_at, "
+        "(SELECT ara.run_id FROM agent_run_artifacts ara "
+        " WHERE ara.artifact_id = ki.id AND ara.artifact_type = ki.item_type "
+        " ORDER BY ara.created_at DESC LIMIT 1) AS producer_run_id "
+        "FROM knowledge_items ki "
+        f"WHERE ki.created_at > ? AND {_active} ORDER BY ki.rowid DESC LIMIT 100",
+        (cutoff_24h,),
+    ).fetchall()]
+    recent_knowledge_total = int(get_db().execute(
+        f"SELECT COUNT(*) FROM knowledge_items WHERE created_at > ? AND {_active}",
+        (cutoff_24h,),
+    ).fetchone()[0])
     recent_runs = repo._select_all(
         "agent_runs",
         where="agent_name = ? AND started_at > ?",
         params=("dreaming_agent", cutoff_24h),
         limit=5,
     )
+    for run in recent_runs:
+        run["artifacts"] = [dict(row) for row in get_db().execute(
+            "SELECT artifact_type, artifact_id, created_at FROM agent_run_artifacts "
+            "WHERE run_id = ? ORDER BY created_at",
+            (run["id"],),
+        ).fetchall()]
+    try:
+        from aletheia.learning.control import get_learning_job_health, job_health_view
+
+        dreaming_job = job_health_view(get_learning_job_health("dreaming_daily"))
+        dreaming_job.pop("last_error", None)
+        dreaming_job.pop("last_failure_reason", None)
+    except Exception:
+        dreaming_job = None
     return {
         "recent_research_notes": recent_research,
         "recent_strategy_hypotheses": recent_hypotheses,
@@ -1899,6 +1971,11 @@ def get_dreaming_summary():
         "recent_dreaming_logs": recent_dreaming_logs,
         "recent_dreaming_runs": recent_runs,
         "recent_daily_reviews": recent_daily_reviews,
+        "recent_knowledge_items": recent_knowledge_items,
+        "recent_knowledge_total": recent_knowledge_total,
+        "recent_knowledge_returned": len(recent_knowledge_items),
+        "recent_knowledge_truncated": len(recent_knowledge_items) < recent_knowledge_total,
+        "dreaming_job": dreaming_job,
     }
 
 
@@ -1972,23 +2049,37 @@ def get_reviews_summary():
 
 @router.get("/knowledge/{item_id}/content")
 def get_knowledge_content(item_id: str):
-    """Read the markdown content of a knowledge item by its file_path."""
+    """Read file-backed Markdown, falling back to persisted inline content."""
     _ensure_db()
     from pathlib import Path
 
     items = repo._select_all("knowledge_items", where="id = ?", params=(item_id,), limit=1)
     if not items:
         raise HTTPException(404, "Knowledge item not found")
-    file_path = items[0].get("file_path")
+    item = items[0]
+    inline_content = item.get("content") or ""
+    file_path = item.get("file_path")
     if not file_path:
-        return {"id": item_id, "content": "", "error": "no_file_path"}
+        return (
+            {"id": item_id, "content": inline_content}
+            if inline_content
+            else {"id": item_id, "content": "", "error": "no_file_path"}
+        )
     p = Path(file_path)
     if not p.exists():
-        return {"id": item_id, "content": "", "error": "file_not_found"}
+        return (
+            {"id": item_id, "content": inline_content}
+            if inline_content
+            else {"id": item_id, "content": "", "error": "file_not_found"}
+        )
     try:
         content = p.read_text(encoding="utf-8")
     except Exception:
-        return {"id": item_id, "content": "", "error": "read_failed"}
+        return (
+            {"id": item_id, "content": inline_content}
+            if inline_content
+            else {"id": item_id, "content": "", "error": "read_failed"}
+        )
     return {"id": item_id, "content": content}
 
 

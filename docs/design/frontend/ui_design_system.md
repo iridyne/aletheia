@@ -13,6 +13,9 @@
 5. **渐进式披露** — 折叠卡片显示状态摘要，展开才编辑，不一次塞满所有字段。
 6. **统一网格** — 所有表单卡片用 2 列 form-grid，不自造列数不一的内联 grid。
 
+界面结构、文案、空状态和信息删减同时遵循
+[No Fluff UI Guidance](no_fluff_ui.md)。
+
 ---
 
 ## 2. Token 参考
@@ -99,28 +102,21 @@
 渐进加载的分组应匹配视觉优先级：先返回首屏核心事实，再启动互相独立的下层查询。
 已显示的 stale 数据可以保留，但必须保留自身窗口标签，禁止用新 selector 的标签包装旧值。
 
-### Learning Contribution Observability (target)
+### Learning Workbench
 
-The `/learning` target uses the same dense terminal language as Blotter rather than a marketing
-dashboard:
+The `/learning` page starts with four decision areas:
 
-```text
-five independent status tokens
-full-width contribution-by-path ledger
-current cohort (7/12) | read-only recommendation (5/12)
-full-width append-only verdict history
-bounded DetailDrawer drill-down
-```
+- Learning job status;
+- knowledge created in the last 24 hours;
+- measured impact and remaining evidence;
+- lessons, guard candidates, contradictions and diagnostics requiring review.
 
-Desktop keeps the 7/5 band; 700-1100px stacks it; below 700px status tokens become two columns,
-top tabs scroll horizontally, toolbars wrap and the drawer becomes full width. Use shared `Tabs`,
+Details are organized as Impact, Runs, Library and Operations. Use shared `Tabs`,
 `DataTable`, `DetailDrawer`, `Card`, `Badge`, `StatusText` and `Meter`; do not fork equivalents.
 
 Every query has distinct loading, genuine-empty, unavailable, stale and partial states. A failed
-request must not default to `[]`, `0`, `Never`, or a healthy token. Activity panels carry the label
-"Activity, not measured contribution"; portfolio PnL carries "Portfolio context, not Learning
-attribution". Future information architecture and response semantics are
-proposed in [`learning_observability`](../proposals/learning_observability.md) §8.
+request must not default to `[]`, `0`, `Never`, or a healthy token. Ordinary portfolio PnL does not
+appear on Learning; measured effect is shown only from the contribution projection.
 
 ### Settings Shell — Section + Row
 

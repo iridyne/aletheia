@@ -169,6 +169,7 @@ the same two completeness columns; it writes an empty realized-PnL cell rather t
 | GET | `/analytics/confidence-calibration` | ECE calibration by conviction bucket |
 | GET | `/analytics/reasoning-feedback` | Per-bucket rejection/win rates |
 | GET | `/analytics/filter-controller` | Shadow-only first-exposure cohorts, retry telemetry, bounded fixed-version replays, and preregistered prospective experiment status; never mutates config |
+| GET | `/analytics/filter-controller/persistent` | Fast Learning-page projection of persisted cross-run recommendations, run count/time, schedule state, and an explicit empty reason; never recomputes cohorts, diagnostics, or replays and never mutates config |
 | GET | `/analytics/alpha-attribution` | Read-only five-layer alpha attribution audit (`?days=7/14/30`) |
 | GET | `/analytics/thesis-lineage` | Read-only thesis lineage records layered over the trade causal chain (`?position_id=...&order_id=...&days=90`) |
 | GET | `/analytics/round1-progress` | Historical Round 1 progress metrics |
@@ -267,7 +268,7 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/knowledge` | All knowledge items (paginated) |
+| GET | `/knowledge` | Knowledge items filtered by validated `type`; `type=all` accepts `offset`, `limit`, `q`, and `status=active/archived/deprecated/all`, returning `{items,total,limit,offset,returned,has_more}` plus an explicitly persisted producer run when available. Content remains detail-on-demand. |
 | GET | `/knowledge/research-notes` | Research notes only |
 | GET | `/knowledge/dreaming-logs` | Dreaming agent summaries |
 | GET | `/knowledge/strategy-memory` | Strategy-specific memory |
@@ -276,8 +277,8 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | POST | `/knowledge/guard-candidates/{guard_id}/promote` | Manually move a candidate to active storage; a shadow learned Guard becomes `active_observe` and gains no enforcement authority |
 | GET | `/knowledge/guards/stats` | Guard activation statistics; read failure returns stable `503 guard_stats_read_failed` rather than an empty success payload |
 | GET | `/knowledge/case-studies` | Case study analyses |
-| GET | `/knowledge/{item_id}/content` | Full content of knowledge item |
-| GET | `/dreaming/summary` | Dreaming session summary; recent knowledge collections contain active items only, while archived/deprecated memories are returned separately |
+| GET | `/knowledge/{item_id}/content` | Full knowledge content; file-backed Markdown is authoritative when present, with persisted inline `content` used for DB-native knowledge types or missing legacy files |
+| GET | `/dreaming/summary` | Dreaming session summary; recent knowledge collections contain active items only, `recent_knowledge_items/total/returned/truncated` cover every active produced type with an explicit 100-item bound, each recent run includes its persisted artifact relations, scheduler job health remains distinct from recorded agent sessions, and archived/deprecated memories are returned separately |
 | GET | `/reviews/summary` | Post-trade review summary |
 
 ---

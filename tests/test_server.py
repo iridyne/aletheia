@@ -341,6 +341,30 @@ async def test_learning_funnel_optional_read_failures_are_not_zero(client, monke
 
 
 @pytest.mark.anyio
+async def test_learning_filter_card_uses_persisted_signal_path(client, monkeypatch):
+    from aletheia.analytics import filter_controller
+
+    monkeypatch.setattr(
+        filter_controller,
+        "build_filter_controller_report",
+        lambda: (_ for _ in ()).throw(AssertionError("full report must not run")),
+    )
+    monkeypatch.setattr(
+        filter_controller, "compute_persistent_recommendations", lambda **_: [],
+    )
+
+    response = await client.get("/api/analytics/filter-controller/persistent")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["persistent_recommendations"] == []
+    assert body["runs_available"] == 0
+    assert body["last_run_at"] is None
+    assert body["schedule"] == {"enabled": False, "observe_interval_hours": 6}
+    assert body["empty_reason"] == "controller_disabled"
+
+
+@pytest.mark.anyio
 async def test_pause_resume(client, monkeypatch):
     from aletheia.agent_runtime import resume_gate
 

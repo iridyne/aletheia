@@ -3440,7 +3440,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   gap: var(--space-3); align-items: start;
 }
 .lco-summary-grid {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: var(--space-2);
 }
 .lco-summary-fact {
@@ -3882,33 +3882,35 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
 
 /* ============================ Learning page (Evolve · memory surface) ============================ */
 
-/* Pulse band — a quiet four-metric read-out (NOT a hero state word; that's Risk's signature). */
-.learn-pulse {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-5) var(--space-6);
-  align-items: center;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: var(--space-3) var(--space-5);
-  margin-bottom: var(--space-4);
+.learning-home { display: flex; flex-direction: column; gap: var(--space-3); }
+.learning-home > .card { margin-bottom: 0; }
+.learn-home-status {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2);
 }
-.learn-pulse .stat { min-width: 116px; display: flex; flex-direction: column; gap: 4px; }
-.learn-pulse .stat-label {
-  font-size: 0.72rem; color: var(--muted);
-  text-transform: uppercase; letter-spacing: 0.04em;
+.learning-home-grid {
+  display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 34vw, 460px);
+  gap: var(--space-3); align-items: start;
 }
-.learn-pulse .stat-value {
-  font-family: var(--display); font-size: 1.4rem; font-weight: 600; color: var(--text);
+.learning-home-grid > .card { margin-bottom: 0; }
+.learning-attention-grid {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2);
 }
-/* Tone variants — drive the PulseStat `tone` prop. Scoped to .learn-pulse so a future
-   .stat-value elsewhere is not silently colored. Mirrors the StatusTone vocabulary. */
-.learn-pulse .stat-value-green  { color: var(--green); }
-.learn-pulse .stat-value-yellow { color: var(--yellow); }
-.learn-pulse .stat-value-red    { color: var(--red); }
-.learn-pulse .stat-value-blue   { color: var(--blue); }
-.learn-pulse .stat-value-muted  { color: var(--faint); }
+.learning-attention-item {
+  min-height: 92px; display: flex; flex-direction: column; align-items: flex-start;
+  gap: var(--space-1); padding: var(--space-3); background: var(--surface-2);
+  border: 1px solid var(--border-2); border-radius: var(--r-sm); color: var(--text); text-align: left;
+}
+.learning-attention-item:hover, .learning-attention-item:focus-visible { border-color: var(--accent-dim); }
+.learning-attention-item strong { font: 600 1.2rem var(--mono); }
+.learning-attention-item span { font-size: 0.78rem; }
+.learning-attention-item small { color: var(--muted); font-size: 0.68rem; }
+@media (max-width: 1023px) {
+  .learn-home-status, .learning-attention-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .learning-home-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 639px) {
+  .learn-home-status, .learning-attention-grid { grid-template-columns: 1fr; }
+}
 
 /* Two-up grid for grouped output / reviews; align-items:start so a tall column never
    stretches its short peer (same fix as the Risk page). */
@@ -3943,14 +3945,17 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   overflow-y: auto;
 }
 .learn-item {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-2);
+  padding: 0;
   border-bottom: 1px solid var(--border);
   border-radius: var(--r-sm);
 }
+.learn-item-button {
+  width: 100%; min-height: 44px; padding: var(--space-2); border: 0; border-radius: var(--r-sm);
+  background: transparent; color: inherit; display: flex; align-items: center;
+  justify-content: space-between; gap: var(--space-3); text-align: left;
+}
+.learn-item-button:hover, .learn-item-button:focus-visible { background: var(--surface-2); }
+.learn-item-context { display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--space-2); flex-shrink: 0; }
 .learn-item:last-child { border-bottom: none; }
 .learn-item-title {
   font-size: 0.85rem;
@@ -3989,9 +3994,23 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   padding: 1px 6px;
 }
 .dream-session-out { font-size: var(--fs-sm); color: var(--muted); }
+.dream-artifacts { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); font-size: var(--fs-sm); }
+.dream-artifacts > span { display: inline-flex; align-items: center; gap: var(--space-1); }
 
 /* Knowledge sub-tab button row. */
-.kb-subtabs { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
+.kb-subtabs { display: flex; overflow-x: auto; gap: var(--space-2); margin-bottom: var(--space-3); padding-bottom: 2px; }
+.kb-subtabs > button { flex: 0 0 auto; min-height: 40px; }
+.kb-toolbar { display: grid; grid-template-columns: minmax(240px, 1fr) 180px; gap: var(--space-3); margin-bottom: var(--space-3); }
+.kb-toolbar label { display: flex; flex-direction: column; gap: var(--space-1); color: var(--muted); font-size: 0.72rem; }
+.kb-toolbar input, .kb-toolbar select { width: 100%; }
+.kb-catalog-meta { margin: 0 0 var(--space-2); color: var(--muted); font-size: 0.75rem; }
+.kb-pagination { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-3); margin-top: var(--space-3); color: var(--muted); font-size: 0.75rem; }
+@media (max-width: 600px) {
+  .learn-item-button { align-items: flex-start; flex-direction: column; }
+  .learn-item-context { width: 100%; justify-content: space-between; }
+  .kb-pagination { justify-content: space-between; }
+  .kb-toolbar { grid-template-columns: 1fr; }
+}
 
 /* Strategy promotion board — one card per paper/live strategy. */
 .promo-grid {
