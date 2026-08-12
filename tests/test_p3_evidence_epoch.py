@@ -10,6 +10,8 @@ Tests:
 """
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 
@@ -169,3 +171,16 @@ def test_ensure_evidence_epochs_rejects_missing_deployment_sha(db, monkeypatch):
     monkeypatch.setattr(ev_mod, "_current_commit", lambda: "")
     with pytest.raises(ValueError, match="running deployment commit"):
         ev_mod.ensure_evidence_epochs()
+
+
+def test_gateway_registers_evidence_epochs_before_scheduler_start():
+    from aletheia.server import app as server_app
+
+    source = inspect.getsource(server_app.lifespan)
+
+    assert source.index("ensure_evidence_epochs") > source.index(
+        "start_runtime_session"
+    )
+    assert source.index("ensure_evidence_epochs") < source.index(
+        "    init_tool_registry()"
+    )

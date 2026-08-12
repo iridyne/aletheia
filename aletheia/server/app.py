@@ -483,6 +483,16 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Runtime session start failed (non-fatal): %s", e)
         try:
+            from aletheia.learning.evidence_epoch import ensure_evidence_epochs
+
+            evidence_epochs = ensure_evidence_epochs()
+            if len(evidence_epochs) != 2:
+                logger.warning(
+                    "Evidence epoch registration incomplete: %s", evidence_epochs
+                )
+        except Exception as e:
+            logger.warning("Evidence epoch registration failed (non-fatal): %s", e)
+        try:
             from aletheia.storage.event_store import get_event_store
 
             mirror_result = get_event_store().reconcile_jsonl(limit=100)
