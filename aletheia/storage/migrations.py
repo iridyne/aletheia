@@ -3495,11 +3495,66 @@ _UFC_CANONICAL_IDENTITY = (
     "universe-family-calibration/v11",
     1,
 )
+_UFC_V25_FINGERPRINT_CONTRACT = (
+    "sha256",
+    "json-sort-keys-compact-ascii",
+    ("path_id", "scope", "action", "target_horizon", "source_cohort"),
+    ("summary", "title", "created_at", "updated_at"),
+    "lowercase-and-strip-strings",
+    "sort-normalized-lists-by-canonical-json",
+)
 _UFC_CANONICAL_IDENTITY_CHECKSUM = hashlib.sha256(
-    (repr(_UFC_CANONICAL_IDENTITY) + "\nmaterialize_active_paper_identity_v1").encode(
-        "utf-8"
-    )
+    (
+        repr(_UFC_CANONICAL_IDENTITY)
+        + repr(_UFC_V25_FINGERPRINT_CONTRACT)
+        + "\nmaterialize_active_paper_identity_v2"
+    ).encode("utf-8")
 ).hexdigest()
+
+
+def _ufc_v25_normalize(value):
+    """Frozen schema-1 normalizer; never delegate an applied migration to live code."""
+
+    import json
+
+    if isinstance(value, dict):
+        return {
+            str(key).lower(): _ufc_v25_normalize(item)
+            for key, item in sorted(value.items())
+            if str(key).lower()
+            not in {"summary", "title", "created_at", "updated_at"}
+        }
+    if isinstance(value, list):
+        return sorted(
+            (_ufc_v25_normalize(item) for item in value),
+            key=lambda item: json.dumps(item, sort_keys=True, default=str),
+        )
+    if isinstance(value, str):
+        return value.strip().lower()
+    return value
+
+
+def _ufc_v25_fingerprint(
+    *, path_id, scope, action, target_horizon, source_cohort, behavior_version,
+    schema_version,
+) -> str:
+    """Frozen UFC schema-1 fingerprint implementation for migration v25 only."""
+
+    import json
+
+    payload = {
+        "path_id": path_id.lower(),
+        "scope": _ufc_v25_normalize(scope),
+        "action": _ufc_v25_normalize(action),
+        "target_horizon": target_horizon.lower(),
+        "source_cohort": source_cohort.lower(),
+        "schema_version": schema_version,
+        "behavior_contract_version": behavior_version.lower(),
+    }
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 _MARKET_SIGNAL_IDENTITY_COLUMNS = (
     ("last_market_signal_evidence", "positions", "TEXT"),
@@ -4738,8 +4793,6 @@ def _apply_learning_hypothesis_identity_v24(db: sqlite3.Connection) -> None:
 def _apply_ufc_canonical_identity_v25(db: sqlite3.Connection) -> None:
     """Materialize the identity already committed by an active UFC fingerprint."""
 
-    from aletheia.learning.hypotheses import hypothesis_fingerprint
-
     path_id, behavior_version, schema_version = _UFC_CANONICAL_IDENTITY
     savepoint = "ufc_canonical_identity_v25"
     db.execute(f"SAVEPOINT {savepoint}")
@@ -4781,13 +4834,13 @@ def _apply_ufc_canonical_identity_v25(db: sqlite3.Connection) -> None:
 
             import json
 
-            fingerprint = hypothesis_fingerprint(
+            fingerprint = _ufc_v25_fingerprint(
                 path_id=path_id,
                 scope=json.loads(scope_json),
                 action=json.loads(action_json),
                 target_horizon=target_horizon,
                 source_cohort=source_cohort,
-                behavior_contract_version=behavior_version,
+                behavior_version=behavior_version,
                 schema_version=schema_version,
             )
             if fingerprint != stored_fingerprint:
