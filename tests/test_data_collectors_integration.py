@@ -120,6 +120,9 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
     # Also patch the macro module's bound reference (top-of-file import).
     from aletheia.data.collectors import macro as macro_mod
     monkeypatch.setattr(macro_mod, "httpx_client", _fake_httpx_client)
+    monkeypatch.setattr(
+        macro_mod, "_fetch_one_tradfi_ticker", lambda _ticker: None
+    )
     from aletheia.data.collectors import derivatives as deriv_mod
     monkeypatch.setattr(deriv_mod, "httpx_client", _fake_httpx_client)
     from aletheia.data.collectors import coingecko_top as cg_mod
