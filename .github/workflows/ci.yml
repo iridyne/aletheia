@@ -65,6 +65,7 @@ jobs:
             echo "restored gitleaks $version from $cached"
           else
             curl --fail --location --silent --show-error \
+              --retry 3 --retry-all-errors --retry-delay 2 \
               "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz" \
               --output "$archive"
             # Seed the cache so the next run stays offline. Best-effort: a
