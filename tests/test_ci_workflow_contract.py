@@ -454,6 +454,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "disablePullRequestAutoMerge" in update_script
     assert "do-not-auto-merge" in update_script
     assert "releaseAfterMerge" in update_script
+    assert "'github-actions[bot]', 'app/github-actions'" in update_script
     assert "event_type: 'release_please'" in update_script
 
     release = workflow["jobs"]["release"]
@@ -467,6 +468,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "action == 'closed'" in release["if"]
     assert "merged == true" in release["if"]
     assert "merged_by.login != 'github-actions[bot]'" in release["if"]
+    assert "merged_by.login != 'app/github-actions'" in release["if"]
     assert release["permissions"] == {"contents": "write"}
     assert len(release["steps"]) == 1
     release_step = release["steps"][0]
@@ -484,6 +486,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     followup_script = release_after_ci["steps"][0]["with"]["script"]
     assert "context.payload.workflow_run" in followup_script
     assert "pullRequest.head.sha !== run.head_sha" in followup_script
+    assert "'github-actions[bot]', 'app/github-actions'" in followup_script
     assert "event_type: 'release_please'" in followup_script
 
     # All phases carry write-capable base-repository tokens. Keep them

@@ -193,7 +193,8 @@ jobs:
             };
             const dispatchRelease = async (pullRequest, mergeCommitSha) => {
               if (!releaseAfterMerge) return;
-              if (pullRequest.mergedBy?.login !== 'github-actions[bot]') {
+              const actionsBots = new Set(['github-actions[bot]', 'app/github-actions']);
+              if (!actionsBots.has(pullRequest.mergedBy?.login)) {
                 core.info('non-bot merge is handled by the closed pull-request event');
                 return;
               }
@@ -336,7 +337,8 @@ jobs:
       github.event_name == 'pull_request_target' &&
       github.event.action == 'closed' &&
       github.event.pull_request.merged == true &&
-      github.event.pull_request.merged_by.login != 'github-actions[bot]'
+      github.event.pull_request.merged_by.login != 'github-actions[bot]' &&
+      github.event.pull_request.merged_by.login != 'app/github-actions'
     permissions:
       contents: write
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
@@ -388,7 +390,8 @@ jobs:
                 return;
               }
               if (pullRequest.merged) {
-                if (pullRequest.merged_by?.login !== 'github-actions[bot]') {
+                const actionsBots = new Set(['github-actions[bot]', 'app/github-actions']);
+                if (!actionsBots.has(pullRequest.merged_by?.login)) {
                   core.info('non-bot merge is handled by the closed pull-request event');
                   return;
                 }
