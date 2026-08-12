@@ -434,6 +434,8 @@ def build_exit_trailing_qualification_report(
     opened_after: str | None = None,
 ) -> dict[str, Any]:
     """Report exact-build treatment/control economics without granting authority."""
+    from aletheia.config.loader import load_config
+
     if limit < 1 or limit > 10_000:
         raise ValueError("limit must be between 1 and 10000")
     cutoff = _parse_utc(opened_after) if opened_after is not None else None
@@ -504,9 +506,16 @@ def build_exit_trailing_qualification_report(
     recovery_truncation_count = sum(
         1 for item in all_items if item.get("recovery_truncated") is True
     )
+    enrollment_enabled = bool(
+        load_config(persist_migrations=False).trading.trail_enabled
+    )
     return {
         "contract_version": "exit-trailing-qualification/v2",
         "policy_version": _TRAILING_QUALIFICATION_VERSION,
+        "enrollment_enabled": enrollment_enabled,
+        "enrollment_block_reason": (
+            None if enrollment_enabled else "trading.trail_enabled_false"
+        ),
         "assignment_unit": "position_id",
         "treatment_allocation_bps": _TRAILING_TREATMENT_BPS,
         "control_holdout_bps": 10_000 - _TRAILING_TREATMENT_BPS,

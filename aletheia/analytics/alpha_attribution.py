@@ -207,6 +207,8 @@ def _empty_exit_trailing_qualification(reason: str) -> dict:
     return {
         "contract_version": "exit-trailing-qualification/v2",
         "policy_version": _TRAILING_QUALIFICATION_VERSION,
+        "enrollment_enabled": None,
+        "enrollment_block_reason": "qualification_report_unavailable",
         "measurement_status": "not_measured",
         "causal_grade": "insufficient",
         "assignment_count": 0,
@@ -694,6 +696,8 @@ def render_alpha_audit(report: dict) -> str:
         "Exit trailing qualification: "
         f"{trailing.get('measurement_status', 'not_measured')}",
         "  "
+        f"enrollment={trailing.get('enrollment_enabled')} "
+        f"block={trailing.get('enrollment_block_reason')} "
         f"assignments={trailing.get('assignment_count', 0)} "
         f"treatment={trailing.get('treatment_assignment_count', 0)} "
         f"control={trailing.get('control_assignment_count', 0)} "
