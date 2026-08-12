@@ -18,6 +18,7 @@ from aletheia.analytics.trade_path import build_trade_path_rows
 from aletheia.storage import repositories as repo
 from aletheia.storage.hashing import sha256_json
 from aletheia.storage.models import TradeProposal
+from aletheia.trading.entry_plan import calculate_entry_plan_risk_reward
 
 _ATOL = 1e-10
 _SOURCE_LIMIT = 10_000
@@ -217,8 +218,8 @@ def _proposal_geometry(
         return {**unavailable, "proposal_geometry_reason": "proposal_barriers_invalid"}
     stop_distance = abs(price - stop)
     target_distance = abs(target - price)
-    rr = target_distance / stop_distance
-    if not math.isclose(rr, stored_rr, rel_tol=1e-9, abs_tol=1e-9):
+    rr = calculate_entry_plan_risk_reward(price, stop, target)
+    if rr is None or not math.isclose(rr, stored_rr, rel_tol=1e-9, abs_tol=1e-9):
         return {**unavailable, "proposal_geometry_reason": "proposal_risk_reward_mismatch"}
     source = str(proposal.get("stop_source") or "").strip().lower()
     provenance = "Operator" if source == "operator" else "default" if source == "default" else None
