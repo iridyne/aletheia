@@ -387,6 +387,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "contents": "write",
         "issues": "write",
         "pull-requests": "write",
+        "statuses": "write",
     }
     release_guard = release_candidate["if"]
     assert "event.action == 'release_candidate_verified'" in release_guard
@@ -396,6 +397,17 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "pullRequest.head.sha === run.head_sha" in candidate_script
     assert "autorelease: pending" in candidate_script
     assert "do-not-auto-merge" in candidate_script
+    assert "createCommitStatus" in candidate_script
+    assert "sha: run.head_sha" in candidate_script
+    for required_check in (
+        "Review checks",
+        "Python specifications",
+        "Python unit",
+        "Python integration",
+        "Python end-to-end",
+        "Python runtime state",
+    ):
+        assert required_check in candidate_script
     assert "issues.removeLabel" in candidate_script
     assert "event_type: 'auto_merge_update'" in candidate_script
     assert "expected_head_sha: run.head_sha" in candidate_script

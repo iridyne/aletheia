@@ -68,6 +68,7 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
+      statuses: write
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     steps:
       - name: Release the verified candidate hold
@@ -96,6 +97,23 @@ jobs:
               throw new Error(`expected one release candidate, found ${candidates.length}`);
             }
             const [pullRequest] = candidates;
+            const requiredChecks = [
+              'Review checks',
+              'Python specifications',
+              'Python unit',
+              'Python integration',
+              'Python end-to-end',
+              'Python runtime state',
+            ];
+            for (const check of requiredChecks) {
+              await github.rest.repos.createCommitStatus({
+                ...context.repo,
+                sha: run.head_sha,
+                state: 'success',
+                context: check,
+                description: 'Verified by exact release candidate CI',
+              });
+            }
             await github.rest.issues.removeLabel({
               ...context.repo,
               issue_number: pullRequest.number,
