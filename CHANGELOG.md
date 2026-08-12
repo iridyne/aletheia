@@ -4,6 +4,13 @@ All notable product changes are recorded here. Aletheia uses Semantic Versioning
 for the product release, while build identities and data/behavior contracts keep
 their own independent versions.
 
+## [0.7.5](https://github.com/iridite/aletheia/compare/v0.7.4...v0.7.5) (2026-08-12)
+
+
+### Bug Fixes
+
+* **ci:** merge verified unstable release PRs ([#943](https://github.com/iridite/aletheia/issues/943)) ([92a9c9e](https://github.com/iridite/aletheia/commit/92a9c9e464009fbb51984389b4d92b670cc54636))
+
 ## [0.7.4](https://github.com/iridite/aletheia/compare/v0.7.3...v0.7.4) (2026-08-12)
 
 
