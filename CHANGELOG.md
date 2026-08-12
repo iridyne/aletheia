@@ -4,6 +4,13 @@ All notable product changes are recorded here. Aletheia uses Semantic Versioning
 for the product release, while build identities and data/behavior contracts keep
 their own independent versions.
 
+## [0.7.7](https://github.com/iridite/aletheia/compare/v0.7.6...v0.7.7) (2026-08-12)
+
+
+### Bug Fixes
+
+* **analytics:** explain pre-signal funnel rejections ([#949](https://github.com/iridite/aletheia/issues/949)) ([6e290dc](https://github.com/iridite/aletheia/commit/6e290dcaab1c7c7bc45c9d686f60e8304f821a6c))
+
 ## [0.7.6](https://github.com/iridite/aletheia/compare/v0.7.5...v0.7.6) (2026-08-12)
 
 
