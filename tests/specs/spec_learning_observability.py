@@ -204,11 +204,14 @@ def test_lco_frontend_uses_backend_measurement_state():
     source = (root / "frontend/src/lib/learningContribution.ts").read_text()
     proof = (root / "frontend/src/lib/learningContribution.test.ts").read_text()
     workbench_proof = (root / "frontend/src/pages/Learning.test.tsx").read_text()
+    interaction_proof = (root / "frontend/src/pages/Learning.interaction.test.tsx").read_text()
+    workbench = (root / "frontend/src/pages/Learning.tsx").read_text()
 
     assert "return item.measurement.state" in source
     assert "large activity counts" in proof
     assert "toBe('insufficient_data')" in proof
-    assert "not Learning attribution" in workbench_proof
+    assert "Portfolio PnL" not in workbench
+    assert "not.toContain('Visible PnL chart')" in interaction_proof
     assert "not.toContain('Contradictions needing review: <strong>0</strong>')" in workbench_proof
 
 

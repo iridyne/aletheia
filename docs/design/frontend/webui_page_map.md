@@ -71,24 +71,18 @@ Performance metrics (drawdown/win-rate from promotion gates) may live as a Repor
 Strategy Lifecycle (decide at build). Ref: OpenAlice memory surface / Hermes skills+memory /
 Sophia narrative memory.
 
-**2026-07-19 target extension — Learning Contribution Observability:** the current three-tab merge
-is shipped, but Reports remains activity/context-oriented and cannot answer whether Learning caused
-improvement. The canonical target keeps `/learning` and moves to five tabs:
+**2026-08-12 Learning workbench:** `/learning` uses five task-oriented tabs:
 
-1. Contribution (default measured `lco-v1` projection)
-2. Experiments
-3. Dreaming
-4. Knowledge Base
-5. Operations
+1. Overview, default: status, recent changes, measured impact and open review work
+2. Impact: current measured `lco-v1` projection and evidence detail
+3. Runs: Dreaming scheduler/session state and explicitly linked artifacts
+4. Library: searchable, status-filtered knowledge and review collections
+5. Operations: knowledge flow and persisted filter-controller diagnostics
 
-Contribution follows the Blotter density pattern: five independent status tokens, full-width path
-ledger, 7/5 current-cohort/read-only-recommendation band, append-only verdict history, and a bounded
-detail drawer. Operations separates evaluator health, catch-up and durable last failure. Existing
-knowledge taxonomy and actions remain under Knowledge; they do not appear as contribution authority.
-Legacy `/dreaming`, `/knowledge` and `/reports` must select a deliberate tab rather than all opening
-Dreaming. The broader API/UI, responsive, and error-state design is the
-[`learning_observability`](../proposals/learning_observability.md) Proposal,
-not current UI behavior.
+Ordinary portfolio PnL is excluded because it is not Learning attribution. Existing knowledge
+taxonomy and actions remain under Library and do not become contribution authority. Item-level
+producer links use persisted `agent_run_artifacts`; when no durable consumer relation exists, the UI
+reports it as not recorded rather than inferring lineage.
 
 ### Strategy Lifecycle (/strategies) — KEEP ✅ (standalone)
 Role: lifecycle (§23.11). Distinct pipeline view (draft→…→live_limited) with promotion gates.

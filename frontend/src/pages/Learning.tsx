@@ -1,32 +1,25 @@
-import { useState, type ReactNode } from 'react'
+import { useDeferredValue, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createColumnHelper } from '@tanstack/react-table'
-import { api, type LearningContributionProjection } from '../api/client'
-import type { KnowledgeItem, StrategyRecord } from '../types'
+import { api, type DreamingSummary, type KnowledgeCatalogResponse, type LearningContributionProjection } from '../api/client'
+import type { KnowledgeItem } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import Tabs from '../components/Tabs'
-import PnLChart from '../charts/PnLChart'
 import PageHeader from '../components/PageHeader'
 import { MeasuredPathSelector } from '../components/MeasuredPathSelector'
-import { Badge, Button, Card, CardHeader, Meter, StatusText } from '../components/ui'
+import { Badge, Button, Card, CardHeader, ListRowButton, Meter, StatusText } from '../components/ui'
 import type { StatusTone } from '../components/ui'
 import { fmtNum, fmtSigned, humanize, fmtTimestamp } from '../lib/format'
 import { guardActivationConfirmation, guardEffectText, type GuardRow } from '../lib/guards'
 import { authorityLabel, contributionPartialCopy, deriveContributionViewState, measuredContributionPathIds } from '../lib/learningContribution'
-import { PORTFOLIO_CONTEXT_LABEL, learningPulseValue, learningReadState, optionalBooleanLabel, type LearningReadState } from '../lib/learningWorkbench'
+import { learningPulseValue, learningReadState, optionalBooleanLabel, type LearningReadState } from '../lib/learningWorkbench'
 
 /**
  * Learning — measured contribution first, then the memory & evolution surfaces.
  *
- * The page answers four human questions, one per tab:
- *   CONTRIBUTION — "Has Learning measurably improved a current experiment?"
- *   DREAMING  — "What did the AI just figure out?"  Each dreaming run is rendered as a
- *               cognition session (tools it called, how long it thought, what it produced),
- *               then this cycle's outputs grouped by kind. This narrative IS the signature.
- *   KNOWLEDGE — "What does it know?"  The §4 type taxonomy as sub-tabs, searchable library.
- *   REPORTS   — "What context surrounds Learning?" Portfolio PnL is account context, while
- *               reviews and diagnostics remain activity rather than contribution evidence.
+ * Overview answers status, change, impact and attention first. Impact, Runs, Library and
+ * Operations provide the evidence and controls behind those answers.
  *
  * Honesty (CLAUDE.md): the §4 taxonomy is preserved — each Knowledge sub-tab queries its real
  * item_type, no laundering. Every empty/missing/file-not-found state is carried verbatim.
@@ -34,60 +27,129 @@ import { PORTFOLIO_CONTEXT_LABEL, learningPulseValue, learningReadState, optiona
  */
 
 export default function Learning() {
+  const [tab, setTab] = useState('overview')
   return (
     <div>
       <PageHeader
         title="Learning"
-        role="Measure first, then evolve. Contribution separates current experiment evidence from Learning activity, memory and portfolio performance."
+        role="See what changed, whether it helped, and what needs review."
       />
-      <LearningPulse />
       <Tabs
+        value={tab}
+        onChange={setTab}
         tabs={[
-          { id: 'contribution', label: 'Measured contribution', render: () => <ContributionTab /> },
-          { id: 'dreaming', label: 'Dreaming', render: () => <DreamingTab /> },
-          { id: 'knowledge', label: 'Knowledge Base', render: () => <KnowledgeTab /> },
-          { id: 'reports', label: 'Reports', render: () => <ReportsTab /> },
+          { id: 'overview', label: 'Overview', render: () => <LearningOverview onNavigate={setTab} /> },
+          { id: 'contribution', label: 'Impact', render: () => <ContributionTab /> },
+          { id: 'dreaming', label: 'Runs', render: () => <DreamingTab /> },
+          { id: 'knowledge', label: 'Library', render: () => <KnowledgeTab /> },
+          { id: 'operations', label: 'Operations', render: () => <ReportsTab /> },
         ]}
       />
     </div>
   )
 }
 
-/* ============================ PULSE BAND ============================ */
-// Activity-only read-outs. They never claim measured contribution and failed reads stay unavailable.
-export function LearningPulse() {
+export function LearningOverview({ onNavigate }: { onNavigate: (tab: string) => void }) {
+  const [selectedKnowledge, setSelectedKnowledge] = useState<KnowledgeItem | null>(null)
   const summaryQuery = useQuery({ queryKey: ['dreaming-summary'], queryFn: api.getDreamingSummary })
-  const strategiesQuery = useQuery({ queryKey: ['strategies'], queryFn: api.getStrategies })
-  const lessonsQuery = useQuery({ queryKey: ['lessons-all'], queryFn: () => api.getLessons(100) })
-  const summaryState = learningReadState(summaryQuery.isLoading, summaryQuery.isError, summaryQuery.data != null)
-  const strategiesState = learningReadState(strategiesQuery.isLoading, strategiesQuery.isError, strategiesQuery.data != null)
-  const lessonsState = learningReadState(lessonsQuery.isLoading, lessonsQuery.isError, lessonsQuery.data != null)
+  const contributionQuery = useQuery({ queryKey: ['learning-contribution', 'lco-v1'], queryFn: api.getLearningContribution, staleTime: 30_000 })
+  const funnelQuery = useQuery({ queryKey: ['learning-funnel'], queryFn: api.getLearningFunnel, staleTime: 120_000 })
+  const controllerQuery = useQuery({ queryKey: ['filter-controller'], queryFn: api.getFilterController, staleTime: 60_000 })
   const summary = summaryQuery.data
-  const strategies = strategiesQuery.data ?? []
-  const lessons = lessonsQuery.data ?? []
-
-  const runs = (summary?.recent_dreaming_runs as any[]) || []
-  const lastRun = runs[0]
-  const new24h =
-    (summary?.recent_research_notes?.length || 0) +
-    (summary?.recent_strategy_hypotheses?.length || 0) +
-    (summary?.recent_dreaming_logs?.length || 0) +
-    ((summary as any)?.recent_daily_reviews?.length || 0)
-  const active = (strategies as StrategyRecord[]).filter(s => s.state !== 'draft' && s.state !== 'retired')
-  const lessonCount = Array.isArray(lessons) ? lessons.length : 0
+  const experiment = contributionQuery.data?.items?.[0]
+  const proposedLessons = funnelQuery.data
+    ? funnelQuery.data.ps_lessons.availability === 'available'
+      ? funnelQuery.data.ps_lessons.by_status?.find(item => item.status === 'proposed')?.count ?? 0
+      : null
+    : null
+  const guardCandidates = funnelQuery.data
+    ? funnelQuery.data.knowledge_items_by_type.find(item => item.item_type === 'guard_candidate')?.count ?? 0
+    : null
+  const contradictions = funnelQuery.data?.contradictions.checked ? funnelQuery.data.contradictions.count ?? 0 : null
+  const controllerSignals = controllerQuery.data ? controllerQuery.data.persistent_recommendations.length : null
+  const attentionValues = [proposedLessons, guardCandidates, contradictions, controllerSignals]
+  const knownAttentionTotal = attentionValues.reduce<number>((total, value) => total + (value ?? 0), 0)
+  const attentionComplete = attentionValues.every(value => value != null) && !funnelQuery.isError && !controllerQuery.isError
+  const recent = summary?.recent_knowledge_items.slice(0, 5) ?? []
+  const job = summary?.dreaming_job
+  const lastRun = summary?.recent_dreaming_runs[0]
+  const runState = learningReadState(summaryQuery.isLoading, summaryQuery.isError, summary != null)
+  const impactState = learningReadState(contributionQuery.isLoading, contributionQuery.isError, contributionQuery.data?.availability === 'available', contributionQuery.data?.availability === 'partial')
+  const changesMeta = runState === 'loading' ? 'Loading'
+    : runState === 'unavailable' ? 'Unavailable'
+    : `${summary?.recent_knowledge_total ?? 0} created in 24h; ${summary?.deprecated_memories_total ?? 0} deprecated in 7d${runState === 'stale' ? '; stale' : ''}`
+  const attentionMeta = attentionComplete
+    ? knownAttentionTotal ? `${knownAttentionTotal.toLocaleString()} open items` : 'No open items'
+    : `${knownAttentionTotal.toLocaleString()} known open items; some counts unavailable`
 
   return (
-    <section className="learn-pulse">
-      <PulseStat
-        label="Activity · last consolidation"
-        value={learningPulseValue(summaryState, lastRun ? fmtRelative(lastRun.started_at) : 'Never')}
-        tone={summaryState === 'unavailable' ? 'red' : runTone(lastRun?.status)}
-      />
-      <PulseStat label="Activity · new knowledge 24h" value={learningPulseValue(summaryState, new24h)} tone={summaryState === 'unavailable' ? 'red' : new24h > 0 ? 'blue' : 'muted'} />
-      <PulseStat label="Activity · strategies in paper" value={learningPulseValue(strategiesState, active.length)} tone={strategiesState === 'unavailable' ? 'red' : active.length > 0 ? 'blue' : 'muted'} />
-      <PulseStat label="Activity · lessons logged" value={learningPulseValue(lessonsState, lessonCount)} tone={lessonsState === 'unavailable' ? 'red' : lessonCount > 0 ? 'yellow' : 'muted'} />
+    <section className="learning-home" aria-label="Learning overview">
+      <div className="learn-home-status">
+        <ContributionFact label="Learning job" value={learningPulseValue(summary?.dreaming_job_availability === 'unavailable' ? 'unavailable' : runState, humanize(job?.status || lastRun?.status || 'not recorded'))} note={`Last success ${fmtTimestamp(job?.last_succeeded_at || lastRun?.ended_at)}${job?.next_due_at ? `; next ${fmtTimestamp(job.next_due_at)}` : ''}`} />
+        <ContributionFact label="New knowledge" value={learningPulseValue(runState, summary?.recent_knowledge_total ?? 0)} note="Created in the last 24 hours" />
+        <ContributionFact label="Impact verdict" value={learningPulseValue(impactState, experiment ? humanize(experiment.measurement.state) : 'Not measured')} note={humanize(experiment?.measurement.reason || 'No current experiment')} />
+        <ContributionFact label="Needs review" value={attentionComplete ? knownAttentionTotal : 'Partial'} note={`${proposedLessons ?? 'unknown'} lessons; ${guardCandidates ?? 'unknown'} guard candidates; ${contradictions ?? 'unknown'} contradictions`} />
+      </div>
+
+      <div className="learning-home-grid">
+        <Card>
+          <CardHeader title="What changed" meta={changesMeta} actions={<Button size="sm" variant="secondary" onClick={() => onNavigate('knowledge')}>Open library</Button>} />
+          <ItemList state={runState} items={recent} onSelect={setSelectedKnowledge} empty="No knowledge was created in the last 24 hours." />
+          {summary?.recent_knowledge_truncated && <p className="text-muted text-sm">Showing 5 recent items from {summary.recent_knowledge_total.toLocaleString()} created in the last 24 hours.</p>}
+        </Card>
+
+        <Card>
+          <CardHeader title="Measured impact" actions={<Button size="sm" variant="secondary" onClick={() => onNavigate('contribution')}>View evidence</Button>} />
+          {experiment ? <ImpactSummary item={experiment} /> : impactState === 'available'
+            ? <p className="text-muted text-sm">No current measured experiment.</p>
+            : <LearningReadMessage state={impactState} subject="Measured impact" />}
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader title="Needs attention" meta={attentionMeta} actions={<Button size="sm" variant="secondary" onClick={() => onNavigate('operations')}>Open operations</Button>} />
+        <div className="learning-attention-grid">
+          <AttentionItem label="Proposed lessons" value={proposedLessons} detail="Review before application" onClick={() => onNavigate('knowledge')} />
+          <AttentionItem label="Guard candidates" value={guardCandidates} detail="Human review required" onClick={() => onNavigate('knowledge')} />
+          <AttentionItem label="Contradictions" value={contradictions} detail="Resolve conflicting knowledge" onClick={() => onNavigate('operations')} />
+          <AttentionItem label="Persistent filter signals" value={controllerSignals} detail="Review only; no automatic change" onClick={() => onNavigate('operations')} />
+        </div>
+      </Card>
+      <DetailDrawer open={!!selectedKnowledge} onClose={() => setSelectedKnowledge(null)} title={selectedKnowledge?.title || 'Knowledge Item'}>
+        {selectedKnowledge && <>
+          <DrawerSection label="Details">
+            <DrawerField label="Type" value={knowledgeTypeLabel(selectedKnowledge.item_type)} />
+            <DrawerField label="Status" value={<StatusBadge status={selectedKnowledge.status || 'active'} />} />
+            <DrawerField label="Produced by run" value={selectedKnowledge.producer_run_id || 'Not recorded'} mono />
+            <DrawerField label="Created" value={fmtTimestamp(selectedKnowledge.created_at)} mono />
+          </DrawerSection>
+          <DrawerSection label="Content"><MarkdownContent itemId={selectedKnowledge.id} /></DrawerSection>
+        </>}
+      </DetailDrawer>
     </section>
   )
+}
+
+function ImpactSummary({ item }: { item: LearningContributionProjection['items'][number] }) {
+  const treatmentRemaining = Math.max(0, item.samples.required_per_arm - item.samples.treatment_assignment_units)
+  const controlRemaining = Math.max(0, item.samples.required_per_arm - item.samples.control_assignment_units)
+  const remaining = treatmentRemaining + controlRemaining
+  return <div className="lco-facts">
+    <ContributionRow label="Verdict" value={humanize(item.measurement.state)} />
+    <ContributionRow label="Next action" value={humanize(item.lifecycle.recommended_action)} />
+    <ContributionRow label="Observed change" value={fmtSigned(item.measurement.delta)} />
+    <ContributionRow label="Previous verdict" value={humanize(item.latest_historical_measurement?.state || 'none recorded')} />
+    <ContributionRow label="Evidence needed" value={remaining ? `${treatmentRemaining} treatment and ${controlRemaining} control units` : 'Sample threshold met'} />
+    <ContributionRow label="Last evaluated" value={fmtTimestamp(item.measurement.evaluated_at)} />
+  </div>
+}
+
+function AttentionItem({ label, value, detail, onClick }: { label: string; value: number | null; detail: string; onClick: () => void }) {
+  return <Button type="button" className="learning-attention-item" onClick={onClick}>
+    <strong>{value == null ? 'Unavailable' : value.toLocaleString()}</strong>
+    <span>{label}</span>
+    <small>{detail}</small>
+  </Button>
 }
 
 /* ======================= MEASURED CONTRIBUTION ======================= */
@@ -100,10 +162,10 @@ function ContributionTab() {
     refetchInterval: 30_000,
   })
   if (query.isLoading) {
-    return <ContributionMessage tone="blue" title="Loading measured contribution" detail="Reading persisted experiment evidence. No evaluation or lifecycle action is being run." />
+    return <ContributionMessage tone="blue" title="Loading measured contribution" detail="Reading saved experiment evidence." />
   }
   if (query.isError && !query.data) {
-    return <ContributionMessage tone="red" title="Contribution unavailable" detail="The contribution read failed. This is not an empty cohort or a zero result." />
+    return <ContributionMessage tone="red" title="Contribution unavailable" detail="Experiment evidence could not be read." />
   }
 
   const data = query.data
@@ -112,7 +174,7 @@ function ContributionTab() {
   }
   const pathIds = measuredContributionPathIds(data)
   if (pathIds.length === 0) {
-    return <ContributionMessage tone="muted" title="No measurable Learning path" detail="The projection succeeded, but no path currently has a measurement adapter." />
+    return <ContributionMessage tone="muted" title="No measurable Learning path" detail="No current Learning path has a measurement adapter." />
   }
   const defaultPath = pathIds.includes('universe_family_calibration')
     ? 'universe_family_calibration'
@@ -176,6 +238,17 @@ function ContributionTab() {
   const required = Math.max(item.samples.required_per_arm, 1)
   const treatmentPct = item.samples.treatment_assignment_units / required * 100
   const controlPct = item.samples.control_assignment_units / required * 100
+  const treatmentRemaining = Math.max(0, item.samples.required_per_arm - item.samples.treatment_assignment_units)
+  const controlRemaining = Math.max(0, item.samples.required_per_arm - item.samples.control_assignment_units)
+  const coverage = measurement.coverage
+  const daysRemaining = coverage?.required_consecutive_days == null || coverage.current_consecutive_market_days == null
+    ? null
+    : Math.max(0, coverage.required_consecutive_days - coverage.current_consecutive_market_days)
+  const evidenceGap = [
+    treatmentRemaining ? `Treatment needs ${treatmentRemaining} more complete units` : null,
+    controlRemaining ? `Control needs ${controlRemaining} more complete units` : null,
+    daysRemaining ? `Continuity needs ${daysRemaining} more market days` : null,
+  ].filter(Boolean).join('; ') || 'Sample and continuity gates are met'
   const excluded = sumCounts(integrity.exclusion_reasons)
   const invalid = sumCounts(integrity.invalid_reasons)
   const envelopePartial = data.availability === 'partial'
@@ -201,27 +274,25 @@ function ContributionTab() {
       <Card>
         <CardHeader
           title={humanize(item.path_id)}
-          meta={`${humanize(item.stage)} experiment · ${item.experiment_id}`}
+          meta={`${humanize(item.stage)} experiment, ${item.experiment_id}`}
           actions={<StatusText tone={measurementTone(measurement.state)}>{humanize(measurement.state)}</StatusText>}
         />
         <div className="lco-summary-grid">
-          <ContributionFact label="Measured delta" value={fmtSigned(measurement.delta)} note="Backend verdict fact; not portfolio PnL" />
-          <ContributionFact label="Treatment" value={`${item.samples.treatment_assignment_units} / ${item.samples.required_per_arm}`} note="Complete assignment units" />
-          <ContributionFact label="Control" value={`${item.samples.control_assignment_units} / ${item.samples.required_per_arm}`} note="Complete assignment units" />
+          <ContributionFact label="Verdict" value={humanize(measurement.state)} note={humanize(measurement.reason || 'not available')} />
+          <ContributionFact label="Next action" value={humanize(lifecycle.recommended_action)} note={humanize(lifecycle.recommendation_reason || 'No recommendation reason recorded')} />
+          <ContributionFact label="Evidence gap" value={evidenceGap} note={`${item.samples.treatment_assignment_units}/${item.samples.required_per_arm} treatment; ${item.samples.control_assignment_units}/${item.samples.required_per_arm} control`} />
+          <ContributionFact label="Observed utility delta" value={fmtSigned(measurement.delta)} note="Preliminary until evidence gates pass" />
           <ContributionFact
             label="Current identity"
             value={item.current_identity.matches_running_cohort ? 'Matched' : 'Not matched'}
             note={humanize(item.current_identity.mismatch_reason || item.current_identity.policy_epoch || 'current')}
           />
         </div>
-        <p className="lco-reason">
-          <strong>Verdict reason:</strong> {humanize(measurement.reason || 'not available')}
-        </p>
       </Card>
 
       <div className="lco-grid">
         <Card>
-          <CardHeader title="Cohort maturity" meta="Treatment and control remain separate" />
+          <CardHeader title="Cohort maturity" />
           <CohortProgress label="Treatment" value={item.samples.treatment_assignment_units} required={item.samples.required_per_arm} pct={treatmentPct} />
           <CohortProgress label="Control" value={item.samples.control_assignment_units} required={item.samples.required_per_arm} pct={controlPct} />
           <div className="lco-facts">
@@ -235,17 +306,18 @@ function ContributionTab() {
         </Card>
 
         <Card>
-          <CardHeader title="Evidence integrity" meta="No silent zero or conflict collapse" />
+          <CardHeader title="Evidence integrity" />
           <div className="lco-facts">
             <ContributionRow label="Excluded" value={excluded} />
             <ContributionRow label="Invalid" value={invalid} />
             <ContributionRow label="Proven conflicts" value={integrity.conflict_count} />
             <ContributionRow label="Matching mirror rows" value={integrity.matching_mirror_rows} />
             <ContributionRow label="Harm boundary" value={humanize(integrity.harm_state)} />
+            <ContributionRow label="Metric version" value={humanize(item.current_identity.metric_version)} />
           </div>
           {(excluded > 0 || invalid > 0 || integrity.conflict_count > 0) && (
             <p className="lco-note">
-              Exclusions: {formatCounts(integrity.exclusion_reasons)} · Invalid: {formatCounts(integrity.invalid_reasons)}
+              Exclusions: {formatCounts(integrity.exclusion_reasons)}; invalid: {formatCounts(integrity.invalid_reasons)}
             </p>
           )}
           {integrity.harm_state === 'indeterminate' && (
@@ -264,7 +336,7 @@ function ContributionTab() {
 
       <div className="lco-grid">
         <Card>
-          <CardHeader title="Evaluator continuity" meta="Operational health is not effectiveness" />
+          <CardHeader title="Evaluator continuity" meta="Schedule and failures" />
           {evaluator ? (
             <div className="lco-facts">
               <ContributionRow label="Current status" value={humanize(evaluator.current_status)} />
@@ -281,7 +353,7 @@ function ContributionTab() {
         </Card>
 
         <Card>
-          <CardHeader title="Lifecycle boundary" meta="Read-only inspection · treatment authority shown separately" />
+          <CardHeader title="Lifecycle" meta="Recommendation and authority" />
           <div className="lco-facts">
             <ContributionRow label="Recommendation" value={humanize(lifecycle.recommended_action)} />
             <ContributionRow label="Paper influence" value={operations == null ? 'Unavailable' : operations.config.paper_influence_enabled ? 'Enabled' : 'Disabled'} />
@@ -291,15 +363,11 @@ function ContributionTab() {
           </div>
           <p className="lco-note">
             {lifecycle.mutation_available
-              ? 'The protected owner admission route is ready. This observability page remains read only.'
-              : `${humanize(lifecycle.mutation_unavailable_reason || 'admission unavailable')}. A recommendation cannot change allocation or admit a trial from this page.`}
+              ? 'Owner admission is available.'
+              : humanize(lifecycle.mutation_unavailable_reason || 'admission unavailable')}
           </p>
         </Card>
       </div>
-
-      <p className="lco-footnote">
-        Activity counts above show that Learning is producing artifacts. Only this identity-matched treatment/control measurement can claim contribution.
-      </p>
     </section>
   )
 }
@@ -364,47 +432,50 @@ function formatCounts(counts: Record<string, number>): string {
     : entries.map(([reason, count]) => `${humanize(reason)} ${fmtNum(count)}`).join(', ')
 }
 
-/** Pulse-band read-out: label over a toned value. Uses the shared .stat CSS structure. */
-function PulseStat({ label, value, tone }: { label: string; value: ReactNode; tone?: StatusTone }) {
-  return (
-    <div className="stat">
-      <span className="stat-label">{label}</span>
-      <span className={`stat-value${tone ? ` stat-value-${tone}` : ''}`}>{value}</span>
-    </div>
-  )
-}
-
 /* ============================ DREAMING ============================ */
 export function DreamingTab() {
   const summaryQuery = useQuery({ queryKey: ['dreaming-summary'], queryFn: api.getDreamingSummary })
   const logsQuery = useQuery({ queryKey: ['dreaming'], queryFn: api.getDreamingLogs })
-  const [selectedItem, setSelectedItem] = useState<any>(null)
+  const [selectedItem, setSelectedItem] = useState<KnowledgeItem | null>(null)
   const summaryState = learningReadState(summaryQuery.isLoading, summaryQuery.isError, summaryQuery.data != null)
   const logsState = learningReadState(logsQuery.isLoading, logsQuery.isError, logsQuery.data != null)
   const summary = summaryQuery.data
   const allLogs = logsQuery.data ?? []
+  const dreamingJob = summary?.dreaming_job
 
-  const runs = (summary?.recent_dreaming_runs as any[]) || []
-  const research = (summary?.recent_research_notes as any[]) || []
-  const hypotheses = (summary?.recent_strategy_hypotheses as any[]) || []
-  const deprecated = (summary?.deprecated_memories as any[]) || []
-  const logs = (summary?.recent_dreaming_logs?.length ? summary.recent_dreaming_logs : (allLogs as any[]).slice(0, 10)) as any[]
+  const runs = summary?.recent_dreaming_runs || []
+  const research = summary?.recent_research_notes || []
+  const hypotheses = summary?.recent_strategy_hypotheses || []
+  const deprecated = summary?.deprecated_memories || []
+  const otherRecent = (summary?.recent_knowledge_items || []).filter(
+    item => !['research_note', 'strategy_memory', 'dreaming_log', 'daily_review'].includes(item.item_type),
+  )
+  const logs = summary?.recent_dreaming_logs?.length ? summary.recent_dreaming_logs : allLogs.slice(0, 10)
 
   return (
     <>
       {/* Signature — dreaming runs as cognition sessions */}
       <Card>
-        <CardHeader title="Dreaming sessions" meta="What the agent consolidated · most recent first" />
+        <CardHeader title="Dreaming sessions" meta="Most recent first" />
         {summaryState === 'loading' || summaryState === 'unavailable' ? (
           <LearningReadMessage state={summaryState} subject="Dreaming sessions" />
         ) : (
           <>
             {summaryState !== 'available' && <LearningReadMessage state={summaryState} subject="Dreaming sessions" />}
             {runs.length === 0 ? (
-              <p className="text-muted text-sm">No dreaming runs in the last 24 hours.</p>
+              dreamingJob?.last_started_at ? (
+                <div className="lco-facts">
+                  <ContributionRow label="Scheduled consolidation" value={fmtTimestamp(dreamingJob.last_started_at)} />
+                  <ContributionRow label="Job status" value={humanize(dreamingJob.status || 'unknown')} />
+                  <ContributionRow label="Last success" value={fmtTimestamp(dreamingJob.last_succeeded_at)} />
+                  <ContributionRow label="Next run" value={fmtTimestamp(dreamingJob.next_due_at)} />
+                  <ContributionRow label="Backlog" value={dreamingJob.backlog_count ?? 'Unavailable'} />
+                  <p className="lco-note">The scheduler has a run record, but no Dreaming Agent session is recorded in the last 24 hours.</p>
+                </div>
+              ) : <p className="text-muted text-sm">No dreaming run or scheduled consolidation has been recorded.</p>
             ) : (
               <div className="dream-sessions">
-                {runs.map((r: any) => <DreamSession key={r.id} run={r} />)}
+                {runs.map(run => <DreamSession key={run.id} run={run} />)}
               </div>
             )}
           </>
@@ -430,6 +501,11 @@ export function DreamingTab() {
             <CardHeader title="Strategy hypotheses" meta="24h" />
             <ItemList state={summaryState} items={hypotheses} onSelect={setSelectedItem} empty="No new strategy hypotheses in the last 24 hours." />
           </Card>
+          <Card>
+            <CardHeader title="Other knowledge" meta={summary?.recent_knowledge_truncated ? `24h, showing ${summary.recent_knowledge_returned} of ${summary.recent_knowledge_total}` : `24h, ${summary?.recent_knowledge_total ?? 0} total`} />
+            <ItemList state={summaryState} items={otherRecent} onSelect={setSelectedItem} empty={summary?.recent_knowledge_truncated ? 'No other knowledge types appear in this bounded result.' : 'No other knowledge types were produced in the last 24 hours.'} />
+            {summary?.recent_knowledge_truncated && <p className="lco-note">This glance view is bounded. Open Knowledge Base to browse the complete catalog.</p>}
+          </Card>
         </div>
         <div className="learn-col-aside">
           <Card>
@@ -451,6 +527,7 @@ export function DreamingTab() {
               <DrawerField label="Confidence" value={<ConfidenceBadge value={selectedItem.confidence} />} />
               <DrawerField label="Status" value={<StatusBadge status={selectedItem.status || 'active'} />} />
               <DrawerField label="Created" value={fmtTimestamp(selectedItem.created_at)} mono />
+              <DrawerField label="Produced by run" value={selectedItem.producer_run_id || 'Not recorded'} mono />
               <DrawerField label="Strategy" value={selectedItem.strategy_id} mono />
             </DrawerSection>
             <DrawerSection label="Content">
@@ -464,18 +541,19 @@ export function DreamingTab() {
 }
 
 /** One dreaming run rendered as a cognition session: status · trigger · timing · tools · output. */
-function DreamSession({ run }: { run: any }) {
+function DreamSession({ run }: { run: DreamingSummary['recent_dreaming_runs'][number] }) {
   const tools = parseJsonArray(run.tools_called)
   const outputs = parseJsonArray(run.outputs_created)
   const errors = parseJsonArray(run.errors)
+  const artifacts = run.artifacts ?? []
   const dur = fmtDuration(run.started_at, run.ended_at)
 
   return (
     <div className="dream-session">
       <div className="dream-session-head">
         <StatusText tone={runTone(run.status)}>{humanize(run.status)}</StatusText>
-        <span className="dream-session-trigger">{humanize(run.trigger_type)}{run.model_provider ? ` · ${humanize(run.model_provider)}` : ''}</span>
-        <span className="dream-session-time mono">{fmtTimestamp(run.started_at)}{dur ? ` · ${dur}` : ''}</span>
+        <span className="dream-session-trigger">{humanize(run.trigger_type)}{run.model_provider ? `, ${humanize(run.model_provider)}` : ''}</span>
+        <span className="dream-session-time mono">{fmtTimestamp(run.started_at)}{dur ? `, ${dur}` : ''}</span>
       </div>
       {tools.length > 0 && (
         <div className="dream-tools">
@@ -483,15 +561,22 @@ function DreamSession({ run }: { run: any }) {
         </div>
       )}
       <div className="dream-session-out">
-        <span>{outputs.length} output{outputs.length === 1 ? '' : 's'} created</span>
-        {errors.length > 0 && <span className="text-error"> · {errors.length} error{errors.length === 1 ? '' : 's'}</span>}
+        <span>{artifacts.length || outputs.length} output{(artifacts.length || outputs.length) === 1 ? '' : 's'} recorded</span>
+        {errors.length > 0 && <span className="text-error">; {errors.length} error{errors.length === 1 ? '' : 's'}</span>}
       </div>
+      {artifacts.length > 0 ? (
+        <div className="dream-artifacts">
+          {artifacts.map(artifact => <span key={`${artifact.artifact_type}:${artifact.artifact_id}`}><Badge tone="blue">{knowledgeTypeLabel(artifact.artifact_type)}</Badge> <span className="mono">{artifact.artifact_id}</span></span>)}
+        </div>
+      ) : outputs.length === 0 && errors.length === 0 ? (
+        <p className="lco-note">The run completed without a recorded knowledge artifact.</p>
+      ) : null}
     </div>
   )
 }
 
 /** Compact clickable list of knowledge items — title + timestamp (type is the group header). */
-function ItemList({ state = 'available', items, onSelect, empty }: { state?: LearningReadState; items: any[]; onSelect: (item: any) => void; empty: string }) {
+function ItemList({ state = 'available', items, onSelect, empty }: { state?: LearningReadState; items: KnowledgeItem[]; onSelect: (item: KnowledgeItem) => void; empty: string }) {
   if (state === 'loading' || state === 'unavailable') return <LearningReadMessage state={state} subject="Items" />
   const warning = state !== 'available' ? <LearningReadMessage state={state} subject="Items" /> : null
   if (!items || items.length === 0) return <>{warning}<p className="text-muted text-sm">{empty}</p></>
@@ -499,10 +584,12 @@ function ItemList({ state = 'available', items, onSelect, empty }: { state?: Lea
     <>
       {warning}
       <ul className="learn-items">
-        {items.map((item: any) => (
-          <li key={item.id} className="learn-item clickable" onClick={() => onSelect(item)}>
-            <span className="learn-item-title">{item.title || '(untitled)'}</span>
-            <span className="learn-item-meta mono">{fmtTimestamp(item.created_at)}</span>
+        {items.map(item => (
+          <li key={item.id} className="learn-item">
+            <ListRowButton type="button" className="learn-item-button" onClick={() => onSelect(item)}>
+              <span className="learn-item-title">{item.title || '(untitled)'}</span>
+              <span className="learn-item-context"><Badge tone="blue">{knowledgeTypeLabel(item.item_type)}</Badge><span className="learn-item-meta mono">{fmtTimestamp(item.created_at)}</span></span>
+            </ListRowButton>
           </li>
         ))}
       </ul>
@@ -513,20 +600,38 @@ function ItemList({ state = 'available', items, onSelect, empty }: { state?: Lea
 /* ============================ KNOWLEDGE BASE ============================ */
 // §4 taxonomy preserved: each sub-tab queries its real item_type (no laundering).
 const KB_TABS = [
-  { key: 'research', label: 'Research Notes', fn: () => api.getKnowledge() },
-  { key: 'strategy', label: 'Strategy Memory', fn: () => api.getStrategyMemory() },
-  { key: 'reviews', label: 'Daily Reviews', fn: () => api.getKnowledge('daily_review') },
-  { key: 'dreaming', label: 'Dreaming Logs', fn: () => api.getDreamingLogs() },
-  { key: 'lessons', label: 'Post-Trade Lessons', fn: () => api.getLessons(100) },
-  { key: 'guardCandidates', label: 'Guard Candidates', fn: () => api.getGuardCandidates() },
-  { key: 'guards', label: 'Active Guards', fn: () => api.getGuards() },
+  { key: 'all', label: 'All Knowledge' },
+  { key: 'research', label: 'Research Notes' },
+  { key: 'strategy', label: 'Strategy Memory' },
+  { key: 'reviews', label: 'Daily Reviews' },
+  { key: 'dreaming', label: 'Dreaming Logs' },
+  { key: 'lessons', label: 'Post-Trade Lessons' },
+  { key: 'guardCandidates', label: 'Guard Candidates' },
+  { key: 'guards', label: 'Active Guards' },
 ] as const
+
+type KnowledgeTabKey = typeof KB_TABS[number]['key']
+const KNOWLEDGE_PAGE_SIZE = 100
+type KnowledgeTabData = KnowledgeCatalogResponse | KnowledgeItem[] | LessonRow[] | GuardRow[]
+
+async function fetchKnowledgeTab(tab: KnowledgeTabKey, offset: number, search: string, status: string): Promise<KnowledgeTabData> {
+  if (tab === 'all') return api.getAllKnowledge(offset, KNOWLEDGE_PAGE_SIZE, search, status)
+  if (tab === 'research') return api.getKnowledge()
+  if (tab === 'strategy') return api.getStrategyMemory()
+  if (tab === 'reviews') return api.getKnowledge('daily_review')
+  if (tab === 'dreaming') return api.getDreamingLogs()
+  if (tab === 'lessons') return api.getLessons(100)
+  if (tab === 'guardCandidates') return api.getGuardCandidates()
+  return api.getGuards()
+}
 
 const kbCol = createColumnHelper<KnowledgeItem>()
 const kbColumns = [
   kbCol.accessor('title', { header: 'Title' }),
+  kbCol.accessor('item_type', { header: 'Type', cell: info => <Badge tone="blue">{humanize(info.getValue() || 'unknown')}</Badge> }),
   kbCol.accessor('confidence', { header: 'Confidence', cell: info => <ConfidenceBadge value={info.getValue()} /> }),
   kbCol.accessor('status', { header: 'Status', cell: info => <StatusBadge status={info.getValue()} /> }),
+  kbCol.accessor('producer_run_id', { header: 'Producer', cell: info => <span className="mono">{info.getValue() ? String(info.getValue()).slice(0, 12) : 'Not recorded'}</span> }),
   kbCol.accessor('created_at', { header: 'Created', cell: info => <span className="mono">{fmtTimestamp(info.getValue())}</span> }),
 ]
 
@@ -559,13 +664,22 @@ const guardColumns = [
 
 export function KnowledgeTab() {
   const queryClient = useQueryClient()
-  const [tab, setTab] = useState<typeof KB_TABS[number]['key']>('research')
+  const [tab, setTab] = useState<KnowledgeTabKey>('all')
+  const [catalogOffset, setCatalogOffset] = useState(0)
+  const [catalogSearch, setCatalogSearch] = useState('')
+  const [catalogStatus, setCatalogStatus] = useState('active')
+  const deferredSearch = useDeferredValue(catalogSearch)
   const [selected, setSelected] = useState<KnowledgeItem | null>(null)
   const [selectedLesson, setSelectedLesson] = useState<LessonRow | null>(null)
   const [selectedGuard, setSelectedGuard] = useState<GuardRow | null>(null)
   const active = KB_TABS.find(t => t.key === tab)!
-  const activeQuery = useQuery({ queryKey: ['knowledge', tab], queryFn: active.fn })
-  const data = activeQuery.data ?? []
+  const activeQuery = useQuery<KnowledgeTabData>({
+    queryKey: ['knowledge', tab, tab === 'all' ? catalogOffset : 0, tab === 'all' ? deferredSearch : '', tab === 'all' ? catalogStatus : 'active'],
+    queryFn: () => fetchKnowledgeTab(tab, catalogOffset, deferredSearch, catalogStatus),
+  })
+  const funnelQuery = useQuery({ queryKey: ['learning-funnel'], queryFn: api.getLearningFunnel, staleTime: 120_000 })
+  const catalog = tab === 'all' && activeQuery.data && !Array.isArray(activeQuery.data) ? activeQuery.data : null
+  const data = catalog?.items ?? (Array.isArray(activeQuery.data) ? activeQuery.data : [])
   const activeState = learningReadState(activeQuery.isLoading, activeQuery.isError, activeQuery.data != null)
   const isLessons = tab === 'lessons'
   const isGuards = tab === 'guards'
@@ -574,27 +688,19 @@ export function KnowledgeTab() {
   const rows = isLessons ? (data as unknown as LessonRow[]) : isGuardRows ? (data as unknown as GuardRow[]) : (data as KnowledgeItem[])
   const tableState = activeState === 'available' && rows.length === 0 ? 'empty' : activeState
 
-  const q0 = useQuery({ queryKey: ['knowledge', KB_TABS[0].key], queryFn: KB_TABS[0].fn, staleTime: 60_000 })
-  const q1 = useQuery({ queryKey: ['knowledge', KB_TABS[1].key], queryFn: KB_TABS[1].fn, staleTime: 60_000 })
-  const q2 = useQuery({ queryKey: ['knowledge', KB_TABS[2].key], queryFn: KB_TABS[2].fn, staleTime: 60_000 })
-  const q3 = useQuery({ queryKey: ['knowledge', KB_TABS[3].key], queryFn: KB_TABS[3].fn, staleTime: 60_000 })
-  const q4 = useQuery({ queryKey: ['knowledge', KB_TABS[4].key], queryFn: KB_TABS[4].fn, staleTime: 60_000 })
-  const q5 = useQuery({ queryKey: ['knowledge', KB_TABS[5].key], queryFn: KB_TABS[5].fn, staleTime: 60_000 })
-  const q6 = useQuery({ queryKey: ['knowledge', KB_TABS[6].key], queryFn: KB_TABS[6].fn, staleTime: 60_000 })
-  const countQueries = [q0, q1, q2, q3, q4, q5, q6]
-  const counts: Record<string, number | undefined> = {
-    [KB_TABS[0].key]: Array.isArray(q0.data) ? q0.data.length : undefined,
-    [KB_TABS[1].key]: Array.isArray(q1.data) ? q1.data.length : undefined,
-    [KB_TABS[2].key]: Array.isArray(q2.data) ? q2.data.length : undefined,
-    [KB_TABS[3].key]: Array.isArray(q3.data) ? q3.data.length : undefined,
-    [KB_TABS[4].key]: Array.isArray(q4.data) ? q4.data.length : undefined,
-    [KB_TABS[5].key]: Array.isArray(q5.data) ? q5.data.length : undefined,
-    [KB_TABS[6].key]: Array.isArray(q6.data) ? q6.data.length : undefined,
+  const typeCounts = Object.fromEntries((funnelQuery.data?.knowledge_items_by_type ?? []).map(item => [item.item_type, item.count]))
+  const totalKnowledge = (funnelQuery.data?.knowledge_items_by_type ?? []).reduce((total, item) => total + item.count, 0)
+  const counts: Record<KnowledgeTabKey, number | null> = {
+    all: funnelQuery.data ? totalKnowledge : null,
+    research: funnelQuery.data ? typeCounts.research_note ?? 0 : null,
+    strategy: funnelQuery.data ? typeCounts.strategy_memory ?? 0 : null,
+    reviews: funnelQuery.data ? typeCounts.daily_review ?? 0 : null,
+    dreaming: funnelQuery.data ? typeCounts.dreaming_log ?? 0 : null,
+    lessons: funnelQuery.data?.ps_lessons.total ?? null,
+    guardCandidates: funnelQuery.data ? typeCounts.guard_candidate ?? 0 : null,
+    guards: funnelQuery.data?.active_guards_total ?? null,
   }
-  const countStates = Object.fromEntries(KB_TABS.map((item, index) => {
-    const query = countQueries[index]
-    return [item.key, learningReadState(query.isLoading, query.isError, query.data != null)]
-  })) as Record<typeof KB_TABS[number]['key'], LearningReadState>
+  const countState = learningReadState(funnelQuery.isLoading, funnelQuery.isError, funnelQuery.data != null, !!funnelQuery.data && Object.keys(funnelQuery.data.query_errors).length > 0)
   const lessonAction = useMutation({
     mutationFn: ({ lessonId, action }: { lessonId: string; action: 'accept' | 'reject' | 'archive' }) => {
       if (action === 'accept') return api.acceptLesson(lessonId)
@@ -619,29 +725,64 @@ export function KnowledgeTab() {
 
   return (
     <>
-      <div className="kb-subtabs">
+      <div className="kb-subtabs" role="tablist" aria-label="Knowledge categories">
         {KB_TABS.map(t => (
-          <Button key={t.key} variant={tab === t.key ? 'primary' : 'secondary'} size="sm" onClick={() => setTab(t.key)}>
+          <Button
+            key={t.key}
+            id={`knowledge-tab-${t.key}`}
+            role="tab"
+            aria-selected={tab === t.key}
+            aria-controls="knowledge-tabpanel"
+            tabIndex={tab === t.key ? 0 : -1}
+            variant={tab === t.key ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => { setTab(t.key); if (t.key !== 'all') setCatalogOffset(0) }}
+            onKeyDown={handleTabKeyDown}
+          >
             {t.label}
-            {countStates[t.key] === 'loading' && <span className="tab-badge" aria-label={`${t.label} count loading`}>…</span>}
-            {countStates[t.key] === 'unavailable' && <span className="tab-badge" aria-label={`${t.label} count unavailable`}>!</span>}
-            {counts[t.key] != null && counts[t.key]! > 0 && <span className="tab-badge">{counts[t.key]}{countStates[t.key] === 'stale' ? '~' : ''}</span>}
+            {countState === 'loading' && <span className="tab-badge" aria-label={`${t.label} count loading`}>…</span>}
+            {countState === 'unavailable' && <span className="tab-badge" aria-label={`${t.label} count unavailable`}>!</span>}
+            {counts[t.key] != null && <span className="tab-badge">{counts[t.key]}{countState === 'stale' ? '~' : ''}</span>}
           </Button>
         ))}
       </div>
-      <Card>
+      <Card id="knowledge-tabpanel" role="tabpanel" aria-labelledby={`knowledge-tab-${tab}`}>
+        {tab === 'all' && <div className="kb-toolbar">
+          <label>
+            <span>Search knowledge</span>
+            <input type="search" value={catalogSearch} placeholder="Title, tag, or type" onChange={event => { setCatalogSearch(event.target.value); setCatalogOffset(0) }} />
+          </label>
+          <label>
+            <span>Status</span>
+            <select value={catalogStatus} onChange={event => { setCatalogStatus(event.target.value); setCatalogOffset(0) }}>
+              <option value="active">Active</option>
+              <option value="archived">Archived</option>
+              <option value="deprecated">Deprecated</option>
+              <option value="all">All statuses</option>
+            </select>
+          </label>
+        </div>}
+        {catalog && <p className="kb-catalog-meta">Showing {catalog.total === 0 ? 0 : catalog.offset + 1}–{catalog.offset + catalog.returned} of {catalog.total.toLocaleString()} matching knowledge items</p>}
         {isLessons ? (
-          <DataTable state={tableState} data={rows as LessonRow[]} columns={lessonColumns} onRowClick={setSelectedLesson} emptyMessage="No lessons yet." />
+          <DataTable state={tableState} data={rows as LessonRow[]} columns={lessonColumns} onRowClick={setSelectedLesson} emptyMessage="No lessons yet." pageSize={100} />
         ) : isGuardRows ? (
           <DataTable
             state={tableState}
             data={rows as GuardRow[]}
             columns={guardColumns}
             onRowClick={setSelectedGuard}
+            pageSize={100}
             emptyMessage={isGuardCandidates ? 'No guard candidates awaiting review.' : 'No active guards yet.'}
           />
         ) : (
-          <DataTable state={tableState} data={rows as KnowledgeItem[]} columns={kbColumns} onRowClick={setSelected} emptyMessage={`No ${active.label.toLowerCase()} yet.`} />
+          <DataTable state={tableState} data={rows as KnowledgeItem[]} columns={kbColumns} onRowClick={setSelected} emptyMessage={`No ${active.label.toLowerCase()} yet.`} pageSize={100} />
+        )}
+        {catalog && catalog.total > catalog.limit && (
+          <div className="kb-pagination" aria-label="Knowledge catalog pagination">
+            <Button size="sm" variant="secondary" disabled={catalog.offset === 0} onClick={() => setCatalogOffset(Math.max(0, catalog.offset - catalog.limit))}>Previous</Button>
+            <span>Page {Math.floor(catalog.offset / catalog.limit) + 1} of {Math.ceil(catalog.total / catalog.limit)}</span>
+            <Button size="sm" variant="secondary" disabled={!catalog.has_more} onClick={() => setCatalogOffset(catalog.offset + catalog.limit)}>Next</Button>
+          </div>
         )}
       </Card>
 
@@ -751,6 +892,8 @@ export function KnowledgeTab() {
               <DrawerField label="Type" value={humanize(selected.item_type)} />
               <DrawerField label="Confidence" value={<ConfidenceBadge value={selected.confidence} />} />
               <DrawerField label="Status" value={<StatusBadge status={selected.status} />} />
+              <DrawerField label="Produced by run" value={selected.producer_run_id ? <span className="mono">{selected.producer_run_id}</span> : 'Not recorded'} />
+              <DrawerField label="Item-level consumption" value="Not recorded" />
               <DrawerField label="Strategy ID" value={selected.strategy_id} mono />
               <DrawerField label="Created" value={fmtTimestamp(selected.created_at)} mono />
               <DrawerField label="Updated" value={fmtTimestamp(selected.updated_at)} mono />
@@ -775,38 +918,11 @@ export function KnowledgeTab() {
 
 /* ============================ REPORTS ============================ */
 export function ReportsTab() {
-  const dreamingQuery = useQuery({ queryKey: ['dreaming'], queryFn: api.getDreamingLogs })
-  const reviewsQuery = useQuery({ queryKey: ['reviews'], queryFn: () => api.getKnowledge('daily_review') })
-  const postTradeReviewsQuery = useQuery({ queryKey: ['post-trade-reviews'], queryFn: api.getPostTradeReviews })
-  const dreaming = dreamingQuery.data ?? []
-  const reviews = reviewsQuery.data ?? []
-  const postTradeReviews = postTradeReviewsQuery.data ?? []
-
   return (
     <>
-      <Card>
-        <CardHeader title="Portfolio PnL" meta={PORTFOLIO_CONTEXT_LABEL} />
-        <PnLChart />
-      </Card>
-
       <LearningFunnelPanel />
 
       <FilterControllerPersistentCard />
-
-      <div className="learn-grid">
-        <Card>
-          <CardHeader title="Daily reviews" />
-          <ReviewList state={learningReadState(reviewsQuery.isLoading, reviewsQuery.isError, reviewsQuery.data != null)} items={reviews as any[]} empty="No daily reviews yet — generated by the dreaming cycle." />
-        </Card>
-        <Card>
-          <CardHeader title="Post-trade reviews" />
-          <ReviewList state={learningReadState(postTradeReviewsQuery.isLoading, postTradeReviewsQuery.isError, postTradeReviewsQuery.data != null)} items={postTradeReviews as any[]} empty="No post-trade reviews yet." />
-        </Card>
-        <Card>
-          <CardHeader title="Recent consolidations" />
-          <ReviewList state={learningReadState(dreamingQuery.isLoading, dreamingQuery.isError, dreamingQuery.data != null)} items={(dreaming as any[]).slice(0, 10)} empty="No consolidations yet." />
-        </Card>
-      </div>
     </>
   )
 }
@@ -845,7 +961,15 @@ function FilterControllerPersistentCard() {
 
   const persistent = data.persistent_recommendations || []
   const cfg = data.persistent_config || { min_consecutive_runs: 3, max_runs_lookback: 10 }
-  const meta = `>= ${cfg.min_consecutive_runs} of last ${cfg.max_runs_lookback} runs`
+  const schedule = data.schedule
+  const meta = `${schedule.enabled ? `scheduled every ${schedule.observe_interval_hours}h` : 'schedule disabled'}, ${data.runs_available} runs, last ${fmtTimestamp(data.last_run_at)}`
+  const emptyCopy = data.empty_reason === 'controller_disabled'
+    ? 'Scheduled observation is disabled; persisted history remains read-only.'
+    : data.empty_reason === 'no_controller_runs'
+    ? 'No controller run has been persisted yet.'
+    : data.empty_reason === 'insufficient_run_history'
+      ? `Only ${data.runs_available} runs are available; ${cfg.min_consecutive_runs} are required to judge persistence.`
+      : 'No persistent overrestrictive signals across the available run history.'
 
   return (
     <Card>
@@ -860,10 +984,7 @@ function FilterControllerPersistentCard() {
         consumes this. Any parameter change requires the normal change-control path.
       </p>
       {persistent.length === 0 ? (
-        <p className="text-muted text-sm">
-          No persistent overrestrictive_suspect signals — every cell in the recent
-          runs held, was single-run only, or was insufficient_data.
-        </p>
+        <p className="text-muted text-sm">{emptyCopy}</p>
       ) : (
         <ul className="learn-items">
           {persistent.map(p => {
@@ -909,26 +1030,6 @@ function FilterControllerPersistentCard() {
         </ul>
       )}
     </Card>
-  )
-}
-
-/** Compact title + timestamp list for periodic reviews (read-only). */
-function ReviewList({ state = 'available', items, empty }: { state?: LearningReadState; items: any[]; empty: string }) {
-  if (state === 'loading' || state === 'unavailable') return <LearningReadMessage state={state} subject="Reviews" />
-  const warning = state !== 'available' ? <LearningReadMessage state={state} subject="Reviews" /> : null
-  if (!items || items.length === 0) return <>{warning}<p className="text-muted text-sm">{empty}</p></>
-  return (
-    <>
-      {warning}
-      <ul className="learn-items">
-        {items.slice(0, 10).map((r: any) => (
-          <li key={r.id} className="learn-item">
-            <span className="learn-item-title">{r.title || '(untitled)'}</span>
-            <span className="learn-item-meta mono">{fmtTimestamp(r.created_at)}</span>
-          </li>
-        ))}
-      </ul>
-    </>
   )
 }
 
@@ -982,22 +1083,25 @@ function parseJsonArray(raw: unknown): string[] {
   try { const v = JSON.parse(raw); return Array.isArray(v) ? v.map(String) : [] } catch { return [] }
 }
 
+function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  const tabs = Array.from(event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])
+  const current = tabs.indexOf(event.currentTarget)
+  if (current < 0 || tabs.length === 0) return
+  event.preventDefault()
+  const next = event.key === 'Home' ? 0
+    : event.key === 'End' ? tabs.length - 1
+    : event.key === 'ArrowRight' ? (current + 1) % tabs.length
+    : (current - 1 + tabs.length) % tabs.length
+  tabs[next].focus()
+  tabs[next].click()
+}
+
 /** UTC-safe parse (mirrors lib/format normalizeIso) → epoch ms, or NaN. */
 function isoMs(iso?: string | null): number {
   if (!iso) return NaN
   const norm = iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`
   return new Date(norm).getTime()
-}
-
-/** "6h ago" relative time from an ISO timestamp. */
-function fmtRelative(iso?: string | null): string {
-  const t = isoMs(iso)
-  if (!Number.isFinite(t)) return '—'
-  const s = Math.max(0, Math.floor((Date.now() - t) / 1000))
-  if (s < 60) return `${s}s ago`
-  const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`
-  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`
-  return `${Math.floor(h / 24)}d ago`
 }
 
 /** Elapsed time between two ISO stamps, e.g. "20s" / "3m 12s". Null if unknown. */
@@ -1064,6 +1168,10 @@ const ITEM_TYPE_LABEL: Record<string, string> = {
   reasoning_feedback: 'Reasoning Feedback',
   trading_memo: 'Trading Memo',
   calibration_report: 'Calibration Report',
+}
+
+function knowledgeTypeLabel(itemType: string): string {
+  return ITEM_TYPE_LABEL[itemType] ?? `Unknown type: ${itemType}`
 }
 
 function LearningReadMessage({ state, subject }: { state: Exclude<LearningReadState, 'available'>; subject: string }) {
