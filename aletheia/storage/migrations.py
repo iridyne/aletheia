@@ -3495,20 +3495,12 @@ _UFC_CANONICAL_IDENTITY = (
     "universe-family-calibration/v11",
     1,
 )
-_UFC_V25_FINGERPRINT_CONTRACT = (
-    "sha256",
-    "json-sort-keys-compact-ascii",
-    ("path_id", "scope", "action", "target_horizon", "source_cohort"),
-    ("summary", "title", "created_at", "updated_at"),
-    "lowercase-and-strip-strings",
-    "sort-normalized-lists-by-canonical-json",
-)
+# Published by #922. Databases may already have this exact checksum in their
+# migration ledger; v25's equivalent verifier repair must not rotate it.
 _UFC_CANONICAL_IDENTITY_CHECKSUM = hashlib.sha256(
-    (
-        repr(_UFC_CANONICAL_IDENTITY)
-        + repr(_UFC_V25_FINGERPRINT_CONTRACT)
-        + "\nmaterialize_active_paper_identity_v2"
-    ).encode("utf-8")
+    (repr(_UFC_CANONICAL_IDENTITY) + "\nmaterialize_active_paper_identity_v1").encode(
+        "utf-8"
+    )
 ).hexdigest()
 
 

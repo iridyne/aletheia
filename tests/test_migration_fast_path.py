@@ -739,6 +739,9 @@ def test_ufc_canonical_identity_v25_materializes_verified_active_paper(monkeypat
     connection = _legacy_active_ufc_db(
         fingerprint="64b53e9eade95232da73ba2760080dabbbeb8f8297e05de4fbd22b17b96dfec8"
     )
+    assert migrations._UFC_CANONICAL_IDENTITY_CHECKSUM == (
+        "76eac7e0a1e81de4b043d5004b461d650b4deb61f51be2ec9c5f307ebe2b180a"
+    )
     monkeypatch.setattr(
         live_hypotheses,
         "hypothesis_fingerprint",
