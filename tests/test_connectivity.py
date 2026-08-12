@@ -24,6 +24,7 @@ def setup_env(tmp_path, monkeypatch):
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    loader._invalidate_config_cache()
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
     reset_db()
     sq._db_conn = None
