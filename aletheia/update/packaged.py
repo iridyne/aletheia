@@ -623,7 +623,15 @@ def _preflight_candidate(
     backup_path: Path,
     operation_id: str,
     target_release: str,
+    expected_sha: str = "",
 ) -> Path:
+    """Validate and preflight the candidate release directory.
+
+    ``expected_sha`` must come from the *signed feed* (the external authority),
+    not from the candidate's own manifest — reading the SHA from the file under
+    test would be a circular self-certification that allows a tampered manifest
+    to pass its own SHA check.  Callers must supply the feed-pinned value.
+    """
     preflight_root = _paths()["preflight"] / operation_id
     shutil.rmtree(preflight_root, ignore_errors=True)
     data_copy = preflight_root / "data-copy"
@@ -633,7 +641,7 @@ def _preflight_candidate(
     manifest = _validate_release_dir(
         candidate_root,
         expected_release_id=target_release,
-        expected_sha=_read_json(candidate_root / "release-manifest.json").get("git_sha", ""),
+        expected_sha=expected_sha,
     )
     executable = Path(str(manifest["entrypoint_path"]))
     env = dict(os.environ)
@@ -730,11 +738,15 @@ def _stage_update(operation_id: str) -> None:
                 message="Creating consistent backup and preflighting migrations",
             )
             backup = BackupService(get_data_dir()).create_backup(label=f"pre_update_{operation_id[:12]}")
+            # Pass the feed-pinned git_sha so preflight validates against the
+            # signed external authority, not the candidate's self-reported value.
+            feed_sha = str(feed.get("git_sha") or "")
             preflight_data = _preflight_candidate(
                 destination,
                 backup_path=backup,
                 operation_id=operation_id,
                 target_release=target_release,
+                expected_sha=feed_sha,
             )
             request = {
                 "schema_version": 1,

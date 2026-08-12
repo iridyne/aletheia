@@ -176,9 +176,21 @@ def _get_last_audit_hash(*, use_cache: bool = True) -> str:
     return _last_audit_hash
 
 
+
+class _AuditLockTimeout(OSError):
+    """Raised when a bounded cross-process audit lock cannot be acquired."""
+
+
+
 @contextmanager
-def _exclusive_file_lock(lock_path: Path):
-    """Cross-process exclusive lock used to serialize audit hash-chain writes."""
+def _exclusive_file_lock(lock_path: Path, *, timeout_sec: float | None = None):
+    """Cross-process exclusive lock used to serialize audit hash-chain writes.
+
+    When *timeout_sec* is given (and > 0) the call raises
+    :class:`_AuditLockTimeout` instead of blocking forever if the lock cannot be
+    acquired within that window. Normal audit writes deliberately omit it: a
+    safety-relevant mutation must not lose its audit record under contention.
+    """
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+b") as lock_file:
         lock_file.seek(0, os.SEEK_END)
@@ -189,7 +201,25 @@ def _exclusive_file_lock(lock_path: Path):
         if os.name == "nt":
             import msvcrt
 
-            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            if timeout_sec and timeout_sec > 0:
+                deadline = time.monotonic() + timeout_sec
+                acquired = False
+                while True:
+                    try:
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                        acquired = True
+                        break
+                    except OSError:
+                        pass
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(0.05)
+                if not acquired:
+                    raise _AuditLockTimeout(
+                        f"audit lock {lock_path} not acquired within {timeout_sec:.1f}s"
+                    )
+            else:
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
             try:
                 yield
             finally:
@@ -198,7 +228,25 @@ def _exclusive_file_lock(lock_path: Path):
         else:
             import fcntl
 
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            if timeout_sec and timeout_sec > 0:
+                deadline = time.monotonic() + timeout_sec
+                acquired = False
+                while True:
+                    try:
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        acquired = True
+                        break
+                    except BlockingIOError:
+                        pass
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(0.05)
+                if not acquired:
+                    raise _AuditLockTimeout(
+                        f"audit lock {lock_path} not acquired within {timeout_sec:.1f}s"
+                    )
+            else:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
             try:
                 yield
             finally:
@@ -298,6 +346,8 @@ def write_audits_deduplicated(events: list[dict]) -> set[str]:
                     prev_hash = _hash_record(line)
                     _last_audit_hash = prev_hash
                     completed.add(event_id)
+    except _AuditLockTimeout as e:
+        logger.warning("audit jsonl batch lock timed out: %s", e)
     except OSError as e:
         logger.warning("audit jsonl batch write failed: %s", e)
     return completed
@@ -351,6 +401,12 @@ def write_audit(
                 _append_jsonl_line(audit_path, line)
                 _last_audit_hash = _hash_record(line)
                 jsonl_written = True
+    except _AuditLockTimeout as e:
+        logger.warning(
+            "audit jsonl write lock timed out: %s (event_type=%s)",
+            e,
+            event.get("event_type", "?"),
+        )
     except OSError as e:
         logger.warning("audit jsonl write failed: %s (event_type=%s)",
                        e, event.get("event_type", "?"))

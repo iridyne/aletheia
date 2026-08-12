@@ -311,7 +311,12 @@ def list_open_experiments(*, path_id: str | None = None) -> list[dict]:
         clauses.append("h.path_id=?")
         params.append(path_id)
     rows = get_db().execute(
-        "SELECT e.* FROM learning_experiments e JOIN learning_hypotheses h "
+        "SELECT e.*, ("
+        "SELECT x.concurrent_policy_epoch FROM learning_exposures x "
+        "WHERE x.experiment_id=e.experiment_id "
+        "ORDER BY x.exposed_at DESC, x.rowid DESC LIMIT 1"
+        ") AS concurrent_policy_epoch "
+        "FROM learning_experiments e JOIN learning_hypotheses h "
         "ON h.hypothesis_id=e.hypothesis_id WHERE " + " AND ".join(clauses) + " "
         "ORDER BY e.created_at, e.experiment_id",
         tuple(params),
