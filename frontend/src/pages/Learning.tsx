@@ -143,11 +143,11 @@ function ImpactSummary({ item }: { item: LearningContributionProjection['items']
 }
 
 function AttentionItem({ label, value, detail, onClick }: { label: string; value: number | null; detail: string; onClick: () => void }) {
-  return <button type="button" className="learning-attention-item" onClick={onClick}>
+  return <Button type="button" className="learning-attention-item" onClick={onClick}>
     <strong>{value == null ? 'Unavailable' : value.toLocaleString()}</strong>
     <span>{label}</span>
     <small>{detail}</small>
-  </button>
+  </Button>
 }
 
 /* ======================= MEASURED CONTRIBUTION ======================= */
