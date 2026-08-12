@@ -177,6 +177,7 @@ jobs:
           uv run pytest tests/
           --ignore=tests/simulation
           --ignore=tests/test_auto_resume.py
+          --ignore=tests/test_connectivity.py
           --ignore=tests/test_operator_cli.py
           --ignore=tests/test_pause_ownership.py
           -m "${{ matrix.marker }}"
@@ -237,6 +238,9 @@ jobs:
               -n 2 --dist loadfile -q --tb=short --timeout=120
           ALETHEIA_DATA_DIR="$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-pause-ownership" \
             uv run pytest tests/test_pause_ownership.py \
+              -n 1 -q --tb=short --timeout=120
+          ALETHEIA_DATA_DIR="$RUNNER_TEMP/aletheia-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-connectivity" \
+            uv run pytest tests/test_connectivity.py \
               -n 1 -q --tb=short --timeout=120
 
   release-candidate:
