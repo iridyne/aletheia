@@ -366,6 +366,22 @@ async def test_learning_filter_card_uses_persisted_signal_path(client, monkeypat
 
 
 @pytest.mark.anyio
+async def test_learning_filter_card_does_not_present_config_defaults_as_facts(client, monkeypatch):
+    from aletheia.analytics import filter_controller
+    from aletheia.config import loader
+
+    monkeypatch.setattr(loader, "load_config", lambda: (_ for _ in ()).throw(ValueError("private config failure")))
+    monkeypatch.setattr(filter_controller, "compute_persistent_recommendations", lambda **_: [])
+
+    response = await client.get("/api/analytics/filter-controller/persistent")
+
+    assert response.status_code == 200
+    assert response.json()["config_availability"] == "unavailable"
+    assert response.json()["empty_reason"] == "config_unavailable"
+    assert "private config failure" not in response.text
+
+
+@pytest.mark.anyio
 async def test_pause_resume(client, monkeypatch):
     from aletheia.agent_runtime import resume_gate
 

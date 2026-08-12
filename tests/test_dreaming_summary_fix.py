@@ -182,6 +182,24 @@ async def test_dreaming_summary_uses_persisted_run_artifact_links(client):
 
 
 @pytest.mark.anyio
+async def test_dreaming_summary_exposes_scheduler_health_failure(client, monkeypatch):
+    from aletheia.learning import control
+
+    monkeypatch.setattr(
+        control,
+        "get_learning_job_health",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("private scheduler failure")),
+    )
+
+    response = await client.get("/api/dreaming/summary")
+
+    assert response.status_code == 200
+    assert response.json()["dreaming_job"] is None
+    assert response.json()["dreaming_job_availability"] == "unavailable"
+    assert "private scheduler failure" not in response.text
+
+
+@pytest.mark.anyio
 async def test_knowledge_content_falls_back_to_inline_storage(client):
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import insert_knowledge_item
