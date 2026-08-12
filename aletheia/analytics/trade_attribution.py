@@ -11,7 +11,11 @@ import json
 import logging
 from typing import Any
 
-from aletheia.analytics.outcome_integrity import assess_reportable_outcome, raw_account_events
+from aletheia.analytics.outcome_integrity import (
+    assess_reportable_outcome,
+    eligible_strategy_outcomes,
+    raw_account_events,
+)
 from aletheia.storage import repositories as repo
 
 logger = logging.getLogger("aletheia.analytics.trade_attribution")
@@ -148,19 +152,27 @@ def build_trade_attribution_rows(
     db: Any = None,
     include_source_status: bool = False,
 ) -> list[dict] | tuple[list[dict], bool | None]:
-    """Build attribution rows for closed paper/demo positions."""
-    source_limit = 10_000
-    source_rows = raw_account_events(
-        closed_after=closed_after,
-        symbol=symbol,
-        limit=source_limit,
-        db=db,
-    )
-    source_truncated = None if len(source_rows) >= source_limit else False
-    positions = [
-        row for row in source_rows if assess_reportable_outcome(row).eligible
-    ]
-    positions = list(reversed(positions))[:limit]
+    if (
+        closed_after is None
+        and symbol is None
+        and db is None
+        and not include_source_status
+    ):
+        positions = list(reversed(eligible_strategy_outcomes()))[:limit]
+        source_truncated = None
+    else:
+        source_limit = 10_000
+        source_rows = raw_account_events(
+            closed_after=closed_after,
+            symbol=symbol,
+            limit=source_limit,
+            db=db,
+        )
+        source_truncated = None if len(source_rows) >= source_limit else False
+        positions = [
+            row for row in source_rows if assess_reportable_outcome(row).eligible
+        ]
+        positions = list(reversed(positions))[:limit]
     rows = []
     for pos in positions:
         row = _build_row(pos, db=db)

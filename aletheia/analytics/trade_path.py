@@ -221,14 +221,18 @@ def _analyze_path(row: dict, post_exit_bars: int, *, db: Any = None) -> dict:
         return result
 
     try:
+        candle_kwargs = {
+            "limit": requested_span,
+            "exchange": identity.exchange,
+            "market_type": identity.market_type,
+            "before_ts": fetch_end_ts,
+        }
+        if db is not None:
+            candle_kwargs["db"] = db
         candles = repo.get_ohlcv_candles(
             symbol,
             _DEFAULT_TIMEFRAME,
-            limit=requested_span,
-            exchange=identity.exchange,
-            market_type=identity.market_type,
-            before_ts=fetch_end_ts,
-            db=db,
+            **candle_kwargs,
         )
     except Exception as exc:  # read failure is unavailable evidence, never zero
         logger.debug("trade path OHLCV read failed: %s", type(exc).__name__)
