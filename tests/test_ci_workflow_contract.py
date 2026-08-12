@@ -64,15 +64,16 @@ def test_ci_only_validates_pull_requests_merge_queue_and_explicit_release_runs()
     assert triggers["pull_request"]["branches"] == ["master"]
 
 
-def test_ci_has_two_review_jobs_and_verified_release_handoff() -> None:
+def test_ci_has_independent_review_regression_and_release_jobs() -> None:
     jobs = _workflow()["jobs"]
 
-    assert set(jobs) == {"review", "tests", "release-candidate"}
+    assert set(jobs) == {"review", "tests", "runtime-state-tests", "release-candidate"}
     assert jobs["review"]["name"] == "Review checks"
-    assert jobs["tests"]["name"] == "Python regression"
+    assert jobs["tests"]["name"] == "Python ${{ matrix.name }}"
+    assert jobs["runtime-state-tests"]["name"] == "Python runtime state"
     handoff = jobs["release-candidate"]
     assert handoff["name"] == "Hand off verified release candidate"
-    assert handoff["needs"] == ["review", "tests"]
+    assert handoff["needs"] == ["review", "tests", "runtime-state-tests"]
     assert "event_name == 'workflow_dispatch'" in handoff["if"]
     assert "release-please--branches--master" in handoff["if"]
     assert handoff["permissions"] == {"contents": "write"}
@@ -106,7 +107,7 @@ def test_ci_jobs_use_self_hosted_runners_and_minimum_permissions() -> None:
     workflow = _workflow()
 
     assert workflow["permissions"] == {"contents": "read"}
-    for job_name in ("review", "tests"):
+    for job_name in ("review", "tests", "runtime-state-tests"):
         job = workflow["jobs"][job_name]
         assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
         setup_uv = next(step for step in job["steps"] if str(step.get("uses", "")).startswith("astral-sh/setup-uv@"))
@@ -247,27 +248,39 @@ def test_native_host_build_uses_self_contained_linker() -> None:
     )
 
 
-def test_python_regression_excludes_nightly_simulation_and_isolates_state() -> None:
-    job = _workflow()["jobs"]["tests"]
-    commands = _run_commands(job)
+def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> None:
+    workflow = _workflow()
+    tier_job = workflow["jobs"]["tests"]
+    tier_commands = _run_commands(tier_job)
+    matrix = tier_job["strategy"]["matrix"]["include"]
 
-    assert "for tier in tier_spec tier_unit tier_integration tier_e2e" in commands
-    assert "uv run pytest tests/" in commands
-    assert "--ignore=tests/simulation" in commands
-    assert "--ignore=tests/test_auto_resume.py" in commands
-    assert "--ignore=tests/test_operator_cli.py" in commands
-    assert "--ignore=tests/test_pause_ownership.py" in commands
-    assert "tests/test_auto_resume.py tests/test_operator_cli.py" in commands
-    assert "uv run pytest tests/test_pause_ownership.py" in commands
-    assert "GITHUB_RUN_ATTEMPT}-pause-ownership" in commands
-    assert "-n 2 --dist loadfile" in commands
-    assert "--dist loadfile" in commands
-    assert "ALETHEIA_DATA_DIR=$RUNNER_TEMP" in commands
-    assert "GITHUB_RUN_ATTEMPT" in commands
-    assert "GITHUB_ENV" in commands
-    assert "unzip" in commands
-    assert "python -m zipfile" in commands
-    assert "sudo" not in commands
+    assert tier_job["strategy"]["fail-fast"] == "false"
+    assert matrix == [
+        {"name": "specifications", "marker": "tier_spec"},
+        {"name": "unit", "marker": "tier_unit"},
+        {"name": "integration", "marker": "tier_integration"},
+        {"name": "end-to-end", "marker": "tier_e2e"},
+    ]
+    assert "uv run pytest tests/" in tier_commands
+    assert "--ignore=tests/simulation" in tier_commands
+    assert "--ignore=tests/test_auto_resume.py" in tier_commands
+    assert "--ignore=tests/test_operator_cli.py" in tier_commands
+    assert "--ignore=tests/test_pause_ownership.py" in tier_commands
+    assert '${{ matrix.marker }}' in tier_commands
+    assert "--dist loadfile" in tier_commands
+    tier_env = tier_job["steps"][-1]["env"]["ALETHEIA_DATA_DIR"]
+    assert "${{ runner.temp }}" in tier_env
+    assert "${{ github.run_attempt }}" in tier_env
+    assert "${{ matrix.marker }}" in tier_env
+
+    runtime_commands = _run_commands(workflow["jobs"]["runtime-state-tests"])
+    assert "tests/test_auto_resume.py tests/test_operator_cli.py" in runtime_commands
+    assert "uv run pytest tests/test_pause_ownership.py" in runtime_commands
+    assert "GITHUB_RUN_ATTEMPT}-pause-ownership" in runtime_commands
+    assert "-n 2 --dist loadfile" in runtime_commands
+    assert "unzip" in runtime_commands
+    assert "python -m zipfile" in runtime_commands
+    assert "sudo" not in runtime_commands
 
 
 def test_superseded_pull_request_runs_are_cancelled() -> None:
