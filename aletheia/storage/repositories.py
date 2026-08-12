@@ -6014,13 +6014,15 @@ def get_ohlcv_candles(
     exchange: str = "",
     market_type: str = "",
     before_ts: int | None = None,
+    *,
+    db: sqlite3.Connection | None = None,
 ) -> list[dict]:
     """Return up to `limit` most-recent OHLCV bars, oldest-first.
 
     When exchange/market_type are supplied, queries are scoped to that exact
     instrument. Unscoped legacy callers should be migrated by their owners.
     """
-    db = get_db()
+    db = db or get_db()
     scope = _resolve_ohlcv_scope(db, symbol, timeframe, exchange, market_type)
     if scope is None:
         return []

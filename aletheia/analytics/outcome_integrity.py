@@ -420,7 +420,9 @@ def raw_account_events(
     strategy_id: Any = _FILTER_UNSET,
     closed_after: str | None = None,
     closed_before: str | None = None,
+    symbol: str | None = None,
     limit: int = 10_000,
+    db: Any = None,
 ) -> list[dict]:
     """Read immutable closed-position events without implying outcome quality."""
     if limit < 1 or limit > 10_000:
@@ -444,8 +446,11 @@ def raw_account_events(
     if closed_before is not None:
         conditions.append("datetime(p.closed_at) < datetime(?)")
         params.append(closed_before)
+    if symbol is not None:
+        conditions.append("p.symbol = ?")
+        params.append(symbol)
     params.append(limit)
-    rows = get_db().execute(
+    rows = (db or get_db()).execute(
         """
         SELECT recent.* FROM (
         SELECT p.*,

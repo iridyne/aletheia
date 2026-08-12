@@ -11,7 +11,7 @@ import json
 import logging
 from typing import Any
 
-from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+from aletheia.analytics.outcome_integrity import assess_reportable_outcome, raw_account_events
 from aletheia.storage import repositories as repo
 
 logger = logging.getLogger("aletheia.analytics.trade_attribution")
@@ -44,6 +44,7 @@ def proposal_decision_context(
     proposal_id: str | None,
     *,
     proposal: dict | None = None,
+    db: Any = None,
 ) -> dict[str, Any]:
     """Read complete decision context through one exact Proposal identity."""
     if not proposal_id:
@@ -56,8 +57,20 @@ def proposal_decision_context(
             "decision_evidence_manifest": _NOT_RECORDED,
             "decision_learning_manifest": _NOT_RECORDED,
         }
-    exact_proposal = proposal or _safe_get(repo.get_trade_proposal, proposal_id)
-    decision = _safe_get(repo.get_pi_decision_for_proposal, proposal_id)
+    exact_proposal = proposal or _read_one(db, "trade_proposals", proposal_id, repo.get_trade_proposal)
+    if db is None:
+        decision = _safe_get(repo.get_pi_decision_for_proposal, proposal_id)
+    else:
+        decisions = db.execute(
+            "SELECT * FROM pi_decisions WHERE proposal_id=? "
+            "AND action!='signal_pending' ORDER BY datetime(created_at) ASC, rowid ASC LIMIT 2",
+            (proposal_id,),
+        ).fetchall()
+        decision = (
+            {"_integrity_error": _AMBIGUOUS, "proposal_id": proposal_id}
+            if len(decisions) > 1
+            else dict(decisions[0]) if decisions else None
+        )
 
     def integrity_context(status: str) -> dict[str, Any]:
         rationale = (exact_proposal or {}).get("agent_rationale")
@@ -127,27 +140,39 @@ def proposal_decision_context(
     }
 
 
-def build_trade_attribution_rows(limit: int = 500) -> list[dict]:
-    """Build attribution rows for closed paper/demo positions.
-
-    Each row joins position back through the full causal chain. Missing joins
-    produce None fields, never errors.
-    """
-    positions = list(reversed(eligible_strategy_outcomes()))[:limit]
-    rows: list[dict] = []
-
+def build_trade_attribution_rows(
+    limit: int = 500,
+    *,
+    closed_after: str | None = None,
+    symbol: str | None = None,
+    db: Any = None,
+    include_source_status: bool = False,
+) -> list[dict] | tuple[list[dict], bool | None]:
+    """Build attribution rows for closed paper/demo positions."""
+    source_limit = 10_000
+    source_rows = raw_account_events(
+        closed_after=closed_after,
+        symbol=symbol,
+        limit=source_limit,
+        db=db,
+    )
+    source_truncated = None if len(source_rows) >= source_limit else False
+    positions = [
+        row for row in source_rows if assess_reportable_outcome(row).eligible
+    ]
+    positions = list(reversed(positions))[:limit]
+    rows = []
     for pos in positions:
-        row = _build_row(pos)
+        row = _build_row(pos, db=db)
         if row is not None:
             rows.append(row)
+    return (rows, source_truncated) if include_source_status else rows
 
-    return rows
 
-
-def _build_row(pos: dict) -> dict | None:
+def _build_row(pos: dict, *, db: Any = None) -> dict | None:
     """Build a single attribution row from a closed position."""
-    proposal = _safe_get(repo.get_trade_proposal, pos.get("proposal_id"))
-    order = _safe_get(repo.get_order, pos.get("order_id")) if pos.get("order_id") else None
+    proposal = _read_one(db, "trade_proposals", pos.get("proposal_id"), repo.get_trade_proposal)
+    order = _read_one(db, "orders", pos.get("order_id"), repo.get_order)
     direct_opportunity_id = pos.get("opportunity_id")
     if (
         proposal is None
@@ -161,22 +186,24 @@ def _build_row(pos: dict) -> dict | None:
     serenity_opp = None
     opportunity = None
     if trade_school == "serenity":
-        serenity_opp = _safe_get(
-            repo.get_serenity_opportunity, direct_opportunity_id
+        serenity_opp = _read_one(
+            db, "serenity_opportunities", direct_opportunity_id, repo.get_serenity_opportunity
         )
     else:
-        opportunity = _safe_get(repo.get_opportunity, direct_opportunity_id)
-    strategy = _safe_get(repo.get_strategy, pos.get("strategy_id"))
-    risk_decision = _safe_get(
-        lambda decision_id: repo._select_one("risk_decisions", decision_id),
+        opportunity = _read_one(db, "opportunities", direct_opportunity_id, repo.get_opportunity)
+    strategy = _read_one(db, "strategy_records", pos.get("strategy_id"), repo.get_strategy)
+    risk_decision = _read_one(
+        db,
+        "risk_decisions",
         order.get("risk_decision_id"),
+        lambda decision_id: repo._select_one("risk_decisions", decision_id),
     )
-    universe_member = _lookup_universe_member(opportunity)
+    universe_member = _lookup_universe_member(opportunity, db=db)
 
     if opportunity is None and serenity_opp is None:
         return None
     decision_context = proposal_decision_context(
-        proposal.get("id"), proposal=proposal
+        proposal.get("id"), proposal=proposal, db=db
     )
 
     # Compute realized_pnl_pct
@@ -300,6 +327,18 @@ def factor_key(row: dict) -> str:
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _read_one(db: Any, table: str, key: str | None, fallback) -> dict | None:
+    if not key:
+        return None
+    if db is None:
+        return _safe_get(fallback, key)
+    try:
+        row = db.execute(f"SELECT * FROM {table} WHERE id=?", (key,)).fetchone()
+    except Exception:
+        return None
+    return dict(row) if row is not None else None
+
+
 def _safe_get(fn, key: str | None) -> dict | None:
     if not key:
         return None
@@ -309,16 +348,11 @@ def _safe_get(fn, key: str | None) -> dict | None:
         return None
 
 
-def _lookup_universe_member(opportunity: dict | None) -> dict | None:
+def _lookup_universe_member(opportunity: dict | None, *, db: Any = None) -> dict | None:
     if not opportunity:
         return None
     member_id = opportunity.get("universe_member_id")
-    if not member_id:
-        return None
-    try:
-        return repo.get_universe_member(member_id)
-    except Exception:
-        return None
+    return _read_one(db, "universe_members", member_id, repo.get_universe_member)
 
 
 def _parse_json_list(raw: Any) -> list:

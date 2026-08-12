@@ -34,19 +34,19 @@ def _seed_member(db, member_id: str, *, penalty=None, flags=None) -> None:
     )
 
 
-def _shadow(db, sid: str | None, oid: str, key: str | None, *, score: float = 50, rank: int = 1, symbol: str = "BTC/USDT", venue: str | None = "bitget", market: str = "spot", direction: str = "long", family: str = "momentum", epoch: str | None = "epoch-a", batch: str | None = "batch-a", minute: int = 0, cost_model: str | None = "v1") -> None:
+def _shadow(db, sid: str | None, oid: str, key: str | None, *, score: float = 50, rank: int = 1, symbol: str = "BTC/USDT", venue: str | None = "bitget", market: str = "spot", direction: str = "long", family: str = "momentum", epoch: str | None = "epoch-a", batch: str | None = "batch-a", minute: int = 0, cost_model: str | None = "v1", entry_price=100) -> None:
     db.execute(
-        "INSERT INTO shadow_trades (id,batch_id,opportunity_id,symbol,venue,market_type,direction,scanner_family,trade_score,rank,outcome_candidate_key,policy_epoch_id,created_at,cost_model_version) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (sid, batch, oid, symbol, venue, market, direction, family, score, rank, key, epoch, _now(minute), cost_model),
+        "INSERT INTO shadow_trades (id,batch_id,opportunity_id,symbol,venue,market_type,direction,scanner_family,trade_score,rank,outcome_candidate_key,policy_epoch_id,created_at,cost_model_version,entry_price) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (sid, batch, oid, symbol, venue, market, direction, family, score, rank, key, epoch, _now(minute), cost_model, entry_price),
     )
 
 
-def _outcome(db, key: str, horizon: str, net, *, status: str = "settled", venue: str | None = "bitget", symbol: str | None = "BTC/USDT", market: str | None = "spot", direction: str | None = "long", entry_minute: float = -0.5, cost_model: str | None = "v1") -> None:
+def _outcome(db, key: str, horizon: str, net, *, status: str = "settled", venue: str | None = "bitget", symbol: str | None = "BTC/USDT", market: str | None = "spot", direction: str | None = "long", entry_minute: float = -0.5, cost_model: str | None = "v1", entry_price=100) -> None:
     db.execute(
         "INSERT INTO filter_candidate_outcomes (id,outcome_candidate_key,venue,symbol,market_type,direction,horizon,entry_price_usd,entry_ts,due_at,settled_at,net_return_pct,cost_model_version,status) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (f"out-{key}-{horizon}", key, venue, symbol, market, direction, horizon, 100, _now(entry_minute), _now(-0.1), _now() if status.lower() == "settled" else None, net, cost_model, status),
+        (f"out-{key}-{horizon}", key, venue, symbol, market, direction, horizon, entry_price, _now(entry_minute), _now(-0.1), _now() if status.lower() == "settled" else None, net, cost_model, status),
     )
 
 
@@ -187,11 +187,11 @@ def test_conflicting_settled_outcomes_are_excluded_deterministically():
     db.execute(
         "CREATE TABLE filter_candidate_outcomes (outcome_candidate_key TEXT,horizon TEXT,"
         "status TEXT,net_return_pct REAL,settled_at TEXT,venue TEXT,symbol TEXT,market_type TEXT,"
-        "direction TEXT,entry_ts TEXT,cost_model_version TEXT)"
+        "direction TEXT,entry_ts TEXT,cost_model_version TEXT,entry_price_usd REAL)"
     )
     db.executemany(
         "INSERT INTO filter_candidate_outcomes VALUES "
-        "('key-conflict','15m','settled',?,?,'bitget','BTC/USDT','spot','long',?,'v1')",
+        "('key-conflict','15m','settled',?,?,'bitget','BTC/USDT','spot','long',?,'v1',100)",
         [(1.0, _now(), _now(-0.5)), (-1.0, _now(), _now(-0.5))],
     )
     db.commit()
@@ -213,11 +213,11 @@ def test_mixed_numeric_and_null_settled_outcomes_conflict():
     db.execute(
         "CREATE TABLE filter_candidate_outcomes (outcome_candidate_key TEXT,horizon TEXT,"
         "status TEXT,net_return_pct REAL,settled_at TEXT,venue TEXT,symbol TEXT,market_type TEXT,"
-        "direction TEXT,entry_ts TEXT,cost_model_version TEXT)"
+        "direction TEXT,entry_ts TEXT,cost_model_version TEXT,entry_price_usd REAL)"
     )
     db.executemany(
         "INSERT INTO filter_candidate_outcomes VALUES "
-        "('key-mixed','15m','settled',?,?,'bitget','BTC/USDT','spot','long',?,'v1')",
+        "('key-mixed','15m','settled',?,?,'bitget','BTC/USDT','spot','long',?,'v1',100)",
         [(1.0, _now(), _now(-0.5)), (None, _now(), _now(-0.5))],
     )
     db.commit()
@@ -255,6 +255,30 @@ def test_outcome_linkage_fails_closed_on_identity_cost_and_entry_alignment():
         "missing_cost_model_identity": 1,
         "missing_instrument_identity": 1,
     }
+
+def test_outcome_linkage_requires_exact_finite_entry_price():
+    from aletheia.analytics.ranker_objective_audit import build_ranker_objective_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_opportunity(db, "opp-price")
+    _shadow(db, "shadow-price", "opp-price", "key-price", entry_price=100.0)
+    _outcome(db, "key-price", "15m", 3.0, entry_price=100.0000000001)
+    report = build_ranker_objective_audit()
+    assert report["outcome_linkage_exclusions"]["entry_price_mismatch"] == 1
+@pytest.mark.parametrize("value", ["not-a-number", "NaN", "Infinity"])
+def test_malformed_or_nonfinite_net_returns_fail_closed(value):
+    from aletheia.analytics.ranker_objective_audit import build_ranker_objective_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _seed_opportunity(db, f"opp-{value}")
+    _shadow(db, f"shadow-{value}", f"opp-{value}", f"key-{value}")
+    _outcome(db, f"key-{value}", "15m", value)
+    report = build_ranker_objective_audit()
+    batch = report["variants"]["current_persisted_ranking"]["by_policy_epoch"]["epoch-a"]["by_batch"]["batch-a"]
+    assert batch["outcome_states"]["15m"] == {"conflict": 1}
+    assert batch["horizons"]["15m"]["settled_count"] == 0
 
 
 def test_earliest_aligned_first_exposure_is_the_only_outcome_sample():

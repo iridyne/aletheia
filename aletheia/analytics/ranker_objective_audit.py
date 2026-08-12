@@ -7,6 +7,7 @@ loads policy configuration, settles outcomes, or mutates runtime state.
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from collections import Counter, defaultdict
 from contextlib import contextmanager
@@ -250,7 +251,7 @@ def _load_observations(db, cutoff: str, limit: int) -> tuple[list[dict], dict]:
         "id", "batch_id", "opportunity_id", "venue", "symbol", "market_type",
         "direction", "scanner_family", "trade_score", "rank", "was_selected",
         "created_at", "resolved_at", "outcome_candidate_key", "policy_epoch_id",
-        "cost_model_version",
+        "cost_model_version", "entry_price",
     ]
     select = [name if name in cols else f"NULL AS {name}" for name in wanted]
     time_col = "created_at" if "created_at" in cols else None
@@ -352,6 +353,7 @@ def _attach_outcomes(db, rows: list[dict]) -> dict[str, int]:
     required = {
         "outcome_candidate_key", "horizon", "status", "net_return_pct", "settled_at",
         "venue", "symbol", "market_type", "direction", "entry_ts", "cost_model_version",
+        "entry_price_usd",
     }
     if not _table_exists(db, "filter_candidate_outcomes"):
         return {"missing_outcome_table": len(rows)} if rows else {}
@@ -365,7 +367,7 @@ def _attach_outcomes(db, rows: list[dict]) -> dict[str, int]:
     placeholders = ",".join("?" for _ in keys)
     outcomes = db.execute(
         "SELECT rowid,outcome_candidate_key,horizon,status,net_return_pct,settled_at,"
-        "venue,symbol,market_type,direction,entry_ts,cost_model_version "
+        "venue,symbol,market_type,direction,entry_ts,cost_model_version,entry_price_usd "
         f"FROM filter_candidate_outcomes WHERE outcome_candidate_key IN ({placeholders}) "
         "ORDER BY outcome_candidate_key,horizon,datetime(settled_at),rowid",
         tuple(keys),
@@ -427,6 +429,12 @@ def _outcome_linkage_exclusion(row: dict, outcome: Any) -> str | None:
         or str(row["direction"]).lower() != str(outcome["direction"]).lower()
     ):
         return "instrument_identity_mismatch"
+    ranked_entry = _finite(row.get("entry_price"))
+    outcome_entry = _finite(outcome["entry_price_usd"])
+    if ranked_entry is None or outcome_entry is None:
+        return "missing_entry_price_identity"
+    if ranked_entry != outcome_entry:
+        return "entry_price_mismatch"
     # Cost semantics belong to the canonical settled outcome. The established
     # shadow writer persists rank-time exposure before settlement economics exist,
     # so requiring its nullable projection would reject production-written rows.
@@ -446,26 +454,33 @@ def _outcome_linkage_exclusion(row: dict, outcome: Any) -> str | None:
 
 
 def _apply_outcome_facts(row: dict, horizon: str, facts: list[Any]) -> None:
-    settled_values = {
-        float(item["net_return_pct"])
-        for item in facts
-        if str(item["status"]).lower() == "settled"
-        and item["settled_at"] is not None
-        and item["net_return_pct"] is not None
-    }
     settled = [item for item in facts if str(item["status"]).lower() == "settled"]
-    settled_has_null = any(item["net_return_pct"] is None for item in settled)
+    settled_values: set[float] = set()
+    settled_has_null = False
+    settled_has_malformed = False
+    for item in settled:
+        raw = item["net_return_pct"]
+        if raw is None:
+            settled_has_null = True
+            continue
+        value = _finite(raw)
+        if value is None:
+            settled_has_malformed = True
+            continue
+        settled_values.add(value)
     mixed_statuses = any(str(item["status"]).lower() != "settled" for item in facts)
-    if len(settled_values) > 1 or (settled_values and settled_has_null) or (settled and mixed_statuses):
+    if (
+        settled_has_malformed
+        or len(settled_values) > 1
+        or (settled_values and settled_has_null)
+        or (settled and mixed_statuses)
+    ):
         row["outcome_states"][horizon] = "conflict"
     elif len(settled_values) == 1 and len(settled) == len(facts):
         value = next(iter(settled_values))
         row["outcome_states"][horizon] = "settled"
         row["outcomes"][horizon] = value
-    elif any(
-        str(item["status"]).lower() == "settled" and item["net_return_pct"] is None
-        for item in facts
-    ):
+    elif settled_has_null:
         row["outcome_states"][horizon] = "null"
     elif any(str(item["status"]).lower() in {"failed", "error"} for item in facts):
         row["outcome_states"][horizon] = "failed"
@@ -788,6 +803,14 @@ def _json_value(raw: Any, default: Any) -> Any:
         return json.loads(str(raw))
     except (TypeError, ValueError):
         return default
+
+
+def _finite(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _round(value: float | None) -> float | None:

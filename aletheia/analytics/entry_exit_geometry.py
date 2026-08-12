@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import math
+import sqlite3
 from typing import Any
 
 from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
@@ -33,35 +34,51 @@ def build_entry_exit_geometry_audit(
         raise ValueError("limit must be a positive integer")
     clean_symbol = str(symbol).strip() if symbol is not None else None
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-    # trade_path's limit is applied before this view's close-time/symbol filters.
-    # Read its complete supported source bound so a display limit never silently
-    # excludes a matching row behind 500 unrelated outcomes.
-    rows = build_trade_path_rows(limit=_SOURCE_LIMIT, post_exit_bars=0)
-    rows.sort(
-        key=lambda row: _utc(row.get("closed_at")) or datetime.min.replace(tzinfo=timezone.utc),
-        reverse=True,
-    )
-    selected_paths: list[dict[str, Any]] = []
-    outside_window = 0
-    symbol_mismatch = 0
-    for path_row in rows:
-        closed_at = _utc(path_row.get("closed_at"))
-        if closed_at is None or closed_at < cutoff:
-            outside_window += 1
-            continue
-        if clean_symbol is not None and path_row.get("symbol") != clean_symbol:
-            symbol_mismatch += 1
-            continue
-        selected_paths.append(path_row)
-    selected = [_build_row(row) for row in selected_paths[:limit]]
-    # At the exact source cap we cannot distinguish exactly-10k from truncated;
-    # report unknown rather than asserting either state.
-    source_truncated: bool | None = None if len(rows) >= _SOURCE_LIMIT else False
+    source_error = False
+    try:
+        from aletheia.storage.sqlite import readonly_db
+
+        with readonly_db() as db:
+            rows, source_truncated = build_trade_path_rows(
+                limit=_SOURCE_LIMIT,
+                post_exit_bars=0,
+                closed_after=cutoff.isoformat(),
+                symbol=clean_symbol,
+                db=db,
+                include_source_status=True,
+            )
+            rows.sort(
+                key=lambda row: _utc(row.get("closed_at"))
+                or datetime.min.replace(tzinfo=timezone.utc),
+                reverse=True,
+            )
+            selected_paths = []
+            outside_window = 0
+            symbol_mismatch = 0
+            for path_row in rows:
+                closed_at = _utc(path_row.get("closed_at"))
+                if closed_at is None or closed_at < cutoff:
+                    outside_window += 1
+                    continue
+                if clean_symbol is not None and path_row.get("symbol") != clean_symbol:
+                    symbol_mismatch += 1
+                    continue
+                selected_paths.append(path_row)
+            selected = [_build_row(row, db=db) for row in selected_paths[:limit]]
+    except (FileNotFoundError, OSError, sqlite3.Error):
+        source_error = True
+        selected_paths = []
+        selected = []
+        outside_window = 0
+        symbol_mismatch = 0
+        source_truncated = None
     return {
         "view": "entry-exit",
         "hours": hours,
         "limit": limit,
         "symbol": clean_symbol,
+        "status": "unavailable" if source_error else "available",
+        "unavailable_reason": "database_unavailable" if source_error else None,
         "position_count": len(selected),
         "cohort_eligible_count": len(selected_paths),
         "cohort_identity": {
@@ -79,14 +96,14 @@ def build_entry_exit_geometry_audit(
     }
 
 
-def _build_row(path_row: dict[str, Any]) -> dict[str, Any]:
+def _build_row(path_row: dict[str, Any], *, db: Any = None) -> dict[str, Any]:
     position_id = str(path_row.get("position_id") or "")
-    proposal = _safe_read(repo.get_trade_proposal, path_row.get("proposal_id"))
-    position = _safe_read(repo.get_position, position_id)
-    assignment = _safe_read(repo.get_exit_breakeven_shadow_assignment, position_id)
-    state = _safe_read(repo.get_position_protection_state, position_id)
-    trigger = _safe_read(repo.get_position_protection_trigger, position_id)
-    plans = _read_plans(position_id)
+    proposal = _safe_read(repo.get_trade_proposal, path_row.get("proposal_id"), db=db, table="trade_proposals")
+    position = _safe_read(repo.get_position, position_id, db=db, table="positions")
+    assignment = _safe_read(repo.get_exit_breakeven_shadow_assignment, position_id, db=db, table="exit_breakeven_shadow_assignments", id_column="position_id")
+    state = _safe_read(repo.get_position_protection_state, position_id, db=db, table="position_protection_state", id_column="position_id")
+    trigger = _safe_read(repo.get_position_protection_trigger, position_id, db=db, table="position_protection_triggers", id_column="position_id")
+    plans = _read_plans(position_id, db=db)
 
     result: dict[str, Any] = {
         "position_id": position_id or None,
@@ -147,11 +164,11 @@ def _build_row(path_row: dict[str, Any]) -> dict[str, Any]:
         "protective_trigger_cross_evidence_status": "unavailable",
     }
 
-    geometry = _proposal_geometry(path_row, proposal, position)
+    geometry = _proposal_geometry(path_row, proposal, position, db=db)
     result.update(geometry)
     history = _plan_history(plans, position)
     result.update(history)
-    initial = _initial_risk(path_row, position, proposal, plans, geometry)
+    initial = _initial_risk(path_row, position, proposal, plans, geometry, db=db)
     result.update(initial)
     result.update(_cost_assumptions(path_row, assignment, state, plans, initial))
     result.update(_path_normalization(path_row, initial))
@@ -160,7 +177,11 @@ def _build_row(path_row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _proposal_geometry(
-    row: dict[str, Any], proposal: dict[str, Any] | None, position: dict[str, Any] | None
+    row: dict[str, Any],
+    proposal: dict[str, Any] | None,
+    position: dict[str, Any] | None,
+    *,
+    db: Any = None,
 ) -> dict[str, Any]:
     unavailable = {
         "proposal_geometry_status": "unavailable",
@@ -180,7 +201,7 @@ def _proposal_geometry(
     )
     if not identity:
         return {**unavailable, "proposal_geometry_reason": "proposal_position_identity_mismatch"}
-    if not _validate_proposal_chain(proposal):
+    if not _validate_proposal_chain(proposal, db=db):
         return {
             **unavailable,
             "proposal_geometry_reason": "proposal_chain_identity_or_hash_invalid",
@@ -216,13 +237,13 @@ def _proposal_geometry(
     }
 
 
-def _validate_proposal_chain(proposal: dict[str, Any]) -> bool:
-    """Validate this exact snapshot and its immutable global chain prefix read-only."""
+def _validate_proposal_chain(proposal: dict[str, Any], db: Any = None) -> bool:
+    """Validate the target snapshot and its post-TaG hashed prefix."""
     proposal_id = str(proposal.get("id") or "")
-    if not proposal_id:
+    if not proposal_id or not isinstance(proposal.get("commit_hash"), str):
         return False
     try:
-        rows = repo.get_db().execute(
+        rows = (db or repo.get_db()).execute(
             "SELECT rowid AS _chain_rowid, * FROM trade_proposals "
             "WHERE rowid <= (SELECT rowid FROM trade_proposals WHERE id=?) "
             "ORDER BY rowid ASC",
@@ -234,23 +255,36 @@ def _validate_proposal_chain(proposal: dict[str, Any]) -> bool:
     if not chain or chain[-1].get("id") != proposal_id:
         return False
     previous_hash: str | None = None
+    started = False
     for stored in chain:
+        parent_hash = stored.get("parent_hash")
+        commit_hash = stored.get("commit_hash")
+        if not started and parent_hash is None and commit_hash is None:
+            continue
+        if (
+            not isinstance(commit_hash, str)
+            or not commit_hash
+            or (parent_hash is not None and not isinstance(parent_hash, str))
+            or parent_hash != previous_hash
+        ):
+            return False
+        started = True
         try:
             model = TradeProposal.model_validate(stored)
             payload = model.model_dump(exclude={"status", "commit_hash"})
             expected_hash = sha256_json(payload)[:16]
         except Exception:
             return False
-        if stored.get("parent_hash") != previous_hash or stored.get("commit_hash") != expected_hash:
+        if commit_hash != expected_hash:
             return False
         previous_hash = expected_hash
+    if not started:
+        return False
     try:
         supplied = TradeProposal.model_validate(proposal).model_dump()
         persisted = TradeProposal.model_validate(chain[-1]).model_dump()
     except Exception:
         return False
-    # Status is mutable, but this exact read should still agree with its stored
-    # snapshot; all immutable fields, including parent_hash, are hash-covered.
     return supplied == persisted
 
 
@@ -328,6 +362,8 @@ def _initial_risk(
     proposal: dict[str, Any] | None,
     plans: list[dict[str, Any]] | None,
     proposal_geometry: dict[str, Any],
+    *,
+    db: Any = None,
 ) -> dict[str, Any]:
     base = {"initial_risk_status": "unavailable", "initial_risk_reason": "initial_plan_unavailable"}
     if proposal_geometry.get("proposal_geometry_status") != "available":
@@ -345,11 +381,11 @@ def _initial_risk(
     effective = _utc(first.get("effective_at"))
     if opened is None or effective != opened:
         return {**base, "initial_risk_reason": "initial_plan_not_effective_at_entry"}
-    state = _safe_read(repo.get_position_protection_state, position.get("id"))
+    state = _safe_read(repo.get_position_protection_state, position.get("id"), db=db, table="position_protection_state", id_column="position_id")
     if state is None or _utc(state.get("activated_at")) != opened:
         return {**base, "initial_risk_reason": "forward_adopted_or_unlinked_initial_plan"}
-    order = _safe_read(repo.get_order, position.get("order_id"))
-    fill = _entry_fill(position)
+    order = _safe_read(repo.get_order, position.get("order_id"), db=db, table="orders")
+    fill = _entry_fill(position, db=db)
     entry = _positive(position.get("entry_price"))
     quantity = _positive(position.get("quantity"))
     stop = _positive(first.get("stop_price"))
@@ -364,6 +400,7 @@ def _initial_risk(
         or order.get("close_reason") not in (None, "")
         or order.get("symbol") != position.get("symbol")
         or _direction(order.get("direction")) != direction
+        or order.get("market_type") != proposal.get("market_type")
         or None in (entry, quantity, stop, target)
         or direction is None
     ):
@@ -452,6 +489,8 @@ def _cost_assumptions(
         or not _same(rule.get("slippage_bps"), slippage_bps)
     ):
         return {**base, "cost_assumptions_reason": "cost_assignment_rule_invalid"}
+    if physical_market == "perp":
+        return {**base, "cost_assumptions_reason": "perp_barrier_funding_unverified"}
     assert entry is not None and quantity is not None and entry_fee is not None
     assert fee_rate is not None and slippage_bps is not None
     if not _same(assignment.get("entry_price"), entry) or not _same(assignment.get("quantity"), quantity):
@@ -714,11 +753,11 @@ def _human_section(label: str, row: dict[str, Any], prefix: str, fields: tuple[t
     return f"{label}: {values}"
 
 
-def _read_plans(position_id: str) -> list[dict[str, Any]] | None:
+def _read_plans(position_id: str, *, db: Any = None) -> list[dict[str, Any]] | None:
     if not position_id:
         return None
     try:
-        rows = repo.get_db().execute(
+        rows = (db or repo.get_db()).execute(
             "SELECT * FROM position_exit_plan_versions WHERE position_id=? ORDER BY version ASC",
             (position_id,),
         ).fetchall()
@@ -727,12 +766,12 @@ def _read_plans(position_id: str) -> list[dict[str, Any]] | None:
         return None
 
 
-def _entry_fill(position: dict[str, Any]) -> dict[str, Any] | None:
+def _entry_fill(position: dict[str, Any], *, db: Any = None) -> dict[str, Any] | None:
     order_id = position.get("order_id")
     if not order_id:
         return None
     try:
-        rows = repo.get_db().execute(
+        rows = (db or repo.get_db()).execute(
             "SELECT * FROM fills WHERE order_id=? ORDER BY rowid ASC", (order_id,)
         ).fetchall()
     except Exception:
@@ -778,11 +817,26 @@ def _hashed_json(raw: Any, expected_hash: Any) -> Any:
         return None
 
 
-def _safe_read(fn: Any, identity: Any) -> dict[str, Any] | None:
+def _safe_read(
+    fn: Any,
+    identity: Any,
+    *,
+    db: Any = None,
+    table: str | None = None,
+    id_column: str = "id",
+) -> dict[str, Any] | None:
     if identity is None:
         return None
     try:
-        value = fn(identity)
+        if db is None:
+            value = fn(identity)
+        elif table is not None:
+            row = db.execute(
+                f"SELECT * FROM {table} WHERE {id_column}=?", (identity,)
+            ).fetchone()
+            value = dict(row) if row is not None else None
+        else:
+            return None
     except Exception:
         return None
     return value if isinstance(value, dict) else None

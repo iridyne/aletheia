@@ -81,6 +81,7 @@ def _evidence(monkeypatch, **row_overrides):
     order = {
         "id": "order-1", "position_id": "position-1", "proposal_id": "proposal-1",
         "close_reason": None, "symbol": "BTC/USDT", "direction": "long",
+        "market_type": "spot",
     }
     fill = {"order_id": "order-1", "fill_price": 100.0, "fill_quantity": 2.0, "filled_at": opened}
     row = {
@@ -98,10 +99,10 @@ def _evidence(monkeypatch, **row_overrides):
     monkeypatch.setattr(geometry.repo, "get_position_protection_state", lambda _id: state)
     monkeypatch.setattr(geometry.repo, "get_position_protection_trigger", lambda _id: None)
     monkeypatch.setattr(geometry.repo, "get_exit_breakeven_shadow_assignment", lambda _id: assignment)
-    monkeypatch.setattr(geometry, "_read_plans", lambda _id: [plan1])
-    monkeypatch.setattr(geometry, "_entry_fill", lambda _position: fill)
+    monkeypatch.setattr(geometry, "_read_plans", lambda _id, **_kwargs: [plan1])
+    monkeypatch.setattr(geometry, "_entry_fill", lambda _position, **_kwargs: fill)
     # Unit fixtures isolate geometry from the file-backed global Proposal chain.
-    monkeypatch.setattr(geometry, "_validate_proposal_chain", lambda _proposal: True, raising=False)
+    monkeypatch.setattr(geometry, "_validate_proposal_chain", lambda _proposal, **_kwargs: True, raising=False)
     return row, proposal_dict, position, plan1, assignment, state
 
 
@@ -174,7 +175,7 @@ def test_lists_only_actual_trailing_revisions_and_validates_dual_hit(monkeypatch
               "stop_price": 97.0, "plan_json": payload2,
               "plan_hash": hashlib.sha256(payload2.encode()).hexdigest(), "provenance": "trailing_v1"}
     position["exit_plan_effective_at"] = effective2
-    monkeypatch.setattr(geometry, "_read_plans", lambda _id: [first, second])
+    monkeypatch.setattr(geometry, "_read_plans", lambda _id, **_kwargs: [first, second])
     bar_open_ms = int((datetime.fromisoformat(first["effective_at"]) + timedelta(minutes=5)).timestamp() * 1000)
     bar = {
         "venue": "bitget", "symbol": "BTC/USDT", "market_type": "spot", "timeframe": "1m",
@@ -254,11 +255,12 @@ def test_builder_filters_before_display_limit_beyond_500_and_exposes_cohort(monk
         "symbol": "BTC/USDT", "outcome_eligible": 1,
         "outcome_exclusion_reason": "eligible", "outcome_semantics_version": "oi-v1",
     })
-    monkeypatch.setattr(
-        geometry, "build_trade_path_rows",
-        lambda **kwargs: rows[:kwargs["limit"]],
-    )
-    monkeypatch.setattr(geometry, "_build_row", lambda row: dict(row))
+    captured = {}
+    def fake_paths(**kwargs):
+        captured.update(kwargs)
+        return rows[:kwargs["limit"]], False
+    monkeypatch.setattr(geometry, "build_trade_path_rows", fake_paths)
+    monkeypatch.setattr(geometry, "_build_row", lambda row, **_kwargs: dict(row))
 
     report = geometry.build_entry_exit_geometry_audit(hours=24, limit=1, symbol="BTC/USDT")
 
@@ -275,6 +277,9 @@ def test_builder_filters_before_display_limit_beyond_500_and_exposes_cohort(monk
         "symbol_mismatch": 501,
         "source_truncated": False,
     }
+    assert captured["symbol"] == "BTC/USDT"
+    assert captured["closed_after"]
+    assert captured["include_source_status"] is True
 
 
 def test_short_close_costs_match_frozen_paper_fill_formula():
@@ -298,7 +303,7 @@ def test_short_close_costs_match_frozen_paper_fill_formula():
 
 def test_proposal_chain_failure_gates_geometry_initial_risk_and_costs(monkeypatch):
     row, *_ = _evidence(monkeypatch)
-    monkeypatch.setattr(geometry, "_validate_proposal_chain", lambda _proposal: False)
+    monkeypatch.setattr(geometry, "_validate_proposal_chain", lambda _proposal, **_kwargs: False)
 
     result = geometry._build_row(row)
 
@@ -328,7 +333,7 @@ def test_later_malformed_revision_does_not_invalidate_v1_metrics(monkeypatch):
         "plan_hash": "0" * 64,
     }
     position["exit_plan_effective_at"] = effective2
-    monkeypatch.setattr(geometry, "_read_plans", lambda _id: [first, second])
+    monkeypatch.setattr(geometry, "_read_plans", lambda _id, **_kwargs: [first, second])
 
     result = geometry._build_row(row)
 
@@ -352,7 +357,7 @@ def test_rejects_retrospectively_created_later_revision(monkeypatch):
         "plan_hash": repo.hash_position_exit_plan_json(payload2),
     }
     position["exit_plan_effective_at"] = effective2
-    monkeypatch.setattr(geometry, "_read_plans", lambda _id: [first, second])
+    monkeypatch.setattr(geometry, "_read_plans", lambda _id, **_kwargs: [first, second])
 
     result = geometry._build_row(row)
 
@@ -385,7 +390,7 @@ def test_file_backed_chain_validation_and_audit_are_read_only(tmp_path, monkeypa
     conn.execute("UPDATE trade_proposals SET quantity=2.0 WHERE id=?", (child.id,))
     tampered = repo.get_trade_proposal(child.id)
     before_changes = conn.total_changes
-    monkeypatch.setattr(geometry, "build_trade_path_rows", lambda **_kwargs: [])
+    monkeypatch.setattr(geometry, "build_trade_path_rows", lambda **_kwargs: ([], False))
 
     assert geometry._validate_proposal_chain(tampered) is False
     report = geometry.build_entry_exit_geometry_audit(hours=24, limit=10)
@@ -394,6 +399,58 @@ def test_file_backed_chain_validation_and_audit_are_read_only(tmp_path, monkeypa
     assert conn.total_changes == before_changes
     sq._db_conn = None
     conn.close()
+
+def test_chain_skips_only_leading_legacy_rows_and_requires_hashed_target(tmp_path, monkeypatch):
+    import sqlite3
+
+    legacy = TradeProposal(id="legacy", symbol="OLD/USDT", market_type="spot", direction="long", quantity=1.0)
+    target = TradeProposal(id="target", symbol="BTC/USDT", market_type="spot", direction="long", quantity=1.0)
+    target.commit_hash = repo._compute_proposal_hash(target)
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    db.execute("CREATE TABLE trade_proposals AS SELECT * FROM json_each('{}') WHERE 0")
+    columns = list(target.model_dump())
+    db.execute("DROP TABLE trade_proposals")
+    db.execute("CREATE TABLE trade_proposals (" + ",".join(f"{name}" + (" REAL" if name in {"quantity","price","stop_price","take_profit","risk_reward"} else " TEXT") for name in columns) + ")")
+    def insert(model):
+        data = model.model_dump()
+        db.execute("INSERT INTO trade_proposals (" + ",".join(data) + ") VALUES (" + ",".join("?" for _ in data) + ")", tuple(data.values()))
+    insert(legacy)
+    insert(target)
+    assert geometry._validate_proposal_chain(target.model_dump(), db=db) is True
+    db.execute("INSERT INTO trade_proposals SELECT * FROM trade_proposals WHERE id='legacy'")
+    db.execute("UPDATE trade_proposals SET id='gap' WHERE rowid=(SELECT max(rowid) FROM trade_proposals)")
+    later = TradeProposal(id="later", symbol="ETH/USDT", market_type="spot", direction="long", quantity=1.0, parent_hash=target.commit_hash)
+    later.commit_hash = repo._compute_proposal_hash(later)
+    insert(later)
+    assert geometry._validate_proposal_chain(later.model_dump(), db=db) is False
+    unhashed = target.model_copy(update={"commit_hash": None}).model_dump()
+    assert geometry._validate_proposal_chain(unhashed, db=db) is False
+def test_unknown_source_truncation_and_unavailable_absent_database(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    sq.reset_db()
+    report = geometry.build_entry_exit_geometry_audit()
+    assert report["status"] == "unavailable"
+    assert report["cohort_exclusions"]["source_truncated"] is None
+    assert not (tmp_path / "app.db").exists()
+    assert not (tmp_path / "app.write.lock").exists()
+
+
+def test_order_market_and_perp_funding_fail_closed(monkeypatch):
+    row, proposal, position, _plan, assignment, state = _evidence(monkeypatch)
+    order = {"id": "order-1", "position_id": "position-1", "proposal_id": "proposal-1", "close_reason": None, "symbol": "BTC/USDT", "direction": "long", "market_type": "perp"}
+    monkeypatch.setattr(geometry.repo, "get_order", lambda _id: order)
+    assert geometry._build_row(row)["initial_risk_reason"] == "entry_fill_or_initial_plan_malformed"
+    proposal["market_type"] = position["market_type"] = row["market_type"] = "usdt_futures"
+    order["market_type"] = "usdt_futures"
+    assignment["market_type"] = state["market_type"] = "perp"
+    result = geometry._build_row(row)
+    assert result["initial_risk_status"] == "available"
+    assert result["cost_assumptions_reason"] == "perp_barrier_funding_unverified"
+    assert result["net_target_gain"] is None
 
 
 def test_cli_routes_entry_exit_and_rejects_opportunity_filters(monkeypatch):
