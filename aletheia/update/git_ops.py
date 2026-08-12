@@ -97,13 +97,34 @@ def changed_files(old: str, new: str) -> list[str]:
     return [line.strip() for line in r.stdout.splitlines() if line.strip()]
 
 
+def fetch_head() -> str:
+    """Return the SHA recorded in FETCH_HEAD after the most recent fetch."""
+    r = _git("rev-parse", "FETCH_HEAD")
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
 def pull(branch: str = "master") -> dict:
-    """Fast-forward to the exact fetched origin HEAD, rejecting local-only commits."""
+    """Fast-forward to the exact fetched SHA, not the mutable remote ref.
+
+    Invariant: the SHA captured from FETCH_HEAD immediately after the fetch is
+    the only SHA referenced by the ahead-count check, the merge target, and the
+    post-merge equality guard.  A concurrent fetch that advances origin/<branch>
+    between any two of those steps cannot cause HEAD to land on an unvalidated
+    commit, because git merge --ff-only FETCH_HEAD is resolved once at the time
+    of the call against the FETCH_HEAD written by *this* fetch, not against the
+    mutable origin/<branch> pointer.
+    """
     if not git_available():
         return {"ok": False, "reason": "git_unavailable"}
     r = _git("fetch", "origin", branch)
     if r.returncode != 0:
         return {"ok": False, "reason": "fetch_failed", "stderr": r.stderr.strip()}
+
+    # Capture the immutable SHA from FETCH_HEAD immediately after the fetch so
+    # all subsequent checks and the merge target all reference the same commit.
+    target = fetch_head()
+    if not target:
+        return {"ok": False, "reason": "remote_state_unavailable"}
 
     ahead = ahead_count(branch)
     if ahead < 0:
@@ -111,10 +132,8 @@ def pull(branch: str = "master") -> dict:
     if ahead:
         return {"ok": False, "reason": "local_ahead", "ahead_count": ahead}
 
-    target = remote_commit(branch)
-    if not target:
-        return {"ok": False, "reason": "remote_state_unavailable"}
-    r = _git("merge", "--ff-only", f"origin/{branch}")
+    # Merge to the exact SHA we validated, not the mutable origin/<branch>.
+    r = _git("merge", "--ff-only", target)
     if r.returncode != 0:
         return {"ok": False, "reason": "ff_only_rejected", "stderr": r.stderr.strip()}
     current = current_commit()

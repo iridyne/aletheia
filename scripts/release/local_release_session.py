@@ -266,6 +266,39 @@ def _cli_output(command: list[str], *, env: dict[str, str]) -> str:
     return completed.stdout.strip()
 
 
+_OLD_CLI_HINT = "update apply"  # emitted by pre-#909 packaged CLI on bare `update`
+
+
+def _cli_trigger_update(launcher: Path, *, env: dict[str, str]) -> None:
+    """Invoke the installed CLI's update command.
+
+    Post-#910 CLIs accept ``aletheia update`` (bare).  Pre-#909 packaged CLIs
+    reject bare ``update`` and print a hint to run ``update apply --yes``.
+    On the first bootstrap upgrade from an old installed version, detect that
+    hint and retry with the legacy grammar so the session succeeds.
+    """
+    completed = subprocess.run(
+        [str(launcher), "update"],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode == 0:
+        return
+    stderr = completed.stderr.strip()
+    stdout = completed.stdout.strip()
+    combined = stderr + stdout
+    if _OLD_CLI_HINT in combined:
+        # Installed CLI is pre-#909: it requires the explicit apply subcommand.
+        # Retry with the old grammar so the first cross-version upgrade can complete.
+        _cli_output([str(launcher), "update", "apply", "--yes"], env=env)
+        return
+    detail = (stderr or stdout)
+    raise LocalReleaseSessionError(f"installed CLI failed ({completed.returncode}): {detail}")
+
+
 def _read_update_state(cli: Path, *, env: dict[str, str]) -> dict[str, Any]:
     output = _cli_output([str(cli), "update", "status", "--json"], env=env)
     try:
@@ -295,7 +328,7 @@ def apply_via_installed_cli(
         raise LocalReleaseSessionError(f"installed CLI is not a file: {launcher}")
     env = dict(os.environ, ALETHEIA_UPDATE_FEED_URL=feed_url)
     _cli_output([str(launcher), "update", "check"], env=env)
-    _cli_output([str(launcher), "update"], env=env)
+    _cli_trigger_update(launcher, env=env)
     deadline = time.monotonic() + timeout_sec
     while time.monotonic() < deadline:
         state = _read_update_state(launcher, env=env)

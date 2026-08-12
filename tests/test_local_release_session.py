@@ -132,13 +132,19 @@ def test_local_session_uses_temporary_feed_for_check_update_and_terminal_status(
     launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR)
     calls: list[tuple[list[str], dict[str, str]]] = []
-    responses = iter(["available", "staged", json.dumps({"status": "success", "phase": "committed"})])
+    responses = iter(["available", json.dumps({"status": "success", "phase": "committed"})])
 
     def fake_cli(command, *, env):
         calls.append((command, env))
         return next(responses)
 
+    trigger_calls: list[dict] = []
+
+    def fake_trigger(lnch, *, env):
+        trigger_calls.append({"launcher": lnch, "env": env})
+
     monkeypatch.setattr(session, "_cli_output", fake_cli)
+    monkeypatch.setattr(session, "_cli_trigger_update", fake_trigger)
 
     state = session.apply_via_installed_cli(
         cli=launcher,
@@ -147,12 +153,47 @@ def test_local_session_uses_temporary_feed_for_check_update_and_terminal_status(
     )
 
     assert state == {"status": "success", "phase": "committed"}
+    # _cli_output handles check and status polling; _cli_trigger_update handles apply.
     assert [call[0][1:] for call in calls] == [
         ["update", "check"],
-        ["update"],
         ["update", "status", "--json"],
     ]
-    assert all(call[1]["ALETHEIA_UPDATE_FEED_URL"].endswith("update-feed.json") for call in calls)
+    assert len(trigger_calls) == 1
+    assert trigger_calls[0]["env"]["ALETHEIA_UPDATE_FEED_URL"].endswith("update-feed.json")
+
+
+def test_local_session_version_boundary_falls_back_to_apply_on_old_cli(monkeypatch, tmp_path):
+    """First upgrade from a pre-#909 installed runtime: bare 'update' is rejected
+    with the old hint; the driver must fall back to 'update apply --yes'.
+    """
+    session = _session_module()
+    launcher = tmp_path / "aletheia"
+    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR)
+
+    apply_calls: list[list[str]] = []
+
+    def fake_subprocess_run(command, **_kwargs):
+        # Old packaged CLI rejects bare `update` with the legacy hint.
+        if command[-1] == "update":
+            return subprocess.CompletedProcess(
+                command, returncode=1,
+                stdout="",
+                stderr="Direct Git HEAD updates are unavailable in packaged mode. "
+                       "Run `aletheia update apply` for the signed-release workflow.\n",
+            )
+        pytest.fail(f"unexpected subprocess call in version_boundary test: {command}")
+
+    def fake_cli_output(command, *, env):
+        apply_calls.append(list(command))
+        return "staged"
+
+    monkeypatch.setattr(session.subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr(session, "_cli_output", fake_cli_output)
+
+    session._cli_trigger_update(launcher, env={})  # noqa: SLF001 - testing internal boundary
+
+    assert apply_calls == [[str(launcher), "update", "apply", "--yes"]]
 
 
 def test_local_release_id_rejects_path_escape(tmp_path):
@@ -179,8 +220,9 @@ def test_local_session_treats_an_equivalent_payload_as_a_successful_noop(monkeyp
     launcher = tmp_path / "aletheia"
     launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR)
-    responses = iter(["already current", "already current", json.dumps({"status": "up_to_date"})])
+    responses = iter(["already current", json.dumps({"status": "up_to_date"})])
     monkeypatch.setattr(session, "_cli_output", lambda *_args, **_kwargs: next(responses))
+    monkeypatch.setattr(session, "_cli_trigger_update", lambda *_args, **_kwargs: None)
 
     state = session.apply_via_installed_cli(
         cli=launcher,
