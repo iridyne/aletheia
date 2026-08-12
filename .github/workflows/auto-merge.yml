@@ -108,6 +108,7 @@ jobs:
                 operation: 'enable',
                 pull_request_number: pullRequest.number,
                 expected_head_sha: run.head_sha,
+                release_after_merge: true,
               },
             });
 
@@ -128,6 +129,7 @@ jobs:
       OPERATION: ${{ github.event.client_payload.operation }}
       PR_NUMBER: ${{ github.event.client_payload.pull_request_number }}
       EXPECTED_HEAD_SHA: ${{ github.event.client_payload.expected_head_sha }}
+      RELEASE_AFTER_MERGE: ${{ github.event.client_payload.release_after_merge || 'false' }}
     steps:
       - name: Apply pull request auto-merge state
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
@@ -137,6 +139,7 @@ jobs:
             const operation = process.env.OPERATION;
             const pullRequestNumber = Number.parseInt(process.env.PR_NUMBER, 10);
             const expectedHeadSha = process.env.EXPECTED_HEAD_SHA;
+            const releaseAfterMerge = process.env.RELEASE_AFTER_MERGE === 'true';
             if (!['enable', 'disable'].includes(operation)) {
               throw new Error(`unsupported auto-merge operation: ${operation}`);
             }
@@ -157,6 +160,9 @@ jobs:
                   headRefOid
                   mergeStateStatus
                   autoMergeRequest { enabledAt }
+                  labels(first: 20) { nodes { name } }
+                  mergeCommit { oid }
+                  mergedBy { login }
                 }
               }
             }`;
@@ -166,6 +172,21 @@ jobs:
                 number: pullRequestNumber,
               });
               return result.repository.pullRequest;
+            };
+            const dispatchRelease = async (pullRequest, mergeCommitSha) => {
+              if (!releaseAfterMerge) return;
+              if (pullRequest.mergedBy?.login !== 'github-actions[bot]') {
+                core.info('non-bot merge is handled by the closed pull-request event');
+                return;
+              }
+              await github.rest.repos.createDispatchEvent({
+                ...context.repo,
+                event_type: 'release_please',
+                client_payload: {
+                  merged_pull_request: pullRequest.number,
+                  merge_commit_sha: mergeCommitSha,
+                },
+              });
             };
             if (operation === 'disable') {
               const pullRequest = await fetchPullRequest();
@@ -197,7 +218,7 @@ jobs:
                 return;
               }
               if (pullRequest.state === 'MERGED') {
-                core.info('pull request merged; the post-CI or closed-event job owns release dispatch');
+                await dispatchRelease(pullRequest, pullRequest.mergeCommit?.oid);
                 return;
               }
               if (pullRequest.state !== 'OPEN') {
@@ -215,8 +236,11 @@ jobs:
                 );
                 return;
               }
-              if (pullRequest.autoMergeRequest) {
-                core.info('auto-merge is enabled; GitHub will merge when required checks pass');
+              if (
+                releaseAfterMerge &&
+                pullRequest.labels.nodes.some(({name}) => name === 'do-not-auto-merge')
+              ) {
+                core.info('exact release candidate verification still holds this pull request');
                 return;
               }
               if (['UNKNOWN', 'UNSTABLE'].includes(pullRequest.mergeStateStatus)) {
@@ -244,6 +268,14 @@ jobs:
                     `GitHub declined protected merge: ${mergeResult.data.message || 'unknown reason'}`,
                   );
                 }
+                await dispatchRelease(
+                  {...pullRequest, mergedBy: {login: 'github-actions[bot]'}},
+                  mergeResult.data.sha,
+                );
+                return;
+              }
+              if (pullRequest.autoMergeRequest) {
+                core.info('auto-merge is enabled; GitHub will merge when required checks pass');
                 return;
               }
               if (!autoMergeStates.has(pullRequest.mergeStateStatus)) {
@@ -306,17 +338,18 @@ jobs:
             });
 
   release-after-ci:
-    name: Dispatch bot auto-merge release after CI
+    name: Dispatch ordinary bot auto-merge release after CI
     if: >-
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'pull_request'
+      github.event.workflow_run.event == 'pull_request' &&
+      !startsWith(github.event.workflow_run.head_branch, 'release-please--branches--master')
     permissions:
       contents: write
       pull-requests: read
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     steps:
-      - name: Dispatch Release Please for bot auto-merge
+      - name: Dispatch Release Please for ordinary bot auto-merge
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
         with:
           retries: 3
@@ -357,4 +390,4 @@ jobs:
               }
               await new Promise((resolve) => setTimeout(resolve, 5000));
             }
-            throw new Error('bot auto-merge did not complete within the post-CI handoff window');
+            throw new Error('ordinary bot auto-merge did not complete within the post-CI handoff window');

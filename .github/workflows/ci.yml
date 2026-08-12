@@ -266,3 +266,29 @@ jobs:
                 head_sha: context.sha,
               },
             });
+
+  release-pr-ci:
+    name: Hand off verified release pull request
+    needs: [review, tests, runtime-state-tests]
+    if: >-
+      github.event_name == 'pull_request' &&
+      startsWith(github.head_ref, 'release-please--branches--master')
+    permissions:
+      contents: write
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    steps:
+      - name: Dispatch verified release pull request
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
+        with:
+          retries: 3
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              ...context.repo,
+              event_type: 'auto_merge_update',
+              client_payload: {
+                operation: 'enable',
+                pull_request_number: context.payload.pull_request.number,
+                expected_head_sha: context.payload.pull_request.head.sha,
+                release_after_merge: true,
+              },
+            });
