@@ -41,6 +41,7 @@ _ESSENTIAL_JOBS: set[str] = {
     "portfolio_snapshot",
     "price_feed",
     "position_manager",
+    "position_path_observer",
     "ohlcv_nightly_backfill",
     "ohlcv_active_backfill",
     "exchange_sync",
@@ -99,6 +100,7 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "data_collector_context": 60.0,
     "exchange_sync": 60.0,
     "portfolio_snapshot": 45.0,
+    "position_path_observer": 90.0,
     "price_feed": 45.0,
     "daily_summary": 60.0,
     "ohlcv_nightly_backfill": 3600.0,
@@ -1273,6 +1275,15 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=10),
         executor="io",
     )
+    _scheduler.add_job(
+        _guarded("position_path_observer", _run_position_path_observer),
+        "interval",
+        minutes=5,
+        id="position_path_observer",
+        misfire_grace_time=120,
+        next_run_time=datetime.now() + timedelta(seconds=40),
+        executor="io",
+    )
     # 3-min cadence gives momentum (30min TTL) ~10 review chances, mean_reversion
     # (60min TTL) ~20. Was 5-min (6 / 12), which combined with the change-suppression
     # TTL bug (fixed in repositories.refresh_active_snapshot_ttls) starved fast
@@ -2361,6 +2372,42 @@ def _run_portfolio_snapshot():
         logger.warning("portfolio_snapshot job failed: %s", e)
         _record_job_failure("portfolio_snapshot", str(e))
 
+
+
+def _run_position_path_observer():
+    """Persist observational five-minute paths without changing trading state."""
+
+    try:
+        from aletheia.portfolio.position_path_observer import (
+            run_open_position_path_observer,
+        )
+
+        summary = _run_sync_with_timeout(
+            "position_path_observer", run_open_position_path_observer
+        )
+        reported_errors = (
+            list(summary.get("errors") or []) if isinstance(summary, dict) else []
+        )
+        if reported_errors:
+            logger.warning(
+                "position_path_observer completed with %d reported errors: %s",
+                len(reported_errors),
+                reported_errors[:20],
+            )
+            _record_job_failure(
+                "position_path_observer", "position_path_observer_reported_errors"
+            )
+        else:
+            _record_job_success("position_path_observer")
+    except TimeoutError:
+        logger.warning(
+            "position_path_observer job timed out after %.0fs",
+            _ASYNC_JOB_TIMEOUT_SEC["position_path_observer"],
+        )
+        _record_job_failure("position_path_observer", "timed out")
+    except Exception as exc:
+        logger.warning("position_path_observer job failed: %s", exc)
+        _record_job_failure("position_path_observer", str(exc))
 
 def _run_paper_trader():
     cfg = load_config()

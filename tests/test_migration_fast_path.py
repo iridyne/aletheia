@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 26)
+        f"aletheia-sqlite-v{version}" for version in range(2, 27)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v25"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v26"
     connection.close()
 
 
@@ -593,8 +593,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260812_0024_ufc_canonical_identity_v25",
-        "aletheia-sqlite-v25",
+        "20260813_0025_position_path_observations_v26",
+        "aletheia-sqlite-v26",
     )
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "
@@ -1236,4 +1236,121 @@ def test_migration_ledger_rejects_an_applied_step_after_a_gap(tmp_path, monkeypa
 
     with pytest.raises(migrations.MigrationStateError, match="contiguous prefix"):
         migrations.apply_migrations()
+    connection.close()
+
+
+def test_position_path_observations_v26_distinguishes_available_evidence_contracts():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE positions (id TEXT PRIMARY KEY)")
+    connection.execute("INSERT INTO positions VALUES ('position-1')")
+    migrations._apply_position_path_observations_v26(connection)
+
+    table_info = {
+        row[1]: row[5]
+        for row in connection.execute("PRAGMA table_info(position_path_observations)")
+    }
+    assert table_info["position_id"] == 1
+    assert table_info["bucket_open_ms"] == 2
+    triggers = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger'"
+        )
+    }
+    assert {
+        "trg_position_path_observations_no_update",
+        "trg_position_path_observations_no_delete",
+    } <= triggers
+
+    columns = (
+        "position_id, bucket_open_ms, observed_at, symbol, market_type, direction, "
+        "entry_price, quantity, funding_source, exit_plan_version, evidence_status, "
+        "evidence_reason, capture_mode"
+    )
+    connection.execute(
+        f"INSERT INTO position_path_observations ({columns}) VALUES "
+        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "position-1",
+            0,
+            "2026-08-13T00:00:00+00:00",
+            "BTC/USDT",
+            None,
+            None,
+            None,
+            None,
+            "unavailable",
+            0,
+            "unavailable",
+            "position fields unavailable",
+            "post_close_final_snapshot",
+        ),
+    )
+
+    available_columns = (
+        f"{columns}, venue, bar_open, bar_high, bar_low, bar_close, bar_volume, "
+        "bar_provider"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            f"INSERT INTO position_path_observations ({available_columns}) VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "position-1",
+                300000,
+                "2026-08-13T00:05:00+00:00",
+                "BTC/USDT",
+                None,
+                None,
+                None,
+                None,
+                "exchange",
+                0,
+                "available",
+                "complete_exact_5m_bar",
+                "open_snapshot",
+                "binance",
+                100.0,
+                101.0,
+                99.0,
+                100.5,
+                1.0,
+                "binance",
+            ),
+        )
+    connection.execute(
+        f"INSERT INTO position_path_observations ({available_columns}) VALUES "
+        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "position-1",
+            300000,
+            "2026-08-13T00:05:00+00:00",
+            "BTC/USDT",
+            "spot",
+            "long",
+            100.0,
+            1.0,
+            "exchange",
+            0,
+            "available",
+            "complete_exact_5m_bar",
+            "open_snapshot",
+            "binance",
+            100.0,
+            101.0,
+            99.0,
+            100.5,
+            1.0,
+            "binance",
+        ),
+    )
+    assert [
+        row[0]
+        for row in connection.execute(
+            "SELECT capture_mode FROM position_path_observations "
+            "ORDER BY bucket_open_ms"
+        )
+    ] == ["post_close_final_snapshot", "open_snapshot"]
     connection.close()

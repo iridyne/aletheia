@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v25"
+SCHEMA_VERSION = "aletheia-sqlite-v26"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3501,6 +3501,90 @@ _UFC_CANONICAL_IDENTITY_CHECKSUM = hashlib.sha256(
     (repr(_UFC_CANONICAL_IDENTITY) + "\nmaterialize_active_paper_identity_v1").encode(
         "utf-8"
     )
+).hexdigest()
+
+_POSITION_PATH_OBSERVATIONS_SQL = """
+CREATE TABLE IF NOT EXISTS position_path_observations (
+    position_id TEXT NOT NULL REFERENCES positions(id),
+    bucket_open_ms INTEGER NOT NULL CHECK (
+        bucket_open_ms >= 0 AND bucket_open_ms % 300000 = 0
+    ),
+    observed_at TEXT NOT NULL CHECK (julianday(observed_at) IS NOT NULL),
+    venue TEXT,
+    symbol TEXT NOT NULL,
+    market_type TEXT,
+    direction TEXT,
+    entry_price REAL,
+    quantity REAL,
+    bar_open REAL CHECK (bar_open > 0),
+    bar_high REAL CHECK (bar_high > 0),
+    bar_low REAL CHECK (bar_low > 0),
+    bar_close REAL CHECK (bar_close > 0),
+    bar_volume REAL CHECK (bar_volume >= 0),
+    bar_provider TEXT,
+    mark_price REAL CHECK (mark_price > 0),
+    unrealized_pnl REAL,
+    entry_fee REAL,
+    funding_cost REAL,
+    funding_source TEXT NOT NULL,
+    stop_price REAL,
+    take_profit_price REAL,
+    exit_plan_version INTEGER NOT NULL CHECK (exit_plan_version >= 0),
+    evidence_status TEXT NOT NULL CHECK (
+        evidence_status IN ('available', 'unavailable')
+    ),
+    evidence_reason TEXT NOT NULL,
+    producer_commit TEXT,
+    runtime_session_id TEXT,
+    capture_mode TEXT NOT NULL CHECK (
+        capture_mode IN ('open_snapshot', 'post_close_final_snapshot')
+    ),
+    PRIMARY KEY (position_id, bucket_open_ms),
+    CHECK (
+        (evidence_status = 'available'
+         AND market_type IS NOT NULL
+         AND market_type IN ('spot', 'perp')
+         AND direction IS NOT NULL
+         AND direction IN ('long', 'short')
+         AND entry_price IS NOT NULL
+         AND entry_price > 0
+         AND quantity IS NOT NULL
+         AND quantity > 0
+         AND venue IS NOT NULL
+         AND bar_open IS NOT NULL
+         AND bar_high IS NOT NULL
+         AND bar_low IS NOT NULL
+         AND bar_close IS NOT NULL
+         AND bar_volume IS NOT NULL
+         AND bar_provider IS NOT NULL
+         AND evidence_reason = 'complete_exact_5m_bar')
+        OR
+        (evidence_status = 'unavailable'
+         AND bar_open IS NULL
+         AND bar_high IS NULL
+         AND bar_low IS NULL
+         AND bar_close IS NULL
+         AND bar_volume IS NULL
+         AND bar_provider IS NULL
+         AND evidence_reason != '')
+    )
+);
+CREATE TRIGGER IF NOT EXISTS trg_position_path_observations_no_update
+BEFORE UPDATE ON position_path_observations
+BEGIN
+    SELECT RAISE(ABORT, 'Position path observations are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_position_path_observations_no_delete
+BEFORE DELETE ON position_path_observations
+BEGIN
+    SELECT RAISE(ABORT, 'Position path observations are append-only');
+END;
+"""
+_POSITION_PATH_OBSERVATIONS_CHECKSUM = hashlib.sha256(
+    (
+        _POSITION_PATH_OBSERVATIONS_SQL
+        + "\nappend_only_position_path_observations_v1\nPRAGMA optimize"
+    ).encode("utf-8")
 ).hexdigest()
 
 
@@ -4851,6 +4935,13 @@ def _apply_ufc_canonical_identity_v25(db: sqlite3.Connection) -> None:
         raise
 
 
+def _apply_position_path_observations_v26(db: sqlite3.Connection) -> None:
+    """Persist append-only five-minute facts for open Position analysis."""
+
+    db.executescript(_POSITION_PATH_OBSERVATIONS_SQL)
+    db.execute("PRAGMA optimize")
+
+
 def _apply_market_signal_identity_v7(db: sqlite3.Connection) -> None:
     """Add structured evidence without changing legacy wake-summary fields."""
 
@@ -5234,8 +5325,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260812_0024_ufc_canonical_identity_v25",
         checksum=_UFC_CANONICAL_IDENTITY_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v25",
         apply=_apply_ufc_canonical_identity_v25,
+    ),
+    MigrationStep(
+        migration_id="20260813_0025_position_path_observations_v26",
+        checksum=_POSITION_PATH_OBSERVATIONS_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_position_path_observations_v26,
     ),
 )
 

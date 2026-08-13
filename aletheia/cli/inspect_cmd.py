@@ -75,6 +75,38 @@ def positions(
     _output(rows, json_output)
 
 
+@inspect_app.command("position-path")
+def position_path(
+    position_id: str = typer.Option(..., "--id", "--position-id"),
+    limit: int = typer.Option(10_000, "--limit", "-n"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Inspect append-only five-minute observations for one Position."""
+
+    from aletheia.analytics.position_path_observations import (
+        build_position_path_report,
+    )
+
+    report = build_position_path_report(position_id, limit=limit)
+    _output(report, json_output)
+
+
+@inspect_app.command("stop-loss-path")
+def stop_loss_path(
+    hours: int = typer.Option(168, "--hours", help="Closed-position lookback"),
+    limit: int = typer.Option(200, "--limit", "-n", help="Max stop-loss rows"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Audit fail-closed stop-loss path attribution for a recent cohort."""
+
+    from aletheia.analytics.position_path_observations import (
+        build_stop_loss_path_audit,
+    )
+
+    report = build_stop_loss_path_audit(hours=hours, limit=limit)
+    _output(report, json_output)
+
+
 # ---------------------------------------------------------------------------
 # 2. proposals
 # ---------------------------------------------------------------------------
