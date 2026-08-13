@@ -388,15 +388,28 @@ def test_epoch_ending_exactly_at_cutoff_is_complete():
     assert result["status"] == "evaluated"
 
 
-def test_malformed_nonempty_epoch_end_fails_closed():
+@pytest.mark.parametrize("ended_at", ["", "not-a-timestamp"])
+def test_malformed_epoch_end_fails_closed(ended_at):
     from aletheia.storage.sqlite import get_db
 
-    get_db().execute("UPDATE learning_policy_epochs SET ended_at='not-a-timestamp'")
+    get_db().execute("UPDATE learning_policy_epochs SET ended_at=?", (ended_at,))
     get_db().commit()
 
     result = counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())
 
     assert result["reason"] == "registered_epoch_end_malformed"
+
+
+def test_overflowing_epoch_start_fails_closed_and_is_not_a_cli_cutoff():
+    from aletheia.storage.sqlite import get_db
+
+    get_db().execute("UPDATE learning_policy_epochs SET started_at='9999-12-15T00:00:00+00:00'")
+    get_db().commit()
+
+    result = counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())
+
+    assert result["reason"] == "registered_epoch_malformed"
+    assert counterfactual.profit_loop_registration_cutoffs() == []
 
 
 def test_position_closed_after_registered_cutoff_is_ineligible():
