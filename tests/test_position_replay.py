@@ -209,6 +209,38 @@ def test_replay_fails_closed_instead_of_joining_ambiguous_pi_retry(monkeypatch):
     assert "ambiguous_pi_decision_for_proposal" in replay["causal_link"]["errors"]
 
 
+def test_replay_hides_mutable_position_state_after_historical_cutoff():
+    db = _database()
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T00:00:25+00:00", db=db
+    )
+    assert replay["availability"] == "unavailable"
+    assert replay["unavailable_reason"] == "position_state_mutated_after_cutoff"
+
+
+def test_replay_requests_candles_through_fixed_counterfactual_horizon(monkeypatch):
+    db = _database()
+    captured = {}
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+
+    def candles(*args, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", candles)
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+    ohlcv = replay["stages"]["holding"]["ohlcv"]
+    assert captured["limit"] == 66
+    assert ohlcv["expected_row_count"] == 66
+    assert ohlcv["availability"] == "unavailable"
+
+
 def test_position_replay_cli_emits_json(monkeypatch):
     monkeypatch.setattr(
         position_replay,

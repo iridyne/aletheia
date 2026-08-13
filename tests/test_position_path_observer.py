@@ -171,7 +171,9 @@ async def test_observer_defers_when_provider_cannot_prove_closed_bar(
     assert calls == {"created": 1, "requested": 1, "closed": 1}
     assert repo.list_position_path_observations(position.id) == []
 
-    retried = await observe_open_position_paths(now=now)
+    retried = await observe_open_position_paths(
+        now=datetime.fromtimestamp((bucket + 900_000) / 1000, tz=timezone.utc)
+    )
     assert retried["inserted"] == 1
     assert retried["available"] == 1
     assert retried["deferred"] == 0
@@ -179,6 +181,16 @@ async def test_observer_defers_when_provider_cannot_prove_closed_bar(
     rows = repo.list_position_path_observations(position.id)
     assert len(rows) == 1
     assert rows[0]["evidence_status"] == "available"
+    assert (
+        repo.get_db()
+        .execute(
+            "SELECT COUNT(*) FROM position_path_observation_deferred_buckets "
+            "WHERE position_id=? AND bucket_open_ms=?",
+            (position.id, bucket),
+        )
+        .fetchone()[0]
+        == 0
+    )
 
 
 @pytest.mark.asyncio
