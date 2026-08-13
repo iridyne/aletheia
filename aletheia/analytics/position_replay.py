@@ -84,21 +84,73 @@ def _pi_decision(db: Any, proposal_id: str, cutoff: datetime) -> tuple[dict[str,
 
 
 def _runtime_identity(db: Any, rows: Iterable[dict[str, Any] | None]) -> dict[str, Any]:
-    session_ids = sorted({str(row.get("runtime_session_id")) for row in rows if row and row.get("runtime_session_id")})
-    sessions = []
-    for session_id in session_ids:
-        found = db.execute("SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)).fetchone()
-        if found is not None:
-            sessions.append(dict(found))
+    producers = [row for row in rows if row]
+    identities = [
+        (
+            row.get("runtime_session_id"),
+            row.get("producer_commit"),
+            row.get("behavior_fingerprint"),
+        )
+        for row in producers
+    ]
+    identities.extend(
+        (
+            row.get("closed_runtime_session_id"),
+            row.get("closed_producer_commit"),
+            row.get("closed_behavior_fingerprint"),
+        )
+        for row in producers
+        if row.get("closed_at")
+    )
+    session_ids = sorted({str(identity[0]) for identity in identities if identity[0]})
+    sessions = {
+        str(found["session_id"]): dict(found)
+        for session_id in session_ids
+        if (found := db.execute("SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)).fetchone())
+        is not None
+    }
+    unresolved_session_ids = sorted(set(session_ids) - sessions.keys())
+    resolved_identities = []
+    incomplete_identity_count = 0
+    mismatched_identity_count = 0
+    for session_id, direct_commit, direct_fingerprint in identities:
+        direct_pair = (str(direct_commit), str(direct_fingerprint)) if direct_commit and direct_fingerprint else None
+        session = sessions.get(str(session_id)) if session_id else None
+        session_pair = (
+            (str(session["boot_commit"]), str(session["behavior_fingerprint"]))
+            if session and session.get("boot_commit") and session.get("behavior_fingerprint")
+            else None
+        )
+        if (direct_commit or direct_fingerprint) and direct_pair is None:
+            incomplete_identity_count += 1
+            continue
+        if session_id and session_pair is None:
+            incomplete_identity_count += 1
+            continue
+        if direct_pair and session_pair and direct_pair != session_pair:
+            mismatched_identity_count += 1
+            continue
+        identity = direct_pair or session_pair
+        if identity is None:
+            incomplete_identity_count += 1
+            continue
+        resolved_identities.append(identity)
+    errors = []
+    if unresolved_session_ids:
+        errors.append("runtime_session_not_recorded")
+    if incomplete_identity_count:
+        errors.append("producer_identity_incomplete")
+    if mismatched_identity_count:
+        errors.append("producer_identity_mismatch")
     return {
+        "status": "available" if not errors else "unavailable",
+        "errors": errors,
         "runtime_session_ids": session_ids,
-        "producer_commits": sorted(
-            {str(row.get("producer_commit")) for row in rows if row and row.get("producer_commit")}
-            | {str(row.get("boot_commit")) for row in sessions if row.get("boot_commit")}
-        ),
-        "behavior_fingerprints": sorted(
-            {str(row.get("behavior_fingerprint")) for row in sessions if row.get("behavior_fingerprint")}
-        ),
+        "unresolved_runtime_session_ids": unresolved_session_ids,
+        "incomplete_identity_count": incomplete_identity_count,
+        "mismatched_identity_count": mismatched_identity_count,
+        "producer_commits": sorted({identity[0] for identity in resolved_identities}),
+        "behavior_fingerprints": sorted({identity[1] for identity in resolved_identities}),
     }
 
 
