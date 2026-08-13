@@ -158,7 +158,7 @@ def test_negative_b2_outcome_opposes_short_candidate_without_implying_bearish_pr
         "avg_net_pct": -2.958808, "shrunk_avg_net_pct": -1.479404,
     })
 
-    assert "historical trades were unprofitable and oppose this candidate" in block
+    assert "candidate outcomes were unprofitable and oppose this candidate" in block
     assert "negative means losing net outcome, not bearish price direction" in block
 
 

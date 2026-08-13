@@ -135,7 +135,7 @@ def render_b2_evidence_summary(summary: dict[str, Any] | None) -> str:
         )
     profitable = summary.get("status") == "qualified_positive"
     return (
-        "B2 same-direction outcome evidence: comparable historical trades were "
+        "B2 same-direction outcome evidence: comparable candidate outcomes were "
         f"{'profitable and support' if profitable else 'unprofitable and oppose'} "
         "this candidate "
         f"(n_net={summary.get('n_net')}/{summary.get('n_total')}, "
