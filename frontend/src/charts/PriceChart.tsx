@@ -1,196 +1,301 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  createChart, type IChartApi, type ISeriesApi, type Time, type LogicalRange,
+  createChart, LineStyle, type IChartApi, type IPriceLine, type ISeriesApi,
+  type LogicalRange, type Time,
 } from 'lightweight-charts'
-import { api } from '../api/client'
+import { api, type OhlcvResult } from '../api/client'
 import { chartTheme } from './theme'
 
 export type MarkerKind = 'long' | 'short' | 'stop_long' | 'stop_short'
-export interface TradeMarker { time: number; kind: MarkerKind; price: number; id?: string }
+export interface ChartMarker {
+  id: string
+  entity: 'trade' | 'opportunity'
+  time: number
+  kind: MarkerKind
+  label: string
+}
+export interface ChartMarkerBucket {
+  time: number
+  position: 'belowBar' | 'aboveBar'
+  events: ChartMarker[]
+}
+export interface PositionLevel {
+  id: string
+  kind: 'entry' | 'stop' | 'take_profit' | 'liquidation'
+  price: number
+  title: string
+}
+export interface VisibleVolumeProfile { poc: number; vah: number; val: number }
+export interface Bar { time: number; open: number; high: number; low: number; close: number; volume: number }
 
-interface Bar { time: number; open: number; high: number; low: number; close: number }
-
-// How many candles to load up-front and per scroll-back page.
 const INITIAL_LIMIT = 300
 const PAGE_LIMIT = 300
-// Trigger a history page when the left-most visible bar is within this many bars of the start.
 const SCROLL_TRIGGER_BARS = 10
-// Live tail: re-poll the newest candles on this cadence (ms).
 const LIVE_POLL_MS = 10_000
 
+const MARKER_CFG: Record<MarkerKind, {
+  position: 'belowBar' | 'aboveBar'; shape: 'arrowUp' | 'arrowDown'; color: string; label: string
+}> = {
+  long: { position: 'belowBar', shape: 'arrowUp', color: chartTheme.markerBuy, label: 'Long' },
+  short: { position: 'aboveBar', shape: 'arrowDown', color: chartTheme.markerSell, label: 'Short' },
+  stop_long: { position: 'aboveBar', shape: 'arrowDown', color: chartTheme.markerStopLong, label: 'Stop Long' },
+  stop_short: { position: 'belowBar', shape: 'arrowUp', color: chartTheme.markerStopShort, label: 'Stop Short' },
+}
+
 export function marketDataMetaState(
-  meta: { ageMs: number | null; stale: boolean | null; receivedAt: number },
-  now: number,
+  meta: { ageMs: number | null; stale: boolean | null; receivedAt: number }, now: number,
 ) {
   const elapsed = Math.max(0, now - meta.receivedAt)
-  return {
-    ageMs: meta.ageMs === null ? null : meta.ageMs + elapsed,
-    stale: meta.stale === true || elapsed > LIVE_POLL_MS * 2,
+  return { ageMs: meta.ageMs === null ? null : meta.ageMs + elapsed, stale: meta.stale === true || elapsed > LIVE_POLL_MS * 2 }
+}
+
+const toBar = (candle: Bar): Bar => ({ ...candle })
+
+function firstBarAtOrAfter(bars: Bar[], timestamp: number) {
+  let low = 0
+  let high = bars.length
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2)
+    if (bars[middle].time < timestamp) low = middle + 1
+    else high = middle
   }
+  return low < bars.length ? low : null
 }
 
-function toBar(c: any): Bar {
-  return { time: c.time, open: c.open, high: c.high, low: c.low, close: c.close }
+export function bucketChartMarkers(bars: Bar[], markers: ChartMarker[]): ChartMarkerBucket[] {
+  const buckets = new Map<string, ChartMarkerBucket>()
+  for (const marker of markers) {
+    const index = firstBarAtOrAfter(bars, marker.time)
+    if (index === null) continue
+    const time = bars[index].time
+    const position = MARKER_CFG[marker.kind].position
+    const key = `${time}|${position}`
+    const bucket = buckets.get(key) ?? { time, position, events: [] }
+    bucket.events.push(marker)
+    buckets.set(key, bucket)
+  }
+  return [...buckets.values()].sort((a, b) => a.time - b.time)
 }
 
-const MARKER_CFG: Record<MarkerKind, { position: 'belowBar' | 'aboveBar'; shape: 'arrowUp' | 'arrowDown'; color: string; label: string }> = {
-  long:       { position: 'belowBar', shape: 'arrowUp',   color: chartTheme.markerBuy,       label: 'Long' },
-  short:      { position: 'aboveBar', shape: 'arrowDown', color: chartTheme.markerSell,      label: 'Short' },
-  stop_long:  { position: 'aboveBar', shape: 'arrowDown', color: chartTheme.markerStopLong,  label: 'Stop Long' },
-  stop_short: { position: 'belowBar', shape: 'arrowUp',   color: chartTheme.markerStopShort, label: 'Stop Short' },
+export function estimateVisibleVolumeProfile(
+  bars: Bar[], visibleFrom: number, visibleTo: number, binCount = 48, valueAreaRatio = 0.70,
+): VisibleVolumeProfile | null {
+  if (!Number.isFinite(visibleFrom) || !Number.isFinite(visibleTo) || binCount < 1) return null
+  const visible = bars.slice(Math.max(0, Math.floor(visibleFrom)), Math.min(bars.length, Math.ceil(visibleTo) + 1))
+  if (visible.length < 2) return null
+  const usable = visible.filter(bar => Number.isFinite(bar.low) && Number.isFinite(bar.high) && Number.isFinite(bar.close)
+    && Number.isFinite(bar.volume) && bar.volume > 0 && bar.high >= bar.low)
+  if (!usable.length) return null
+  const low = Math.min(...usable.map(bar => bar.low))
+  const high = Math.max(...usable.map(bar => bar.high))
+  if (!Number.isFinite(low) || !Number.isFinite(high) || high <= low) return null
+
+  const width = (high - low) / binCount
+  const volumes = Array.from({ length: binCount }, () => 0)
+  for (const bar of usable) {
+    if (bar.high === bar.low) {
+      volumes[Math.min(binCount - 1, Math.max(0, Math.floor((bar.close - low) / width)))] += bar.volume
+      continue
+    }
+    const first = Math.max(0, Math.floor((bar.low - low) / width))
+    const last = Math.min(binCount - 1, Math.floor((bar.high - low) / width))
+    for (let index = first; index <= last; index += 1) {
+      const binLow = low + index * width
+      const overlap = Math.max(0, Math.min(bar.high, binLow + width) - Math.max(bar.low, binLow))
+      volumes[index] += bar.volume * overlap / (bar.high - bar.low)
+    }
+  }
+  const total = volumes.reduce((sum, volume) => sum + volume, 0)
+  if (!(total > 0)) return null
+  let pocIndex = 0
+  for (let index = 1; index < volumes.length; index += 1) if (volumes[index] > volumes[pocIndex]) pocIndex = index
+  let left = pocIndex
+  let right = pocIndex
+  let accumulated = volumes[pocIndex]
+  const target = total * Math.min(1, Math.max(0, valueAreaRatio))
+  while (accumulated < target && (left > 0 || right < volumes.length - 1)) {
+    const leftVolume = left > 0 ? volumes[left - 1] : -1
+    const rightVolume = right < volumes.length - 1 ? volumes[right + 1] : -1
+    if (leftVolume >= rightVolume) accumulated += volumes[--left]
+    else accumulated += volumes[++right]
+  }
+  return { poc: low + (pocIndex + 0.5) * width, val: low + left * width, vah: low + (right + 1) * width }
 }
 
-function seriesMarkers(markers: TradeMarker[]) {
-  return [...markers]
-    .sort((a, b) => a.time - b.time)
-    .map(m => {
-      const cfg = MARKER_CFG[m.kind]
-      return { time: m.time as Time, position: cfg.position, color: cfg.color, shape: cfg.shape, text: cfg.label }
-    })
+function markerSeriesData(buckets: ChartMarkerBucket[]) {
+  return buckets.map(bucket => {
+    const first = bucket.events[0]
+    const cfg = MARKER_CFG[first.kind]
+    const label = cfg.label.startsWith('Stop') ? cfg.label : first.label || cfg.label
+    return {
+      time: bucket.time as Time, position: bucket.position, color: cfg.color, shape: cfg.shape,
+      text: `${label}${bucket.events.length > 1 ? ` ×${bucket.events.length}` : ''}`.slice(0, 12),
+    }
+  })
 }
 
-/**
- * Candlestick chart with exchange-style dynamic loading:
- *  - loads the most recent `INITIAL_LIMIT` candles on mount,
- *  - lazily pages OLDER history as the user scrolls/zooms toward the left edge
- *    (fetched via `before=<earliest candle>` and prepended), and
- *  - keeps the right edge LIVE by polling the newest candles every LIVE_POLL_MS
- *    and calling series.update() on the forming/closed bar.
- *
- * State is held imperatively in refs (the chart is long-lived, not re-rendered
- * per data change) so paging never resets the user's scroll position.
- */
-export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spot', markers = [], onMarkerClick }: {
-  // #115 fix: PriceChart used to default every getOhlcv call to spot (client
-  // signature marketType='spot'), so a perp instrument's chart quietly pulled
-  // spot bars — the price would look off vs the true perp mark. Take
-  // marketType as a prop; callers pass it based on the symbol's board /
-  // context. Defaults to 'spot' for backward compat with any caller not yet
-  // updated.
-  symbol: string; timeframe?: string; marketType?: string; markers?: TradeMarker[]; onMarkerClick?: (id: string) => void
+function levelStyle(kind: PositionLevel['kind']) {
+  if (kind === 'entry') return { color: chartTheme.markerBuy, lineStyle: LineStyle.Solid }
+  if (kind === 'take_profit') return { color: chartTheme.upColor, lineStyle: LineStyle.Dashed }
+  return { color: chartTheme.downColor, lineStyle: LineStyle.Dashed }
+}
+
+export default function PriceChart({
+  symbol, timeframe = '1h', marketType = 'spot', exchange = '', markers = [], positionLevels = [], overlays,
+  onMarkerClick, onMetaChange, onProfileChange,
+}: {
+  symbol: string; timeframe?: string; marketType?: string; exchange?: string
+  markers?: ChartMarker[]; positionLevels?: PositionLevel[]
+  overlays: { volume: boolean; profile: boolean; levels: boolean; signals: boolean }
+  onMarkerClick?: (events: ChartMarker[]) => void
+  onMetaChange?: (meta: OhlcvResult['meta'] | null) => void
+  onProfileChange?: (profile: VisibleVolumeProfile | null) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
-  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
-
-  // Ascending, deduped candle store + index of known times.
+  const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const barsRef = useRef<Bar[]>([])
   const timesRef = useRef<Set<number>>(new Set())
-  // Guards: one history fetch in flight at a time; stop paging once exhausted.
+  const bucketsRef = useRef<ChartMarkerBucket[]>([])
+  const profileLinesRef = useRef<IPriceLine[]>([])
+  const levelLinesRef = useRef<IPriceLine[]>([])
   const loadingOlderRef = useRef(false)
   const exhaustedRef = useRef(false)
   const initializedRef = useRef(false)
-  // Latest markers, read by the click handler + re-applied without rebuilding the chart.
-  const markersRef = useRef<TradeMarker[]>(markers)
+  const markersRef = useRef(markers)
+  const overlaysRef = useRef(overlays)
+  const levelsRef = useRef(positionLevels)
   const markerClickRef = useRef(onMarkerClick)
+  const metaChangeRef = useRef(onMetaChange)
+  const profileChangeRef = useRef(onProfileChange)
   markerClickRef.current = onMarkerClick
-
+  metaChangeRef.current = onMetaChange
+  profileChangeRef.current = onProfileChange
   const [status, setStatus] = useState<'loading' | 'ok' | 'empty' | 'error'>('loading')
-  const [dataMeta, setDataMeta] = useState<{
-    source: string; asOf: string | null; ageMs: number | null; stale: boolean | null; receivedAt: number
-  } | null>(null)
-  const [now, setNow] = useState(() => Date.now())
 
-  // Main lifecycle: rebuild whenever the requested market-data identity changes.
+  const clearLines = (series: ISeriesApi<'Candlestick'>, lines: IPriceLine[]) => {
+    for (const line of lines) series.removePriceLine(line)
+    lines.length = 0
+  }
+  const applyLevels = () => {
+    const series = candleRef.current
+    if (!series) return
+    clearLines(series, levelLinesRef.current)
+    if (!overlaysRef.current.levels) return
+    for (const level of levelsRef.current) {
+      if (!Number.isFinite(level.price) || level.price <= 0) continue
+      const style = levelStyle(level.kind)
+      levelLinesRef.current.push(series.createPriceLine({
+        price: level.price, title: level.title, color: style.color, lineStyle: style.lineStyle,
+        lineWidth: 1, axisLabelVisible: true,
+      }))
+    }
+  }
+  const applyProfile = (range?: LogicalRange | null) => {
+    const chart = chartRef.current
+    const series = candleRef.current
+    if (!chart || !series) return
+    clearLines(series, profileLinesRef.current)
+    const visible = range ?? chart.timeScale().getVisibleLogicalRange()
+    const profile = overlaysRef.current.profile && visible
+      ? estimateVisibleVolumeProfile(barsRef.current, visible.from, visible.to) : null
+    profileChangeRef.current?.(profile)
+    if (!profile) return
+    profileLinesRef.current.push(
+      series.createPriceLine({ price: profile.poc, title: 'Est. POC', color: chartTheme.lineColor, lineWidth: 2, lineStyle: LineStyle.Solid, axisLabelVisible: true }),
+      series.createPriceLine({ price: profile.vah, title: 'Est. VAH', color: chartTheme.borderColor, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true }),
+      series.createPriceLine({ price: profile.val, title: 'Est. VAL', color: chartTheme.borderColor, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true }),
+    )
+  }
+  const applyMarkers = () => {
+    const series = candleRef.current
+    if (!series) return
+    bucketsRef.current = bucketChartMarkers(barsRef.current, markersRef.current)
+    series.setMarkers(overlaysRef.current.signals ? markerSeriesData(bucketsRef.current) : [])
+  }
+
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
     let cancelled = false
     setStatus('loading')
-    setDataMeta(null)
-
+    metaChangeRef.current?.(null)
+    profileChangeRef.current?.(null)
     const chart = createChart(container, {
-      layout: chartTheme.layout,
-      grid: chartTheme.grid,
-      width: container.clientWidth,
-      height: 320,
+      layout: chartTheme.layout, grid: chartTheme.grid, width: container.clientWidth, height: container.clientHeight,
       timeScale: { timeVisible: true, rightOffset: 4 },
     })
     chartRef.current = chart
-    const series = chart.addCandlestickSeries({
+    const candles = chart.addCandlestickSeries({
       upColor: chartTheme.upColor, downColor: chartTheme.downColor, borderVisible: false,
       wickUpColor: chartTheme.upColor, wickDownColor: chartTheme.downColor,
     })
-    seriesRef.current = series
-
-    // Reset the imperative store for the new symbol/timeframe.
+    candleRef.current = candles
+    const volume = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: '', visible: overlaysRef.current.volume })
+    volume.priceScale().applyOptions({ scaleMargins: { top: 0.76, bottom: 0 } })
+    volumeRef.current = volume
     barsRef.current = []
     timesRef.current = new Set()
     loadingOlderRef.current = false
     exhaustedRef.current = false
     initializedRef.current = false
 
-    const applyMarkers = () => series.setMarkers(seriesMarkers(markersRef.current))
-
-    // Prepend a page of older candles when the user scrolls toward the start.
+    const setAllData = () => {
+      candles.setData(barsRef.current.map(bar => ({ ...bar, time: bar.time as Time })))
+      volume.setData(barsRef.current.map(bar => ({
+        time: bar.time as Time, value: bar.volume,
+        color: bar.close >= bar.open ? `${chartTheme.upColor}80` : `${chartTheme.downColor}80`,
+      })))
+      applyMarkers()
+      applyLevels()
+      applyProfile()
+    }
     const loadOlder = async () => {
-      if (loadingOlderRef.current || exhaustedRef.current) return
-      if (!initializedRef.current || !barsRef.current.length) return
+      if (loadingOlderRef.current || exhaustedRef.current || !initializedRef.current || !barsRef.current.length) return
       loadingOlderRef.current = true
-      const earliest = barsRef.current[0].time
       try {
-        const res = await api.getOhlcv(symbol, timeframe, PAGE_LIMIT, earliest, '', marketType)
+        const rows = await api.getOhlcv(symbol, timeframe, PAGE_LIMIT, barsRef.current[0].time, exchange, marketType)
         if (cancelled) return
-        const rows = Array.isArray(res) ? res : []
-        const fresh = rows.map(toBar).filter(b => !timesRef.current.has(b.time))
+        const fresh = (Array.isArray(rows) ? rows : []).map(toBar).filter(bar => !timesRef.current.has(bar.time))
         if (!fresh.length) { exhaustedRef.current = true; return }
-        for (const b of fresh) timesRef.current.add(b.time)
-        barsRef.current = [...fresh, ...barsRef.current].sort((a, b) => a.time - b.time)
-        // Preserve the visible window: setData re-indexes bars, so shift the logical
-        // range right by the number we prepended — the view stays put instead of jumping.
+        for (const bar of fresh) timesRef.current.add(bar.time)
         const range = chart.timeScale().getVisibleLogicalRange()
-        series.setData(barsRef.current.map(b => ({ ...b, time: b.time as Time })))
-        applyMarkers()
-        if (range) {
-          const added = fresh.length
-          chart.timeScale().setVisibleLogicalRange({ from: range.from + added, to: range.to + added })
-        }
+        barsRef.current = [...fresh, ...barsRef.current].sort((a, b) => a.time - b.time)
+        setAllData()
+        if (range) chart.timeScale().setVisibleLogicalRange({ from: range.from + fresh.length, to: range.to + fresh.length })
       } catch {
-        // transient network error — leave guards so a later scroll retries
+        // A later scroll retries a transient history failure.
       } finally {
         loadingOlderRef.current = false
       }
     }
-
-    // Keep the right edge live: merge the newest candles onto the tail.
     const pollLatest = async () => {
       if (cancelled || !initializedRef.current || !barsRef.current.length) return
       try {
-        const res = await api.getOhlcvWithMeta(symbol, timeframe, 2, marketType)
+        const result = await api.getOhlcvWithMeta(symbol, timeframe, 2, marketType, exchange)
         if (cancelled) return
-        setDataMeta({ ...res.meta, receivedAt: Date.now() })
-        const rows = res.candles.map(toBar).sort((a, b) => a.time - b.time)
-        let appended = false
-        for (const b of rows) {
+        metaChangeRef.current?.(result.meta)
+        for (const bar of result.candles.map(toBar).sort((a, b) => a.time - b.time)) {
           const last = barsRef.current[barsRef.current.length - 1]
-          if (!last || b.time < last.time) continue   // update() requires time >= last
-          series.update({ ...b, time: b.time as Time })
-          if (b.time === last.time) {
-            barsRef.current[barsRef.current.length - 1] = b   // replace forming/closed bar
-          } else {
-            barsRef.current.push(b)
-            timesRef.current.add(b.time)
-            appended = true
-          }
+          if (!last || bar.time < last.time) continue
+          if (bar.time === last.time) barsRef.current[barsRef.current.length - 1] = bar
+          else { barsRef.current.push(bar); timesRef.current.add(bar.time) }
         }
-        if (appended) applyMarkers()
+        setAllData()
       } catch {
-        // transient — next tick retries
+        // The next live tick retries without replacing visible data.
       }
     }
-
-    // Initial load: most recent INITIAL_LIMIT candles.
-    ;(async () => {
+    void (async () => {
       try {
-        const res = await api.getOhlcvWithMeta(symbol, timeframe, INITIAL_LIMIT, marketType)
+        const result = await api.getOhlcvWithMeta(symbol, timeframe, INITIAL_LIMIT, marketType, exchange)
         if (cancelled) return
-        const rows = res.candles
-        setDataMeta({ ...res.meta, receivedAt: Date.now() })
-        if (!rows.length) { setStatus('empty'); return }
-        barsRef.current = rows.map(toBar)
-        timesRef.current = new Set(barsRef.current.map(b => b.time))
-        series.setData(barsRef.current.map(b => ({ ...b, time: b.time as Time })))
-        applyMarkers()
+        metaChangeRef.current?.(result.meta)
+        if (!result.candles.length) { setStatus('empty'); return }
+        barsRef.current = result.candles.map(toBar).sort((a, b) => a.time - b.time)
+        timesRef.current = new Set(barsRef.current.map(bar => bar.time))
+        setAllData()
         chart.timeScale().fitContent()
         initializedRef.current = true
         setStatus('ok')
@@ -198,69 +303,56 @@ export default function PriceChart({ symbol, timeframe = '1h', marketType = 'spo
         if (!cancelled) setStatus('error')
       }
     })()
-
     const onRangeChange = (range: LogicalRange | null) => {
       if (!range) return
+      applyProfile(range)
       if (range.from < SCROLL_TRIGGER_BARS) void loadOlder()
     }
     chart.timeScale().subscribeVisibleLogicalRangeChange(onRangeChange)
-
-    const handleClick = (param: Parameters<Parameters<typeof chart.subscribeClick>[0]>[0]) => {
+    const onClick = (param: Parameters<Parameters<typeof chart.subscribeClick>[0]>[0]) => {
       if (!param.time || !markerClickRef.current) return
-      const t = param.time as number
-      const matched = markersRef.current.find(m => m.time === t && m.id)
-      if (matched?.id) markerClickRef.current(matched.id)
+      const events = bucketsRef.current.filter(bucket => bucket.time === Number(param.time)).flatMap(bucket => bucket.events)
+        .sort((a, b) => a.time - b.time)
+      if (events.length) markerClickRef.current(events)
     }
-    chart.subscribeClick(handleClick)
-
+    chart.subscribeClick(onClick)
     const poll = window.setInterval(() => void pollLatest(), LIVE_POLL_MS)
-    const clock = window.setInterval(() => setNow(Date.now()), LIVE_POLL_MS)
     const resizeObserver = new ResizeObserver(entries => {
-      const width = entries[0]?.contentRect.width
-      if (width) chart.applyOptions({ width })
+      const box = entries[0]?.contentRect
+      if (box?.width && box.height) chart.applyOptions({ width: box.width, height: box.height })
     })
     resizeObserver.observe(container)
-
     return () => {
       cancelled = true
       window.clearInterval(poll)
-      window.clearInterval(clock)
       resizeObserver.disconnect()
-      chart.unsubscribeClick(handleClick)
+      chart.unsubscribeClick(onClick)
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRangeChange)
       chart.remove()
-      seriesRef.current = null
       chartRef.current = null
+      candleRef.current = null
+      volumeRef.current = null
     }
-  }, [symbol, timeframe, marketType])
+  }, [exchange, marketType, symbol, timeframe])
 
-  // Re-apply markers without rebuilding the chart when the prop changes.
+  useEffect(() => { markersRef.current = markers; applyMarkers() }, [markers])
+  useEffect(() => { levelsRef.current = positionLevels; applyLevels() }, [positionLevels])
   useEffect(() => {
-    markersRef.current = markers
-    if (seriesRef.current) seriesRef.current.setMarkers(seriesMarkers(markers))
-  }, [markers])
-
-  const metaState = dataMeta ? marketDataMetaState(dataMeta, now) : null
+    overlaysRef.current = overlays
+    volumeRef.current?.applyOptions({ visible: overlays.volume })
+    applyMarkers()
+    applyLevels()
+    applyProfile()
+  }, [overlays])
 
   return (
-    <div>
-      {status === 'error' && <p className="hint">Could not load market data (configure exchange / network).</p>}
-      {status === 'empty' && <p className="hint">No candle data yet.</p>}
-      {dataMeta && (
-        <p className="hint" title={dataMeta.asOf ?? undefined}>
-          Source: {dataMeta.source} · As of: {metaState?.ageMs === null ? 'not available' : `${Math.floor((metaState?.ageMs ?? 0) / 60_000)}m ago`}
-          {metaState?.stale ? ' · stale' : ''}
-        </p>
-      )}
-      <div ref={containerRef} style={{ width: '100%' }} />
-      {markers.length > 0 && (
-        <div className="chart-legend">
-          <span style={{ color: chartTheme.markerBuy }}>▲ Long</span>
-          <span style={{ color: chartTheme.markerSell }}>▼ Short</span>
-          <span style={{ color: chartTheme.markerStopLong }}>▼ Stop Long</span>
-          <span style={{ color: chartTheme.markerStopShort }}>▲ Stop Short</span>
-        </div>
-      )}
+    <div className="market-chart-stage" aria-busy={status === 'loading'}>
+      <div id="market-price-chart" ref={containerRef} className="market-price-chart" aria-label={`${symbol} candlestick chart`} />
+      {status !== 'ok' && <div className="market-chart-state" role="status">
+        {status === 'loading' && 'Loading market data…'}
+        {status === 'empty' && 'No candle data for this instrument'}
+        {status === 'error' && 'Market data unavailable · verify exchange, symbol, and market type'}
+      </div>}
     </div>
   )
 }

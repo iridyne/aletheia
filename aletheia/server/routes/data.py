@@ -477,6 +477,22 @@ def get_opportunities(asset_class: str | None = None):
     return repo.list_opportunities(limit=25)
 
 
+@router.get("/market/opportunity-instruments")
+def get_market_opportunity_instruments():
+    _ensure_db()
+    return repo.list_opportunity_instruments()
+
+
+@router.get("/market/opportunities")
+def get_market_opportunities(
+    symbol: str,
+    market_type: str,
+    limit: Annotated[int, Query(ge=1, le=500)] = 500,
+):
+    _ensure_db()
+    return repo.list_opportunities_for_instrument(symbol, market_type, limit)
+
+
 class SerenityThemeCreate(BaseModel):
     name: str
     demand_wave: str | None = None
