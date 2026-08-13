@@ -341,6 +341,8 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "contract_version": DIAGNOSIS_CONTRACT_VERSION,
         "fact_unit": "candidate_fact",
+        "read_only": True,
+        "behavior_changed": False,
         "as_of_at": report.get("as_of_at"),
         "fixed_horizon": report.get("fixed_horizon"),
         "raw_count": len(facts),

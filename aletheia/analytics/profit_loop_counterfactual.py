@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 import math
 from typing import Any, Callable, Mapping
 
@@ -12,6 +14,22 @@ from ..storage.proposal_hypothesis import evaluate_hypothesis_prefix
 
 COUNTERFACTUAL_CONTRACT_VERSION = "profit_loop_counterfactual/v1"
 _FIXED_HORIZON_BARS = 60
+_DURATION_DAYS = 30
+_ASSIGNMENT_UNIT = "position_id"
+_ELIGIBILITY = (
+    "opened_on_or_after_registration_closed_by_cutoff_complete_position_fact_with_frozen_hypothesis_and_1m_prefix"
+)
+_STOPPING_RULE = "single_locked_retrospective_evaluation_after_fixed_cutoff_no_optional_stopping"
+_BASELINE_POLICY_ID = "initial_stop_fixed_60m/v1"
+_FROZEN_INPUTS = "exact_instrument_1m_ohlcv_position_hypothesis_initial_stop"
+_FILL_COST_CONTRACT = "next_bar_open_pessimistic_stop_fee_funding_slippage/v1"
+_TREATMENTS = (
+    ("delay_1_bar/v1", "delay_1_bar_fixed_60m/v1"),
+    ("delay_3_bars/v1", "delay_3_bars_fixed_60m/v1"),
+    ("delay_5_bars/v1", "delay_5_bars_fixed_60m/v1"),
+    ("breakeven_after_1r/v1", "breakeven_after_1r_fixed_60m/v1"),
+    ("thesis_invalidation_exit/v1", "thesis_invalidation_exit_fixed_60m/v1"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,46 +52,53 @@ class CounterfactualSpec:
     evidence_class: str
 
 
-_REGISTRATION = {
-    "registration_at": "2026-08-13T06:12:47+00:00",
-    "cutoff_at": "2026-09-12T06:12:47+00:00",
-    "registration_commit": "683c8e27952bee7816931733bed0f64bfadae856",
-    "eligible_producer_commits": (
-        "683c8e27952bee7816931733bed0f64bfadae856",
-        "dafb94379db05c9ab08c9e43e1cb1687379c3cd8",
-    ),
-    "behavior_fingerprint": "2b930ecb61ead8f7",
-    "assignment_unit": "position_id",
-    "eligibility": "opened_on_or_after_registration_closed_by_cutoff_complete_position_fact_with_frozen_hypothesis_and_1m_prefix",
-    "fixed_horizon_bars": _FIXED_HORIZON_BARS,
-    "sample_cap": 500,
-    "frozen_inputs": "exact_instrument_1m_ohlcv_position_hypothesis_initial_stop",
-    "fill_cost_contract": "next_bar_open_pessimistic_stop_fee_funding_slippage/v1",
-    "stopping_rule": "single_locked_retrospective_evaluation_after_fixed_cutoff_no_optional_stopping",
-    "evidence_class": "exploratory",
-}
-
-
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _spec(hypothesis_id: str, treatment: str) -> CounterfactualSpec:
-    return CounterfactualSpec(
-        hypothesis_id=hypothesis_id,
-        baseline_policy_id="initial_stop_fixed_60m/v1",
-        treatment_policy_id=treatment,
-        **_REGISTRATION,
+def _registry_payload() -> list[dict[str, Any]]:
+    return [
+        {
+            "hypothesis_id": hypothesis_id,
+            "baseline_policy_id": _BASELINE_POLICY_ID,
+            "treatment_policy_id": treatment_policy_id,
+            "fixed_horizon_bars": _FIXED_HORIZON_BARS,
+            "sample_cap": 500,
+            "frozen_inputs": _FROZEN_INPUTS,
+            "fill_cost_contract": _FILL_COST_CONTRACT,
+            "evidence_class": "exploratory",
+        }
+        for hypothesis_id, treatment_policy_id in _TREATMENTS
+    ]
+
+
+def profit_loop_registry_hash() -> str:
+    canonical = json.dumps(_registry_payload(), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _registry(registration: Mapping[str, Any]) -> tuple[CounterfactualSpec, ...]:
+    return tuple(
+        CounterfactualSpec(
+            hypothesis_id=hypothesis_id,
+            baseline_policy_id=_BASELINE_POLICY_ID,
+            treatment_policy_id=treatment_policy_id,
+            registration_at=str(registration["registration_at"]),
+            cutoff_at=str(registration["cutoff_at"]),
+            registration_commit=str(registration["deploy_commit"]),
+            eligible_producer_commits=(str(registration["deploy_commit"]),),
+            behavior_fingerprint=str(registration["behavior_fingerprint"]),
+            assignment_unit=_ASSIGNMENT_UNIT,
+            eligibility=_ELIGIBILITY,
+            fixed_horizon_bars=_FIXED_HORIZON_BARS,
+            sample_cap=500,
+            frozen_inputs=_FROZEN_INPUTS,
+            fill_cost_contract=_FILL_COST_CONTRACT,
+            stopping_rule=_STOPPING_RULE,
+            evidence_class="exploratory",
+        )
+        for hypothesis_id, treatment_policy_id in _TREATMENTS
     )
-
-
-REGISTRY = (
-    _spec("delay_1_bar/v1", "delay_1_bar_fixed_60m/v1"),
-    _spec("delay_3_bars/v1", "delay_3_bars_fixed_60m/v1"),
-    _spec("delay_5_bars/v1", "delay_5_bars_fixed_60m/v1"),
-    _spec("breakeven_after_1r/v1", "breakeven_after_1r_fixed_60m/v1"),
-    _spec("thesis_invalidation_exit/v1", "thesis_invalidation_exit_fixed_60m/v1"),
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +149,101 @@ def _nested(root: Mapping[str, Any], *keys: str) -> Any:
             return None
         value = value.get(key)
     return value
+
+
+def resolve_profit_loop_registration(fact: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Resolve one immutable profit-loop epoch from complete producer identity."""
+    producer = fact.get("producer")
+    if not isinstance(producer, Mapping) or producer.get("status") != "available":
+        return {"status": "not_evaluable", "reason": "complete_producer_identity_required"}
+    commits = [str(value) for value in producer.get("producer_commits") or [] if value]
+    fingerprints = [str(value) for value in producer.get("behavior_fingerprints") or [] if value]
+    if len(commits) != 1 or len(fingerprints) != 1:
+        return {"status": "not_evaluable", "reason": "complete_producer_identity_required"}
+    commit = commits[0]
+    fingerprint = fingerprints[0]
+
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        rows = (
+            get_db()
+            .execute(
+                "SELECT epoch_id, effective_values_json, started_at, ended_at "
+                "FROM learning_policy_epochs WHERE epoch_kind=? "
+                "ORDER BY started_at, rowid",
+                ("evidence_anchor:profit_loop_observability",),
+            )
+            .fetchall()
+        )
+    except Exception:
+        return {"status": "not_evaluable", "reason": "verified_deployment_registration_required"}
+
+    identity_matches: list[tuple[Any, Mapping[str, Any]]] = []
+    for row in rows:
+        try:
+            values = json.loads(row["effective_values_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {"status": "not_evaluable", "reason": "registered_epoch_malformed"}
+        if not isinstance(values, Mapping):
+            return {"status": "not_evaluable", "reason": "registered_epoch_malformed"}
+        if values.get("deploy_commit") == commit and values.get("behavior_fingerprint") == fingerprint:
+            identity_matches.append((row, values))
+    if not identity_matches:
+        return {"status": "not_evaluable", "reason": "verified_deployment_registration_required"}
+    if len(identity_matches) != 1:
+        return {"status": "not_evaluable", "reason": "registered_epoch_conflict"}
+
+    expected_hash = profit_loop_registry_hash()
+    matches = [item for item in identity_matches if item[1].get("registry_hash") == expected_hash]
+    if not matches:
+        return {"status": "not_evaluable", "reason": "registered_registry_hash_mismatch"}
+    row, values = matches[0]
+    registration_at = _parse_utc(row["started_at"])
+    if registration_at is None:
+        return {"status": "not_evaluable", "reason": "verified_deployment_registration_required"}
+    cutoff_at = registration_at + timedelta(days=_DURATION_DAYS)
+    ended_at = _parse_utc(row["ended_at"])
+    if row["ended_at"] and ended_at is None:
+        return {"status": "not_evaluable", "reason": "registered_epoch_end_malformed"}
+    if ended_at is not None and ended_at < cutoff_at:
+        return {"status": "not_evaluable", "reason": "registered_epoch_ended_before_cutoff"}
+    return {
+        "status": "available",
+        "epoch_id": str(row["epoch_id"]),
+        "registration_at": registration_at.isoformat(),
+        "cutoff_at": cutoff_at.isoformat(),
+        "deploy_commit": commit,
+        "behavior_fingerprint": fingerprint,
+        "registry_hash": expected_hash,
+        "duration_days": _DURATION_DAYS,
+        "assignment_unit": _ASSIGNMENT_UNIT,
+        "eligibility": _ELIGIBILITY,
+        "stopping_rule": _STOPPING_RULE,
+        "ended_at": ended_at.isoformat() if ended_at else None,
+    }
+
+
+def profit_loop_registration_cutoffs() -> list[str]:
+    """Return persisted profit-loop cutoffs for cutoff-anchored CLI replay."""
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        rows = (
+            get_db()
+            .execute(
+                "SELECT started_at FROM learning_policy_epochs WHERE epoch_kind=? ORDER BY started_at DESC, rowid DESC",
+                ("evidence_anchor:profit_loop_observability",),
+            )
+            .fetchall()
+        )
+    except Exception:
+        return []
+    return [
+        (started + timedelta(days=_DURATION_DAYS)).isoformat()
+        for row in rows
+        if (started := _parse_utc(row["started_at"])) is not None
+    ]
 
 
 def _rows(fact: Mapping[str, Any]) -> list[dict[str, float]]:
@@ -269,33 +389,31 @@ def evaluate_counterfactual_registry(
     hypothesis_evaluator: Callable[..., str] = evaluate_hypothesis_prefix,
 ) -> dict[str, Any]:
     """Evaluate fixed registry; every state call receives only its completed prefix."""
+    registration = resolve_profit_loop_registration(fact)
+    registered = registration if registration and registration.get("status") == "available" else None
+    registry = _registry(registered) if registered else ()
     base = {
         "contract_version": COUNTERFACTUAL_CONTRACT_VERSION,
         "fact_id": fact.get("fact_id"),
-        "assignment_unit": "position_id",
+        "assignment_unit": _ASSIGNMENT_UNIT,
         "evidence_class": "exploratory",
         "promotion_eligible": False,
-        "registry": [asdict(spec) for spec in REGISTRY],
+        "registry_hash": profit_loop_registry_hash(),
+        "registration": registered,
+        "registry": [asdict(spec) for spec in registry] if registry else _registry_payload(),
     }
-    if not all(
-        _REGISTRATION.get(field)
-        for field in (
-            "registration_at",
-            "cutoff_at",
-            "registration_commit",
-            "eligible_producer_commits",
-            "behavior_fingerprint",
-        )
-    ):
+    if registered is None:
         return {
             **base,
             "status": "not_evaluable",
-            "reason": "verified_deployment_registration_required",
+            "reason": (registration.get("reason") if registration else "verified_deployment_registration_required"),
             "results": [],
         }
+    cutoff_at = _parse_utc(registered["cutoff_at"])
+    if cutoff_at is None or _now_utc() < cutoff_at:
+        return {**base, "status": "not_evaluable", "reason": "registered_cutoff_not_reached", "results": []}
     evaluation_at = _parse_utc(fact.get("as_of_at"))
     requested_as_of = _parse_utc(as_of_at)
-    cutoff_at = _parse_utc(_REGISTRATION["cutoff_at"])
     if evaluation_at is None:
         return {**base, "status": "not_evaluable", "reason": "evaluation_as_of_unavailable", "results": []}
     if requested_as_of is not None and requested_as_of != evaluation_at:
@@ -305,8 +423,6 @@ def evaluate_counterfactual_registry(
             "reason": "evaluation_as_of_conflicts_with_fact",
             "results": [],
         }
-    if cutoff_at is None or _now_utc() < cutoff_at:
-        return {**base, "status": "not_evaluable", "reason": "registered_cutoff_not_reached", "results": []}
     if evaluation_at != cutoff_at:
         return {
             **base,
@@ -314,31 +430,20 @@ def evaluate_counterfactual_registry(
             "reason": "registered_evidence_cutoff_mismatch",
             "results": [],
         }
-    if _nested(fact, "producer", "status") != "available":
+    opened_at = _parse_utc(_nested(fact, "stages", "exit", "position", "opened_at"))
+    closed_at = _parse_utc(_nested(fact, "stages", "exit", "position", "closed_at"))
+    registration_at = _parse_utc(registered["registration_at"])
+    if (
+        opened_at is None
+        or closed_at is None
+        or registration_at is None
+        or opened_at < registration_at
+        or closed_at > cutoff_at
+    ):
         return {
             **base,
             "status": "not_evaluable",
-            "reason": "complete_producer_identity_required",
-            "results": [],
-        }
-    eligible_producer_commits = {str(commit) for commit in _REGISTRATION["eligible_producer_commits"]}
-    producer_commits = {str(commit) for commit in (_nested(fact, "producer", "producer_commits") or [])}
-    if not producer_commits or not producer_commits <= eligible_producer_commits:
-        return {
-            **base,
-            "status": "not_evaluable",
-            "reason": "registered_producer_identity_mismatch",
-            "results": [],
-        }
-    registered_fingerprint = str(_REGISTRATION["behavior_fingerprint"])
-    behavior_fingerprints = {
-        str(fingerprint) for fingerprint in (_nested(fact, "producer", "behavior_fingerprints") or [])
-    }
-    if behavior_fingerprints != {registered_fingerprint}:
-        return {
-            **base,
-            "status": "not_evaluable",
-            "reason": "registered_behavior_identity_mismatch",
+            "reason": "registered_cohort_eligibility_failed",
             "results": [],
         }
     if (
@@ -356,24 +461,6 @@ def evaluate_counterfactual_registry(
     if cost_model is None or not cost_model.valid():
         return {**base, "status": "not_evaluable", "reason": "verified_cost_model_required", "results": []}
     rows = _rows(fact)
-    opened_at = _parse_utc(_nested(fact, "stages", "exit", "position", "opened_at"))
-    closed_at = _parse_utc(_nested(fact, "stages", "exit", "position", "closed_at"))
-    registration_at = _parse_utc(_REGISTRATION["registration_at"])
-    cutoff_at = _parse_utc(_REGISTRATION["cutoff_at"])
-    if (
-        opened_at is None
-        or closed_at is None
-        or registration_at is None
-        or cutoff_at is None
-        or opened_at < registration_at
-        or closed_at > cutoff_at
-    ):
-        return {
-            **base,
-            "status": "not_evaluable",
-            "reason": "registered_cohort_eligibility_failed",
-            "results": [],
-        }
     hypothesis = _nested(
         fact,
         "stages",
@@ -403,7 +490,7 @@ def evaluate_counterfactual_registry(
         evaluator=hypothesis_evaluator,
     )
     results = []
-    for spec in REGISTRY:
+    for spec in registry:
         delay = 0
         if spec.hypothesis_id.startswith("delay_"):
             delay = int(spec.hypothesis_id.split("_")[1])

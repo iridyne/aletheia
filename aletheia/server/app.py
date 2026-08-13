@@ -485,12 +485,18 @@ async def lifespan(app: FastAPI):
             logger.warning("Runtime session start failed (non-fatal): %s", e)
         if runtime_session and runtime_session.get("durable") is True:
             try:
-                from aletheia.learning.evidence_epoch import ensure_evidence_epochs
+                from aletheia.learning.evidence_epoch import (
+                    EXPECTED_EVIDENCE_PATH_IDS,
+                    ensure_evidence_epochs,
+                )
 
                 evidence_epochs = ensure_evidence_epochs()
-                if len(evidence_epochs) != 2:
+                missing_evidence_paths = EXPECTED_EVIDENCE_PATH_IDS - evidence_epochs.keys()
+                if missing_evidence_paths:
                     logger.warning(
-                        "Evidence epoch registration incomplete: %s", evidence_epochs
+                        "Evidence epoch registration incomplete; missing=%s registered=%s",
+                        sorted(missing_evidence_paths),
+                        evidence_epochs,
                     )
             except Exception as e:
                 logger.warning("Evidence epoch registration failed (non-fatal): %s", e)

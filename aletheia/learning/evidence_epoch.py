@@ -17,17 +17,19 @@ gateway and operator remain the sole entry/exit decision paths.
 
 from __future__ import annotations
 
+import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger("aletheia.learning.evidence_epoch")
 
-# The two paths whose epochs are managed here.
 _EVIDENCE_PATH_IDS: tuple[str, ...] = (
     "exit_trailing_evidence",
     "entry_correction_v2",
+    "profit_loop_observability",
 )
+EXPECTED_EVIDENCE_PATH_IDS = frozenset(_EVIDENCE_PATH_IDS)
 
 
 def _current_commit() -> str:
@@ -65,6 +67,33 @@ def _effective_values_for_path(path_id: str, *, commit_sha: str) -> dict[str, An
     }
 
 
+def _profit_loop_effective_values() -> dict[str, Any]:
+    from aletheia.agent_runtime.runtime_session import current_session
+    from aletheia.analytics.profit_loop_counterfactual import (
+        COUNTERFACTUAL_CONTRACT_VERSION,
+        profit_loop_registry_hash,
+    )
+
+    session = current_session()
+    if not session or session.get("durable") is not True:
+        raise ValueError("durable current runtime session is unavailable")
+    commit = str(session.get("boot_commit") or "").strip()
+    fingerprint = str(session.get("behavior_fingerprint") or "").strip()
+    if not commit or not fingerprint:
+        raise ValueError("current runtime commit or behavior fingerprint is unavailable")
+    return {
+        "path_id": "profit_loop_observability",
+        "behavior_contract": COUNTERFACTUAL_CONTRACT_VERSION,
+        "deploy_commit": commit,
+        "behavior_fingerprint": fingerprint,
+        "registry_hash": profit_loop_registry_hash(),
+        "duration_days": 30,
+        "assignment_unit": "position_id",
+        "eligibility": "opened_on_or_after_registration_closed_by_cutoff_complete_position_fact_with_frozen_hypothesis_and_1m_prefix",
+        "stopping_rule": "single_locked_retrospective_evaluation_after_fixed_cutoff_no_optional_stopping",
+    }
+
+
 def _behavior_contract_version(path_id: str) -> str:
     try:
         from aletheia.learning.registry import get_learning_path
@@ -94,9 +123,14 @@ def ensure_evidence_epochs(*, commit_sha: str | None = None) -> dict[str, str]:
     with transaction(immediate=True):
         for path_id in _EVIDENCE_PATH_IDS:
             try:
+                values = (
+                    _profit_loop_effective_values()
+                    if path_id == "profit_loop_observability"
+                    else _effective_values_for_path(path_id, commit_sha=sha)
+                )
                 epoch = build_policy_epoch(
                     epoch_kind=f"evidence_anchor:{path_id}",
-                    effective_values=_effective_values_for_path(path_id, commit_sha=sha),
+                    effective_values=values,
                     affected_path_ids=(path_id,),
                     safety_required=False,
                 )
@@ -106,7 +140,7 @@ def ensure_evidence_epochs(*, commit_sha: str | None = None) -> dict[str, str]:
                     "evidence epoch %s: path=%s commit=%s",
                     epoch_id[:12] if epoch_id else "?",
                     path_id,
-                    sha[:12] if sha else "none",
+                    str(values.get("deploy_commit") or "none")[:12],
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
@@ -126,7 +160,6 @@ def current_evidence_epochs() -> dict[str, dict[str, Any]]:
     """
     try:
         from aletheia.storage.sqlite import get_db
-        import json as _json
     except Exception:
         return {}
 
@@ -144,7 +177,7 @@ def current_evidence_epochs() -> dict[str, dict[str, Any]]:
             if row:
                 values = {}
                 try:
-                    values = _json.loads(row["effective_values_json"] or "{}")
+                    values = json.loads(row["effective_values_json"] or "{}")
                 except Exception:
                     pass
                 result[path_id] = {
@@ -152,6 +185,9 @@ def current_evidence_epochs() -> dict[str, dict[str, Any]]:
                     "started_at": row["started_at"],
                     "deploy_commit": values.get("deploy_commit", ""),
                     "behavior_contract": values.get("behavior_contract", ""),
+                    "behavior_fingerprint": values.get("behavior_fingerprint"),
+                    "registry_hash": values.get("registry_hash"),
+                    "duration_days": values.get("duration_days"),
                 }
     except Exception as exc:  # noqa: BLE001
         logger.warning("evidence epoch query failed: %s", exc)
@@ -170,24 +206,51 @@ def evidence_epoch_summary() -> dict[str, Any]:
         entry = epochs.get(path_id)
         if entry:
             epoch_commit = entry.get("deploy_commit", "")
-            consistent = epoch_commit[:12] == sha[:12] if sha and epoch_commit else None
-            paths.append({
+            consistent = epoch_commit == sha if sha and epoch_commit else None
+            path = {
                 "path_id": path_id,
                 "epoch_id": entry["epoch_id"],
                 "started_at": entry["started_at"],
                 "deploy_commit": epoch_commit,
                 "sha_consistent": consistent,
                 "status": "open",
-            })
+            }
+            if path_id == "profit_loop_observability":
+                try:
+                    started_at = datetime.fromisoformat(
+                        str(entry["started_at"]).replace("Z", "+00:00")
+                    )
+                    if started_at.tzinfo is None:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    path.update({"status": "malformed", "sha_consistent": False, "cutoff_at": None})
+                else:
+                    path["cutoff_at"] = (started_at + timedelta(days=30)).isoformat()
+                path.update(
+                    {
+                        "behavior_fingerprint": entry.get("behavior_fingerprint"),
+                        "registry_hash": entry.get("registry_hash"),
+                    }
+                )
+            paths.append(path)
         else:
-            paths.append({
+            path = {
                 "path_id": path_id,
                 "epoch_id": None,
                 "started_at": None,
                 "deploy_commit": None,
                 "sha_consistent": None,
                 "status": "not_registered",
-            })
+            }
+            if path_id == "profit_loop_observability":
+                path.update(
+                    {
+                        "behavior_fingerprint": None,
+                        "registry_hash": None,
+                        "cutoff_at": None,
+                    }
+                )
+            paths.append(path)
 
     return {
         "current_commit": sha,

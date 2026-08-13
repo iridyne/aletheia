@@ -75,6 +75,8 @@ def build_entry_exit_geometry_audit(
         source_truncated = None
     return {
         "view": "entry-exit",
+        "read_only": True,
+        "behavior_changed": False,
         "hours": hours,
         "limit": limit,
         "symbol": clean_symbol,

@@ -41,7 +41,10 @@ def test_position_and_candidate_diagnosis_commands_emit_versioned_json(monkeypat
     )
     candidate = runner.invoke(inspect_app, ["candidate-diagnosis", "--json"])
     assert candidate.exit_code == 0
-    assert json.loads(candidate.stdout)["fact_unit"] == "candidate_fact"
+    candidate_payload = json.loads(candidate.stdout)
+    assert candidate_payload["fact_unit"] == "candidate_fact"
+    assert candidate_payload["read_only"] is True
+    assert candidate_payload["behavior_changed"] is False
 
 
 def test_counterfactual_command_requires_explicit_verified_cost_file(tmp_path, monkeypatch):
@@ -68,12 +71,18 @@ def test_counterfactual_command_requires_explicit_verified_cost_file(tmp_path, m
     monkeypatch.setattr(
         counterfactual_module,
         "evaluate_counterfactual_registry",
-        lambda fact, *, cost_model: {
+        lambda fact, *, cost_model, as_of_at=None: {
             "contract_version": "profit_loop_counterfactual/v1",
             "fact_id": fact["fact_id"],
             "cost_model_valid": cost_model.valid(),
         },
     )
+    monkeypatch.setattr(
+        counterfactual_module,
+        "resolve_profit_loop_registration",
+        lambda fact: {"status": "not_evaluable"},
+    )
+    monkeypatch.setattr(counterfactual_module, "profit_loop_registration_cutoffs", lambda: [])
 
     result = runner.invoke(
         inspect_app,
@@ -91,6 +100,62 @@ def test_counterfactual_command_requires_explicit_verified_cost_file(tmp_path, m
     payload = json.loads(result.stdout)
     assert payload["fact_id"] == "position-1"
     assert payload["cost_model_valid"] is True
+
+
+def test_counterfactual_default_replay_stops_at_first_matching_cutoff(tmp_path, monkeypatch):
+    cost_file = tmp_path / "cost.json"
+    cost_file.write_text(
+        json.dumps(
+            {
+                "model_id": "paper-cost-v1",
+                "entry_fee_bps": 1.0,
+                "exit_fee_bps": 1.0,
+                "slippage_bps_per_side": 1.0,
+                "funding_bps_per_hour": 1.0,
+                "source_evidence_hash": "a" * 64,
+                "verified_at": "2026-08-13T03:59:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    newest = "2026-10-12T05:34:28+00:00"
+    matching = "2026-09-12T05:34:28+00:00"
+    older = "2026-08-12T05:34:28+00:00"
+    calls = []
+    monkeypatch.setattr(
+        counterfactual_module,
+        "profit_loop_registration_cutoffs",
+        lambda: [newest, matching, older],
+    )
+    monkeypatch.setattr(
+        position_replay_module,
+        "build_position_replay",
+        lambda position_id, **kwargs: (
+            calls.append(kwargs["as_of_at"]) or {"fact_id": position_id, "as_of_at": kwargs["as_of_at"]}
+        ),
+    )
+    monkeypatch.setattr(
+        counterfactual_module,
+        "resolve_profit_loop_registration",
+        lambda fact: {
+            "status": "available",
+            "cutoff_at": matching,
+        },
+    )
+    monkeypatch.setattr(
+        counterfactual_module,
+        "evaluate_counterfactual_registry",
+        lambda fact, **kwargs: {"fact_id": fact["fact_id"], "as_of_at": fact["as_of_at"]},
+    )
+
+    result = runner.invoke(
+        inspect_app,
+        ["profit-counterfactual", "--id", "position-1", "--cost-model", str(cost_file), "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [newest, matching]
+    assert json.loads(result.stdout)["as_of_at"] == matching
 
 
 def test_profit_gradient_command_fails_closed_on_empty_evidence(tmp_path):
