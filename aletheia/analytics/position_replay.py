@@ -121,6 +121,7 @@ def _ohlcv_evidence(
     *,
     position: dict[str, Any],
     path: dict[str, Any] | None,
+    cutoff: datetime,
 ) -> dict[str, Any]:
     base = {
         "availability": "unavailable",
@@ -153,8 +154,9 @@ def _ohlcv_evidence(
     start = entry_ts_i - entry_ts_i % _BAR_MS
     actual_end = ((exit_ts_i + _BAR_MS - 1) // _BAR_MS) * _BAR_MS
     counterfactual_end = start + _COUNTERFACTUAL_WINDOW_BARS * _BAR_MS
-    end = max(actual_end, counterfactual_end)
-    expected_i = (end - start) // _BAR_MS
+    cutoff_end = int(cutoff.timestamp() * 1000) // _BAR_MS * _BAR_MS
+    end = min(max(actual_end, counterfactual_end), cutoff_end)
+    expected_i = max(0, (end - start) // _BAR_MS)
     base.update(
         {
             "window_start_ts_ms": start,
@@ -342,7 +344,7 @@ def build_position_replay(
         causal_errors.append(pi_error)
 
     path = getattr(trade_path_analytics, "build_position_trade_path")(position_id, db=source)
-    ohlcv = _ohlcv_evidence(source, position=position, path=path)
+    ohlcv = _ohlcv_evidence(source, position=position, path=path, cutoff=cutoff)
     economics = _economics(position)
     provenance = _runtime_identity(
         source,

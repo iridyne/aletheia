@@ -1868,7 +1868,7 @@ def _compute_proposal_hash(p: TradeProposal) -> str:
     return sha256_json(payload)[:16]
 
 
-def insert_trade_proposal(p: TradeProposal) -> None:
+def insert_trade_proposal(p: TradeProposal, *, decision_inputs: object | None = None) -> None:
     # Provenance is immutable Proposal identity, so stamp it on both the model
     # and persisted payload *before* computing the hash. Hashing first produced
     # a commit that could never be verified from a real runtime-stamped row.
@@ -1893,7 +1893,7 @@ def insert_trade_proposal(p: TradeProposal) -> None:
         db = get_db()
         from aletheia.storage.proposal_hypothesis import freeze_position_hypothesis
 
-        freeze_position_hypothesis(p, db=db)
+        freeze_position_hypothesis(p, db=db, decision=decision_inputs)
         row = db.execute(
             "SELECT commit_hash FROM trade_proposals WHERE commit_hash IS NOT NULL ORDER BY rowid DESC LIMIT 1"
         ).fetchone()
@@ -2662,23 +2662,37 @@ def defer_position_path_observation_bucket(
     bucket_open_ms: int,
     attempted_at: str,
     reason: str,
-) -> None:
-    """Durably schedule or revisit one Position/bucket without polluting immutable facts."""
+) -> int:
+    """Durably schedule or revisit one Position/bucket and return retry attempts."""
 
     db = get_db()
     was_in_tx = db.in_transaction
+    is_attempt = reason != "scheduled"
     execute_write(
         "INSERT INTO position_path_observation_deferred_buckets "
         "(position_id,bucket_open_ms,first_deferred_at,last_attempt_at,attempt_count,reason) "
-        "VALUES (?,?,?,?,1,?) "
+        "VALUES (?,?,?,?,?,?) "
         "ON CONFLICT(position_id,bucket_open_ms) DO UPDATE SET "
         "last_attempt_at=excluded.last_attempt_at,"
-        "attempt_count=position_path_observation_deferred_buckets.attempt_count+1,"
+        "attempt_count=position_path_observation_deferred_buckets.attempt_count+excluded.attempt_count,"
         "reason=excluded.reason",
-        (position_id, bucket_open_ms, attempted_at, attempted_at, reason),
+        (
+            position_id,
+            bucket_open_ms,
+            attempted_at,
+            attempted_at,
+            1 if is_attempt else 0,
+            reason,
+        ),
     )
+    row = db.execute(
+        "SELECT attempt_count FROM position_path_observation_deferred_buckets "
+        "WHERE position_id=? AND bucket_open_ms=?",
+        (position_id, bucket_open_ms),
+    ).fetchone()
     if not was_in_tx:
         db.commit()
+    return int(row["attempt_count"]) if row is not None else 0
 
 
 def list_oldest_deferred_position_path_bucket(*, limit: int = 2_000) -> list[dict]:

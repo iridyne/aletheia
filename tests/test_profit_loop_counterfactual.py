@@ -23,6 +23,7 @@ def _fact(*, invalidation_threshold: float = 50.0) -> dict:
         )
     return {
         "fact_id": "position-1",
+        "as_of_at": "2026-09-12T05:34:28+00:00",
         "stages": {
             "decision": {
                 "proposal": {
@@ -43,9 +44,9 @@ def _fact(*, invalidation_threshold: float = 50.0) -> dict:
             "holding": {"ohlcv": {"rows": rows}},
             "exit": {
                 "position": {
-                    "opened_at": "2026-08-13T05:00:00+00:00",
+                    "opened_at": "2026-08-13T05:34:28+00:00",
                     "direction": "long",
-                    "closed_at": "2026-08-13T06:05:00+00:00",
+                    "closed_at": "2026-08-13T06:39:28+00:00",
                 }
             },
         },
@@ -174,4 +175,40 @@ def test_registered_cohort_rejects_positions_opened_before_registration():
     fact = _fact()
     fact["stages"]["exit"]["position"]["opened_at"] = "2026-08-13T04:00:00+00:00"
     result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+    assert result["reason"] == "registered_cohort_eligibility_failed"
+
+
+def test_registry_fails_closed_before_registered_cutoff_and_records_deployed_commit():
+    fact = _fact()
+    fact["as_of_at"] = "2026-09-12T05:34:27+00:00"
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    assert result["status"] == "not_evaluable"
+    assert result["reason"] == "registered_cutoff_not_reached"
+    assert result["registry"][0]["registration_at"] == "2026-08-13T05:34:28+00:00"
+    assert result["registry"][0]["cutoff_at"] == "2026-09-12T05:34:28+00:00"
+    assert (
+        result["registry"][0]["registration_commit"]
+        == "94a69d7733ae9d579f03df533cfa4293c5cfe084"
+    )
+
+
+def test_registry_requires_explicit_fact_or_current_as_of():
+    fact = _fact()
+    fact.pop("as_of_at")
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    assert result["status"] == "not_evaluable"
+    assert result["reason"] == "evaluation_as_of_unavailable"
+
+
+def test_registered_cohort_starts_only_after_verified_deployment():
+    fact = _fact()
+    fact["stages"]["exit"]["position"]["opened_at"] = "2026-08-13T05:34:27+00:00"
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    assert result["status"] == "not_evaluable"
     assert result["reason"] == "registered_cohort_eligibility_failed"

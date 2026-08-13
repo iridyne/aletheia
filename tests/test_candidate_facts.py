@@ -197,6 +197,31 @@ def test_candidate_facts_decode_current_compressed_batches():
     assert fact["terminal_state"] == "filtered"
 
 
+def test_candidate_facts_preserve_malformed_plain_json_as_unavailable_evidence():
+    db = _db()
+    db.execute(
+        "UPDATE filter_decision_batches SET candidate_facts=? WHERE id='batch-filtered'",
+        ('{"not": valid json',),
+    )
+
+    report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db
+    )
+
+    assert report["candidate_count"] == 3
+    assert report["unavailable_count"] == 1
+    assert report["unavailable_reasons"] == {"malformed_candidate_facts_json": 1}
+    assert report["exclusions"] == [
+        {
+            "source_table": "filter_decision_batches",
+            "source_batch_id": "batch-filtered",
+            "event_at": "2026-08-13T00:00:30+00:00",
+            "availability": "unavailable",
+            "unavailable_reason": "malformed_candidate_facts_json",
+        }
+    ]
+
+
 def test_candidate_exact_pi_identity_does_not_join_other_retry():
     db = _db()
     db.execute(

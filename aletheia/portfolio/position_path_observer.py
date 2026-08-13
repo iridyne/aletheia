@@ -22,6 +22,7 @@ _MAX_CONCURRENT_OHLCV_REQUESTS = 4
 _OHLCV_REQUEST_TIMEOUT_SECONDS = 15.0
 _OBSERVATION_CYCLE_TIMEOUT_SECONDS = 60.0
 _PROVIDER_CLOSE_TIMEOUT_SECONDS = 5.0
+_MAX_DURABLE_OBSERVATION_ATTEMPTS = 3
 
 
 def _physical_market_type(value: object) -> str | None:
@@ -274,10 +275,9 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
     for position in current_positions:
         position_id = str(position["id"])
         first_bucket_open_ms = _first_full_bucket_open_ms(position)
-        if (
-            position_id not in current_observed
-            and first_bucket_open_ms is not None
-            and current_bucket_open_ms >= first_bucket_open_ms
+        if position_id not in current_observed and (
+            first_bucket_open_ms is None
+            or current_bucket_open_ms >= first_bucket_open_ms
         ):
             repo.defer_position_path_observation_bucket(
                 position_id,
@@ -343,6 +343,22 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
                     "error_type": type(exc).__name__,
                 }
             )
+    def defer_or_exhaust(position_id: str, *, reason: str) -> None:
+        attempt_count = repo.defer_position_path_observation_bucket(
+            position_id,
+            bucket_open_ms=bucket_open_ms,
+            attempted_at=observed_at,
+            reason=reason,
+        )
+        if attempt_count < _MAX_DURABLE_OBSERVATION_ATTEMPTS:
+            summary["deferred"] += 1
+            return
+        store_result(
+            position_id,
+            instrument=None,
+            bar=None,
+            reason=f"market_data_retry_exhausted:{reason}",
+        )
 
     async def fetch_bar(
         instrument: InstrumentId,
@@ -393,12 +409,20 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
                 continue
             first_bucket_open_ms = _first_full_bucket_open_ms(position)
             if first_bucket_open_ms is None:
-                store_result(
-                    position_id,
-                    instrument=None,
-                    bar=None,
-                    reason="position_opened_at_invalid",
-                )
+                latest = repo.get_position(position_id)
+                if latest is not None:
+                    inserted = _store_unavailable(
+                        latest,
+                        bucket_open_ms=bucket_open_ms,
+                        observed_at=observed_at,
+                        reason="position_opened_at_invalid",
+                    )
+                    repo.resolve_deferred_position_path_observation(
+                        position_id, bucket_open_ms=bucket_open_ms
+                    )
+                    if inserted:
+                        summary["inserted"] += 1
+                        summary["unavailable"] += 1
                 continue
             if bucket_open_ms < first_bucket_open_ms:
                 repo.resolve_deferred_position_path_observation(position_id, bucket_open_ms=bucket_open_ms)
@@ -428,23 +452,11 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
                         }
                     )
                     for position_id in instrument_groups[instrument]:
-                        repo.defer_position_path_observation_bucket(
-                            position_id,
-                            bucket_open_ms=bucket_open_ms,
-                            attempted_at=observed_at,
-                            reason=reason,
-                        )
-                    summary["deferred"] += len(instrument_groups[instrument])
+                        defer_or_exhaust(position_id, reason=reason)
                     continue
                 if bar is None:
                     for position_id in instrument_groups[instrument]:
-                        repo.defer_position_path_observation_bucket(
-                            position_id,
-                            bucket_open_ms=bucket_open_ms,
-                            attempted_at=observed_at,
-                            reason=reason,
-                        )
-                    summary["deferred"] += len(instrument_groups[instrument])
+                        defer_or_exhaust(position_id, reason=reason)
                     continue
                 for position_id in instrument_groups[instrument]:
                     store_result(
@@ -463,13 +475,9 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
                         "error_type": "ObservationCycleTimeout",
                     }
                 )
-                summary["deferred"] += len(instrument_groups[instrument])
                 for position_id in instrument_groups[instrument]:
-                    repo.defer_position_path_observation_bucket(
-                        position_id,
-                        bucket_open_ms=bucket_open_ms,
-                        attempted_at=observed_at,
-                        reason="observation_cycle_timeout",
+                    defer_or_exhaust(
+                        position_id, reason="observation_cycle_timeout"
                     )
     finally:
         for task in tasks:

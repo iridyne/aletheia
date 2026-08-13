@@ -233,12 +233,37 @@ def test_replay_requests_candles_through_fixed_counterfactual_horizon(monkeypatc
 
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", candles)
     replay = position_replay.build_position_replay(
-        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+        "position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db
     )
     ohlcv = replay["stages"]["holding"]["ohlcv"]
     assert captured["limit"] == 66
     assert ohlcv["expected_row_count"] == 66
     assert ohlcv["availability"] == "unavailable"
+
+
+def test_replay_counterfactual_ohlcv_never_crosses_requested_as_of(monkeypatch):
+    db = _database()
+    captured = {}
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+
+    def candles(*args, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", candles)
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T00:10:30+00:00", db=db
+    )
+
+    ohlcv = replay["stages"]["holding"]["ohlcv"]
+    requested_cutoff_ms = 1_786_579_800_000
+    assert captured["before_ts"] == requested_cutoff_ms
+    assert ohlcv["window_end_ts_ms"] == requested_cutoff_ms
+    assert ohlcv["expected_row_count"] == 10
 
 
 def test_position_replay_cli_emits_json(monkeypatch):

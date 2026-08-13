@@ -112,8 +112,17 @@ jobs:
                   continue;
                 }
               }
-              const operation = pullRequest.labels.some(
-                ({name}) => name === 'do-not-auto-merge',
+              const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
+                ...context.repo,
+                pull_number: pullRequest.number,
+                per_page: 100,
+              });
+              const changesMergeAuthority = changedFiles.some(
+                ({filename}) => filename === '.github/workflows/auto-merge.yml',
+              );
+              const operation = (
+                changesMergeAuthority ||
+                pullRequest.labels.some(({name}) => name === 'do-not-auto-merge')
               ) ? 'disable' : 'enable';
               await github.rest.repos.createDispatchEvent({
                 ...context.repo,
@@ -345,6 +354,17 @@ jobs:
                   `pull request head changed from ${expectedHeadSha} to ${pullRequest.headRefOid}; ` +
                   'a newer pull request event must authorize the merge',
                 );
+                return;
+              }
+              const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
+                ...context.repo,
+                pull_number: pullRequest.number,
+                per_page: 100,
+              });
+              if (changedFiles.some(
+                ({filename}) => filename === '.github/workflows/auto-merge.yml',
+              )) {
+                core.info('merge-authority workflow changes require an explicit manual merge');
                 return;
               }
 

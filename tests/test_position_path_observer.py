@@ -654,6 +654,77 @@ async def test_observer_rereads_position_closed_during_request(monkeypatch):
     assert row["bar_close"] == 130.0
     assert closed == 1
 
+@pytest.mark.asyncio
+async def test_observer_persists_invalid_opened_at_as_unavailable(monkeypatch):
+    from aletheia.data import ccxt_provider
+    from aletheia.portfolio.position_path_observer import observe_open_position_paths
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(position_id="position-invalid-opened-at")
+    repo.update_position(position.id, opened_at="not-a-timestamp")
+    monkeypatch.setattr(
+        ccxt_provider,
+        "get_market_data_provider",
+        lambda **_: (_ for _ in ()).throw(
+            AssertionError("invalid opened_at must not request market data")
+        ),
+    )
+    bucket = 1_786_579_200_000
+
+    result = await observe_open_position_paths(
+        now=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc)
+    )
+
+    assert result["inserted"] == 1
+    assert result["unavailable"] == 1
+    row = repo.list_position_path_observations(position.id)[0]
+    assert row["bucket_open_ms"] == bucket
+    assert row["evidence_status"] == "unavailable"
+    assert row["evidence_reason"] == "position_opened_at_invalid"
+    assert repo.list_oldest_deferred_position_path_bucket() == []
+
+
+@pytest.mark.asyncio
+async def test_observer_exhausts_durable_market_data_retries(monkeypatch):
+    from aletheia.data import ccxt_provider
+    from aletheia.portfolio import position_path_observer as observer
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(position_id="position-retry-exhausted")
+    bucket = 1_786_579_200_000
+
+    class Provider:
+        async def get_ohlcv(self, *args, **kwargs):
+            raise TimeoutError("transient provider failure")
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+    )
+    results = []
+    for offset in (300_000, 600_000, 900_000):
+        results.append(
+            await observer.observe_open_position_paths(
+                now=datetime.fromtimestamp((bucket + offset) / 1000, tz=timezone.utc)
+            )
+        )
+
+    assert [result["deferred"] for result in results] == [1, 1, 0]
+    rows = repo.list_position_path_observations(position.id)
+    assert len(rows) == 1
+    assert rows[0]["evidence_status"] == "unavailable"
+    assert (
+        rows[0]["evidence_reason"]
+        == "market_data_retry_exhausted:market_data_fetch_failed"
+    )
+    assert all(
+        row["bucket_open_ms"] != bucket
+        for row in repo.list_oldest_deferred_position_path_bucket()
+    )
+
+
 def test_unavailable_identity_is_preserved_and_reported():
     from aletheia.analytics.position_path_observations import build_position_path_report
     from aletheia.portfolio.position_path_observer import _store_unavailable
