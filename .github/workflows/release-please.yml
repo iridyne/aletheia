@@ -2,7 +2,10 @@ name: Prepare and tag releases
 
 on:
   repository_dispatch:
-    types: [release_please]
+    # A manually-authorized release PR needs one trusted follow-up run after
+    # merge to create its tag and GitHub Release. Ordinary PR merges never
+    # dispatch this event; they accumulate until workflow_dispatch is used.
+    types: [release_candidate_merged]
   workflow_dispatch:
 
 permissions:
@@ -23,6 +26,29 @@ jobs:
       issues: write
       pull-requests: write
     steps:
+      - name: Validate the authorized release merge
+        if: github.event_name == 'repository_dispatch'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
+        with:
+          retries: 3
+          script: |
+            const run = context.payload.client_payload;
+            if (!/^[0-9a-f]{40}$/.test(run.merge_commit_sha || '')) {
+              throw new Error('release merge SHA must be a 40-character lowercase Git object ID');
+            }
+            if (!/^[0-9a-f]{40}$/.test(run.expected_base_sha || '')) {
+              throw new Error('release base SHA must be a 40-character lowercase Git object ID');
+            }
+            const {data: commit} = await github.rest.repos.getCommit({
+              ...context.repo,
+              ref: run.merge_commit_sha,
+            });
+            if (
+              commit.parents.length !== 1 ||
+              commit.parents[0].sha !== run.expected_base_sha
+            ) {
+              throw new Error('release merge contains commits outside the authorized batch');
+            }
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
@@ -51,9 +77,13 @@ jobs:
               sleep $((attempt * 5))
             done
           }
-          release_please github-release
-          release_please release-pr
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            release_please release-pr
+          else
+            release_please github-release
+          fi
       - name: Run CI for the release pull request
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
         with:
           retries: 3

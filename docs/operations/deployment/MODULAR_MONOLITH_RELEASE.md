@@ -23,25 +23,25 @@ private dashboard and Operator Shell packages and the stable native host also
 retain independent component versions unless they become separately shipped
 products.
 
-Release Please maintains a Ready-for-review release PR from Conventional Commit
-history. A merged-PR event explicitly dispatches Release Please because merges
-performed with the repository `GITHUB_TOKEN` do not reliably start another
-workflow through a `push` event. When the trusted auto-merge worker performs a
-clean squash merge, it emits that dispatch in the same job. Native auto-merge
-returns control immediately; after the exact PR CI run completes, a trusted
-metadata-only follow-up observes the bot merge and dispatches Release Please.
-The closed-PR path covers human merges.
+Ordinary Ready-for-review PRs accumulate after the last stable tag. They do not
+start Release Please or imply that Fedora should deploy. When the accumulated
+changes justify updating the operational instance, an operator explicitly runs
+the `Prepare and tag releases` workflow with `workflow_dispatch`. Release Please
+then computes one Ready-for-review release PR from the complete Conventional
+Commit history since the previous tag.
 Release Please keeps its `autorelease: pending` marker on the generated PR and
 the workflow adds `do-not-auto-merge` while the candidate is unverified. Release
 Please explicitly dispatches the existing read-only CI workflow on the generated
 branch because its `GITHUB_TOKEN` cannot trigger the normal pull-request event.
-After both CI jobs succeed, a metadata-only job dispatches the exact candidate
-branch and SHA to the trusted auto-merge workflow. That workflow removes the
-hold only after matching the open Release Please PR.
-Merging the release PR creates the matching tag and a metadata-only GitHub
-Release. Failed CI leaves the candidate open and held. The release workflow does
-not publish a package, build an artifact, deploy a Runtime, or open an
-Observation window.
+After all required CI jobs succeed, a metadata-only job dispatches the exact
+candidate branch, SHA, and merge-base SHA to the trusted auto-merge workflow.
+If `master` advances, the candidate remains held until the operator reruns the
+manual workflow, which refreshes and re-verifies the batch. Merging the exact
+candidate emits a tag-only follow-up; that follow-up verifies the squash parent
+against the authorized base before creating the matching tag and metadata-only
+GitHub Release. It never opens the next release PR. Failed CI or identity checks
+leave the candidate untagged. The workflow does not publish a package, build an
+artifact, deploy a Runtime, or open an Observation window.
 
 The workflow invokes the exact `release-please@17.6.0` CLI through the
 GitHub-owned Node setup Action. This preserves the repository's restrictive
