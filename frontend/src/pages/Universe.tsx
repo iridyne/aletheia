@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createColumnHelper } from '@tanstack/react-table'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
-import type { CalibrationFamilySummary, CalibrationResponse, UniverseCurrentResponse, UniverseMember, UniverseMemberDetail } from '../types'
+import type { UniverseCurrentResponse, UniverseMember, UniverseMemberDetail } from '../types'
 import { DataTable } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
@@ -92,18 +92,11 @@ export default function Universe() {
   const [filter, setFilter] = useState<'all' | 'executable' | 'flagged' | 'stale'>('all')
   const [familyFilter, setFamilyFilter] = useState('all')
   const [search, setSearch] = useState('')
-  const [evidenceOpen, setEvidenceOpen] = useState(false)
 
   const { data } = useQuery<UniverseCurrentResponse>({
     queryKey: ['universe-current'],
     queryFn: () => api.get('/universe/current'),
     refetchInterval: 30000,
-  })
-  const { data: calibration } = useQuery<CalibrationResponse>({
-    queryKey: ['universe-calibration'],
-    queryFn: () => api.getUniverseCalibration(),
-    staleTime: 5 * 60 * 1000,
-    refetchInterval: 10 * 60 * 1000,
   })
   const refreshMutation = useMutation({
     mutationFn: () => api.post('/universe/refresh'),
@@ -178,7 +171,7 @@ export default function Universe() {
             </div>
           })}
         </Card>
-        <ScannerEvidence summaries={calibration?.by_cohort ?? []} onOpen={() => setEvidenceOpen(open => !open)} open={evidenceOpen} />
+        <WhyInPool members={members} marketType={snapshot?.market_type} />
       </div>}
 
       <section className="universe-list-section" aria-label="Universe candidates">
@@ -202,27 +195,43 @@ export default function Universe() {
   )
 }
 
-function ScannerEvidence({ summaries, onOpen, open }: { summaries: CalibrationFamilySummary[]; onOpen: () => void; open: boolean }) {
-  const supported = summaries.filter(summary => summary.total_outcomes >= 10 && summary.avg_return_pct > 0).sort((a, b) => b.avg_return_pct - a.avg_return_pct)
-  const watch = summaries.filter(summary => summary.total_outcomes >= 10 && summary.avg_return_pct <= 0).sort((a, b) => a.avg_return_pct - b.avg_return_pct)
-  const insufficient = summaries.filter(summary => summary.total_outcomes < 10)
-  return <Card className="universe-evidence">
-    <CardHeader title="Scanner evidence" meta="Observational, not an execution gate" actions={<Button size="sm" variant="secondary" onClick={onOpen}>{open ? 'Hide cohort evidence' : 'View cohort evidence'}</Button>} />
-    <div className="universe-evidence-grid">
-      <EvidenceGroup title="Supported cohorts" items={supported} empty="No cohort has positive net evidence yet." tone="positive" />
-      <EvidenceGroup title="Watch cohorts" items={watch} empty="No negative net cohort evidence." tone="warning" />
-      <EvidenceGroup title="Insufficient evidence" items={insufficient} empty="No low-sample cohorts." tone="muted" />
-    </div>
-    {open && <CohortEvidence summaries={summaries} />}
+function WhyInPool({ members, marketType }: { members: UniverseMember[]; marketType?: string | null }) {
+  const rows = useMemo(() => {
+    const buckets = new Map<string, { reason: string; count: number; top: UniverseMember | null; topScore: number }>()
+    for (const member of members) {
+      const reasons = parseJson(member.inclusion_reason) as string[]
+      const primary = reasons[0]
+      if (!primary || typeof primary !== 'string') continue
+      const existing = buckets.get(primary)
+      const score = member.total_score ?? 0
+      if (existing) {
+        existing.count += 1
+        if (score > existing.topScore) { existing.top = member; existing.topScore = score }
+      } else {
+        buckets.set(primary, { reason: primary, count: 1, top: member, topScore: score })
+      }
+    }
+    return [...buckets.values()].sort((a, b) => b.count - a.count).slice(0, 5)
+  }, [members])
+  const missingReasonCount = members.filter(member => parseJson(member.inclusion_reason).length === 0).length
+  return <Card className="universe-why-pool">
+    <CardHeader
+      title="Why in pool"
+      meta={`${rows.length ? `Top ${rows.length} inclusion ${rows.length === 1 ? 'reason' : 'reasons'}` : 'No inclusion reasons recorded'}`}
+    />
+    {rows.length ? <ul className="universe-why-list">
+      {rows.map(row => <li key={row.reason} className="universe-why-row">
+        <span className="universe-why-reason" title={row.reason}>{humanize(row.reason)}</span>
+        <span className="universe-why-count mono">{row.count}</span>
+        {row.top && <span className="universe-why-top mono">
+          Top {fmtSymbol(row.top.symbol, marketType)} · {row.topScore.toFixed(0)}
+        </span>}
+      </li>)}
+    </ul> : <p className="hint">Scanner did not attach inclusion reasons to any current candidate.</p>}
+    {missingReasonCount > 0 && rows.length > 0 && <p className="hint universe-why-missing">
+      {missingReasonCount} candidate{missingReasonCount === 1 ? '' : 's'} with no recorded reason.
+    </p>}
   </Card>
-}
-
-function EvidenceGroup({ title, items, empty, tone }: { title: string; items: CalibrationFamilySummary[]; empty: string; tone: 'positive' | 'warning' | 'muted' }) {
-  return <div className={`universe-evidence-group ${tone}`}><h3>{title}</h3>{items.length ? items.slice(0, 2).map(item => <div key={`${item.family}-${item.direction}-${item.market_type}`}><strong>{humanize(`${item.family} · ${item.direction} · ${item.market_type}`)}</strong><span>{item.total_outcomes < 10 ? `${item.total_outcomes} settled outcomes · need 10+` : `${item.avg_return_pct >= 0 ? '+' : ''}${item.avg_return_pct.toFixed(2)}% avg net · ${item.hit_rate_pct.toFixed(0)}% positive · n=${item.total_outcomes}`}</span></div>) : <p>{empty}</p>}</div>
-}
-
-function CohortEvidence({ summaries }: { summaries: CalibrationFamilySummary[] }) {
-  return <div className="universe-cohort-evidence"><p className="hint">Average net return after estimated costs · positive outcome rate · settled outcome count.</p><div className="table-wrap"><table><thead><tr><th>Cohort</th><th>Average net return</th><th>Positive rate</th><th>Outcomes</th></tr></thead><tbody>{summaries.map(item => <tr key={`${item.family}-${item.direction}-${item.market_type}`}><td><span className={familyClass(item.family)}>{humanize(`${item.family} · ${item.direction} · ${item.market_type}`)}</span></td><td className={item.avg_return_pct > 0 ? 'pnl-positive mono' : item.avg_return_pct < 0 ? 'pnl-negative mono' : 'mono'}>{item.avg_return_pct >= 0 ? '+' : ''}{item.avg_return_pct.toFixed(2)}%</td><td className="mono">{item.hit_rate_pct.toFixed(0)}%</td><td className="mono">{item.total_outcomes}</td></tr>)}</tbody></table></div></div>
 }
 function MemberDrawer({ member, marketType, onClose }: { member: UniverseMember; marketType?: string | null; onClose: () => void }) {
   const { data } = useQuery<UniverseMemberDetail>({

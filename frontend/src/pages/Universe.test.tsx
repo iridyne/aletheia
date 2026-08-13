@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it } from 'vitest'
-import type { CalibrationResponse, UniverseCurrentResponse } from '../types'
+import type { UniverseCurrentResponse } from '../types'
 import Universe from './Universe'
 
 const current: UniverseCurrentResponse = {
@@ -23,15 +23,10 @@ const current: UniverseCurrentResponse = {
   }],
 }
 
-const calibration: CalibrationResponse = {
-  by_cohort_horizon: [],
-  by_cohort: [{ family: 'momentum', direction: 'long', market_type: 'spot', total_outcomes: 42, hit_rate_pct: 57, avg_return_pct: 0.42 }],
-}
 
 function renderUniverse() {
   const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } })
   client.setQueryData(['universe-current'], current)
-  client.setQueryData(['universe-calibration'], calibration)
   return renderToStaticMarkup(<MemoryRouter><QueryClientProvider client={client}><Universe /></QueryClientProvider></MemoryRouter>)
 }
 
@@ -41,7 +36,7 @@ describe('Universe Board', () => {
     expect(html).toContain('Executable')
     expect(html).toContain('Scanned')
     expect(html).toContain('Allocation')
-    expect(html).toContain('Scanner evidence')
+    expect(html).toContain('Why in pool')
     expect(html).toContain('RS24h leads BTC')
     expect(html).toContain('Market quality')
     expect(html).toContain('Decision state')
