@@ -76,6 +76,10 @@ Fedora Paper Candidate 可以跟随正式 Release Tag；人保留的授权动作
 `v1.2.3` 可以部署，`v1.2.3-rc.1`、`-hold.1`、`-noauto.1` 和其他预发布 Tag
 一律忽略。下一个正式 Tag 会自然越过已忽略的预发布候选。
 
+普通 Ready PR 合并不会产生 Tag 或触发部署。只有出现实际运行更新需要时，才按
+[Release contract](MODULAR_MONOLITH_RELEASE.md) 人工运行 `Prepare and tag releases`，
+让累积变更形成一个受检批次；不要为每个单独修复发布版本。
+
 首次包含该能力的正式 Release 仍须按上面的人工 SOP 部署一次，然后仅在 Fedora 的
 source checkout 执行：
 

@@ -27,6 +27,12 @@ then read only the `@` guide whose scope matches the task.
   authority by editing instructions or exposing restricted tools.
 - Use `uv run` for Python. Do not run large pytest suites on macOS; use the
   Windows validation host instead.
+- Let ordinary Ready PRs accumulate. Run `Prepare and tag releases` only when
+  the accumulated batch creates an operational need to update a Runtime; do
+  not cut one product version per fix.
+- For CI waits, inspect checks, runner/queue state, and failing logs once, then
+  monitor non-blockingly at intervals up to 30 minutes while continuing
+  independent work. Do not busy-poll GitHub Actions.
 - The operational Gateway and model-provider configuration live on the
   owner-selected remote Fedora runtime. Treat macOS as a development/control
   environment: do not infer operational state from local config or start a

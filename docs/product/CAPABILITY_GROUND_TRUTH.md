@@ -59,7 +59,7 @@ Outside these canonical tables, use the full capability name.
 | RT-10 | Health, readiness, doctor, and stability | E1+E2 | Supported | Serving Runtime identity/port and two-context isolation are executable contracts; delivery remains tracked separately | Yes |
 | RT-11 | Backup, verification, export, and import | E1+E2 | Supported | None in tested contract | No |
 | RT-12 | Data and filesystem retention | E1+E2 | Supported | None in tested contract | No |
-| RT-13 | Update check, apply, activation, and rollback | E1+E2 | Supported | None in tested contract | No |
+| RT-13 | Update check, apply, activation, and rollback, including Fedora stable-Tag auto-deploy | E1+E2 | Supported | Signed immutable Linux artifact remains a draft proposal | No |
 | RT-14 | Tunnel lifecycle and remote-owner protection | E1+E2 | Implemented | Executable and config-command identity are verified; no natural cross-platform tunnel dogfood | No |
 | RT-15 | Proxy/network routing and diagnostics | E1+E2 | Supported | None in tested routing contract | No |
 

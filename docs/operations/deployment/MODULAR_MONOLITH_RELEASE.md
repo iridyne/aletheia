@@ -29,6 +29,11 @@ changes justify updating the operational instance, an operator explicitly runs
 the `Prepare and tag releases` workflow with `workflow_dispatch`. Release Please
 then computes one Ready-for-review release PR from the complete Conventional
 Commit history since the previous tag.
+
+A release batch is justified by an operational need to update a Runtime, a
+coherent behavior/evidence epoch, or a required migration or security fix.
+Documentation, CI maintenance, and low-urgency fixes normally accumulate. A
+merged issue or PR alone is not a reason to publish another product version.
 Release Please keeps its `autorelease: pending` marker on the generated PR and
 the workflow adds `do-not-auto-merge` while the candidate is unverified. Release
 Please explicitly dispatches the existing read-only CI workflow on the generated
