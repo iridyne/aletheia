@@ -33,9 +33,9 @@ class CounterfactualSpec:
 
 
 _REGISTRATION = {
-    "registration_at": None,
-    "cutoff_at": None,
-    "registration_commit": None,
+    "registration_at": "2026-08-13T06:12:47+00:00",
+    "cutoff_at": "2026-09-12T06:12:47+00:00",
+    "registration_commit": "683c8e27952bee7816931733bed0f64bfadae856",
     "assignment_unit": "position_id",
     "eligibility": "opened_on_or_after_registration_closed_by_cutoff_complete_position_fact_with_frozen_hypothesis_and_1m_prefix",
     "fixed_horizon_bars": _FIXED_HORIZON_BARS,
