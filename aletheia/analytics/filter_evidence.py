@@ -35,14 +35,8 @@ _VALID_DECISIONS = {"passed", "passed_with_penalty", "rejected", "not_applicable
 _DROP_SNAPSHOT_VALUE = object()
 HEAVY_BATCH_MIN_INTERVAL_SEC = 55 * 60
 _SENSITIVE_KEY_PARTS = {
-    "api_key",
-    "authorization",
-    "credential",
-    "password",
-    "prompt",
-    "raw_context",
-    "secret",
-    "token",
+    "api_key", "authorization", "credential", "password", "prompt",
+    "raw_context", "secret", "token",
 }
 
 # Shared causal assignment used by feedback statistics and bounded replays.
@@ -141,7 +135,9 @@ def record_filter_decision(
     parameter_json = _canonical_json(params)
     input_json = _canonical_json(input_values)
     filter_version = _filter_version(filter_name, parameter_json)
-    dedup_material = f"{candidate_key}|{filter_name}|{stage}|{sequence_no}|{decision}|{filter_version}"
+    dedup_material = (
+        f"{candidate_key}|{filter_name}|{stage}|{sequence_no}|{decision}|{filter_version}"
+    )
     dedup_key = hashlib.sha256(dedup_material.encode("utf-8")).hexdigest()
     decision_id = dedup_key[:12]
     side = str(direction or "").lower() or None
@@ -149,7 +145,11 @@ def record_filter_decision(
     timestamp = evaluated_at or _utcnow()
     outcome_entry_ts = entry_ts or timestamp
 
-    outcome_ready = bool(venue) and entry_price_usd is not None and float(entry_price_usd) > 0
+    outcome_ready = (
+        bool(venue)
+        and entry_price_usd is not None
+        and float(entry_price_usd) > 0
+    )
     result_key = outcome_candidate_key or candidate_key if outcome_ready else None
     fact = FilterDecision(
         id=decision_id,
@@ -183,7 +183,7 @@ def record_filter_decision(
     )
     try:
         repo.insert_filter_decision(fact)
-        if result_key and entry_price_usd is not None:
+        if result_key:
             _ensure_candidate_outcomes(
                 outcome_candidate_key=result_key,
                 venue=str(venue),
@@ -233,14 +233,17 @@ def verify_signal_emitter_admission(opportunity: dict[str, Any]) -> tuple[bool, 
 
     raw_metadata = opportunity.get("metadata") or {}
     try:
-        metadata = raw_metadata if isinstance(raw_metadata, dict) else json.loads(raw_metadata)
+        metadata = (
+            raw_metadata
+            if isinstance(raw_metadata, dict)
+            else json.loads(raw_metadata)
+        )
     except (TypeError, ValueError):
         metadata = {}
     manifest = metadata.get("evidence_manifest") if isinstance(metadata, dict) else None
     t0 = manifest.get("t0") if isinstance(manifest, dict) else None
     if not isinstance(t0, dict) or t0.get("status") != "available":
         return False, "producer_eligibility_manifest_missing"
-    assert isinstance(manifest, dict)
     if manifest.get("policy_epoch") != POLICY_EPOCH_LABEL:
         return False, "producer_eligibility_epoch_mismatch"
 
@@ -261,17 +264,13 @@ def verify_signal_emitter_admission(opportunity: dict[str, Any]) -> tuple[bool, 
     from aletheia.storage.sqlite import get_db
 
     try:
-        rows = (
-            get_db()
-            .execute(
-                "SELECT opportunity_id, universe_snapshot_id, universe_member_id, symbol, "
-                "market_type, direction FROM filter_decisions "
-                "WHERE opportunity_id=? AND filter_name='opportunity_emission' "
-                "AND stage='signal_emitter' AND decision='passed'",
-                (opportunity_id,),
-            )
-            .fetchall()
-        )
+        rows = get_db().execute(
+            "SELECT opportunity_id, universe_snapshot_id, universe_member_id, symbol, "
+            "market_type, direction FROM filter_decisions "
+            "WHERE opportunity_id=? AND filter_name='opportunity_emission' "
+            "AND stage='signal_emitter' AND decision='passed'",
+            (opportunity_id,),
+        ).fetchall()
     except Exception as exc:
         logger.warning(
             "signal emitter admission fact unavailable opportunity=%s: %s",
@@ -317,18 +316,16 @@ def record_filter_decision_batch(
         try:
             from aletheia.storage.sqlite import get_db
 
-            previous = (
-                get_db()
-                .execute(
-                    "SELECT id, evaluated_at FROM filter_decision_batches "
-                    "WHERE candidate_kind=? AND filter_name=? AND stage=? AND filter_version=? "
-                    "ORDER BY evaluated_at DESC LIMIT 1",
-                    (candidate_kind, filter_name, stage, filter_version),
-                )
-                .fetchone()
-            )
+            previous = get_db().execute(
+                "SELECT id, evaluated_at FROM filter_decision_batches "
+                "WHERE candidate_kind=? AND filter_name=? AND stage=? AND filter_version=? "
+                "ORDER BY evaluated_at DESC LIMIT 1",
+                (candidate_kind, filter_name, stage, filter_version),
+            ).fetchone()
             previous_at = (
-                _parse_dt(previous["evaluated_at"] if hasattr(previous, "keys") else previous[1]) if previous else None
+                _parse_dt(previous["evaluated_at"] if hasattr(previous, "keys") else previous[1])
+                if previous
+                else None
             )
             current_at = _parse_dt(effective_evaluated_at)
             if (
@@ -388,7 +385,9 @@ def decode_filter_decision_batch(payload: str) -> list[dict[str, Any]]:
     encoded = payload or "[]"
     if encoded.startswith("zlib-base64:"):
         try:
-            compressed = base64.b64decode(encoded.removeprefix("zlib-base64:"), validate=True)
+            compressed = base64.b64decode(
+                encoded.removeprefix("zlib-base64:"), validate=True
+            )
             encoded = zlib.decompress(compressed).decode("utf-8")
         except (ValueError, zlib.error, UnicodeDecodeError) as exc:
             raise ValueError("malformed compact filter decision batch") from exc
@@ -437,42 +436,39 @@ def filter_feedback_stats(
     # rejection incorrectly becomes the candidate's first exposure.
     time_clause = " AND datetime(fd.first_evaluated_at) >= datetime(?)" if evaluated_since else ""
     params = (evaluated_since,) if evaluated_since else ()
-    rows = (
-        get_db()
-        .execute(
-            FIRST_EXPOSURE_CTE_SQL + "SELECT fd.filter_name, fd.stage, fd.filter_version, "
-            "fd.parameter_snapshot, fd.decision, "
-            "COALESCE(fd.scanner_family, 'unknown') AS scanner_family, "
-            "fd.direction, fd.market_type, fo.horizon, "
-            "COUNT(DISTINCT fd.outcome_candidate_key) AS n_total, "
-            "COUNT(DISTINCT CASE WHEN fo.status='settled' AND fo.net_return_pct IS NOT NULL "
-            "  THEN fd.outcome_candidate_key END) AS n_net, "
-            "AVG(CASE WHEN fo.status='settled' THEN fo.net_return_pct END) AS avg_net, "
-            "SUM(CASE WHEN fo.status='settled' AND fo.net_return_pct > 0 "
-            "  THEN fo.net_return_pct ELSE 0 END) AS gains, "
-            "SUM(CASE WHEN fo.status='settled' AND fo.net_return_pct < 0 "
-            "  THEN -fo.net_return_pct ELSE 0 END) AS losses, "
-            "SUM(CASE WHEN fd.decision='rejected' AND fo.status='settled' "
-            "  AND fo.net_return_pct < 0 THEN 1 ELSE 0 END) AS blocked_avoided_loss_count, "
-            "SUM(CASE WHEN fd.decision='rejected' AND fo.status='settled' "
-            "  AND fo.net_return_pct > COALESCE(fo.min_tradable_edge_pct, 0.05) "
-            "  THEN 1 ELSE 0 END) AS blocked_missed_alpha_count, "
-            "SUM(CASE WHEN fd.decision='rejected' AND fo.status='settled' "
-            "  THEN fo.net_return_pct ELSE 0 END) AS blocked_net_sum "
-            "FROM ranked_filter_decisions fd "
-            "JOIN filter_candidate_outcomes fo "
-            "  ON fo.outcome_candidate_key = fd.outcome_candidate_key "
-            "WHERE fd.exposure_rank = 1 "
-            f"{time_clause} "
-            "GROUP BY fd.filter_name, fd.stage, fd.filter_version, "
-            "fd.parameter_snapshot, fd.decision, "
-            "COALESCE(fd.scanner_family, 'unknown'), fd.direction, fd.market_type, fo.horizon "
-            "ORDER BY fd.filter_name, fd.stage, fd.filter_version, scanner_family, "
-            "fd.direction, fd.market_type, fo.horizon, fd.decision",
-            params,
-        )
-        .fetchall()
-    )
+    rows = get_db().execute(
+        FIRST_EXPOSURE_CTE_SQL +
+        "SELECT fd.filter_name, fd.stage, fd.filter_version, "
+        "fd.parameter_snapshot, fd.decision, "
+        "COALESCE(fd.scanner_family, 'unknown') AS scanner_family, "
+        "fd.direction, fd.market_type, fo.horizon, "
+        "COUNT(DISTINCT fd.outcome_candidate_key) AS n_total, "
+        "COUNT(DISTINCT CASE WHEN fo.status='settled' AND fo.net_return_pct IS NOT NULL "
+        "  THEN fd.outcome_candidate_key END) AS n_net, "
+        "AVG(CASE WHEN fo.status='settled' THEN fo.net_return_pct END) AS avg_net, "
+        "SUM(CASE WHEN fo.status='settled' AND fo.net_return_pct > 0 "
+        "  THEN fo.net_return_pct ELSE 0 END) AS gains, "
+        "SUM(CASE WHEN fo.status='settled' AND fo.net_return_pct < 0 "
+        "  THEN -fo.net_return_pct ELSE 0 END) AS losses, "
+        "SUM(CASE WHEN fd.decision='rejected' AND fo.status='settled' "
+        "  AND fo.net_return_pct < 0 THEN 1 ELSE 0 END) AS blocked_avoided_loss_count, "
+        "SUM(CASE WHEN fd.decision='rejected' AND fo.status='settled' "
+        "  AND fo.net_return_pct > COALESCE(fo.min_tradable_edge_pct, 0.05) "
+        "  THEN 1 ELSE 0 END) AS blocked_missed_alpha_count, "
+        "SUM(CASE WHEN fd.decision='rejected' AND fo.status='settled' "
+        "  THEN fo.net_return_pct ELSE 0 END) AS blocked_net_sum "
+        "FROM ranked_filter_decisions fd "
+        "JOIN filter_candidate_outcomes fo "
+        "  ON fo.outcome_candidate_key = fd.outcome_candidate_key "
+        "WHERE fd.exposure_rank = 1 "
+        f"{time_clause} "
+        "GROUP BY fd.filter_name, fd.stage, fd.filter_version, "
+        "fd.parameter_snapshot, fd.decision, "
+        "COALESCE(fd.scanner_family, 'unknown'), fd.direction, fd.market_type, fo.horizon "
+        "ORDER BY fd.filter_name, fd.stage, fd.filter_version, scanner_family, "
+        "fd.direction, fd.market_type, fo.horizon, fd.decision",
+        params,
+    ).fetchall()
     raw = [dict(row) for row in rows]
     priors: dict[tuple, tuple[int, float]] = {}
     for row in raw:
@@ -490,8 +486,12 @@ def filter_feedback_stats(
         sample = float(row.get("avg_net") or 0.0)
         gains = float(row.pop("gains") or 0.0)
         losses = float(row.pop("losses") or 0.0)
-        row["blocked_avoided_loss_count"] = int(row.get("blocked_avoided_loss_count") or 0)
-        row["blocked_missed_alpha_count"] = int(row.get("blocked_missed_alpha_count") or 0)
+        row["blocked_avoided_loss_count"] = int(
+            row.get("blocked_avoided_loss_count") or 0
+        )
+        row["blocked_missed_alpha_count"] = int(
+            row.get("blocked_missed_alpha_count") or 0
+        )
         row["blocked_net_sum"] = round(float(row.get("blocked_net_sum") or 0.0), 6)
         row["n"] = n
         row["n_total"] = n_total
@@ -508,34 +508,32 @@ def filter_feedback_stats(
     return output
 
 
-def filter_feedback_trajectory_summary(*, evaluated_since: str | None = None) -> dict[str, Any]:
+def filter_feedback_trajectory_summary(
+    *, evaluated_since: str | None = None
+) -> dict[str, Any]:
     """Explain how many retry rows were excluded by first-exposure assignment."""
     from aletheia.storage.sqlite import get_db
 
     time_clause = "WHERE datetime(first_evaluated_at) >= datetime(?)" if evaluated_since else ""
     params = (evaluated_since,) if evaluated_since else ()
-    row = (
-        get_db()
-        .execute(
-            "WITH trajectories AS ("
-            " SELECT filter_name, stage, filter_version, outcome_candidate_key, "
-            " COUNT(*) AS decision_rows, COUNT(DISTINCT decision) AS decision_kinds, "
-            " MIN(evaluated_at) AS first_evaluated_at "
-            " FROM filter_decisions "
-            " WHERE decision IN ('passed','rejected') "
-            "   AND outcome_candidate_key IS NOT NULL "
-            " GROUP BY filter_name, stage, filter_version, outcome_candidate_key"
-            ") "
-            "SELECT COUNT(*) AS candidate_trajectories, "
-            " COALESCE(SUM(decision_rows - 1), 0) AS excluded_later_rows, "
-            " COALESCE(SUM(CASE WHEN decision_kinds > 1 THEN 1 ELSE 0 END), 0) "
-            "   AS decision_transition_candidates "
-            "FROM trajectories "
-            f"{time_clause}",
-            params,
-        )
-        .fetchone()
-    )
+    row = get_db().execute(
+        "WITH trajectories AS ("
+        " SELECT filter_name, stage, filter_version, outcome_candidate_key, "
+        " COUNT(*) AS decision_rows, COUNT(DISTINCT decision) AS decision_kinds, "
+        " MIN(evaluated_at) AS first_evaluated_at "
+        " FROM filter_decisions "
+        " WHERE decision IN ('passed','rejected') "
+        "   AND outcome_candidate_key IS NOT NULL "
+        " GROUP BY filter_name, stage, filter_version, outcome_candidate_key"
+        ") "
+        "SELECT COUNT(*) AS candidate_trajectories, "
+        " COALESCE(SUM(decision_rows - 1), 0) AS excluded_later_rows, "
+        " COALESCE(SUM(CASE WHEN decision_kinds > 1 THEN 1 ELSE 0 END), 0) "
+        "   AS decision_transition_candidates "
+        "FROM trajectories "
+        f"{time_clause}",
+        params,
+    ).fetchone()
     return {
         "assignment_policy": "first_exposure",
         "candidate_trajectories": int(row["candidate_trajectories"] or 0),
@@ -558,7 +556,11 @@ def _observer_range_bucket(value: float | None, boundaries: tuple[float, ...]) -
 
 def _observer_rule_cohort(input_snapshot: dict[str, Any]) -> str:
     """Classify the persisted event-time rules without re-running current code."""
-    matched = {str(item) for item in (input_snapshot.get("matched_rules") or []) if item is not None}
+    matched = {
+        str(item)
+        for item in (input_snapshot.get("matched_rules") or [])
+        if item is not None
+    }
     has_rsi = "rsi_deviation" in matched
     has_atr = "atr_pct" in matched
     if has_rsi and has_atr:
@@ -583,24 +585,24 @@ def observer_pre_filter_diagnostics(
     """
     from aletheia.storage.sqlite import get_db
 
-    time_clause = " AND datetime(fd.first_evaluated_at) >= datetime(?)" if evaluated_since else ""
-    params = (evaluated_since,) if evaluated_since else ()
-    rows = (
-        get_db()
-        .execute(
-            FIRST_EXPOSURE_CTE_SQL + "SELECT fd.filter_version, fd.decision, fd.scanner_family, "
-            "fd.direction, fd.market_type, fd.input_snapshot, "
-            "fo.horizon, fo.status, fo.net_return_pct "
-            "FROM ranked_filter_decisions fd "
-            "JOIN filter_candidate_outcomes fo "
-            "  ON fo.outcome_candidate_key = fd.outcome_candidate_key "
-            "WHERE fd.exposure_rank = 1 "
-            "  AND fd.filter_name = 'observer_pre_filter' "
-            f"{time_clause}",
-            params,
-        )
-        .fetchall()
+    time_clause = (
+        " AND datetime(fd.first_evaluated_at) >= datetime(?)"
+        if evaluated_since else ""
     )
+    params = (evaluated_since,) if evaluated_since else ()
+    rows = get_db().execute(
+        FIRST_EXPOSURE_CTE_SQL
+        + "SELECT fd.filter_version, fd.decision, fd.scanner_family, "
+        "fd.direction, fd.market_type, fd.input_snapshot, "
+        "fo.horizon, fo.status, fo.net_return_pct "
+        "FROM ranked_filter_decisions fd "
+        "JOIN filter_candidate_outcomes fo "
+        "  ON fo.outcome_candidate_key = fd.outcome_candidate_key "
+        "WHERE fd.exposure_rank = 1 "
+        "  AND fd.filter_name = 'observer_pre_filter' "
+        f"{time_clause}",
+        params,
+    ).fetchall()
 
     grouped: dict[tuple[Any, ...], dict[str, Any]] = {}
     cell_priors: dict[tuple[Any, ...], list[float]] = {}
@@ -617,13 +619,20 @@ def observer_pre_filter_diagnostics(
         except (TypeError, ValueError):
             rsi = None
         try:
-            atr_pct = float(inputs["atr_pct"]) if inputs.get("atr_pct") is not None else None
+            atr_pct = (
+                float(inputs["atr_pct"])
+                if inputs.get("atr_pct") is not None else None
+            )
         except (TypeError, ValueError):
             atr_pct = None
         rsi_deviation = abs(rsi - 50.0) if rsi is not None else None
         rule_cohort = _observer_rule_cohort(inputs)
-        rsi_bucket = _observer_range_bucket(rsi_deviation, (6.0, 9.0, 12.0, 16.0))
-        atr_bucket = _observer_range_bucket(atr_pct, (0.4, 0.6, 0.8, 1.2))
+        rsi_bucket = _observer_range_bucket(
+            rsi_deviation, (6.0, 9.0, 12.0, 16.0)
+        )
+        atr_bucket = _observer_range_bucket(
+            atr_pct, (0.4, 0.6, 0.8, 1.2)
+        )
         cell_key = (
             row.get("filter_version"),
             row.get("scanner_family") or "unknown",
@@ -658,7 +667,8 @@ def observer_pre_filter_diagnostics(
         group["n_total"] += 1
         net = (
             float(row["net_return_pct"])
-            if row.get("status") == "settled" and row.get("net_return_pct") is not None
+            if row.get("status") == "settled"
+            and row.get("net_return_pct") is not None
             else None
         )
         if net is not None:
@@ -674,15 +684,19 @@ def observer_pre_filter_diagnostics(
         n_net = int(group["n_net"])
         raw_avg = group["_net_sum"] / n_net if n_net else None
         group.pop("_net_sum")
-        group["outcome_coverage"] = round(n_net / int(group["n_total"]), 4) if group["n_total"] else 0.0
-        group["raw_avg_net_pct"] = round(raw_avg, 6) if raw_avg is not None else None
+        group["outcome_coverage"] = round(
+            n_net / int(group["n_total"]), 4
+        ) if group["n_total"] else 0.0
+        group["raw_avg_net_pct"] = (
+            round(raw_avg, 6) if raw_avg is not None else None
+        )
         group["shrunk_avg_net_pct"] = (
             round(
-                (n_net * raw_avg + float(shrinkage_k) * prior) / (n_net + float(shrinkage_k)),
+                (n_net * raw_avg + float(shrinkage_k) * prior)
+                / (n_net + float(shrinkage_k)),
                 6,
             )
-            if raw_avg is not None
-            else None
+            if raw_avg is not None else None
         )
         cohorts.append(group)
 
@@ -714,22 +728,20 @@ def filter_version_status(filter_name: str) -> dict[str, Any]:
     """Return the latest persisted version and bounded version history."""
     from aletheia.storage.sqlite import get_db
 
-    rows = (
-        get_db()
-        .execute(
-            "SELECT filter_version, parameter_snapshot, MIN(evaluated_at) AS first_seen_at, "
-            "MAX(evaluated_at) AS last_seen_at, COUNT(*) AS decision_count "
-            "FROM filter_decisions WHERE filter_name=? "
-            "GROUP BY filter_version, parameter_snapshot "
-            "ORDER BY datetime(last_seen_at) DESC LIMIT 20",
-            (filter_name,),
-        )
-        .fetchall()
-    )
+    rows = get_db().execute(
+        "SELECT filter_version, parameter_snapshot, MIN(evaluated_at) AS first_seen_at, "
+        "MAX(evaluated_at) AS last_seen_at, COUNT(*) AS decision_count "
+        "FROM filter_decisions WHERE filter_name=? "
+        "GROUP BY filter_version, parameter_snapshot "
+        "ORDER BY datetime(last_seen_at) DESC LIMIT 20",
+        (filter_name,),
+    ).fetchall()
     versions = [dict(row) for row in rows]
     return {
         "filter_name": filter_name,
-        "current_filter_version": (versions[0]["filter_version"] if versions else None),
+        "current_filter_version": (
+            versions[0]["filter_version"] if versions else None
+        ),
         "versions": versions,
     }
 
@@ -832,7 +844,9 @@ def record_observer_pre_filter_evidence(
     return record_filter_decision(
         candidate_key=candidate_key,
         candidate_kind="observer_evaluation",
-        parent_candidate_key=(f"universe_member:{universe_member_id}" if universe_member_id else None),
+        parent_candidate_key=(
+            f"universe_member:{universe_member_id}" if universe_member_id else None
+        ),
         run_id=run_id,
         universe_snapshot_id=universe_snapshot_id,
         universe_member_id=universe_member_id,
@@ -918,7 +932,11 @@ def record_operator_filter_trace(
             member = repo.get_universe_member(opportunity["universe_member_id"])
         except Exception:
             member = None
-    market = _normalize_market(decision_result.get("market_type") or (opportunity or {}).get("market") or "spot")
+    market = _normalize_market(
+        decision_result.get("market_type")
+        or (opportunity or {}).get("market")
+        or "spot"
+    )
     venue = _default_venue()
     entry_snapshot = _exact_snapshot(str(symbol), market, max_age_seconds=120)
     entry_price = _positive_float((entry_snapshot or {}).get("price"))
@@ -940,7 +958,9 @@ def record_operator_filter_trace(
             entry_spread_bps = queued_seed["entry_spread_bps"]
             funding_rate_at_entry = queued_seed["funding_rate_at_entry"]
             outcome_seed_source = "queued_candidate_fixed"
-    if require_outcome_seed and (direction not in _VALID_DIRECTIONS or not venue or entry_price is None):
+    if require_outcome_seed and (
+        direction not in _VALID_DIRECTIONS or not venue or entry_price is None
+    ):
         raise ValueError("terminal_operator_outcome_unavailable")
     candidate_key = f"pi_decision:{decision_id}"
     count = 0
@@ -954,7 +974,9 @@ def record_operator_filter_trace(
         record_filter_decision(
             candidate_key=candidate_key,
             candidate_kind="pi_decision",
-            parent_candidate_key=(f"opportunity:{opportunity_id}" if opportunity_id else None),
+            parent_candidate_key=(
+                f"opportunity:{opportunity_id}" if opportunity_id else None
+            ),
             opportunity_id=opportunity_id,
             universe_snapshot_id=(opportunity or {}).get("universe_snapshot_id"),
             universe_member_id=(opportunity or {}).get("universe_member_id"),
@@ -962,7 +984,8 @@ def record_operator_filter_trace(
             symbol=str(symbol),
             market_type=market,
             direction=direction,
-            scanner_family=decision_result.get("scanner_family") or (opportunity or {}).get("scanner_family"),
+            scanner_family=decision_result.get("scanner_family")
+            or (opportunity or {}).get("scanner_family"),
             regime_tag=(opportunity or {}).get("regime_tag"),
             filter_name=str(step["filter_name"]),
             stage=str(step.get("stage") or "system_operator"),
@@ -994,50 +1017,34 @@ def _queued_candidate_outcome_seed(
     try:
         from aletheia.storage.sqlite import get_db
 
-        rows = (
-            get_db()
-            .execute(
-                "SELECT venue, symbol, market_type, direction, entry_price_usd, "
-                "entry_spread_bps, funding_rate_at_entry, entry_ts, horizon "
-                "FROM filter_candidate_outcomes WHERE outcome_candidate_key=? "
-                "ORDER BY horizon",
-                (f"opportunity:{opportunity_id}",),
-            )
-            .fetchall()
-        )
+        rows = get_db().execute(
+            "SELECT venue, symbol, market_type, direction, entry_price_usd, "
+            "entry_spread_bps, funding_rate_at_entry, entry_ts, horizon "
+            "FROM filter_candidate_outcomes WHERE outcome_candidate_key=? "
+            "ORDER BY horizon",
+            (f"opportunity:{opportunity_id}",),
+        ).fetchall()
     except Exception:
         return None
     if {row["horizon"] for row in rows} != set(_HORIZONS):
         return None
     normalized_rows = [dict(row) for row in rows]
     identities = {
-        (
-            row.get("venue"),
-            row.get("symbol"),
-            _normalize_market(row.get("market_type")),
-            str(row.get("direction") or "").lower(),
-            _positive_float(row.get("entry_price_usd")),
-            row.get("entry_ts"),
-        )
+        (row.get("venue"), row.get("symbol"), _normalize_market(row.get("market_type")),
+         str(row.get("direction") or "").lower(), _positive_float(row.get("entry_price_usd")),
+         row.get("entry_ts"))
         for row in normalized_rows
     }
     if len(identities) != 1:
         return None
     venue, seed_symbol, seed_market, seed_direction, entry_price, entry_ts = identities.pop()
-    if (
-        not venue
-        or seed_symbol != symbol
-        or seed_market != market_type
-        or seed_direction != direction
-        or entry_price is None
-        or _parse_dt(str(entry_ts or "")) is None
-    ):
+    if (not venue or seed_symbol != symbol or seed_market != market_type
+            or seed_direction != direction or entry_price is None
+            or _parse_dt(str(entry_ts or "")) is None):
         return None
     first = normalized_rows[0]
     return {
-        "venue": str(venue),
-        "entry_price_usd": entry_price,
-        "entry_ts": str(entry_ts),
+        "venue": str(venue), "entry_price_usd": entry_price, "entry_ts": str(entry_ts),
         "entry_spread_bps": _optional_float(first.get("entry_spread_bps")),
         "funding_rate_at_entry": _optional_float(first.get("funding_rate_at_entry")),
     }
@@ -1062,7 +1069,9 @@ def record_risk_filter_decision(
     return record_filter_decision(
         candidate_key=f"proposal:{proposal.id}",
         candidate_kind="proposal",
-        parent_candidate_key=(f"opportunity:{proposal.opportunity_id}" if proposal.opportunity_id else None),
+        parent_candidate_key=(
+            f"opportunity:{proposal.opportunity_id}" if proposal.opportunity_id else None
+        ),
         opportunity_id=proposal.opportunity_id,
         universe_snapshot_id=(opportunity or {}).get("universe_snapshot_id"),
         universe_member_id=(opportunity or {}).get("universe_member_id"),
@@ -1154,25 +1163,23 @@ def build_candidate_outcomes(
         if delta is None:
             continue
         material = f"{outcome_candidate_key}|{horizon}"
-        outcomes.append(
-            FilterCandidateOutcome(
-                id=hashlib.sha256(material.encode("utf-8")).hexdigest()[:12],
-                outcome_candidate_key=outcome_candidate_key,
-                venue=venue,
-                symbol=symbol,
-                market_type=market_type,
-                direction=direction,
-                scanner_family=scanner_family,
-                regime_tag=regime_tag,
-                horizon=horizon,
-                allocation_selected=allocation_selected,
-                entry_price_usd=entry_price_usd,
-                entry_spread_bps=entry_spread_bps,
-                funding_rate_at_entry=funding_rate_at_entry,
-                entry_ts=entry_ts,
-                due_at=(entry_dt + delta).isoformat(),
-            )
-        )
+        outcomes.append(FilterCandidateOutcome(
+            id=hashlib.sha256(material.encode("utf-8")).hexdigest()[:12],
+            outcome_candidate_key=outcome_candidate_key,
+            venue=venue,
+            symbol=symbol,
+            market_type=market_type,
+            direction=direction,
+            scanner_family=scanner_family,
+            regime_tag=regime_tag,
+            horizon=horizon,
+            allocation_selected=allocation_selected,
+            entry_price_usd=entry_price_usd,
+            entry_spread_bps=entry_spread_bps,
+            funding_rate_at_entry=funding_rate_at_entry,
+            entry_ts=entry_ts,
+            due_at=(entry_dt + delta).isoformat(),
+        ))
     return outcomes
 
 
@@ -1204,7 +1211,12 @@ def _encode_candidate_facts(facts: list[dict[str, Any]]) -> str:
 
 
 def _normalize_market(market_type: str | None) -> str:
-    return "perp" if str(market_type or "spot").lower() in {"perp", "futures", "swap", "usdt_futures"} else "spot"
+    return (
+        "perp"
+        if str(market_type or "spot").lower()
+        in {"perp", "futures", "swap", "usdt_futures"}
+        else "spot"
+    )
 
 
 def _sanitize_snapshot(value: Any, key: str = "") -> Any:
@@ -1219,7 +1231,11 @@ def _sanitize_snapshot(value: Any, key: str = "") -> Any:
                 sanitized_dict[str(child_key)] = sanitized
         return sanitized_dict
     if isinstance(value, (list, tuple)):
-        return [sanitized for item in value[:50] if (sanitized := _sanitize_snapshot(item)) is not _DROP_SNAPSHOT_VALUE]
+        return [
+            sanitized
+            for item in value[:50]
+            if (sanitized := _sanitize_snapshot(item)) is not _DROP_SNAPSHOT_VALUE
+        ]
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value[:500] if isinstance(value, str) else value
     return str(value)[:500]
@@ -1278,7 +1294,11 @@ def _exact_snapshot(
         if max_age_seconds is not None:
             snapshot_at = _parse_dt(str(snapshot.get("snapshot_at") or ""))
             now = datetime.now(timezone.utc)
-            if snapshot_at is None or snapshot_at > now or (now - snapshot_at).total_seconds() > max_age_seconds:
+            if (
+                snapshot_at is None
+                or snapshot_at > now
+                or (now - snapshot_at).total_seconds() > max_age_seconds
+            ):
                 return None
         return snapshot
     except Exception:

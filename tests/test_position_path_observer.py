@@ -47,7 +47,8 @@ def _seed_position(
         (asset_id, venue, "perp", symbol, "active"),
     )
     db.execute(
-        "INSERT INTO universe_snapshots (id,status,created_at) VALUES (?,'active',datetime('now'))",
+        "INSERT INTO universe_snapshots (id,status,created_at) "
+        "VALUES (?,'active',datetime('now'))",
         (snapshot_id,),
     )
     db.execute(
@@ -152,7 +153,9 @@ async def test_observer_defers_when_provider_cannot_prove_closed_bar(
         calls["created"] += 1
         return Provider()
 
-    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", create_provider)
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", create_provider
+    )
     now = datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc)
 
     result = await observe_open_position_paths(now=now)
@@ -168,7 +171,9 @@ async def test_observer_defers_when_provider_cannot_prove_closed_bar(
     assert calls == {"created": 1, "requested": 1, "closed": 1}
     assert repo.list_position_path_observations(position.id) == []
 
-    retried = await observe_open_position_paths(now=datetime.fromtimestamp((bucket + 900_000) / 1000, tz=timezone.utc))
+    retried = await observe_open_position_paths(
+        now=datetime.fromtimestamp((bucket + 900_000) / 1000, tz=timezone.utc)
+    )
     assert retried["inserted"] == 1
     assert retried["available"] == 1
     assert retried["deferred"] == 0
@@ -179,7 +184,8 @@ async def test_observer_defers_when_provider_cannot_prove_closed_bar(
     assert (
         repo.get_db()
         .execute(
-            "SELECT COUNT(*) FROM position_path_observation_deferred_buckets WHERE position_id=? AND bucket_open_ms=?",
+            "SELECT COUNT(*) FROM position_path_observation_deferred_buckets "
+            "WHERE position_id=? AND bucket_open_ms=?",
             (position.id, bucket),
         )
         .fetchone()[0]
@@ -232,7 +238,9 @@ async def test_observer_requests_once_per_unique_instrument(
         calls["created"] += 1
         return Provider()
 
-    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", create_provider)
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", create_provider
+    )
     now = datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc)
 
     result = await observe_open_position_paths(now=now)
@@ -248,7 +256,9 @@ async def test_observer_requests_once_per_unique_instrument(
     assert calls == {"created": 1, "requested": 1, "closed": 1}
     assert len(repo.list_position_path_observations(first_position.id)) == 1
     assert len(repo.list_position_path_observations(second_position.id)) == 1
-    assert repo.list_position_path_observations(first_position.id)[0]["capture_mode"] == "open_snapshot"
+    assert repo.list_position_path_observations(first_position.id)[0][
+        "capture_mode"
+    ] == "open_snapshot"
 
 
 @pytest.mark.asyncio
@@ -259,7 +269,9 @@ async def test_observer_samples_position_closed_after_target_bucket(monkeypatch)
 
     bucket = 1_786_579_200_000
     position = _seed_position(position_id="position-path-just-closed")
-    closed_at = datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc).isoformat()
+    closed_at = datetime.fromtimestamp(
+        (bucket + 300_000) / 1000, tz=timezone.utc
+    ).isoformat()
     repo.update_position(position.id, status="closed", closed_at=closed_at)
     calls = {"requested": 0}
 
@@ -287,9 +299,13 @@ async def test_observer_samples_position_closed_after_target_bucket(monkeypatch)
         async def close(self):
             return None
 
-    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda **_: Provider())
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+    )
 
-    result = await observe_open_position_paths(now=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc))
+    result = await observe_open_position_paths(
+        now=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc)
+    )
 
     assert result == {
         "positions": 1,
@@ -327,9 +343,13 @@ async def test_observer_skips_existing_bucket_before_provider_lookup(monkeypatch
     def unexpected_provider(**_):
         raise AssertionError("an existing observation must skip provider lookup")
 
-    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", unexpected_provider)
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", unexpected_provider
+    )
 
-    result = await observe_open_position_paths(now=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc))
+    result = await observe_open_position_paths(
+        now=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc)
+    )
 
     assert result == {
         "positions": 1,
@@ -349,7 +369,11 @@ async def test_observer_skips_bar_that_crosses_position_entry(monkeypatch):
     from aletheia.storage import repositories as repo
 
     bucket = 1_786_579_200_000
-    position = _seed_position(opened_at=datetime.fromtimestamp((bucket + 1) / 1000, tz=timezone.utc).isoformat())
+    position = _seed_position(
+        opened_at=datetime.fromtimestamp(
+            (bucket + 1) / 1000, tz=timezone.utc
+        ).isoformat()
+    )
     calls = {"created": 0, "requested": 0, "closed": 0}
 
     class Provider:
@@ -380,9 +404,13 @@ async def test_observer_skips_bar_that_crosses_position_entry(monkeypatch):
         calls["created"] += 1
         return Provider()
 
-    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", create_provider)
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", create_provider
+    )
 
-    skipped = await observe_open_position_paths(now=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc))
+    skipped = await observe_open_position_paths(
+        now=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc)
+    )
     assert skipped == {
         "positions": 1,
         "inserted": 0,
@@ -394,12 +422,15 @@ async def test_observer_skips_bar_that_crosses_position_entry(monkeypatch):
     assert calls == {"created": 0, "requested": 0, "closed": 0}
     assert repo.list_position_path_observations(position.id) == []
 
-    recorded = await observe_open_position_paths(now=datetime.fromtimestamp((bucket + 600_000) / 1000, tz=timezone.utc))
+    recorded = await observe_open_position_paths(
+        now=datetime.fromtimestamp((bucket + 600_000) / 1000, tz=timezone.utc)
+    )
     assert recorded["inserted"] == 1
     assert calls == {"created": 1, "requested": 1, "closed": 1}
     rows = repo.list_position_path_observations(position.id)
     assert len(rows) == 1
     assert rows[0]["bucket_open_ms"] == bucket + 300_000
+
 
 
 @pytest.mark.asyncio
@@ -431,7 +462,9 @@ async def test_observer_persists_completed_instrument_before_other_timeout(
                 try:
                     await asyncio.Event().wait()
                 except asyncio.CancelledError:
-                    slow_cancelled_after_fast_persisted = bool(repo.list_position_path_observations(fast.id))
+                    slow_cancelled_after_fast_persisted = bool(
+                        repo.list_position_path_observations(fast.id)
+                    )
                     raise
             return OHLCVResult(
                 [
@@ -534,7 +567,9 @@ async def test_observer_bounds_unique_instrument_concurrency(monkeypatch):
             closed += 1
 
     provider = Provider()
-    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda **_: provider)
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", lambda **_: provider
+    )
 
     result = await observer.observe_open_position_paths(
         now=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc)
@@ -562,7 +597,9 @@ async def test_observer_rereads_position_closed_during_request(monkeypatch):
             repo.update_position(
                 position.id,
                 status="closed",
-                closed_at=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc).isoformat(),
+                closed_at=datetime.fromtimestamp(
+                    (bucket + 300_000) / 1000, tz=timezone.utc
+                ).isoformat(),
                 entry_price=120.0,
                 quantity=0.02,
                 current_price=107.0,
@@ -594,9 +631,13 @@ async def test_observer_rereads_position_closed_during_request(monkeypatch):
             nonlocal closed
             closed += 1
 
-    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda **_: Provider())
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+    )
 
-    result = await observe_open_position_paths(now=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc))
+    result = await observe_open_position_paths(
+        now=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc)
+    )
 
     assert result["inserted"] == 1
     row = repo.list_position_path_observations(position.id)[0]
@@ -613,7 +654,6 @@ async def test_observer_rereads_position_closed_during_request(monkeypatch):
     assert row["bar_close"] == 130.0
     assert closed == 1
 
-
 @pytest.mark.asyncio
 async def test_observer_persists_invalid_opened_at_as_unavailable(monkeypatch):
     from aletheia.data import ccxt_provider
@@ -625,11 +665,15 @@ async def test_observer_persists_invalid_opened_at_as_unavailable(monkeypatch):
     monkeypatch.setattr(
         ccxt_provider,
         "get_market_data_provider",
-        lambda **_: (_ for _ in ()).throw(AssertionError("invalid opened_at must not request market data")),
+        lambda **_: (_ for _ in ()).throw(
+            AssertionError("invalid opened_at must not request market data")
+        ),
     )
     bucket = 1_786_579_200_000
 
-    result = await observe_open_position_paths(now=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc))
+    result = await observe_open_position_paths(
+        now=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc)
+    )
 
     assert result["inserted"] == 1
     assert result["unavailable"] == 1
@@ -659,7 +703,9 @@ async def test_observer_backs_off_transient_market_data_retries_without_terminal
         async def close(self):
             return None
 
-    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda **_: Provider())
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+    )
     results = []
     for offset in (300_000, 600_000, 900_000):
         results.append(
@@ -670,15 +716,11 @@ async def test_observer_backs_off_transient_market_data_retries_without_terminal
 
     assert [result["deferred"] for result in results] == [1, 1, 1]
     assert repo.list_position_path_observations(position.id) == []
-    retry = (
-        get_db()
-        .execute(
-            "SELECT attempt_count,reason FROM position_path_observation_deferred_buckets "
-            "WHERE position_id=? AND bucket_open_ms=?",
-            (position.id, bucket),
-        )
-        .fetchone()
-    )
+    retry = get_db().execute(
+        "SELECT attempt_count,reason FROM position_path_observation_deferred_buckets "
+        "WHERE position_id=? AND bucket_open_ms=?",
+        (position.id, bucket),
+    ).fetchone()
     assert dict(retry) == {
         "attempt_count": 3,
         "reason": "market_data_fetch_failed",
@@ -689,7 +731,10 @@ async def test_observer_backs_off_transient_market_data_retries_without_terminal
         "WHERE position_id=? AND bucket_open_ms=?",
         (position.id, bucket),
     )
-    assert all(row["bucket_open_ms"] != bucket for row in repo.list_oldest_deferred_position_path_bucket())
+    assert all(
+        row["bucket_open_ms"] != bucket
+        for row in repo.list_oldest_deferred_position_path_bucket()
+    )
 
 
 def test_unavailable_identity_is_preserved_and_reported():
@@ -723,6 +768,7 @@ def test_unavailable_identity_is_preserved_and_reported():
     db = repo.get_db()
     with pytest.raises(Exception, match="append-only"):
         db.execute(
-            "UPDATE position_path_observations SET evidence_reason='changed' WHERE position_id=?",
+            "UPDATE position_path_observations SET evidence_reason='changed' "
+            "WHERE position_id=?",
             (position.id,),
         )
