@@ -18,6 +18,8 @@ _EFFECTIVE_VALUES = {
     "shrinkage_prior_mean_pct": 0.0,
     "shrinkage_k": 20.0,
     "insufficient_evidence": "neutral_not_directional_veto",
+    "qualified_outcome_semantics": "same_direction_net_outcome_not_price_direction",
+    "funding_semantics": "positive_crowded_longs_negative_crowded_shorts",
     "shared_roles": ["assessment", "bull", "bear"],
 }
 _AFFECTED_PATHS = (
