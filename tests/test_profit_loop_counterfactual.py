@@ -25,7 +25,10 @@ def _fact(*, invalidation_threshold: float = 50.0) -> dict:
     return {
         "fact_id": "position-1",
         "as_of_at": "2026-09-12T05:34:28+00:00",
-        "producer": {"producer_commits": ["test-verified-deployment"]},
+        "producer": {
+            "producer_commits": ["test-verified-deployment"],
+            "behavior_fingerprints": ["test-behavior"],
+        },
         "causal_link": {"status": "available"},
         "economics": {"availability": "available"},
         "stages": {
@@ -88,6 +91,11 @@ def _registered_test_cohort(monkeypatch):
         counterfactual._REGISTRATION,
         "registration_commit",
         "test-verified-deployment",
+    )
+    monkeypatch.setitem(
+        counterfactual._REGISTRATION,
+        "behavior_fingerprint",
+        "test-behavior",
     )
     monkeypatch.setattr(
         counterfactual,
@@ -240,13 +248,22 @@ def test_registry_requires_post_deployment_registration(monkeypatch):
     assert result["reason"] == "verified_deployment_registration_required"
 
 
-def test_registry_rejects_mismatched_producer_commit():
+def test_registry_allows_code_only_upgrade_with_same_behavior():
     fact = _fact()
-    fact["producer"]["producer_commits"] = ["stale-runtime"]
+    fact["producer"]["producer_commits"] = ["later-analysis-only-deployment"]
 
     result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
 
-    assert result["reason"] == "registered_producer_identity_mismatch"
+    assert result["status"] == "evaluated"
+
+
+def test_registry_rejects_mismatched_behavior_fingerprint():
+    fact = _fact()
+    fact["producer"]["behavior_fingerprints"] = ["changed-behavior"]
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    assert result["reason"] == "registered_behavior_identity_mismatch"
 
 
 @pytest.mark.parametrize(
