@@ -218,9 +218,9 @@ trades, positive expectancy, drawdown/consecutive-loss/risk-violation checks, a
 post-trade review). LIVE positions are **never** auto-closed by the position
 manager. Treat enabling live as a separate, deliberate decision.
 
-## 9. Updating the code (on-demand self-upgrade)
+## 9. Updating the code
 
-This is owner-triggered, not a daemon. In a source checkout, the primary command is:
+For an owner-triggered source update, the primary command remains:
 
 ```bash
 uv run aletheia update
@@ -244,6 +244,16 @@ The same bare command selects the safe path for the current runtime: source chec
 use the controlled Git deployment above, while packaged runtimes use the signed-release
 and Tray activation path. Dirty, wrong-branch, ahead, or diverged source checkouts fail
 closed rather than clobbering local work or inventing a deployment state.
+
+The Fedora Paper Candidate may instead follow strict stable Release Tags with
+the source-runtime auto updater. Bootstrap it once with
+`uv run aletheia update auto install`, inspect it with `update auto status`, and
+use `update auto resume` only after resolving a global recovery hold. The timer
+ignores prerelease tags, pins the selected Tag SHA, requires a clean
+fast-forward-only `master`, Paper mode, Live off, and healthy Gateway/provider/
+settlement baselines, and rolls back activation failures. The complete gates
+and failure policy are authoritative in
+[`DEPLOYMENT.md`](../deployment/DEPLOYMENT.md#无人值守升级边界).
 
 ## 10. Health & observability
 

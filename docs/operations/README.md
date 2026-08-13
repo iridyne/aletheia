@@ -19,6 +19,11 @@ For read-only Alpha, opportunity-funnel, and sizing diagnosis, use
 LLM token usage, optional economics, budget-shadow, and context-adapter
 operations, use the [LLM Harness Telemetry runbook](runbooks/LLM_HARNESS_TELEMETRY.md).
 
+For Fedora source-runtime deployment and stable-Tag auto-updates, use
+[Deployment](deployment/DEPLOYMENT.md). Release batching and exact candidate
+authorization are defined by the
+[modular-monolith release contract](deployment/MODULAR_MONOLITH_RELEASE.md).
+
 ## Packaged Runtime release lane
 
 For the browser-first macOS installed product, start with

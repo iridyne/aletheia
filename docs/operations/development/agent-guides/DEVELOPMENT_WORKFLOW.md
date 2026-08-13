@@ -41,6 +41,12 @@ uv run aletheia doctor
 - Commit only scoped files and publish through the normal PR workflow. GitHub
   Actions uses self-hosted runners only. Disable a broken workflow; do not
   archive the repository.
+- Ordinary Ready PRs accumulate until an operationally useful release batch is
+  needed; only then run `Prepare and tag releases`. See the
+  [release contract](../../deployment/MODULAR_MONOLITH_RELEASE.md).
+- When CI is pending, inspect checks, the registered runner/queue state, and any
+  failing log once. Continue independent work and monitor non-blockingly at
+  intervals up to 30 minutes; do not spend the work loop polling unchanged jobs.
 - The gateway is global: do not restart it casually or from competing worktrees.
 - Owner updates lead with outcome, consequence, and current state.
 

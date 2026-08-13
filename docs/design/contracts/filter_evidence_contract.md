@@ -115,6 +115,10 @@ administrative exclusion，不得进入 candidate skip、trace/seed 缺口或效
 事实不能替代 emitter 的 producer pass。Universe emitter 的该类失败不是可忽略分析错误：
 当前没有 snapshot/member 级独立重试队列，因此 `UniverseService.refresh` 必须把 scanner run 标为
 failed 并返回失败，禁止继续发布 completed。
+进入队列后的 immutable producer admission 拒绝属于 queue lifecycle：写入唯一的 producer
+eligibility rejection，转为 `signal_queue_evicted` 并终结该 Opportunity。它不是 System Operator
+判断，不得创建 `operator_action_assessment`、outcome seed 或 B2 cohort 成员；暂时无法取得
+producer attestation 时仍返回 typed unavailable，保留载体重试。
 Opportunity 的 open/queued TTL 过期也必须与 `ttl_expired` 记录同事务提交；证据失败则保留原状态。
 这条规则同样覆盖 System Operator 的两次权限重查：若 Opportunity 在 LLM 评估期间或
 Proposal preflight 之后才越过 `valid_until`，preflight/claim 必须共用同一个仓储 CAS，写且只写一条
@@ -175,6 +179,12 @@ summary 的最小 trace（epoch、tier、bucket、样本/coverage、成本模型
 `insufficient_evidence`：中性未知，不得被叙述为负向 alpha 或自动降低 conviction；成本模型不一致
 则为 `data_quality_incident`。同一序列化 summary 必须输入 assessment、Bull 与 Bear。该行为不
 改变 Ranker、Risk 的独立 `family_direction_edge()`、Execution 或 Live 权限。
+
+`qualified_negative` 只表示上述同身份、同方向且已成熟 cohort 的净收益为负，并作为该候选的
+反方历史证据；它不表示价格方向 bearish，也不单独授权 trade、skip、veto 或 conviction 变化。
+Funding 的方向语义固定为：正 funding 表示 longs pay shorts / long crowding，支持 contrarian
+short；负 funding 表示 shorts pay longs / short crowding，支持 contrarian long，并反对 short。
+outcome 或 funding 语义变化必须轮换 policy epoch，禁止把不同语义的样本混入同一 cohort。
 
 PiDecision 的 `evidence_manifest_json.operator_rationale` 必须完整保存 `skip_kind`、adverse reason/evidence、
 supporting/opposing signals 与 risk factors，权威 `reasoning` 保存全文。短 reflection 或 UI 可以截断显示，

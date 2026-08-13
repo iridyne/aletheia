@@ -32,7 +32,7 @@ Discovery surfaces:
 | RT-10 | Health, readiness, doctor, and stability | Distinguish process liveness, UI readiness, business degradation, and consistency | Dashboard, API, CLI | `aletheia/server/routes/health.py`, `aletheia/diagnostics/doctor.py` |
 | RT-11 | Backup, verification, export, and import | Create and verify recoverable local state bundles and safely import them | API, CLI | `aletheia/server/routes/persistence.py`, `aletheia/persistence/` |
 | RT-12 | Data and filesystem retention | Prune bounded telemetry/files without deleting causal trading evidence | Scheduler, settings | `aletheia/maintenance/`, `docs/design/data/RETENTION_POLICY.md` |
-| RT-13 | Update check, apply, activation, and rollback | Safely update development or packaged runtimes with progress and rollback | Settings, tray, API, CLI | `aletheia/update/`, `aletheia/server/routes/update.py` |
+| RT-13 | Update check, apply, activation, and rollback | Safely update development, packaged, or Fedora source runtimes; Fedora admits strict stable Tags with durable rollback/hold state | Settings, tray, API, CLI, systemd user timer | `aletheia/update/`, `aletheia/server/routes/update.py` |
 | RT-14 | Tunnel lifecycle and remote-owner protection | Configure and operate a tunnel while protecting mutations with owner authority | CLI, Settings | `aletheia/gateway/tunnel.py`, `aletheia/cli/tunnel.py` |
 | RT-15 | Proxy/network routing and diagnostics | Configure direct/proxy networking and test reachability | CLI, Settings | `aletheia/net.py`, `aletheia/cli/network_cmd.py` |
 

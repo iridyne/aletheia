@@ -11,21 +11,28 @@ supersedes: []
 
 ## Summary
 
-Consider replacing the owner-triggered Fedora source-checkout updater with a
-signed, immutable Linux Runtime and a headless activation host. This is a
+Consider replacing the Fedora stable-Tag source-checkout updater with a signed,
+immutable Linux Runtime and a headless activation host. This is a
 cross-domain trust-boundary change spanning release authorization, frontend and
 backend identity, SQLite migration, service ownership, and rollback. It is not
 implemented or accepted by this draft.
 
 ## Current fact
 
-Fedora is the owner-selected long-running Paper runtime. Deployments use the
-human-triggered source-checkout SOP in
-[`DEPLOYMENT.md`](../../operations/deployment/DEPLOYMENT.md). `UpdateConfig`
-explicitly forbids daemon use. The current updater has no cross-process update
-lock, CI-candidate authorization, automatic provenance and settlement gate, or
-safe Git-only recovery after an applied schema migration. The macOS
+Fedora is the owner-selected long-running Paper runtime. Its implemented
+source-runtime updater follows only strict stable Release Tags under the
+[`DEPLOYMENT.md`](../../operations/deployment/DEPLOYMENT.md) contract. A
+user-level systemd timer runs a locked transaction, pins the Tag SHA, preflights
+migrations against a restored backup, stages dependencies and frontend assets,
+verifies provenance/schema/provider/scheduler/settlement/Paper/Live-off gates,
+and durably records skip, rollback, or global-hold outcomes. The macOS
 `aletheia-tray` is not a Linux service host.
+
+That implementation still builds and activates a mutable source checkout on
+the stable host and trusts Git Tag/repository controls rather than a signed
+Linux artifact/feed. This draft addresses that remaining distribution and
+activation boundary; it does not describe a prerequisite for the current
+stable-Tag updater.
 
 ## Goals and non-goals
 
@@ -44,7 +51,8 @@ Non-goals:
 - enabling Live or changing Risk, provider, trading authority, or policy epochs;
 - opening an Observation window automatically;
 - treating a merge, download, or process start as a successful deployment;
-- modifying source code or building frontend assets on the stable runtime.
+- preserving source checkout or on-host frontend build as the final
+  distribution model.
 
 ## Proposed design
 
@@ -73,12 +81,14 @@ Non-goals:
 
 ## Trust and complexity review
 
-The proposal creates a new release-signing authority, durable activation
-request, Linux service owner, and database recovery path. Splitting these across
-independent scripts would permit frontend/backend drift and competing lifecycle
-owners. Reusing the current source-checkout updater as a daemon is insufficient:
-Git cannot reverse an applied schema migration, and its human-triggered contract
-has no signed candidate or post-activation economic-health gate.
+The proposal creates a new release-signing authority, immutable artifact/feed,
+and stable activation host. The current source updater already supplies a
+single-instance lock, durable transaction state, backup-based schema recovery,
+and post-activation identity and health gates. It does not supply a signed
+artifact boundary: the stable host still fetches Git objects, resolves
+dependencies, and builds frontend assets. The proposal is justified only if
+removing that on-host build and Git trust surface is worth the extra signing and
+artifact lifecycle.
 
 Credentials remain write-only and outside artifacts, logs, manifests, and Git.
 The stable host receives no authority to change Live, Risk, provider, or trading
@@ -107,12 +117,13 @@ activation is enabled.
 
 ## Rollout and rollback
 
-Keep the current owner-triggered SOP authoritative while the proposal is draft.
+Keep the stable-Tag source updater authoritative while the proposal is draft.
 Introduce artifact production and check-only feed verification first, then
-canary staging, then supervised activation. Automatic activation remains off
-until the verification contract passes on the owner-selected Fedora runtime.
-Any failed gate returns selection to the prior immutable release and restores
-the pre-update database backup when schema state is not backward-compatible.
+canary staging, then supervised activation. Immutable-artifact automatic
+activation remains off until the verification contract passes on the
+owner-selected Fedora runtime. Any failed gate returns selection to the prior
+immutable release and restores the pre-update database backup when schema state
+is not backward-compatible.
 
 ## Resolution
 
