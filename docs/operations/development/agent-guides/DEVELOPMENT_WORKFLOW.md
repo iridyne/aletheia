@@ -41,6 +41,12 @@ uv run aletheia doctor
 - Commit only scoped files and publish through the normal PR workflow. GitHub
   Actions uses self-hosted runners only. Disable a broken workflow; do not
   archive the repository.
+- Heavy/full Python validation runs first through PR CI on the repository's
+  self-hosted GitHub Actions runners. If those runners are unavailable and the
+  result cannot wait, use an isolated Fedora CI/Test process in a dedicated
+  Worktree with a temporary data root, no secrets, and no execution authority;
+  never use the stable Runtime checkout or primary data. Windows is not a
+  validation dependency or fallback.
 - Ordinary Ready PRs accumulate until an operationally useful release batch is
   needed; only then run `Prepare and tag releases`. See the
   [release contract](../../deployment/MODULAR_MONOLITH_RELEASE.md).
@@ -53,7 +59,9 @@ uv run aletheia doctor
 ## Common commands
 
 - Focused test: `uv run pytest tests/test_<area>.py -q`
-- Full suite, never on macOS: `uv run pytest tests/ -q --tb=line`
+- Full suite: prefer PR CI on a repository self-hosted runner. Fedora fallback,
+  isolated from the stable Runtime: `uv run pytest tests/ -q --tb=line`. Never
+  run it on macOS or use Windows as a validation fallback.
 - Gateway: `uv run aletheia gateway <start|stop|restart|status|logs>`
 - Daily/release UI: `http://127.0.0.1:8787/`
 - Worktree HMR: Vite `http://127.0.0.1:5173/`; read

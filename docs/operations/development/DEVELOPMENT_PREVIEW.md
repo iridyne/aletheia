@@ -113,10 +113,10 @@ This is for UI and API development, not paper-trading simulation. Use focused
 tests or the stable gateway's explicitly authorized paper workflow for trading
 behavior verification.
 
-## Parallel Windows previews
+## Parallel remote previews
 
-A Windows qualification/CI host may run several isolated Preview pairs while
-the stable gateway remains pinned on `8787`. Each pair must come from its own
+A remote development host may run several isolated Preview pairs while the
+stable gateway remains pinned on `8787`. Each pair must come from its own
 Worktree and use unique host ports.
 
 ```text
@@ -178,7 +178,7 @@ edits visible. If an owner-approved gateway restart is needed for a release,
 perform it from the owning checkout and prove the current commit with the normal
 runtime checks.
 
-A merged PR is not a qualification deployment. The Windows qualification
+A merged PR is not a qualification deployment. The owner-selected qualification
 Runtime remains pinned until the owner explicitly selects a new candidate. See
 [`Qualification Development Protocol`](QUALIFICATION_DEVELOPMENT_PROTOCOL.md)
 for observation-window rules.

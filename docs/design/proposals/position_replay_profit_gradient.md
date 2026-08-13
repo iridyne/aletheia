@@ -140,7 +140,9 @@ cutoff and anti-lookahead, one-minute completeness and deterministic hashing,
 accounting residuals and cost non-duplication, candidate/Position denominator
 separation, same-bar ambiguity, epoch and concentration gates, and no trading
 behavior mutation. macOS runs only focused tests; the final complete suite runs
-on the Windows validation host.
+through PR CI on a repository self-hosted runner. If that runner is unavailable
+and verification cannot wait, use an isolated Fedora CI/Test process; Windows
+is not a validation fallback.
 
 ## Rollout and rollback
 

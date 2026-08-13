@@ -25,8 +25,11 @@ then read only the `@` guide whose scope matches the task.
   off by default, and Risk approval always precedes execution.
 - Never read, reveal, log, prompt, or commit credentials. Never expand agent
   authority by editing instructions or exposing restricted tools.
-- Use `uv run` for Python. Do not run large pytest suites on macOS; use the
-  Windows validation host instead.
+- Use `uv run` for Python. Do not run large pytest suites on macOS. Prefer the
+  repository's GitHub Actions self-hosted runners. If they are unavailable and
+  verification cannot wait, use only an isolated CI/Test process on remote
+  Fedora with a temporary data root and no secrets or execution authority.
+  Windows is not a validation dependency or fallback.
 - Let ordinary Ready PRs accumulate. Run `Prepare and tag releases` only when
   the accumulated batch creates an operational need to update a Runtime; do
   not cut one product version per fix.
