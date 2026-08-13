@@ -314,6 +314,13 @@ def evaluate_counterfactual_registry(
             "reason": "registered_evidence_cutoff_mismatch",
             "results": [],
         }
+    if _nested(fact, "producer", "status") != "available":
+        return {
+            **base,
+            "status": "not_evaluable",
+            "reason": "complete_producer_identity_required",
+            "results": [],
+        }
     eligible_producer_commits = {str(commit) for commit in _REGISTRATION["eligible_producer_commits"]}
     producer_commits = {str(commit) for commit in (_nested(fact, "producer", "producer_commits") or [])}
     if not producer_commits or not producer_commits <= eligible_producer_commits:

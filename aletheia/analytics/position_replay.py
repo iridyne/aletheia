@@ -84,21 +84,42 @@ def _pi_decision(db: Any, proposal_id: str, cutoff: datetime) -> tuple[dict[str,
 
 
 def _runtime_identity(db: Any, rows: Iterable[dict[str, Any] | None]) -> dict[str, Any]:
-    session_ids = sorted({str(row.get("runtime_session_id")) for row in rows if row and row.get("runtime_session_id")})
-    sessions = []
-    for session_id in session_ids:
-        found = db.execute("SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)).fetchone()
-        if found is not None:
-            sessions.append(dict(found))
+    producers = [row for row in rows if row]
+    session_ids = sorted(
+        {
+            str(session_id)
+            for row in producers
+            for session_id in (row.get("runtime_session_id"), row.get("closed_runtime_session_id"))
+            if session_id
+        }
+    )
+    sessions = {
+        str(found["session_id"]): dict(found)
+        for session_id in session_ids
+        if (found := db.execute("SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)).fetchone())
+        is not None
+    }
+    unresolved_session_ids = sorted(set(session_ids) - sessions.keys())
+    producer_commits = {
+        str(value)
+        for row in producers
+        for value in (row.get("producer_commit"), row.get("closed_producer_commit"))
+        if value
+    } | {str(row["boot_commit"]) for row in sessions.values() if row.get("boot_commit")}
+    behavior_fingerprints = {
+        str(value)
+        for row in producers
+        for value in (row.get("behavior_fingerprint"), row.get("closed_behavior_fingerprint"))
+        if value
+    } | {str(row["behavior_fingerprint"]) for row in sessions.values() if row.get("behavior_fingerprint")}
+    errors = ["runtime_session_not_recorded"] if unresolved_session_ids else []
     return {
+        "status": "available" if not errors else "unavailable",
+        "errors": errors,
         "runtime_session_ids": session_ids,
-        "producer_commits": sorted(
-            {str(row.get("producer_commit")) for row in rows if row and row.get("producer_commit")}
-            | {str(row.get("boot_commit")) for row in sessions if row.get("boot_commit")}
-        ),
-        "behavior_fingerprints": sorted(
-            {str(row.get("behavior_fingerprint")) for row in sessions if row.get("behavior_fingerprint")}
-        ),
+        "unresolved_runtime_session_ids": unresolved_session_ids,
+        "producer_commits": sorted(producer_commits),
+        "behavior_fingerprints": sorted(behavior_fingerprints),
     }
 
 

@@ -26,6 +26,7 @@ def _fact(*, invalidation_threshold: float = 50.0) -> dict:
         "fact_id": "position-1",
         "as_of_at": "2026-09-12T05:34:28+00:00",
         "producer": {
+            "status": "available",
             "producer_commits": ["test-verified-deployment"],
             "behavior_fingerprints": ["test-behavior"],
         },
@@ -281,6 +282,15 @@ def test_registry_rejects_mismatched_behavior_fingerprint():
     result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
 
     assert result["reason"] == "registered_behavior_identity_mismatch"
+
+
+def test_registry_rejects_incomplete_producer_identity():
+    fact = _fact()
+    fact["producer"]["status"] = "unavailable"
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    assert result["reason"] == "complete_producer_identity_required"
 
 
 @pytest.mark.parametrize(

@@ -22,7 +22,9 @@ def _database() -> sqlite3.Connection:
             entry_fee REAL, exit_fee REAL, funding_cost REAL, funding_source TEXT,
             status TEXT, execution_mode TEXT, opened_at TEXT, closed_at TEXT,
             reconciliation_identity TEXT, reconciliation_evidence TEXT,
-            outcome_semantics_version TEXT, runtime_session_id TEXT, producer_commit TEXT
+            outcome_semantics_version TEXT, runtime_session_id TEXT, producer_commit TEXT,
+            behavior_fingerprint TEXT, closed_runtime_session_id TEXT,
+            closed_producer_commit TEXT, closed_behavior_fingerprint TEXT
         );
         CREATE TABLE opportunities (
             id TEXT PRIMARY KEY, universe_member_id TEXT, symbol TEXT, thesis TEXT,
@@ -103,7 +105,8 @@ def _database() -> sqlite3.Connection:
         "('position-1','opp-1','proposal-1','entry-order','BTC/USDT','usdt_futures',"
         "'long',1.0,100.0,102.0,1.7,0.1,0.1,0.1,'local_simulation','closed',"
         "'paper_internal','2026-08-13T00:00:00+00:00','2026-08-13T00:02:00+00:00',"
-        "'settlement-1','{}','oi-v1','session-1','commit-a')"
+        "'settlement-1','{}','oi-v1','session-1','commit-a','behavior-a',"
+        "'session-1','commit-a','behavior-a')"
     )
     db.execute(
         "INSERT INTO orders VALUES "
@@ -191,6 +194,28 @@ def test_replay_uses_exact_ids_cutoff_reconciled_economics_and_deterministic_has
         first["stages"]["holding"]["ohlcv"]["ohlcv_window_hash"]
         == second["stages"]["holding"]["ohlcv"]["ohlcv_window_hash"]
     )
+    assert first["producer"]["status"] == "available"
+    assert first["producer"]["behavior_fingerprints"] == ["behavior-a"]
+
+
+def test_replay_fails_closed_when_a_producer_session_is_unresolved(monkeypatch):
+    db = _database()
+    db.execute(
+        "UPDATE positions SET closed_runtime_session_id='missing-session', "
+        "closed_producer_commit='commit-a', closed_behavior_fingerprint=NULL"
+    )
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
+
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db)
+
+    assert replay["producer"]["status"] == "unavailable"
+    assert replay["producer"]["unresolved_runtime_session_ids"] == ["missing-session"]
 
 
 def test_replay_fails_closed_instead_of_joining_ambiguous_pi_retry(monkeypatch):
@@ -211,9 +236,7 @@ def test_replay_fails_closed_instead_of_joining_ambiguous_pi_retry(monkeypatch):
 
 def test_replay_hides_mutable_position_state_after_historical_cutoff():
     db = _database()
-    replay = position_replay.build_position_replay(
-        "position-1", as_of_at="2026-08-13T00:00:25+00:00", db=db
-    )
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:00:25+00:00", db=db)
     assert replay["availability"] == "unavailable"
     assert replay["unavailable_reason"] == "position_state_mutated_after_cutoff"
 
@@ -232,9 +255,7 @@ def test_replay_requests_candles_through_fixed_counterfactual_horizon(monkeypatc
         return []
 
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", candles)
-    replay = position_replay.build_position_replay(
-        "position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db
-    )
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db)
     ohlcv = replay["stages"]["holding"]["ohlcv"]
     assert captured["limit"] == 66
     assert ohlcv["expected_row_count"] == 66
@@ -255,9 +276,7 @@ def test_replay_counterfactual_ohlcv_never_crosses_requested_as_of(monkeypatch):
         return []
 
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", candles)
-    replay = position_replay.build_position_replay(
-        "position-1", as_of_at="2026-08-13T00:10:30+00:00", db=db
-    )
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:10:30+00:00", db=db)
 
     ohlcv = replay["stages"]["holding"]["ohlcv"]
     requested_cutoff_ms = 1_786_579_800_000
