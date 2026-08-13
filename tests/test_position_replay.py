@@ -28,7 +28,8 @@ def _database() -> sqlite3.Connection:
         );
         CREATE TABLE opportunities (
             id TEXT PRIMARY KEY, universe_member_id TEXT, symbol TEXT, thesis TEXT,
-            scanner_family TEXT, created_at TEXT
+            scanner_family TEXT, created_at TEXT, runtime_session_id TEXT,
+            producer_commit TEXT, behavior_fingerprint TEXT
         );
         CREATE TABLE serenity_opportunities (id TEXT PRIMARY KEY);
         CREATE TABLE universe_members (
@@ -40,15 +41,17 @@ def _database() -> sqlite3.Connection:
         CREATE TABLE trade_proposals (
             id TEXT PRIMARY KEY, opportunity_id TEXT, symbol TEXT, direction TEXT,
             attribution_snapshot TEXT, created_at TEXT, runtime_session_id TEXT,
-            producer_commit TEXT
+            producer_commit TEXT, behavior_fingerprint TEXT
         );
         CREATE TABLE pi_decisions (
-            id TEXT PRIMARY KEY, proposal_id TEXT, action TEXT, created_at TEXT
+            id TEXT PRIMARY KEY, proposal_id TEXT, action TEXT, created_at TEXT,
+            runtime_session_id TEXT, producer_commit TEXT, behavior_fingerprint TEXT
         );
         CREATE TABLE risk_decisions (
             id TEXT PRIMARY KEY, proposal_id TEXT, approved INTEGER,
             decision_role TEXT, policy_id TEXT, policy_revision INTEGER,
-            policy_hash TEXT, created_at TEXT
+            policy_hash TEXT, created_at TEXT, runtime_session_id TEXT,
+            producer_commit TEXT, behavior_fingerprint TEXT
         );
         CREATE TABLE orders (
             id TEXT PRIMARY KEY, proposal_id TEXT, risk_decision_id TEXT,
@@ -75,20 +78,29 @@ def _database() -> sqlite3.Connection:
     db.execute("INSERT INTO universe_members VALUES ('member-1','asset-1',1,95.0)")
     db.execute(
         "INSERT INTO opportunities VALUES "
-        "('opp-1','member-1','BTC/USDT','breakout','momentum','2026-08-13T00:00:00+00:00')"
+        "('opp-1','member-1','BTC/USDT','breakout','momentum',"
+        "'2026-08-13T00:00:00+00:00','session-1','commit-a','behavior-a')"
     )
     db.execute(
         "INSERT INTO trade_proposals VALUES "
         "('proposal-1','opp-1','BTC/USDT','long',?,"
-        "'2026-08-13T00:00:10+00:00','session-1','commit-a')",
+        "'2026-08-13T00:00:10+00:00','session-1','commit-a','behavior-a')",
         (json.dumps({"position_hypothesis": {"contract_version": "position_hypothesis/v1"}}),),
     )
-    db.execute("INSERT INTO pi_decisions VALUES ('decision-1','proposal-1','trade','2026-08-13T00:00:05+00:00')")
-    db.execute("INSERT INTO pi_decisions VALUES ('decision-future','proposal-1','trade','2026-08-13T01:00:00+00:00')")
+    db.execute(
+        "INSERT INTO pi_decisions VALUES "
+        "('decision-1','proposal-1','trade','2026-08-13T00:00:05+00:00',"
+        "'session-1','commit-a','behavior-a')"
+    )
+    db.execute(
+        "INSERT INTO pi_decisions VALUES "
+        "('decision-future','proposal-1','trade','2026-08-13T01:00:00+00:00',"
+        "'session-1','commit-a','behavior-a')"
+    )
     db.execute(
         "INSERT INTO risk_decisions VALUES "
         "('risk-1','proposal-1',1,'authoritative','paper-risk',3,'risk-hash',"
-        "'2026-08-13T00:00:20+00:00')"
+        "'2026-08-13T00:00:20+00:00','session-1','commit-a','behavior-a')"
     )
     db.execute(
         "INSERT INTO orders VALUES "
@@ -216,6 +228,23 @@ def test_replay_fails_closed_when_a_producer_session_is_unresolved(monkeypatch):
 
     assert replay["producer"]["status"] == "unavailable"
     assert replay["producer"]["unresolved_runtime_session_ids"] == ["missing-session"]
+
+
+def test_replay_fails_closed_when_a_producer_row_has_no_identity(monkeypatch):
+    db = _database()
+    db.execute("UPDATE fills SET runtime_session_id=NULL, producer_commit=NULL WHERE id='close-fill'")
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
+
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db)
+
+    assert replay["producer"]["status"] == "unavailable"
+    assert replay["producer"]["errors"] == ["producer_identity_incomplete"]
 
 
 def test_replay_fails_closed_instead_of_joining_ambiguous_pi_retry(monkeypatch):
