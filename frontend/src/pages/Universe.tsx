@@ -1,14 +1,14 @@
-import { useState, useMemo } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createColumnHelper } from '@tanstack/react-table'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
-import type { UniverseMember, UniverseCurrentResponse, UniverseMemberDetail, CalibrationResponse } from '../types'
+import type { CalibrationFamilySummary, CalibrationResponse, UniverseCurrentResponse, UniverseMember, UniverseMemberDetail } from '../types'
 import { DataTable } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
 import MetricTile from '../components/MetricTile'
-import { Badge, Button, Card } from '../components/ui'
+import { Badge, Button, Card, CardHeader } from '../components/ui'
 import { humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
 
 const col = createColumnHelper<UniverseMember>()
@@ -40,66 +40,48 @@ function timeAgo(isoStr: string | null | undefined): string {
   return `${Math.floor(diff / 86400)}d ago`
 }
 
-// Built per-snapshot so the symbol cell can render per the board's market type
-// (perp → no slash, spot → slash). All members in one snapshot share a market type.
 const makeColumns = (marketType?: string | null) => [
   col.accessor('rank', { header: '#', cell: info => <span className="mono">{info.getValue()}</span> }),
   col.accessor('symbol', {
-    header: 'Symbol',
+    header: 'Candidate',
     cell: info => (
-      <span className="flex items-center gap-1">
-        <span className="mono">{fmtSymbol(info.getValue(), marketType)}</span>
+      <span className="universe-candidate">
+        <strong className="mono">{fmtSymbol(info.getValue(), marketType)}</strong>
         {info.row.original.stale && <Badge tone="warning">stale</Badge>}
       </span>
     ),
   }),
   col.accessor('scanner_family', {
-    header: 'Family',
+    header: 'Why selected',
+    cell: info => {
+      const reasons = parseJson(info.row.original.inclusion_reason)
+      return <span className="universe-selection">
+        <span className={familyClass(info.getValue())}>{info.getValue() ? humanize(info.getValue()!) : 'Unclassified'}</span>
+        <span title={reasons.join(' · ')}>{reasons[0] || 'No selection reason recorded'}</span>
+      </span>
+    },
+  }),
+  col.accessor('quote_volume_24h', {
+    header: 'Market quality',
     cell: info => (
-      <span className={familyClass(info.getValue())}>
-        {info.getValue() ? humanize(info.getValue()!) : '—'}
+      <span className="universe-market-quality">
+        <span className="mono">{formatVolume(info.getValue())} · {info.row.original.spread_bps != null ? `${info.row.original.spread_bps.toFixed(1)} bps` : 'spread —'}</span>
+        <span>Tradability {info.row.original.tradability_score?.toFixed(0) ?? '—'}</span>
       </span>
     ),
   }),
-  col.accessor('total_score', {
-    header: 'Score',
-    cell: info => <span className="mono">{info.getValue()?.toFixed(1) ?? '—'}</span>,
-  }),
-  col.accessor('quote_volume_24h', {
-    header: 'Volume 24h',
-    cell: info => <span className="mono">{formatVolume(info.getValue())}</span>,
-  }),
-  col.accessor('spread_bps', {
-    header: 'Spread',
-    cell: info => <span className="mono">{info.getValue() != null ? `${info.getValue()!.toFixed(1)} bps` : '—'}</span>,
-  }),
-  col.accessor('tradability_score', {
-    header: 'Tradability',
-    cell: info => <span className="mono">{info.getValue()?.toFixed(0) ?? '—'}</span>,
-  }),
-  col.accessor('ttl_sec', {
-    header: 'TTL',
-    cell: info => {
-      const sec = info.getValue()
-      if (sec == null) return <span className="mono">—</span>
-      return <span className="mono">{sec >= 3600 ? `${(sec / 3600).toFixed(0)}h` : `${(sec / 60).toFixed(0)}m`}</span>
-    },
-  }),
-  col.accessor('risk_flags', {
-    header: 'Flags',
-    cell: info => {
-      const flags = parseJson(info.getValue())
-      if (!flags.length) return <span className="text-muted">—</span>
-      return <span>{flags.map(f => humanize(String(f))).join(', ')}</span>
-    },
-  }),
   col.accessor('execution_eligible', {
-    header: 'Eligible',
-    cell: info => (
-      <Badge tone={info.getValue() ? 'green' : 'muted'}>
-        {info.getValue() ? 'Yes' : 'No'}
-      </Badge>
-    ),
+    header: 'Decision state',
+    cell: info => {
+      const member = info.row.original
+      const flags = parseJson(member.risk_flags)
+      return <span className="universe-decision-state">
+        <Badge tone={member.execution_eligible ? 'green' : flags.length ? 'warning' : 'muted'}>
+          {member.execution_eligible ? 'Executable' : flags.length ? 'Flagged' : 'Not executable'}
+        </Badge>
+        <span className="mono">{member.ttl_sec >= 3600 ? `${(member.ttl_sec / 3600).toFixed(0)}h` : `${Math.ceil(member.ttl_sec / 60)}m`} left</span>
+      </span>
+    },
   }),
 ]
 
@@ -107,20 +89,22 @@ export default function Universe() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [selected, setSelected] = useState<UniverseMember | null>(null)
+  const [filter, setFilter] = useState<'all' | 'executable' | 'flagged' | 'stale'>('all')
+  const [familyFilter, setFamilyFilter] = useState('all')
+  const [search, setSearch] = useState('')
+  const [evidenceOpen, setEvidenceOpen] = useState(false)
 
   const { data } = useQuery<UniverseCurrentResponse>({
     queryKey: ['universe-current'],
     queryFn: () => api.get('/universe/current'),
     refetchInterval: 30000,
   })
-
   const { data: calibration } = useQuery<CalibrationResponse>({
     queryKey: ['universe-calibration'],
     queryFn: () => api.getUniverseCalibration(),
     staleTime: 5 * 60 * 1000,
     refetchInterval: 10 * 60 * 1000,
   })
-
   const refreshMutation = useMutation({
     mutationFn: () => api.post('/universe/refresh'),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['universe-current'] }),
@@ -132,182 +116,119 @@ export default function Universe() {
   const isFallback = data?.fallback ?? true
   const isStale = data?.stale ?? false
   const staleCount = data?.stale_count ?? 0
-
   const summary = snapshot?.summary ? (() => {
     try { return JSON.parse(snapshot.summary) } catch { return {} }
   })() : {}
-
   const statusTone = !enabled ? 'muted' : isFallback ? 'negative' : isStale ? 'warning' : 'positive'
   const statusText = !enabled ? 'Off' : isFallback ? 'Fallback' : isStale ? 'Stale' : 'Active'
-
   const columns = useMemo(() => makeColumns(snapshot?.market_type), [snapshot?.market_type])
+  const familyCounts = useMemo(() => members.reduce<Record<string, number>>((counts, member) => {
+    const family = member.scanner_family || 'unknown'
+    counts[family] = (counts[family] || 0) + 1
+    return counts
+  }, {}), [members])
+  const families = Object.keys(familyCounts).sort()
+  const executableCount = members.filter(member => !!member.execution_eligible).length
+  const flaggedCount = members.filter(member => parseJson(member.risk_flags).length > 0).length
+  const filteredMembers = members.filter(member => {
+    const flags = parseJson(member.risk_flags).length > 0
+    const matchesState = filter === 'all'
+      || filter === 'executable' && !!member.execution_eligible
+      || filter === 'flagged' && flags
+      || filter === 'stale' && !!member.stale
+    const matchesFamily = familyFilter === 'all' || member.scanner_family === familyFilter
+    return matchesState && matchesFamily && member.symbol.toLowerCase().includes(search.trim().toLowerCase())
+  })
 
   return (
-    <div>
+    <div className="universe-board">
       <PageHeader
         title="Universe Board"
-        role={
-          !enabled
-            ? 'Disabled — using static fallback (BTC/ETH/SOL)'
-            : isFallback
-              ? 'No active snapshot — showing fallback pool (BTC/ETH/SOL)'
-              : isStale
-                ? `Stale data — ${staleCount}/${members.length} members expired, awaiting next refresh`
-                : `Snapshot ${snapshot?.id?.slice(0, 8)} — ${members.length} candidates`
-        }
+        role={!enabled
+          ? 'Disabled — using static fallback (BTC/ETH/SOL)'
+          : isFallback
+            ? 'No active snapshot — showing fallback pool (BTC/ETH/SOL)'
+            : isStale
+              ? `Stale data — ${staleCount}/${members.length} members expired, awaiting next refresh`
+              : `Snapshot ${snapshot?.id?.slice(0, 8)} — ${members.length} candidates`}
+        actions={enabled ? <div className="flex gap-2"><Button onClick={() => refreshMutation.mutate()} disabled={refreshMutation.isPending}>{refreshMutation.isPending ? 'Refreshing…' : 'Refresh now'}</Button><Button variant="secondary" onClick={() => navigate('/settings?tab=risk&section=universe')}>Settings</Button></div> : undefined}
       />
 
-      {!enabled && (
-        <Card className="universe-disabled-card">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div>
-              <h3>Universe generator is disabled</h3>
-              <p className="hint">
-                The board is showing the static fallback pool. Enable it in Settings → Risk, Symbols & Universe → Universe Board.
-              </p>
+      {!enabled && <Card className="universe-disabled-card"><div className="flex items-center justify-between gap-2 flex-wrap"><div><h3>Universe generator is disabled</h3><p className="hint">The board is showing the static fallback pool. Enable it in Settings → Risk, Symbols & Universe → Universe Board.</p></div><Button variant="secondary" onClick={() => navigate('/settings?tab=risk&section=universe')}>Open Universe setting</Button></div></Card>}
+
+      <section className="universe-pool-health" aria-label="Universe pool health">
+        <MetricTile label="Candidates" value={members.length} context={isFallback ? 'static fallback pool' : 'retained after scanning'} />
+        <MetricTile label="Executable" value={executableCount} context={`${Math.max(0, members.length - executableCount)} not executable`} />
+        <MetricTile label="Flagged" value={flaggedCount} context={flaggedCount ? 'review member risk flags' : 'no member risk flags'} />
+        <MetricTile label="Status" value={statusText} tone={statusTone} context={`refreshed ${timeAgo(snapshot?.created_at)}`} />
+      </section>
+      {!isFallback && <div className="universe-funnel" aria-label="Universe scan funnel"><span>Scanned <strong>{summary.scanned ?? '—'}</strong></span><span aria-hidden="true">→</span><span>Filtered <strong>{summary.filtered ?? '—'}</strong></span><span aria-hidden="true">→</span><span>Retained <strong>{members.length}</strong></span></div>}
+
+      {!isFallback && members.length > 0 && <div className="universe-overview-grid">
+        <Card className="universe-allocation">
+          <CardHeader title="Allocation" meta={`${families.length} active families`} />
+          {families.map(family => {
+            const count = familyCounts[family]
+            const top = members.find(member => (member.scanner_family || 'unknown') === family)
+            return <div className="universe-allocation-row" key={family}>
+              <span className={familyClass(family)}>{humanize(family)}</span>
+              <div className="universe-allocation-track"><span style={{ width: `${count * 100 / members.length}%` }} /></div>
+              <strong>{count}</strong>
+              <small>{top ? `Top ${fmtSymbol(top.symbol, snapshot?.market_type)} · ${top.total_score.toFixed(0)}` : 'No candidate'}</small>
             </div>
-            <Button
-              variant="secondary"
-              onClick={() => navigate('/settings?tab=risk&section=universe')}
-            >
-              Open Universe setting
-            </Button>
-          </div>
-        </Card>
-      )}
-
-      {/* Summary row */}
-      <div className="account-snapshot">
-        <MetricTile label="Candidates" value={members.length} />
-        <MetricTile label="Scanned" value={summary.scanned ?? '—'} />
-        <MetricTile label="Filtered" value={summary.filtered ?? '—'} />
-        <MetricTile label="Status" value={statusText} tone={statusTone} />
-        <MetricTile label="Refreshed" value={timeAgo(snapshot?.created_at)} />
-      </div>
-
-      {/* Family breakdown */}
-      {members.length > 0 && !isFallback && (
-        <div className="account-snapshot">
-          {['momentum', 'mean_reversion', 'volatility', 'derivatives'].map(family => {
-            const count = members.filter(m => m.scanner_family === family).length
-            const top = members.find(m => m.scanner_family === family)
-            return (
-              <Card key={family} className="metric-tile">
-                <div className={`metric-label ${familyClass(family)}`}>
-                  {humanize(family)}
-                </div>
-                <div className="metric-value">{count} <span className="text-sm text-muted">assets</span></div>
-                {top && (
-                  <div className="metric-caveat">
-                    Top: <span className="mono">{fmtSymbol(top.symbol, snapshot?.market_type)}</span> ({top.total_score.toFixed(0)})
-                  </div>
-                )}
-              </Card>
-            )
           })}
-        </div>
-      )}
+        </Card>
+        <ScannerEvidence summaries={calibration?.by_cohort ?? []} onOpen={() => setEvidenceOpen(open => !open)} open={evidenceOpen} />
+      </div>}
 
-      {/* Scanner Calibration */}
-      {(() => {
-        const horizons = ['15m', '1h', '4h', '24h']
-        const calMap: Record<string, Record<string, { n: number; wr: number }>> = {}
-        for (const row of calibration?.by_cohort_horizon ?? []) {
-          const fam = row.scanner_family ?? 'unknown'
-          const cohort = `${fam} · ${row.direction} · ${row.market_type}`
-          if (!calMap[cohort]) calMap[cohort] = {}
-          if (row.n >= 10) {
-            calMap[cohort][row.horizon] = { n: row.n, wr: row.win_count / row.n * 100 }
-          }
-        }
-        const calFamilies = Object.keys(calMap)
-        if (!calFamilies.length) return null
-        return (
-          <Card className="mb-3">
-            <div className="metric-label mb-2">Net Scanner Calibration <span className="text-muted">(after estimated costs, n≥10)</span></div>
-            <div className="cal-scroll">
-              <table className="cal-table">
-                <thead>
-                  <tr>
-                    <th className="cal-th cal-th-left">Family · Side · Market</th>
-                    {horizons.map(h => (
-                      <th key={h} className="cal-th cal-th-center">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {calFamilies.sort().map(cohort => (
-                    <tr key={cohort}>
-                      <td className="cal-td">
-                        <span className={familyClass(cohort.split(' · ')[0])}>{humanize(cohort)}</span>
-                      </td>
-                      {horizons.map(h => {
-                        const cell = calMap[cohort]?.[h]
-                        if (!cell) return <td key={h} className="cal-td cal-td-center cal-td-muted">—</td>
-                        const tone = cell.wr >= 52 ? 'pnl-positive' : cell.wr <= 48 ? 'pnl-negative' : ''
-                        return (
-                          <td key={h} className="cal-td cal-td-center">
-                            <span className={`mono ${tone}`}>{cell.wr.toFixed(0)}%</span>
-                            <span className="cal-n">n={cell.n}</span>
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-        )
-      })()}
-
-      {/* Actions */}
-      {enabled && (
-        <div className="mb-3">
-          <div className="flex gap-2">
-            <Button
-              onClick={() => refreshMutation.mutate()}
-              disabled={refreshMutation.isPending}
-            >
-              {refreshMutation.isPending ? 'Refreshing…' : 'Refresh Now'}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => navigate('/settings?tab=risk&section=universe')}
-            >
-              Universe Settings
-            </Button>
+      <section className="universe-list-section" aria-label="Universe candidates">
+        <div className="universe-list-head">
+          <div><h2>Universe list</h2><p>{filteredMembers.length} of {members.length} candidates</p></div>
+          <div className="universe-filters" aria-label="Filter universe candidates">
+            {(['all', 'executable', 'flagged', 'stale'] as const).map(value => <Button key={value} size="sm" variant="ghost" className={`universe-filter${filter === value ? ' active' : ''}`} aria-pressed={filter === value} onClick={() => setFilter(value)}>{humanize(value)} {value === 'all' ? members.length : value === 'executable' ? executableCount : value === 'flagged' ? flaggedCount : staleCount}</Button>)}
+            <select aria-label="Filter by scanner family" value={familyFilter} onChange={event => setFamilyFilter(event.target.value)}>
+              <option value="all">All families</option>
+              {families.map(family => <option key={family} value={family}>{humanize(family)}</option>)}
+            </select>
+            <input aria-label="Search universe symbols" placeholder="Search symbol" value={search} onChange={event => setSearch(event.target.value)} />
           </div>
-          {refreshMutation.isError && (
-            <div className="settings-save-msg err">
-              {(refreshMutation.error as Error).message}
-            </div>
-          )}
         </div>
-      )}
+        <DataTable columns={columns} data={filteredMembers} onRowClick={setSelected} emptyMessage={enabled ? 'No candidates match these filters.' : 'Universe generator disabled'} columnToggle tableId="universe-board" />
+      </section>
 
-      {/* Main table */}
-      <DataTable
-        columns={columns}
-        data={members}
-        onRowClick={setSelected}
-        emptyMessage={enabled ? 'No universe data yet — trigger a refresh' : 'Universe generator disabled'}
-      />
-
-      {/* Detail drawer */}
-      {selected && (
-        <MemberDrawer member={selected} marketType={snapshot?.market_type} onClose={() => setSelected(null)} />
-      )}
+      {refreshMutation.isError && <div className="settings-save-msg err">{(refreshMutation.error as Error).message}</div>}
+      {selected && <MemberDrawer member={selected} marketType={snapshot?.market_type} onClose={() => setSelected(null)} />}
     </div>
   )
 }
 
+function ScannerEvidence({ summaries, onOpen, open }: { summaries: CalibrationFamilySummary[]; onOpen: () => void; open: boolean }) {
+  const supported = summaries.filter(summary => summary.total_outcomes >= 10 && summary.avg_return_pct > 0).sort((a, b) => b.avg_return_pct - a.avg_return_pct)
+  const watch = summaries.filter(summary => summary.total_outcomes >= 10 && summary.avg_return_pct <= 0).sort((a, b) => a.avg_return_pct - b.avg_return_pct)
+  const insufficient = summaries.filter(summary => summary.total_outcomes < 10)
+  return <Card className="universe-evidence">
+    <CardHeader title="Scanner evidence" meta="Observational, not an execution gate" actions={<Button size="sm" variant="secondary" onClick={onOpen}>{open ? 'Hide cohort evidence' : 'View cohort evidence'}</Button>} />
+    <div className="universe-evidence-grid">
+      <EvidenceGroup title="Supported cohorts" items={supported} empty="No cohort has positive net evidence yet." tone="positive" />
+      <EvidenceGroup title="Watch cohorts" items={watch} empty="No negative net cohort evidence." tone="warning" />
+      <EvidenceGroup title="Insufficient evidence" items={insufficient} empty="No low-sample cohorts." tone="muted" />
+    </div>
+    {open && <CohortEvidence summaries={summaries} />}
+  </Card>
+}
+
+function EvidenceGroup({ title, items, empty, tone }: { title: string; items: CalibrationFamilySummary[]; empty: string; tone: 'positive' | 'warning' | 'muted' }) {
+  return <div className={`universe-evidence-group ${tone}`}><h3>{title}</h3>{items.length ? items.slice(0, 2).map(item => <div key={`${item.family}-${item.direction}-${item.market_type}`}><strong>{humanize(`${item.family} · ${item.direction} · ${item.market_type}`)}</strong><span>{item.total_outcomes < 10 ? `${item.total_outcomes} settled outcomes · need 10+` : `${item.avg_return_pct >= 0 ? '+' : ''}${item.avg_return_pct.toFixed(2)}% avg net · ${item.hit_rate_pct.toFixed(0)}% positive · n=${item.total_outcomes}`}</span></div>) : <p>{empty}</p>}</div>
+}
+
+function CohortEvidence({ summaries }: { summaries: CalibrationFamilySummary[] }) {
+  return <div className="universe-cohort-evidence"><p className="hint">Average net return after estimated costs · positive outcome rate · settled outcome count.</p><div className="table-wrap"><table><thead><tr><th>Cohort</th><th>Average net return</th><th>Positive rate</th><th>Outcomes</th></tr></thead><tbody>{summaries.map(item => <tr key={`${item.family}-${item.direction}-${item.market_type}`}><td><span className={familyClass(item.family)}>{humanize(`${item.family} · ${item.direction} · ${item.market_type}`)}</span></td><td className={item.avg_return_pct > 0 ? 'pnl-positive mono' : item.avg_return_pct < 0 ? 'pnl-negative mono' : 'mono'}>{item.avg_return_pct >= 0 ? '+' : ''}{item.avg_return_pct.toFixed(2)}%</td><td className="mono">{item.hit_rate_pct.toFixed(0)}%</td><td className="mono">{item.total_outcomes}</td></tr>)}</tbody></table></div></div>
+}
 function MemberDrawer({ member, marketType, onClose }: { member: UniverseMember; marketType?: string | null; onClose: () => void }) {
   const { data } = useQuery<UniverseMemberDetail>({
     queryKey: ['universe-member', member.id],
     queryFn: () => api.getUniverseMember(member.id),
   })
-
   const features = data?.features
   const opportunities = data?.opportunities ?? []
 
