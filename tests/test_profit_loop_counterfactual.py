@@ -25,7 +25,10 @@ def _fact(*, invalidation_threshold: float = 50.0) -> dict:
     return {
         "fact_id": "position-1",
         "as_of_at": "2026-09-12T05:34:28+00:00",
-        "producer": {"producer_commits": ["test-verified-deployment"]},
+        "producer": {
+            "producer_commits": ["test-verified-deployment"],
+            "behavior_fingerprints": ["test-behavior"],
+        },
         "causal_link": {"status": "available"},
         "economics": {"availability": "available"},
         "stages": {
@@ -93,6 +96,11 @@ def _registered_test_cohort(monkeypatch):
         counterfactual._REGISTRATION,
         "eligible_producer_commits",
         ("test-verified-deployment", "test-registration-deployment"),
+    )
+    monkeypatch.setitem(
+        counterfactual._REGISTRATION,
+        "behavior_fingerprint",
+        "test-behavior",
     )
     monkeypatch.setattr(
         counterfactual,
@@ -264,6 +272,15 @@ def test_registry_rejects_unregistered_producer_commit():
     result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
 
     assert result["reason"] == "registered_producer_identity_mismatch"
+
+
+def test_registry_rejects_mismatched_behavior_fingerprint():
+    fact = _fact()
+    fact["producer"]["behavior_fingerprints"] = ["changed-config"]
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    assert result["reason"] == "registered_behavior_identity_mismatch"
 
 
 @pytest.mark.parametrize(
