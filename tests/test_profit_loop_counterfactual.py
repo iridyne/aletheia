@@ -25,6 +25,9 @@ def _fact(*, invalidation_threshold: float = 50.0) -> dict:
     return {
         "fact_id": "position-1",
         "as_of_at": "2026-09-12T05:34:28+00:00",
+        "producer": {"producer_commits": ["test-verified-deployment"]},
+        "causal_link": {"status": "available"},
+        "economics": {"availability": "available"},
         "stages": {
             "decision": {
                 "proposal": {
@@ -42,7 +45,10 @@ def _fact(*, invalidation_threshold: float = 50.0) -> dict:
                     }
                 }
             },
-            "holding": {"ohlcv": {"rows": rows}},
+            "holding": {
+                "availability": "available",
+                "ohlcv": {"availability": "available", "rows": rows},
+            },
             "exit": {
                 "position": {
                     "opened_at": "2026-08-13T05:34:28+00:00",
@@ -82,6 +88,11 @@ def _registered_test_cohort(monkeypatch):
         counterfactual._REGISTRATION,
         "registration_commit",
         "test-verified-deployment",
+    )
+    monkeypatch.setattr(
+        counterfactual,
+        "_now_utc",
+        lambda: counterfactual._parse_utc("2026-09-12T05:34:28+00:00"),
     )
 
 
@@ -227,3 +238,47 @@ def test_registry_requires_post_deployment_registration(monkeypatch):
 
     assert result["status"] == "not_evaluable"
     assert result["reason"] == "verified_deployment_registration_required"
+
+
+def test_registry_rejects_mismatched_producer_commit():
+    fact = _fact()
+    fact["producer"]["producer_commits"] = ["stale-runtime"]
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    assert result["reason"] == "registered_producer_identity_mismatch"
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("causal_link", "status"), "unavailable"),
+        (("economics", "availability"), "unavailable"),
+        (("stages", "holding", "availability"), "unavailable"),
+        (("stages", "holding", "ohlcv", "availability"), "unavailable"),
+    ],
+)
+def test_registry_rejects_incomplete_position_fact(path, value):
+    fact = _fact()
+    target = fact
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    assert result["reason"] == "complete_position_fact_required"
+
+
+def test_future_as_of_cannot_bypass_registered_cutoff(monkeypatch):
+    monkeypatch.setattr(
+        counterfactual,
+        "_now_utc",
+        lambda: counterfactual._parse_utc("2026-09-12T05:34:27+00:00"),
+    )
+    fact = _fact()
+    fact["as_of_at"] = "2026-09-13T05:34:28+00:00"
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    assert result["reason"] == "registered_cutoff_not_reached"

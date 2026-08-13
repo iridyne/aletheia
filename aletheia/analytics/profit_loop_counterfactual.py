@@ -47,6 +47,10 @@ _REGISTRATION = {
 }
 
 
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def _spec(hypothesis_id: str, treatment: str) -> CounterfactualSpec:
     return CounterfactualSpec(
         hypothesis_id=hypothesis_id,
@@ -277,8 +281,29 @@ def evaluate_counterfactual_registry(
     cutoff_at = _parse_utc(_REGISTRATION["cutoff_at"])
     if evaluation_at is None:
         return {**base, "status": "not_evaluable", "reason": "evaluation_as_of_unavailable", "results": []}
-    if cutoff_at is None or evaluation_at < cutoff_at:
+    if cutoff_at is None or _now_utc() < cutoff_at or evaluation_at < cutoff_at:
         return {**base, "status": "not_evaluable", "reason": "registered_cutoff_not_reached", "results": []}
+    registered_commit = str(_REGISTRATION["registration_commit"])
+    producer_commits = {str(commit) for commit in (_nested(fact, "producer", "producer_commits") or [])}
+    if producer_commits != {registered_commit}:
+        return {
+            **base,
+            "status": "not_evaluable",
+            "reason": "registered_producer_identity_mismatch",
+            "results": [],
+        }
+    if (
+        _nested(fact, "causal_link", "status") != "available"
+        or _nested(fact, "economics", "availability") != "available"
+        or _nested(fact, "stages", "holding", "availability") != "available"
+        or _nested(fact, "stages", "holding", "ohlcv", "availability") != "available"
+    ):
+        return {
+            **base,
+            "status": "not_evaluable",
+            "reason": "complete_position_fact_required",
+            "results": [],
+        }
     if cost_model is None or not cost_model.valid():
         return {**base, "status": "not_evaluable", "reason": "verified_cost_model_required", "results": []}
     rows = _rows(fact)
