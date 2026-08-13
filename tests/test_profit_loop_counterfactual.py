@@ -77,37 +77,55 @@ def _cost() -> counterfactual.CostModel:
 
 
 @pytest.fixture(autouse=True)
-def _registered_test_cohort(monkeypatch):
-    monkeypatch.setitem(
-        counterfactual._REGISTRATION,
-        "registration_at",
-        "2026-08-13T05:34:28+00:00",
+def _registered_test_cohort(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
+    from aletheia.storage.migrations import apply_migrations
+    from aletheia.storage.sqlite import get_db
+
+    apply_migrations()
+    values = {
+        "path_id": "profit_loop_observability",
+        "behavior_contract": counterfactual.COUNTERFACTUAL_CONTRACT_VERSION,
+        "deploy_commit": "test-verified-deployment",
+        "behavior_fingerprint": "test-behavior",
+        "registry_hash": counterfactual.profit_loop_registry_hash(),
+        "duration_days": 30,
+        "assignment_unit": "position_id",
+        "eligibility": counterfactual._ELIGIBILITY,
+        "stopping_rule": counterfactual._STOPPING_RULE,
+    }
+    import json
+
+    get_db().execute(
+        "INSERT INTO learning_policy_epochs "
+        "(epoch_id, epoch_kind, effective_values_hash, effective_values_json, "
+        "affected_path_ids_json, safety_required, started_at, ended_at, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            "profit-epoch",
+            "evidence_anchor:profit_loop_observability",
+            "test-hash",
+            json.dumps(values, sort_keys=True),
+            '["profit_loop_observability"]',
+            0,
+            "2026-08-13T05:34:28+00:00",
+            None,
+            "2026-08-13T05:34:28+00:00",
+        ),
     )
-    monkeypatch.setitem(
-        counterfactual._REGISTRATION,
-        "cutoff_at",
-        "2026-09-12T05:34:28+00:00",
-    )
-    monkeypatch.setitem(
-        counterfactual._REGISTRATION,
-        "registration_commit",
-        "test-verified-deployment",
-    )
-    monkeypatch.setitem(
-        counterfactual._REGISTRATION,
-        "eligible_producer_commits",
-        ("test-verified-deployment", "test-registration-deployment"),
-    )
-    monkeypatch.setitem(
-        counterfactual._REGISTRATION,
-        "behavior_fingerprint",
-        "test-behavior",
-    )
+    get_db().commit()
     monkeypatch.setattr(
         counterfactual,
         "_now_utc",
         lambda: counterfactual._parse_utc("2026-09-12T05:34:28+00:00"),
     )
+    yield
+    import aletheia.storage.sqlite as sqlite_mod
+
+    try:
+        sqlite_mod._local.conn.close()
+    except AttributeError:
+        pass
 
 
 def test_registry_is_finite_exploratory_prefix_only_and_does_not_mutate_fact():
@@ -243,10 +261,11 @@ def test_registry_requires_explicit_fact_or_current_as_of():
     assert result["reason"] == "evaluation_as_of_unavailable"
 
 
-def test_registry_requires_post_deployment_registration(monkeypatch):
-    monkeypatch.setitem(counterfactual._REGISTRATION, "registration_at", None)
-    monkeypatch.setitem(counterfactual._REGISTRATION, "cutoff_at", None)
-    monkeypatch.setitem(counterfactual._REGISTRATION, "registration_commit", None)
+def test_registry_requires_post_deployment_registration():
+    from aletheia.storage.sqlite import get_db
+
+    get_db().execute("DELETE FROM learning_policy_epochs")
+    get_db().commit()
 
     result = counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())
 
@@ -254,7 +273,7 @@ def test_registry_requires_post_deployment_registration(monkeypatch):
     assert result["reason"] == "verified_deployment_registration_required"
 
 
-def test_registry_allows_preregistered_code_only_deployment():
+def test_registry_rejects_multiple_producer_identities():
     fact = _fact()
     fact["producer"]["producer_commits"] = [
         "test-verified-deployment",
@@ -263,7 +282,17 @@ def test_registry_allows_preregistered_code_only_deployment():
 
     result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
 
-    assert result["status"] == "evaluated"
+    assert result["reason"] == "complete_producer_identity_required"
+
+
+@pytest.mark.parametrize("field", ["producer_commits", "behavior_fingerprints"])
+def test_registry_rejects_duplicate_producer_identity_values(field):
+    fact = _fact()
+    fact["producer"][field] = fact["producer"][field] * 2
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    assert result["reason"] == "complete_producer_identity_required"
 
 
 def test_registry_rejects_unregistered_producer_commit():
@@ -272,7 +301,7 @@ def test_registry_rejects_unregistered_producer_commit():
 
     result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
 
-    assert result["reason"] == "registered_producer_identity_mismatch"
+    assert result["reason"] == "verified_deployment_registration_required"
 
 
 def test_registry_rejects_mismatched_behavior_fingerprint():
@@ -281,7 +310,102 @@ def test_registry_rejects_mismatched_behavior_fingerprint():
 
     result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
 
-    assert result["reason"] == "registered_behavior_identity_mismatch"
+    assert result["reason"] == "verified_deployment_registration_required"
+
+
+def test_registry_rejects_wrong_registry_hash_duplicate_and_shortened_epoch():
+    import json
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    row = db.execute("SELECT effective_values_json FROM learning_policy_epochs").fetchone()
+    values = json.loads(row["effective_values_json"])
+    values["registry_hash"] = "0" * 64
+    db.execute(
+        "UPDATE learning_policy_epochs SET effective_values_json=?",
+        (json.dumps(values, sort_keys=True),),
+    )
+    db.commit()
+    assert counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())["reason"] == (
+        "registered_registry_hash_mismatch"
+    )
+
+    values["registry_hash"] = counterfactual.profit_loop_registry_hash()
+    db.execute(
+        "UPDATE learning_policy_epochs SET effective_values_json=?",
+        (json.dumps(values, sort_keys=True),),
+    )
+    duplicate_values = {**values, "registry_hash": "f" * 64}
+    db.execute(
+        "INSERT INTO learning_policy_epochs "
+        "(epoch_id, epoch_kind, effective_values_hash, effective_values_json, "
+        "affected_path_ids_json, safety_required, started_at, created_at) "
+        "VALUES ('duplicate-epoch','evidence_anchor:profit_loop_observability',?,?,?,0,?,?)",
+        (
+            "duplicate-hash",
+            json.dumps(duplicate_values, sort_keys=True),
+            '["profit_loop_observability"]',
+            "2026-08-13T05:34:28.000001+00:00",
+            "2026-08-13T05:34:28.000001+00:00",
+        ),
+    )
+    db.commit()
+    assert counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())["reason"] == (
+        "registered_epoch_conflict"
+    )
+
+    db.execute("DELETE FROM learning_policy_epochs WHERE epoch_id='duplicate-epoch'")
+    db.execute("UPDATE learning_policy_epochs SET ended_at='2026-08-14T05:34:28+00:00'")
+    db.commit()
+    assert counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())["reason"] == (
+        "registered_epoch_ended_before_cutoff"
+    )
+
+
+@pytest.mark.parametrize("payload", ["{invalid", "[]"])
+def test_malformed_epoch_payload_fails_closed_before_identity_filtering(payload):
+    from aletheia.storage.sqlite import get_db
+
+    get_db().execute(
+        "UPDATE learning_policy_epochs SET effective_values_json=?",
+        (payload,),
+    )
+    get_db().commit()
+
+    result = counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())
+
+    assert result["reason"] == "registered_epoch_malformed"
+
+
+def test_epoch_ending_exactly_at_cutoff_is_complete():
+    from aletheia.storage.sqlite import get_db
+
+    get_db().execute("UPDATE learning_policy_epochs SET ended_at='2026-09-12T05:34:28+00:00'")
+    get_db().commit()
+
+    result = counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())
+
+    assert result["status"] == "evaluated"
+
+
+def test_malformed_nonempty_epoch_end_fails_closed():
+    from aletheia.storage.sqlite import get_db
+
+    get_db().execute("UPDATE learning_policy_epochs SET ended_at='not-a-timestamp'")
+    get_db().commit()
+
+    result = counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())
+
+    assert result["reason"] == "registered_epoch_end_malformed"
+
+
+def test_position_closed_after_registered_cutoff_is_ineligible():
+    fact = _fact()
+    fact["stages"]["exit"]["position"]["closed_at"] = "2026-09-12T05:34:29+00:00"
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    assert result["reason"] == "registered_cohort_eligibility_failed"
 
 
 def test_registry_rejects_incomplete_producer_identity():

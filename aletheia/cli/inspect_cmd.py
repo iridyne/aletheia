@@ -165,15 +165,40 @@ def profit_counterfactual(
     from aletheia.analytics.profit_loop_counterfactual import (
         CostModel,
         evaluate_counterfactual_registry,
+        profit_loop_registration_cutoffs,
+        resolve_profit_loop_registration,
     )
 
     payload = json.loads(cost_model_file.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise typer.BadParameter("cost model must be a JSON object")
     cost_model = CostModel(**payload)
-    fact = build_position_replay(position_id, as_of_at=as_of_at)
+    if as_of_at is not None:
+        fact = build_position_replay(position_id, as_of_at=as_of_at)
+    else:
+        fact = None
+        first_failure = None
+        for cutoff in profit_loop_registration_cutoffs():
+            candidate = build_position_replay(position_id, as_of_at=cutoff)
+            if first_failure is None:
+                first_failure = candidate
+            registration = resolve_profit_loop_registration(candidate) or {}
+            if (
+                registration.get("status") == "available"
+                and registration.get("cutoff_at") == candidate.get("as_of_at")
+            ):
+                fact = candidate
+                break
+        fact = fact or first_failure or {
+            "fact_id": position_id,
+            "producer": {"status": "unavailable"},
+        }
     _output(
-        evaluate_counterfactual_registry(fact, cost_model=cost_model),
+        evaluate_counterfactual_registry(
+            fact,
+            cost_model=cost_model,
+            as_of_at=as_of_at,
+        ),
         json_output,
     )
 

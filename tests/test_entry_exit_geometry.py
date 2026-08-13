@@ -470,6 +470,8 @@ def test_file_backed_chain_validation_and_audit_are_read_only(tmp_path, monkeypa
     report = geometry.build_entry_exit_geometry_audit(hours=24, limit=10)
 
     assert report["rows"] == []
+    assert report["read_only"] is True
+    assert report["behavior_changed"] is False
     assert conn.total_changes == before_changes
     sq._db_conn = None
     conn.close()

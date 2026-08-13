@@ -14,14 +14,17 @@ evidence_app.add_typer(epoch_app, name="epoch")
 def register_epoch(
     json_output: bool = typer.Option(False, "--json", help="Print raw JSON."),
     commit_sha: str | None = typer.Option(
-        None, "--commit", help="Override commit SHA (default: current HEAD)."
+        None,
+        "--commit",
+        help="Override commit SHA for legacy evidence paths only (default: current runtime).",
     ),
 ):
-    """Register evidence epochs for exit_trailing_evidence and entry_correction_v2.
+    """Register durable observation-only evidence epochs.
 
     Anchors the current deployed commit SHA as the epoch boundary so that
     PF, MFE→realized capture, tail, and regime slices are comparable across
-    deploys.  Idempotent: re-running on the same build is a no-op.
+    deploys. Profit-loop identity always comes from the durable Runtime Session;
+    ``--commit`` cannot override it. Idempotent on the same identity.
     """
     from aletheia.learning.evidence_epoch import ensure_evidence_epochs, evidence_epoch_summary
 
