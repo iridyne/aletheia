@@ -21,6 +21,7 @@ class CounterfactualSpec:
     treatment_policy_id: str
     registration_at: str
     cutoff_at: str
+    registration_commit: str
     assignment_unit: str
     eligibility: str
     fixed_horizon_bars: int
@@ -32,8 +33,9 @@ class CounterfactualSpec:
 
 
 _REGISTRATION = {
-    "registration_at": "2026-08-13T04:47:04+00:00",
-    "cutoff_at": "2026-09-12T04:47:04+00:00",
+    "registration_at": None,
+    "cutoff_at": None,
+    "registration_commit": None,
     "assignment_unit": "position_id",
     "eligibility": "opened_on_or_after_registration_closed_by_cutoff_complete_position_fact_with_frozen_hypothesis_and_1m_prefix",
     "fixed_horizon_bars": _FIXED_HORIZON_BARS,
@@ -252,6 +254,7 @@ def evaluate_counterfactual_registry(
     fact: Mapping[str, Any],
     *,
     cost_model: CostModel | None,
+    as_of_at: str | datetime | None = None,
     hypothesis_evaluator: Callable[..., str] = evaluate_hypothesis_prefix,
 ) -> dict[str, Any]:
     """Evaluate fixed registry; every state call receives only its completed prefix."""
@@ -263,6 +266,19 @@ def evaluate_counterfactual_registry(
         "promotion_eligible": False,
         "registry": [asdict(spec) for spec in REGISTRY],
     }
+    if not all(_REGISTRATION.get(field) for field in ("registration_at", "cutoff_at", "registration_commit")):
+        return {
+            **base,
+            "status": "not_evaluable",
+            "reason": "verified_deployment_registration_required",
+            "results": [],
+        }
+    evaluation_at = _parse_utc(as_of_at) or _parse_utc(fact.get("as_of_at"))
+    cutoff_at = _parse_utc(_REGISTRATION["cutoff_at"])
+    if evaluation_at is None:
+        return {**base, "status": "not_evaluable", "reason": "evaluation_as_of_unavailable", "results": []}
+    if cutoff_at is None or evaluation_at < cutoff_at:
+        return {**base, "status": "not_evaluable", "reason": "registered_cutoff_not_reached", "results": []}
     if cost_model is None or not cost_model.valid():
         return {**base, "status": "not_evaluable", "reason": "verified_cost_model_required", "results": []}
     rows = _rows(fact)

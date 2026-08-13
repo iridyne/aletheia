@@ -116,16 +116,11 @@ def _market_identity(db: Any, opportunity: dict[str, Any] | None, proposal: Trad
     }
 
 
-def _decision_inputs(db: Any, proposal: TradeProposal) -> dict[str, Any]:
-    rows = db.execute(
-        "SELECT reasoning, bear_case, key_assumptions, evidence_manifest_json "
-        "FROM pi_decisions WHERE proposal_id=? AND action!='signal_pending' "
-        "ORDER BY datetime(created_at), rowid LIMIT 2",
-        (proposal.id,),
-    ).fetchall()
-    if len(rows) != 1:
+def _decision_input_values(value: object) -> dict[str, Any]:
+    dump = getattr(value, "model_dump", None)
+    row = dump() if callable(dump) else value
+    if not isinstance(row, Mapping):
         return {}
-    row = dict(rows[0])
     manifest = _mapping(row.get("evidence_manifest_json"))
     motivation = manifest.get("trade_motivation")
     motivation = dict(motivation) if isinstance(motivation, Mapping) else {}
@@ -135,8 +130,24 @@ def _decision_inputs(db: Any, proposal: TradeProposal) -> dict[str, Any]:
         "key_assumptions": _json_list(row.get("key_assumptions")),
         "thesis": motivation.get("thesis"),
         "supporting_signals": _list(motivation.get("supporting_evidence")),
-        "declared_invalidation_conditions": _list(motivation.get("invalidation_conditions")),
+        "declared_invalidation_conditions": _list(
+            motivation.get("invalidation_conditions")
+        ),
     }
+
+
+def _decision_inputs(
+    db: Any, proposal: TradeProposal, decision: object | None
+) -> dict[str, Any]:
+    if decision is not None:
+        return _decision_input_values(decision)
+    rows = db.execute(
+        "SELECT reasoning, bear_case, key_assumptions, evidence_manifest_json "
+        "FROM pi_decisions WHERE proposal_id=? AND action!='signal_pending' "
+        "ORDER BY datetime(created_at), rowid LIMIT 2",
+        (proposal.id,),
+    ).fetchall()
+    return _decision_input_values(rows[0]) if len(rows) == 1 else {}
 
 
 def _validate_existing_hypothesis(existing: Mapping[str, Any], proposal: TradeProposal) -> None:
@@ -187,11 +198,23 @@ def _validate_existing_hypothesis(existing: Mapping[str, Any], proposal: TradePr
         "target_price": _finite(existing.get("target_price")),
         "risk_reward": _finite(risk.get("risk_reward")),
     }
+    quote_amount = _finite(risk.get("quote_amount"))
+    expected_quote_amount = (
+        abs(expected["entry_price"] - expected["stop_price"]) * expected["quantity"]
+        if expected["entry_price"] is not None
+        and expected["stop_price"] is not None
+        and expected["quantity"] is not None
+        else None
+    )
+    if quote_amount != expected_quote_amount:
+        raise ValueError("position hypothesis conflicts with Proposal risk quote amount")
     if actual != expected:
         raise ValueError("position hypothesis conflicts with Proposal identity or risk geometry")
 
 
-def freeze_position_hypothesis(proposal: TradeProposal, *, db: Any) -> None:
+def freeze_position_hypothesis(
+    proposal: TradeProposal, *, db: Any, decision: object | None = None
+) -> None:
     """Freeze evidence before hashing/persistence; never rewrite an existing contract."""
     if (
         proposal.source != "native"
@@ -210,7 +233,7 @@ def freeze_position_hypothesis(proposal: TradeProposal, *, db: Any) -> None:
         return
 
     opportunity = _opportunity(db, proposal)
-    decision_inputs = _decision_inputs(db, proposal)
+    decision_inputs = _decision_inputs(db, proposal, decision)
     supporting_signals = _list(snapshot.get("supporting_signals")) or _list(decision_inputs.get("supporting_signals"))
     raw_invalidations = snapshot.get("invalidation_conditions")
     if not raw_invalidations and proposal.stop_price is not None:

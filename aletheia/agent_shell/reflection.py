@@ -373,7 +373,7 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
             claim_failure = _pending_claim_authority_failure(pi_dec)
         if proposal is not None:
             if claim_failure is None:
-                insert_trade_proposal(proposal)
+                insert_trade_proposal(proposal, decision_inputs=pi_dec)
                 pi_dec.proposal_id = proposal.id
                 pi_dec.proposal_status = "submitting"
                 pi_dec.proposal_reason = None
@@ -483,7 +483,7 @@ def recover_interrupted_decision(
         ):
             raise ValueError("interrupted_proposal_identity_mismatch")
 
-        repo.insert_trade_proposal(proposal)
+        repo.insert_trade_proposal(proposal, decision_inputs=row)
         repo.update_pi_decision(
             decision_id,
             proposal_id=proposal.id,

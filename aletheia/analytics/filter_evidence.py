@@ -385,10 +385,12 @@ def decode_filter_decision_batch(payload: str) -> list[dict[str, Any]]:
     encoded = payload or "[]"
     if encoded.startswith("zlib-base64:"):
         try:
-            compressed = base64.b64decode(encoded.removeprefix("zlib-base64:"))
+            compressed = base64.b64decode(
+                encoded.removeprefix("zlib-base64:"), validate=True
+            )
             encoded = zlib.decompress(compressed).decode("utf-8")
-        except (ValueError, zlib.error, UnicodeDecodeError):
-            return []
+        except (ValueError, zlib.error, UnicodeDecodeError) as exc:
+            raise ValueError("malformed compact filter decision batch") from exc
     raw = json.loads(encoded)
     if isinstance(raw, list):
         return [dict(item) for item in raw if isinstance(item, dict)]

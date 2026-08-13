@@ -64,15 +64,31 @@ def _parsed(value: object, expected: type) -> object:
     return parsed if isinstance(parsed, expected) else expected()
 
 
-def _batch_facts(db: Any, cutoff: datetime) -> list[dict[str, Any]]:
+def _batch_facts(
+    db: Any,
+    cutoff: datetime,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     facts: list[dict[str, Any]] = []
+    exclusions: list[dict[str, Any]] = []
     for batch in _rows(
         db,
         "SELECT * FROM filter_decision_batches ORDER BY datetime(evaluated_at), rowid",
     ):
         if not _visible(batch, cutoff):
             continue
-        raw_facts = decode_filter_decision_batch(str(batch.get("candidate_facts") or "[]"))
+        try:
+            raw_facts = decode_filter_decision_batch(str(batch.get("candidate_facts") or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            exclusions.append(
+                {
+                    "source_table": "filter_decision_batches",
+                    "source_batch_id": batch.get("id"),
+                    "event_at": batch.get("evaluated_at"),
+                    "availability": "unavailable",
+                    "unavailable_reason": "malformed_candidate_facts_json",
+                }
+            )
+            continue
         for sequence, raw in enumerate(raw_facts):
             if not isinstance(raw, dict):
                 continue
@@ -96,7 +112,7 @@ def _batch_facts(db: Any, cutoff: datetime) -> list[dict[str, Any]]:
                 "source_batch_id": batch["id"],
             }
             facts.append(fact)
-    return facts
+    return facts, exclusions
 
 
 def _terminal(
@@ -148,7 +164,8 @@ def build_candidate_facts(
         "SELECT * FROM filter_decisions ORDER BY datetime(evaluated_at), sequence_no, rowid",
     )
     filter_rows = [{**row, "source_table": "filter_decisions"} for row in explicit if _visible(row, cutoff)]
-    filter_rows.extend(_batch_facts(source, cutoff))
+    batch_rows, batch_exclusions = _batch_facts(source, cutoff)
+    filter_rows.extend(batch_rows)
 
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in filter_rows:
@@ -311,6 +328,13 @@ def build_candidate_facts(
         "candidate_count": len(facts),
         "settled_outcome_count": outcome_count,
         "outcome_coverage": outcome_count / len(facts) if facts else None,
+        "unavailable_count": len(batch_exclusions),
+        "unavailable_reasons": {
+            "malformed_candidate_facts_json": len(batch_exclusions)
+        }
+        if batch_exclusions
+        else {},
+        "exclusions": batch_exclusions,
         "terminal_counts": dict(sorted(terminal_counts.items())),
         "facts": facts,
     }

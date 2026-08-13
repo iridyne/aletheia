@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 import aletheia.analytics.profit_loop_counterfactual as counterfactual
+import pytest
 from aletheia.storage.proposal_hypothesis import evaluate_hypothesis_prefix
 
 
@@ -23,6 +24,7 @@ def _fact(*, invalidation_threshold: float = 50.0) -> dict:
         )
     return {
         "fact_id": "position-1",
+        "as_of_at": "2026-09-12T05:34:28+00:00",
         "stages": {
             "decision": {
                 "proposal": {
@@ -43,9 +45,9 @@ def _fact(*, invalidation_threshold: float = 50.0) -> dict:
             "holding": {"ohlcv": {"rows": rows}},
             "exit": {
                 "position": {
-                    "opened_at": "2026-08-13T05:00:00+00:00",
+                    "opened_at": "2026-08-13T05:34:28+00:00",
                     "direction": "long",
-                    "closed_at": "2026-08-13T06:05:00+00:00",
+                    "closed_at": "2026-08-13T06:39:28+00:00",
                 }
             },
         },
@@ -61,6 +63,25 @@ def _cost() -> counterfactual.CostModel:
         exit_fee_bps=10.0,
         slippage_bps_per_side=5.0,
         funding_bps_per_hour=2.0,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _registered_test_cohort(monkeypatch):
+    monkeypatch.setitem(
+        counterfactual._REGISTRATION,
+        "registration_at",
+        "2026-08-13T05:34:28+00:00",
+    )
+    monkeypatch.setitem(
+        counterfactual._REGISTRATION,
+        "cutoff_at",
+        "2026-09-12T05:34:28+00:00",
+    )
+    monkeypatch.setitem(
+        counterfactual._REGISTRATION,
+        "registration_commit",
+        "test-verified-deployment",
     )
 
 
@@ -175,3 +196,34 @@ def test_registered_cohort_rejects_positions_opened_before_registration():
     fact["stages"]["exit"]["position"]["opened_at"] = "2026-08-13T04:00:00+00:00"
     result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
     assert result["reason"] == "registered_cohort_eligibility_failed"
+
+
+def test_registry_fails_closed_before_registered_cutoff():
+    fact = _fact()
+    fact["as_of_at"] = "2026-09-12T05:34:27+00:00"
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    assert result["status"] == "not_evaluable"
+    assert result["reason"] == "registered_cutoff_not_reached"
+
+
+def test_registry_requires_explicit_fact_or_current_as_of():
+    fact = _fact()
+    fact.pop("as_of_at")
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    assert result["status"] == "not_evaluable"
+    assert result["reason"] == "evaluation_as_of_unavailable"
+
+
+def test_registry_requires_post_deployment_registration(monkeypatch):
+    monkeypatch.setitem(counterfactual._REGISTRATION, "registration_at", None)
+    monkeypatch.setitem(counterfactual._REGISTRATION, "cutoff_at", None)
+    monkeypatch.setitem(counterfactual._REGISTRATION, "registration_commit", None)
+
+    result = counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())
+
+    assert result["status"] == "not_evaluable"
+    assert result["reason"] == "verified_deployment_registration_required"
