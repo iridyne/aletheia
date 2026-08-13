@@ -22,7 +22,7 @@ class CounterfactualSpec:
     registration_at: str
     cutoff_at: str
     registration_commit: str
-    behavior_fingerprint: str
+    eligible_producer_commits: tuple[str, ...]
     assignment_unit: str
     eligibility: str
     fixed_horizon_bars: int
@@ -37,7 +37,10 @@ _REGISTRATION = {
     "registration_at": "2026-08-13T06:12:47+00:00",
     "cutoff_at": "2026-09-12T06:12:47+00:00",
     "registration_commit": "683c8e27952bee7816931733bed0f64bfadae856",
-    "behavior_fingerprint": "2b930ecb61ead8f7",
+    "eligible_producer_commits": (
+        "683c8e27952bee7816931733bed0f64bfadae856",
+        "dafb94379db05c9ab08c9e43e1cb1687379c3cd8",
+    ),
     "assignment_unit": "position_id",
     "eligibility": "opened_on_or_after_registration_closed_by_cutoff_complete_position_fact_with_frozen_hypothesis_and_1m_prefix",
     "fixed_horizon_bars": _FIXED_HORIZON_BARS,
@@ -278,7 +281,7 @@ def evaluate_counterfactual_registry(
             "registration_at",
             "cutoff_at",
             "registration_commit",
-            "behavior_fingerprint",
+            "eligible_producer_commits",
         )
     ):
         return {
@@ -308,15 +311,13 @@ def evaluate_counterfactual_registry(
             "reason": "registered_evidence_cutoff_mismatch",
             "results": [],
         }
-    registered_fingerprint = str(_REGISTRATION["behavior_fingerprint"])
-    behavior_fingerprints = {
-        str(fingerprint) for fingerprint in (_nested(fact, "producer", "behavior_fingerprints") or [])
-    }
-    if behavior_fingerprints != {registered_fingerprint}:
+    eligible_producer_commits = {str(commit) for commit in _REGISTRATION["eligible_producer_commits"]}
+    producer_commits = {str(commit) for commit in (_nested(fact, "producer", "producer_commits") or [])}
+    if not producer_commits or not producer_commits <= eligible_producer_commits:
         return {
             **base,
             "status": "not_evaluable",
-            "reason": "registered_behavior_identity_mismatch",
+            "reason": "registered_producer_identity_mismatch",
             "results": [],
         }
     if (

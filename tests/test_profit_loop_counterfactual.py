@@ -25,10 +25,7 @@ def _fact(*, invalidation_threshold: float = 50.0) -> dict:
     return {
         "fact_id": "position-1",
         "as_of_at": "2026-09-12T05:34:28+00:00",
-        "producer": {
-            "producer_commits": ["test-verified-deployment"],
-            "behavior_fingerprints": ["test-behavior"],
-        },
+        "producer": {"producer_commits": ["test-verified-deployment"]},
         "causal_link": {"status": "available"},
         "economics": {"availability": "available"},
         "stages": {
@@ -94,8 +91,8 @@ def _registered_test_cohort(monkeypatch):
     )
     monkeypatch.setitem(
         counterfactual._REGISTRATION,
-        "behavior_fingerprint",
-        "test-behavior",
+        "eligible_producer_commits",
+        ("test-verified-deployment", "test-registration-deployment"),
     )
     monkeypatch.setattr(
         counterfactual,
@@ -248,22 +245,25 @@ def test_registry_requires_post_deployment_registration(monkeypatch):
     assert result["reason"] == "verified_deployment_registration_required"
 
 
-def test_registry_allows_code_only_upgrade_with_same_behavior():
+def test_registry_allows_preregistered_code_only_deployment():
     fact = _fact()
-    fact["producer"]["producer_commits"] = ["later-analysis-only-deployment"]
+    fact["producer"]["producer_commits"] = [
+        "test-verified-deployment",
+        "test-registration-deployment",
+    ]
 
     result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
 
     assert result["status"] == "evaluated"
 
 
-def test_registry_rejects_mismatched_behavior_fingerprint():
+def test_registry_rejects_unregistered_producer_commit():
     fact = _fact()
-    fact["producer"]["behavior_fingerprints"] = ["changed-behavior"]
+    fact["producer"]["producer_commits"] = ["later-unregistered-deployment"]
 
     result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
 
-    assert result["reason"] == "registered_behavior_identity_mismatch"
+    assert result["reason"] == "registered_producer_identity_mismatch"
 
 
 @pytest.mark.parametrize(
