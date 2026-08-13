@@ -33,9 +33,9 @@ class CounterfactualSpec:
 
 
 _REGISTRATION = {
-    "registration_at": "2026-08-13T05:34:28+00:00",
-    "cutoff_at": "2026-09-12T05:34:28+00:00",
-    "registration_commit": "94a69d7733ae9d579f03df533cfa4293c5cfe084",
+    "registration_at": None,
+    "cutoff_at": None,
+    "registration_commit": None,
     "assignment_unit": "position_id",
     "eligibility": "opened_on_or_after_registration_closed_by_cutoff_complete_position_fact_with_frozen_hypothesis_and_1m_prefix",
     "fixed_horizon_bars": _FIXED_HORIZON_BARS,
@@ -266,6 +266,13 @@ def evaluate_counterfactual_registry(
         "promotion_eligible": False,
         "registry": [asdict(spec) for spec in REGISTRY],
     }
+    if not all(_REGISTRATION.get(field) for field in ("registration_at", "cutoff_at", "registration_commit")):
+        return {
+            **base,
+            "status": "not_evaluable",
+            "reason": "verified_deployment_registration_required",
+            "results": [],
+        }
     evaluation_at = _parse_utc(as_of_at) or _parse_utc(fact.get("as_of_at"))
     cutoff_at = _parse_utc(_REGISTRATION["cutoff_at"])
     if evaluation_at is None:

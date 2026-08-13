@@ -399,8 +399,8 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "acknowledgement[1] !== pullRequest.head.sha" in schedule_script
     assert "do-not-auto-merge" in schedule_script
     assert "github.rest.pulls.listFiles" in schedule_script
-    assert "filename === '.github/workflows/auto-merge.yml'" in schedule_script
-    assert "changesMergeAuthority" in schedule_script
+    assert "previous_filename" in schedule_script
+    assert "[filename, previous_filename].includes('.github/workflows/auto-merge.yml')" in schedule_script
 
     release_candidate = workflow["jobs"]["release-candidate"]
     assert release_candidate["permissions"] == {
@@ -497,6 +497,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "document every confirmed, false-positive, or deferred finding" in update_script
     assert "github.rest.pulls.listFiles" in update_script
     assert "merge-authority workflow changes require an explicit manual merge" in update_script
+    assert "previous_filename" in update_script
     assert update_script.index("if (!releaseAfterMerge)") < update_script.index("const maxAttempts = 150")
     ordinary_path = update_script[
         update_script.index("if (!releaseAfterMerge)") : update_script.index("const autoMergeStates")

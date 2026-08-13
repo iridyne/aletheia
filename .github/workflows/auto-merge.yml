@@ -117,8 +117,8 @@ jobs:
                 pull_number: pullRequest.number,
                 per_page: 100,
               });
-              const changesMergeAuthority = changedFiles.some(
-                ({filename}) => filename === '.github/workflows/auto-merge.yml',
+              const changesMergeAuthority = changedFiles.some(({filename, previous_filename}) =>
+                [filename, previous_filename].includes('.github/workflows/auto-merge.yml'),
               );
               const operation = (
                 changesMergeAuthority ||
@@ -361,8 +361,8 @@ jobs:
                 pull_number: pullRequest.number,
                 per_page: 100,
               });
-              if (changedFiles.some(
-                ({filename}) => filename === '.github/workflows/auto-merge.yml',
+              if (changedFiles.some(({filename, previous_filename}) =>
+                [filename, previous_filename].includes('.github/workflows/auto-merge.yml'),
               )) {
                 core.info('merge-authority workflow changes require an explicit manual merge');
                 return;
