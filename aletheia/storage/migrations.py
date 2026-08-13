@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v26"
+SCHEMA_VERSION = "aletheia-sqlite-v27"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3584,6 +3584,28 @@ _POSITION_PATH_OBSERVATIONS_CHECKSUM = hashlib.sha256(
     (
         _POSITION_PATH_OBSERVATIONS_SQL
         + "\nappend_only_position_path_observations_v1\nPRAGMA optimize"
+    ).encode("utf-8")
+).hexdigest()
+
+_POSITION_PATH_DEFERRED_BUCKETS_SQL = """
+CREATE TABLE IF NOT EXISTS position_path_observation_deferred_buckets (
+    position_id TEXT NOT NULL REFERENCES positions(id),
+    bucket_open_ms INTEGER NOT NULL CHECK (
+        bucket_open_ms >= 0 AND bucket_open_ms % 300000 = 0
+    ),
+    first_deferred_at TEXT NOT NULL CHECK (julianday(first_deferred_at) IS NOT NULL),
+    last_attempt_at TEXT NOT NULL CHECK (julianday(last_attempt_at) IS NOT NULL),
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    reason TEXT NOT NULL,
+    PRIMARY KEY (position_id, bucket_open_ms)
+);
+CREATE INDEX IF NOT EXISTS idx_position_path_deferred_bucket
+ON position_path_observation_deferred_buckets(bucket_open_ms, position_id);
+"""
+_POSITION_PATH_DEFERRED_BUCKETS_CHECKSUM = hashlib.sha256(
+    (
+        _POSITION_PATH_DEFERRED_BUCKETS_SQL
+        + "\ndurable_position_path_retry_v1\nPRAGMA optimize"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -4941,6 +4963,12 @@ def _apply_position_path_observations_v26(db: sqlite3.Connection) -> None:
     db.executescript(_POSITION_PATH_OBSERVATIONS_SQL)
     db.execute("PRAGMA optimize")
 
+def _apply_position_path_deferred_buckets_v27(db: sqlite3.Connection) -> None:
+    """Persist the narrow retry queue for transiently unavailable path buckets."""
+
+    db.executescript(_POSITION_PATH_DEFERRED_BUCKETS_SQL)
+    db.execute("PRAGMA optimize")
+
 
 def _apply_market_signal_identity_v7(db: sqlite3.Connection) -> None:
     """Add structured evidence without changing legacy wake-summary fields."""
@@ -5331,8 +5359,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260813_0025_position_path_observations_v26",
         checksum=_POSITION_PATH_OBSERVATIONS_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v26",
         apply=_apply_position_path_observations_v26,
+    ),
+    MigrationStep(
+        migration_id="20260813_0026_position_path_deferred_buckets_v27",
+        checksum=_POSITION_PATH_DEFERRED_BUCKETS_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_position_path_deferred_buckets_v27,
     ),
 )
 

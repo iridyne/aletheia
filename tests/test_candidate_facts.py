@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import json
 import sqlite3
+import zlib
 
 import aletheia.analytics.candidate_facts as candidate_facts
 
@@ -169,3 +171,69 @@ def test_candidate_facts_reject_variable_horizon():
         assert str(exc) == "unsupported fixed horizon: realized_close"
     else:
         raise AssertionError("variable horizon was accepted")
+
+
+def test_candidate_facts_decode_current_compressed_batches():
+    db = _db()
+    raw = json.dumps(
+        [
+            {
+                "candidate_key": "compressed-filtered",
+                "outcome_candidate_key": "compressed-outcome",
+                "decision": "rejected",
+            }
+        ],
+        separators=(",", ":"),
+    ).encode()
+    payload = "zlib-base64:" + base64.b64encode(zlib.compress(raw)).decode()
+    db.execute(
+        "UPDATE filter_decision_batches SET candidate_facts=? WHERE id='batch-filtered'",
+        (payload,),
+    )
+
+    report = candidate_facts.build_candidate_facts(horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db)
+
+    fact = next(item for item in report["facts"] if item["fact_id"] == "compressed-outcome")
+    assert fact["terminal_state"] == "filtered"
+
+
+def test_candidate_exact_pi_identity_does_not_join_other_retry():
+    db = _db()
+    db.execute(
+        "UPDATE filter_decisions SET candidate_key='pi_decision:pi-skip', "
+        "candidate_kind='pi_decision' WHERE id='filter-skip'"
+    )
+    db.execute(
+        "INSERT INTO pi_decisions VALUES ('pi-retry','opp-skip','proposal-risk','trade','2026-08-13T00:01:11+00:00')"
+    )
+
+    report = candidate_facts.build_candidate_facts(horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db)
+
+    fact = next(item for item in report["facts"] if item["fact_id"] == "outcome-skip")
+    assert fact["identity"]["pi_decision_id"] == "pi-skip"
+    assert fact["terminal_state"] == "pi_skip"
+
+
+def test_candidate_facts_resolve_serenity_opportunity_by_decision_source():
+    db = _db()
+    db.execute("ALTER TABLE pi_decisions ADD COLUMN signal_source TEXT")
+    db.execute("CREATE TABLE serenity_opportunities (id TEXT PRIMARY KEY, created_at TEXT)")
+    db.execute("INSERT INTO serenity_opportunities VALUES ('serenity-1','2026-08-13T00:03:01+00:00')")
+    db.execute(
+        "INSERT INTO filter_decisions VALUES "
+        "('serenity-filter','pi_decision:serenity-decision','pi_decision',"
+        "'serenity-outcome','serenity-1',NULL,'operator','decision',0,'passed',"
+        "'eligible','2026-08-13T00:03:00+00:00')"
+    )
+    db.execute(
+        "INSERT INTO pi_decisions "
+        "(id,opportunity_id,proposal_id,action,created_at,signal_source) VALUES "
+        "('serenity-decision','serenity-1',NULL,'skip',"
+        "'2026-08-13T00:03:10+00:00','serenity')"
+    )
+
+    report = candidate_facts.build_candidate_facts(horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db)
+
+    fact = next(item for item in report["facts"] if item["fact_id"] == "serenity-outcome")
+    assert fact["funnel"]["opportunity_reached"] is True
+    assert fact["identity"]["pi_decision_id"] == "serenity-decision"

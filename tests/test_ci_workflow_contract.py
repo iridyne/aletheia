@@ -41,11 +41,7 @@ def _release_workflow() -> dict:
 
 
 def _run_commands(job: dict) -> str:
-    return "\n".join(
-        str(step.get("run") or "")
-        for step in job.get("steps", [])
-        if isinstance(step, dict)
-    )
+    return "\n".join(str(step.get("run") or "") for step in job.get("steps", []) if isinstance(step, dict))
 
 
 def test_only_expected_workflows_are_active() -> None:
@@ -133,10 +129,7 @@ def test_ci_jobs_use_self_hosted_runners_and_minimum_permissions() -> None:
         assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
         setup_uv = next(step for step in job["steps"] if str(step.get("uses", "")).startswith("astral-sh/setup-uv@"))
         assert setup_uv["with"]["enable-cache"] == "false"
-    setup_node = next(
-        step for step in workflow["jobs"]["review"]["steps"]
-        if step.get("uses") == SETUP_NODE_ACTION
-    )
+    setup_node = next(step for step in workflow["jobs"]["review"]["steps"] if step.get("uses") == SETUP_NODE_ACTION)
     assert setup_node["with"] == {"node-version": "22"}
 
 
@@ -196,7 +189,7 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
     assert "set -euo pipefail" in commands
     assert "release-please@17.6.0" in commands
     assert "for attempt in 1 2 3" in commands
-    assert 'sleep $((attempt * 5))' in commands
+    assert "sleep $((attempt * 5))" in commands
     assert "release_please github-release" in commands
     assert "release_please release-pr" in commands
     assert 'if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]' in commands
@@ -282,9 +275,7 @@ def test_native_host_build_uses_self_contained_linker() -> None:
 
     # The step must also target the musl platform so no glibc symbols leak in.
     run = native_step.get("run", "")
-    assert "x86_64-unknown-linux-musl" in run, (
-        "Native host step must compile for x86_64-unknown-linux-musl"
-    )
+    assert "x86_64-unknown-linux-musl" in run, "Native host step must compile for x86_64-unknown-linux-musl"
 
 
 def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> None:
@@ -305,7 +296,7 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
     assert "--ignore=tests/test_auto_resume.py" in tier_commands
     assert "--ignore=tests/test_operator_cli.py" in tier_commands
     assert "--ignore=tests/test_pause_ownership.py" in tier_commands
-    assert '${{ matrix.marker }}' in tier_commands
+    assert "${{ matrix.marker }}" in tier_commands
     assert "--dist loadfile" in tier_commands
     tier_env = tier_job["steps"][-1]["env"]["ALETHEIA_DATA_DIR"]
     assert "${{ runner.temp }}" in tier_env
@@ -335,6 +326,9 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
 
     assert set(triggers) == {
         "pull_request_target",
+        "pull_request_review",
+        "issue_comment",
+        "workflow_run",
         "repository_dispatch",
     }
     assert triggers["pull_request_target"]["branches"] == ["master"]
@@ -348,6 +342,15 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "unlabeled",
         "closed",
     ]
+    assert triggers["pull_request_review"] == {
+        "branches": ["master"],
+        "types": ["submitted"],
+    }
+    assert triggers["issue_comment"]["types"] == ["created", "edited"]
+    assert triggers["workflow_run"] == {
+        "workflows": ["Aletheia CI"],
+        "types": ["completed"],
+    }
     assert triggers["repository_dispatch"]["types"] == [
         "auto_merge_update",
         "release_candidate_verified",
@@ -367,14 +370,20 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "X64",
         "ubuntu-24.04",
     ]
-    assert "event_name == 'pull_request_target'" in schedule["if"]
-    assert "action != 'closed'" in schedule["if"]
-    assert "draft == false" in schedule["if"]
-    assert "!startsWith" in schedule["if"]
-    assert "release-please--branches--master" in schedule["if"]
-    assert schedule["permissions"] == {"contents": "write"}
-    assert set(schedule["env"]) == {"OPERATION", "PR_NUMBER", "EXPECTED_HEAD_SHA"}
-    assert "do-not-auto-merge" in schedule["env"]["OPERATION"]
+    schedule_guard = schedule["if"]
+    assert "event_name == 'pull_request_target'" in schedule_guard
+    assert "action != 'closed'" in schedule_guard
+    assert "event_name == 'pull_request_review'" in schedule_guard
+    assert "chatgpt-codex-connector" in schedule_guard
+    assert "event_name == 'issue_comment'" in schedule_guard
+    assert "startsWith(github.event.comment.body, '/codex-triage ')" in schedule_guard
+    assert "event_name == 'workflow_run'" in schedule_guard
+    assert "workflow_run.conclusion == 'success'" in schedule_guard
+    assert schedule["permissions"] == {
+        "contents": "write",
+        "pull-requests": "read",
+    }
+    assert "env" not in schedule
     assert len(schedule["steps"]) == 1
     schedule_step = schedule["steps"][0]
     assert schedule_step["name"] == "Dispatch trusted auto-merge update"
@@ -383,8 +392,12 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     schedule_script = schedule_step["with"]["script"]
     assert "createDispatchEvent" in schedule_script
     assert "auto_merge_update" in schedule_script
-    assert "pull_request_number" in schedule_script
-    assert "process.env.OPERATION" in schedule_script
+    assert "payload.review.commit_id !== pullRequest.head.sha" in schedule_script
+    assert "payload.workflow_run.head_sha !== pullRequest.head.sha" in schedule_script
+    assert "trustedAssociations" in schedule_script
+    assert "/codex-triage ([0-9a-f]{40}) (clean|complete)" in schedule_script
+    assert "acknowledgement[1] !== pullRequest.head.sha" in schedule_script
+    assert "do-not-auto-merge" in schedule_script
 
     release_candidate = workflow["jobs"]["release-candidate"]
     assert release_candidate["permissions"] == {
@@ -468,13 +481,31 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "issues.addLabels" in update_script
     assert "expected_base_sha: expectedBaseSha" in update_script
     assert "event_type: 'release_candidate_merged'" in update_script
+
+    assert "reviews(last: 100)" in update_script
+    assert "comments(last: 100)" in update_script
+    assert "review.commit?.oid === expectedHeadSha" in update_script
+    assert "chatgpt-codex-connector" in update_script
+    assert "trustedAssociations" in update_script
+    assert "match[1] !== expectedHeadSha" in update_script
+    assert "disposition === 'clean'" in update_script
+    assert "disposition === 'complete'" in update_script
+    assert "acknowledgement.createdAt >= latestReviewAt" in update_script
+    assert "document every confirmed, false-positive, or deferred finding" in update_script
+    assert update_script.index("if (!releaseAfterMerge)") < update_script.index("const maxAttempts = 150")
+    ordinary_path = update_script[
+        update_script.index("if (!releaseAfterMerge)") : update_script.index("const autoMergeStates")
+    ]
+    assert "disableAutoMerge(pullRequest)" in ordinary_path
+    assert "pullRequest.mergeStateStatus !== 'CLEAN'" in ordinary_path
+    assert "github.rest.pulls.merge" in ordinary_path
+    assert "setTimeout" not in ordinary_path
     assert "event_type: 'release_please'" not in update_script
 
     # All phases carry write-capable base-repository tokens. Keep them
     # metadata-only: never check out or execute pull-request content.
     assert not any(
-        str(step.get("uses", "")).startswith("actions/checkout@")
-        or bool(step.get("run"))
+        str(step.get("uses", "")).startswith("actions/checkout@") or bool(step.get("run"))
         for workflow_job in workflow["jobs"].values()
         for step in workflow_job["steps"]
     )
@@ -485,10 +516,10 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     schedule = workflow["jobs"]["schedule"]
     update = workflow["jobs"]["update"]
 
-    assert set(schedule["env"]) == {"OPERATION", "PR_NUMBER", "EXPECTED_HEAD_SHA"}
-    assert "pull_request.head.sha" in schedule["env"]["EXPECTED_HEAD_SHA"]
+    assert "env" not in schedule
     schedule_script = schedule["steps"][0]["with"]["script"]
-    assert "expected_head_sha" in schedule_script
+    assert "pullRequest.head.sha" in schedule_script
+    assert "expected_head_sha: pullRequest.head.sha" in schedule_script
 
     assert set(update["env"]) == {
         "OPERATION",

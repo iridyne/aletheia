@@ -2656,6 +2656,60 @@ def get_observed_position_ids_for_bucket(
         observed.update(str(row["position_id"]) for row in rows)
     return observed
 
+def defer_position_path_observation_bucket(
+    position_id: str,
+    *,
+    bucket_open_ms: int,
+    attempted_at: str,
+    reason: str,
+) -> None:
+    """Durably schedule or revisit one Position/bucket without polluting immutable facts."""
+
+    db = get_db()
+    was_in_tx = db.in_transaction
+    execute_write(
+        "INSERT INTO position_path_observation_deferred_buckets "
+        "(position_id,bucket_open_ms,first_deferred_at,last_attempt_at,attempt_count,reason) "
+        "VALUES (?,?,?,?,1,?) "
+        "ON CONFLICT(position_id,bucket_open_ms) DO UPDATE SET "
+        "last_attempt_at=excluded.last_attempt_at,"
+        "attempt_count=position_path_observation_deferred_buckets.attempt_count+1,"
+        "reason=excluded.reason",
+        (position_id, bucket_open_ms, attempted_at, attempted_at, reason),
+    )
+    if not was_in_tx:
+        db.commit()
+
+
+def list_oldest_deferred_position_path_bucket(*, limit: int = 2_000) -> list[dict]:
+    """Return the oldest durable retry cohort, bounded for one observer cycle."""
+
+    bounded_limit = max(1, min(int(limit), 2_000))
+    rows = get_db().execute(
+        "SELECT * FROM position_path_observation_deferred_buckets "
+        "WHERE bucket_open_ms=("
+        "SELECT MIN(bucket_open_ms) FROM position_path_observation_deferred_buckets"
+        ") ORDER BY position_id LIMIT ?",
+        (bounded_limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def resolve_deferred_position_path_observation(
+    position_id: str, *, bucket_open_ms: int
+) -> None:
+    """Remove one retry only after it became an immutable fact or ineligible."""
+
+    db = get_db()
+    was_in_tx = db.in_transaction
+    execute_write(
+        "DELETE FROM position_path_observation_deferred_buckets "
+        "WHERE position_id=? AND bucket_open_ms=?",
+        (position_id, bucket_open_ms),
+    )
+    if not was_in_tx:
+        db.commit()
+
 
 def insert_position_path_observation(observation: Mapping[str, object]) -> bool:
     """Insert one immutable Position/five-minute bucket, idempotently."""

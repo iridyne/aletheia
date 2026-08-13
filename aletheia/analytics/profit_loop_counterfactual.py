@@ -32,15 +32,15 @@ class CounterfactualSpec:
 
 
 _REGISTRATION = {
-    "registration_at": "2026-08-13T04:01:38+00:00",
-    "cutoff_at": "2026-08-13T04:01:38+00:00",
+    "registration_at": "2026-08-13T04:47:04+00:00",
+    "cutoff_at": "2026-09-12T04:47:04+00:00",
     "assignment_unit": "position_id",
-    "eligibility": "closed_by_cutoff_complete_position_fact_with_frozen_hypothesis_and_1m_prefix",
+    "eligibility": "opened_on_or_after_registration_closed_by_cutoff_complete_position_fact_with_frozen_hypothesis_and_1m_prefix",
     "fixed_horizon_bars": _FIXED_HORIZON_BARS,
     "sample_cap": 500,
     "frozen_inputs": "exact_instrument_1m_ohlcv_position_hypothesis_initial_stop",
     "fill_cost_contract": "next_bar_open_pessimistic_stop_fee_funding_slippage/v1",
-    "stopping_rule": "single_locked_retrospective_evaluation_no_optional_stopping",
+    "stopping_rule": "single_locked_retrospective_evaluation_after_fixed_cutoff_no_optional_stopping",
     "evidence_class": "exploratory",
 }
 
@@ -178,6 +178,11 @@ def _simulate(
             return {"status": "not_evaluable", "reason": "delay_invalidation_not_evaluable"}
         if delay_state == "invalidated":
             return {"status": "no_trade", "reason": "hypothesis_invalidated_before_delayed_entry"}
+    stop_crossed = any(
+        bar["low"] <= initial_stop if direction == "long" else bar["high"] >= initial_stop for bar in delay_prefix
+    )
+    if stop_crossed:
+        return {"status": "no_trade", "reason": "frozen_stop_crossed_before_delayed_entry"}
     raw_entry = rows[delay_bars]["open"]
     entry = _adverse_slippage(
         raw_entry,
@@ -185,6 +190,8 @@ def _simulate(
         cost_model.slippage_bps_per_side,
         entry=True,
     )
+    if (direction == "long" and entry <= initial_stop) or (direction == "short" and entry >= initial_stop):
+        return {"status": "no_trade", "reason": "frozen_stop_crossed_before_delayed_entry"}
     initial_r = abs(entry - initial_stop)
     if initial_r <= 0:
         return {"status": "not_evaluable", "reason": "initial_risk_unavailable"}
@@ -197,8 +204,15 @@ def _simulate(
         prefix.append(bar)
         stop_hit = bar["low"] <= active_stop if direction == "long" else bar["high"] >= active_stop
         if stop_hit:
-            exit_price = active_stop
+            gap_through = bar["open"] < active_stop if direction == "long" else bar["open"] > active_stop
+            exit_price = bar["open"] if gap_through else active_stop
             exit_reason = "stop"
+            break
+        favorable = bar["high"] >= entry + initial_r if direction == "long" else bar["low"] <= entry - initial_r
+        breakeven_touched = bar["low"] <= entry if direction == "long" else bar["high"] >= entry
+        if breakeven_after_1r and favorable and breakeven_touched:
+            exit_price = entry
+            exit_reason = "breakeven_same_bar_ambiguous"
             break
         state = evaluator(hypothesis, completed_bars=prefix)
         if state == "not_evaluable" and exit_on_invalidation:
@@ -207,10 +221,8 @@ def _simulate(
             exit_price = rows[index + 1]["open"]
             exit_reason = "hypothesis_invalidation"
             break
-        if breakeven_after_1r:
-            favorable = bar["high"] >= entry + initial_r if direction == "long" else bar["low"] <= entry - initial_r
-            if favorable:
-                active_stop = entry
+        if breakeven_after_1r and favorable:
+            active_stop = entry
     exit_price = _adverse_slippage(
         exit_price,
         direction,
@@ -254,13 +266,22 @@ def evaluate_counterfactual_registry(
     if cost_model is None or not cost_model.valid():
         return {**base, "status": "not_evaluable", "reason": "verified_cost_model_required", "results": []}
     rows = _rows(fact)
+    opened_at = _parse_utc(_nested(fact, "stages", "exit", "position", "opened_at"))
     closed_at = _parse_utc(_nested(fact, "stages", "exit", "position", "closed_at"))
+    registration_at = _parse_utc(_REGISTRATION["registration_at"])
     cutoff_at = _parse_utc(_REGISTRATION["cutoff_at"])
-    if closed_at is None or cutoff_at is None or closed_at > cutoff_at:
+    if (
+        opened_at is None
+        or closed_at is None
+        or registration_at is None
+        or cutoff_at is None
+        or opened_at < registration_at
+        or closed_at > cutoff_at
+    ):
         return {
             **base,
             "status": "not_evaluable",
-            "reason": "registered_cutoff_eligibility_failed",
+            "reason": "registered_cohort_eligibility_failed",
             "results": [],
         }
     hypothesis = _nested(

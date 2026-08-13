@@ -4,6 +4,7 @@ This module is observational. It never changes Position, ExitPlan, Risk, executi
 or Learning state. Missing identity or market data is persisted as unavailable
 rather than guessed, so later analysis can distinguish absence from zero.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -50,6 +51,7 @@ def _normalize_direction(value: object) -> str | None:
         return "short"
     return None
 
+
 def _first_full_bucket_open_ms(position: dict[str, Any]) -> int | None:
     value = position.get("opened_at")
     try:
@@ -62,16 +64,13 @@ def _first_full_bucket_open_ms(position: dict[str, Any]) -> int | None:
             opened_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         if opened_at.tzinfo is None:
             return None
-        opened_at_ms = math.ceil(
-            opened_at.astimezone(timezone.utc).timestamp() * 1000
-        )
+        opened_at_ms = math.ceil(opened_at.astimezone(timezone.utc).timestamp() * 1000)
     except (OSError, OverflowError, TypeError, ValueError):
         return None
     return ((opened_at_ms + _BUCKET_MS - 1) // _BUCKET_MS) * _BUCKET_MS
 
-def _position_survives_target_bucket(
-    position: dict[str, Any], *, bucket_open_ms: int, bucket_end_ms: int
-) -> bool:
+
+def _position_survives_target_bucket(position: dict[str, Any], *, bucket_open_ms: int, bucket_end_ms: int) -> bool:
     first_bucket_open_ms = _first_full_bucket_open_ms(position)
     if first_bucket_open_ms is None or bucket_open_ms < first_bucket_open_ms:
         return False
@@ -99,21 +98,16 @@ def _position_survives_target_bucket(
         return False
 
 
-
-
 def _resolve_instrument(position: dict[str, Any]) -> tuple[InstrumentId | None, str]:
     protection = repo.get_position_protection_state(str(position["id"]))
     if protection is not None:
         try:
-            instrument = InstrumentId.from_parts(
-                protection["venue"], protection["symbol"], protection["market_type"]
-            )
+            instrument = InstrumentId.from_parts(protection["venue"], protection["symbol"], protection["market_type"])
         except (KeyError, TypeError, ValueError):
             return None, "protection_instrument_identity_invalid"
-        if (
-            instrument.symbol != to_canonical(str(position.get("symbol") or ""))
-            or instrument.market_type != _physical_market_type(position.get("market_type"))
-        ):
+        if instrument.symbol != to_canonical(
+            str(position.get("symbol") or "")
+        ) or instrument.market_type != _physical_market_type(position.get("market_type")):
             return None, "protection_instrument_identity_mismatch"
         return instrument, "position_protection_state"
 
@@ -147,9 +141,7 @@ def _resolve_instrument(position: dict[str, Any]) -> tuple[InstrumentId | None, 
         return None, "universe_instrument_identity_invalid"
 
 
-def _base_observation(
-    position: dict[str, Any], *, bucket_open_ms: int, observed_at: str
-) -> dict[str, object]:
+def _base_observation(position: dict[str, Any], *, bucket_open_ms: int, observed_at: str) -> dict[str, object]:
     from aletheia.agent_runtime.runtime_session import current_provenance
 
     provenance = current_provenance()
@@ -181,22 +173,15 @@ def _base_observation(
         "evidence_reason": "not_observed",
         "producer_commit": provenance.get("producer_commit"),
         "runtime_session_id": provenance.get("runtime_session_id"),
-        "capture_mode": (
-            "post_close_final_snapshot"
-            if position.get("status") == "closed"
-            else "open_snapshot"
-        ),
+        "capture_mode": ("post_close_final_snapshot" if position.get("status") == "closed" else "open_snapshot"),
     }
 
 
-def _store_unavailable(
-    position: dict[str, Any], *, bucket_open_ms: int, observed_at: str, reason: str
-) -> bool:
-    observation = _base_observation(
-        position, bucket_open_ms=bucket_open_ms, observed_at=observed_at
-    )
+def _store_unavailable(position: dict[str, Any], *, bucket_open_ms: int, observed_at: str, reason: str) -> bool:
+    observation = _base_observation(position, bucket_open_ms=bucket_open_ms, observed_at=observed_at)
     observation["evidence_reason"] = reason
     return insert_position_path_observation(observation)
+
 
 def _store_latest_position_result(
     position_id: str,
@@ -263,9 +248,7 @@ def _store_latest_position_result(
     if position.get("status") != "closed":
         observation["mark_price"] = close
         observation["unrealized_pnl"] = (
-            (close - entry) * quantity
-            if direction == "long"
-            else (entry - close) * quantity
+            (close - entry) * quantity if direction == "long" else (entry - close) * quantity
         )
     return insert_position_path_observation(observation), "available"
 
@@ -277,23 +260,43 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
 
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     now_ms = int(current.timestamp() * 1000)
-    bucket_open_ms = (now_ms // _BUCKET_MS - 1) * _BUCKET_MS
-    bucket_end_ms = bucket_open_ms + _BUCKET_MS
+    current_bucket_open_ms = (now_ms // _BUCKET_MS - 1) * _BUCKET_MS
+    current_bucket_end_ms = current_bucket_open_ms + _BUCKET_MS
     observed_at = current.isoformat()
-    positions = repo.list_positions_for_path_observation_bucket(
-        bucket_open=datetime.fromtimestamp(
-            bucket_open_ms / 1000, tz=timezone.utc
-        ).isoformat(),
-        bucket_end=datetime.fromtimestamp(
-            bucket_end_ms / 1000, tz=timezone.utc
-        ).isoformat(),
+    current_positions = repo.list_positions_for_path_observation_bucket(
+        bucket_open=datetime.fromtimestamp(current_bucket_open_ms / 1000, tz=timezone.utc).isoformat(),
+        bucket_end=datetime.fromtimestamp(current_bucket_end_ms / 1000, tz=timezone.utc).isoformat(),
     )
+    current_observed = repo.get_observed_position_ids_for_bucket(
+        [str(position["id"]) for position in current_positions],
+        bucket_open_ms=current_bucket_open_ms,
+    )
+    for position in current_positions:
+        position_id = str(position["id"])
+        first_bucket_open_ms = _first_full_bucket_open_ms(position)
+        if (
+            position_id not in current_observed
+            and first_bucket_open_ms is not None
+            and current_bucket_open_ms >= first_bucket_open_ms
+        ):
+            repo.defer_position_path_observation_bucket(
+                position_id,
+                bucket_open_ms=current_bucket_open_ms,
+                attempted_at=observed_at,
+                reason="scheduled",
+            )
+    deferred_rows = repo.list_oldest_deferred_position_path_bucket()
+    bucket_open_ms = int(deferred_rows[0]["bucket_open_ms"]) if deferred_rows else current_bucket_open_ms
+    bucket_end_ms = bucket_open_ms + _BUCKET_MS
+    positions = [
+        position for row in deferred_rows if (position := repo.get_position(str(row["position_id"]))) is not None
+    ]
     observed_position_ids = repo.get_observed_position_ids_for_bucket(
         [str(position["id"]) for position in positions],
         bucket_open_ms=bucket_open_ms,
     )
     summary: dict[str, Any] = {
-        "positions": len(positions),
+        "positions": len(current_positions),
         "inserted": 0,
         "available": 0,
         "unavailable": 0,
@@ -301,9 +304,7 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
         "errors": [],
     }
     providers: dict[str, MarketDataProvider] = {}
-    tasks: list[
-        asyncio.Task[tuple[InstrumentId, Candle | None, str, str | None]]
-    ] = []
+    tasks: list[asyncio.Task[tuple[InstrumentId, Candle | None, str, str | None]]] = []
     task_instruments: dict[
         asyncio.Task[tuple[InstrumentId, Candle | None, str, str | None]],
         InstrumentId,
@@ -328,8 +329,10 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
                 observed_at=observed_at,
             )
             if result is None:
+                repo.resolve_deferred_position_path_observation(position_id, bucket_open_ms=bucket_open_ms)
                 return
             inserted, status = result
+            repo.resolve_deferred_position_path_observation(position_id, bucket_open_ms=bucket_open_ms)
             if inserted:
                 summary["inserted"] += 1
                 summary[status] += 1
@@ -364,21 +367,13 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
                     timeout=_OHLCV_REQUEST_TIMEOUT_SECONDS,
                 )
                 bar = next(
-                    (
-                        candle
-                        for candle in result
-                        if candle.timestamp == bucket_open_ms and candle.is_closed
-                    ),
+                    (candle for candle in result if candle.timestamp == bucket_open_ms and candle.is_closed),
                     None,
                 )
                 return (
                     instrument,
                     bar,
-                    (
-                        "complete_exact_5m_bar"
-                        if bar is not None
-                        else "exact_5m_bar_unavailable"
-                    ),
+                    ("complete_exact_5m_bar" if bar is not None else "exact_5m_bar_unavailable"),
                     None,
                 )
             except Exception as exc:
@@ -394,6 +389,7 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
         for position in positions:
             position_id = str(position["id"])
             if position_id in observed_position_ids:
+                repo.resolve_deferred_position_path_observation(position_id, bucket_open_ms=bucket_open_ms)
                 continue
             first_bucket_open_ms = _first_full_bucket_open_ms(position)
             if first_bucket_open_ms is None:
@@ -405,6 +401,7 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
                 )
                 continue
             if bucket_open_ms < first_bucket_open_ms:
+                repo.resolve_deferred_position_path_observation(position_id, bucket_open_ms=bucket_open_ms)
                 continue
 
             instrument, identity_reason = _resolve_instrument(position)
@@ -418,15 +415,10 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
                 continue
             instrument_groups.setdefault(instrument, []).append(position_id)
 
-        task_instruments = {
-            asyncio.create_task(fetch_bar(instrument)): instrument
-            for instrument in instrument_groups
-        }
+        task_instruments = {asyncio.create_task(fetch_bar(instrument)): instrument for instrument in instrument_groups}
         tasks = list(task_instruments)
         try:
-            for completed in asyncio.as_completed(
-                tasks, timeout=_OBSERVATION_CYCLE_TIMEOUT_SECONDS
-            ):
+            for completed in asyncio.as_completed(tasks, timeout=_OBSERVATION_CYCLE_TIMEOUT_SECONDS):
                 instrument, bar, reason, error_type = await completed
                 if error_type is not None:
                     summary["errors"].append(
@@ -435,9 +427,23 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
                             "error_type": error_type,
                         }
                     )
+                    for position_id in instrument_groups[instrument]:
+                        repo.defer_position_path_observation_bucket(
+                            position_id,
+                            bucket_open_ms=bucket_open_ms,
+                            attempted_at=observed_at,
+                            reason=reason,
+                        )
                     summary["deferred"] += len(instrument_groups[instrument])
                     continue
                 if bar is None:
+                    for position_id in instrument_groups[instrument]:
+                        repo.defer_position_path_observation_bucket(
+                            position_id,
+                            bucket_open_ms=bucket_open_ms,
+                            attempted_at=observed_at,
+                            reason=reason,
+                        )
                     summary["deferred"] += len(instrument_groups[instrument])
                     continue
                 for position_id in instrument_groups[instrument]:
@@ -458,6 +464,13 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
                     }
                 )
                 summary["deferred"] += len(instrument_groups[instrument])
+                for position_id in instrument_groups[instrument]:
+                    repo.defer_position_path_observation_bucket(
+                        position_id,
+                        bucket_open_ms=bucket_open_ms,
+                        attempted_at=observed_at,
+                        reason="observation_cycle_timeout",
+                    )
     finally:
         for task in tasks:
             if not task.done():
@@ -467,9 +480,7 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
         if providers:
             await asyncio.gather(
                 *(
-                    asyncio.wait_for(
-                        provider.close(), timeout=_PROVIDER_CLOSE_TIMEOUT_SECONDS
-                    )
+                    asyncio.wait_for(provider.close(), timeout=_PROVIDER_CLOSE_TIMEOUT_SECONDS)
                     for provider in providers.values()
                 ),
                 return_exceptions=True,

@@ -274,22 +274,51 @@ def _group_returns(facts: Iterable[Mapping[str, Any]], predicate) -> list[float]
     return values
 
 
+def _candidate_kind(fact: Mapping[str, Any]) -> str:
+    first = fact.get("first_exposure")
+    return str(first.get("candidate_kind") or "") if isinstance(first, Mapping) else ""
+
+
 def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     facts = [fact for fact in report.get("facts", []) if isinstance(fact, Mapping)]
     comparisons = {
         "Selection": (
-            _group_returns(facts, lambda fact: fact.get("terminal_state") == "filtered"),
-            _group_returns(facts, lambda fact: fact.get("terminal_state") != "filtered"),
+            _group_returns(
+                facts,
+                lambda fact: _candidate_kind(fact) == "opportunity" and fact.get("terminal_state") == "filtered",
+            ),
+            _group_returns(
+                facts,
+                lambda fact: _candidate_kind(fact) == "opportunity" and fact.get("terminal_state") != "filtered",
+            ),
         ),
         "Decision": (
-            _group_returns(facts, lambda fact: str(fact.get("terminal_state", "")).startswith("pi_")),
             _group_returns(
-                facts, lambda fact: fact.get("terminal_state") in {"risk_reject", "approved_unfilled", "traded"}
+                facts,
+                lambda fact: (
+                    _candidate_kind(fact) == "pi_decision" and str(fact.get("terminal_state", "")).startswith("pi_")
+                ),
+            ),
+            _group_returns(
+                facts,
+                lambda fact: (
+                    _candidate_kind(fact) == "pi_decision"
+                    and fact.get("terminal_state") in {"risk_reject", "approved_unfilled", "traded"}
+                ),
             ),
         ),
         "Risk": (
-            _group_returns(facts, lambda fact: fact.get("terminal_state") == "risk_reject"),
-            _group_returns(facts, lambda fact: fact.get("terminal_state") in {"approved_unfilled", "traded"}),
+            _group_returns(
+                facts,
+                lambda fact: _candidate_kind(fact) == "proposal" and fact.get("terminal_state") == "risk_reject",
+            ),
+            _group_returns(
+                facts,
+                lambda fact: (
+                    _candidate_kind(fact) == "proposal"
+                    and fact.get("terminal_state") in {"approved_unfilled", "traded"}
+                ),
+            ),
         ),
     }
     layers = {}

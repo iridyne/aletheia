@@ -43,8 +43,9 @@ def _fact(*, invalidation_threshold: float = 50.0) -> dict:
             "holding": {"ohlcv": {"rows": rows}},
             "exit": {
                 "position": {
+                    "opened_at": "2026-08-13T05:00:00+00:00",
                     "direction": "long",
-                    "closed_at": "2026-08-13T04:00:00+00:00",
+                    "closed_at": "2026-08-13T06:05:00+00:00",
                 }
             },
         },
@@ -136,3 +137,41 @@ def test_future_bars_after_pessimistic_stop_cannot_change_result():
     second = counterfactual.evaluate_counterfactual_registry(changed, cost_model=_cost())
 
     assert first["results"] == second["results"]
+
+
+def test_delayed_entry_is_no_trade_when_frozen_stop_was_crossed_in_delay_prefix():
+    fact = _fact()
+    fact["stages"]["holding"]["ohlcv"]["rows"][0][3] = 97.0
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    delay = next(item for item in result["results"] if item["hypothesis_id"] == "delay_1_bar/v1")
+    assert delay["treatment"] == {
+        "status": "no_trade",
+        "reason": "frozen_stop_crossed_before_delayed_entry",
+    }
+
+
+def test_stop_gap_uses_adverse_bar_open_and_same_bar_breakeven_is_pessimistic():
+    fact = _fact()
+    rows = fact["stages"]["holding"]["ohlcv"]["rows"]
+    rows[1][1:5] = [97.0, 101.2, 96.0, 100.0]
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+    baseline = result["results"][0]["baseline"]
+    assert baseline["reason"] == "stop"
+    assert baseline["exit_price"] < 97.0
+
+    fact = _fact()
+    rows = fact["stages"]["holding"]["ohlcv"]["rows"]
+    rows[0][2] = 103.0
+    rows[0][3] = 99.0
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+    breakeven = next(item for item in result["results"] if item["hypothesis_id"] == "breakeven_after_1r/v1")
+    assert breakeven["treatment"]["reason"] == "breakeven_same_bar_ambiguous"
+
+
+def test_registered_cohort_rejects_positions_opened_before_registration():
+    fact = _fact()
+    fact["stages"]["exit"]["position"]["opened_at"] = "2026-08-13T04:00:00+00:00"
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+    assert result["reason"] == "registered_cohort_eligibility_failed"

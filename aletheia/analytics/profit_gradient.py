@@ -62,8 +62,8 @@ def _cluster_interval(
         return None, None, None
     cluster_values = [sum(values) / len(values) for values in clusters.values()]
     estimate = sum(cluster_values) / len(cluster_values)
-    if len(cluster_values) == 1:
-        return estimate, estimate, estimate
+    if len(cluster_values) < 2:
+        return estimate, None, None
     seed_material = "|".join(
         f"{key}:{','.join(f'{value:.12g}' for value in values)}" for key, values in sorted(clusters.items())
     )

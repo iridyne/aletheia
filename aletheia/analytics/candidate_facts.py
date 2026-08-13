@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 import json
 from typing import Any, Iterable
+from aletheia.analytics.filter_evidence import decode_filter_decision_batch
 
 from aletheia.storage import repositories as repo
 
@@ -41,6 +42,12 @@ def _rows(db: Any, sql: str, params: Iterable[object] = ()) -> list[dict[str, An
 def _one(db: Any, table: str, identity: object) -> dict[str, Any] | None:
     if identity in (None, ""):
         return None
+    exists = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    if exists is None:
+        return None
     row = db.execute(f"SELECT * FROM {table} WHERE id=?", (identity,)).fetchone()
     return dict(row) if row is not None else None
 
@@ -65,9 +72,7 @@ def _batch_facts(db: Any, cutoff: datetime) -> list[dict[str, Any]]:
     ):
         if not _visible(batch, cutoff):
             continue
-        raw_facts = _parsed(batch.get("candidate_facts"), list)
-        if not isinstance(raw_facts, list):
-            continue
+        raw_facts = decode_filter_decision_batch(str(batch.get("candidate_facts") or "[]"))
         for sequence, raw in enumerate(raw_facts):
             if not isinstance(raw, dict):
                 continue
@@ -177,23 +182,51 @@ def build_candidate_facts(
             (str(row["opportunity_id"]) for row in ordered if row.get("opportunity_id")),
             None,
         )
-        opportunity = _one(source, "opportunities", opportunity_id)
-        decisions = (
-            _rows(
+        candidate_key = str(first.get("candidate_key") or "")
+        candidate_kind = str(first.get("candidate_kind") or "")
+        decision_id = (
+            candidate_key.removeprefix("pi_decision:")
+            if candidate_kind == "pi_decision" and candidate_key.startswith("pi_decision:")
+            else None
+        )
+        decision = _one(source, "pi_decisions", decision_id)
+        if decision is not None and not _visible(decision, cutoff):
+            decision = None
+        if decision is None and opportunity_id and decision_id is None:
+            decisions = _rows(
                 source,
                 "SELECT * FROM pi_decisions WHERE opportunity_id=? "
                 "AND action!='signal_pending' ORDER BY datetime(created_at), rowid",
                 (opportunity_id,),
             )
-            if opportunity_id
-            else []
-        )
-        decisions = [row for row in decisions if _visible(row, cutoff)]
-        decision = decisions[0] if decisions else None
-        proposal_id = (decision or {}).get("proposal_id") or next(
-            (row.get("proposal_id") for row in ordered if row.get("proposal_id")), None
+            decisions = [row for row in decisions if _visible(row, cutoff)]
+            decision = decisions[0] if len(decisions) == 1 else None
+        signal_source = str((decision or {}).get("signal_source") or "")
+        opportunity = None
+        if opportunity_id:
+            if signal_source == "serenity":
+                opportunity = _one(source, "serenity_opportunities", opportunity_id)
+            elif signal_source == "market_observer":
+                opportunity = _one(source, "opportunities", opportunity_id)
+            else:
+                market_opportunity = _one(source, "opportunities", opportunity_id)
+                serenity_opportunity = _one(source, "serenity_opportunities", opportunity_id)
+                opportunity = (
+                    market_opportunity or serenity_opportunity
+                    if (market_opportunity is None) != (serenity_opportunity is None)
+                    else None
+                )
+        if opportunity is not None and not _visible(opportunity, cutoff):
+            opportunity = None
+        proposal_id = (
+            candidate_key.removeprefix("proposal:")
+            if candidate_kind == "proposal" and candidate_key.startswith("proposal:")
+            else (decision or {}).get("proposal_id")
+            or next((row.get("proposal_id") for row in ordered if row.get("proposal_id")), None)
         )
         proposal = _one(source, "trade_proposals", proposal_id)
+        if proposal is not None and not _visible(proposal, cutoff):
+            proposal = None
         orders = (
             _rows(
                 source,
@@ -208,6 +241,8 @@ def build_candidate_facts(
         orders = [row for row in orders if _visible(row, cutoff)]
         order = orders[0] if len(orders) == 1 else None
         risk = _one(source, "risk_decisions", (order or {}).get("risk_decision_id"))
+        if risk is not None and not _visible(risk, cutoff):
+            risk = None
         if risk is None and proposal_id:
             risks = _rows(
                 source,
@@ -218,6 +253,8 @@ def build_candidate_facts(
             risks = [row for row in risks if _visible(row, cutoff)]
             risk = risks[0] if len(risks) == 1 else None
         position = _one(source, "positions", (order or {}).get("position_id"))
+        if position is not None and not _visible(position, cutoff):
+            position = None
         outcome = outcome_by_key.get(fact_id)
         terminal = _terminal(ordered, opportunity, decision, proposal, risk, order, position)
         terminal_counts[terminal] += 1

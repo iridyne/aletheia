@@ -4,6 +4,14 @@ on:
   pull_request_target:
     branches: [master]
     types: [opened, reopened, ready_for_review, edited, synchronize, labeled, unlabeled, closed]
+  pull_request_review:
+    branches: [master]
+    types: [submitted]
+  issue_comment:
+    types: [created, edited]
+  workflow_run:
+    workflows: [Aletheia CI]
+    types: [completed]
   repository_dispatch:
     types: [auto_merge_update, release_candidate_verified]
 
@@ -17,44 +25,106 @@ jobs:
   schedule:
     name: Schedule auto-merge update
     if: >-
-      github.event_name == 'pull_request_target' &&
-      github.event.action != 'closed' &&
-      github.event.pull_request.draft == false &&
-      !startsWith(github.event.pull_request.head.ref, 'release-please--branches--master')
+      (
+        github.event_name == 'pull_request_target' &&
+        github.event.action != 'closed'
+      ) ||
+      (
+        github.event_name == 'pull_request_review' &&
+        github.event.review.user.login == 'chatgpt-codex-connector'
+      ) ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        startsWith(github.event.comment.body, '/codex-triage ')
+      ) ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.event == 'pull_request' &&
+        github.event.workflow_run.conclusion == 'success'
+      )
     permissions:
       contents: write
+      pull-requests: read
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    env:
-      OPERATION: ${{ contains(github.event.pull_request.labels.*.name, 'do-not-auto-merge') && 'disable' || 'enable' }}
-      PR_NUMBER: ${{ github.event.pull_request.number }}
-      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - name: Dispatch trusted auto-merge update
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
         with:
           retries: 3
           script: |
-            const operation = process.env.OPERATION;
-            const pullRequestNumber = Number.parseInt(process.env.PR_NUMBER, 10);
-            const expectedHeadSha = process.env.EXPECTED_HEAD_SHA;
-            if (!['enable', 'disable'].includes(operation)) {
-              throw new Error(`unsupported auto-merge operation: ${operation}`);
+            const connectorLogin = 'chatgpt-codex-connector';
+            const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+            const triagePattern = /^\/codex-triage ([0-9a-f]{40}) (clean|complete)$/;
+            const eventName = context.eventName;
+            const payload = context.payload;
+            let pullRequestNumbers = [];
+
+            if (eventName === 'pull_request_target') {
+              pullRequestNumbers = [payload.pull_request.number];
+            } else if (eventName === 'pull_request_review') {
+              if (payload.review.user?.login !== connectorLogin) return;
+              pullRequestNumbers = [payload.pull_request.number];
+            } else if (eventName === 'issue_comment') {
+              if (!trustedAssociations.has(payload.comment.author_association)) {
+                core.info('ignoring Codex triage acknowledgement from an untrusted author');
+                return;
+              }
+              const [command] = String(payload.comment.body || '').replace(/\r/g, '').split('\n');
+              if (!triagePattern.test(command.trim())) return;
+              pullRequestNumbers = [payload.issue.number];
+            } else if (eventName === 'workflow_run') {
+              pullRequestNumbers = payload.workflow_run.pull_requests.map(({number}) => number);
             }
-            if (!Number.isInteger(pullRequestNumber) || pullRequestNumber <= 0) {
-              throw new Error('pull request number must be a positive integer');
+
+            for (const pullRequestNumber of [...new Set(pullRequestNumbers)]) {
+              const {data: pullRequest} = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: pullRequestNumber,
+              });
+              if (
+                pullRequest.state !== 'open' ||
+                pullRequest.base.ref !== 'master' ||
+                pullRequest.draft ||
+                pullRequest.head.ref.startsWith('release-please--branches--master')
+              ) {
+                continue;
+              }
+              if (
+                eventName === 'pull_request_review' &&
+                payload.review.commit_id !== pullRequest.head.sha
+              ) {
+                core.info('ignoring Connector review for a superseded head');
+                continue;
+              }
+              if (
+                eventName === 'workflow_run' &&
+                payload.workflow_run.head_sha !== pullRequest.head.sha
+              ) {
+                core.info('ignoring CI completion for a superseded head');
+                continue;
+              }
+              if (eventName === 'issue_comment') {
+                const [command] = String(payload.comment.body || '').replace(/\r/g, '').split('\n');
+                const acknowledgement = command.trim().match(triagePattern);
+                if (!acknowledgement || acknowledgement[1] !== pullRequest.head.sha) {
+                  core.info('ignoring Codex triage acknowledgement for a superseded head');
+                  continue;
+                }
+              }
+              const operation = pullRequest.labels.some(
+                ({name}) => name === 'do-not-auto-merge',
+              ) ? 'disable' : 'enable';
+              await github.rest.repos.createDispatchEvent({
+                ...context.repo,
+                event_type: 'auto_merge_update',
+                client_payload: {
+                  operation,
+                  pull_request_number: pullRequest.number,
+                  expected_head_sha: pullRequest.head.sha,
+                },
+              });
             }
-            if (!/^[0-9a-f]{40}$/.test(expectedHeadSha)) {
-              throw new Error('expected head SHA must be a 40-character lowercase Git object ID');
-            }
-            await github.rest.repos.createDispatchEvent({
-              ...context.repo,
-              event_type: 'auto_merge_update',
-              client_payload: {
-                operation,
-                pull_request_number: pullRequestNumber,
-                expected_head_sha: expectedHeadSha,
-              },
-            });
 
   release-candidate:
     name: Approve a verified release candidate
@@ -197,6 +267,20 @@ jobs:
                   mergeStateStatus
                   autoMergeRequest { enabledAt }
                   labels(first: 20) { nodes { name } }
+                  reviews(last: 100) {
+                    nodes {
+                      author { login }
+                      commit { oid }
+                      submittedAt
+                    }
+                  }
+                  comments(last: 100) {
+                    nodes {
+                      authorAssociation
+                      body
+                      createdAt
+                    }
+                  }
                   mergeCommit { oid }
                   mergedBy { login }
                 }
@@ -221,6 +305,17 @@ jobs:
                 },
               });
             };
+            const disableAutoMerge = async (pullRequest) => {
+              if (!pullRequest.autoMergeRequest) return;
+              await github.graphql(
+                `mutation($pullRequestId: ID!) {
+                  disablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId}) {
+                    pullRequest { number }
+                  }
+                }`,
+                { pullRequestId: pullRequest.id },
+              );
+            };
             if (operation === 'disable') {
               const pullRequest = await fetchPullRequest();
               if (!pullRequest || pullRequest.state !== 'OPEN') {
@@ -231,14 +326,105 @@ jobs:
                 core.info('auto-merge is already disabled');
                 return;
               }
-              await github.graphql(
-                `mutation($pullRequestId: ID!) {
-                  disablePullRequestAutoMerge(input: {pullRequestId: $pullRequestId}) {
-                    pullRequest { number }
-                  }
-                }`,
-                { pullRequestId: pullRequest.id },
+              await disableAutoMerge(pullRequest);
+              return;
+            }
+
+            if (!releaseAfterMerge) {
+              const pullRequest = await fetchPullRequest();
+              if (!pullRequest || pullRequest.state !== 'OPEN') {
+                core.info('pull request is no longer open; no auto-merge update needed');
+                return;
+              }
+              if (pullRequest.isDraft) {
+                core.info('pull request returned to Draft; auto-merge remains disabled');
+                return;
+              }
+              if (pullRequest.headRefOid !== expectedHeadSha) {
+                core.info(
+                  `pull request head changed from ${expectedHeadSha} to ${pullRequest.headRefOid}; ` +
+                  'a newer pull request event must authorize the merge',
+                );
+                return;
+              }
+
+              // Native auto-merge survives synchronize events and could merge a new
+              // head before the Connector responds. Ordinary pull requests therefore
+              // use only this exact-SHA, event-driven merge path.
+              await disableAutoMerge(pullRequest);
+              if (pullRequest.labels.nodes.some(({name}) => name === 'do-not-auto-merge')) {
+                core.info('do-not-auto-merge holds this pull request');
+                return;
+              }
+
+              const connectorLogin = 'chatgpt-codex-connector';
+              const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+              const triagePattern = /^\/codex-triage ([0-9a-f]{40}) (clean|complete)$/;
+              const exactHeadReviews = pullRequest.reviews.nodes.filter((review) =>
+                review.author?.login === connectorLogin &&
+                review.commit?.oid === expectedHeadSha &&
+                review.submittedAt
               );
+              const acknowledgements = pullRequest.comments.nodes.flatMap((comment) => {
+                if (!trustedAssociations.has(comment.authorAssociation)) return [];
+                const [command, ...detailLines] = String(comment.body || '')
+                  .replace(/\r/g, '')
+                  .split('\n');
+                const match = command.trim().match(triagePattern);
+                const details = detailLines.join('\n').trim();
+                if (!match || match[1] !== expectedHeadSha || !details) return [];
+                return [{
+                  disposition: match[2],
+                  createdAt: comment.createdAt,
+                }];
+              });
+
+              if (exactHeadReviews.length === 0) {
+                if (!acknowledgements.some(({disposition}) => disposition === 'clean')) {
+                  core.info(
+                    `waiting for Connector completion on ${expectedHeadSha}; after a clean ` +
+                    `Connector result, an authorized maintainer must comment ` +
+                    `"/codex-triage ${expectedHeadSha} clean" followed by the review evidence`,
+                  );
+                  return;
+                }
+              } else {
+                const latestReviewAt = exactHeadReviews
+                  .map(({submittedAt}) => submittedAt)
+                  .sort()
+                  .at(-1);
+                const triageComplete = acknowledgements.some((acknowledgement) =>
+                  acknowledgement.disposition === 'complete' &&
+                  acknowledgement.createdAt >= latestReviewAt
+                );
+                if (!triageComplete) {
+                  core.info(
+                    `waiting for P1/P2 triage on ${expectedHeadSha}; an authorized maintainer ` +
+                    `must comment "/codex-triage ${expectedHeadSha} complete" after the exact-head ` +
+                    `review and document every confirmed, false-positive, or deferred finding`,
+                  );
+                  return;
+                }
+              }
+
+              if (pullRequest.mergeStateStatus !== 'CLEAN') {
+                core.info(
+                  `exact-head Connector gate passed; waiting for an event after pull request ` +
+                  `status ${pullRequest.mergeStateStatus}`,
+                );
+                return;
+              }
+              const mergeResult = await github.rest.pulls.merge({
+                ...context.repo,
+                pull_number: pullRequestNumber,
+                merge_method: 'squash',
+                sha: expectedHeadSha,
+              });
+              if (!mergeResult.data.merged) {
+                throw new Error(
+                  `GitHub declined protected merge: ${mergeResult.data.message || 'unknown reason'}`,
+                );
+              }
               return;
             }
 

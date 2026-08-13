@@ -113,6 +113,9 @@ def _instrument(discovery: dict[str, Any] | None, position: dict[str, Any]) -> d
     }
 
 
+_COUNTERFACTUAL_WINDOW_BARS = 66
+
+
 def _ohlcv_evidence(
     db: Any,
     *,
@@ -129,9 +132,9 @@ def _ohlcv_evidence(
             "timeframe": "1m",
         },
         "window_start_ts_ms": (path or {}).get("entry_ts_ms"),
-        "window_end_ts_ms": (path or {}).get("exit_ts_ms"),
+        "window_end_ts_ms": None,
         "row_count": 0,
-        "expected_row_count": (path or {}).get("holding_bars_expected"),
+        "expected_row_count": None,
         "rows": [],
         "ohlcv_window_hash": None,
     }
@@ -140,17 +143,25 @@ def _ohlcv_evidence(
         return base
     entry_ts = path.get("entry_ts_ms")
     exit_ts = path.get("exit_ts_ms")
-    expected = path.get("holding_bars_expected")
     exchange = path.get("ohlcv_exchange")
     market_type = path.get("ohlcv_market_type")
-    if any(value is None for value in (entry_ts, exit_ts, expected, exchange, market_type)):
+    if any(value is None for value in (entry_ts, exit_ts, exchange, market_type)):
         base["unavailable_reason"] = "ohlcv_window_identity_incomplete"
         return base
     entry_ts_i = int(entry_ts) if entry_ts is not None else 0
     exit_ts_i = int(exit_ts) if exit_ts is not None else 0
-    expected_i = int(expected) if expected is not None else 0
     start = entry_ts_i - entry_ts_i % _BAR_MS
-    end = ((exit_ts_i + _BAR_MS - 1) // _BAR_MS) * _BAR_MS
+    actual_end = ((exit_ts_i + _BAR_MS - 1) // _BAR_MS) * _BAR_MS
+    counterfactual_end = start + _COUNTERFACTUAL_WINDOW_BARS * _BAR_MS
+    end = max(actual_end, counterfactual_end)
+    expected_i = (end - start) // _BAR_MS
+    base.update(
+        {
+            "window_start_ts_ms": start,
+            "window_end_ts_ms": end,
+            "expected_row_count": expected_i,
+        }
+    )
     candles = repo.get_ohlcv_candles(
         str(position.get("symbol") or ""),
         "1m",
@@ -178,6 +189,7 @@ def _ohlcv_evidence(
             "rows": [list(row) for row in canonical],
             "row_count": len(canonical),
             "ohlcv_window_hash": _content_hash(canonical),
+            "expected_row_count": expected_i,
         }
     )
     return base
@@ -249,6 +261,10 @@ def build_position_replay(
         "unavailable_reason": "position_not_found",
     }
     if position is None or not _at_or_before(position, cutoff):
+        return base
+    closed_at = _utc(position.get("closed_at"))
+    if closed_at is not None and closed_at > cutoff:
+        base["unavailable_reason"] = "position_state_mutated_after_cutoff"
         return base
 
     proposal = _row(source, "trade_proposals", position.get("proposal_id"))

@@ -7,6 +7,7 @@ import pytest
 from aletheia.storage.models import Opportunity, TradeProposal
 from aletheia.storage.proposal_hypothesis import (
     evaluate_hypothesis_prefix,
+    freeze_position_hypothesis,
 )
 
 
@@ -153,3 +154,61 @@ def test_unknown_input_is_not_evaluable_and_unknown_vocabulary_fails_closed():
             },
             completed_bars=[{"close": 100.0}],
         )
+
+
+def test_frozen_hypothesis_defaults_to_machine_evaluable_stop_condition():
+    from aletheia.storage import repositories as repo
+
+    opportunity = _opportunity()
+    proposal = TradeProposal(
+        id="proposal-stop-condition",
+        opportunity_id=opportunity.id,
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=2.0,
+        price=100.0,
+        stop_price=95.0,
+        take_profit=110.0,
+        risk_reward=2.0,
+        attribution_snapshot="{}",
+    )
+    repo.insert_trade_proposal(proposal)
+    stored = repo.get_trade_proposal(proposal.id)
+    hypothesis = json.loads(stored["attribution_snapshot"])["position_hypothesis"]
+    assert hypothesis["invalidation_conditions"] == [
+        {"kind": "price_at_or_below", "threshold": 95.0}
+    ]
+    assert (
+        evaluate_hypothesis_prefix(
+            hypothesis, completed_bars=[{"close": 94.0}]
+        )
+        == "invalidated"
+    )
+
+
+def test_caller_supplied_hypothesis_must_match_all_proposal_identity_and_geometry():
+    from aletheia.storage import repositories as repo
+
+    opportunity = _opportunity()
+    proposal = TradeProposal(
+        id="proposal-supplied-hypothesis",
+        opportunity_id=opportunity.id,
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=2.0,
+        price=100.0,
+        stop_price=95.0,
+        take_profit=110.0,
+        risk_reward=2.0,
+        expected_horizon_hours=24.0,
+        attribution_snapshot="{}",
+    )
+    freeze_position_hypothesis(proposal, db=repo.get_db())
+    snapshot = json.loads(proposal.attribution_snapshot)
+    snapshot["position_hypothesis"]["target_price"] = 111.0
+    proposal.attribution_snapshot = json.dumps(snapshot)
+
+    with pytest.raises(ValueError, match="conflicts with Proposal identity"):
+        freeze_position_hypothesis(proposal, db=repo.get_db())
