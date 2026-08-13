@@ -34,6 +34,10 @@ Exact-timeframe and real-field provider results are owned by the
 Collector execution facts and persisted dataset freshness are kept separate by
 the [Market Data Coverage and Collector Health Contract](market_data_coverage_contract.md).
 
+Profit-loop replay, candidate/Position denominator separation, frozen opening
+hypotheses, exploratory counterfactuals, and seven-layer winner gates are owned
+by the [Profit-loop observability contract](profit_loop_observability_contract.md).
+
 Learning Knowledge empty, stale, and unavailable presentation semantics are
 owned by the
 [Dashboard Data Presentation Contract](dashboard_data_presentation_contract.md).

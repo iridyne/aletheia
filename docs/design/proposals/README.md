@@ -27,6 +27,9 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [Position replay and profit-gradient evidence](position_replay_profit_gradient.md):
+  exact candidate/Position facts, frozen hypotheses, prefix-only analysis, and
+  seven-layer unique-winner gates without trading authority.
 - [Gateway service lifecycle](gateway_service_lifecycle.md): cross-platform
   install, enablement, runtime control, and optional Windows machine-service
   design.

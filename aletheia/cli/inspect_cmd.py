@@ -6,6 +6,7 @@ modify config, or trigger side effects. Designed for Agent / developer use.
 
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -89,6 +90,121 @@ def position_path(
 
     report = build_position_path_report(position_id, limit=limit)
     _output(report, json_output)
+
+
+@inspect_app.command("position-replay")
+def position_replay(
+    position_id: str = typer.Option(..., "--id", "--position-id"),
+    as_of_at: Optional[str] = typer.Option(None, "--as-of"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Replay exact immutable facts for one Position without writes."""
+
+    from aletheia.analytics.position_replay import build_position_replay
+
+    report = build_position_replay(position_id, as_of_at=as_of_at)
+    _output(report, json_output)
+
+
+@inspect_app.command("candidate-facts")
+def candidate_facts(
+    horizon: str = typer.Option("24h", "--horizon"),
+    as_of_at: Optional[str] = typer.Option(None, "--as-of"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Inspect the complete candidate funnel at one fixed horizon."""
+
+    from aletheia.analytics.candidate_facts import build_candidate_facts
+
+    report = build_candidate_facts(horizon=horizon, as_of_at=as_of_at)
+    _output(report, json_output)
+
+
+@inspect_app.command("position-diagnosis")
+def position_diagnosis(
+    position_id: str = typer.Option(..., "--id", "--position-id"),
+    as_of_at: Optional[str] = typer.Option(None, "--as-of"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Derive read-only diagnostics from one exact Position replay."""
+
+    from aletheia.analytics.position_replay import build_position_replay
+    from aletheia.analytics.profit_loop_diagnosis import diagnose_position_fact
+
+    fact = build_position_replay(position_id, as_of_at=as_of_at)
+    _output(diagnose_position_fact(fact), json_output)
+
+
+@inspect_app.command("candidate-diagnosis")
+def candidate_diagnosis(
+    horizon: str = typer.Option("24h", "--horizon"),
+    as_of_at: Optional[str] = typer.Option(None, "--as-of"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Derive candidate-denominator diagnostics at one fixed horizon."""
+
+    from aletheia.analytics.candidate_facts import build_candidate_facts
+    from aletheia.analytics.profit_loop_diagnosis import diagnose_candidate_report
+
+    facts = build_candidate_facts(horizon=horizon, as_of_at=as_of_at)
+    _output(diagnose_candidate_report(facts), json_output)
+
+
+@inspect_app.command("profit-counterfactual")
+def profit_counterfactual(
+    position_id: str = typer.Option(..., "--id", "--position-id"),
+    cost_model_file: Path = typer.Option(
+        ..., "--cost-model", exists=True, file_okay=True, dir_okay=False
+    ),
+    as_of_at: Optional[str] = typer.Option(None, "--as-of"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Evaluate the fixed exploratory registry with an explicit cost contract."""
+
+    from aletheia.analytics.position_replay import build_position_replay
+    from aletheia.analytics.profit_loop_counterfactual import (
+        CostModel,
+        evaluate_counterfactual_registry,
+    )
+
+    payload = json.loads(cost_model_file.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise typer.BadParameter("cost model must be a JSON object")
+    cost_model = CostModel(**payload)
+    fact = build_position_replay(position_id, as_of_at=as_of_at)
+    _output(
+        evaluate_counterfactual_registry(fact, cost_model=cost_model),
+        json_output,
+    )
+
+
+@inspect_app.command("profit-gradient")
+def profit_gradient(
+    evidence_file: Path = typer.Option(
+        ..., "--evidence", exists=True, file_okay=True, dir_okay=False
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Apply seven-layer unique-winner gates to a frozen evidence artifact."""
+
+    from aletheia.analytics.profit_gradient import select_unique_max_direction
+
+    payload = json.loads(evidence_file.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise typer.BadParameter("evidence must be a JSON object")
+    layer_samples = payload.get("layer_samples")
+    evidence_context = payload.get("evidence_context")
+    if not isinstance(layer_samples, dict) or not isinstance(evidence_context, dict):
+        raise typer.BadParameter(
+            "evidence requires layer_samples and evidence_context objects"
+        )
+    _output(
+        select_unique_max_direction(
+            layer_samples,
+            evidence_context=evidence_context,
+        ),
+        json_output,
+    )
 
 
 @inspect_app.command("stop-loss-path")

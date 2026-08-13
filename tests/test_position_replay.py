@@ -1,0 +1,229 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from types import SimpleNamespace
+
+from typer.testing import CliRunner
+
+import aletheia.analytics.position_replay as position_replay
+from aletheia.cli.inspect_cmd import inspect_app
+
+
+def _database() -> sqlite3.Connection:
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    db.executescript(
+        """
+        CREATE TABLE positions (
+            id TEXT PRIMARY KEY, opportunity_id TEXT, proposal_id TEXT, order_id TEXT,
+            symbol TEXT, market_type TEXT, direction TEXT, quantity REAL,
+            entry_price REAL, current_price REAL, realized_pnl REAL,
+            entry_fee REAL, exit_fee REAL, funding_cost REAL, funding_source TEXT,
+            status TEXT, execution_mode TEXT, opened_at TEXT, closed_at TEXT,
+            reconciliation_identity TEXT, reconciliation_evidence TEXT,
+            outcome_semantics_version TEXT, runtime_session_id TEXT, producer_commit TEXT
+        );
+        CREATE TABLE opportunities (
+            id TEXT PRIMARY KEY, universe_member_id TEXT, symbol TEXT, thesis TEXT,
+            scanner_family TEXT, created_at TEXT
+        );
+        CREATE TABLE serenity_opportunities (id TEXT PRIMARY KEY);
+        CREATE TABLE universe_members (
+            id TEXT PRIMARY KEY, asset_id TEXT, rank INTEGER, total_score REAL
+        );
+        CREATE TABLE universe_registry (
+            id TEXT PRIMARY KEY, venue TEXT, symbol TEXT, market_type TEXT
+        );
+        CREATE TABLE trade_proposals (
+            id TEXT PRIMARY KEY, opportunity_id TEXT, symbol TEXT, direction TEXT,
+            attribution_snapshot TEXT, created_at TEXT, runtime_session_id TEXT,
+            producer_commit TEXT
+        );
+        CREATE TABLE pi_decisions (
+            id TEXT PRIMARY KEY, proposal_id TEXT, action TEXT, created_at TEXT
+        );
+        CREATE TABLE risk_decisions (
+            id TEXT PRIMARY KEY, proposal_id TEXT, approved INTEGER,
+            decision_role TEXT, policy_id TEXT, policy_revision INTEGER,
+            policy_hash TEXT, created_at TEXT
+        );
+        CREATE TABLE orders (
+            id TEXT PRIMARY KEY, proposal_id TEXT, risk_decision_id TEXT,
+            position_id TEXT, close_reason TEXT, created_at TEXT,
+            runtime_session_id TEXT, producer_commit TEXT
+        );
+        CREATE TABLE fills (
+            id TEXT PRIMARY KEY, order_id TEXT, fill_price REAL,
+            fill_quantity REAL, fee REAL, fee_source TEXT, filled_at TEXT,
+            runtime_session_id TEXT, producer_commit TEXT
+        );
+        CREATE TABLE position_exit_plan_versions (
+            position_id TEXT, version INTEGER, effective_at TEXT
+        );
+        CREATE TABLE position_protection_state (
+            position_id TEXT PRIMARY KEY, status TEXT
+        );
+        CREATE TABLE runtime_sessions (
+            session_id TEXT PRIMARY KEY, boot_commit TEXT, behavior_fingerprint TEXT
+        );
+        """
+    )
+    db.execute("INSERT INTO universe_registry VALUES ('asset-1','bitget','BTC/USDT','perp')")
+    db.execute("INSERT INTO universe_members VALUES ('member-1','asset-1',1,95.0)")
+    db.execute(
+        "INSERT INTO opportunities VALUES "
+        "('opp-1','member-1','BTC/USDT','breakout','momentum','2026-08-13T00:00:00+00:00')"
+    )
+    db.execute(
+        "INSERT INTO trade_proposals VALUES "
+        "('proposal-1','opp-1','BTC/USDT','long',?,"
+        "'2026-08-13T00:00:10+00:00','session-1','commit-a')",
+        (json.dumps({"position_hypothesis": {"contract_version": "position_hypothesis/v1"}}),),
+    )
+    db.execute("INSERT INTO pi_decisions VALUES ('decision-1','proposal-1','trade','2026-08-13T00:00:05+00:00')")
+    db.execute("INSERT INTO pi_decisions VALUES ('decision-future','proposal-1','trade','2026-08-13T01:00:00+00:00')")
+    db.execute(
+        "INSERT INTO risk_decisions VALUES "
+        "('risk-1','proposal-1',1,'authoritative','paper-risk',3,'risk-hash',"
+        "'2026-08-13T00:00:20+00:00')"
+    )
+    db.execute(
+        "INSERT INTO orders VALUES "
+        "('entry-order','proposal-1','risk-1','position-1',NULL,"
+        "'2026-08-13T00:00:30+00:00','session-1','commit-a')"
+    )
+    db.execute(
+        "INSERT INTO fills VALUES "
+        "('entry-fill','entry-order',100.0,1.0,0.1,'broker_ledger',"
+        "'2026-08-13T00:00:40+00:00','session-1','commit-a')"
+    )
+    db.execute(
+        "INSERT INTO positions VALUES "
+        "('position-1','opp-1','proposal-1','entry-order','BTC/USDT','usdt_futures',"
+        "'long',1.0,100.0,102.0,1.7,0.1,0.1,0.1,'local_simulation','closed',"
+        "'paper_internal','2026-08-13T00:00:00+00:00','2026-08-13T00:02:00+00:00',"
+        "'settlement-1','{}','oi-v1','session-1','commit-a')"
+    )
+    db.execute(
+        "INSERT INTO orders VALUES "
+        "('close-order',NULL,NULL,'position-1','take_profit',"
+        "'2026-08-13T00:01:50+00:00','session-1','commit-a')"
+    )
+    db.execute(
+        "INSERT INTO fills VALUES "
+        "('close-fill','close-order',102.0,1.0,0.1,'broker_ledger',"
+        "'2026-08-13T00:02:00+00:00','session-1','commit-a')"
+    )
+    db.execute("INSERT INTO position_exit_plan_versions VALUES ('position-1',1,'2026-08-13T00:00:30+00:00')")
+    db.execute("INSERT INTO position_protection_state VALUES ('position-1','closed')")
+    db.execute("INSERT INTO runtime_sessions VALUES ('session-1','commit-a','behavior-a')")
+    db.commit()
+    return db
+
+
+def _path() -> dict:
+    return {
+        "position_id": "position-1",
+        "path_evidence_status": "available",
+        "path_evidence_reason": "complete_exact_1m_path",
+        "entry_ts_ms": 1_786_579_200_000,
+        "exit_ts_ms": 1_786_579_320_000,
+        "holding_bars_expected": 2,
+        "holding_bars_observed": 2,
+        "ohlcv_exchange": "bitget",
+        "ohlcv_market_type": "perp",
+    }
+
+
+def _candles() -> list[dict]:
+    return [
+        {
+            "ts": 1_786_579_200_000 + index * 60_000,
+            "open": 100.0 + index,
+            "high": 101.0 + index,
+            "low": 99.0 + index,
+            "close": 100.5 + index,
+            "volume": 10.0,
+            "provider": "ccxt",
+        }
+        for index in range(2)
+    ]
+
+
+def _assessment():
+    return SimpleNamespace(
+        eligible=True,
+        reason="eligible",
+        outcome_key="position:position-1",
+        horizon="realized_close",
+    )
+
+
+def test_replay_uses_exact_ids_cutoff_reconciled_economics_and_deterministic_hash(
+    monkeypatch,
+):
+    db = _database()
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
+    before = db.total_changes
+
+    first = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db)
+    second = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db)
+
+    assert db.total_changes == before
+    assert first["identity"]["pi_decision_id"] == "decision-1"
+    assert first["identity"]["risk_decision_id"] == "risk-1"
+    assert first["identity"]["entry_fill_ids"] == ["entry-fill"]
+    assert first["identity"]["close_fill_ids"] == ["close-fill"]
+    assert first["causal_link"] == {"status": "available", "errors": []}
+    assert first["economics"]["gross_pnl"] == 2.0
+    assert first["economics"]["net_pnl"] == 1.7
+    assert first["economics"]["accounting_residual"] == 0.0
+    assert first["economics"]["residual_within_tolerance"] is True
+    assert first["stages"]["holding"]["ohlcv"]["row_count"] == 2
+    assert (
+        first["stages"]["holding"]["ohlcv"]["ohlcv_window_hash"]
+        == second["stages"]["holding"]["ohlcv"]["ohlcv_window_hash"]
+    )
+
+
+def test_replay_fails_closed_instead_of_joining_ambiguous_pi_retry(monkeypatch):
+    db = _database()
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
+
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db)
+
+    assert replay["identity"]["pi_decision_id"] is None
+    assert "ambiguous_pi_decision_for_proposal" in replay["causal_link"]["errors"]
+
+
+def test_position_replay_cli_emits_json(monkeypatch):
+    monkeypatch.setattr(
+        position_replay,
+        "build_position_replay",
+        lambda position_id, as_of_at=None: {
+            "contract_version": "profit_loop_fact/v1",
+            "fact_id": position_id,
+            "as_of_at": as_of_at,
+        },
+    )
+
+    result = CliRunner().invoke(
+        inspect_app,
+        ["position-replay", "--id", "position-1", "--as-of", "2026-08-13T00:10:00Z", "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["fact_id"] == "position-1"

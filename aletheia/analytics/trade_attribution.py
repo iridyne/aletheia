@@ -144,6 +144,23 @@ def proposal_decision_context(
     }
 
 
+def build_trade_attribution_for_position(
+    position_id: str, *, db: Any = None
+) -> dict[str, Any] | None:
+    """Build one exact eligible Position attribution without pagination fallback."""
+    source = db or repo.get_db()
+    row = source.execute(
+        "SELECT * FROM positions WHERE id=?",
+        (position_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    position = dict(row)
+    if not assess_reportable_outcome(position).eligible:
+        return None
+    return _build_row(position, db=source)
+
+
 def build_trade_attribution_rows(
     limit: int = 500,
     *,

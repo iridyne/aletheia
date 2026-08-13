@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -127,6 +128,7 @@ def test_complete_paths_have_mutually_exclusive_root_causes(
     assert decomposition["accounting_delta"] is not None
     assert decomposition["mfe_pct"] is not None
     assert decomposition["mae_pct"] is not None
+    assert "cost_complete_observation_count" not in report
     assert decomposition["giveback_to_exit_pct"] is not None
 
 
@@ -163,6 +165,20 @@ def test_missing_bucket_is_partial_data_even_when_economics_mismatch(monkeypatch
     assert decomposition["covered_bucket_count"] == 2
     assert decomposition["missing_bucket_count"] == 1
     assert decomposition["mfe_pct"] is None
+
+
+def test_excursions_never_report_negative_mfe_or_mae():
+    mfe, mae = analysis._excursions(
+        direction="long",
+        entry_price=100.0,
+        rows=[
+            {"bar_high": 99.0, "bar_low": 101.0},
+            {"bar_high": 98.0, "bar_low": 102.0},
+        ],
+    )
+
+    assert mfe == 0.0
+    assert mae == 0.0
 
 
 def test_profitable_stop_loss_is_not_in_loss_root_cause(monkeypatch):
@@ -212,6 +228,11 @@ def test_cohort_counts_only_verified_losses_in_classification_denominator(monkey
     )
     monkeypatch.setattr(
         analysis,
+        "assess_reportable_outcome",
+        lambda _position: SimpleNamespace(eligible=True, reason="eligible"),
+    )
+    monkeypatch.setattr(
+        analysis,
         "build_position_path_report",
         lambda position_id: {
             "stop_loss_decomposition": decompositions[position_id]
@@ -229,3 +250,37 @@ def test_cohort_counts_only_verified_losses_in_classification_denominator(monkey
         "unknown": 1,
     }
     assert audit["reason_counts"]["missing_5m_buckets"] == 1
+
+
+def test_cohort_excludes_non_reportable_outcomes_before_path_classification(
+    monkeypatch,
+):
+    excluded = _position(id="excluded")
+    monkeypatch.setattr(
+        analysis,
+        "_recent_stop_loss_positions",
+        lambda *, cutoff, limit: [excluded],
+    )
+    monkeypatch.setattr(
+        analysis,
+        "assess_reportable_outcome",
+        lambda _position: SimpleNamespace(
+            eligible=False, reason="missing_attribution"
+        ),
+    )
+    monkeypatch.setattr(
+        analysis,
+        "build_position_path_report",
+        lambda _position_id: pytest.fail(
+            "excluded outcome reached path classification"
+        ),
+    )
+
+    audit = analysis.build_stop_loss_path_audit()
+
+    assert audit["stop_loss_position_count"] == 1
+    assert audit["eligible_outcome_count"] == 0
+    assert audit["excluded_outcome_count"] == 1
+    assert audit["outcome_exclusion_reasons"] == {"missing_attribution": 1}
+    assert audit["loss_sample_count"] == 0
+    assert audit["positions"][0]["included_in_loss_denominator"] is False
