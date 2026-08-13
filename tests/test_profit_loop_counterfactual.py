@@ -216,7 +216,7 @@ def test_registry_fails_closed_before_registered_cutoff():
     result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
 
     assert result["status"] == "not_evaluable"
-    assert result["reason"] == "registered_cutoff_not_reached"
+    assert result["reason"] == "registered_evidence_cutoff_mismatch"
 
 
 def test_registry_requires_explicit_fact_or_current_as_of():
@@ -282,3 +282,12 @@ def test_future_as_of_cannot_bypass_registered_cutoff(monkeypatch):
     result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
 
     assert result["reason"] == "registered_cutoff_not_reached"
+
+
+def test_registry_rejects_replay_evidence_after_registered_cutoff():
+    fact = _fact()
+    fact["as_of_at"] = "2026-09-12T05:34:29+00:00"
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    assert result["reason"] == "registered_evidence_cutoff_mismatch"

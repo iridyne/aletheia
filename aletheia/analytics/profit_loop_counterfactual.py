@@ -281,8 +281,15 @@ def evaluate_counterfactual_registry(
     cutoff_at = _parse_utc(_REGISTRATION["cutoff_at"])
     if evaluation_at is None:
         return {**base, "status": "not_evaluable", "reason": "evaluation_as_of_unavailable", "results": []}
-    if cutoff_at is None or _now_utc() < cutoff_at or evaluation_at < cutoff_at:
+    if cutoff_at is None or _now_utc() < cutoff_at:
         return {**base, "status": "not_evaluable", "reason": "registered_cutoff_not_reached", "results": []}
+    if evaluation_at != cutoff_at:
+        return {
+            **base,
+            "status": "not_evaluable",
+            "reason": "registered_evidence_cutoff_mismatch",
+            "results": [],
+        }
     registered_commit = str(_REGISTRATION["registration_commit"])
     producer_commits = {str(commit) for commit in (_nested(fact, "producer", "producer_commits") or [])}
     if producer_commits != {registered_commit}:
