@@ -57,7 +57,8 @@ def test_production_migrations_persist_stable_ledger_and_apply_once(tmp_path, mo
     assert applied == ["baseline"]
 
     row = connection.execute(
-        "SELECT migration_id, checksum, schema_version, duration_ms FROM aletheia_schema_migrations"
+        "SELECT migration_id, checksum, schema_version, duration_ms "
+        "FROM aletheia_schema_migrations"
     ).fetchone()
     assert dict(row) == {
         "migration_id": "20260806_0001_legacy_schema_v2",
@@ -145,7 +146,9 @@ def test_failed_migration_is_not_recorded_and_can_retry(tmp_path, monkeypatch):
     monkeypatch.setattr(migrations, "_MIGRATIONS", (failing,))
     with pytest.raises(RuntimeError, match="interrupted"):
         migrations.apply_migrations()
-    assert connection.execute("SELECT COUNT(*) FROM aletheia_schema_migrations").fetchone()[0] == 0
+    assert connection.execute(
+        "SELECT COUNT(*) FROM aletheia_schema_migrations"
+    ).fetchone()[0] == 0
 
     applied: list[str] = []
     succeeding = migrations.MigrationStep(
@@ -157,7 +160,9 @@ def test_failed_migration_is_not_recorded_and_can_retry(tmp_path, monkeypatch):
     monkeypatch.setattr(migrations, "_MIGRATIONS", (succeeding,))
     assert migrations.apply_migrations() is True
     assert applied == ["retried"]
-    assert connection.execute("SELECT COUNT(*) FROM aletheia_schema_migrations").fetchone()[0] == 1
+    assert connection.execute(
+        "SELECT COUNT(*) FROM aletheia_schema_migrations"
+    ).fetchone()[0] == 1
     connection.close()
 
 
@@ -176,7 +181,12 @@ def test_read_only_verification_reports_pending_without_creating_ledger(tmp_path
     assert "20260806_0001_legacy_schema_v2" in str(exc_info.value)
 
     with sqlite3.connect(tmp_path / "app.db") as connection:
-        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
     assert tables == {"existing_state"}
     sqlite_store.reset_db()
 
@@ -214,10 +224,20 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     import aletheia.storage.migrations as migrations
 
     connection = sqlite3.connect(":memory:")
-    connection.execute("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, status TEXT, started_at TEXT)")
-    connection.execute("CREATE TABLE universe_scanner_runs (id TEXT PRIMARY KEY, status TEXT, started_at TEXT)")
-    connection.execute("CREATE TABLE runtime_cost_events (id TEXT PRIMARY KEY, started_at TEXT)")
-    connection.execute("CREATE TABLE alpha_control_observations (id TEXT PRIMARY KEY, layer TEXT, created_at TEXT)")
+    connection.execute(
+        "CREATE TABLE agent_runs (id TEXT PRIMARY KEY, status TEXT, started_at TEXT)"
+    )
+    connection.execute(
+        "CREATE TABLE universe_scanner_runs "
+        "(id TEXT PRIMARY KEY, status TEXT, started_at TEXT)"
+    )
+    connection.execute(
+        "CREATE TABLE runtime_cost_events (id TEXT PRIMARY KEY, started_at TEXT)"
+    )
+    connection.execute(
+        "CREATE TABLE alpha_control_observations "
+        "(id TEXT PRIMARY KEY, layer TEXT, created_at TEXT)"
+    )
     reindexed: list[tuple[sqlite3.Connection, bool]] = []
     monkeypatch.setattr(
         retrieval,
@@ -227,7 +247,12 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
 
     migrations._apply_startup_dataset_boundary_v3(connection)
 
-    indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    indexes = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'"
+        )
+    }
     assert "idx_agent_runs_status_started" in indexes
     assert "idx_universe_scanner_runs_status_started" in indexes
     assert "idx_runtime_cost_events_normalized_started" in indexes
@@ -249,17 +274,34 @@ def test_position_protection_v9_migration_is_additive_and_idempotent():
     migrations._apply_position_protection_state_v9(connection)
     migrations._apply_position_protection_state_v9(connection)
 
-    position_columns = [row[1] for row in connection.execute("PRAGMA table_info(positions)")]
+    position_columns = [
+        row[1] for row in connection.execute("PRAGMA table_info(positions)")
+    ]
     assert position_columns.count("exit_plan_effective_at") == 1
-    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
     assert {
         "position_exit_plan_versions",
         "position_protection_state",
         "position_protection_triggers",
     } <= tables
-    indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    indexes = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'"
+        )
+    }
     assert "idx_position_exit_plan_versions_effective" in indexes
-    triggers = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='trigger'")}
+    triggers = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger'"
+        )
+    }
     assert {
         "trg_position_exit_plan_versions_no_update",
         "trg_position_exit_plan_versions_no_delete",
@@ -286,19 +328,21 @@ def test_agent_usage_storage_v20_is_additive_and_keeps_legacy_null():
     migrations._apply_agent_usage_storage_v20(connection)
     migrations._apply_agent_usage_storage_v20(connection)
 
-    assert (
-        connection.execute(
-            "SELECT economics_tracing_enabled FROM runtime_sessions WHERE session_id='legacy-session'"
-        ).fetchone()[0]
-        is None
-    )
     assert connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_run_artifacts'"
+        "SELECT economics_tracing_enabled FROM runtime_sessions "
+        "WHERE session_id='legacy-session'"
+    ).fetchone()[0] is None
+    assert connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='agent_run_artifacts'"
     ).fetchone()
     assert connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_agent_run_artifacts_artifact'"
+        "SELECT 1 FROM sqlite_master WHERE type='index' "
+        "AND name='idx_agent_run_artifacts_artifact'"
     ).fetchone()
-    artifact_columns = {row[1]: row for row in connection.execute("PRAGMA table_info(agent_run_artifacts)")}
+    artifact_columns = {
+        row[1]: row for row in connection.execute("PRAGMA table_info(agent_run_artifacts)")
+    }
     assert artifact_columns["created_at"][3] == 1
     assert "datetime('now')" in str(artifact_columns["created_at"][4])
     connection.close()
@@ -321,7 +365,11 @@ def test_learning_fixed_look_v10_migration_is_additive_and_idempotent():
     migrations._apply_learning_fixed_look_v10(connection)
     migrations._apply_learning_fixed_look_v10(connection)
 
-    verdict_columns = {row[1] for row in connection.execute("PRAGMA table_info(learning_contribution_verdicts)")}
+    verdict_columns = {
+        row[1] for row in connection.execute(
+            "PRAGMA table_info(learning_contribution_verdicts)"
+        )
+    }
     assert {
         "inference_contract_version",
         "inference_role",
@@ -329,12 +377,10 @@ def test_learning_fixed_look_v10_migration_is_additive_and_idempotent():
         "inference_plan_hash",
         "inference_cutoff_fingerprint",
     } <= verdict_columns
-    assert (
-        connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='learning_inference_decisions'"
-        ).fetchone()
-        is not None
-    )
+    assert connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' "
+        "AND name='learning_inference_decisions'"
+    ).fetchone() is not None
     connection.close()
 
 
@@ -368,16 +414,15 @@ def test_learning_randomization_inference_v12_preserves_v1_and_accepts_v2():
     migrations._apply_learning_randomization_inference_v12(connection)
     migrations._apply_learning_randomization_inference_v12(connection)
 
-    assert (
-        connection.execute(
-            "SELECT inference_contract_version FROM learning_inference_decisions WHERE experiment_id='legacy'"
-        ).fetchone()[0]
-        == "ufc-fixed-look/v1"
-    )
+    assert connection.execute(
+        "SELECT inference_contract_version FROM learning_inference_decisions "
+        "WHERE experiment_id='legacy'"
+    ).fetchone()[0] == "ufc-fixed-look/v1"
     objects = {
         (str(row[0]), str(row[1]))
         for row in connection.execute(
-            "SELECT type, name FROM sqlite_master WHERE tbl_name='learning_inference_decisions' AND sql IS NOT NULL"
+            "SELECT type, name FROM sqlite_master "
+            "WHERE tbl_name='learning_inference_decisions' AND sql IS NOT NULL"
         ).fetchall()
     }
     assert ("index", "idx_learning_inference_family") in objects
@@ -389,11 +434,14 @@ def test_learning_randomization_inference_v12_preserves_v1_and_accepts_v2():
     )
     with pytest.raises(sqlite3.IntegrityError):
         connection.execute(
-            "UPDATE learning_inference_decisions SET plan_hash=? WHERE experiment_id='current'",
+            "UPDATE learning_inference_decisions SET plan_hash=? "
+            "WHERE experiment_id='current'",
             ("c" * 64,),
         )
     with pytest.raises(sqlite3.IntegrityError):
-        connection.execute("DELETE FROM learning_inference_decisions WHERE experiment_id='current'")
+        connection.execute(
+            "DELETE FROM learning_inference_decisions WHERE experiment_id='current'"
+        )
     connection.close()
 
 
@@ -422,21 +470,18 @@ def test_learning_randomization_inference_v12_rolls_back_failed_rebuild(monkeypa
         migrations._apply_learning_randomization_inference_v12(connection)
 
     table_sql = connection.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='learning_inference_decisions'"
+        "SELECT sql FROM sqlite_master WHERE type='table' "
+        "AND name='learning_inference_decisions'"
     ).fetchone()[0]
     assert "ufc-fixed-look/v1" in table_sql
-    assert (
-        connection.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='learning_inference_decisions_v1'"
-        ).fetchone()[0]
-        == 0
-    )
-    assert (
-        connection.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='trg_learning_inference_plan_immutable'"
-        ).fetchone()[0]
-        == 1
-    )
+    assert connection.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
+        "AND name='learning_inference_decisions_v1'"
+    ).fetchone()[0] == 0
+    assert connection.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' "
+        "AND name='trg_learning_inference_plan_immutable'"
+    ).fetchone()[0] == 1
     connection.close()
 
 
@@ -449,12 +494,22 @@ def test_exit_breakeven_shadow_v11_migration_is_additive_and_idempotent():
     migrations._apply_exit_breakeven_shadow_v11(connection)
     migrations._apply_exit_breakeven_shadow_v11(connection)
 
-    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
     assert {
         "exit_breakeven_shadow_assignments",
         "exit_breakeven_shadow_outcomes",
     } <= tables
-    triggers = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='trigger'")}
+    triggers = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger'"
+        )
+    }
     assert {
         "trg_exit_breakeven_assignment_no_update",
         "trg_exit_breakeven_assignment_no_delete",
@@ -518,7 +573,10 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         "INSERT INTO aletheia_schema_migrations "
         "(migration_id, checksum, schema_version, applied_at, duration_ms) "
         "VALUES (?, ?, ?, '2026-08-08T00:00:00+00:00', 0)",
-        [(step.migration_id, step.checksum, step.schema_version) for step in migrations._MIGRATIONS[:-5]],
+        [
+            (step.migration_id, step.checksum, step.schema_version)
+            for step in migrations._MIGRATIONS[:-5]
+        ],
     )
     connection.commit()
     monkeypatch.setattr(migrations, "get_db", lambda: connection)
@@ -530,7 +588,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     assert migrations.apply_migrations() is False
 
     rows = connection.execute(
-        "SELECT migration_id, schema_version FROM aletheia_schema_migrations ORDER BY migration_id"
+        "SELECT migration_id, schema_version FROM aletheia_schema_migrations "
+        "ORDER BY migration_id"
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
@@ -549,14 +608,17 @@ def test_event_jsonl_outbox_migration_does_not_replay_historical_rows():
     import aletheia.storage.migrations as migrations
 
     connection = sqlite3.connect(":memory:")
-    connection.execute("CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)")
+    connection.execute(
+        "CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)"
+    )
     connection.execute("INSERT INTO ps_event_log VALUES ('old', '2026-08-01T00:00:00+00:00')")
 
     migrations._apply_event_jsonl_outbox_v22(connection)
     migrations._apply_event_jsonl_outbox_v22(connection)
 
     row = connection.execute(
-        "SELECT jsonl_mirror_status, jsonl_attempt_count, jsonl_mirrored_at FROM ps_event_log WHERE event_id='old'"
+        "SELECT jsonl_mirror_status, jsonl_attempt_count, jsonl_mirrored_at "
+        "FROM ps_event_log WHERE event_id='old'"
     ).fetchone()
     assert tuple(row) == ("mirrored", 0, "2026-08-01T00:00:00+00:00")
     connection.close()
@@ -566,13 +628,18 @@ def test_exit_trailing_recovery_v23_is_additive_idempotent_and_write_once():
     import aletheia.storage.migrations as migrations
 
     connection = sqlite3.connect(":memory:")
-    connection.execute("CREATE TABLE position_protection_state (position_id TEXT PRIMARY KEY)")
+    connection.execute(
+        "CREATE TABLE position_protection_state (position_id TEXT PRIMARY KEY)"
+    )
     connection.execute("INSERT INTO position_protection_state VALUES ('position-1')")
 
     migrations._apply_exit_trailing_recovery_v23(connection)
     migrations._apply_exit_trailing_recovery_v23(connection)
 
-    columns = {row[1] for row in connection.execute("PRAGMA table_info(position_protection_state)")}
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(position_protection_state)")
+    }
     assert {
         "recovery_observation_json",
         "recovery_observation_hash",
@@ -584,7 +651,8 @@ def test_exit_trailing_recovery_v23_is_additive_idempotent_and_write_once():
     )
     with pytest.raises(sqlite3.IntegrityError, match="immutable"):
         connection.execute(
-            "UPDATE position_protection_state SET recovery_observation_json='[]' WHERE position_id='position-1'"
+            "UPDATE position_protection_state SET recovery_observation_json='[]' "
+            "WHERE position_id='position-1'"
         )
     connection.close()
 
@@ -593,13 +661,17 @@ def test_event_jsonl_outbox_migration_rolls_back_partial_schema(monkeypatch):
     import aletheia.storage.migrations as migrations
 
     connection = sqlite3.connect(":memory:")
-    connection.execute("CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)")
+    connection.execute(
+        "CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)"
+    )
     monkeypatch.setattr(migrations, "_EVENT_JSONL_OUTBOX_INDEX_SQL", "invalid SQL")
 
     with pytest.raises(sqlite3.OperationalError):
         migrations._apply_event_jsonl_outbox_v22(connection)
 
-    columns = {row[1] for row in connection.execute("PRAGMA table_info(ps_event_log)")}
+    columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(ps_event_log)")
+    }
     assert "jsonl_mirror_status" not in columns
     connection.close()
 
@@ -608,13 +680,18 @@ def test_learning_hypothesis_identity_v24_is_additive_and_idempotent():
     import aletheia.storage.migrations as migrations
 
     connection = sqlite3.connect(":memory:")
-    connection.execute("CREATE TABLE learning_hypotheses (hypothesis_id TEXT PRIMARY KEY)")
+    connection.execute(
+        "CREATE TABLE learning_hypotheses (hypothesis_id TEXT PRIMARY KEY)"
+    )
     connection.execute("INSERT INTO learning_hypotheses VALUES ('legacy')")
 
     migrations._apply_learning_hypothesis_identity_v24(connection)
     migrations._apply_learning_hypothesis_identity_v24(connection)
 
-    columns = {row[1] for row in connection.execute("PRAGMA table_info(learning_hypotheses)")}
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(learning_hypotheses)")
+    }
     assert {
         "behavior_contract_version",
         "fingerprint_schema_version",
@@ -643,12 +720,15 @@ def _legacy_active_ufc_db(*, fingerprint: str) -> sqlite3.Connection:
     connection.execute(
         "INSERT INTO learning_hypotheses VALUES "
         "('hypothesis', ?, 'universe_family_calibration', "
-        '\'{"direction":"long","family":"momentum","market_type":"spot"}\', '
-        '\'{"multiplier":1.1,"type":"opportunity_multiplier"}\', '
+        "'{\"direction\":\"long\",\"family\":\"momentum\",\"market_type\":\"spot\"}', "
+        "'{\"multiplier\":1.1,\"type\":\"opportunity_multiplier\"}', "
         "'4h', 'universe_forward_outcomes:clean_net:v2', NULL, NULL)",
         (fingerprint,),
     )
-    connection.execute("INSERT INTO learning_experiments VALUES ('experiment', 'hypothesis', 'paper_10', NULL)")
+    connection.execute(
+        "INSERT INTO learning_experiments VALUES "
+        "('experiment', 'hypothesis', 'paper_10', NULL)"
+    )
     return connection
 
 
@@ -656,7 +736,9 @@ def test_ufc_canonical_identity_v25_materializes_verified_active_paper(monkeypat
     import aletheia.storage.migrations as migrations
     import aletheia.learning.hypotheses as live_hypotheses
 
-    connection = _legacy_active_ufc_db(fingerprint="64b53e9eade95232da73ba2760080dabbbeb8f8297e05de4fbd22b17b96dfec8")
+    connection = _legacy_active_ufc_db(
+        fingerprint="64b53e9eade95232da73ba2760080dabbbeb8f8297e05de4fbd22b17b96dfec8"
+    )
     assert migrations._UFC_CANONICAL_IDENTITY_CHECKSUM == (
         "76eac7e0a1e81de4b043d5004b461d650b4deb61f51be2ec9c5f307ebe2b180a"
     )
@@ -669,12 +751,10 @@ def test_ufc_canonical_identity_v25_materializes_verified_active_paper(monkeypat
     migrations._apply_ufc_canonical_identity_v25(connection)
     migrations._apply_ufc_canonical_identity_v25(connection)
 
-    assert tuple(
-        connection.execute(
-            "SELECT behavior_contract_version, fingerprint_schema_version "
-            "FROM learning_hypotheses WHERE hypothesis_id='hypothesis'"
-        ).fetchone()
-    ) == ("universe-family-calibration/v11", 1)
+    assert tuple(connection.execute(
+        "SELECT behavior_contract_version, fingerprint_schema_version "
+        "FROM learning_hypotheses WHERE hypothesis_id='hypothesis'"
+    ).fetchone()) == ("universe-family-calibration/v11", 1)
     connection.close()
 
 
@@ -686,12 +766,10 @@ def test_ufc_canonical_identity_v25_rejects_unproven_identity():
     with pytest.raises(migrations.MigrationStateError):
         migrations._apply_ufc_canonical_identity_v25(connection)
 
-    assert tuple(
-        connection.execute(
-            "SELECT behavior_contract_version, fingerprint_schema_version "
-            "FROM learning_hypotheses WHERE hypothesis_id='hypothesis'"
-        ).fetchone()
-    ) == (None, None)
+    assert tuple(connection.execute(
+        "SELECT behavior_contract_version, fingerprint_schema_version "
+        "FROM learning_hypotheses WHERE hypothesis_id='hypothesis'"
+    ).fetchone()) == (None, None)
     connection.close()
 
 
@@ -705,16 +783,20 @@ def test_universe_positioning_v18_is_additive_and_idempotent():
     migrations._apply_universe_positioning_v18(connection)
     migrations._apply_universe_positioning_v18(connection)
 
-    feature_columns = {row[1] for row in connection.execute("PRAGMA table_info(universe_feature_snapshots)")}
-    oi_columns = {row[1] for row in connection.execute("PRAGMA table_info(open_interest_snapshots)")}
+    feature_columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(universe_feature_snapshots)")
+    }
+    oi_columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(open_interest_snapshots)")
+    }
     assert {"long_short_ratio", "top_trader_position_ratio"} <= feature_columns
     assert "top_trader_position_ratio" in oi_columns
-    assert (
-        connection.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='universe_relative_rank_shadow_batches'"
-        ).fetchone()[0]
-        == 1
-    )
+    assert connection.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
+        "AND name='universe_relative_rank_shadow_batches'"
+    ).fetchone()[0] == 1
     connection.close()
 
 
@@ -725,10 +807,20 @@ def test_universe_twin_shadow_migration_is_additive_and_idempotent():
     migrations._apply_universe_twin_shadow_evidence_v8(connection)
     migrations._apply_universe_twin_shadow_evidence_v8(connection)
 
-    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
     assert "universe_twin_shadow_batches" in tables
     assert "universe_twin_shadow_records" in tables
-    columns = {row[1] for row in connection.execute("PRAGMA table_info(universe_twin_shadow_records)")}
+    columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(universe_twin_shadow_records)"
+        )
+    }
     assert {
         "candidate_index",
         "compact_output_json",
@@ -751,8 +843,18 @@ def test_universe_twin_prospective_migration_is_additive_and_idempotent():
     migrations._apply_universe_twin_prospective_v13(connection)
     migrations._apply_universe_twin_prospective_v13(connection)
 
-    batch_columns = {row[1] for row in connection.execute("PRAGMA table_info(universe_twin_shadow_batches)")}
-    record_columns = {row[1] for row in connection.execute("PRAGMA table_info(universe_twin_shadow_records)")}
+    batch_columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(universe_twin_shadow_batches)"
+        )
+    }
+    record_columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(universe_twin_shadow_records)"
+        )
+    }
     assert {
         "experiment_id",
         "behavior_contract_hash",
@@ -776,12 +878,19 @@ def test_technical_snapshot_metadata_v14_is_additive_and_idempotent():
     import aletheia.storage.migrations as migrations
 
     connection = sqlite3.connect(":memory:")
-    connection.execute("CREATE TABLE universe_feature_snapshots (id TEXT PRIMARY KEY)")
+    connection.execute(
+        "CREATE TABLE universe_feature_snapshots (id TEXT PRIMARY KEY)"
+    )
 
     migrations._apply_technical_snapshot_metadata_v14(connection)
     migrations._apply_technical_snapshot_metadata_v14(connection)
 
-    columns = {row[1]: row for row in connection.execute("PRAGMA table_info(universe_feature_snapshots)")}
+    columns = {
+        row[1]: row
+        for row in connection.execute(
+            "PRAGMA table_info(universe_feature_snapshots)"
+        )
+    }
     assert "technical_algorithm_version" in columns
     assert columns["technical_snapshot_manifest"][3] == 1
     assert columns["technical_snapshot_manifest"][4] == "'{}'"
@@ -797,14 +906,18 @@ def test_execution_reference_v16_is_additive_idempotent_and_immutable():
     migrations._apply_execution_reference_v16(connection)
     migrations._apply_execution_reference_v16(connection)
 
-    columns = {row[1] for row in connection.execute("PRAGMA table_info(orders)")}
+    columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(orders)")
+    }
     assert {"reference_price", "reference_price_source"} <= columns
     connection.execute(
         "INSERT INTO orders (id, reference_price, reference_price_source) "
         "VALUES ('order-1', 100, 'risk_verified_proposal_price')"
     )
     with pytest.raises(sqlite3.IntegrityError, match="execution reference is immutable"):
-        connection.execute("UPDATE orders SET reference_price=101 WHERE id='order-1'")
+        connection.execute(
+            "UPDATE orders SET reference_price=101 WHERE id='order-1'"
+        )
     connection.close()
 
 
@@ -824,10 +937,14 @@ def test_serenity_retry_idempotency_v15_protects_new_attempts_without_rewriting_
 
     migrations._apply_serenity_retry_idempotency_v15(connection)
     migrations._apply_serenity_retry_idempotency_v15(connection)
-    connection.execute("INSERT INTO serenity_research_runs VALUES ('new-a', 'parent', 2, 'serenity-retry:parent:2')")
+    connection.execute(
+        "INSERT INTO serenity_research_runs VALUES "
+        "('new-a', 'parent', 2, 'serenity-retry:parent:2')"
+    )
     with pytest.raises(sqlite3.IntegrityError):
         connection.execute(
-            "INSERT INTO serenity_research_runs VALUES ('new-b', 'parent', 2, 'serenity-retry:parent:2')"
+            "INSERT INTO serenity_research_runs VALUES "
+            "('new-b', 'parent', 2, 'serenity-retry:parent:2')"
         )
     connection.close()
 
@@ -837,17 +954,28 @@ def test_universe_twin_prospective_v13_rolls_back_partial_failure(monkeypatch):
 
     connection = sqlite3.connect(":memory:")
     migrations._apply_universe_twin_shadow_evidence_v8(connection)
-    before = {row[1] for row in connection.execute("PRAGMA table_info(universe_twin_shadow_batches)")}
+    before = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(universe_twin_shadow_batches)"
+        )
+    }
     monkeypatch.setattr(
         migrations,
         "_UNIVERSE_TWIN_PROSPECTIVE_COLUMNS",
-        migrations._UNIVERSE_TWIN_PROSPECTIVE_COLUMNS + (("forced_failure", "missing_twin_table", "TEXT"),),
+        migrations._UNIVERSE_TWIN_PROSPECTIVE_COLUMNS
+        + (("forced_failure", "missing_twin_table", "TEXT"),),
     )
 
     with pytest.raises(sqlite3.OperationalError):
         migrations._apply_universe_twin_prospective_v13(connection)
 
-    after = {row[1] for row in connection.execute("PRAGMA table_info(universe_twin_shadow_batches)")}
+    after = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(universe_twin_shadow_batches)"
+        )
+    }
     assert after == before
     connection.close()
 
@@ -884,13 +1012,19 @@ def test_capacity_guardrail_migration_drops_only_redundant_indexes():
 
     migrations._apply_capacity_guardrails_v4(connection)
 
-    indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    indexes = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'"
+        )
+    }
     assert "idx_filter_outcomes_candidate" not in indexes
     assert "idx_filter_candidate_outcomes_key" not in indexes
     assert "idx_market_ohlcv_instrument_tf_ts" not in indexes
     assert "idx_audit_events_type_timestamp" in indexes
     outcome_plan = connection.execute(
-        "EXPLAIN QUERY PLAN SELECT * FROM filter_candidate_outcomes WHERE outcome_candidate_key=? AND horizon=?",
+        "EXPLAIN QUERY PLAN SELECT * FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key=? AND horizon=?",
         ("candidate", "4h"),
     ).fetchone()[3]
     ohlcv_plan = connection.execute(
@@ -909,13 +1043,22 @@ def test_pending_outcome_partial_index_covers_due_queue_only():
 
     connection = sqlite3.connect(":memory:")
     connection.execute(
-        "CREATE TABLE filter_candidate_outcomes (id TEXT PRIMARY KEY, status TEXT NOT NULL, due_at TEXT NOT NULL)"
+        "CREATE TABLE filter_candidate_outcomes "
+        "(id TEXT PRIMARY KEY, status TEXT NOT NULL, due_at TEXT NOT NULL)"
     )
-    connection.execute("CREATE INDEX idx_filter_outcomes_status_due ON filter_candidate_outcomes(status,due_at)")
+    connection.execute(
+        "CREATE INDEX idx_filter_outcomes_status_due "
+        "ON filter_candidate_outcomes(status,due_at)"
+    )
 
     migrations._apply_pending_outcome_partial_index_v5(connection)
 
-    indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    indexes = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'"
+        )
+    }
     assert "idx_filter_outcomes_status_due" not in indexes
     assert "idx_filter_outcomes_pending_due" in indexes
     pending_plan = connection.execute(
@@ -924,7 +1067,8 @@ def test_pending_outcome_partial_index_covers_due_queue_only():
         ("2026-08-06T00:00:00+00:00",),
     ).fetchone()[3]
     settled_plan = connection.execute(
-        "EXPLAIN QUERY PLAN SELECT id FROM filter_candidate_outcomes WHERE status='settled' AND due_at <= ?",
+        "EXPLAIN QUERY PLAN SELECT id FROM filter_candidate_outcomes "
+        "WHERE status='settled' AND due_at <= ?",
         ("2026-08-06T00:00:00+00:00",),
     ).fetchone()[3]
     assert "idx_filter_outcomes_pending_due" in pending_plan
@@ -959,12 +1103,17 @@ def test_market_signal_identity_migration_is_additive_and_idempotent():
     import aletheia.storage.migrations as migrations
 
     connection = sqlite3.connect(":memory:")
-    connection.execute("CREATE TABLE positions (id TEXT PRIMARY KEY, last_market_signal_action TEXT)")
+    connection.execute(
+        "CREATE TABLE positions ("
+        "id TEXT PRIMARY KEY, last_market_signal_action TEXT)"
+    )
 
     migrations._apply_market_signal_identity_v7(connection)
     migrations._apply_market_signal_identity_v7(connection)
 
-    columns = [row[1] for row in connection.execute("PRAGMA table_info(positions)")]
+    columns = [
+        row[1] for row in connection.execute("PRAGMA table_info(positions)")
+    ]
     assert columns.count("last_market_signal_evidence") == 1
     assert columns.count("last_market_signal_action") == 1
     connection.close()
@@ -981,28 +1130,24 @@ def test_migration_progress_display_explains_eta_as_a_range():
     output = StringIO()
     console = Console(file=output, force_terminal=False, width=160)
     with MigrationProgressDisplay(console=console) as progress:
-        progress(
-            MigrationProgressEvent(
-                phase="started",
-                migration_id="migration-a",
-                description="large compatibility migration",
-                step_index=1,
-                step_count=1,
-                estimated_remaining_sec=(20.0, 50.0),
-                estimate_basis="broad local calibration",
-            )
-        )
-        progress(
-            MigrationProgressEvent(
-                phase="completed",
-                migration_id="migration-a",
-                description="large compatibility migration",
-                step_index=1,
-                step_count=1,
-                duration_sec=31.0,
-                estimated_remaining_sec=(0.0, 0.0),
-            )
-        )
+        progress(MigrationProgressEvent(
+            phase="started",
+            migration_id="migration-a",
+            description="large compatibility migration",
+            step_index=1,
+            step_count=1,
+            estimated_remaining_sec=(20.0, 50.0),
+            estimate_basis="broad local calibration",
+        ))
+        progress(MigrationProgressEvent(
+            phase="completed",
+            migration_id="migration-a",
+            description="large compatibility migration",
+            step_index=1,
+            step_count=1,
+            duration_sec=31.0,
+            estimated_remaining_sec=(0.0, 0.0),
+        ))
 
     rendered = output.getvalue()
     assert "Completed 1/1" in rendered
@@ -1052,7 +1197,9 @@ def test_migration_ledger_rejects_schema_version_drift(tmp_path, monkeypatch):
     connection = _connection(tmp_path / "app.db")
     _production_migration_env(monkeypatch, migrations, connection)
     assert migrations.apply_migrations() is True
-    connection.execute("UPDATE aletheia_schema_migrations SET schema_version='corrupt'")
+    connection.execute(
+        "UPDATE aletheia_schema_migrations SET schema_version='corrupt'"
+    )
     connection.commit()
 
     with pytest.raises(migrations.MigrationStateError, match="schema version mismatch"):
@@ -1100,10 +1247,18 @@ def test_position_path_observations_v26_distinguishes_available_evidence_contrac
     connection.execute("INSERT INTO positions VALUES ('position-1')")
     migrations._apply_position_path_observations_v26(connection)
 
-    table_info = {row[1]: row[5] for row in connection.execute("PRAGMA table_info(position_path_observations)")}
+    table_info = {
+        row[1]: row[5]
+        for row in connection.execute("PRAGMA table_info(position_path_observations)")
+    }
     assert table_info["position_id"] == 1
     assert table_info["bucket_open_ms"] == 2
-    triggers = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='trigger'")}
+    triggers = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger'"
+        )
+    }
     assert {
         "trg_position_path_observations_no_update",
         "trg_position_path_observations_no_delete",
@@ -1115,7 +1270,8 @@ def test_position_path_observations_v26_distinguishes_available_evidence_contrac
         "evidence_reason, capture_mode"
     )
     connection.execute(
-        f"INSERT INTO position_path_observations ({columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        f"INSERT INTO position_path_observations ({columns}) VALUES "
+        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             "position-1",
             0,
@@ -1133,7 +1289,10 @@ def test_position_path_observations_v26_distinguishes_available_evidence_contrac
         ),
     )
 
-    available_columns = f"{columns}, venue, bar_open, bar_high, bar_low, bar_close, bar_volume, bar_provider"
+    available_columns = (
+        f"{columns}, venue, bar_open, bar_high, bar_low, bar_close, bar_volume, "
+        "bar_provider"
+    )
     with pytest.raises(sqlite3.IntegrityError):
         connection.execute(
             f"INSERT INTO position_path_observations ({available_columns}) VALUES "
@@ -1189,6 +1348,9 @@ def test_position_path_observations_v26_distinguishes_available_evidence_contrac
     )
     assert [
         row[0]
-        for row in connection.execute("SELECT capture_mode FROM position_path_observations ORDER BY bucket_open_ms")
+        for row in connection.execute(
+            "SELECT capture_mode FROM position_path_observations "
+            "ORDER BY bucket_open_ms"
+        )
     ] == ["post_close_final_snapshot", "open_snapshot"]
     connection.close()
