@@ -91,7 +91,7 @@ def _seed_position(
 
 
 @pytest.mark.asyncio
-async def test_observer_requires_provider_closed_proof_even_with_stored_exact_bar(
+async def test_observer_defers_when_provider_cannot_prove_closed_bar(
     monkeypatch,
 ):
     from aletheia.data import ccxt_provider
@@ -138,7 +138,7 @@ async def test_observer_requires_provider_closed_proof_even_with_stored_exact_ba
                         98.0,
                         104.0,
                         13.0,
-                        False,
+                        calls["requested"] > 1,
                         "ccxt",
                         "bitget",
                     )
@@ -162,19 +162,23 @@ async def test_observer_requires_provider_closed_proof_even_with_stored_exact_ba
 
     assert result == {
         "positions": 1,
-        "inserted": 1,
+        "inserted": 0,
         "available": 0,
-        "unavailable": 1,
+        "unavailable": 0,
+        "deferred": 1,
         "errors": [],
     }
     assert calls == {"created": 1, "requested": 1, "closed": 1}
+    assert repo.list_position_path_observations(position.id) == []
+
+    retried = await observe_open_position_paths(now=now)
+    assert retried["inserted"] == 1
+    assert retried["available"] == 1
+    assert retried["deferred"] == 0
+    assert calls == {"created": 2, "requested": 2, "closed": 2}
     rows = repo.list_position_path_observations(position.id)
     assert len(rows) == 1
-    assert rows[0]["evidence_status"] == "unavailable"
-    assert rows[0]["evidence_reason"] == "exact_5m_bar_unavailable"
-    assert rows[0]["bar_high"] is None
-    assert rows[0]["bar_provider"] is None
-    assert rows[0]["capture_mode"] == "open_snapshot"
+    assert rows[0]["evidence_status"] == "available"
 
 
 @pytest.mark.asyncio
@@ -234,6 +238,7 @@ async def test_observer_requests_once_per_unique_instrument(
         "inserted": 2,
         "available": 2,
         "unavailable": 0,
+        "deferred": 0,
         "errors": [],
     }
     assert calls == {"created": 1, "requested": 1, "closed": 1}
@@ -295,6 +300,7 @@ async def test_observer_samples_position_closed_after_target_bucket(monkeypatch)
         "inserted": 1,
         "available": 1,
         "unavailable": 0,
+        "deferred": 0,
         "errors": [],
     }
     assert calls["requested"] == 1
@@ -338,6 +344,7 @@ async def test_observer_skips_existing_bucket_before_provider_lookup(monkeypatch
         "inserted": 0,
         "available": 0,
         "unavailable": 0,
+        "deferred": 0,
         "errors": [],
     }
     assert len(repo.list_position_path_observations(position.id)) == 1
@@ -397,6 +404,7 @@ async def test_observer_skips_bar_that_crosses_position_entry(monkeypatch):
         "inserted": 0,
         "available": 0,
         "unavailable": 0,
+        "deferred": 0,
         "errors": [],
     }
     assert calls == {"created": 0, "requested": 0, "closed": 0}
@@ -478,9 +486,10 @@ async def test_observer_persists_completed_instrument_before_other_timeout(
         now=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc)
     )
 
-    assert result["inserted"] == 2
+    assert result["inserted"] == 1
     assert result["available"] == 1
-    assert result["unavailable"] == 1
+    assert result["unavailable"] == 0
+    assert result["deferred"] == 1
     assert result["errors"] == [
         {
             "instrument": "okx:ETH/USDT:perp",
@@ -489,7 +498,7 @@ async def test_observer_persists_completed_instrument_before_other_timeout(
     ]
     assert slow_cancelled_after_fast_persisted is True
     assert repo.list_position_path_observations(fast.id)[0]["evidence_status"] == "available"
-    assert repo.list_position_path_observations(slow.id)[0]["evidence_status"] == "unavailable"
+    assert repo.list_position_path_observations(slow.id) == []
     assert sorted(closed_exchanges) == ["bitget", "okx"]
 
 

@@ -17,7 +17,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from aletheia.analytics.trade_attribution import build_trade_attribution_rows
+from aletheia.analytics.trade_attribution import (
+    build_trade_attribution_for_position,
+    build_trade_attribution_rows,
+)
 from aletheia.storage import repositories as repo
 
 logger = logging.getLogger("aletheia.analytics.trade_path")
@@ -41,6 +44,14 @@ class _InstrumentIdentity:
     exchange: str
     market_type: str
     source: str
+
+
+def build_position_trade_path(
+    position_id: str, *, db: Any = None
+) -> dict[str, Any] | None:
+    """Build one exact Position path without cohort pagination."""
+    attribution = build_trade_attribution_for_position(position_id, db=db)
+    return _analyze_path(attribution, 0, db=db) if attribution is not None else None
 
 
 def build_trade_path_rows(

@@ -8,7 +8,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aletheia.storage import repositories as repo
-from aletheia.analytics.outcome_integrity import validated_funding_economics
+from aletheia.analytics.outcome_integrity import (
+    assess_reportable_outcome,
+    validated_funding_economics,
+)
 
 
 def _finite(value: object) -> float | None:
@@ -30,7 +33,7 @@ def _excursions(
     else:
         mfe = (entry_price - min(lows)) / entry_price * 100.0
         mae = (max(highs) - entry_price) / entry_price * 100.0
-    return mfe, mae
+    return max(0.0, mfe), max(0.0, mae)
 
 def _timestamp(value: object) -> datetime | None:
     if not value:
@@ -391,18 +394,6 @@ def build_position_path_report(position_id: str, *, limit: int = 10_000) -> dict
     plan_versions = sorted(
         {int(row.get("exit_plan_version") or 0) for row in observations}
     )
-    cost_complete_count = sum(
-        1
-        for row in observations
-        if row.get("entry_fee") is not None
-        and (
-            row.get("market_type") == "spot"
-            or (
-                row.get("funding_cost") is not None
-                and row.get("funding_source") not in {None, "", "unavailable"}
-            )
-        )
-    )
     return {
         "position_id": position_id,
         "position_status": position.get("status"),
@@ -442,7 +433,6 @@ def build_position_path_report(position_id: str, *, limit: int = 10_000) -> dict
         ),
         "stop_loss_decomposition": decomposition,
         "exit_plan_versions_observed": plan_versions,
-        "cost_complete_observation_count": cost_complete_count,
         "observations": observations,
     }
 
@@ -474,13 +464,31 @@ def build_stop_loss_path_audit(
     root_cause_counts: Counter[str] = Counter()
     reason_counts: Counter[str] = Counter()
     coverage_counts: Counter[str] = Counter()
+    exclusion_reason_counts: Counter[str] = Counter()
     classified_count = 0
     unknown_count = 0
     not_a_loss_count = 0
     unverified_net_pnl_count = 0
+    excluded_outcome_count = 0
     samples: list[dict[str, Any]] = []
 
     for position in positions:
+        assessment = assess_reportable_outcome(position)
+        if not assessment.eligible:
+            excluded_outcome_count += 1
+            exclusion_reason_counts[assessment.reason] += 1
+            samples.append(
+                {
+                    "position_id": position["id"],
+                    "symbol": position.get("symbol"),
+                    "closed_at": position.get("closed_at"),
+                    "realized_net_pnl": _finite(position.get("realized_pnl")),
+                    "included_in_loss_denominator": False,
+                    "reportable_outcome": False,
+                    "outcome_exclusion_reason": assessment.reason,
+                }
+            )
+            continue
         report = build_position_path_report(str(position["id"]))
         decomposition = report.get("stop_loss_decomposition") or {}
         realized = _finite(position.get("realized_pnl"))
@@ -508,6 +516,8 @@ def build_stop_loss_path_audit(
                 "closed_at": position.get("closed_at"),
                 "realized_net_pnl": realized,
                 "included_in_loss_denominator": is_loss,
+                "reportable_outcome": True,
+                "outcome_exclusion_reason": None,
                 **decomposition,
             }
         )
@@ -521,13 +531,16 @@ def build_stop_loss_path_audit(
             "insufficient_data"
             if not positions
             else "partial_data"
-            if unknown_count or unverified_net_pnl_count
+            if unknown_count or unverified_net_pnl_count or excluded_outcome_count
             else "available"
         ),
         "window_hours": hours_i,
         "cutoff": cutoff.isoformat(),
         "limit": limit_i,
         "stop_loss_position_count": len(positions),
+        "eligible_outcome_count": len(positions) - excluded_outcome_count,
+        "excluded_outcome_count": excluded_outcome_count,
+        "outcome_exclusion_reasons": dict(sorted(exclusion_reason_counts.items())),
         "loss_sample_count": loss_sample_count,
         "classified_count": classified_count,
         "unknown_count": unknown_count,

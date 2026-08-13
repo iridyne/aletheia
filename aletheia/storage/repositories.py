@@ -1891,6 +1891,9 @@ def insert_trade_proposal(p: TradeProposal) -> None:
     # append-only chain even though each individual hash is valid.
     with transaction(immediate=True):
         db = get_db()
+        from aletheia.storage.proposal_hypothesis import freeze_position_hypothesis
+
+        freeze_position_hypothesis(p, db=db)
         row = db.execute(
             "SELECT commit_hash FROM trade_proposals WHERE commit_hash IS NOT NULL ORDER BY rowid DESC LIMIT 1"
         ).fetchone()

@@ -297,6 +297,7 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
         "inserted": 0,
         "available": 0,
         "unavailable": 0,
+        "deferred": 0,
         "errors": [],
     }
     providers: dict[str, MarketDataProvider] = {}
@@ -434,6 +435,11 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
                             "error_type": error_type,
                         }
                     )
+                    summary["deferred"] += len(instrument_groups[instrument])
+                    continue
+                if bar is None:
+                    summary["deferred"] += len(instrument_groups[instrument])
+                    continue
                 for position_id in instrument_groups[instrument]:
                     store_result(
                         position_id,
@@ -451,13 +457,7 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
                         "error_type": "ObservationCycleTimeout",
                     }
                 )
-                for position_id in instrument_groups[instrument]:
-                    store_result(
-                        position_id,
-                        instrument=instrument,
-                        bar=None,
-                        reason="market_data_cycle_timeout",
-                    )
+                summary["deferred"] += len(instrument_groups[instrument])
     finally:
         for task in tasks:
             if not task.done():
