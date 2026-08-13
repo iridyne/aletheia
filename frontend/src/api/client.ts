@@ -2507,6 +2507,8 @@ export const api = {
 			`/market/snapshots${symbol ? `?symbol=${encodeURIComponent(symbol)}&limit=${limit}` : `?limit=${limit}`}`,
 		),
 
+	getDefaultExchange: () => fetchJson<{ exchange: string }>("/config/default-exchange"),
+
 	// Macro indicators (VIX, DXY, SPY, BTC dominance, risk regime)
 	getMacro: () => fetchJson<{ available: boolean; data: any }>("/market/macro"),
 	getCollectorHealth: () =>

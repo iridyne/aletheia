@@ -58,16 +58,26 @@ from aletheia.data.venue_health import (
 logger = logging.getLogger("aletheia.ccxt_provider")
 
 # Canonical timeframe → milliseconds. Single source of truth for bar durations.
-# Scoped to the timeframes the system actually uses (trading.instruments.TIMEFRAMES
-# + 1m). An unlisted timeframe (e.g. "3m") yields 0 from timeframe_ms(), which the
-# OHLCV route treats as unsupported when paginating — keep this set tight on purpose.
+# Covers the Bitget/Binance/OKX granularities the charts UI exposes for parity
+# with mainstream exchange terminals; agent reasoning still uses the smaller
+# trading.instruments.TIMEFRAMES subset. An unlisted timeframe (e.g. "2m",
+# "1M") yields 0 from timeframe_ms(); the OHLCV route treats that as
+# unsupported when paginating.
 _TF_MS = {
     "1m": 60_000,
+    "3m": 180_000,
     "5m": 300_000,
     "15m": 900_000,
+    "30m": 1_800_000,
     "1h": 3_600_000,
+    "2h": 7_200_000,
     "4h": 14_400_000,
+    "6h": 21_600_000,
+    "8h": 28_800_000,
+    "12h": 43_200_000,
     "1d": 86_400_000,
+    "3d": 259_200_000,
+    "1w": 604_800_000,
 }
 
 

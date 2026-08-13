@@ -493,6 +493,22 @@ def get_market_opportunities(
     return repo.list_opportunities_for_instrument(symbol, market_type, limit)
 
 
+@router.get("/config/default-exchange")
+def get_default_exchange_config():
+    """Preferred instrument exchange for observation-only UI ordering.
+
+    Prefers the operator-selected `exchange.name` when it names a real venue;
+    falls back to `market_data.ccxt_exchange` so the chart's OHLCV provider and
+    the instrument search popup agree on ordering. Never surfaces credentials.
+    """
+    cfg = load_config()
+    venue = getattr(cfg.exchange, "name", "") or ""
+    if venue and venue.lower() not in {"paper_internal", "unknown", ""}:
+        return {"exchange": venue.lower()}
+    fallback = getattr(cfg.market_data, "ccxt_exchange", "") or "binance"
+    return {"exchange": fallback.lower()}
+
+
 class SerenityThemeCreate(BaseModel):
     name: str
     demand_wave: str | None = None
