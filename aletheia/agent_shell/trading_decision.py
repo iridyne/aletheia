@@ -2176,8 +2176,8 @@ def _fmt_feature_line(f: dict) -> str:
 
 _SIGNAL_RULES = """\
 Signal interpretation (same logic as the scanner chain):
-  FR>+0.01%: crowded longs → bearish bias for trend; bullish for mean-reversion
-  FR<-0.01%: crowded shorts → bullish bias for trend; bearish for mean-reversion
+  FR>+0.01%: longs pay shorts; crowded longs → supports a contrarian short
+  FR<-0.01%: shorts pay longs; crowded shorts → supports a contrarian long, opposes a short
   OI_div=hidden_acc (OI↑+price↓): possible accumulation → potential long setup
   OI_div=weak_rally (OI↓+price↑): distribution risk → potential short setup
   taker>1.2: aggressive buyers confirm momentum; taker<0.8: aggressive sellers

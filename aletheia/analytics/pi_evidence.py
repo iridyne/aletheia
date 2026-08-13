@@ -133,12 +133,15 @@ def render_b2_evidence_summary(summary: dict[str, Any] | None) -> str:
             f"coverage={float(summary.get('outcome_coverage') or 0):.0%}); "
             "neutral, not a directional veto."
         )
+    profitable = summary.get("status") == "qualified_positive"
     return (
-        "B2 candidate evidence: "
-        f"{summary.get('directional_verdict')} conditioned evidence "
+        "B2 same-direction outcome evidence: comparable historical trades were "
+        f"{'profitable and support' if profitable else 'unprofitable and oppose'} "
+        "this candidate "
         f"(n_net={summary.get('n_net')}/{summary.get('n_total')}, "
         f"coverage={float(summary.get('outcome_coverage') or 0):.0%}, "
         f"avg_net={float(summary.get('avg_net_pct') or 0):+.3f}%, "
         f"shrunk={float(summary.get('shrunk_avg_net_pct') or 0):+.3f}%); "
-        "one input, not a directional veto."
+        "negative means losing net outcome, not bearish price direction; "
+        "one input, not an automatic trade or veto."
     )

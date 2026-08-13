@@ -147,3 +147,25 @@ def test_b2_summary_is_identical_for_assessment_bull_and_bear(tmp_path, monkeypa
     assert block in bear
     assert "999T" not in assessment
     assert "-99.00%avg_net" not in assessment
+
+
+def test_negative_b2_outcome_opposes_short_candidate_without_implying_bearish_price():
+    from aletheia.analytics.pi_evidence import render_b2_evidence_summary
+
+    block = render_b2_evidence_summary({
+        "status": "qualified_negative", "directional_verdict": "negative",
+        "n_total": 21, "n_net": 20, "outcome_coverage": 0.9524,
+        "avg_net_pct": -2.958808, "shrunk_avg_net_pct": -1.479404,
+    })
+
+    assert "historical trades were unprofitable and oppose this candidate" in block
+    assert "negative means losing net outcome, not bearish price direction" in block
+
+
+def test_assessment_prompt_does_not_treat_negative_funding_as_short_support():
+    from aletheia.agent_shell.trading_decision import _build_assessment_prompt
+
+    prompt = _build_assessment_prompt({"layer1": {}, "layer2": {}, "layer3": {}})
+
+    assert "FR<-0.01%: shorts pay longs; crowded shorts" in prompt
+    assert "supports a contrarian long, opposes a short" in prompt
