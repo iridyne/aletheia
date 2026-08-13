@@ -143,11 +143,18 @@ def _validate_existing_hypothesis(existing: Mapping[str, Any], proposal: TradePr
     if existing.get("contract_version") != HYPOTHESIS_CONTRACT_VERSION:
         raise ValueError("position hypothesis contract is invalid or unsupported")
     _validated_conditions(existing.get("invalidation_conditions"))
-    identity = existing.get("decision_identity")
-    risk = existing.get("initial_risk")
-    market = existing.get("market_identity")
-    if not all(isinstance(value, Mapping) for value in (identity, risk, market)):
+    identity_value = existing.get("decision_identity")
+    risk_value = existing.get("initial_risk")
+    market_value = existing.get("market_identity")
+    if not isinstance(identity_value, Mapping):
         raise ValueError("position hypothesis identity or risk contract is incomplete")
+    if not isinstance(risk_value, Mapping):
+        raise ValueError("position hypothesis identity or risk contract is incomplete")
+    if not isinstance(market_value, Mapping):
+        raise ValueError("position hypothesis identity or risk contract is incomplete")
+    identity = identity_value
+    risk = risk_value
+    market = market_value
     expected = {
         "proposal_id": proposal.id,
         "opportunity_id": proposal.opportunity_id,
