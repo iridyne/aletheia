@@ -2619,6 +2619,108 @@ def list_all_open_positions() -> list[dict]:
     rows = get_db().execute("SELECT * FROM positions WHERE status='open' ORDER BY rowid DESC").fetchall()
     return [dict(row) for row in rows]
 
+def list_positions_for_path_observation_bucket(
+    *, bucket_open: str, bucket_end: str
+) -> list[dict]:
+    """Return open Positions plus Positions closed after the target bucket."""
+
+    rows = get_db().execute(
+        "SELECT * FROM positions "
+        "WHERE status='open' OR ("
+        "status='closed' "
+        "AND datetime(opened_at) <= datetime(?) "
+        "AND datetime(closed_at) >= datetime(?)"
+        ") ORDER BY rowid DESC",
+        (bucket_open, bucket_end),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_observed_position_ids_for_bucket(
+    position_ids: Sequence[str], *, bucket_open_ms: int
+) -> set[str]:
+    """Return candidate Position IDs already observed for one bucket."""
+
+    observed: set[str] = set()
+    for offset in range(0, len(position_ids), 400):
+        chunk = position_ids[offset : offset + 400]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = get_db().execute(
+            "SELECT position_id FROM position_path_observations "
+            f"WHERE bucket_open_ms=? AND position_id IN ({placeholders})",
+            (bucket_open_ms, *chunk),
+        ).fetchall()
+        observed.update(str(row["position_id"]) for row in rows)
+    return observed
+
+
+def insert_position_path_observation(observation: Mapping[str, object]) -> bool:
+    """Insert one immutable Position/five-minute bucket, idempotently."""
+
+    data = dict(observation)
+    columns = (
+        "position_id",
+        "bucket_open_ms",
+        "observed_at",
+        "venue",
+        "symbol",
+        "market_type",
+        "direction",
+        "entry_price",
+        "quantity",
+        "bar_open",
+        "bar_high",
+        "bar_low",
+        "bar_close",
+        "bar_volume",
+        "bar_provider",
+        "mark_price",
+        "unrealized_pnl",
+        "entry_fee",
+        "funding_cost",
+        "funding_source",
+        "stop_price",
+        "take_profit_price",
+        "exit_plan_version",
+        "evidence_status",
+        "evidence_reason",
+        "producer_commit",
+        "runtime_session_id",
+        "capture_mode",
+    )
+    missing = [column for column in columns if column not in data]
+    if missing:
+        raise ValueError(
+            "position path observation is missing columns: " + ", ".join(missing)
+        )
+    db = get_db()
+    was_in_tx = db.in_transaction
+    cursor = execute_write(
+        f"INSERT INTO position_path_observations ({','.join(columns)}) "
+        f"VALUES ({','.join('?' for _ in columns)}) "
+        "ON CONFLICT(position_id, bucket_open_ms) DO NOTHING",
+        tuple(data[column] for column in columns),
+    )
+    if not was_in_tx:
+        db.commit()
+    return cursor.rowcount == 1
+
+
+def list_position_path_observations(
+    position_id: str,
+    *,
+    limit: int = 10_000,
+) -> list[dict]:
+    """Return one Position's immutable observations oldest-first."""
+
+    bounded_limit = max(1, min(int(limit), 10_000))
+    rows = get_db().execute(
+        "SELECT * FROM position_path_observations WHERE position_id=? "
+        "ORDER BY bucket_open_ms ASC LIMIT ?",
+        (position_id, bounded_limit),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
 
 def _optional_plan_price_equal(left: object, right: object) -> bool:
     if left is None or right is None:
