@@ -56,12 +56,12 @@ def _database() -> sqlite3.Connection:
         CREATE TABLE orders (
             id TEXT PRIMARY KEY, proposal_id TEXT, risk_decision_id TEXT,
             position_id TEXT, close_reason TEXT, created_at TEXT,
-            runtime_session_id TEXT, producer_commit TEXT
+            runtime_session_id TEXT, producer_commit TEXT, behavior_fingerprint TEXT
         );
         CREATE TABLE fills (
             id TEXT PRIMARY KEY, order_id TEXT, fill_price REAL,
             fill_quantity REAL, fee REAL, fee_source TEXT, filled_at TEXT,
-            runtime_session_id TEXT, producer_commit TEXT
+            runtime_session_id TEXT, producer_commit TEXT, behavior_fingerprint TEXT
         );
         CREATE TABLE position_exit_plan_versions (
             position_id TEXT, version INTEGER, effective_at TEXT
@@ -105,12 +105,12 @@ def _database() -> sqlite3.Connection:
     db.execute(
         "INSERT INTO orders VALUES "
         "('entry-order','proposal-1','risk-1','position-1',NULL,"
-        "'2026-08-13T00:00:30+00:00','session-1','commit-a')"
+        "'2026-08-13T00:00:30+00:00','session-1','commit-a','behavior-a')"
     )
     db.execute(
         "INSERT INTO fills VALUES "
         "('entry-fill','entry-order',100.0,1.0,0.1,'broker_ledger',"
-        "'2026-08-13T00:00:40+00:00','session-1','commit-a')"
+        "'2026-08-13T00:00:40+00:00','session-1','commit-a','behavior-a')"
     )
     db.execute(
         "INSERT INTO positions VALUES "
@@ -123,12 +123,12 @@ def _database() -> sqlite3.Connection:
     db.execute(
         "INSERT INTO orders VALUES "
         "('close-order',NULL,NULL,'position-1','take_profit',"
-        "'2026-08-13T00:01:50+00:00','session-1','commit-a')"
+        "'2026-08-13T00:01:50+00:00','session-1','commit-a','behavior-a')"
     )
     db.execute(
         "INSERT INTO fills VALUES "
         "('close-fill','close-order',102.0,1.0,0.1,'broker_ledger',"
-        "'2026-08-13T00:02:00+00:00','session-1','commit-a')"
+        "'2026-08-13T00:02:00+00:00','session-1','commit-a','behavior-a')"
     )
     db.execute("INSERT INTO position_exit_plan_versions VALUES ('position-1',1,'2026-08-13T00:00:30+00:00')")
     db.execute("INSERT INTO position_protection_state VALUES ('position-1','closed')")
@@ -245,6 +245,23 @@ def test_replay_fails_closed_when_a_producer_row_has_no_identity(monkeypatch):
 
     assert replay["producer"]["status"] == "unavailable"
     assert replay["producer"]["errors"] == ["producer_identity_incomplete"]
+
+
+def test_replay_rejects_direct_identity_that_disagrees_with_session(monkeypatch):
+    db = _database()
+    db.execute("UPDATE fills SET producer_commit='different-commit' WHERE id='close-fill'")
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
+
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db)
+
+    assert replay["producer"]["status"] == "unavailable"
+    assert replay["producer"]["errors"] == ["producer_identity_mismatch"]
 
 
 def test_replay_fails_closed_instead_of_joining_ambiguous_pi_retry(monkeypatch):

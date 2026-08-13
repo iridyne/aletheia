@@ -112,25 +112,43 @@ def _runtime_identity(db: Any, rows: Iterable[dict[str, Any] | None]) -> dict[st
     unresolved_session_ids = sorted(set(session_ids) - sessions.keys())
     resolved_identities = []
     incomplete_identity_count = 0
+    mismatched_identity_count = 0
     for session_id, direct_commit, direct_fingerprint in identities:
+        direct_pair = (str(direct_commit), str(direct_fingerprint)) if direct_commit and direct_fingerprint else None
         session = sessions.get(str(session_id)) if session_id else None
-        commit = direct_commit or (session or {}).get("boot_commit")
-        fingerprint = direct_fingerprint or (session or {}).get("behavior_fingerprint")
-        if not commit or not fingerprint:
+        session_pair = (
+            (str(session["boot_commit"]), str(session["behavior_fingerprint"]))
+            if session and session.get("boot_commit") and session.get("behavior_fingerprint")
+            else None
+        )
+        if (direct_commit or direct_fingerprint) and direct_pair is None:
             incomplete_identity_count += 1
             continue
-        resolved_identities.append((str(commit), str(fingerprint)))
+        if session_id and session_pair is None:
+            incomplete_identity_count += 1
+            continue
+        if direct_pair and session_pair and direct_pair != session_pair:
+            mismatched_identity_count += 1
+            continue
+        identity = direct_pair or session_pair
+        if identity is None:
+            incomplete_identity_count += 1
+            continue
+        resolved_identities.append(identity)
     errors = []
     if unresolved_session_ids:
         errors.append("runtime_session_not_recorded")
     if incomplete_identity_count:
         errors.append("producer_identity_incomplete")
+    if mismatched_identity_count:
+        errors.append("producer_identity_mismatch")
     return {
         "status": "available" if not errors else "unavailable",
         "errors": errors,
         "runtime_session_ids": session_ids,
         "unresolved_runtime_session_ids": unresolved_session_ids,
         "incomplete_identity_count": incomplete_identity_count,
+        "mismatched_identity_count": mismatched_identity_count,
         "producer_commits": sorted({identity[0] for identity in resolved_identities}),
         "behavior_fingerprints": sorted({identity[1] for identity in resolved_identities}),
     }
