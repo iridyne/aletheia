@@ -405,12 +405,13 @@ async def test_proposal_preflight_rejects_legacy_observer_producer(
 ):
     _prepare_db(tmp_path, monkeypatch)
     from aletheia.agent_shell.trading_decision import (
-        DecisionUnavailable,
         TradingDecision,
         prepare_decision_as_proposal,
     )
-    from aletheia.storage.models import Opportunity
-    from aletheia.storage.repositories import insert_opportunity
+    from aletheia.agent_shell.reflection import claim_decision
+    from aletheia.storage.models import Opportunity, PiDecision
+    from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
+    from aletheia.storage.sqlite import get_db
 
     opportunity = Opportunity(
         id="legacy-observer-opportunity",
@@ -420,8 +421,17 @@ async def test_proposal_preflight_rejects_legacy_observer_producer(
         confidence="high",
         confidence_score=80,
         source_agent="market_observer",
+        status="queued",
     )
     insert_opportunity(opportunity)
+    insert_pi_decision(PiDecision(
+        action="signal_pending",
+        opportunity_id=opportunity.id,
+        signal_source="market_observer",
+        symbol=opportunity.symbol,
+        direction="long",
+        market_type=opportunity.market,
+    ))
     decision = TradingDecision(
         action="trade",
         symbol=opportunity.symbol,
@@ -432,10 +442,89 @@ async def test_proposal_preflight_rejects_legacy_observer_producer(
         opportunity_id=opportunity.id,
     )
 
-    with pytest.raises(DecisionUnavailable, match="producer_not_authorized"):
-        await prepare_decision_as_proposal(decision, "paper_internal")
+    result = await prepare_decision_as_proposal(decision, "paper_internal")
 
+    assert result == {
+        "status": "queue_rejected",
+        "reason": "producer_not_authorized",
+    }
     assert decision.filter_trace[-1]["filter_name"] == "producer_eligibility"
+    assert decision.filter_trace[-1]["decision"] == "rejected"
+
+    claimed, created = claim_decision({
+        "action": "signal_queue_evicted",
+        "symbol": opportunity.symbol,
+        "direction": "long",
+        "market_type": opportunity.market,
+        "conviction": 80,
+        "reasoning": decision.reasoning,
+        "opportunity_id": opportunity.id,
+        "signal_source": "market_observer",
+        "proposal_status": "not_applicable",
+        "proposal_reason": result["reason"],
+        "filter_trace": decision.filter_trace,
+    })
+
+    assert created is True
+    assert claimed["action"] == "signal_queue_evicted"
+    assert get_db().execute(
+        "SELECT status FROM opportunities WHERE id=?", (opportunity.id,)
+    ).fetchone()[0] == "reviewed"
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM filter_decisions WHERE opportunity_id=? "
+        "AND filter_name='producer_eligibility'",
+        (opportunity.id,),
+    ).fetchone()[0] == 1
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM filter_decisions WHERE opportunity_id=? "
+        "AND filter_name='operator_action_assessment'",
+        (opportunity.id,),
+    ).fetchone()[0] == 0
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM filter_candidate_outcomes WHERE outcome_candidate_key=?",
+        (f"pi_decision:{claimed['id']}",),
+    ).fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_proposal_preflight_retries_unavailable_producer_attestation(
+    tmp_path, monkeypatch,
+):
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.trading_decision import (
+        DecisionUnavailable,
+        TradingDecision,
+        prepare_decision_as_proposal,
+    )
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.repositories import insert_opportunity
+
+    opportunity = Opportunity(
+        id="temporarily-unverifiable-producer",
+        symbol="LOW/USDT",
+        market="usdt_futures",
+        direction_bias="long",
+        source_agent="universe_scanner",
+        universe_snapshot_id="snapshot",
+        universe_member_id="member",
+    )
+    insert_opportunity(opportunity)
+    decision = TradingDecision(
+        action="trade",
+        symbol=opportunity.symbol,
+        market_type=opportunity.market,
+        direction="long",
+        conviction=80,
+        reasoning="retry only after attestation storage recovers",
+        opportunity_id=opportunity.id,
+    )
+    monkeypatch.setattr(
+        "aletheia.analytics.filter_evidence.verify_signal_emitter_admission",
+        lambda _opportunity: (False, "producer_attestation_unavailable"),
+    )
+
+    with pytest.raises(DecisionUnavailable, match="producer_attestation_unavailable"):
+        await prepare_decision_as_proposal(decision, "paper_internal")
 
 
 @pytest.mark.asyncio
@@ -444,7 +533,6 @@ async def test_proposal_preflight_rejects_scanner_t0_direction_conflict(
 ):
     _prepare_db(tmp_path, monkeypatch)
     from aletheia.agent_shell.trading_decision import (
-        DecisionUnavailable,
         TradingDecision,
         prepare_decision_as_proposal,
     )
@@ -488,12 +576,12 @@ async def test_proposal_preflight_rejects_scanner_t0_direction_conflict(
         scanner_family=opportunity.scanner_family,
     )
 
-    with pytest.raises(
-        DecisionUnavailable,
-        match="producer_eligibility_manifest_conflict",
-    ):
-        await prepare_decision_as_proposal(decision, "paper_internal")
+    result = await prepare_decision_as_proposal(decision, "paper_internal")
 
+    assert result == {
+        "status": "queue_rejected",
+        "reason": "producer_eligibility_manifest_conflict",
+    }
     assert decision.filter_trace[-1] == {
         "filter_name": "producer_eligibility",
         "stage": "proposal_submission",

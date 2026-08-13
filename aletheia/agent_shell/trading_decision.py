@@ -1066,11 +1066,16 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
                     "parameters": {"required_producer": "universe_scanner"},
                 })
             if not admitted:
-                raise DecisionUnavailable(
-                    admission_reason,
-                    stage="proposal_preflight",
-                    filter_trace=list(decision.filter_trace),
-                )
+                if admission_reason == "producer_attestation_unavailable":
+                    raise DecisionUnavailable(
+                        admission_reason,
+                        stage="proposal_preflight",
+                        filter_trace=list(decision.filter_trace),
+                    )
+                # Producer authority is immutable for an existing carrier. It
+                # cannot become executable on retry, but it is not an Operator
+                # outcome and may predate fixed-outcome seeding.
+                return {"status": "queue_rejected", "reason": admission_reason}
             raw_metadata = source_opportunity.get("metadata") or {}
             try:
                 metadata = (

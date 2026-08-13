@@ -379,6 +379,24 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
                 pi_dec.proposal_reason = None
         if claim_failure is None:
             insert_pi_decision(pi_dec)
+            if pi_dec.action == "signal_queue_evicted" and decision_result.get(
+                "filter_trace"
+            ):
+                from aletheia.analytics.filter_evidence import record_candidate_filter_trace
+
+                record_candidate_filter_trace(
+                    {
+                        "opportunity_id": pi_dec.opportunity_id,
+                        "symbol": pi_dec.symbol,
+                        "market_type": pi_dec.market_type,
+                        "direction": pi_dec.direction,
+                        "filter_trace": [
+                            step for step in decision_result["filter_trace"]
+                            if step.get("filter_name") == "producer_eligibility"
+                        ],
+                    },
+                    raise_on_error=True,
+                )
             # Candidate-scoped skips are terminal filter facts.  Write their
             # trace (and any exact-price fixed-horizon outcome seeds) before
             # consuming the pending carrier so an evidence failure rolls the

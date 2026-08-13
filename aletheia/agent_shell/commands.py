@@ -2645,6 +2645,16 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             result["proposal_id"] = prepared_proposal.id
             result["proposal_status"] = "submitting"
             result["proposal_reason"] = None
+        elif prepared_result and prepared_result.get("status") == "queue_rejected":
+            # Immutable producer failures retire the carrier without inventing
+            # an Operator skip or requiring a historical fixed-outcome seed.
+            decision.action = "signal_queue_evicted"
+            trade_like = False
+            result["action"] = "signal_queue_evicted"
+            result["proposal_id"] = None
+            result["proposal_status"] = "not_applicable"
+            result["proposal_reason"] = prepared_result.get("reason")
+            result["filter_trace"] = decision.filter_trace
         elif prepared_result and prepared_result.get("status") == "skipped":
             # A deterministic direction-quality rejection is a real terminal
             # business decision. Persist it honestly as skip, not as a trade
