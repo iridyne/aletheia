@@ -33,9 +33,9 @@ class CounterfactualSpec:
 
 
 _REGISTRATION = {
-    "registration_at": None,
-    "cutoff_at": None,
-    "registration_commit": None,
+    "registration_at": "2026-08-13T06:12:47+00:00",
+    "cutoff_at": "2026-09-12T06:12:47+00:00",
+    "registration_commit": "683c8e27952bee7816931733bed0f64bfadae856",
     "assignment_unit": "position_id",
     "eligibility": "opened_on_or_after_registration_closed_by_cutoff_complete_position_fact_with_frozen_hypothesis_and_1m_prefix",
     "fixed_horizon_bars": _FIXED_HORIZON_BARS,
@@ -45,6 +45,10 @@ _REGISTRATION = {
     "stopping_rule": "single_locked_retrospective_evaluation_after_fixed_cutoff_no_optional_stopping",
     "evidence_class": "exploratory",
 }
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _spec(hypothesis_id: str, treatment: str) -> CounterfactualSpec:
@@ -273,12 +277,48 @@ def evaluate_counterfactual_registry(
             "reason": "verified_deployment_registration_required",
             "results": [],
         }
-    evaluation_at = _parse_utc(as_of_at) or _parse_utc(fact.get("as_of_at"))
+    evaluation_at = _parse_utc(fact.get("as_of_at"))
+    requested_as_of = _parse_utc(as_of_at)
     cutoff_at = _parse_utc(_REGISTRATION["cutoff_at"])
     if evaluation_at is None:
         return {**base, "status": "not_evaluable", "reason": "evaluation_as_of_unavailable", "results": []}
-    if cutoff_at is None or evaluation_at < cutoff_at:
+    if requested_as_of is not None and requested_as_of != evaluation_at:
+        return {
+            **base,
+            "status": "not_evaluable",
+            "reason": "evaluation_as_of_conflicts_with_fact",
+            "results": [],
+        }
+    if cutoff_at is None or _now_utc() < cutoff_at:
         return {**base, "status": "not_evaluable", "reason": "registered_cutoff_not_reached", "results": []}
+    if evaluation_at != cutoff_at:
+        return {
+            **base,
+            "status": "not_evaluable",
+            "reason": "registered_evidence_cutoff_mismatch",
+            "results": [],
+        }
+    registered_commit = str(_REGISTRATION["registration_commit"])
+    producer_commits = {str(commit) for commit in (_nested(fact, "producer", "producer_commits") or [])}
+    if producer_commits != {registered_commit}:
+        return {
+            **base,
+            "status": "not_evaluable",
+            "reason": "registered_producer_identity_mismatch",
+            "results": [],
+        }
+    if (
+        _nested(fact, "causal_link", "status") != "available"
+        or _nested(fact, "economics", "availability") != "available"
+        or _nested(fact, "stages", "holding", "availability") != "available"
+        or _nested(fact, "stages", "holding", "ohlcv", "availability") != "available"
+    ):
+        return {
+            **base,
+            "status": "not_evaluable",
+            "reason": "complete_position_fact_required",
+            "results": [],
+        }
     if cost_model is None or not cost_model.valid():
         return {**base, "status": "not_evaluable", "reason": "verified_cost_model_required", "results": []}
     rows = _rows(fact)
