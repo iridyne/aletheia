@@ -277,10 +277,18 @@ def evaluate_counterfactual_registry(
             "reason": "verified_deployment_registration_required",
             "results": [],
         }
-    evaluation_at = _parse_utc(as_of_at) or _parse_utc(fact.get("as_of_at"))
+    evaluation_at = _parse_utc(fact.get("as_of_at"))
+    requested_as_of = _parse_utc(as_of_at)
     cutoff_at = _parse_utc(_REGISTRATION["cutoff_at"])
     if evaluation_at is None:
         return {**base, "status": "not_evaluable", "reason": "evaluation_as_of_unavailable", "results": []}
+    if requested_as_of is not None and requested_as_of != evaluation_at:
+        return {
+            **base,
+            "status": "not_evaluable",
+            "reason": "evaluation_as_of_conflicts_with_fact",
+            "results": [],
+        }
     if cutoff_at is None or _now_utc() < cutoff_at:
         return {**base, "status": "not_evaluable", "reason": "registered_cutoff_not_reached", "results": []}
     if evaluation_at != cutoff_at:

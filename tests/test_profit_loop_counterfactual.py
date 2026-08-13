@@ -291,3 +291,16 @@ def test_registry_rejects_replay_evidence_after_registered_cutoff():
     result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
 
     assert result["reason"] == "registered_evidence_cutoff_mismatch"
+
+
+def test_as_of_override_cannot_mask_post_cutoff_fact():
+    fact = _fact()
+    fact["as_of_at"] = "2026-09-12T05:34:29+00:00"
+
+    result = counterfactual.evaluate_counterfactual_registry(
+        fact,
+        cost_model=_cost(),
+        as_of_at="2026-09-12T05:34:28+00:00",
+    )
+
+    assert result["reason"] == "evaluation_as_of_conflicts_with_fact"
