@@ -650,6 +650,23 @@ def test_story_reports_missing_path_and_missing_management_linkage(monkeypatch):
     assert "position_management_linkage_not_recorded" in story["evidence_gaps"]
 
 
+def test_structured_events_keep_ambiguous_decision_ids(monkeypatch):
+    db = _db()
+    db.execute(
+        "INSERT INTO pi_decisions VALUES (?,?,?,?,?,?)",
+        ("decision-2", "proposal-1", "trade", "2026-08-12T23:59:45+00:00", "trade", "{}"),
+    )
+    db.commit()
+    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+
+    story = lifecycle.build_position_lifecycle_story(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+    decision = next(event for event in story["structured_events"] if event["event_type"] == "decision_committed")
+    assert decision["evidence_status"] == "ambiguous"
+    assert decision["facts"]["candidate_decision_ids"] == ["decision-1", "decision-2"]
+
+
 def test_structured_events_are_the_only_machine_facing_story_projection(monkeypatch):
     db = _db()
     monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())

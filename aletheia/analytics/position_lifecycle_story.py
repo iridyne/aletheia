@@ -225,7 +225,7 @@ _STRUCTURED_EVENT_ALIASES = {
 
 _STRUCTURED_EVENT_FACT_KEYS = {
     "opportunity_admitted": (),
-    "decision_committed": ("action", "proposal_id"),
+    "decision_committed": ("action", "proposal_id", "candidate_decision_ids"),
     "risk_approved": ("decision_role", "policy_id", "position_id"),
     "entry_filled": ("fill_price", "fill_quantity", "order_id", "fill_ids", "fill_count"),
     "first_meaningful_favorable_excursion": ("return_pct", "rule"),
@@ -1420,10 +1420,16 @@ def _management_opportunities(
                 or ""
             ).strip().lower() in trigger_names
         ]
-        plan_changed = bool(linked) and any(
+        linked_review_times = [
+            created
+            for row in linked
+            if (created := _utc(row.get("created_at"))) is not None
+        ]
+        plan_changed = bool(linked_review_times) and any(
             int(plan.get("version") or 0) > 1
             and (plan_at := _utc(plan.get("effective_at"))) is not None
             and (occurred is None or plan_at >= occurred)
+            and any(plan_at >= review_at for review_at in linked_review_times)
             for plan in plans
         )
         nodes.append(

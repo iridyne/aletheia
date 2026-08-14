@@ -171,10 +171,9 @@ def _visible(
                 future = _timestamp(row.get(field))
                 if future is not None and future > cutoff:
                     candidate[field] = None
-                    if field == "filled_at" and str(candidate.get("status") or "").lower() in {
-                        "filled", "closed", "complete", "completed"
-                    }:
-                        candidate["status"] = "open"
+                    if field == "filled_at" and candidate.get("status") is not None:
+                        candidate["status"] = None
+                        candidate["status_evidence"] = "unavailable"
             visible.append(candidate)
     return visible
 
@@ -492,6 +491,15 @@ def build_opportunity_lifecycle_story(
         label="trade_proposals",
         gaps=gaps,
     )
+    proposals = [
+        (
+            dict(proposal, status=None, status_evidence="unavailable")
+            if "status" in proposal and str(proposal.get("status") or "").lower()
+            not in {"", "pending", "proposed"}
+            else proposal
+        )
+        for proposal in proposals
+    ]
     proposal_ids = _ids(proposals)
     proposal_decisions = _child_rows(
         db,
@@ -677,8 +685,17 @@ def build_opportunity_lifecycle_story(
             }
         )
 
+    decisions_by_id = {
+        str(row.get("id")): row
+        for row in direct_decisions + proposal_decisions
+        if row.get("id") is not None
+    }
+    all_decisions = sorted(
+        decisions_by_id.values(),
+        key=lambda row: (str(row.get("created_at") or ""), str(row.get("id") or "")),
+    )
     lifecycle = {
-        "decisions": direct_decisions,
+        "decisions": all_decisions,
         "proposals": embedded_proposals,
         "risk_decisions": risks,
         "orders": enriched_orders,
@@ -687,7 +704,7 @@ def build_opportunity_lifecycle_story(
     }
     position_source_available = not any(gap.startswith("positions:") for gap in gaps)
     multiplicity = {
-        "decisions": len(direct_decisions),
+        "decisions": len(all_decisions),
         "proposals": len(proposals),
         "risk_decisions": len({str(row.get("id")) for row in risks}),
         "orders": len(enriched_orders),

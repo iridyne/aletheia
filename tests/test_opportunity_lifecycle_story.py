@@ -211,7 +211,8 @@ def test_as_of_hides_future_close_order_fill_and_position_story_knowledge(monkey
     assert [row["id"] for row in story["lifecycle"]["orders"]] == ["entry-order", "close-order"]
     close_order = story["lifecycle"]["orders"][1]
     assert close_order["filled_at"] is None
-    assert close_order["status"] == "open"
+    assert close_order["status"] is None
+    assert close_order["status_evidence"] == "unavailable"
     assert story["multiplicity"]["fills"] == 1
     assert captured[0].isoformat() == _PRE_CLOSE
     assert story["counterfactual"]["shadow"]["status"] == "pending"
