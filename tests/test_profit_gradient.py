@@ -27,6 +27,7 @@ def _context(**overrides) -> dict:
         "outcome_contract_versions": ["outcome-v1"],
         "metric_versions": ["metric-v1"],
         "statistical_unit_versions": ["unit-v1"],
+        "stages": ["paper_10"],
     }
     context.update(overrides)
     return context
@@ -78,6 +79,7 @@ def test_one_separated_layer_is_unique_winner_with_normalized_harm_units():
         "outcome_contract_version": "outcome-v1",
         "metric_version": "metric-v1",
         "statistical_unit_version": "unit-v1",
+        "stage": "paper_10",
     }
     assert result["thresholds"]["minimum_smaller_arm"] == 20
     assert result["verdict"] == "unique_max_direction"
@@ -167,6 +169,25 @@ def test_paired_same_unit_does_not_require_arm_labels():
     assert result["winner_layer"] == "Costs"
 
 
+def test_paired_effect_is_unit_weighted_not_cluster_weighted():
+    samples = _samples("Costs", effect_bp=10.0, count=29, with_arms=False)
+    large_cluster = _samples("Costs", effect_bp=-20.0, count=100, with_arms=False)
+    for index, sample in enumerate(large_cluster):
+        sample["unit_id"] = f"Costs-large-{index}"
+        sample["cluster_id"] = "large-cluster"
+
+    normalized, exclusions, _ = gradient._normalized_samples(
+        "Costs", [*samples, *large_cluster]
+    )
+    estimate, lower, upper = gradient._paired_unit_interval(normalized)
+
+    assert exclusions == []
+    assert estimate == pytest.approx((29 * 10.0 - 100 * 20.0) / 129.0)
+    assert estimate < 0
+    assert lower is not None
+    assert upper is not None
+
+
 def test_paired_same_unit_requires_thirty_unique_units():
     samples = {
         layer: _samples(layer, effect_bp=10.0, count=29, with_arms=False)
@@ -234,6 +255,8 @@ def test_prospective_randomized_thresholds_use_independent_cluster_counts():
     costs = result["layers"]["Costs"]
     assert costs["eligible_sample_count"] == 40
     assert costs["independent_unit_count"] == 4
+    assert costs["eligible_frequency"] == pytest.approx(0.4)
+    assert costs["harm_quote_per_100_candidates"] == pytest.approx(20.0)
     assert costs["cluster_count_by_arm"] == {"control": 2, "treatment": 2}
     assert costs["smaller_arm_count"] == 2
     assert "independent_units_below_30" in costs["gate_reasons"]
@@ -310,6 +333,33 @@ def test_asymmetric_zero_delta_units_are_excluded(bp, quote):
     assert result["winner_layer"] is None
 
 
+def test_randomized_temporal_effects_must_match_aggregate_direction():
+    samples = _seven_layers()
+    costs = samples["Costs"]
+    for index, sample in enumerate(costs):
+        if index < 19:
+            sample["arm"] = "treatment"
+            value = 100.0
+        elif index < 20:
+            sample["arm"] = "control"
+            value = 110.0
+        elif index == 20:
+            sample["arm"] = "treatment"
+            value = 0.0
+        else:
+            sample["arm"] = "control"
+            value = 10.0
+        sample["paired_net_delta_bp"] = value
+        sample["paired_net_delta_quote"] = value / 10.0
+
+    result = gradient.select_unique_max_direction(samples, evidence_context=_context())
+
+    costs = result["layers"]["Costs"]
+    assert costs["paired_net_delta_bp"] == pytest.approx(80.0)
+    assert "temporal_halves_disagree" in costs["gate_reasons"]
+    assert result["winner_layer"] is None
+
+
 def test_randomized_effect_is_treatment_minus_control_not_pooled_mean():
     samples = _seven_layers()
     for sample in samples["Costs"]:
@@ -336,6 +386,7 @@ def test_randomized_effect_is_treatment_minus_control_not_pooled_mean():
         "outcome_contract_versions",
         "metric_versions",
         "statistical_unit_versions",
+        "stages",
     ],
 )
 def test_randomized_cohort_identity_is_required(field):
@@ -410,6 +461,7 @@ def test_noncausal_comparison_methods_cannot_produce_a_unique_winner(method, rol
         "outcome_contract_versions",
         "metric_versions",
         "statistical_unit_versions",
+        "stages",
     ],
 )
 def test_paired_cohort_identity_is_required(field):
