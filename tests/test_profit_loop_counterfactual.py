@@ -147,6 +147,7 @@ def test_registry_is_finite_exploratory_prefix_only_and_does_not_mutate_fact():
     assert fact == frozen
     assert result["contract_version"] == "profit_loop_counterfactual/v1"
     assert result["counterfactual_scope"] == "first_60_minutes"
+    assert result["counterfactual_horizon"] == "60_minutes_after_each_hypothetical_entry"
     assert result["status"] == "evaluated"
     assert result["evidence_class"] == "exploratory"
     assert result["promotion_eligible"] is False
@@ -157,6 +158,11 @@ def test_registry_is_finite_exploratory_prefix_only_and_does_not_mutate_fact():
         "breakeven_after_1r/v1",
         "thesis_invalidation_exit/v1",
     ]
+    delay_5 = next(item for item in result["results"] if item["hypothesis_id"] == "delay_5_bars/v1")
+    assert delay_5["treatment"]["held_bars"] == 60
+    assert delay_5["treatment"]["exit_price"] == pytest.approx(
+        fact["stages"]["holding"]["ohlcv"]["rows"][65][1] * 0.9995
+    )
     assert observed_prefixes
     for item in result["results"]:
         assert item["promotion_eligible"] is False
@@ -188,6 +194,7 @@ def test_delay_becomes_no_trade_when_thesis_invalidates_in_completed_prefix():
 def test_missing_cost_or_fixed_horizon_coverage_is_not_evaluable():
     no_cost = counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=None)
     assert no_cost["counterfactual_scope"] == "first_60_minutes"
+    assert no_cost["counterfactual_horizon"] == "60_minutes_after_each_hypothetical_entry"
     assert no_cost["status"] == "not_evaluable"
     assert no_cost["reason"] == "verified_cost_model_required"
 

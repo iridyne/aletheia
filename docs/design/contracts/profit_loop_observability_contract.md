@@ -7,11 +7,15 @@ reconstructing the complete candidate denominator, evaluating a fixed explorator
 counterfactual registry, and applying seven-layer unique-winner gates.
 
 The current Position counterfactual is deliberately an early-path experiment. Its
-formal output always declares `counterfactual_scope = first_60_minutes`: it uses
-60 one-minute bars to compare the preregistered initial-Stop baseline with the
-five bounded candidate treatments. This scope does not describe a Position's
-full Holding / Exit lifecycle and must not be read as a rule that Positions
-should be closed after one hour.
+formal output always declares `counterfactual_scope = first_60_minutes` and
+`counterfactual_horizon = 60_minutes_after_each_hypothetical_entry`: every arm
+uses 60 one-minute bars after that arm's hypothetical entry to compare the
+preregistered initial-Stop baseline with the five bounded candidate treatments.
+A delayed arm also reads its delay prefix; therefore `delay_5_bars/v1` can use
+the source open at minute 65 (66 source rows in total). The scope is not a
+strict shared 60-row input window, does not describe a Position's full Holding /
+Exit lifecycle, and must not be read as a rule that Positions should be closed
+after one hour.
 
 This capability has no trading authority. It does not change Ranker, System
 Operator, Risk, Execution, position protection, Learning, Live, or an existing
@@ -99,8 +103,9 @@ concentration, exclusions, and gate reasons. Its verdict is either
 - Hypothesis state reads only the completed prefix supplied by its caller.
   Missing machine-evaluable inputs return `not_evaluable`.
 - The counterfactual registry is finite and locked. Its formal scope is
-  `first_60_minutes`; delayed entry uses the next bar open, and thesis
-  invalidation during the delay produces `no_trade`.
+  `first_60_minutes` with a per-arm horizon of
+  `60_minutes_after_each_hypothetical_entry`; delayed entry uses the next bar
+  open, and thesis invalidation during the delay produces `no_trade`.
 - `counterfactual_scope = first_60_minutes` is an evidence boundary, not an
   exit recommendation. A better early-path treatment cannot establish that all
   Positions should exit within one hour.

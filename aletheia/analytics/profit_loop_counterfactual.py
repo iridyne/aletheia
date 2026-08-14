@@ -14,6 +14,7 @@ from ..storage.proposal_hypothesis import evaluate_hypothesis_prefix
 
 COUNTERFACTUAL_CONTRACT_VERSION = "profit_loop_counterfactual/v1"
 COUNTERFACTUAL_SCOPE = "first_60_minutes"
+COUNTERFACTUAL_HORIZON = "60_minutes_after_each_hypothetical_entry"
 _FIXED_HORIZON_BARS = 60
 _DURATION_DAYS = 30
 _ASSIGNMENT_UNIT = "position_id"
@@ -396,6 +397,7 @@ def evaluate_counterfactual_registry(
     base = {
         "contract_version": COUNTERFACTUAL_CONTRACT_VERSION,
         "counterfactual_scope": COUNTERFACTUAL_SCOPE,
+        "counterfactual_horizon": COUNTERFACTUAL_HORIZON,
         "fact_id": fact.get("fact_id"),
         "assignment_unit": _ASSIGNMENT_UNIT,
         "evidence_class": "exploratory",
