@@ -33,7 +33,7 @@ The production entry point is `aletheia inspect`:
   `profit_loop_diagnosis/v1` artifacts without changing their inputs;
 - `profit-counterfactual --cost-model <json>` evaluates the fixed
   `profit_loop_counterfactual/v1` registry against one durable evidence epoch;
-- `profit-gradient --evidence <json>` applies `profit_gradient/v2` gates to a
+- `profit-gradient --evidence <json>` applies `profit_gradient/v3` gates to a
   frozen evidence artifact.
 
 All commands are synchronous, read-only inspection commands. The cost-model and
@@ -87,14 +87,14 @@ basis points, per-100-candidate harm, per-capital-day harm, clustered interval,
 concentration, exclusions, and gate reasons. Its verdict is either
 `unique_max_direction` or `no_unique_direction`.
 
-### Profit-gradient v2 comparison method
+### Profit-gradient v3 comparison method
 
 Every gradient evidence artifact must declare the v2 wrapper and one
 `evidence_context.comparison_method`:
 
 ```json
 {
-  "contract_version": "profit_gradient/v2",
+  "contract_version": "profit_gradient/v3",
   "evidence_context": {
     "comparison_method":
     "prospective_randomized|paired_same_unit|deterministic_decomposition|directional_observational"
@@ -104,7 +104,10 @@ Every gradient evidence artifact must declare the v2 wrapper and one
 
 The CLI rejects a missing or older wrapper version before evaluating samples.
 
-A missing or unknown method is ineligible; v1 evidence is historical and is not
+Version 3 also records the randomized estimand and cohort identity. Version 2
+results are historical and are not pooled with version 3.
+
+A missing or unknown method is ineligible; v1 and v2 evidence are historical and are not
 implicitly assigned a method, relabeled, pooled, or compared with v2 evidence.
 One artifact does not mix methods implicitly. A caller evaluating a different
 method creates a separately identified evidence artifact.
@@ -115,17 +118,20 @@ hard gates. The method-specific gates are:
 
 | comparison method | additional method gate | unique winner |
 | --- | --- | --- |
-| `prospective_randomized` | at least 30 independent units, exactly two non-empty arms, and at least 20 units in the smaller arm | allowed |
+| `prospective_randomized` | at least 30 independent units, exact `control`/`treatment` arms, at least 20 units in the smaller arm, and singular assignment/horizon/outcome/metric/statistical-unit identities | allowed |
 | `paired_same_unit` | at least 30 unique units; no arm threshold or arm labels are required | allowed for selecting the next forward question, never automatic behavior change |
 | `deterministic_decomposition` | at least 30 independent units; facts remain descriptive | prohibited; measured fact only |
 | `directional_observational` | at least 30 independent units; association remains directional | prohibited; rank the next question only |
 
-For `paired_same_unit`, each normalized row contributes one complete,
-cost-aware delta for one unique statistical unit (for the current Exit
-counterfactual, one Position). Duplicate `unit_id` rows are excluded. The
-paired result is never made to satisfy the randomized arm gate by inventing
-`treatment` or `control` labels. The report exposes the applied threshold
-profile, arm counts, unassigned-arm counts for randomized evidence, and
+For `prospective_randomized`, the estimand is the equal-weight per-cluster
+`treatment - control` outcome contrast; arm labels affect the estimate and the
+cluster bootstrap. A pooled mean is not a randomized effect. For
+`paired_same_unit`, each normalized row contributes one complete, cost-aware
+delta for one unique statistical unit (for the current Exit counterfactual,
+one Position). Duplicate `unit_id` rows are excluded. The paired result is
+never made to satisfy the randomized arm gate by inventing `treatment` or
+`control` labels. The report exposes the applied threshold profile, arm counts,
+unassigned-arm counts for randomized evidence, and
 `smaller_arm_count: null` when arms do not apply.
 
 The current delayed-entry, breakeven, and hypothesis-invalidation registry is
