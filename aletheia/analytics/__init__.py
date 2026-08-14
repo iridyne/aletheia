@@ -33,6 +33,16 @@ from aletheia.analytics.temporal import (
     temporal_summary,
 )
 
+from aletheia.analytics.position_lifecycle_story import (
+    build_position_lifecycle_story,
+    render_position_lifecycle_story,
+)
+
+from aletheia.analytics.opportunity_lifecycle_story import (
+    build_opportunity_lifecycle_story,
+    render_opportunity_lifecycle_story,
+)
+
 __all__ = [
     # performance_summary
     "equity_curve",
@@ -55,4 +65,10 @@ __all__ = [
     "bucket_by_hour",
     "bucket_by_weekday",
     "temporal_summary",
+    # position_lifecycle_story
+    "build_position_lifecycle_story",
+    "render_position_lifecycle_story",
+    # opportunity_lifecycle_story
+    "build_opportunity_lifecycle_story",
+    "render_opportunity_lifecycle_story",
 ]

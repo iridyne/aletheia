@@ -1919,3 +1919,66 @@ def decisions(
         # Trim reason to fit terminal width reasonably
         reason_short = reason[:70] + "…" if len(reason) > 70 else reason
         typer.echo(f"{ts:19}  {sym:15}  {side:5}  {oc:14}  {reason_short}")
+
+
+@inspect_app.command("position-story")
+def position_story(
+    position_id: str = typer.Option(..., "--id", "--position-id"),
+    as_of: Optional[str] = typer.Option(None, "--as-of"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show one Position's deterministic, read-only lifecycle story."""
+    from aletheia.analytics.position_lifecycle_story import (
+        build_position_lifecycle_story,
+        render_position_lifecycle_story,
+    )
+
+    parsed_as_of = as_of
+    if as_of:
+        try:
+            parsed = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            parsed_as_of = parsed.astimezone(timezone.utc).isoformat()
+        except (TypeError, ValueError):
+            raise typer.BadParameter("invalid timestamp; use ISO-8601", param_hint="--as-of")
+    story = build_position_lifecycle_story(position_id, as_of_at=parsed_as_of)
+    if json_output:
+        _output(story, True)
+    else:
+        typer.echo(render_position_lifecycle_story(story))
+
+
+@inspect_app.command("opportunity-lifecycle")
+def opportunity_lifecycle(
+    opportunity_id: str = typer.Option(..., "--id", "--opportunity-id"),
+    as_of: Optional[str] = typer.Option(None, "--as-of"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show one exact Opportunity-rooted lifecycle for Agent inspection."""
+
+    from aletheia.analytics.opportunity_lifecycle_story import (
+        build_opportunity_lifecycle_story,
+        render_opportunity_lifecycle_story,
+    )
+
+    parsed_as_of = as_of
+    if as_of:
+        try:
+            parsed = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            parsed_as_of = parsed.astimezone(timezone.utc).isoformat()
+        except (TypeError, ValueError):
+            raise typer.BadParameter("invalid timestamp; use ISO-8601", param_hint="--as-of")
+    try:
+        story = build_opportunity_lifecycle_story(
+            opportunity_id,
+            as_of_at=parsed_as_of,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--as-of") from exc
+    if json_output:
+        _output(story, True)
+    else:
+        typer.echo(render_opportunity_lifecycle_story(story))
