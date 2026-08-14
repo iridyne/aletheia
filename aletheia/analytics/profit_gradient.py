@@ -10,7 +10,7 @@ import random
 from typing import Any, Iterable, Mapping
 
 
-PROFIT_GRADIENT_CONTRACT_VERSION = "profit_gradient/v2"
+PROFIT_GRADIENT_CONTRACT_VERSION = "profit_gradient/v3"
 LAYERS = ("Selection", "Decision", "Risk", "Execution", "Holding", "Exit", "Costs")
 COMPARISON_METHODS = (
     "prospective_randomized",
@@ -26,6 +26,7 @@ _COMPARISON_PROFILES = {
         "requires_two_arms": True,
         "allows_unique_winner": True,
         "evidence_role": "prospective_confirmatory",
+        "estimand": "treatment_minus_control_cluster_mean_bp",
     },
     "paired_same_unit": {
         "minimum_independent_units": 30,
@@ -33,6 +34,7 @@ _COMPARISON_PROFILES = {
         "requires_two_arms": False,
         "allows_unique_winner": True,
         "evidence_role": "paired_confirmatory",
+        "estimand": "paired_same_unit_mean_bp",
     },
     "deterministic_decomposition": {
         "minimum_independent_units": 30,
@@ -40,6 +42,7 @@ _COMPARISON_PROFILES = {
         "requires_two_arms": False,
         "allows_unique_winner": False,
         "evidence_role": "measured_only",
+        "estimand": "deterministic_decomposition_bp",
     },
     "directional_observational": {
         "minimum_independent_units": 30,
@@ -47,6 +50,7 @@ _COMPARISON_PROFILES = {
         "requires_two_arms": False,
         "allows_unique_winner": False,
         "evidence_role": "directional_only",
+        "estimand": "directional_observational_bp",
     },
 }
 
@@ -112,10 +116,121 @@ def _cluster_interval(
     return estimate, _percentile(bootstraps, 0.025), _percentile(bootstraps, 0.975)
 
 
+def _randomized_cluster_interval(
+    samples: list[dict[str, Any]], *, iterations: int = 2_000
+) -> tuple[float | None, float | None, float | None, dict[str, int], bool]:
+    by_cluster: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
+    for sample in samples:
+        if sample["arm"] in {"control", "treatment"}:
+            by_cluster[sample["cluster_id"]][sample["arm"]].append(sample)
+
+    arm_clusters: dict[str, list[dict[str, Any]]] = {"control": [], "treatment": []}
+    for cluster_id, arms in sorted(by_cluster.items()):
+        for arm in arm_clusters:
+            rows = arms.get(arm, [])
+            if not rows:
+                continue
+            arm_clusters[arm].append(
+                {
+                    "cluster_id": str(cluster_id),
+                    "arm": arm,
+                    "occurred_at": sum(row["occurred_at"] for row in rows) / len(rows),
+                    "paired_net_delta_bp": sum(row["paired_net_delta_bp"] for row in rows) / len(rows),
+                    "paired_net_delta_quote": sum(row["paired_net_delta_quote"] for row in rows) / len(rows),
+                }
+            )
+
+    cluster_counts = {arm: len(rows) for arm, rows in arm_clusters.items()}
+    treatment = arm_clusters["treatment"]
+    control = arm_clusters["control"]
+    if not treatment or not control:
+        return None, None, None, cluster_counts, False
+
+    treatment_mean = sum(row["paired_net_delta_bp"] for row in treatment) / len(treatment)
+    control_mean = sum(row["paired_net_delta_bp"] for row in control) / len(control)
+    estimate = treatment_mean - control_mean
+    if min(cluster_counts.values()) < 2:
+        return estimate, None, None, cluster_counts, False
+
+    seed_material = "|".join(
+        f"{arm}:{row['cluster_id']}:{row['paired_net_delta_bp']:.12g}:{row['paired_net_delta_quote']:.12g}"
+        for arm in ("control", "treatment")
+        for row in sorted(arm_clusters[arm], key=lambda item: item["cluster_id"])
+    )
+    seed = int(hashlib.sha256(seed_material.encode()).hexdigest()[:16], 16)
+    rng = random.Random(seed)
+    bootstraps = []
+    for _ in range(iterations):
+        treatment_selected = [rng.choice(treatment)["paired_net_delta_bp"] for _ in treatment]
+        control_selected = [rng.choice(control)["paired_net_delta_bp"] for _ in control]
+        bootstraps.append(
+            sum(treatment_selected) / len(treatment_selected)
+            - sum(control_selected) / len(control_selected)
+        )
+
+    ordered = sorted(
+        treatment + control,
+        key=lambda row: (row["occurred_at"], row["cluster_id"]),
+    )
+    midpoint = len(ordered) // 2
+    temporal_effects = []
+    if midpoint:
+        for half in (ordered[:midpoint], ordered[midpoint:]):
+            treatment_values = [
+                row["paired_net_delta_bp"] for row in half if row["arm"] == "treatment"
+            ]
+            control_values = [
+                row["paired_net_delta_bp"] for row in half if row["arm"] == "control"
+            ]
+            if not treatment_values or not control_values:
+                temporal_effects = []
+                break
+            temporal_effects.append(
+                sum(treatment_values) / len(treatment_values)
+                - sum(control_values) / len(control_values)
+            )
+    temporal_stable = (
+        len(temporal_effects) == 2
+        and all(effect != 0 for effect in temporal_effects)
+        and (temporal_effects[0] > 0) == (temporal_effects[1] > 0)
+    )
+    return estimate, _percentile(bootstraps, 0.025), _percentile(bootstraps, 0.975), cluster_counts, temporal_stable
+
+
 def _expected_units(layer: str) -> tuple[str, str]:
     if layer in _CANDIDATE_LAYERS:
         return "candidate_fact", "fixed_horizon_net_return"
     return "position_fact", "verified_settled_net_economics"
+
+
+_RANDOMIZED_COHORT_FIELDS = (
+    ("assignment_salts", "assignment_salt"),
+    ("horizons", "horizon"),
+    ("outcome_contract_versions", "outcome_contract_version"),
+    ("metric_versions", "metric_version"),
+    ("statistical_unit_versions", "statistical_unit_version"),
+)
+
+
+def _randomized_cohort_identity(
+    context: Mapping[str, Any], method: str | None
+) -> tuple[dict[str, str] | None, list[str]]:
+    if method != "prospective_randomized":
+        return None, []
+    identity: dict[str, str] = {}
+    reasons = []
+    for field, output_field in _RANDOMIZED_COHORT_FIELDS:
+        values = context.get(field)
+        normalized = [str(value) for value in values] if isinstance(values, list) else []
+        if (
+            not normalized
+            or any(value is None or not str(value).strip() for value in values)
+            or len(set(normalized)) != 1
+        ):
+            reasons.append(f"mixed_or_missing_{field}")
+            continue
+        identity[output_field] = normalized[0]
+    return (identity if not reasons else None), reasons
 
 
 def _comparison_method(context: Mapping[str, Any]) -> tuple[str | None, list[str]]:
@@ -135,6 +250,7 @@ def _thresholds_for(method: str | None) -> dict[str, Any]:
         "minimum_independent_units": profile["minimum_independent_units"],
         "minimum_smaller_arm": profile["minimum_smaller_arm"],
         "requires_two_arms": profile["requires_two_arms"],
+        "estimand": profile["estimand"],
         "minimum_risk_rejects": 20,
         "minimum_absolute_effect_bp": 5.0,
         "cluster_interval": "95%_cluster_bootstrap_excluding_zero",
@@ -183,7 +299,10 @@ def _normalized_samples(
         if not unit_id or not cluster_id or delta_bp is None or delta_quote is None or occurred_at is None:
             exclusions.append("incomplete_paired_sample")
             continue
-        if (delta_bp == 0.0 and delta_quote != 0.0) or delta_bp * delta_quote < 0.0:
+        if (delta_bp == 0.0) != (delta_quote == 0.0):
+            exclusions.append("paired_delta_zero_mismatch")
+            continue
+        if delta_bp * delta_quote < 0.0:
             exclusions.append("paired_delta_sign_mismatch")
             continue
         if unit_id in seen_units:
@@ -258,6 +377,9 @@ def _global_gate(context: Mapping[str, Any]) -> tuple[bool, list[str]]:
         value = _finite(context.get(field))
         if value is None or value < threshold:
             reasons.append(f"{field}_below_{threshold:.2f}")
+    candidate_count = _finite(context.get("candidate_count"))
+    if candidate_count is None or candidate_count <= 0:
+        reasons.append("candidate_count_not_positive")
     epoch_ok, epoch_reasons = _epoch_gate(context)
     reasons.extend(epoch_reasons)
     return bool(epoch_ok and not reasons), reasons
@@ -276,7 +398,6 @@ def _layer_result(
     thresholds: Mapping[str, Any],
 ) -> dict[str, Any]:
     samples, exclusions, raw_count = _normalized_samples(layer, raw_samples)
-    estimate, lower, upper = _cluster_interval(samples)
     unit_count = len(samples)
     profile = _COMPARISON_PROFILES.get(comparison_method or "")
     arms = defaultdict(int)
@@ -289,8 +410,18 @@ def _layer_result(
     requires_two_arms = bool(profile and profile["requires_two_arms"])
     unassigned_arm_count = unit_count - sum(arms.values()) if requires_two_arms else None
     smaller_arm = min(arms.values()) if requires_two_arms and len(arms) == 2 else None
+    if comparison_method == "prospective_randomized":
+        estimate, lower, upper, cluster_count_by_arm, temporal_stable = _randomized_cluster_interval(samples)
+        total_quote = (
+            sum(sample["paired_net_delta_quote"] for sample in samples if sample["arm"] == "treatment")
+            - sum(sample["paired_net_delta_quote"] for sample in samples if sample["arm"] == "control")
+        )
+    else:
+        estimate, lower, upper = _cluster_interval(samples)
+        cluster_count_by_arm = None
+        total_quote = sum(sample["paired_net_delta_quote"] for sample in samples)
+        temporal_stable = _same_sign_halves(samples)
     top1, top5 = _concentration(samples)
-    total_quote = sum(sample["paired_net_delta_quote"] for sample in samples)
     frequency = unit_count / candidate_count if candidate_count > 0 else None
     gradient = frequency * lower if frequency is not None and lower is not None else None
     reasons = list(global_reasons)
@@ -299,6 +430,8 @@ def _layer_result(
     if unit_count < minimum_units:
         reasons.append(f"independent_units_below_{minimum_units}")
     if requires_two_arms:
+        if set(arms) != {"control", "treatment"}:
+            reasons.append("randomized_arm_labels_required")
         if len(arms) != 2:
             reasons.append("randomized_two_arms_required")
         if unassigned_arm_count:
@@ -313,7 +446,7 @@ def _layer_result(
         reasons.append("cluster_interval_crosses_zero")
     if estimate is None or estimate <= 0:
         reasons.append("direction_does_not_reduce_harm")
-    if not _same_sign_halves(samples):
+    if not temporal_stable:
         reasons.append("temporal_halves_disagree")
     if top1 is None or top5 is None:
         reasons.append("concentration_unavailable")
@@ -335,7 +468,9 @@ def _layer_result(
         "exclusion_waterfall": dict(sorted(Counter(exclusions).items())),
         "independent_unit_count": unit_count,
         "cluster_count": len({sample["cluster_id"] for sample in samples}),
+        "cluster_count_by_arm": cluster_count_by_arm,
         "comparison_method": comparison_method,
+        "estimand": profile["estimand"] if profile else None,
         "evidence_role": profile["evidence_role"] if profile else None,
         "thresholds": dict(thresholds),
         "arm_counts": dict(sorted(arms.items())),
@@ -366,8 +501,12 @@ def select_unique_max_direction(
     """Return a winner only when the declared method permits one."""
     global_ok, global_reasons = _global_gate(evidence_context)
     comparison_method, method_reasons = _comparison_method(evidence_context)
+    cohort_identity, identity_reasons = _randomized_cohort_identity(
+        evidence_context, comparison_method
+    )
     global_reasons.extend(method_reasons)
-    global_ok = bool(global_ok and not method_reasons)
+    global_reasons.extend(identity_reasons)
+    global_ok = bool(global_ok and not method_reasons and not identity_reasons)
     thresholds = _thresholds_for(comparison_method)
     profile = _COMPARISON_PROFILES.get(comparison_method or "")
     unique_winner_eligible = bool(profile and profile["allows_unique_winner"])
@@ -418,7 +557,9 @@ def select_unique_max_direction(
     return {
         "contract_version": PROFIT_GRADIENT_CONTRACT_VERSION,
         "comparison_method": comparison_method,
+        "estimand": profile["estimand"] if profile else None,
         "evidence_role": profile["evidence_role"] if profile else None,
+        "cohort_identity": cohort_identity,
         "thresholds": thresholds,
         "unique_winner_eligible": unique_winner_eligible,
         "verdict": verdict,
