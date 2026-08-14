@@ -432,6 +432,7 @@ def build_position_replay(
                 "risk_policy_hash": (risk or {}).get("policy_hash"),
             },
             "cost_identity": {
+                "cost_model_id": "paper-execution-reference/v1",
                 "entry_fee_sources": sorted(
                     {str(row.get("fee_source")) for row in entry_fills if row.get("fee_source")}
                 ),

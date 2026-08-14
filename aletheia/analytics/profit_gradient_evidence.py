@@ -18,7 +18,9 @@ from typing import Any, Iterable, Mapping
 
 from aletheia.analytics.candidate_facts import build_candidate_facts
 from aletheia.learning.outcomes import assess_candidate_outcome
-from aletheia.analytics.execution_contribution import COST_MODEL_VERSION as POSITION_COST_MODEL_ID
+from aletheia.analytics.execution_contribution import (
+    _paired_position_cost,
+)
 from aletheia.analytics.position_replay import build_position_replay
 from aletheia.analytics.profit_gradient import LAYERS
 from aletheia.analytics.profit_loop_counterfactual import (
@@ -293,7 +295,13 @@ def _resolve_registration(db: Any, evidence_epoch_id: str, cutoff: datetime) -> 
     }
 
 
-def _resolve_cost_model(db: Any, cost_model_id: str, cutoff: datetime) -> dict[str, Any]:
+def _resolve_cost_model(
+    db: Any,
+    cost_model_id: str,
+    cutoff: datetime,
+    *,
+    position_facts: Iterable[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
     """Resolve a model only from persisted immutable outcome identities.
 
     There is no writable cost-model registry in this MVP.  A model is therefore
@@ -345,6 +353,21 @@ def _resolve_cost_model(db: Any, cost_model_id: str, cutoff: datetime) -> dict[s
             cost_model_id=cost_model_id,
             malformed_count=malformed_count,
         )
+    for fact in position_facts:
+        identity = fact.get("cost_identity")
+        if (
+            fact.get("availability") == "available"
+            and isinstance(identity, Mapping)
+            and identity.get("cost_model_id") == cost_model_id
+            and fact.get("fact_id") not in (None, "")
+        ):
+            sources.append(
+                {
+                    "table": "position_replays",
+                    "fact_id": str(fact["fact_id"]),
+                    "cost_model_id": cost_model_id,
+                }
+            )
     if not sources:
         return _unavailable("cost_model_not_recorded", cost_model_id=cost_model_id)
     return {
@@ -383,9 +406,11 @@ def _load_candidates(db: Any, cutoff: datetime) -> tuple[dict[str, Any], list[di
                 "settled_outcome_count": report.get("settled_outcome_count"),
                 "unavailable_count": report.get("unavailable_count", 0),
                 "unavailable_reasons": report.get("unavailable_reasons", {}),
+                "exclusions": report.get("exclusions", []),
                 "facts": facts,
             }
         ),
+        "exclusions": report.get("exclusions", []),
     }, facts
 
 
@@ -835,12 +860,6 @@ def _fact_cost_model_id(fact: Mapping[str, Any]) -> str | None:
             value = root.get("cost_model_id") or root.get("cost_model_version")
             if value not in (None, ""):
                 return str(value)
-    if isinstance(cost_identity, Mapping) and {
-        "entry_fee_sources", "exit_fee_sources", "funding_source"
-    } <= set(cost_identity):
-        # This is the exact immutable contract used by execution_contribution;
-        # no model is guessed from an arbitrary fee-source string.
-        return POSITION_COST_MODEL_ID
     return None
 
 
@@ -926,7 +945,7 @@ def _position_cost_sample(
         return None, "epoch_mismatch"
     arm, cluster, pair_id, policy_epoch, producer_commit, assignment_reason = _position_assignment(
         db, fact, cutoff, epoch_start, epoch_id,
-        observed_at=closed_at,
+        observed_at=opened_at,
         registration=registration,
         layer=layer,
     )
@@ -988,6 +1007,8 @@ def _position_execution_sample(
         return None, "paired_evidence_unavailable"
     if economics.get("availability") != "available":
         return None, "unverified_or_unsettled_outcome"
+    if economics.get("residual_within_tolerance") is not True:
+        return None, "accounting_mismatch"
     entry_order = execution.get("entry_order")
     entry_fills = execution.get("entry_fills")
     close_orders = exit_stage.get("close_orders")
@@ -1008,6 +1029,12 @@ def _position_execution_sample(
     if None in (entry_reference, close_reference, quantity, entry_fee, exit_fee, funding, actual_net, entry_price):
         return None, "cost_incomplete"
     position = exit_stage.get("position") if isinstance(exit_stage.get("position"), Mapping) else {}
+    try:
+        _, chain_reason = _paired_position_cost(db, dict(position))
+    except (KeyError, OSError, TypeError, ValueError, sqlite3.Error):
+        chain_reason = "incomplete_path"
+    if chain_reason is not None:
+        return None, "incomplete_path"
     direction = str(position.get("direction") or "").lower()
     if direction == "long":
         reference_gross = (close_reference - entry_reference) * quantity
@@ -1028,7 +1055,7 @@ def _position_execution_sample(
         return None, "epoch_mismatch"
     arm, cluster, pair_id, policy_epoch, producer_commit, assignment_reason = _position_assignment(
         db, fact, cutoff, epoch_start, epoch_id,
-        observed_at=closed_at,
+        observed_at=opened_at,
         registration=registration,
         layer=layer,
     )
@@ -1565,7 +1592,12 @@ def build_profit_gradient_evidence(
             assert epoch_start is not None
             candidate_source, candidate_facts = _load_candidates(db, cutoff)
             position_source, position_facts = _load_positions(db, cutoff)
-            cost_source = _resolve_cost_model(db, cost_model_id, cutoff)
+            cost_source = _resolve_cost_model(
+                db,
+                cost_model_id,
+                cutoff,
+                position_facts=position_facts,
+            )
             epoch_for_context = registration if registration.get("status") == "available" else {}
             layer_samples, layer_stats = _add_layer_samples(
                 db=db,

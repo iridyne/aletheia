@@ -75,6 +75,146 @@ def test_cost_model_source_does_not_admit_future_settlement():
     assert resolved["reason"] == "cost_model_not_recorded"
 
 
+def test_position_replay_cost_model_identity_is_explicit_and_resolvable():
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    cost_model_id = "paper-execution-reference/v1"
+
+    assert evidence._fact_cost_model_id(
+        {"cost_identity": {"entry_fee_sources": [], "exit_fee_sources": [], "funding_source": None}}
+    ) is None
+    assert evidence._fact_cost_model_id(
+        {"cost_identity": {"cost_model_id": cost_model_id}}
+    ) == cost_model_id
+
+    resolved = evidence._resolve_cost_model(
+        db,
+        cost_model_id,
+        datetime(2026, 8, 14, tzinfo=timezone.utc),
+        position_facts=[
+            {
+                "fact_id": "position-1",
+                "availability": "available",
+                "cost_identity": {"cost_model_id": cost_model_id},
+            }
+        ],
+    )
+
+    assert resolved["status"] == "available"
+    assert resolved["source_tables"] == ["position_replays"]
+
+
+def test_candidate_source_hash_includes_exclusion_identity(monkeypatch):
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    reports = iter(
+        [
+            {"facts": [], "unavailable_count": 1, "unavailable_reasons": {"bad": 1}, "exclusions": [{"id": "a"}]},
+            {"facts": [], "unavailable_count": 1, "unavailable_reasons": {"bad": 1}, "exclusions": [{"id": "b"}]},
+        ]
+    )
+    monkeypatch.setattr(evidence, "build_candidate_facts", lambda **_: next(reports))
+
+    first, _ = evidence._load_candidates(db, datetime(2026, 8, 14, tzinfo=timezone.utc))
+    second, _ = evidence._load_candidates(db, datetime(2026, 8, 14, tzinfo=timezone.utc))
+
+    assert first["source_hash"] != second["source_hash"]
+
+
+def _execution_fact(*, residual_within_tolerance: bool = True) -> dict:
+    return {
+        "fact_id": "position-1",
+        "economics": {
+            "availability": "available",
+            "residual_within_tolerance": residual_within_tolerance,
+            "entry_fee": 0.0,
+            "exit_fee": 0.0,
+            "funding_cost": 0.0,
+            "net_pnl": 9.0,
+        },
+        "stages": {
+            "execution": {"entry_order": {"reference_price": 100.0}, "entry_fills": [{}]},
+            "exit": {
+                "position": {
+                    "id": "position-1",
+                    "opened_at": "2026-08-13T00:00:00+00:00",
+                    "closed_at": "2026-08-13T00:01:00+00:00",
+                    "quantity": 1.0,
+                    "entry_price": 100.0,
+                    "direction": "long",
+                },
+                "close_orders": [{"reference_price": 110.0}],
+                "close_fills": [{}],
+            },
+        },
+    }
+
+
+def test_execution_sample_rejects_accounting_mismatch():
+    sample, reason = evidence._position_execution_sample(
+        sqlite3.connect(":memory:"),
+        _execution_fact(residual_within_tolerance=False),
+        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cost_model_id="paper-execution-reference/v1",
+        epoch_id="epoch-1",
+    )
+
+    assert sample is None
+    assert reason == "accounting_mismatch"
+
+
+def test_position_assignment_precedes_entry_and_execution_chain_is_validated(monkeypatch):
+    observed = []
+    monkeypatch.setattr(evidence, "_paired_position_cost", lambda *_: ({}, None))
+
+    def assign(_db, _fact, _cutoff, _epoch_start, _epoch_id, *, observed_at=None, **_kwargs):
+        observed.append(observed_at)
+        return "treatment", "cluster-1", "pair-1", "policy-1", "commit-1", None
+
+    monkeypatch.setattr(evidence, "_position_assignment", assign)
+    fact = _execution_fact()
+    cutoff = datetime(2026, 8, 14, tzinfo=timezone.utc)
+    epoch_start = datetime(2026, 8, 12, tzinfo=timezone.utc)
+
+    cost_sample, cost_reason = evidence._position_cost_sample(
+        sqlite3.connect(":memory:"),
+        {**fact, "economics": {**fact["economics"], "gross_pnl": 10.0}},
+        cutoff=cutoff,
+        epoch_start=epoch_start,
+        cost_model_id="paper-execution-reference/v1",
+        epoch_id="epoch-1",
+    )
+    execution_sample, execution_reason = evidence._position_execution_sample(
+        sqlite3.connect(":memory:"),
+        fact,
+        cutoff=cutoff,
+        epoch_start=epoch_start,
+        cost_model_id="paper-execution-reference/v1",
+        epoch_id="epoch-1",
+    )
+
+    assert cost_reason is None and cost_sample is not None
+    assert execution_reason is None and execution_sample is not None
+    assert observed == [datetime(2026, 8, 13, tzinfo=timezone.utc)] * 2
+
+
+def test_execution_sample_rejects_invalid_fill_chain(monkeypatch):
+    monkeypatch.setattr(evidence, "_paired_position_cost", lambda *_: (None, "execution_fill_mismatch"))
+
+    sample, reason = evidence._position_execution_sample(
+        sqlite3.connect(":memory:"),
+        _execution_fact(),
+        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cost_model_id="paper-execution-reference/v1",
+        epoch_id="epoch-1",
+    )
+
+    assert sample is None
+    assert reason == "incomplete_path"
+
+
 def test_incomplete_source_cannot_emit_numeric_coverage():
     cutoff = datetime(2026, 8, 14, tzinfo=timezone.utc)
     context = evidence._coverage_context(

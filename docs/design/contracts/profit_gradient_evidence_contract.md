@@ -42,9 +42,13 @@ its exact inputs and requires the rebuilt hash to match; static metadata alone
 cannot authorize hand-authored samples.
 
 Candidate outcomes use one fixed `24h` net-return contract, a persisted
-`settled_at <= cutoff`, and the exact supplied cost-model version. Position
-samples additionally bind the replay's fee-source contract to
-`paper-execution-reference/v1` and require runtime commit/fingerprint provenance.
+`settled_at <= cutoff`, and the exact supplied cost-model version. Compressed
+candidate batches are unavailable when their declared count differs from the
+decoded rows, and deterministic exclusion records are part of the source hash.
+Position samples additionally require the replay's explicit cost-model identity
+`paper-execution-reference/v1`, exact order/fill/Position reconciliation,
+accounting agreement, and assignment before entry; they also require runtime
+commit/fingerprint provenance.
 Position economics use the verified accounting
 identity `net = gross - entry_fee - exit_fee - funding`; candidate costs are not
 deducted again from Position economics.

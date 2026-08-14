@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 import json
 from typing import Any, Iterable
@@ -89,6 +89,25 @@ def _batch_facts(
                 }
             )
             continue
+        declared_count = batch.get("candidate_count")
+        if declared_count is not None:
+            try:
+                declared_count = int(declared_count)
+            except (TypeError, ValueError, OverflowError):
+                declared_count = None
+            if declared_count is None or declared_count < 0 or declared_count != len(raw_facts):
+                exclusions.append(
+                    {
+                        "source_table": "filter_decision_batches",
+                        "source_batch_id": batch.get("id"),
+                        "event_at": batch.get("evaluated_at"),
+                        "availability": "unavailable",
+                        "unavailable_reason": "candidate_fact_count_mismatch",
+                        "declared_candidate_count": declared_count,
+                        "decoded_candidate_count": len(raw_facts),
+                    }
+                )
+                continue
         for sequence, raw in enumerate(raw_facts):
             if not isinstance(raw, dict):
                 continue
@@ -319,6 +338,10 @@ def build_candidate_facts(
         for fact in facts
         if fact["fixed_horizon_outcome"] is not None and fact["fixed_horizon_outcome"].get("status") == "settled"
     )
+    unavailable_reasons = Counter(
+        str(item.get("unavailable_reason") or "source_unavailable")
+        for item in batch_exclusions
+    )
     return {
         "contract_version": FACT_CONTRACT_VERSION,
         "fact_unit": "candidate_fact",
@@ -329,11 +352,7 @@ def build_candidate_facts(
         "settled_outcome_count": outcome_count,
         "outcome_coverage": outcome_count / len(facts) if facts else None,
         "unavailable_count": len(batch_exclusions),
-        "unavailable_reasons": {
-            "malformed_candidate_facts_json": len(batch_exclusions)
-        }
-        if batch_exclusions
-        else {},
+        "unavailable_reasons": dict(sorted(unavailable_reasons.items())),
         "exclusions": batch_exclusions,
         "terminal_counts": dict(sorted(terminal_counts.items())),
         "facts": facts,
