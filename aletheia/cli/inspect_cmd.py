@@ -212,11 +212,18 @@ def profit_gradient(
 ):
     """Apply seven-layer unique-winner gates to a frozen evidence artifact."""
 
-    from aletheia.analytics.profit_gradient import select_unique_max_direction
+    from aletheia.analytics.profit_gradient import (
+        PROFIT_GRADIENT_CONTRACT_VERSION,
+        select_unique_max_direction,
+    )
 
     payload = json.loads(evidence_file.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise typer.BadParameter("evidence must be a JSON object")
+    if payload.get("contract_version") != PROFIT_GRADIENT_CONTRACT_VERSION:
+        raise typer.BadParameter(
+            f"evidence contract_version must be {PROFIT_GRADIENT_CONTRACT_VERSION}"
+        )
     layer_samples = payload.get("layer_samples")
     evidence_context = payload.get("evidence_context")
     if not isinstance(layer_samples, dict) or not isinstance(evidence_context, dict):

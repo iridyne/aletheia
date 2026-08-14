@@ -165,6 +165,9 @@ def _normalized_samples(
         if not unit_id or not cluster_id or delta_bp is None or delta_quote is None or occurred_at is None:
             exclusions.append("incomplete_paired_sample")
             continue
+        if (delta_bp == 0.0 and delta_quote != 0.0) or delta_bp * delta_quote < 0.0:
+            exclusions.append("paired_delta_sign_mismatch")
+            continue
         if unit_id in seen_units:
             exclusions.append("duplicate_assignment_unit")
             continue
@@ -254,6 +257,7 @@ def _layer_result(
         if sample["arm"]:
             arms[sample["arm"]] += 1
     requires_two_arms = bool(profile and profile["requires_two_arms"])
+    unassigned_arm_count = unit_count - sum(arms.values()) if requires_two_arms else None
     smaller_arm = min(arms.values()) if requires_two_arms and len(arms) == 2 else None
     top1, top5 = _concentration(samples)
     total_quote = sum(sample["paired_net_delta_quote"] for sample in samples)
@@ -267,6 +271,8 @@ def _layer_result(
     if requires_two_arms:
         if len(arms) != 2:
             reasons.append("randomized_two_arms_required")
+        if unassigned_arm_count:
+            reasons.append("randomized_arm_missing")
         if minimum_smaller_arm is None or smaller_arm is None or smaller_arm < minimum_smaller_arm:
             reasons.append("smaller_arm_below_20")
     if layer == "Risk" and risk_reject_count < int(thresholds.get("minimum_risk_rejects") or 20):
@@ -303,6 +309,7 @@ def _layer_result(
         "evidence_role": profile["evidence_role"] if profile else None,
         "thresholds": dict(thresholds),
         "arm_counts": dict(sorted(arms.items())),
+        "unassigned_arm_count": unassigned_arm_count,
         "smaller_arm_count": smaller_arm,
         "eligible_frequency": frequency,
         "paired_net_delta_bp": estimate,

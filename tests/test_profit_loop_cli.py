@@ -167,6 +167,7 @@ def test_profit_gradient_command_fails_closed_on_empty_evidence(tmp_path):
     evidence.write_text(
         json.dumps(
             {
+                "contract_version": "profit_gradient/v2",
                 "layer_samples": {},
                 "evidence_context": {
                     "behavior_fingerprints": ["behavior-v1"],
@@ -199,3 +200,25 @@ def test_profit_gradient_command_fails_closed_on_empty_evidence(tmp_path):
     assert payload["verdict"] == "no_unique_direction"
     assert payload["winner_layer"] is None
     assert payload["automatic_behavior_change_authorized"] is False
+
+
+def test_profit_gradient_command_rejects_legacy_evidence_version(tmp_path):
+    evidence = tmp_path / "evidence.json"
+    evidence.write_text(
+        json.dumps(
+            {
+                "contract_version": "profit_gradient/v1",
+                "layer_samples": {},
+                "evidence_context": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        inspect_app,
+        ["profit-gradient", "--evidence", str(evidence), "--json"],
+    )
+
+    assert result.exit_code != 0
+    assert "profit_gradient/v2" in result.output
