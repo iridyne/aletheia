@@ -224,6 +224,26 @@ def test_paired_same_unit_rejects_duplicate_position_units():
     assert result["winner_layer"] is None
 
 
+def test_paired_same_unit_uses_resampling_clusters_for_independence_gate():
+    samples = {
+        layer: _samples(layer, effect_bp=10.0, count=40, with_arms=False)
+        for layer in gradient.LAYERS
+    }
+    for index, sample in enumerate(samples["Costs"]):
+        sample["cluster_id"] = f"cluster-{index // 20}"
+
+    result = gradient.select_unique_max_direction(
+        samples,
+        evidence_context=_context(comparison_method="paired_same_unit"),
+    )
+
+    costs = result["layers"]["Costs"]
+    assert costs["eligible_sample_count"] == 40
+    assert costs["independent_unit_count"] == 2
+    assert "independent_units_below_30" in costs["gate_reasons"]
+    assert result["winner_layer"] is None
+
+
 def test_prospective_randomized_retains_two_arm_threshold():
     samples = _seven_layers()
     for index, sample in enumerate(samples["Costs"]):
@@ -475,6 +495,53 @@ def test_paired_cohort_identity_is_required(field):
     assert result["winner_layer"] is None
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "assignment_salts",
+        "horizons",
+        "outcome_contract_versions",
+        "metric_versions",
+        "statistical_unit_versions",
+        "stages",
+    ],
+)
+def test_randomized_cohort_identity_rejects_non_string_values(field):
+    context = _context(**{field: [{}]})
+
+    result = gradient.select_unique_max_direction(_seven_layers(), evidence_context=context)
+
+    assert result["cohort_identity"] is None
+    assert f"mixed_or_missing_{field}" in result["global_gate_reasons"]
+    assert result["winner_layer"] is None
+
+
+def test_paired_quote_harm_must_match_positive_bp_direction():
+    samples = {
+        layer: _samples(
+            layer,
+            effect_bp=10.0 if layer == "Costs" else 1.0,
+            count=40,
+            with_arms=False,
+        )
+        for layer in gradient.LAYERS
+    }
+    for sample in samples["Costs"][:10]:
+        sample["paired_net_delta_bp"] = -1.0
+        sample["paired_net_delta_quote"] = -10.0
+
+    result = gradient.select_unique_max_direction(
+        samples,
+        evidence_context=_context(comparison_method="paired_same_unit"),
+    )
+
+    costs = result["layers"]["Costs"]
+    assert costs["paired_net_delta_bp"] > 5.0
+    assert costs["harm_quote"] == pytest.approx(-70.0)
+    assert "paired_quote_harm_not_positive" in costs["gate_reasons"]
+    assert result["winner_layer"] is None
+
+
 def test_randomized_quote_harm_uses_cluster_arm_contrast_not_row_sums():
     samples = _seven_layers()
     costs = samples["Costs"]
@@ -575,6 +642,23 @@ def test_randomized_bootstrap_seed_ignores_quote_values():
 
     assert baseline[:3] == pytest.approx(changed_quotes[:3])
     assert baseline[3:] == changed_quotes[3:]
+
+
+def test_paired_bootstrap_seed_ignores_row_order_within_clusters():
+    samples = _samples("Costs", effect_bp=1.0, count=12, with_arms=False)
+    values = [1.0, 4.0, 8.0, 13.0, 21.0, 34.0]
+    for index, sample in enumerate(samples):
+        sample["cluster_id"] = f"cluster-{index // 2}"
+        sample["paired_net_delta_bp"] = values[index // 2] + index % 2
+        sample["paired_net_delta_quote"] = sample["paired_net_delta_bp"] / 10.0
+
+    normalized, _, _ = gradient._normalized_samples("Costs", samples)
+    reordered = list(reversed(normalized))
+
+    baseline = gradient._paired_unit_interval(normalized)
+    changed_order = gradient._paired_unit_interval(reordered)
+
+    assert baseline == pytest.approx(changed_order)
 
 
 def test_temporal_sign_reversal_blocks_apparent_average_effect():

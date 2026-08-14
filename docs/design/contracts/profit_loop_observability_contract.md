@@ -119,7 +119,7 @@ hard gates. The method-specific gates are:
 | comparison method | additional method gate | unique winner |
 | --- | --- | --- |
 | `prospective_randomized` | at least 30 independent clusters, exact `control`/`treatment` arms with each cluster assigned to one arm, at least 20 clusters in the smaller arm, singular assignment/horizon/outcome/metric/statistical-unit/stage identities, and a positive quote contrast aligned with the basis-point direction | allowed |
-| `paired_same_unit` | at least 30 unique units, with singular horizon/outcome/metric/statistical-unit identities; no arm threshold or arm labels are required | allowed for selecting the next forward question, never automatic behavior change |
+| `paired_same_unit` | at least 30 independent resampling clusters and 30 unique units, with singular horizon/outcome/metric/statistical-unit/stage identities; no arm threshold or arm labels are required | allowed for selecting the next forward question, never automatic behavior change |
 | `deterministic_decomposition` | at least 30 independent units; facts remain descriptive | prohibited; measured fact only |
 | `directional_observational` | at least 30 independent units; association remains directional | prohibited; rank the next question only |
 
