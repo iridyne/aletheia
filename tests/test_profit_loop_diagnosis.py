@@ -101,6 +101,7 @@ def test_candidate_diagnosis_uses_only_fixed_horizon_candidate_units():
         "facts": [
             {
                 "fact_id": "filtered",
+                "first_exposure": {"candidate_kind": "opportunity"},
                 "terminal_state": "filtered",
                 "fixed_horizon_outcome": {
                     "status": "settled",
@@ -110,6 +111,7 @@ def test_candidate_diagnosis_uses_only_fixed_horizon_candidate_units():
             },
             {
                 "fact_id": "traded",
+                "first_exposure": {"candidate_kind": "opportunity"},
                 "terminal_state": "traded",
                 "fixed_horizon_outcome": {
                     "status": "settled",
@@ -127,3 +129,47 @@ def test_candidate_diagnosis_uses_only_fixed_horizon_candidate_units():
     assert result["layers"]["Selection"]["delta_pct"] == 3.0
     assert result["layers"]["Selection"]["statistical_unit"] == "outcome_candidate_key"
     assert result["layers"]["Selection"]["economic_unit"] == "fixed_horizon_net_return_pct"
+
+
+def test_candidate_layers_compare_only_their_matching_populations():
+    facts = []
+    for candidate_kind, rejected, accepted in (
+        ("opportunity", "filtered", "traded"),
+        ("pi_decision", "pi_skip", "traded"),
+        ("proposal", "risk_reject", "traded"),
+    ):
+        facts.extend(
+            [
+                {
+                    "first_exposure": {"candidate_kind": candidate_kind},
+                    "terminal_state": rejected,
+                    "fixed_horizon_outcome": {
+                        "status": "settled",
+                        "net_return_pct": -1.0,
+                    },
+                },
+                {
+                    "first_exposure": {"candidate_kind": candidate_kind},
+                    "terminal_state": accepted,
+                    "fixed_horizon_outcome": {
+                        "status": "settled",
+                        "net_return_pct": 2.0,
+                    },
+                },
+            ]
+        )
+    report = {
+        "as_of_at": "2026-08-13T00:00:00+00:00",
+        "fixed_horizon": "24h",
+        "settled_outcome_count": len(facts),
+        "outcome_coverage": 1.0,
+        "facts": facts,
+    }
+
+    result = diagnosis.diagnose_candidate_report(report)
+
+    assert {layer: result["layers"][layer]["delta_pct"] for layer in ("Selection", "Decision", "Risk")} == {
+        "Selection": 3.0,
+        "Decision": 3.0,
+        "Risk": 3.0,
+    }

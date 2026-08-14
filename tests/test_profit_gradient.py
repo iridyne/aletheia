@@ -134,3 +134,15 @@ def test_temporal_sign_reversal_blocks_apparent_average_effect():
 
     assert result["verdict"] == "no_unique_direction"
     assert "temporal_halves_disagree" in result["layers"]["Costs"]["gate_reasons"]
+
+
+def test_one_dependent_cluster_cannot_produce_confidence_interval():
+    estimate, lower, upper = gradient._cluster_interval(
+        [
+            {"cluster_id": "same-day", "paired_net_delta_bp": 5.0},
+            {"cluster_id": "same-day", "paired_net_delta_bp": 15.0},
+        ]
+    )
+    assert estimate == 10.0
+    assert lower is None
+    assert upper is None

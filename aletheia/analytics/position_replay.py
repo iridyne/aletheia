@@ -84,21 +84,73 @@ def _pi_decision(db: Any, proposal_id: str, cutoff: datetime) -> tuple[dict[str,
 
 
 def _runtime_identity(db: Any, rows: Iterable[dict[str, Any] | None]) -> dict[str, Any]:
-    session_ids = sorted({str(row.get("runtime_session_id")) for row in rows if row and row.get("runtime_session_id")})
-    sessions = []
-    for session_id in session_ids:
-        found = db.execute("SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)).fetchone()
-        if found is not None:
-            sessions.append(dict(found))
+    producers = [row for row in rows if row]
+    identities = [
+        (
+            row.get("runtime_session_id"),
+            row.get("producer_commit"),
+            row.get("behavior_fingerprint"),
+        )
+        for row in producers
+    ]
+    identities.extend(
+        (
+            row.get("closed_runtime_session_id"),
+            row.get("closed_producer_commit"),
+            row.get("closed_behavior_fingerprint"),
+        )
+        for row in producers
+        if row.get("closed_at")
+    )
+    session_ids = sorted({str(identity[0]) for identity in identities if identity[0]})
+    sessions = {
+        str(found["session_id"]): dict(found)
+        for session_id in session_ids
+        if (found := db.execute("SELECT * FROM runtime_sessions WHERE session_id=?", (session_id,)).fetchone())
+        is not None
+    }
+    unresolved_session_ids = sorted(set(session_ids) - sessions.keys())
+    resolved_identities = []
+    incomplete_identity_count = 0
+    mismatched_identity_count = 0
+    for session_id, direct_commit, direct_fingerprint in identities:
+        direct_pair = (str(direct_commit), str(direct_fingerprint)) if direct_commit and direct_fingerprint else None
+        session = sessions.get(str(session_id)) if session_id else None
+        session_pair = (
+            (str(session["boot_commit"]), str(session["behavior_fingerprint"]))
+            if session and session.get("boot_commit") and session.get("behavior_fingerprint")
+            else None
+        )
+        if (direct_commit or direct_fingerprint) and direct_pair is None:
+            incomplete_identity_count += 1
+            continue
+        if session_id and session_pair is None:
+            incomplete_identity_count += 1
+            continue
+        if direct_pair and session_pair and direct_pair != session_pair:
+            mismatched_identity_count += 1
+            continue
+        identity = direct_pair or session_pair
+        if identity is None:
+            incomplete_identity_count += 1
+            continue
+        resolved_identities.append(identity)
+    errors = []
+    if unresolved_session_ids:
+        errors.append("runtime_session_not_recorded")
+    if incomplete_identity_count:
+        errors.append("producer_identity_incomplete")
+    if mismatched_identity_count:
+        errors.append("producer_identity_mismatch")
     return {
+        "status": "available" if not errors else "unavailable",
+        "errors": errors,
         "runtime_session_ids": session_ids,
-        "producer_commits": sorted(
-            {str(row.get("producer_commit")) for row in rows if row and row.get("producer_commit")}
-            | {str(row.get("boot_commit")) for row in sessions if row.get("boot_commit")}
-        ),
-        "behavior_fingerprints": sorted(
-            {str(row.get("behavior_fingerprint")) for row in sessions if row.get("behavior_fingerprint")}
-        ),
+        "unresolved_runtime_session_ids": unresolved_session_ids,
+        "incomplete_identity_count": incomplete_identity_count,
+        "mismatched_identity_count": mismatched_identity_count,
+        "producer_commits": sorted({identity[0] for identity in resolved_identities}),
+        "behavior_fingerprints": sorted({identity[1] for identity in resolved_identities}),
     }
 
 
@@ -113,11 +165,15 @@ def _instrument(discovery: dict[str, Any] | None, position: dict[str, Any]) -> d
     }
 
 
+_COUNTERFACTUAL_WINDOW_BARS = 66
+
+
 def _ohlcv_evidence(
     db: Any,
     *,
     position: dict[str, Any],
     path: dict[str, Any] | None,
+    cutoff: datetime,
 ) -> dict[str, Any]:
     base = {
         "availability": "unavailable",
@@ -129,9 +185,9 @@ def _ohlcv_evidence(
             "timeframe": "1m",
         },
         "window_start_ts_ms": (path or {}).get("entry_ts_ms"),
-        "window_end_ts_ms": (path or {}).get("exit_ts_ms"),
+        "window_end_ts_ms": None,
         "row_count": 0,
-        "expected_row_count": (path or {}).get("holding_bars_expected"),
+        "expected_row_count": None,
         "rows": [],
         "ohlcv_window_hash": None,
     }
@@ -140,17 +196,26 @@ def _ohlcv_evidence(
         return base
     entry_ts = path.get("entry_ts_ms")
     exit_ts = path.get("exit_ts_ms")
-    expected = path.get("holding_bars_expected")
     exchange = path.get("ohlcv_exchange")
     market_type = path.get("ohlcv_market_type")
-    if any(value is None for value in (entry_ts, exit_ts, expected, exchange, market_type)):
+    if any(value is None for value in (entry_ts, exit_ts, exchange, market_type)):
         base["unavailable_reason"] = "ohlcv_window_identity_incomplete"
         return base
     entry_ts_i = int(entry_ts) if entry_ts is not None else 0
     exit_ts_i = int(exit_ts) if exit_ts is not None else 0
-    expected_i = int(expected) if expected is not None else 0
     start = entry_ts_i - entry_ts_i % _BAR_MS
-    end = ((exit_ts_i + _BAR_MS - 1) // _BAR_MS) * _BAR_MS
+    actual_end = ((exit_ts_i + _BAR_MS - 1) // _BAR_MS) * _BAR_MS
+    counterfactual_end = start + _COUNTERFACTUAL_WINDOW_BARS * _BAR_MS
+    cutoff_end = int(cutoff.timestamp() * 1000) // _BAR_MS * _BAR_MS
+    end = min(max(actual_end, counterfactual_end), cutoff_end)
+    expected_i = max(0, (end - start) // _BAR_MS)
+    base.update(
+        {
+            "window_start_ts_ms": start,
+            "window_end_ts_ms": end,
+            "expected_row_count": expected_i,
+        }
+    )
     candles = repo.get_ohlcv_candles(
         str(position.get("symbol") or ""),
         "1m",
@@ -178,6 +243,7 @@ def _ohlcv_evidence(
             "rows": [list(row) for row in canonical],
             "row_count": len(canonical),
             "ohlcv_window_hash": _content_hash(canonical),
+            "expected_row_count": expected_i,
         }
     )
     return base
@@ -249,6 +315,10 @@ def build_position_replay(
         "unavailable_reason": "position_not_found",
     }
     if position is None or not _at_or_before(position, cutoff):
+        return base
+    closed_at = _utc(position.get("closed_at"))
+    if closed_at is not None and closed_at > cutoff:
+        base["unavailable_reason"] = "position_state_mutated_after_cutoff"
         return base
 
     proposal = _row(source, "trade_proposals", position.get("proposal_id"))
@@ -326,7 +396,7 @@ def build_position_replay(
         causal_errors.append(pi_error)
 
     path = getattr(trade_path_analytics, "build_position_trade_path")(position_id, db=source)
-    ohlcv = _ohlcv_evidence(source, position=position, path=path)
+    ohlcv = _ohlcv_evidence(source, position=position, path=path, cutoff=cutoff)
     economics = _economics(position)
     provenance = _runtime_identity(
         source,

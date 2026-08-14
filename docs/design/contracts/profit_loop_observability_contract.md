@@ -21,7 +21,7 @@ The production entry point is `aletheia inspect`:
 - `position-diagnosis` and `candidate-diagnosis` emit
   `profit_loop_diagnosis/v1` artifacts without changing their inputs;
 - `profit-counterfactual --cost-model <json>` evaluates the fixed
-  `profit_loop_counterfactual/v1` registry;
+  `profit_loop_counterfactual/v1` registry against one durable evidence epoch;
 - `profit-gradient --evidence <json>` applies `profit_gradient/v1` gates to a
   frozen evidence artifact.
 
@@ -32,6 +32,14 @@ gradient evidence files are inputs only.
 
 No replay, diagnosis, counterfactual, gradient, manifest, or protected-retention
 table exists.
+
+Profit-loop registration reuses `learning_policy_epochs` with
+`epoch_kind=evidence_anchor:profit_loop_observability`. Gateway startup creates
+the anchor only after a durable Runtime Session exists. Its immutable identity
+is the exact Runtime Session boot commit, behavior fingerprint, and canonical
+SHA-256 of the five-treatment registry; the offline `evidence epoch register
+--commit` override cannot supply or replace this identity. No migration,
+configuration field, or Learning treatment is introduced.
 
 Position replay joins existing immutable IDs across Opportunity, PI decision,
 Proposal, authoritative Risk decision, Order, Fill, Position, exit plan,
@@ -82,6 +90,19 @@ concentration, exclusions, and gate reasons. Its verdict is either
   Missing machine-evaluable inputs return `not_evaluable`.
 - The counterfactual registry is finite and locked. Delayed entry uses the next
   bar open; thesis invalidation during the delay produces `no_trade`.
+- A counterfactual resolves exactly one immutable profit-loop evidence anchor
+  matching the complete opening/closing producer commit, behavior fingerprint,
+  and current registry hash. Missing, mixed, conflicting, or duplicate identity
+  fails closed; current HEAD, parent commits, raw Position rows, and fingerprint-
+  only matches are never fallbacks.
+- `learning_policy_epochs.started_at` is the immutable registration time and the
+  only cutoff is `started_at + 30 days`. A restart with the same triple reuses
+  the epoch. Any commit, fingerprint, or registry change ends the old epoch and
+  starts a new 30-day window from zero. An epoch ended before its cutoff cannot
+  be evaluated as a shortened cohort.
+- The hard-coded registration opened on 2026-08-13 cannot accept the producer
+  identity of the build that actually ran it. It remains immutable historical
+  evidence with zero valid samples and is neither deleted nor reinterpreted.
 - Counterfactual output requires a cost model with a model ID, verification
   timestamp, source-evidence SHA-256, fee, funding, and slippage assumptions.
 - Same-sample counterfactuals are permanently `exploratory` and
@@ -106,6 +127,11 @@ Transient Position path-provider failures are deferred and retried by the
 existing observer. They no longer create an append-only unavailable bucket that
 blocks later recovery.
 
+`candidate-diagnosis` and the `opportunity audit --view entry-exit` report root
+both declare `read_only=true` and `behavior_changed=false`. These fields describe
+the inspection surfaces only; their economics, eligibility, gates, and rows are
+unchanged.
+
 No protected OHLCV retention was added. The Fedora Paper evidence checked during
 implementation contained 327 closed Positions, a maximum hold of 1,705.28
 minutes, and only 1,414 retained ADA perpetual one-minute rows—well below the
@@ -127,6 +153,9 @@ A manifest remains prohibited until one of those observable triggers occurs.
 
 ## Known gaps
 
-The first post-deployment evidence cohort must accumulate before any empirical
-winner or retention trigger can be claimed. GitHub issue #964 remains the
-implementation and deployment record.
+The first post-repair deployment evidence cohort must accumulate before any
+empirical winner or retention trigger can be claimed. Its cutoff is established
+only after deploying the exact merged commit and recording the new durable epoch;
+the historical 2026-09-12 cutoff is not reused. GitHub issue #964 is the parent
+scope and #974 records the producer-registration repair. This remains exploratory
+with no promotion authority and does not modify or reset UFC.

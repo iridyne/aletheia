@@ -22,11 +22,14 @@ def _database() -> sqlite3.Connection:
             entry_fee REAL, exit_fee REAL, funding_cost REAL, funding_source TEXT,
             status TEXT, execution_mode TEXT, opened_at TEXT, closed_at TEXT,
             reconciliation_identity TEXT, reconciliation_evidence TEXT,
-            outcome_semantics_version TEXT, runtime_session_id TEXT, producer_commit TEXT
+            outcome_semantics_version TEXT, runtime_session_id TEXT, producer_commit TEXT,
+            behavior_fingerprint TEXT, closed_runtime_session_id TEXT,
+            closed_producer_commit TEXT, closed_behavior_fingerprint TEXT
         );
         CREATE TABLE opportunities (
             id TEXT PRIMARY KEY, universe_member_id TEXT, symbol TEXT, thesis TEXT,
-            scanner_family TEXT, created_at TEXT
+            scanner_family TEXT, created_at TEXT, runtime_session_id TEXT,
+            producer_commit TEXT, behavior_fingerprint TEXT
         );
         CREATE TABLE serenity_opportunities (id TEXT PRIMARY KEY);
         CREATE TABLE universe_members (
@@ -38,25 +41,27 @@ def _database() -> sqlite3.Connection:
         CREATE TABLE trade_proposals (
             id TEXT PRIMARY KEY, opportunity_id TEXT, symbol TEXT, direction TEXT,
             attribution_snapshot TEXT, created_at TEXT, runtime_session_id TEXT,
-            producer_commit TEXT
+            producer_commit TEXT, behavior_fingerprint TEXT
         );
         CREATE TABLE pi_decisions (
-            id TEXT PRIMARY KEY, proposal_id TEXT, action TEXT, created_at TEXT
+            id TEXT PRIMARY KEY, proposal_id TEXT, action TEXT, created_at TEXT,
+            runtime_session_id TEXT, producer_commit TEXT, behavior_fingerprint TEXT
         );
         CREATE TABLE risk_decisions (
             id TEXT PRIMARY KEY, proposal_id TEXT, approved INTEGER,
             decision_role TEXT, policy_id TEXT, policy_revision INTEGER,
-            policy_hash TEXT, created_at TEXT
+            policy_hash TEXT, created_at TEXT, runtime_session_id TEXT,
+            producer_commit TEXT, behavior_fingerprint TEXT
         );
         CREATE TABLE orders (
             id TEXT PRIMARY KEY, proposal_id TEXT, risk_decision_id TEXT,
             position_id TEXT, close_reason TEXT, created_at TEXT,
-            runtime_session_id TEXT, producer_commit TEXT
+            runtime_session_id TEXT, producer_commit TEXT, behavior_fingerprint TEXT
         );
         CREATE TABLE fills (
             id TEXT PRIMARY KEY, order_id TEXT, fill_price REAL,
             fill_quantity REAL, fee REAL, fee_source TEXT, filled_at TEXT,
-            runtime_session_id TEXT, producer_commit TEXT
+            runtime_session_id TEXT, producer_commit TEXT, behavior_fingerprint TEXT
         );
         CREATE TABLE position_exit_plan_versions (
             position_id TEXT, version INTEGER, effective_at TEXT
@@ -73,47 +78,57 @@ def _database() -> sqlite3.Connection:
     db.execute("INSERT INTO universe_members VALUES ('member-1','asset-1',1,95.0)")
     db.execute(
         "INSERT INTO opportunities VALUES "
-        "('opp-1','member-1','BTC/USDT','breakout','momentum','2026-08-13T00:00:00+00:00')"
+        "('opp-1','member-1','BTC/USDT','breakout','momentum',"
+        "'2026-08-13T00:00:00+00:00','session-1','commit-a','behavior-a')"
     )
     db.execute(
         "INSERT INTO trade_proposals VALUES "
         "('proposal-1','opp-1','BTC/USDT','long',?,"
-        "'2026-08-13T00:00:10+00:00','session-1','commit-a')",
+        "'2026-08-13T00:00:10+00:00','session-1','commit-a','behavior-a')",
         (json.dumps({"position_hypothesis": {"contract_version": "position_hypothesis/v1"}}),),
     )
-    db.execute("INSERT INTO pi_decisions VALUES ('decision-1','proposal-1','trade','2026-08-13T00:00:05+00:00')")
-    db.execute("INSERT INTO pi_decisions VALUES ('decision-future','proposal-1','trade','2026-08-13T01:00:00+00:00')")
+    db.execute(
+        "INSERT INTO pi_decisions VALUES "
+        "('decision-1','proposal-1','trade','2026-08-13T00:00:05+00:00',"
+        "'session-1','commit-a','behavior-a')"
+    )
+    db.execute(
+        "INSERT INTO pi_decisions VALUES "
+        "('decision-future','proposal-1','trade','2026-08-13T01:00:00+00:00',"
+        "'session-1','commit-a','behavior-a')"
+    )
     db.execute(
         "INSERT INTO risk_decisions VALUES "
         "('risk-1','proposal-1',1,'authoritative','paper-risk',3,'risk-hash',"
-        "'2026-08-13T00:00:20+00:00')"
+        "'2026-08-13T00:00:20+00:00','session-1','commit-a','behavior-a')"
     )
     db.execute(
         "INSERT INTO orders VALUES "
         "('entry-order','proposal-1','risk-1','position-1',NULL,"
-        "'2026-08-13T00:00:30+00:00','session-1','commit-a')"
+        "'2026-08-13T00:00:30+00:00','session-1','commit-a','behavior-a')"
     )
     db.execute(
         "INSERT INTO fills VALUES "
         "('entry-fill','entry-order',100.0,1.0,0.1,'broker_ledger',"
-        "'2026-08-13T00:00:40+00:00','session-1','commit-a')"
+        "'2026-08-13T00:00:40+00:00','session-1','commit-a','behavior-a')"
     )
     db.execute(
         "INSERT INTO positions VALUES "
         "('position-1','opp-1','proposal-1','entry-order','BTC/USDT','usdt_futures',"
         "'long',1.0,100.0,102.0,1.7,0.1,0.1,0.1,'local_simulation','closed',"
         "'paper_internal','2026-08-13T00:00:00+00:00','2026-08-13T00:02:00+00:00',"
-        "'settlement-1','{}','oi-v1','session-1','commit-a')"
+        "'settlement-1','{}','oi-v1','session-1','commit-a','behavior-a',"
+        "'session-1','commit-a','behavior-a')"
     )
     db.execute(
         "INSERT INTO orders VALUES "
         "('close-order',NULL,NULL,'position-1','take_profit',"
-        "'2026-08-13T00:01:50+00:00','session-1','commit-a')"
+        "'2026-08-13T00:01:50+00:00','session-1','commit-a','behavior-a')"
     )
     db.execute(
         "INSERT INTO fills VALUES "
         "('close-fill','close-order',102.0,1.0,0.1,'broker_ledger',"
-        "'2026-08-13T00:02:00+00:00','session-1','commit-a')"
+        "'2026-08-13T00:02:00+00:00','session-1','commit-a','behavior-a')"
     )
     db.execute("INSERT INTO position_exit_plan_versions VALUES ('position-1',1,'2026-08-13T00:00:30+00:00')")
     db.execute("INSERT INTO position_protection_state VALUES ('position-1','closed')")
@@ -191,6 +206,62 @@ def test_replay_uses_exact_ids_cutoff_reconciled_economics_and_deterministic_has
         first["stages"]["holding"]["ohlcv"]["ohlcv_window_hash"]
         == second["stages"]["holding"]["ohlcv"]["ohlcv_window_hash"]
     )
+    assert first["producer"]["status"] == "available"
+    assert first["producer"]["behavior_fingerprints"] == ["behavior-a"]
+
+
+def test_replay_fails_closed_when_a_producer_session_is_unresolved(monkeypatch):
+    db = _database()
+    db.execute(
+        "UPDATE positions SET closed_runtime_session_id='missing-session', "
+        "closed_producer_commit='commit-a', closed_behavior_fingerprint=NULL"
+    )
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
+
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db)
+
+    assert replay["producer"]["status"] == "unavailable"
+    assert replay["producer"]["unresolved_runtime_session_ids"] == ["missing-session"]
+
+
+def test_replay_fails_closed_when_a_producer_row_has_no_identity(monkeypatch):
+    db = _database()
+    db.execute("UPDATE fills SET runtime_session_id=NULL, producer_commit=NULL WHERE id='close-fill'")
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
+
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db)
+
+    assert replay["producer"]["status"] == "unavailable"
+    assert replay["producer"]["errors"] == ["producer_identity_incomplete"]
+
+
+def test_replay_rejects_direct_identity_that_disagrees_with_session(monkeypatch):
+    db = _database()
+    db.execute("UPDATE fills SET producer_commit='different-commit' WHERE id='close-fill'")
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
+
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db)
+
+    assert replay["producer"]["status"] == "unavailable"
+    assert replay["producer"]["errors"] == ["producer_identity_mismatch"]
 
 
 def test_replay_fails_closed_instead_of_joining_ambiguous_pi_retry(monkeypatch):
@@ -207,6 +278,57 @@ def test_replay_fails_closed_instead_of_joining_ambiguous_pi_retry(monkeypatch):
 
     assert replay["identity"]["pi_decision_id"] is None
     assert "ambiguous_pi_decision_for_proposal" in replay["causal_link"]["errors"]
+
+
+def test_replay_hides_mutable_position_state_after_historical_cutoff():
+    db = _database()
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:00:25+00:00", db=db)
+    assert replay["availability"] == "unavailable"
+    assert replay["unavailable_reason"] == "position_state_mutated_after_cutoff"
+
+
+def test_replay_requests_candles_through_fixed_counterfactual_horizon(monkeypatch):
+    db = _database()
+    captured = {}
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+
+    def candles(*args, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", candles)
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db)
+    ohlcv = replay["stages"]["holding"]["ohlcv"]
+    assert captured["limit"] == 66
+    assert ohlcv["expected_row_count"] == 66
+    assert ohlcv["availability"] == "unavailable"
+
+
+def test_replay_counterfactual_ohlcv_never_crosses_requested_as_of(monkeypatch):
+    db = _database()
+    captured = {}
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+
+    def candles(*args, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", candles)
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:10:30+00:00", db=db)
+
+    ohlcv = replay["stages"]["holding"]["ohlcv"]
+    requested_cutoff_ms = 1_786_579_800_000
+    assert captured["before_ts"] == requested_cutoff_ms
+    assert ohlcv["window_end_ts_ms"] == requested_cutoff_ms
+    assert ohlcv["expected_row_count"] == 10
 
 
 def test_position_replay_cli_emits_json(monkeypatch):

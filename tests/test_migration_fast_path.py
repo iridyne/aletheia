@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 27)
+        f"aletheia-sqlite-v{version}" for version in range(2, 28)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v26"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v27"
     connection.close()
 
 
@@ -593,8 +593,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260813_0025_position_path_observations_v26",
-        "aletheia-sqlite-v26",
+        "20260813_0026_position_path_deferred_buckets_v27",
+        "aletheia-sqlite-v27",
     )
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "
