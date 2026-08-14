@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import math
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, cast
 
 from aletheia.data.providers import Candle, MarketDataProvider
@@ -55,22 +55,28 @@ def _normalize_direction(value: object) -> str | None:
     return None
 
 
-def _first_full_bucket_open_ms(position: dict[str, Any]) -> int | None:
-    value = position.get("opened_at")
+def _parse_position_timestamp(value: object) -> datetime | None:
     try:
         if isinstance(value, datetime):
-            opened_at = value
+            parsed = value
         else:
             raw = str(value or "").strip()
             if not raw:
                 return None
-            opened_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        if opened_at.tzinfo is None:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
             # SQLite's datetime('now') default is UTC but has no offset.
-            opened_at = opened_at.replace(tzinfo=timezone.utc)
-        opened_at_ms = math.ceil(opened_at.astimezone(timezone.utc).timestamp() * 1000)
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
     except (OSError, OverflowError, TypeError, ValueError):
         return None
+
+
+def _first_full_bucket_open_ms(position: dict[str, Any]) -> int | None:
+    opened_at = _parse_position_timestamp(position.get("opened_at"))
+    if opened_at is None:
+        return None
+    opened_at_ms = math.ceil(opened_at.timestamp() * 1000)
     return ((opened_at_ms + _BUCKET_MS - 1) // _BUCKET_MS) * _BUCKET_MS
 
 
@@ -106,21 +112,11 @@ def expected_position_path_bucket_bounds(
     if status == "open":
         last_bucket_open_ms = latest_completed_bucket_open_ms
     elif status == "closed":
-        value = position.get("closed_at")
-        try:
-            if isinstance(value, datetime):
-                closed_at = value
-            else:
-                raw = str(value or "").strip()
-                if not raw:
-                    return None, None
-                closed_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-            if closed_at.tzinfo is None:
-                # Preserve legacy SQLite UTC timestamp compatibility.
-                closed_at = closed_at.replace(tzinfo=timezone.utc)
-            closed_at_ms = int(closed_at.astimezone(timezone.utc).timestamp() * 1000)
-        except (OSError, OverflowError, TypeError, ValueError):
+        opened_at = _parse_position_timestamp(position.get("opened_at"))
+        closed_at = _parse_position_timestamp(position.get("closed_at"))
+        if opened_at is None or closed_at is None or closed_at <= opened_at:
             return None, None
+        closed_at_ms = int(closed_at.timestamp() * 1000)
         last_bucket_open_ms = (closed_at_ms // _BUCKET_MS - 1) * _BUCKET_MS
     else:
         return None, None
@@ -223,8 +219,21 @@ def _base_observation(position: dict[str, Any], *, bucket_open_ms: int, observed
     }
 
 
-def _store_unavailable(position: dict[str, Any], *, bucket_open_ms: int, observed_at: str, reason: str) -> bool:
-    observation = _base_observation(position, bucket_open_ms=bucket_open_ms, observed_at=observed_at)
+def _store_unavailable(
+    position: dict[str, Any],
+    *,
+    bucket_open_ms: int,
+    observed_at: str,
+    reason: str,
+    historical: bool = False,
+) -> bool:
+    if historical:
+        position = _historical_position_snapshot(
+            position, bucket_open_ms=bucket_open_ms
+        )
+    observation = _base_observation(
+        position, bucket_open_ms=bucket_open_ms, observed_at=observed_at
+    )
     observation["evidence_reason"] = reason
     return insert_position_path_observation(observation)
 
@@ -281,6 +290,7 @@ def _store_latest_position_result(
                 bucket_open_ms=bucket_open_ms,
                 observed_at=observed_at,
                 reason=reason,
+                historical=historical,
             ),
             "unavailable",
         )
@@ -305,6 +315,7 @@ def _store_latest_position_result(
                 bucket_open_ms=bucket_open_ms,
                 observed_at=observed_at,
                 reason="position_or_bar_economics_invalid",
+                historical=historical,
             ),
             "unavailable",
         )
@@ -395,6 +406,7 @@ async def observe_open_position_paths(
                     bucket_open_ms=bucket_open_ms,
                     observed_at=observed_at,
                     reason=f"max_retries_exceeded:{row['reason']}",
+                    historical=bucket_open_ms < latest_completed_bucket_open_ms,
                 )
                 _record_inserted_summary(
                     summary, inserted=inserted, status="unavailable"
@@ -549,6 +561,7 @@ async def observe_open_position_paths(
                 bucket_open_ms=bucket_open_ms,
                 observed_at=observed_at,
                 reason=f"max_retries_exceeded:{reason}",
+                historical=bucket_open_ms < latest_completed_bucket_open_ms,
             )
             _record_inserted_summary(
                 summary, inserted=inserted, status="unavailable"
@@ -767,7 +780,7 @@ def build_position_path_observer_status(
                     oldest_missing = (bucket_open_ms, position_id)
                 if (
                     bucket_open_ms not in state["deferred"]
-                    and bucket_open_ms + _BUCKET_MS >= cutoff_ms
+                    and bucket_open_ms >= cutoff_ms
                 ):
                     skipped += 1
 
@@ -785,9 +798,7 @@ def build_position_path_observer_status(
     else:
         lag_seconds = 0.0
 
-    last_24h = repo.count_position_path_observations_since(
-        (current - timedelta(hours=24)).isoformat()
-    )
+    last_24h = repo.count_position_path_observations_since(cutoff_ms)
     last_24h["skipped"] = skipped
     return {
         "eligible_position_count": len(positions),

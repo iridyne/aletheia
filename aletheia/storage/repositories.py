@@ -2780,15 +2780,15 @@ def count_deferred_position_path_observation_buckets() -> int:
     return int(row["count"]) if row else 0
 
 
-def count_position_path_observations_since(since: str) -> dict[str, int]:
-    """Count immutable available/unavailable facts observed since ``since``."""
+def count_position_path_observations_since(since_bucket_open_ms: int) -> dict[str, int]:
+    """Count immutable facts whose bucket starts in the trailing window."""
 
     rows = get_db().execute(
         "SELECT evidence_status, COUNT(*) AS count "
         "FROM position_path_observations "
-        "WHERE julianday(observed_at) >= julianday(?) "
+        "WHERE bucket_open_ms >= ? "
         "GROUP BY evidence_status",
-        (since,),
+        (int(since_bucket_open_ms),),
     ).fetchall()
     counts = {"available": 0, "unavailable": 0}
     for row in rows:

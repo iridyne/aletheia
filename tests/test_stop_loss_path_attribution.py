@@ -74,6 +74,16 @@ def _report(monkeypatch, position: dict, rows: list[dict]) -> dict:
     return analysis.build_position_path_report(position["id"])
 
 
+def test_expected_path_rejects_close_before_open():
+    assert analysis._expected_bucket_bounds(
+        {
+            "status": "closed",
+            "opened_at": _OPENED_AT,
+            "closed_at": _OPENED_AT,
+        }
+    ) == (None, None)
+
+
 def test_expected_path_preserves_legacy_naive_sqlite_utc_timestamps():
     first, last = analysis._expected_bucket_bounds(
         {
