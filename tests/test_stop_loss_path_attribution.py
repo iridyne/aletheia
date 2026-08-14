@@ -74,6 +74,18 @@ def _report(monkeypatch, position: dict, rows: list[dict]) -> dict:
     return analysis.build_position_path_report(position["id"])
 
 
+def test_expected_path_preserves_legacy_naive_sqlite_utc_timestamps():
+    first, last = analysis._expected_bucket_bounds(
+        {
+            "opened_at": "2026-08-13 00:00:00",
+            "closed_at": "2026-08-13 00:10:00",
+        }
+    )
+
+    assert first == _FIRST_BUCKET_MS
+    assert last == _FIRST_BUCKET_MS + 300_000
+
+
 def test_expected_path_starts_after_submillisecond_entry_boundary():
     first, last = analysis._expected_bucket_bounds(
         {

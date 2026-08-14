@@ -66,7 +66,8 @@ def _first_full_bucket_open_ms(position: dict[str, Any]) -> int | None:
                 return None
             opened_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         if opened_at.tzinfo is None:
-            return None
+            # SQLite's datetime('now') default is UTC but has no offset.
+            opened_at = opened_at.replace(tzinfo=timezone.utc)
         opened_at_ms = math.ceil(opened_at.astimezone(timezone.utc).timestamp() * 1000)
     except (OSError, OverflowError, TypeError, ValueError):
         return None
@@ -115,7 +116,8 @@ def expected_position_path_bucket_bounds(
                     return None, None
                 closed_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
             if closed_at.tzinfo is None:
-                return None, None
+                # Preserve legacy SQLite UTC timestamp compatibility.
+                closed_at = closed_at.replace(tzinfo=timezone.utc)
             closed_at_ms = int(closed_at.astimezone(timezone.utc).timestamp() * 1000)
         except (OSError, OverflowError, TypeError, ValueError):
             return None, None
