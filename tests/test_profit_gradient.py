@@ -679,6 +679,24 @@ def test_randomized_bootstrap_seed_ignores_quote_values():
     assert baseline[3:] == changed_quotes[3:]
 
 
+def test_randomized_bootstrap_seed_ignores_cluster_labels():
+    samples = _samples("Costs", effect_bp=1.0, count=40)
+    normalized, _, _ = gradient._normalized_samples("Costs", samples)
+    renamed = deepcopy(normalized)
+    labels = {
+        cluster_id: f"renamed-{index}"
+        for index, cluster_id in enumerate(
+            reversed(sorted({sample["cluster_id"] for sample in normalized}))
+        )
+    }
+    for sample in renamed:
+        sample["cluster_id"] = labels[sample["cluster_id"]]
+
+    assert gradient._randomized_cluster_interval(normalized) == pytest.approx(
+        gradient._randomized_cluster_interval(renamed)
+    )
+
+
 def test_paired_bootstrap_seed_ignores_row_order_within_clusters():
     samples = _samples("Costs", effect_bp=1.0, count=12, with_arms=False)
     values = [1.0, 4.0, 8.0, 13.0, 21.0, 34.0]

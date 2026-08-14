@@ -220,17 +220,26 @@ def _randomized_cluster_interval(
     if min(cluster_counts.values()) < 2:
         return estimate, None, None, cluster_counts, False
 
-    seed_material = "|".join(
-        f"{arm}:{row['cluster_id']}:{row['paired_net_delta_bp']:.12g}"
+    canonical_observations = {
+        arm: tuple(sorted(row["paired_net_delta_bp"] for row in arm_clusters[arm]))
         for arm in ("control", "treatment")
-        for row in sorted(arm_clusters[arm], key=lambda item: item["cluster_id"])
+    }
+    seed_material = "|".join(
+        f"{arm}:{','.join(f'{value:.12g}' for value in canonical_observations[arm])}"
+        for arm in ("control", "treatment")
     )
     seed = int(hashlib.sha256(seed_material.encode()).hexdigest()[:16], 16)
     rng = random.Random(seed)
     bootstraps = []
     for _ in range(iterations):
-        treatment_selected = [rng.choice(treatment)["paired_net_delta_bp"] for _ in treatment]
-        control_selected = [rng.choice(control)["paired_net_delta_bp"] for _ in control]
+        treatment_selected = [
+            rng.choice(canonical_observations["treatment"])
+            for _ in treatment
+        ]
+        control_selected = [
+            rng.choice(canonical_observations["control"])
+            for _ in control
+        ]
         bootstraps.append(
             sum(treatment_selected) / len(treatment_selected)
             - sum(control_selected) / len(control_selected)
