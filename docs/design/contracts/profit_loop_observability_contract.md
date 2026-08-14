@@ -89,7 +89,7 @@ concentration, exclusions, and gate reasons. Its verdict is either
 
 ### Profit-gradient v3 comparison method
 
-Every gradient evidence artifact must declare the v2 wrapper and one
+Every gradient evidence artifact must declare the v3 wrapper and one
 `evidence_context.comparison_method`:
 
 ```json
@@ -104,11 +104,11 @@ Every gradient evidence artifact must declare the v2 wrapper and one
 
 The CLI rejects a missing or older wrapper version before evaluating samples.
 
-Version 3 also records the randomized estimand and cohort identity. Version 2
-results are historical and are not pooled with version 3.
+Version 3 also records the randomized estimand and cohort identity. Version 2 and
+older results are historical and are not pooled with version 3.
 
 A missing or unknown method is ineligible; v1 and v2 evidence are historical and are not
-implicitly assigned a method, relabeled, pooled, or compared with v2 evidence.
+implicitly assigned a method, relabeled, pooled, or compared with version 3 evidence.
 One artifact does not mix methods implicitly. A caller evaluating a different
 method creates a separately identified evidence artifact.
 
@@ -118,14 +118,16 @@ hard gates. The method-specific gates are:
 
 | comparison method | additional method gate | unique winner |
 | --- | --- | --- |
-| `prospective_randomized` | at least 30 independent units, exact `control`/`treatment` arms, at least 20 units in the smaller arm, and singular assignment/horizon/outcome/metric/statistical-unit identities | allowed |
-| `paired_same_unit` | at least 30 unique units; no arm threshold or arm labels are required | allowed for selecting the next forward question, never automatic behavior change |
+| `prospective_randomized` | at least 30 independent clusters, exact `control`/`treatment` arms, at least 20 clusters in the smaller arm, and singular assignment/horizon/outcome/metric/statistical-unit identities | allowed |
+| `paired_same_unit` | at least 30 unique units, with singular horizon/outcome/metric/statistical-unit identities; no arm threshold or arm labels are required | allowed for selecting the next forward question, never automatic behavior change |
 | `deterministic_decomposition` | at least 30 independent units; facts remain descriptive | prohibited; measured fact only |
 | `directional_observational` | at least 30 independent units; association remains directional | prohibited; rank the next question only |
 
 For `prospective_randomized`, the estimand is the equal-weight per-cluster
 `treatment - control` outcome contrast; arm labels affect the estimate and the
-cluster bootstrap. A pooled mean is not a randomized effect. For
+cluster bootstrap. Quote harm and concentration use the same per-cluster arm-
+contrast contributions, not pooled row sums. A pooled mean is not a randomized
+effect. For
 `paired_same_unit`, each normalized row contributes one complete, cost-aware
 delta for one unique statistical unit (for the current Exit counterfactual,
 one Position). Duplicate `unit_id` rows are excluded. The paired result is
