@@ -22,6 +22,11 @@ def _context(**overrides) -> dict:
         "capital_days": 20.0,
         "risk_reject_count": 25,
         "comparison_method": "prospective_randomized",
+        "assignment_salts": ["salt-v1"],
+        "horizons": ["24h"],
+        "outcome_contract_versions": ["outcome-v1"],
+        "metric_versions": ["metric-v1"],
+        "statistical_unit_versions": ["unit-v1"],
     }
     context.update(overrides)
     return context
@@ -33,21 +38,24 @@ def _samples(
     fact_unit = "candidate_fact" if layer in {"Selection", "Decision", "Risk"} else "position_fact"
     economic_unit = "fixed_horizon_net_return" if fact_unit == "candidate_fact" else "verified_settled_net_economics"
     started = datetime(2026, 8, 1, tzinfo=timezone.utc)
-    return [
-        {
-            "fact_unit": fact_unit,
-            "economic_unit": economic_unit,
-            "unit_id": f"{layer}-{index}",
-            "cluster_id": f"day-{index // 4}",
-            "occurred_at": (started + timedelta(hours=index)).isoformat(),
-            "arm": (
-                "baseline" if index < count // 2 else "treatment"
-            ) if with_arms else "",
-            "paired_net_delta_bp": effect_bp,
-            "paired_net_delta_quote": effect_bp / 10.0,
-        }
-        for index in range(count)
-    ]
+    samples = []
+    for index in range(count):
+        cluster = index // 4
+        arm = ("control" if cluster % 2 == 0 else "treatment") if with_arms else ""
+        value_bp = effect_bp if not with_arms or arm == "treatment" else 0.0
+        samples.append(
+            {
+                "fact_unit": fact_unit,
+                "economic_unit": economic_unit,
+                "unit_id": f"{layer}-{index}",
+                "cluster_id": f"day-{cluster}",
+                "occurred_at": (started + timedelta(hours=index)).isoformat(),
+                "arm": arm,
+                "paired_net_delta_bp": value_bp,
+                "paired_net_delta_quote": value_bp / 10.0,
+            }
+        )
+    return samples
 
 
 def _seven_layers(*, winner: str = "Costs") -> dict[str, list[dict]]:
@@ -61,8 +69,16 @@ def test_one_separated_layer_is_unique_winner_with_normalized_harm_units():
     result = gradient.select_unique_max_direction(samples, evidence_context=_context())
 
     assert samples == frozen
-    assert result["contract_version"] == "profit_gradient/v2"
+    assert result["contract_version"] == "profit_gradient/v3"
     assert result["comparison_method"] == "prospective_randomized"
+    assert result["estimand"] == "treatment_minus_control_cluster_mean_bp"
+    assert result["cohort_identity"] == {
+        "assignment_salt": "salt-v1",
+        "horizon": "24h",
+        "outcome_contract_version": "outcome-v1",
+        "metric_version": "metric-v1",
+        "statistical_unit_version": "unit-v1",
+    }
     assert result["thresholds"]["minimum_smaller_arm"] == 20
     assert result["verdict"] == "unique_max_direction"
     assert result["winner_layer"] == "Costs"
@@ -73,9 +89,10 @@ def test_one_separated_layer_is_unique_winner_with_normalized_harm_units():
     assert costs["economic_unit"] == "verified_settled_net_economics"
     assert costs["lower_95_bp"] == pytest.approx(10.0)
     assert costs["gradient_lower_bp"] == pytest.approx(4.0)
-    assert costs["harm_quote"] == pytest.approx(40.0)
-    assert costs["harm_quote_per_100_candidates"] == pytest.approx(40.0)
-    assert costs["harm_quote_per_capital_day"] == pytest.approx(2.0)
+    assert costs["cluster_count_by_arm"] == {"control": 5, "treatment": 5}
+    assert costs["harm_quote"] == pytest.approx(20.0)
+    assert costs["harm_quote_per_100_candidates"] == pytest.approx(20.0)
+    assert costs["harm_quote_per_capital_day"] == pytest.approx(1.0)
 
 
 def test_multiple_eligible_layers_or_nonseparated_intervals_have_no_winner():
@@ -121,7 +138,7 @@ def test_denominators_risk_rejects_and_concentration_are_hard_gates():
     assert result["verdict"] == "no_unique_direction"
 
     concentrated = _seven_layers()
-    concentrated["Costs"][0]["paired_net_delta_quote"] = 1_000.0
+    concentrated["Costs"][4]["paired_net_delta_quote"] = 1_000.0
     concentration_result = gradient.select_unique_max_direction(concentrated, evidence_context=_context())
     assert concentration_result["verdict"] == "no_unique_direction"
     assert "top1_concentration_above_25pct" in concentration_result["layers"]["Costs"]["gate_reasons"]
@@ -222,7 +239,7 @@ def test_prospective_randomized_rejects_unassigned_units():
 
 def test_conflicting_delta_units_are_excluded():
     samples = _seven_layers()
-    samples["Costs"][0]["paired_net_delta_quote"] = -1.0
+    samples["Costs"][4]["paired_net_delta_quote"] = -1.0
 
     result = gradient.select_unique_max_direction(
         samples,
@@ -233,6 +250,75 @@ def test_conflicting_delta_units_are_excluded():
     assert costs["independent_unit_count"] == 39
     assert "paired_delta_sign_mismatch" in costs["gate_reasons"]
     assert result["winner_layer"] is None
+
+
+@pytest.mark.parametrize(
+    ("bp", "quote"),
+    [(0.0, 1.0), (1.0, 0.0)],
+)
+def test_asymmetric_zero_delta_units_are_excluded(bp, quote):
+    samples = _seven_layers()
+    samples["Costs"][0]["paired_net_delta_bp"] = bp
+    samples["Costs"][0]["paired_net_delta_quote"] = quote
+
+    result = gradient.select_unique_max_direction(
+        samples,
+        evidence_context=_context(comparison_method="paired_same_unit"),
+    )
+
+    costs = result["layers"]["Costs"]
+    assert costs["independent_unit_count"] == 39
+    assert "paired_delta_zero_mismatch" in costs["gate_reasons"]
+    assert result["winner_layer"] is None
+
+
+def test_randomized_effect_is_treatment_minus_control_not_pooled_mean():
+    samples = _seven_layers()
+    for sample in samples["Costs"]:
+        if sample["arm"] == "control":
+            sample["paired_net_delta_bp"] = 100.0
+            sample["paired_net_delta_quote"] = 10.0
+        else:
+            sample["paired_net_delta_bp"] = 110.0
+            sample["paired_net_delta_quote"] = 11.0
+
+    result = gradient.select_unique_max_direction(samples, evidence_context=_context())
+
+    costs = result["layers"]["Costs"]
+    assert costs["paired_net_delta_bp"] == pytest.approx(10.0)
+    assert costs["estimand"] == "treatment_minus_control_cluster_mean_bp"
+    assert result["winner_layer"] == "Costs"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "assignment_salts",
+        "horizons",
+        "outcome_contract_versions",
+        "metric_versions",
+        "statistical_unit_versions",
+    ],
+)
+def test_randomized_cohort_identity_is_required(field):
+    context = _context()
+    context.pop(field)
+
+    result = gradient.select_unique_max_direction(_seven_layers(), evidence_context=context)
+
+    assert result["cohort_identity"] is None
+    assert f"mixed_or_missing_{field}" in result["global_gate_reasons"]
+    assert result["winner_layer"] is None
+
+
+def test_nonpositive_candidate_denominator_cannot_select_a_winner():
+    for candidate_count in (None, 0, -1, float("nan")):
+        result = gradient.select_unique_max_direction(
+            _seven_layers(), evidence_context=_context(candidate_count=candidate_count)
+        )
+        assert result["winner_layer"] is None
+        assert result["verdict"] == "no_unique_direction"
+        assert "candidate_count_not_positive" in result["global_gate_reasons"]
 
 
 @pytest.mark.parametrize(
