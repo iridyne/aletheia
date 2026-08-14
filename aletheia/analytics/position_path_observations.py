@@ -378,7 +378,11 @@ def build_position_path_report(position_id: str, *, limit: int = 10_000) -> dict
         giveback_pct=giveback_to_exit_pct,
     )
     plan_versions = sorted(
-        {int(row.get("exit_plan_version") or 0) for row in observations}
+        {
+            version
+            for version in (int(row.get("exit_plan_version") or 0) for row in observations)
+            if version > 0
+        }
     )
     return {
         "position_id": position_id,

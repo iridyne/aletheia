@@ -128,11 +128,11 @@ async def test_observer_defers_when_provider_cannot_prove_closed_bar(
             assert str(instrument) == "bitget:BTC/USDT:perp"
             assert timeframe == "5m"
             assert limit == 2
-            assert since == bucket
+            assert since in {bucket, bucket + 300_000}
             return OHLCVResult(
                 [
                     Candle(
-                        bucket,
+                        since,
                         100.0,
                         105.0,
                         98.0,
@@ -174,12 +174,12 @@ async def test_observer_defers_when_provider_cannot_prove_closed_bar(
     retried = await observe_open_position_paths(
         now=datetime.fromtimestamp((bucket + 900_000) / 1000, tz=timezone.utc)
     )
-    assert retried["inserted"] == 1
-    assert retried["available"] == 1
+    assert retried["inserted"] == 2
+    assert retried["available"] == 2
     assert retried["deferred"] == 0
-    assert calls == {"created": 2, "requested": 2, "closed": 2}
+    assert calls == {"created": 3, "requested": 3, "closed": 3}
     rows = repo.list_position_path_observations(position.id)
-    assert len(rows) == 1
+    assert len(rows) == 2
     assert rows[0]["evidence_status"] == "available"
     assert (
         repo.get_db()
@@ -363,7 +363,7 @@ async def test_observer_skips_existing_bucket_before_provider_lookup(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_observer_recovers_oldest_missing_bucket_one_per_position_per_round(
+async def test_observer_recovers_oldest_missing_buckets_with_bounded_catchup(
     monkeypatch,
 ):
     from aletheia.data import ccxt_provider
@@ -412,12 +412,28 @@ async def test_observer_recovers_oldest_missing_bucket_one_per_position_per_roun
     first = await observer.observe_open_position_paths(now=now)
     second = await observer.observe_open_position_paths(now=now)
 
-    assert first["inserted"] == 1
-    assert second["inserted"] == 1
-    assert requested == [bucket, bucket + 300_000]
-    assert [
-        row["bucket_open_ms"] for row in repo.list_position_path_observations(position.id)
-    ] == [bucket, bucket + 300_000, bucket + 1_500_000]
+    assert first["inserted"] == 2
+    assert second["inserted"] == 2
+    assert requested == [
+        bucket,
+        bucket + 300_000,
+        bucket + 600_000,
+        bucket + 900_000,
+    ]
+    rows = repo.list_position_path_observations(position.id)
+    assert [row["bucket_open_ms"] for row in rows] == [
+        bucket,
+        bucket + 300_000,
+        bucket + 600_000,
+        bucket + 900_000,
+        bucket + 1_500_000,
+    ]
+    recovered = rows[:-1]
+    assert all(row["funding_cost"] is None for row in recovered)
+    assert all(row["funding_source"] == "unavailable" for row in recovered)
+    assert all(row["stop_price"] is None for row in recovered)
+    assert all(row["take_profit_price"] is None for row in recovered)
+    assert all(row["exit_plan_version"] == 0 for row in recovered)
 
 
 @pytest.mark.asyncio
@@ -466,9 +482,11 @@ async def test_observer_recovers_closed_position_path_after_missed_runs(monkeypa
     )
     now = datetime.fromtimestamp((bucket + 1_800_000) / 1000, tz=timezone.utc)
 
-    for _ in range(3):
-        result = await observer.observe_open_position_paths(now=now)
-        assert result["inserted"] == 1
+    results = [
+        await observer.observe_open_position_paths(now=now)
+        for _ in range(2)
+    ]
+    assert [result["inserted"] for result in results] == [2, 1]
 
     assert requested == [bucket, bucket + 300_000, bucket + 600_000]
     rows = repo.list_position_path_observations(position.id)

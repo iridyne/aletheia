@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
@@ -23,6 +24,7 @@ _OHLCV_REQUEST_TIMEOUT_SECONDS = 15.0
 _OBSERVATION_CYCLE_TIMEOUT_SECONDS = 60.0
 _PROVIDER_CLOSE_TIMEOUT_SECONDS = 5.0
 _MAX_DURABLE_OBSERVATION_ATTEMPTS = repo.POSITION_PATH_MAX_RETRY_ATTEMPTS
+_MAX_RECOVERY_PASSES_PER_CYCLE = 2
 
 
 def _physical_market_type(value: object) -> str | None:
@@ -225,6 +227,32 @@ def _store_unavailable(position: dict[str, Any], *, bucket_open_ms: int, observe
     return insert_position_path_observation(observation)
 
 
+def _historical_position_snapshot(
+    position: dict[str, Any], *, bucket_open_ms: int
+) -> dict[str, Any]:
+    """Use durable historical protection facts; never attach current mutable state."""
+
+    snapshot = dict(position)
+    snapshot["funding_cost"] = None
+    snapshot["funding_source"] = "unavailable"
+    snapshot["stop_price"] = None
+    snapshot["take_profit_price"] = None
+    snapshot["exit_plan_version"] = 0
+    try:
+        plan, _bisected = repo.get_position_exit_plan_for_bar(
+            str(position["id"]),
+            bar_open_ms=bucket_open_ms,
+            bar_close_ms=bucket_open_ms + _BUCKET_MS,
+        )
+    except Exception:
+        plan = None
+    if plan is not None:
+        snapshot["stop_price"] = _finite(plan.get("stop_price"))
+        snapshot["take_profit_price"] = _finite(plan.get("take_profit_price"))
+        snapshot["exit_plan_version"] = max(0, int(plan.get("version") or 0))
+    return snapshot
+
+
 def _store_latest_position_result(
     position_id: str,
     *,
@@ -234,6 +262,7 @@ def _store_latest_position_result(
     bucket_open_ms: int,
     bucket_end_ms: int,
     observed_at: str,
+    historical: bool = False,
 ) -> tuple[bool, str] | None:
     position = repo.get_position(position_id)
     if position is None or not _position_survives_target_bucket(
@@ -254,6 +283,10 @@ def _store_latest_position_result(
             "unavailable",
         )
 
+    if historical:
+        position = _historical_position_snapshot(
+            position, bucket_open_ms=bucket_open_ms
+        )
     observation = _base_observation(
         position,
         bucket_open_ms=bucket_open_ms,
@@ -315,12 +348,15 @@ def _first_missing_bucket(
     return None
 
 
-async def observe_open_position_paths(*, now: datetime | None = None) -> dict[str, Any]:
-    """Recover the oldest expected five-minute bucket for each eligible Position."""
+async def observe_open_position_paths(
+    *, now: datetime | None = None, _recovery_pass: int = 0
+) -> dict[str, Any]:
+    """Recover a bounded oldest-first prefix of each eligible Position path."""
 
     from aletheia.data.ccxt_provider import get_market_data_provider
 
     current = _observer_clock(now)
+    cycle_started = time.monotonic()
     now_ms = int(current.timestamp() * 1000)
     latest_completed_bucket_open_ms = _latest_completed_bucket_open_ms(now_ms)
     observed_at = current.isoformat()
@@ -461,6 +497,7 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
                 bucket_open_ms=bucket_open_ms,
                 bucket_end_ms=bucket_end_ms,
                 observed_at=observed_at,
+                historical=bucket_open_ms < latest_completed_bucket_open_ms,
             )
             if result is None:
                 repo.resolve_deferred_position_path_observation(
@@ -674,6 +711,25 @@ async def observe_open_position_paths(*, now: datetime | None = None) -> dict[st
                 ),
                 return_exceptions=True,
             )
+    # A single missed tick must not create a permanent one-bucket lag: the
+    # observer may make one bounded follow-up pass when the first pass was
+    # healthy and completed within half of the job's cycle budget. Failed or
+    # unavailable evidence stays on the durable queue for the next cycle.
+    if (
+        _recovery_pass + 1 < _MAX_RECOVERY_PASSES_PER_CYCLE
+        and summary["available"] > 0
+        and summary["unavailable"] == 0
+        and summary["deferred"] == 0
+        and not summary["errors"]
+        and time.monotonic() - cycle_started
+        < _OBSERVATION_CYCLE_TIMEOUT_SECONDS / 2
+    ):
+        follow_up = await observe_open_position_paths(
+            now=current, _recovery_pass=_recovery_pass + 1
+        )
+        for key in ("inserted", "available", "unavailable", "deferred"):
+            summary[key] += follow_up[key]
+        summary["errors"].extend(follow_up["errors"])
     return summary
 
 

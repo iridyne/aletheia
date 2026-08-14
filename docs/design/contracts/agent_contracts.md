@@ -333,12 +333,19 @@ durably queued and independently retried by `outcome_hook_replay`.
 - **Expected-bucket contract**: the first bucket starts at the first complete 5m
   interval after `opened_at`; open Positions end at the latest completed bucket, and
   closed Positions end at the last bucket completed before `closed_at`. Each run
-  registers only the earliest not-yet-materialized bucket for a Position, then consumes
-  the oldest due bucket cohort. A retry reaches terminal `unavailable` after the
-  bounded attempt limit; it never remains pending forever.
+  registers only the earliest not-yet-materialized bucket per bounded pass, then
+  consumes the oldest due bucket cohort. A healthy cycle may make at most two
+  passes per Position so recovery converges without a backfill storm. A retry
+  reaches terminal `unavailable` after the bounded attempt limit; it never remains
+  pending forever.
 - **Identity contract**: OHLCV lookup and deduplication use the exact physical
   `InstrumentId` (venue + canonical symbol + spot/perp market). A bar is available
   only with the exact timestamp and provider `is_closed` proof.
+- **Historical snapshot contract**: a recovered bucket never attaches the current
+  mutable funding/protection state as if it were historical. Funding remains
+  unavailable; protection uses the durable plan effective at the bucket when one
+  exists, otherwise `exit_plan_version=0` and nullable levels disclose that the
+  historical plan is unavailable.
 - **Side effects**: observation-only. It never mutates Position, ExitPlan, Proposal,
   RiskDecision, Order, Fill, Learning, or Live state. `aletheia control status` exposes
   oldest missing bucket, deferred count, observer lag, and trailing 24h available /

@@ -126,10 +126,15 @@ canonical fact and OHLCV hash.
 Position Path Observer uses a recoverable expected-bucket contract. For every
 open or eligible closed Position it derives the first complete post-entry 5m
 bucket through the latest completed bucket (capped at `closed_at` for a closed
-Position), registers only the oldest not-yet-materialized bucket, and preserves
-that registration durably before provider I/O. Each Position contributes at
-most one newly queued bucket per observer cycle; exact venue/symbol/spot-perp
-identity and provider `is_closed` proof remain mandatory.
+Position), registers only the oldest not-yet-materialized bucket per bounded
+pass, and preserves each registration durably before provider I/O. A healthy
+observer cycle makes at most two bounded oldest-first passes per
+Position, so recovery converges without a backfill storm; exact
+venue/symbol/spot-perp identity and provider `is_closed` proof remain mandatory.
+Recovered buckets do not reuse current mutable funding/protection state: funding
+is unavailable, and the effective durable ExitPlan is used when present; otherwise
+`exit_plan_version=0` plus nullable levels explicitly signal unavailable plan
+history.
 
 Transient Position path-provider failures stay in the durable deferred queue for
 bounded retries. Once the retry limit is reached, the bucket is materialized as
