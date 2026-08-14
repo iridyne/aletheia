@@ -114,19 +114,17 @@ export default function AgentFeed() {
   const [, forceUpdate] = useReducer(x => x + 1, 0)
   useEffect(() => { const t = setInterval(forceUpdate, 30000); return () => clearInterval(t) }, [])
 
-  // Overview owns the page scroll, but this card owns its activity-list scroll. Its
-  // rendered top is dynamic because the setup banner and PnL data above it load
-  // asynchronously, so derive the card height from the actual DOM position instead of
-  // a hard-coded header offset. Browser zoom also emits a viewport resize and is
-  // handled by the same measurement.
+  // Height is set once from the card's document position and changes only with
+  // viewport size or initial layout drivers above the card—not page scrolling or
+  // activity updates inside the card.
   useLayoutEffect(() => {
     const card = cardRef.current
     if (!card) return
 
     let animationFrame = 0
     const measure = () => {
-      const top = card.getBoundingClientRect().top
       const viewportHeight = window.visualViewport?.height ?? window.innerHeight
+      const top = card.getBoundingClientRect().top + window.scrollY
       const nextHeight = Math.max(
         MIN_FEED_HEIGHT,
         Math.floor(viewportHeight - Math.max(0, top) - VIEWPORT_BOTTOM_GAP),
@@ -138,23 +136,13 @@ export default function AgentFeed() {
       animationFrame = window.requestAnimationFrame(measure)
     }
 
-    // Data and setup state above the card can change its top without resizing the
-    // browser. Observe those layout drivers and watch for the setup banner mounting.
     const resizeObserver = new ResizeObserver(scheduleMeasure)
     const observeLayoutDrivers = () => {
       const main = card.closest('main')
       if (!main) return
-      // Observe main itself so any structural height change (setup-banner
-      // mounting, PnL zone loading) triggers a re-measure without needing
-      // a MutationObserver that fires on every text-content update.
-      resizeObserver.observe(main)
       main.querySelectorAll('.page-title, .setup-banner, .pnl-zone')
         .forEach(element => resizeObserver.observe(element))
     }
-    // MutationObserver is only used to pick up newly-mounted layout drivers
-    // (e.g. setup-banner appearing after an async check). It must NOT call
-    // scheduleMeasure() — that would re-measure on every feed text update
-    // (agent-runs, timestamps) and cause the height to jitter every 10 s.
     const mutationRoot = card.closest('main')
     const mutationObserver = new MutationObserver(observeLayoutDrivers)
 

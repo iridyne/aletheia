@@ -58,16 +58,25 @@ from aletheia.data.venue_health import (
 logger = logging.getLogger("aletheia.ccxt_provider")
 
 # Canonical timeframe → milliseconds. Single source of truth for bar durations.
-# Scoped to the timeframes the system actually uses (trading.instruments.TIMEFRAMES
-# + 1m). An unlisted timeframe (e.g. "3m") yields 0 from timeframe_ms(), which the
-# OHLCV route treats as unsupported when paginating — keep this set tight on purpose.
+# Covers the Bitget/Binance/OKX granularities the charts UI exposes for parity
+# with mainstream exchange terminals; agent reasoning still uses the smaller
+# trading.instruments.TIMEFRAMES subset. An unlisted timeframe (e.g. "2m",
+# "1M") yields 0 from timeframe_ms(); the OHLCV route treats that as
+# unsupported when paginating.
 _TF_MS = {
     "1m": 60_000,
     "5m": 300_000,
     "15m": 900_000,
+    "30m": 1_800_000,
     "1h": 3_600_000,
+    "2h": 7_200_000,
     "4h": 14_400_000,
+    "6h": 21_600_000,
+    "8h": 28_800_000,
+    "12h": 43_200_000,
     "1d": 86_400_000,
+    "3d": 259_200_000,
+    "1w": 604_800_000,
 }
 
 
@@ -206,6 +215,9 @@ class CCXTProvider:
         timeframe: str = "1h",
         limit: int = 100,
         since: int | None = None,
+        *,
+        _record_venue_health: bool = True,
+        _persist_result: bool = True,
     ) -> OHLCVResult:
         ccxt_symbol, canon, mkt = _resolve_ccxt_symbol(symbol)
 
@@ -243,7 +255,8 @@ class CCXTProvider:
                 raw = await ensure().fetch_ohlcv(
                     ccxt_symbol, timeframe=timeframe, since=since, limit=limit
                 )
-                record_venue_success(name)
+                if _record_venue_health:
+                    record_venue_success(name)
                 parsed = [
                     parse_ohlcv_candle(row, provider="ccxt", exchange=name)
                     for row in raw
@@ -281,14 +294,15 @@ class CCXTProvider:
                 # on the scheduler event loop stalls unrelated async jobs and API
                 # work during bursty OHLCV refreshes, so keep the write awaited but
                 # move the blocking wait to a worker thread.
-                await asyncio.to_thread(
-                    self._persist,
-                    canon,
-                    timeframe,
-                    candles,
-                    name,
-                    market_type=mkt,
-                )
+                if _persist_result:
+                    await asyncio.to_thread(
+                        self._persist,
+                        canon,
+                        timeframe,
+                        candles,
+                        name,
+                        market_type=mkt,
+                    )
                 result = OHLCVResult(
                     candles,
                     requested=limit,
@@ -308,7 +322,7 @@ class CCXTProvider:
                     outcome="failed",
                     reason=type(e).__name__,
                 ))
-                if is_venue_refusal(e):
+                if _record_venue_health and is_venue_refusal(e):
                     record_venue_failure(name, e)
                 logger.warning("ohlcv fetch failed on %s for %s: %s", name, ccxt_symbol, e)
         if attempts and any(attempt.outcome == "empty" for attempt in attempts):
@@ -321,6 +335,24 @@ class CCXTProvider:
             last_err.ohlcv_attempts = tuple(attempts)  # type: ignore[attr-defined]
             raise last_err
         raise RuntimeError("ohlcv fetch failed")
+
+    async def get_ohlcv_observation(
+        self,
+        symbol: InstrumentId | str,
+        timeframe: str = "1h",
+        limit: int = 100,
+        since: int | None = None,
+    ) -> OHLCVResult:
+        """Fetch OHLCV without changing venue health or market-data history."""
+
+        return await self.get_ohlcv(
+            symbol,
+            timeframe=timeframe,
+            limit=limit,
+            since=since,
+            _record_venue_health=False,
+            _persist_result=False,
+        )
 
     @staticmethod
     def _persist(

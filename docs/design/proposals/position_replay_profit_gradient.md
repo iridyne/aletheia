@@ -21,10 +21,11 @@ Closed Position analytics already expose attribution, path, geometry, outcome
 integrity, and Risk/Execution contribution evidence. They do not provide one
 exact-identity replay, a complete non-traded candidate denominator, a frozen
 machine-evaluable opening hypothesis, or a common winner gate. Existing
-`position_path_observations` also has four blockers: transient failures become
-irrecoverable bucket facts, Stop Loss aggregation bypasses reportable-outcome
-eligibility, MFE can be negative, and cost-complete semantics do not match the
-shared accounting contract.
+`position_path_observations` also has five blockers: missed observer cycles do
+not register expected buckets, transient failures can remain pending without a
+terminal bound, Stop Loss aggregation bypasses reportable-outcome eligibility,
+MFE can be negative, and cost-complete semantics do not match the shared
+accounting contract.
 
 ## Goals and non-goals
 

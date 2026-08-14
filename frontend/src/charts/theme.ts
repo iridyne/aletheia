@@ -17,4 +17,5 @@ export const chartTheme = {
   markerSell: '#ff5d6c',
   markerStopLong: '#f59e0b',
   markerStopShort: '#22d3ee',
+  indicatorBlue: '#4aa3ff',
 } as const

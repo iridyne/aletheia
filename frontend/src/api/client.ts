@@ -1,5 +1,6 @@
 import type { InfraEvent, KnowledgeItem, SystemStatus, ThesisLineageRecord } from "../types";
 import type { GuardRow } from "../lib/guards";
+import type { MarketSnapshot, Opportunity, Position } from "../types";
 
 const BASE = "/api";
 const REMOTE_CONTROL_TOKEN_KEY = "aletheia.remoteControlToken";
@@ -450,6 +451,38 @@ export interface OhlcvResult {
 		ageMs: number | null;
 		stale: boolean | null;
 	};
+}
+
+export interface MarketOpportunityInstrument {
+	symbol: string;
+	market: string;
+	total_count: number;
+	open_count: number;
+	latest_created_at: string;
+	latest_status: string;
+	latest_direction_bias: string | null;
+}
+
+export interface MarketTrade {
+	id: string;
+	symbol: string;
+	market_type?: string | null;
+	direction?: string | null;
+	filled_at?: string | null;
+	reduce_only?: boolean | number | null;
+	order_type?: string | null;
+	quantity?: number | null;
+	price?: number | null;
+	strategy_id?: string | null;
+}
+
+export interface MarketNewsItem {
+	id: string;
+	title: string;
+	sentiment?: string | null;
+	source?: string | null;
+	published_at?: string | null;
+	summary?: string | null;
 }
 
 function timeframeMs(timeframe: string): number | null {
@@ -2174,7 +2207,17 @@ export const api = {
 		post("/agent-runs/start", { agent_name }),
 	getDreamingSummary: () =>
 		fetchJson<DreamingSummary>("/dreaming/summary"),
-	getOpportunities: () => fetchJson<any[]>("/opportunities"),
+	getOpportunities: () => fetchJson<Opportunity[]>("/opportunities"),
+	getMarketOpportunityInstruments: () =>
+		fetchJson<MarketOpportunityInstrument[]>("/market/opportunity-instruments"),
+	getMarketOpportunities: (symbol: string, marketType: string, limit = 500) => {
+		const params = new URLSearchParams({
+			symbol,
+			market_type: marketType,
+			limit: String(limit),
+		});
+		return fetchJson<Opportunity[]>(`/market/opportunities?${params}`);
+	},
 	getProposals: () => fetchJson<any[]>("/proposals"),
 	getProposal: (id: string) => fetchJson<any>(`/proposals/${id}`),
 	approveProposal: (id: string) => post(`/proposals/${id}/approve-paper`),
@@ -2183,9 +2226,9 @@ export const api = {
 		fetchJson<{ proposal_id: string; decision: any }>(
 			`/proposals/${id}/risk-decision`,
 		),
-	getTrades: () => fetchJson<any[]>("/trades"),
+	getTrades: () => fetchJson<MarketTrade[]>("/trades"),
 	exportTradesCsv: () => `${BASE}/trades/export?fmt=csv`,
-	getPositions: () => fetchJson<any[]>("/positions"),
+	getPositions: () => fetchJson<Position[]>("/positions"),
 	getPositionsReconciliation: () =>
 		fetchJson<import("../types").PositionsReconciliation>(
 			"/positions/reconciliation",
@@ -2374,18 +2417,20 @@ export const api = {
 			...(exchange ? { exchange } : {}),
 			...(marketType !== "spot" ? { market_type: marketType } : {}),
 		});
-		return fetchJson<any>(`/market/ohlcv?${params}`);
+		return fetchJson<OhlcvCandle[]>(`/market/ohlcv?${params}`);
 	},
 	getOhlcvWithMeta: (
 		symbol: string,
 		timeframe = "1h",
 		limit = 100,
 		marketType = "spot",
+		exchange = "",
 	) => {
 		const params = new URLSearchParams({
 			symbol,
 			timeframe,
 			limit: String(limit),
+			...(exchange ? { exchange } : {}),
 			...(marketType !== "spot" ? { market_type: marketType } : {}),
 		});
 		return fetchJson<OhlcvResult>(
@@ -2458,9 +2503,11 @@ export const api = {
 
 	// Market snapshots (watchlist)
 	getMarketSnapshots: (symbol?: string, limit = 10) =>
-		fetchJson<any[]>(
+		fetchJson<MarketSnapshot[]>(
 			`/market/snapshots${symbol ? `?symbol=${encodeURIComponent(symbol)}&limit=${limit}` : `?limit=${limit}`}`,
 		),
+
+	getDefaultExchange: () => fetchJson<{ exchange: string }>("/config/default-exchange"),
 
 	// Macro indicators (VIX, DXY, SPY, BTC dominance, risk regime)
 	getMacro: () => fetchJson<{ available: boolean; data: any }>("/market/macro"),
@@ -2474,7 +2521,7 @@ export const api = {
 		),
 
 	// News Intelligence
-	getNews: (limit = 50) => fetchJson<any[]>(`/news?limit=${limit}`),
+	getNews: (limit = 50) => fetchJson<MarketNewsItem[]>(`/news?limit=${limit}`),
 	getNewsItem: (id: string) => fetchJson<any>(`/news/${id}`),
 	analyzeNews: (id: string) => post<any>(`/news/${id}/analyze`),
 	createNews: (body: {

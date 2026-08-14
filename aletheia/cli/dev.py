@@ -12,6 +12,9 @@ import typer
 from aletheia.runtime_paths import preview_instance_dir
 
 dev_app = typer.Typer(no_args_is_help=True)
+from aletheia.cli.dev_seed import dev_seed_app
+
+dev_app.add_typer(dev_seed_app, name="seed-markets", help="Populate the isolated preview instance with observation fixture data.")
 _RESERVED_PORTS = frozenset({8787, 8788})
 
 

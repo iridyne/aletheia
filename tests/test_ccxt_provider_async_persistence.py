@@ -43,6 +43,37 @@ async def test_get_ohlcv_persists_outside_scheduler_event_loop(monkeypatch):
     await asyncio.sleep(0)
 
 
+@pytest.mark.real_network
+@pytest.mark.asyncio
+async def test_observation_ohlcv_does_not_persist_or_change_venue_health(monkeypatch):
+    class FakeExchange:
+        async def fetch_ohlcv(self, *_args, **_kwargs):
+            return [[1, 10, 11, 9, 10.5, 100]]
+
+    provider = CCXTProvider(exchange="fixture", fallback_exchange="fallback")
+    monkeypatch.setattr(provider, "_ensure_primary", lambda: FakeExchange())
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.record_venue_success",
+        lambda _name: pytest.fail("observation fetch must not clear venue health"),
+    )
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.record_venue_failure",
+        lambda *_args: pytest.fail("observation fetch must not change venue health"),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_persist",
+        lambda *_args, **_kwargs: pytest.fail("observation fetch must not persist OHLCV"),
+    )
+
+    candles = await provider.get_ohlcv_observation(
+        "BTC/USDT", timeframe="1h", limit=1, since=0
+    )
+
+    assert len(candles) == 1
+    assert candles[0].exchange == "fixture"
+
+
 @pytest.mark.asyncio
 async def test_fallback_ohlcv_cache_keeps_actual_venue_identity(monkeypatch):
     class FakeExchange:

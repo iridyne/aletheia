@@ -159,6 +159,26 @@ def _gateway_running() -> bool | None:
         return None
 
 
+def _position_path_observer_status() -> dict[str, Any]:
+    """Return durable Position-path recovery facts without inventing runtime state."""
+
+    try:
+        from aletheia.portfolio.position_path_observer import (
+            build_position_path_observer_status,
+        )
+
+        return {"available": True, **build_position_path_observer_status()}
+    except Exception as exc:
+        return {
+            "available": False,
+            "error": type(exc).__name__,
+            "oldest_missing_bucket": None,
+            "deferred_bucket_count": None,
+            "observer_lag": None,
+            "last_24h": None,
+        }
+
+
 def build_control_status() -> dict[str, Any]:
     """Collect all governance-relevant state into one serializable dict."""
     deployed = _deployed_commit()
@@ -235,12 +255,14 @@ def build_control_status() -> dict[str, Any]:
     authority = _learning_authority()
     continuity = _runtime_continuity()
     gateway = _gateway_running()
+    position_path = _position_path_observer_status()
 
     return {
         "as_of": datetime.now(timezone.utc).isoformat(),
         "sha": sha_section,
         "gateway_running": gateway,
         "runtime": continuity,
+        "position_path_observer": position_path,
         "authority": authority,
         "active_experiments": active_hypotheses,
         "active_experiments_available": experiment_result["available"],
@@ -292,6 +314,35 @@ def status(
         f"  Recorded  : {sha['runtime_recorded_short']} "
         f"({sha['runtime_recorded_source']})"
     )
+
+    # ─── Position path observer ────────────────────────────────────────────
+    typer.echo("╠═ Position Path Observer ══════════════════════════════╣")
+    position_path = data.get("position_path_observer", {})
+    if not position_path.get("available"):
+        typer.echo("  (not available — durable observer state query failed)")
+    else:
+        oldest = position_path.get("oldest_missing_bucket") or {}
+        typer.echo(
+            "  Oldest missing: "
+            + (
+                f"{oldest.get('position_id')} @ {oldest.get('bucket_open_at')}"
+                if oldest
+                else "none"
+            )
+        )
+        typer.echo(f"  Deferred buckets: {position_path.get('deferred_bucket_count')}")
+        lag = position_path.get("observer_lag") or {}
+        typer.echo(
+            f"  Observer lag: {lag.get('seconds', 'not_available')}s "
+            f"({lag.get('buckets', 'not_available')} buckets)"
+        )
+        counts = position_path.get("last_24h") or {}
+        typer.echo(
+            "  Last 24h: "
+            f"available={counts.get('available', 'not_available')} "
+            f"unavailable={counts.get('unavailable', 'not_available')} "
+            f"skipped={counts.get('skipped', 'not_available')}"
+        )
 
     # ─── Authority ─────────────────────────────────────────────────────────
     typer.echo("╠═ Authority ══════════════════════════════════════════╣")
