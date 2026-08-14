@@ -71,7 +71,9 @@ recombination.
 
 ## Consumer
 
-`uv run aletheia inspect profit-gradient --evidence <FILE>` accepts only a
-compiler artifact. It verifies `content_hash` before passing the frozen
-`layer_samples` and `evidence_context` to `profit_gradient/v3`. The selector's
-`automatic_behavior_change_authorized` result remains permanently `false`.
+`uv run aletheia inspect profit-gradient --evidence <FILE>` accepts only the
+outer compiler artifact `profit_gradient_evidence/v1`. It verifies the source
+bound `content_hash` before passing the frozen `layer_samples` and
+`evidence_context` to the selector, whose report contract is
+`profit_gradient/v3`. The selector's `automatic_behavior_change_authorized`
+result remains permanently `false`.

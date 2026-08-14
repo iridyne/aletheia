@@ -113,12 +113,13 @@ concentration, exclusions, and gate reasons. Its verdict is either
 
 ### Profit-gradient v3 comparison method
 
-Every gradient evidence artifact must declare the v3 wrapper and one
-`evidence_context.comparison_method`:
+The CLI accepts an outer compiler artifact with contract
+`profit_gradient_evidence/v1`; after source-bound verification, the selector
+emits a `profit_gradient/v3` report with one `evidence_context.comparison_method`:
 
 ```json
 {
-  "contract_version": "profit_gradient/v3",
+  "contract_version": "profit_gradient_evidence/v1",
   "evidence_context": {
     "comparison_method":
     "prospective_randomized|paired_same_unit|deterministic_decomposition|directional_observational"
@@ -126,7 +127,8 @@ Every gradient evidence artifact must declare the v3 wrapper and one
 }
 ```
 
-The CLI rejects a missing or older wrapper version before evaluating samples.
+The CLI rejects a missing or older compiler wrapper before evaluating samples;
+`profit_gradient/v3` identifies the selector result, not the input file.
 
 Version 3 also records the randomized estimand and cohort identity. Version 2 and
 older results are historical and are not pooled with version 3.

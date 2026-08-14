@@ -144,17 +144,19 @@ def _paired_unit_interval(
     estimate = sum(all_values) / len(all_values)
     if len(clusters) < 2:
         return estimate, None, None
+    cluster_observations = sorted(
+        tuple(sorted(values)) for values in clusters.values()
+    )
     seed_material = "|".join(
-        f"{key}:{','.join(f'{value:.12g}' for value in sorted(values))}"
-        for key, values in sorted(clusters.items())
+        ",".join(f"{value:.12g}" for value in values)
+        for values in cluster_observations
     )
     seed = int(hashlib.sha256(seed_material.encode()).hexdigest()[:16], 16)
     rng = random.Random(seed)
-    cluster_keys = sorted(clusters)
     bootstraps = []
     for _ in range(iterations):
-        selected = [rng.choice(cluster_keys) for _ in cluster_keys]
-        values = [value for key in selected for value in clusters[key]]
+        selected = [rng.choice(cluster_observations) for _ in cluster_observations]
+        values = [value for cluster in selected for value in cluster]
         bootstraps.append(sum(values) / len(values))
     return estimate, _percentile(bootstraps, 0.025), _percentile(bootstraps, 0.975)
 

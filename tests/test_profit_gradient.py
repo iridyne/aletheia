@@ -696,6 +696,28 @@ def test_paired_bootstrap_seed_ignores_row_order_within_clusters():
     assert baseline == pytest.approx(changed_order)
 
 
+def test_paired_bootstrap_seed_ignores_cluster_labels():
+    samples = _samples("Costs", effect_bp=1.0, count=30, with_arms=False)
+    for index, sample in enumerate(samples):
+        sample["paired_net_delta_bp"] = float(index + 1)
+        sample["paired_net_delta_quote"] = sample["paired_net_delta_bp"] / 10.0
+
+    normalized, _, _ = gradient._normalized_samples("Costs", samples)
+    renamed = deepcopy(normalized)
+    labels = {
+        cluster_id: f"renamed-{index}"
+        for index, cluster_id in enumerate(
+            reversed(sorted({sample["cluster_id"] for sample in normalized}))
+        )
+    }
+    for sample in renamed:
+        sample["cluster_id"] = labels[sample["cluster_id"]]
+
+    assert gradient._paired_unit_interval(normalized) == pytest.approx(
+        gradient._paired_unit_interval(renamed)
+    )
+
+
 def test_paired_temporal_midpoint_timestamp_tie_fails_closed():
     samples = {
         layer: _samples(
