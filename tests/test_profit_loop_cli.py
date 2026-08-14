@@ -167,7 +167,7 @@ def test_profit_gradient_command_fails_closed_on_empty_evidence(tmp_path):
     evidence.write_text(
         json.dumps(
             {
-                "contract_version": "profit_gradient/v2",
+                "contract_version": "profit_gradient/v3",
                 "layer_samples": {},
                 "evidence_context": {
                     "behavior_fingerprints": ["behavior-v1"],
@@ -195,7 +195,7 @@ def test_profit_gradient_command_fails_closed_on_empty_evidence(tmp_path):
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["contract_version"] == "profit_gradient/v2"
+    assert payload["contract_version"] == "profit_gradient/v3"
     assert payload["comparison_method"] == "paired_same_unit"
     assert payload["verdict"] == "no_unique_direction"
     assert payload["winner_layer"] is None
@@ -207,7 +207,7 @@ def test_profit_gradient_command_rejects_legacy_evidence_version(tmp_path):
     evidence.write_text(
         json.dumps(
             {
-                "contract_version": "profit_gradient/v1",
+                "contract_version": "profit_gradient/v2",
                 "layer_samples": {},
                 "evidence_context": {},
             }
@@ -221,4 +221,4 @@ def test_profit_gradient_command_rejects_legacy_evidence_version(tmp_path):
     )
 
     assert result.exit_code != 0
-    assert "profit_gradient/v2" in result.output
+    assert "profit_gradient/v3" in result.output
