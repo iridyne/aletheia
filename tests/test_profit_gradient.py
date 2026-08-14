@@ -564,13 +564,19 @@ def test_randomized_quote_harm_uses_cluster_arm_contrast_not_row_sums():
     assert result["winner_layer"] == "Costs"
 
 
-def test_randomized_quote_harm_weights_heterogeneous_cluster_exposures():
+@pytest.mark.parametrize(
+    ("large_quote", "expected_harm", "expected_winner"),
+    [(0.0, 190.0, "Costs"), (-3.0, -110.0, None)],
+)
+def test_randomized_quote_harm_weights_heterogeneous_cluster_exposures(
+    large_quote, expected_harm, expected_winner
+):
     samples = _seven_layers()
     costs = samples["Costs"]
     treatment = next(sample for sample in costs if sample["arm"] == "treatment")
     treatment["cluster_id"] = "day-treatment-large"
-    treatment["paired_net_delta_bp"] = 0.0
-    treatment["paired_net_delta_quote"] = 0.0
+    treatment["paired_net_delta_bp"] = large_quote
+    treatment["paired_net_delta_quote"] = large_quote
     for index in range(99):
         extra = deepcopy(treatment)
         extra["unit_id"] = f"Costs-treatment-large-{index + 1}"
@@ -587,8 +593,10 @@ def test_randomized_quote_harm_weights_heterogeneous_cluster_exposures():
     result = gradient.select_unique_max_direction(samples, evidence_context=_context())
 
     costs = result["layers"]["Costs"]
-    assert costs["harm_quote"] == pytest.approx(190.0)
-    assert result["winner_layer"] == "Costs"
+    assert costs["harm_quote"] == pytest.approx(expected_harm)
+    if expected_harm < 0:
+        assert "randomized_quote_harm_not_positive" in costs["gate_reasons"]
+    assert result["winner_layer"] == expected_winner
 
 
 def test_randomized_quote_concentration_centers_common_arm_baseline():

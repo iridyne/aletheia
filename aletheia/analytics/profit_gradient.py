@@ -628,6 +628,10 @@ def _layer_result(
         quote_contrast is None or quote_contrast <= 0
     ):
         reasons.append("randomized_quote_contrast_not_positive")
+    if comparison_method == "prospective_randomized" and (
+        total_quote is None or total_quote <= 0
+    ):
+        reasons.append("randomized_quote_harm_not_positive")
     if comparison_method == "paired_same_unit" and (
         total_quote is None or total_quote <= 0
     ):
