@@ -89,15 +89,20 @@ concentration, exclusions, and gate reasons. Its verdict is either
 
 ### Profit-gradient v2 comparison method
 
-Every gradient evidence artifact must declare one
+Every gradient evidence artifact must declare the v2 wrapper and one
 `evidence_context.comparison_method`:
 
 ```json
 {
-  "comparison_method":
-  "prospective_randomized|paired_same_unit|deterministic_decomposition|directional_observational"
+  "contract_version": "profit_gradient/v2",
+  "evidence_context": {
+    "comparison_method":
+    "prospective_randomized|paired_same_unit|deterministic_decomposition|directional_observational"
+  }
 }
 ```
+
+The CLI rejects a missing or older wrapper version before evaluating samples.
 
 A missing or unknown method is ineligible; v1 evidence is historical and is not
 implicitly assigned a method, relabeled, pooled, or compared with v2 evidence.
@@ -120,7 +125,8 @@ cost-aware delta for one unique statistical unit (for the current Exit
 counterfactual, one Position). Duplicate `unit_id` rows are excluded. The
 paired result is never made to satisfy the randomized arm gate by inventing
 `treatment` or `control` labels. The report exposes the applied threshold
-profile, arm counts, and `smaller_arm_count: null` when arms do not apply.
+profile, arm counts, unassigned-arm counts for randomized evidence, and
+`smaller_arm_count: null` when arms do not apply.
 
 The current delayed-entry, breakeven, and hypothesis-invalidation registry is
 an exploratory paired counterfactual and remains `promotion_eligible=false`.
