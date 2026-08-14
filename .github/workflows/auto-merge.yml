@@ -76,6 +76,14 @@ jobs:
                 core.info('ignoring Codex triage acknowledgement from an untrusted author');
                 return;
               }
+              const {data: commenterPermission} = await github.rest.repos.getCollaboratorPermissionLevel({
+                ...context.repo,
+                username: payload.comment.user?.login,
+              });
+              if (!new Set(['admin', 'maintain', 'write']).has(commenterPermission.permission)) {
+                core.info('ignoring Codex triage acknowledgement without write permission');
+                return;
+              }
               const [command] = String(payload.comment.body || '').replace(/\r/g, '').split('\n');
               if (!triagePattern.test(command.trim())) return;
               pullRequestNumbers = [payload.issue.number];
@@ -145,6 +153,7 @@ jobs:
     name: Approve a verified release candidate
     if: >-
       github.event_name == 'repository_dispatch' &&
+      github.event.sender.login == 'github-actions[bot]' &&
       github.event.action == 'release_candidate_verified' &&
       startsWith(github.event.client_payload.head_branch, 'release-please--branches--master')
     permissions:
@@ -192,6 +201,17 @@ jobs:
               core.info('release candidate is behind master; rerun the manual release workflow');
               return;
             }
+            const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
+              ...context.repo,
+              pull_number: pullRequest.number,
+              per_page: 100,
+            });
+            if (changedFiles.some(({filename, previous_filename}) =>
+              [filename, previous_filename].includes('.github/workflows/auto-merge.yml'),
+            )) {
+              core.info('merge-authority workflow changes require an explicit manual merge');
+              return;
+            }
             const requiredChecks = [
               'Review checks',
               'Python specifications',
@@ -230,6 +250,7 @@ jobs:
     name: Apply auto-merge update
     if: >-
       github.event_name == 'repository_dispatch' &&
+      github.event.sender.login == 'github-actions[bot]' &&
       github.event.action == 'auto_merge_update'
     permissions:
       contents: write

@@ -399,6 +399,8 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "isConnectorLogin(payload.review.user?.login)" in schedule_script
     assert "payload.workflow_run.head_sha !== pullRequest.head.sha" in schedule_script
     assert "trustedAssociations" in schedule_script
+    assert "getCollaboratorPermissionLevel" in schedule_script
+    assert "commenterPermission.permission" in schedule_script
     assert "/codex-triage ([0-9a-f]{40}) (clean|complete)" in schedule_script
     assert "acknowledgement[1] !== pullRequest.head.sha" in schedule_script
     assert "do-not-auto-merge" in schedule_script
@@ -415,12 +417,14 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     }
     release_guard = release_candidate["if"]
     assert "event.action == 'release_candidate_verified'" in release_guard
+    assert "event.sender.login == 'github-actions[bot]'" in release_guard
     assert "release-please--branches--master" in release_guard
     candidate_script = release_candidate["steps"][0]["with"]["script"]
     assert "context.payload.client_payload" in candidate_script
     assert "pullRequest.head.sha === run.head_sha" in candidate_script
     assert "autorelease: pending" in candidate_script
     assert "do-not-auto-merge" in candidate_script
+    assert "merge-authority workflow changes require an explicit manual merge" in candidate_script
     assert "compareCommitsWithBasehead" in candidate_script
     assert "pullRequest.base.sha !== expectedBaseSha" in candidate_script
     assert "createCommitStatus" in candidate_script
@@ -450,6 +454,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     ]
     assert "event_name == 'repository_dispatch'" in update["if"]
     assert "event.action == 'auto_merge_update'" in update["if"]
+    assert "event.sender.login == 'github-actions[bot]'" in update["if"]
     assert update["permissions"] == {
         "contents": "write",
         "issues": "write",
