@@ -41,6 +41,13 @@ Missing evidence stays unavailable; it is never converted to zero. `content_hash
 its exact inputs and requires the rebuilt hash to match; static metadata alone
 cannot authorize hand-authored samples.
 
+The compiler's paired contrasts declare `evidence_context.comparison_method` as
+`paired_same_unit`. The same context carries the singular `horizons`,
+`outcome_contract_versions`, `metric_versions`, `statistical_unit_versions`, and
+`stages` arrays consumed by the v3 selector. A missing or mixed stage remains
+ineligible; the compiler never labels a precomputed pair contrast as a
+prospective randomized arm observation.
+
 Candidate outcomes use one fixed `24h` net-return contract, a persisted
 `settled_at <= cutoff`, and the exact supplied cost-model version. Compressed
 candidate batches are unavailable when their declared count differs from the
@@ -66,5 +73,5 @@ recombination.
 
 `uv run aletheia inspect profit-gradient --evidence <FILE>` accepts only a
 compiler artifact. It verifies `content_hash` before passing the frozen
-`layer_samples` and `evidence_context` to `profit_gradient/v1`. The selector's
+`layer_samples` and `evidence_context` to `profit_gradient/v3`. The selector's
 `automatic_behavior_change_authorized` result remains permanently `false`.

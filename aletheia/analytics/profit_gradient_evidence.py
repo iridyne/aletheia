@@ -1,4 +1,4 @@
-"""Deterministic, read-only evidence compilation for ``profit_gradient/v1``.
+"""Deterministic, read-only evidence compilation for ``profit_gradient/v3``.
 
 The selector in :mod:`profit_gradient` is intentionally blind to the database.
 This module is the narrow adapter that gives it one frozen, provenance-bound
@@ -16,8 +16,12 @@ import math
 import sqlite3
 from typing import Any, Iterable, Mapping
 
-from aletheia.analytics.candidate_facts import build_candidate_facts
+from aletheia.analytics.candidate_facts import (
+    FACT_CONTRACT_VERSION as PROFIT_LOOP_FACT_CONTRACT_VERSION,
+    build_candidate_facts,
+)
 from aletheia.learning.outcomes import assess_candidate_outcome
+from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.analytics.execution_contribution import (
     _paired_position_cost,
 )
@@ -39,6 +43,9 @@ _COMPILER_PRODUCER = {
     "manual_layer_samples": False,
 }
 _FIXED_CANDIDATE_HORIZON = "24h"
+_GRADIENT_COMPARISON_METHOD = "paired_same_unit"
+_GRADIENT_OUTCOME_CONTRACT_VERSION = "v1"
+_GRADIENT_STATISTICAL_UNIT_VERSION = PROFIT_LOOP_FACT_CONTRACT_VERSION
 _LAYER_PATH_IDS = {
     "Selection": (),
     "Decision": (),
@@ -561,6 +568,7 @@ def _lookup_assignment(
     observed_at: datetime | None = None,
     registration: Mapping[str, Any] | None = None,
     layer: str | None = None,
+    metadata: dict[str, str] | None = None,
 ) -> tuple[str, str, str | None, str | None, str | None, str | None]:
     """Return arm, unit, pair, policy epoch, producer commit, and exclusion reason."""
     strict = registration is not None
@@ -578,6 +586,13 @@ def _lookup_assignment(
             return "", "", None, None, None, "ambiguous_identity"
         if not cluster:
             return "", "", None, policy_epoch or None, None, "missing_identity"
+        if metadata is not None:
+            metadata.update(
+                {
+                    "outcome_contract_version": str(value.get("outcome_contract_version") or ""),
+                    "stage": str(value.get("experiment_stage") or value.get("stage") or ""),
+                }
+            )
         return arm, cluster, str(value.get("pair_id") or "") or None, policy_epoch or None, None, None
 
     if not _table_exists(db, "learning_exposures"):
@@ -676,14 +691,32 @@ def _lookup_assignment(
             str(row.get("path_id") or ""),
             str(row.get("behavior_contract_hash") or ""),
             str(row.get("code_commit") or ""),
+            str(row.get("outcome_contract_version") or ""),
+            str(row.get("experiment_stage") or ""),
         )
         for row in valid
     }
     if len(identities) != 1:
         return "", "", None, None, None, "ambiguous_identity"
     identity = next(iter(identities))
-    arm, cluster, policy_epoch, experiment_id, hypothesis_id, path_id, behavior_hash, producer_commit = identity
-    if arm not in {"treatment", "control"} or not cluster or not policy_epoch:
+    (
+        arm,
+        cluster,
+        policy_epoch,
+        experiment_id,
+        hypothesis_id,
+        path_id,
+        behavior_hash,
+        producer_commit,
+        outcome_contract_version,
+        stage,
+    ) = identity
+    if (
+        arm not in {"treatment", "control"}
+        or not cluster
+        or not policy_epoch
+        or (strict and (not outcome_contract_version or not stage))
+    ):
         return "", "", None, None, None, "missing_identity"
     if strict:
         if not _table_exists(db, "learning_policy_epochs"):
@@ -716,6 +749,13 @@ def _lookup_assignment(
         # An assignment unit is not a treatment/control pair by itself.  Do not
         # invent a match from time, symbol, or a neighboring exposure.
         return arm, cluster, None, policy_epoch, str(valid[0].get("code_commit")), "paired_evidence_unavailable"
+    if metadata is not None:
+        metadata.update(
+            {
+                "outcome_contract_version": outcome_contract_version,
+                "stage": stage,
+            }
+        )
     return arm, cluster, pair_id, policy_epoch, str(valid[0].get("code_commit") or "") or None, None
 
 
@@ -785,6 +825,7 @@ def _candidate_sample(
     notional = _candidate_notional(db, fact)
     if net_pct is None or notional is None:
         return None, "nonfinite_delta"
+    assignment_metadata: dict[str, str] = {}
     arm, cluster, pair_id, policy_epoch, producer_commit, assignment_reason = _lookup_assignment(
         db,
         fact=fact,
@@ -794,6 +835,7 @@ def _candidate_sample(
         observed_at=occurred,
         registration=registration,
         layer=layer,
+        metadata=assignment_metadata,
     )
     if assignment_reason is not None:
         return None, assignment_reason
@@ -816,6 +858,8 @@ def _candidate_sample(
         "arm": arm,
         "policy_epoch": policy_epoch,
         "producer_commit": producer_commit,
+        "outcome_contract_version": assignment_metadata.get("outcome_contract_version"),
+        "stage": assignment_metadata.get("stage"),
         "arm_net_delta_bp": net_pct * 100.0,
         "arm_net_delta_quote": baseline_quote,
         "paired_net_delta_bp": delta_bp,
@@ -890,6 +934,7 @@ def _position_assignment(
     observed_at: datetime | None = None,
     registration: Mapping[str, Any] | None = None,
     layer: str | None = None,
+    metadata: dict[str, str] | None = None,
 ) -> tuple[str, str, str | None, str | None, str | None, str | None]:
     return _lookup_assignment(
         db,
@@ -900,6 +945,7 @@ def _position_assignment(
         observed_at=observed_at,
         registration=registration,
         layer=layer,
+        metadata=metadata,
     )
 
 
@@ -943,11 +989,13 @@ def _position_cost_sample(
         return None, "cost_incomplete"
     if registration is not None and not _position_provenance_matches(fact, registration):
         return None, "epoch_mismatch"
+    assignment_metadata: dict[str, str] = {}
     arm, cluster, pair_id, policy_epoch, producer_commit, assignment_reason = _position_assignment(
         db, fact, cutoff, epoch_start, epoch_id,
         observed_at=opened_at,
         registration=registration,
         layer=layer,
+        metadata=assignment_metadata,
     )
     if assignment_reason is not None:
         return None, assignment_reason
@@ -965,6 +1013,8 @@ def _position_cost_sample(
         "arm": arm,
         "policy_epoch": policy_epoch,
         "producer_commit": producer_commit,
+        "outcome_contract_version": assignment_metadata.get("outcome_contract_version"),
+        "stage": assignment_metadata.get("stage"),
         "arm_net_delta_bp": -delta_quote / notional * 10_000.0,
         "arm_net_delta_quote": -delta_quote,
         "paired_net_delta_bp": -delta_bp,
@@ -1053,11 +1103,13 @@ def _position_execution_sample(
         return None, "cost_incomplete"
     if registration is not None and not _position_provenance_matches(fact, registration):
         return None, "epoch_mismatch"
+    assignment_metadata: dict[str, str] = {}
     arm, cluster, pair_id, policy_epoch, producer_commit, assignment_reason = _position_assignment(
         db, fact, cutoff, epoch_start, epoch_id,
         observed_at=opened_at,
         registration=registration,
         layer=layer,
+        metadata=assignment_metadata,
     )
     if assignment_reason is not None:
         return None, assignment_reason
@@ -1071,6 +1123,8 @@ def _position_execution_sample(
         "arm": arm,
         "policy_epoch": policy_epoch,
         "producer_commit": producer_commit,
+        "outcome_contract_version": assignment_metadata.get("outcome_contract_version"),
+        "stage": assignment_metadata.get("stage"),
         "arm_net_delta_bp": -delta_quote / notional * 10_000.0,
         "arm_net_delta_quote": -delta_quote,
         "paired_net_delta_bp": -delta_bp,
@@ -1316,6 +1370,7 @@ def _coverage_context(
         "market_data_epochs": set(),
         "cost_model_epochs": set(),
     }
+    stage_values: set[str] = set()
     for fact in cohort_candidates:
         outcome = fact.get("fixed_horizon_outcome")
         if isinstance(outcome, Mapping):
@@ -1352,6 +1407,8 @@ def _coverage_context(
             ):
                 if sample.get(field):
                     identity_values[target].add(str(sample[field]))
+            if sample.get("stage") or sample.get("experiment_stage"):
+                stage_values.add(str(sample.get("stage") or sample.get("experiment_stage")))
 
     for fact in cohort_positions:
         producer = fact.get("producer")
@@ -1435,6 +1492,12 @@ def _coverage_context(
         "policy_epochs": policy_epochs,
         "market_data_epochs": market_epochs,
         "cost_model_epochs": cost_epochs,
+        "comparison_method": _GRADIENT_COMPARISON_METHOD,
+        "horizons": [_FIXED_CANDIDATE_HORIZON],
+        "outcome_contract_versions": [_GRADIENT_OUTCOME_CONTRACT_VERSION],
+        "metric_versions": [METRIC_VERSION],
+        "statistical_unit_versions": [_GRADIENT_STATISTICAL_UNIT_VERSION],
+        "stages": sorted(stage_values),
         "fixed_horizon": _FIXED_CANDIDATE_HORIZON,
         "candidate_economic_unit": "fixed_horizon_net_return",
         "position_economic_unit": "verified_settled_net_economics",

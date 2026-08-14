@@ -239,10 +239,17 @@ def test_incomplete_source_cannot_emit_numeric_coverage():
         cost_source={"status": "available"},
         evidence_epoch_id="epoch-1",
         cost_model_id="v1",
+        layer_samples={"Costs": [{"stage": "paper_10"}]},
     )
 
     assert context["candidate_outcome_coverage"] is None
     assert context["position_causal_link_completeness"] is None
+    assert context["comparison_method"] == "paired_same_unit"
+    assert context["horizons"] == ["24h"]
+    assert context["outcome_contract_versions"] == ["v1"]
+    assert context["metric_versions"] == [evidence.METRIC_VERSION]
+    assert context["statistical_unit_versions"] == ["profit_loop_fact/v1"]
+    assert context["stages"] == ["paper_10"]
 
 
 def test_pairing_rejects_unpaired_units_and_emits_one_contrast_per_arm():
