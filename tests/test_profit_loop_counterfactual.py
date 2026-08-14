@@ -146,6 +146,7 @@ def test_registry_is_finite_exploratory_prefix_only_and_does_not_mutate_fact():
 
     assert fact == frozen
     assert result["contract_version"] == "profit_loop_counterfactual/v1"
+    assert result["counterfactual_scope"] == "first_60_minutes"
     assert result["status"] == "evaluated"
     assert result["evidence_class"] == "exploratory"
     assert result["promotion_eligible"] is False
@@ -165,6 +166,12 @@ def test_registry_is_finite_exploratory_prefix_only_and_does_not_mutate_fact():
             assert item["treatment"]["explicit_cost_pct"] == expected_explicit
 
 
+def test_scope_metadata_does_not_rotate_the_preregistered_v1_registry():
+    assert counterfactual.profit_loop_registry_hash() == (
+        "fac3457cf560a9961b03e0a8af700f3a5ab749d4e052a5fb6446644d563aa39d"
+    )
+
+
 def test_delay_becomes_no_trade_when_thesis_invalidates_in_completed_prefix():
     fact = _fact(invalidation_threshold=101.0)
 
@@ -180,12 +187,14 @@ def test_delay_becomes_no_trade_when_thesis_invalidates_in_completed_prefix():
 
 def test_missing_cost_or_fixed_horizon_coverage_is_not_evaluable():
     no_cost = counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=None)
+    assert no_cost["counterfactual_scope"] == "first_60_minutes"
     assert no_cost["status"] == "not_evaluable"
     assert no_cost["reason"] == "verified_cost_model_required"
 
     short = _fact()
     short["stages"]["holding"]["ohlcv"]["rows"] = short["stages"]["holding"]["ohlcv"]["rows"][:10]
     no_coverage = counterfactual.evaluate_counterfactual_registry(short, cost_model=_cost())
+    assert no_coverage["counterfactual_scope"] == "first_60_minutes"
     assert no_coverage["status"] == "not_evaluable"
     assert no_coverage["reason"] == "fixed_horizon_coverage_unavailable"
 
@@ -200,6 +209,19 @@ def test_future_bars_after_pessimistic_stop_cannot_change_result():
         row[4] = 1_000_000.0
     second = counterfactual.evaluate_counterfactual_registry(changed, cost_model=_cost())
 
+    assert first["results"] == second["results"]
+
+
+def test_bars_after_the_first_60_minute_window_do_not_change_results():
+    fact = _fact()
+    first = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    changed = deepcopy(fact)
+    for row in changed["stages"]["holding"]["ohlcv"]["rows"][66:]:
+        row[1:5] = [10_000.0, 10_001.0, 9_999.0, 10_000.5]
+    second = counterfactual.evaluate_counterfactual_registry(changed, cost_model=_cost())
+
+    assert first["counterfactual_scope"] == "first_60_minutes"
     assert first["results"] == second["results"]
 
 
@@ -269,6 +291,7 @@ def test_registry_requires_post_deployment_registration():
 
     result = counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=_cost())
 
+    assert result["counterfactual_scope"] == "first_60_minutes"
     assert result["status"] == "not_evaluable"
     assert result["reason"] == "verified_deployment_registration_required"
 

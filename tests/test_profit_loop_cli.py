@@ -73,6 +73,7 @@ def test_counterfactual_command_requires_explicit_verified_cost_file(tmp_path, m
         "evaluate_counterfactual_registry",
         lambda fact, *, cost_model, as_of_at=None: {
             "contract_version": "profit_loop_counterfactual/v1",
+            "counterfactual_scope": "first_60_minutes",
             "fact_id": fact["fact_id"],
             "cost_model_valid": cost_model.valid(),
         },
@@ -99,6 +100,7 @@ def test_counterfactual_command_requires_explicit_verified_cost_file(tmp_path, m
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["fact_id"] == "position-1"
+    assert payload["counterfactual_scope"] == "first_60_minutes"
     assert payload["cost_model_valid"] is True
 
 
