@@ -126,7 +126,23 @@ Worktree B: API 8792, Vite 5174
 Worktree C: API 8793, Vite 5175
 ```
 
-Example, from separate Worktrees and terminals:
+On POSIX remote hosts, from separate Worktrees and terminals:
+
+```sh
+# Worktree A
+uv run aletheia dev api --port 8791
+cd frontend && VITE_API_TARGET=http://127.0.0.1:8791 npm run dev -- --port 5173
+
+# Worktree B
+uv run aletheia dev api --port 8792
+cd frontend && VITE_API_TARGET=http://127.0.0.1:8792 npm run dev -- --port 5174
+
+# Worktree C
+uv run aletheia dev api --port 8793
+cd frontend && VITE_API_TARGET=http://127.0.0.1:8793 npm run dev -- --port 5175
+```
+
+On Windows, use the equivalent launcher:
 
 ```powershell
 # Worktree A

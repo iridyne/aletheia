@@ -139,10 +139,11 @@ Focused regressions must prove exact identity and retry isolation, evidence
 cutoff and anti-lookahead, one-minute completeness and deterministic hashing,
 accounting residuals and cost non-duplication, candidate/Position denominator
 separation, same-bar ambiguity, epoch and concentration gates, and no trading
-behavior mutation. macOS runs only focused tests; the final complete suite runs
-through PR CI on a repository self-hosted runner. If that runner is unavailable
-and verification cannot wait, use an isolated Fedora CI/Test process; Windows
-is not a validation fallback.
+behavior mutation. macOS runs only focused tests. PR CI on a repository
+self-hosted runner is the regression gate, but its configured tiers exclude
+`tests/simulation/`; a complete-suite claim therefore also requires an
+isolated, credential-free Fedora CI/Test run of the omitted simulation modules
+or an equivalent PR job. Windows is not a validation fallback.
 
 ## Rollout and rollback
 
