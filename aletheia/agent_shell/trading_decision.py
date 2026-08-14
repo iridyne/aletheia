@@ -148,6 +148,8 @@ class TradingDecision:
     # usdt_futures (the demo/perp venue) when the LLM omits it; leverage is the
     # PI's requested level, clamped to the per-tier cap at submit time.
     market_type: str | None = None
+    # Durable carrier venue. This is context-bound, never model-selected.
+    venue: str | None = None
     leverage: int | None = None
     debate_ran: bool = False
     debate_initial_conviction: int | None = None
@@ -444,17 +446,37 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
             entry_mark.get("status") == "available"
             and _valid_protective_price(entry_mark.get("price")) is not None
         )
+        requires_exact_venue = bool(current.opportunity_id)
         mark_identity_matches = (
             entry_mark.get("symbol") == current.symbol
             and entry_mark.get("market_type") == current.market_type
+            and (
+                not requires_exact_venue
+                or (
+                    bool(current.venue)
+                    and str(entry_mark.get("venue") or "").lower()
+                    == str(current.venue).lower()
+                )
+            )
         )
         mark_available = mark_price_available and mark_identity_matches
         mark_reason = (
             "candidate_entry_mark_available"
             if mark_available
             else (
-                "candidate_entry_mark_identity_mismatch"
-                if mark_price_available else "candidate_entry_mark_unavailable"
+                (
+                    "candidate_entry_mark_identity_unavailable"
+                    if requires_exact_venue and not current.venue
+                    else "candidate_entry_mark_identity_mismatch"
+                )
+                if mark_price_available
+                else (
+                    entry_mark.get("reason")
+                    if str(entry_mark.get("reason") or "").startswith(
+                        "candidate_entry_mark_"
+                    )
+                    else "candidate_entry_mark_unavailable"
+                )
             )
         )
         current.filter_trace.append({
@@ -467,6 +489,8 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
                 "decision_market_type": current.market_type,
                 "mark_symbol": entry_mark.get("symbol"),
                 "mark_market_type": entry_mark.get("market_type"),
+                "decision_venue": current.venue,
+                "mark_venue": entry_mark.get("venue"),
                 "authority": entry_mark.get("authority"),
             },
             "parameters": {"required_for_action": "trade"},
@@ -876,33 +900,9 @@ def _latest_exact_entry_snapshot(
     helper only preserves the exact snapshot id/timestamp in Proposal rationale and
     distinguishes an old exact observation from no exact observation at all.
     """
-    if not venue:
-        return None
-    from aletheia.data.symbols import to_bitget, to_canonical
-    from aletheia.storage.repositories import list_market_snapshots
+    from aletheia.data.price_feed import get_latest_exact_market_snapshot
 
-    canonical = to_canonical(symbol)
-    symbols = [canonical]
-    legacy = to_bitget(canonical)
-    if legacy != canonical:
-        symbols.append(legacy)
-    physical_market = "perp" if market_type == "usdt_futures" else market_type
-    markets = [physical_market]
-    if market_type == "usdt_futures":
-        markets.append("usdt_futures")
-    rows: list[dict] = []
-    for stored_symbol in symbols:
-        for stored_market in markets:
-            rows.extend(list_market_snapshots(
-                symbol=stored_symbol,
-                exchange=venue,
-                market_type=stored_market,
-                limit=1,
-            ))
-    return (
-        max(rows, key=lambda row: str(row.get("snapshot_at") or ""))
-        if rows else None
-    )
+    return get_latest_exact_market_snapshot(symbol, market_type, venue)
 
 
 def attach_candidate_entry_mark(ctx: dict, execution_mode: str) -> str | None:
@@ -915,7 +915,10 @@ def attach_candidate_entry_mark(ctx: dict, execution_mode: str) -> str | None:
     layer2 = ctx.setdefault("layer2", {})
     pending = list(layer2.get("pending_signals") or [])
     if len(pending) != 1:
-        layer2["entry_mark"] = {"status": "unavailable"}
+        layer2["entry_mark"] = {
+            "status": "unavailable",
+            "reason": "candidate_entry_mark_identity_unavailable",
+        }
         return "candidate_entry_mark_identity_unavailable"
     candidate = pending[0]
     symbol = str(candidate.get("symbol") or "").strip()
@@ -928,36 +931,64 @@ def attach_candidate_entry_mark(ctx: dict, execution_mode: str) -> str | None:
         else "spot" if raw_market == "spot" else ""
     )
     if not symbol or not market_type:
-        layer2["entry_mark"] = {"status": "unavailable"}
+        layer2["entry_mark"] = {
+            "status": "unavailable",
+            "reason": "candidate_entry_mark_identity_unavailable",
+        }
         return "candidate_entry_mark_identity_unavailable"
 
     snapshot: dict | None = None
     venue: str | None = None
     try:
-        if execution_mode == "paper_internal":
-            from aletheia.config.loader import load_config
-            from aletheia.data.price_feed import (
-                get_fresh_price_for_protective_close,
-                protective_price_venue,
-            )
+        from aletheia.config.loader import load_config
+        from aletheia.data.price_feed import (
+            get_fresh_price_for_protective_close,
+            protective_price_venue,
+        )
 
+        source = candidate.get("signal_source") or "market_observer"
+        candidate_venue = str(candidate.get("venue") or "").strip().lower() or None
+        if source == "serenity":
             cfg = load_config()
             venue = protective_price_venue(
                 execution_mode,
                 configured_data_venue=cfg.market_data.ccxt_exchange,
             )
-            price = get_fresh_price_for_protective_close(
-                symbol, market_type, venue=venue or "",
-            )
-            snapshot = _latest_exact_entry_snapshot(symbol, market_type, venue or "")
-            authority = "fresh_exact_market_mark"
+        elif execution_mode == "paper_internal":
+            venue = candidate_venue
         else:
-            from aletheia.trading.market_data import latest_snapshot
+            cfg = load_config()
+            venue = protective_price_venue(
+                execution_mode,
+                configured_data_venue=cfg.market_data.ccxt_exchange,
+            )
+            if candidate_venue and venue and candidate_venue != venue:
+                layer2["entry_mark"] = {
+                    "status": "unavailable",
+                    "symbol": symbol,
+                    "market_type": market_type,
+                    "venue": venue,
+                    "reason": "candidate_entry_mark_identity_mismatch",
+                }
+                return "candidate_entry_mark_identity_mismatch"
+            if candidate_venue is None:
+                venue = None
 
-            snapshot = latest_snapshot(symbol, market_type=market_type)
-            price = (snapshot or {}).get("price")
-            venue = (snapshot or {}).get("exchange")
-            authority = "market_snapshot"
+        if venue is None:
+            layer2["entry_mark"] = {
+                "status": "unavailable",
+                "symbol": symbol,
+                "market_type": market_type,
+                "venue": None,
+                "reason": "candidate_entry_mark_identity_unavailable",
+            }
+            return "candidate_entry_mark_identity_unavailable"
+        candidate["venue"] = venue
+        price = get_fresh_price_for_protective_close(
+            symbol, market_type, venue=venue,
+        )
+        snapshot = _latest_exact_entry_snapshot(symbol, market_type, venue)
+        authority = "fresh_exact_market_mark"
     except Exception:
         logger.warning(
             "candidate entry mark lookup unavailable for %s [%s]",
@@ -973,11 +1004,12 @@ def attach_candidate_entry_mark(ctx: dict, execution_mode: str) -> str | None:
             "authority": "unavailable",
             "snapshot_id": None,
             "snapshot_at": None,
+            "reason": "candidate_entry_mark_unavailable",
         }
         return "candidate_entry_mark_unavailable"
 
     validated_price = _valid_protective_price(price)
-    layer2["entry_mark"] = {
+    entry_mark = {
         "status": "available" if validated_price is not None else "unavailable",
         "symbol": symbol,
         "market_type": market_type,
@@ -987,6 +1019,9 @@ def attach_candidate_entry_mark(ctx: dict, execution_mode: str) -> str | None:
         "snapshot_id": (snapshot or {}).get("id"),
         "snapshot_at": (snapshot or {}).get("snapshot_at"),
     }
+    if validated_price is None:
+        entry_mark["reason"] = "candidate_entry_mark_unavailable"
+    layer2["entry_mark"] = entry_mark
     return None if validated_price is not None else "candidate_entry_mark_unavailable"
 
 
@@ -1179,7 +1214,6 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         "parameters": {"min_sample": 15, "max_share": 0.95, "override_conviction": 75},
     })
 
-    from aletheia.trading.market_data import latest_snapshot
     from aletheia.config.loader import load_config
     from aletheia.trust.guard_chain import run_guards, summarize
 
@@ -1212,48 +1246,56 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         # Programmatic/historical objects retain the legacy compatibility path.
         market_type = "usdt_futures"
 
-    snap: dict | None
-    if execution_mode == "paper_internal":
-        from aletheia.data.price_feed import (
-            get_fresh_price_for_protective_close,
-            protective_price_venue,
-        )
+    from aletheia.data.price_feed import (
+        get_fresh_price_for_protective_close,
+        protective_price_venue,
+    )
 
-        venue = protective_price_venue(
-            execution_mode,
-            configured_data_venue=cfg.market_data.ccxt_exchange,
+    execution_venue = protective_price_venue(
+        execution_mode,
+        configured_data_venue=cfg.market_data.ccxt_exchange,
+    )
+    venue = str(decision.venue or "").strip().lower() or execution_venue
+    if (
+        execution_mode != "paper_internal"
+        and decision.venue
+        and execution_venue
+        and venue != execution_venue
+    ):
+        raise DecisionUnavailable(
+            "candidate_entry_mark_identity_mismatch",
+            stage="proposal_preflight",
+            filter_trace=list(decision.filter_trace),
         )
-        price = float(
-            get_fresh_price_for_protective_close(
-                decision.symbol,
-                market_type,
-                venue=venue or "",
-            )
-            or 0
+    if not venue or (execution_mode != "paper_internal" and not execution_venue):
+        raise DecisionUnavailable(
+            "candidate_entry_mark_identity_unavailable",
+            stage="proposal_preflight",
+            filter_trace=list(decision.filter_trace),
         )
-        snap = _latest_exact_entry_snapshot(
-            decision.symbol, market_type, venue or ""
+    decision.venue = venue
+    price = float(
+        get_fresh_price_for_protective_close(
+            decision.symbol,
+            market_type,
+            venue=venue,
         )
-        if snap is None:
-            snap = {
-                "symbol": decision.symbol,
-                "market_type": (
-                    "perp" if market_type == "usdt_futures" else market_type
-                ),
-                "exchange": venue,
-            }
-        snap = dict(snap)
-        snap["price"] = price or snap.get("price")
-        snap["price_authority"] = "fresh_exact_market_mark"
-    else:
-        snap = latest_snapshot(decision.symbol, market_type=market_type)
-        price = float((snap or {}).get("price") or 0)
+        or 0
+    )
+    snap = _latest_exact_entry_snapshot(decision.symbol, market_type, venue)
+    if snap is None:
+        snap = {
+            "symbol": decision.symbol,
+            "market_type": (
+                "perp" if market_type == "usdt_futures" else market_type
+            ),
+            "exchange": venue,
+        }
+    snap = dict(snap)
+    snap["price"] = price or snap.get("price")
+    snap["price_authority"] = "fresh_exact_market_mark"
     if not price:
-        reason = (
-            "market_price_stale"
-            if execution_mode == "paper_internal" and snap.get("id")
-            else "market_price_unavailable"
-        )
+        reason = "market_price_stale" if snap.get("id") else "market_price_unavailable"
         decision.filter_trace.append({
             "filter_name": "proposal_price_availability",
             "stage": "proposal_submission",
@@ -1285,7 +1327,7 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         "inputs": {"symbol": decision.symbol, "market_type": market_type},
         "parameters": {
             "minimum_price": 0,
-            "exact_instrument_required": execution_mode == "paper_internal",
+            "exact_instrument_required": True,
         },
     })
 
@@ -1544,6 +1586,7 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         # analytics/reasoning_feedback.py and fed to the PI prompt. Hard-coded
         # absence here is why reasoning_feedback scanner was permanently unknown.
         "scanner_family": decision.scanner_family,
+        "venue": decision.venue,
         "sizing_learning": decision.sizing_trace,
         "guards": guard_summary,
         # Immutable proposal evidence for why each entry value was used.  The
@@ -3142,6 +3185,7 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         decision.symbol = carrier.get("symbol")
         decision.direction = carrier.get("direction")
         decision.market_type = carrier.get("market_type") or decision.market_type
+        decision.venue = carrier.get("venue") or decision.venue
         decision.opportunity_id = carrier.get("opportunity_id")
         decision.signal_source = carrier.get("signal_source") or "market_observer"
         try:
@@ -3190,6 +3234,7 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         decision.signal_source = "market_observer"
         decision.direction = decision.direction or pdir
         decision.market_type = decision.market_type or pmarket
+        decision.venue = p.get("venue") or decision.venue
         # Recover the source fields omitted from PiDecision. The id remains an
         # honest attribution anchor even if this best-effort lookup fails.
         try:
@@ -3236,6 +3281,7 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
             decision.signal_source = "serenity"
             decision.direction = decision.direction or pdir
             decision.market_type = decision.market_type or pmarket
+            decision.venue = p.get("venue") or decision.venue
             if not decision.market_type:
                 try:
                     from aletheia.storage.repositories import get_serenity_opportunity
@@ -3306,6 +3352,7 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         decision.signal_source = c.get("signal_source") or "market_observer"
         if not decision.market_type and c.get("market_type"):
             decision.market_type = c.get("market_type")
+        decision.venue = c.get("venue") or decision.venue
         return
 
     # Serenity direct match (Phase 2 fix): pending_signals carry opportunity_id
@@ -3331,6 +3378,7 @@ def _attach_opportunity_context(decision: TradingDecision, ctx: dict) -> None:
         decision.signal_source = "serenity"
         decision.direction = decision.direction or pdir
         decision.market_type = decision.market_type or pmarket
+        decision.venue = p.get("venue") or decision.venue
         # Legacy pending rows lack market_type. Recover it from the source
         # serenity_opportunity without weakening the attribution anchor.
         if not decision.market_type:

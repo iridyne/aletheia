@@ -32,8 +32,17 @@ def _capture_rationale(monkeypatch, decision: TradingDecision) -> str:
 
     # Mock only the I/O boundaries — the rationale-building logic runs for real.
     monkeypatch.setattr(
-        "aletheia.trading.market_data.latest_snapshot",
-        lambda symbol, market_type=None: {"price": 100.0},
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda _symbol, _market_type, *, venue: 100.0,
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.trading_decision._latest_exact_entry_snapshot",
+        lambda symbol, market_type, venue: {
+            "symbol": symbol,
+            "market_type": market_type,
+            "exchange": venue,
+            "price": 100.0,
+        },
     )
     monkeypatch.setattr(
         "aletheia.execution.paper_tools.create_paper_proposal",

@@ -88,6 +88,31 @@ def test_ticker_prefilters_keep_complete_sequential_candidate_facts():
     assert volume_facts[2]["reason_code"] == "ticker_prerequisite_failed"
 
 
+def test_pending_candidate_bypasses_only_volume_prefilter():
+    from aletheia.universe.features import _evaluate_ticker_prefilters
+
+    asset = {
+        "id": "pending-low-volume",
+        "symbol": "LOW/USDT",
+        "venue": "okx",
+        "market_type": "spot",
+    }
+    candidates, ticker_facts, volume_facts = _evaluate_ticker_prefilters(
+        [asset],
+        {"LOW/USDT": {"quoteVolume": 100.0}},
+        _Exchange({}),
+        lambda symbol: symbol,
+        min_volume=1_000_000.0,
+        priority_asset_ids={"pending-low-volume"},
+    )
+
+    assert [row[0]["id"] for row in candidates] == ["pending-low-volume"]
+    assert ticker_facts[0]["decision"] == "passed"
+    assert volume_facts[0]["reason_code"] == (
+        "pending_candidate_volume_prefilter_bypassed"
+    )
+
+
 def test_spot_feature_enrichment_does_not_read_derivatives(monkeypatch):
     from aletheia.storage import repositories as repo
     from aletheia.universe.features import _load_fresh_enrichment_rows

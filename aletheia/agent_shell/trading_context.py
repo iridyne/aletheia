@@ -1317,20 +1317,41 @@ def _hydrate_pending_candidate_context(
         asset_id = (member or {}).get("asset_id")
         asset = repo.get_universe_asset(asset_id) if asset_id else None
 
-        # Fallback: opportunity created before universe was enabled carries no
-        # universe_member_id, so the member→asset chain is broken. Resolve by
-        # symbol + market_type from universe_registry so the feature snapshot
-        # lookup can still proceed and candidate_technical_snapshot_unavailable
-        # defers don't permanently hold queue slots.
+        # Legacy fallback is allowed only when symbol + physical market resolves
+        # to one active registry identity. Multiple venues must remain
+        # unavailable rather than silently selecting whichever row was newest.
         if asset is None and not asset_id:
-            registry_row = repo.get_db().execute(
-                "SELECT * FROM universe_registry WHERE symbol = ? AND market_type = ? "
-                "AND status = 'active' ORDER BY last_seen_at DESC LIMIT 1",
-                (candidate.get("symbol"), str(candidate.get("market_type") or "spot")),
-            ).fetchone()
-            if registry_row:
-                asset_id = str(registry_row["id"])
-                asset = dict(registry_row)
+            registry_rows = repo.get_db().execute(
+                "SELECT * FROM universe_registry WHERE symbol = ? "
+                "AND status = 'active' AND is_blacklisted=0 "
+                "ORDER BY datetime(last_seen_at) DESC, id",
+                (candidate.get("symbol"),),
+            ).fetchall()
+            expected_market = _normalize_market_type(candidate.get("market_type"))
+            exact_rows = [
+                dict(row) for row in registry_rows
+                if _normalize_market_type(row["market_type"]) == expected_market
+            ]
+            if len(exact_rows) == 1:
+                asset = exact_rows[0]
+                asset_id = str(asset["id"])
+
+        legacy_venue = None
+        if asset is None and not asset_id:
+            snapshot_markets = (
+                ("perp", "usdt_futures")
+                if expected_market == "perp"
+                else (expected_market,)
+            )
+            placeholders = ",".join("?" for _ in snapshot_markets)
+            venue_rows = repo.get_db().execute(
+                "SELECT DISTINCT lower(exchange) AS venue FROM market_snapshots "
+                f"WHERE symbol=? AND market_type IN ({placeholders}) "
+                "AND COALESCE(exchange,'')!=''",
+                (candidate.get("symbol"), *snapshot_markets),
+            ).fetchall()
+            if len(venue_rows) == 1:
+                legacy_venue = venue_rows[0]["venue"]
 
         candidate.update({
             "universe_member_id": member_id,
@@ -1340,7 +1361,7 @@ def _hydrate_pending_candidate_context(
                 or (member or {}).get("snapshot_id")
             ),
             "asset_id": asset_id,
-            "venue": (asset or {}).get("venue"),
+            "venue": (asset or {}).get("venue") or legacy_venue,
             "execution_eligible": (
                 bool(member.get("execution_eligible")) if member is not None
                 else (opportunity or {}).get("execution_eligible")

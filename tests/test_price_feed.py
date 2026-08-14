@@ -270,6 +270,30 @@ class TestGetWatchedSymbols:
             "binance:BTC/USDT:perp",
         ]
 
+    def test_pending_spot_and_perp_bypass_universe_tick_gate(self, monkeypatch):
+        import aletheia.config.loader as loader
+        import aletheia.storage.repositories as repo
+        from aletheia.data import candidate_market_facts
+
+        cfg = MagicMock()
+        cfg.market_data.ccxt_exchange = "binance"
+        cfg.event_triggers.enabled = False
+        monkeypatch.setattr(loader, "load_config", lambda: cfg)
+        monkeypatch.setattr(repo, "list_all_open_positions", lambda: [])
+        monkeypatch.setattr(
+            candidate_market_facts,
+            "pending_candidate_instruments",
+            lambda: [
+                InstrumentId.from_parts("okx", "BTC/USDT", "spot"),
+                InstrumentId.from_parts("binance", "BTC/USDT", "perp"),
+            ],
+        )
+
+        assert [str(item) for item in get_watched_instruments()] == [
+            "okx:BTC/USDT:spot",
+            "binance:BTC/USDT:perp",
+        ]
+
     @patch("aletheia.config.loader.load_config")
     @patch("aletheia.storage.repositories.list_all_open_positions")
     def test_position_execution_mode_selects_watched_venue(
@@ -306,6 +330,46 @@ class TestRefreshWatchedPrices:
     def test_no_symbols_early_return(self, mock_symbols):
         result = asyncio.run(refresh_watched_prices())
         assert result == {"refreshed": 0, "symbols": [], "errors": []}
+
+    def test_successful_pending_mark_refresh_wakes_exact_defer(self, monkeypatch):
+        from aletheia.data import candidate_market_facts, price_feed
+        import aletheia.config.loader as loader
+        import aletheia.data.ccxt_provider as providers
+
+        instrument = InstrumentId.from_parts("binance", "BTC/USDT", "perp")
+        monkeypatch.setattr(price_feed, "get_watched_instruments", lambda: [instrument])
+        monkeypatch.setattr(
+            candidate_market_facts,
+            "pending_candidate_instruments",
+            lambda: [instrument],
+        )
+        wakes: list[dict] = []
+        monkeypatch.setattr(
+            candidate_market_facts,
+            "wake_pending_candidate_defers",
+            lambda **kwargs: wakes.append(kwargs) or True,
+        )
+        cfg = MagicMock()
+        cfg.market_data.ccxt_exchange = "binance"
+        cfg.event_triggers.enabled = False
+        monkeypatch.setattr(loader, "load_config", lambda: cfg)
+        ticker = MagicMock(
+            last_price=65_000.0,
+            volume_24h=1_000_000.0,
+            provider="binance",
+        )
+        provider = MagicMock()
+        provider.get_ticker = AsyncMock(return_value=ticker)
+        provider.close = AsyncMock()
+        monkeypatch.setattr(
+            providers, "get_market_data_provider", lambda **kwargs: provider,
+        )
+
+        result = asyncio.run(refresh_watched_prices())
+
+        assert result["refreshed"] == 1
+        assert wakes[0]["instruments"] == [instrument]
+        assert wakes[0]["defer_reasons"] == {"candidate_entry_mark_unavailable"}
 
     @patch(
         "aletheia.data.price_feed.get_watched_instruments",

@@ -750,6 +750,25 @@ class UniverseService:
             assets = repo.list_universe_assets(
                 venue=cfg.market_data.ccxt_exchange, limit=1000,
             )
+            priority_asset_ids: set[str] = set()
+            try:
+                from aletheia.data.candidate_market_facts import pending_candidate_assets
+
+                priority_assets = pending_candidate_assets(
+                    venue=cfg.market_data.ccxt_exchange,
+                )
+                priority_asset_ids = {
+                    str(asset["id"]) for asset in priority_assets if asset.get("id")
+                }
+                if priority_asset_ids:
+                    assets = priority_assets + [
+                        asset for asset in assets
+                        if str(asset.get("id") or "") not in priority_asset_ids
+                    ]
+            except Exception:
+                logger.warning(
+                    "Pending candidate feature expansion failed", exc_info=True,
+                )
             repo.update_universe_scanner_run(run.id, assets_scanned=len(assets))
 
             # Inject volume-ranking symbols as additional candidates
@@ -765,19 +784,26 @@ class UniverseService:
                     for index, item in enumerate(ranked_instruments)
                 }
                 if rank_index:
-                    assets.sort(key=lambda asset: rank_index.get(
-                        (
-                            asset.get("venue"),
-                            asset.get("symbol"),
-                            asset.get("market_type"),
+                    assets.sort(key=lambda asset: (
+                        0 if str(asset.get("id") or "") in priority_asset_ids else 1,
+                        rank_index.get(
+                            (
+                                asset.get("venue"),
+                                asset.get("symbol"),
+                                asset.get("market_type"),
+                            ),
+                            len(rank_index),
                         ),
-                        len(rank_index),
                     ))
             except Exception as e:
                 logger.debug("volume_ranking injection skipped: %s", e)
 
+            feature_kwargs = (
+                {"priority_asset_ids": priority_asset_ids}
+                if priority_asset_ids else {}
+            )
             features_list = await collect_features(
-                assets, cfg, scanner_run_id=run.id,
+                assets, cfg, scanner_run_id=run.id, **feature_kwargs,
             )
 
             # Pass 1: coarse filter (stablecoin/blacklist/freshness/volume + extreme spread ≥3×).

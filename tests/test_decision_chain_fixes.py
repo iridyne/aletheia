@@ -12,6 +12,7 @@
 
 import json
 import math
+from types import SimpleNamespace
 
 import pytest
 
@@ -240,6 +241,51 @@ def test_complete_trade_without_authoritative_mark_is_retryable(monkeypatch):
 
     assert exc_info.value.stage == "operator_entry_plan"
     assert exc_info.value.filter_trace[-1]["filter_name"] == "operator_entry_mark"
+
+
+def test_complete_trade_rejects_same_symbol_mark_from_wrong_venue(monkeypatch):
+    import asyncio
+    import aletheia.agent_shell.trading_decision as td
+
+    async def assess(_ctx):
+        return _complete_trade_payload(market_type="usdt_futures")
+
+    monkeypatch.setattr(td, "_assess_opportunity", assess)
+    context = {
+        "layer2": {
+            "pending_signals": [{
+                "opportunity_id": "opp-exact-venue",
+                "signal_source": "market_observer",
+                "symbol": "BTC/USDT",
+                "direction": "long",
+                "market_type": "usdt_futures",
+                "venue": "okx",
+            }],
+            "entry_mark": {
+                "status": "available",
+                "symbol": "BTC/USDT",
+                "market_type": "usdt_futures",
+                "venue": "binance",
+                "price": 100.0,
+                "authority": "fresh_exact_market_mark",
+            },
+        },
+    }
+
+    with pytest.raises(
+        DecisionUnavailable,
+        match="candidate_entry_mark_identity_mismatch",
+    ) as exc_info:
+        asyncio.run(td.evaluate_trading_opportunity(context))
+
+    assert exc_info.value.stage == "operator_entry_plan"
+
+    context["layer2"]["pending_signals"][0]["venue"] = None
+    with pytest.raises(
+        DecisionUnavailable,
+        match="candidate_entry_mark_identity_unavailable",
+    ):
+        asyncio.run(td.evaluate_trading_opportunity(context))
 
 
 def test_inverted_prompt_mark_geometry_uses_bounded_output_repair(monkeypatch):
@@ -621,6 +667,7 @@ def test_candidate_entry_mark_is_exact_and_visible_to_operator(tmp_path, monkeyp
                 "symbol": "BTC/USDT",
                 "direction": "long",
                 "market_type": "usdt_futures",
+                "venue": "binance",
                 "opportunity_id": "opp-entry-plan",
             }],
         },
@@ -677,6 +724,124 @@ def test_candidate_entry_mark_is_exact_and_visible_to_operator(tmp_path, monkeyp
         "candidate_entry_mark_unavailable"
     )
     assert failed_ctx["layer2"]["entry_mark"]["status"] == "unavailable"
+
+
+def test_serenity_paper_candidate_uses_configured_exact_venue(monkeypatch):
+    """Serenity has no Universe asset, so local Paper uses its configured data venue."""
+    import aletheia.agent_shell.trading_decision as td
+
+    monkeypatch.setattr(
+        "aletheia.config.loader.load_config",
+        lambda: SimpleNamespace(
+            market_data=SimpleNamespace(ccxt_exchange="okx"),
+        ),
+    )
+    calls: list[tuple[str, str, str]] = []
+
+    def exact_price(symbol, market_type, *, venue):
+        calls.append((symbol, market_type, venue))
+        return 100.0
+
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        exact_price,
+    )
+    monkeypatch.setattr(
+        td,
+        "_latest_exact_entry_snapshot",
+        lambda *_args: {"id": "serenity-mark", "snapshot_at": "2026-08-15T00:00:00Z"},
+    )
+    candidate = {
+        "opportunity_id": "serenity-exact-venue",
+        "signal_source": "serenity",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "market_type": "spot",
+    }
+    ctx = {"layer2": {"pending_signals": [candidate]}}
+
+    assert td.attach_candidate_entry_mark(ctx, "paper_internal") is None
+    assert candidate["venue"] == "okx"
+    assert calls == [("BTC/USDT", "spot", "okx")]
+    assert ctx["layer2"]["entry_mark"]["venue"] == "okx"
+
+
+def test_exchange_backed_planning_and_submission_use_exact_venue(
+    tmp_path, monkeypatch,
+):
+    """A newer same-instrument row from another venue cannot price either phase."""
+    import asyncio
+    import aletheia.agent_shell.trading_decision as td
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    calls: list[tuple[str, str, str]] = []
+
+    def exact_price(symbol, market_type, *, venue):
+        calls.append((symbol, market_type, venue))
+        return 100.0
+
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        exact_price,
+    )
+    monkeypatch.setattr(
+        td,
+        "_latest_exact_entry_snapshot",
+        lambda symbol, market_type, venue: {
+            "id": "okx-exact",
+            "symbol": symbol,
+            "market_type": market_type,
+            "exchange": venue,
+            "snapshot_at": "2026-08-15T00:00:00Z",
+        },
+    )
+    monkeypatch.setattr(
+        "aletheia.trading.market_data.latest_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("venue-agnostic lookup must not be used")
+        ),
+    )
+    monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda _ctx: [])
+    monkeypatch.setattr(
+        "aletheia.trust.guard_chain.summarize",
+        lambda _verdicts: {"blocks": [], "details": []},
+    )
+    monkeypatch.setattr(td, "_proposal_direction_overheated", lambda *_args: None)
+    monkeypatch.setattr(
+        "aletheia.trading.entry_snapshot.capture_attribution_snapshot",
+        lambda *_args, **_kwargs: {},
+    )
+
+    candidate = {
+        "opportunity_id": "serenity-okx",
+        "signal_source": "serenity",
+        "symbol": "BTC/USDT",
+        "direction": "long",
+        "market_type": "spot",
+        "venue": "okx",
+    }
+    ctx = {"layer2": {"pending_signals": [candidate]}}
+    assert td.attach_candidate_entry_mark(ctx, "okx_demo") is None
+
+    decision = TradingDecision(
+        action="trade",
+        symbol="BTC/USDT",
+        direction="long",
+        conviction=80,
+        reasoning="exact exchange-backed mark",
+        position_size_usdt=20.0,
+        market_type="spot",
+        venue="okx",
+        signal_source="serenity",
+    )
+    result = asyncio.run(td.prepare_decision_as_proposal(decision, "okx_demo"))
+
+    assert result["proposal"].price == 100.0
+    assert calls == [
+        ("BTC/USDT", "spot", "okx"),
+        ("BTC/USDT", "spot", "okx"),
+    ]
 
 
 def test_assessment_prompt_handles_none_equity():

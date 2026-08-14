@@ -142,7 +142,19 @@ def _trading_diagnostics() -> dict:
         "funnel": _safe_funnel_diagnostic(),
         "sizing": _safe_sizing_diagnostic(),
         "thesis": _safe_thesis_diagnostic(),
+        "candidate_market_facts": _safe_candidate_market_facts_diagnostic(),
     }
+
+
+def _safe_candidate_market_facts_diagnostic() -> dict:
+    try:
+        from aletheia.data.candidate_market_facts import (
+            build_pending_candidate_market_report,
+        )
+
+        return build_pending_candidate_market_report()
+    except Exception as exc:
+        return {"status": "unavailable", "reason": str(exc)}
 
 
 def _safe_alpha_diagnostic() -> dict:
@@ -1139,6 +1151,64 @@ def _probe_universe_market_coverage(report: Report) -> None:
         )
         return
     report.add("data.universe_market_coverage", "ok", detail)
+
+
+def _probe_pending_candidate_market_coverage(report: Report) -> None:
+    """Judge exact pending-carrier facts instead of one global newest row."""
+    try:
+        from aletheia.data.candidate_market_facts import (
+            build_pending_candidate_market_report,
+        )
+
+        state = build_pending_candidate_market_report()
+    except Exception as e:
+        report.add(
+            "data.pending_candidate_market_coverage",
+            "info",
+            f"candidate coverage unavailable: {type(e).__name__}",
+            "inspect the read-only candidate market-facts diagnostic",
+        )
+        return
+
+    total = int(state.get("pending_total") or 0)
+    if state.get("status") == "no_pending" or total == 0:
+        report.add(
+            "data.pending_candidate_market_coverage",
+            "info",
+            "no active pending carriers — no denominator",
+        )
+        return
+
+    complete = int(state.get("complete_count") or 0)
+    partial = int(state.get("partial_count") or 0)
+    unavailable = int(state.get("unavailable_count") or 0)
+    detail = (
+        f"pending={total}; complete={complete}; partial={partial}; "
+        f"unavailable={unavailable}"
+    )
+    affected = [
+        item for item in (state.get("items") or [])
+        if item.get("availability") != "complete"
+    ][:3]
+    if affected:
+        samples = ", ".join(
+            f"{item.get('venue') or 'unknown'}:{item.get('symbol') or 'unknown'}:"
+            f"{item.get('physical_market_type') or 'unknown'}"
+            f"[{','.join((item.get('reasons') or ['unknown'])[:2])}]"
+            for item in affected
+        )
+        detail += f"; affected sample={samples}"
+
+    if state.get("status") == "complete":
+        report.add("data.pending_candidate_market_coverage", "ok", detail)
+        return
+    report.add(
+        "data.pending_candidate_market_coverage",
+        "warn",
+        detail,
+        "inspect `aletheia doctor --deep --json` candidate_market_facts; "
+        "do not relax freshness or exact venue/market constraints",
+    )
 
 
 def _probe_orderbook(report: Report) -> None:
@@ -3910,6 +3980,7 @@ def build_report(*, probe_llm: bool = False) -> Report:
         _probe_market_data_venue_health,
         _probe_collector_health,
         _probe_universe_market_coverage,
+        _probe_pending_candidate_market_coverage,
         _probe_orderbook,
         _probe_perp_structure,
         _probe_macro_signals,

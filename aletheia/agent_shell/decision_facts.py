@@ -83,6 +83,8 @@ def candidate_context_unavailable_reason(
         return "candidate_technical_snapshot_incomplete"
 
     source_age = _number(feature.get("data_freshness_sec"))
+    if source_age is None:
+        return "candidate_technical_snapshot_incomplete"
     try:
         observed = datetime.fromisoformat(
             str(feature.get("feature_ts")).replace("Z", "+00:00")
@@ -95,7 +97,7 @@ def candidate_context_unavailable_reason(
         )
     except (TypeError, ValueError):
         return "candidate_technical_snapshot_unavailable"
-    effective_age = row_age + max(source_age or 0.0, 0.0)
+    effective_age = row_age + max(source_age, 0.0)
     if effective_age > _CANDIDATE_TECHNICAL_MAX_AGE_SEC:
         return "candidate_technical_snapshot_stale"
     return None

@@ -229,7 +229,7 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     # evaluation_deferred with reason candidate_technical_snapshot_unavailable.
     repo.upsert_universe_asset(UniverseAsset(
         id="golden-path-asset",
-        venue="fixture",
+        venue=cfg.market_data.ccxt_exchange,
         market_type="spot",
         symbol="BTC/USDT",
     ))

@@ -166,6 +166,71 @@ class TestFeatureSnapshotWake:
 
         assert calls == []
 
+    def test_same_symbol_wrong_market_does_not_wake(self, tmp_path, monkeypatch):
+        conn = _setup_db(tmp_path, monkeypatch)
+        now = datetime.now(timezone.utc)
+        _seed_deferred_carrier(
+            conn,
+            opportunity_id="opp-btc-perp",
+            symbol="BTC/USDT",
+            asset_id="asset-btc-perp",
+            defer_until_iso=(now + timedelta(minutes=90)).isoformat(),
+            deferred_at_iso=(now - timedelta(minutes=5)).isoformat(),
+        )
+        conn.execute(
+            "INSERT INTO universe_registry "
+            "(id, venue, market_type, symbol, status) "
+            "VALUES ('asset-btc-spot', 'binance', 'spot', 'BTC/USDT', 'active')"
+        )
+        conn.commit()
+
+        calls: list[str] = []
+        import aletheia.agent_runtime.pi_daemon as pi_daemon
+
+        monkeypatch.setattr(
+            pi_daemon,
+            "notify_pi_daemon",
+            lambda source=None, event=None: calls.append(str(source)) or True,
+        )
+        from aletheia.universe.features import _wake_pi_daemon_for_refreshed_defers
+
+        _wake_pi_daemon_for_refreshed_defers({"asset-btc-spot"})
+        assert calls == []
+
+    def test_exact_mark_refresh_wakes_only_mark_unavailability(
+        self, tmp_path, monkeypatch,
+    ):
+        conn = _setup_db(tmp_path, monkeypatch)
+        now = datetime.now(timezone.utc)
+        _seed_deferred_carrier(
+            conn,
+            opportunity_id="opp-mark",
+            symbol="BTC/USDT",
+            asset_id="asset-mark",
+            defer_until_iso=(now + timedelta(minutes=90)).isoformat(),
+            deferred_at_iso=(now - timedelta(minutes=5)).isoformat(),
+            defer_reason="candidate_entry_mark_unavailable",
+        )
+        calls: list[str] = []
+        import aletheia.agent_runtime.pi_daemon as pi_daemon
+
+        monkeypatch.setattr(
+            pi_daemon,
+            "notify_pi_daemon",
+            lambda source=None, event=None: calls.append(str(source)) or True,
+        )
+        from aletheia.data.candidate_market_facts import (
+            wake_pending_candidate_defers,
+        )
+        from aletheia.data.symbols import InstrumentId
+
+        wake_pending_candidate_defers(
+            instruments=[InstrumentId.from_parts("binance", "BTC/USDT", "perp")],
+            defer_reasons={"candidate_entry_mark_unavailable"},
+            source="candidate_entry_mark_refreshed",
+        )
+        assert calls == ["candidate_entry_mark_refreshed"]
+
     def test_no_wake_when_defer_window_already_expired(self, tmp_path, monkeypatch):
         conn = _setup_db(tmp_path, monkeypatch)
         now = datetime.now(timezone.utc)

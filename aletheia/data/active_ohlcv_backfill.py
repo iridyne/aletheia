@@ -1,4 +1,4 @@
-"""Bounded OHLCV catch-up for instruments entering the active Universe.
+"""Bounded OHLCV catch-up for pending candidates and the active Universe.
 
 The Universe refresh remains latency-isolated from historical downloads. This
 module plans exact instrument/timeframe gaps from SQLite and repairs only a
@@ -60,6 +60,8 @@ class CoverageTarget:
     bar_count: int
     consecutive_failures: int = 0
     last_attempt_at: str | None = None
+    newest_ts: int | None = None
+    max_age_sec: int | None = None
 
 
 @dataclass(frozen=True)
@@ -89,9 +91,18 @@ def _parse_utc(value: str | None) -> datetime | None:
 
 
 def _active_instruments(member_limit: int = 50) -> list[tuple[InstrumentId, int]]:
-    """Resolve active members to exact instruments without guessing venue/type."""
+    """Resolve pending candidates first, then active Universe instruments."""
     result: list[tuple[InstrumentId, int]] = []
     seen: set[str] = set()
+    try:
+        from aletheia.data.candidate_market_facts import pending_candidate_instruments
+
+        for instrument in pending_candidate_instruments():
+            seen.add(str(instrument))
+            result.append((instrument, -1))
+    except Exception:
+        logger.warning("Pending candidate OHLCV expansion failed", exc_info=True)
+
     for member in repo.get_active_universe_members(limit=member_limit):
         # Data coverage must precede and remain independent from execution
         # eligibility. A selected member can be temporarily ineligible precisely
@@ -118,6 +129,24 @@ def _active_instruments(member_limit: int = 50) -> list[tuple[InstrumentId, int]
     return result
 
 
+def _coverage_ready(
+    *,
+    bar_count: int,
+    newest_ts: int | None,
+    min_bars: int,
+    max_age_sec: int | None,
+    now: datetime,
+) -> bool:
+    if bar_count < min_bars:
+        return False
+    if max_age_sec is None:
+        return True
+    if newest_ts is None:
+        return False
+    age_sec = now.timestamp() - (newest_ts / 1000)
+    return 0 <= age_sec <= max_age_sec
+
+
 def plan_active_ohlcv_backfill(
     *,
     min_bars: int,
@@ -130,6 +159,7 @@ def plan_active_ohlcv_backfill(
         return []
     current = (now or _utcnow()).astimezone(timezone.utc)
     targets: list[CoverageTarget] = []
+    from aletheia.data.candidate_market_facts import CANDIDATE_OHLCV_MAX_AGE_SEC
 
     for instrument, rank in _active_instruments(member_limit=member_limit):
         for timeframe in _TIMEFRAMES:
@@ -140,13 +170,23 @@ def plan_active_ohlcv_backfill(
                 market_type=instrument.market_type,
             )
             bar_count = int(coverage.get("bar_count") or 0)
+            newest_ts = coverage.get("newest_ts")
+            max_age_sec = (
+                CANDIDATE_OHLCV_MAX_AGE_SEC[timeframe] if rank < 0 else None
+            )
             state = repo.get_ohlcv_backfill_state(
                 instrument.exchange,
                 instrument.symbol,
                 instrument.market_type,
                 timeframe,
             )
-            if bar_count >= min_bars:
+            if _coverage_ready(
+                bar_count=bar_count,
+                newest_ts=newest_ts,
+                min_bars=min_bars,
+                max_age_sec=max_age_sec,
+                now=current,
+            ):
                 if state and (state.get("status") != "ready" or state.get("bar_count") != bar_count):
                     repo.upsert_ohlcv_backfill_state(
                         exchange=instrument.exchange,
@@ -175,10 +215,13 @@ def plan_active_ohlcv_backfill(
                 bar_count=bar_count,
                 consecutive_failures=int((state or {}).get("consecutive_failures") or 0),
                 last_attempt_at=(state or {}).get("last_attempt_at"),
+                newest_ts=newest_ts,
+                max_age_sec=max_age_sec,
             ))
 
     timeframe_priority = {timeframe: index for index, timeframe in enumerate(_TIMEFRAMES)}
     targets.sort(key=lambda item: (
+        0 if item.rank < 0 else 1,
         timeframe_priority.get(item.timeframe, len(_TIMEFRAMES)),
         item.rank,
         item.bar_count,
@@ -302,6 +345,7 @@ async def run_active_ohlcv_backfill(
             market_type=target.market_type,
         )
         bar_count = int(coverage.get("bar_count") or 0)
+        newest_ts = coverage.get("newest_ts")
         common = {
             "exchange": target.exchange,
             "symbol": target.symbol,
@@ -311,7 +355,13 @@ async def run_active_ohlcv_backfill(
             "last_attempt_at": current.isoformat(),
         }
 
-        if bar_count >= min_bars:
+        if _coverage_ready(
+            bar_count=bar_count,
+            newest_ts=newest_ts,
+            min_bars=min_bars,
+            max_age_sec=target.max_age_sec,
+            now=current,
+        ):
             ready += 1
             repo.upsert_ohlcv_backfill_state(
                 **common,
@@ -320,19 +370,33 @@ async def run_active_ohlcv_backfill(
                 next_attempt_at=None,
                 last_error=None,
             )
-        elif error_code is None and (bar_count > target.bar_count or bars_fetched > 0):
+        elif error_code is None and (
+            (
+                target.max_age_sec is not None
+                and newest_ts is not None
+                and (target.newest_ts is None or newest_ts > target.newest_ts)
+            )
+            or (
+                target.max_age_sec is None
+                and (bar_count > target.bar_count or bars_fetched > 0)
+            )
+        ):
             partial += 1
             repo.upsert_ohlcv_backfill_state(
                 **common,
                 status="partial",
                 consecutive_failures=0,
                 next_attempt_at=(current + timedelta(minutes=_PARTIAL_RETRY_MINUTES)).isoformat(),
-                last_error=None,
+                last_error=(
+                    "ohlcv_still_stale" if target.max_age_sec is not None else None
+                ),
             )
         else:
             failed += 1
             failures = target.consecutive_failures + 1
-            error_code = error_code or "no_data"
+            error_code = error_code or (
+                "ohlcv_not_updated" if target.max_age_sec is not None else "no_data"
+            )
             repo.upsert_ohlcv_backfill_state(
                 **common,
                 status="failed",
