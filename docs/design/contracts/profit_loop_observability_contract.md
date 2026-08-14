@@ -6,6 +6,17 @@ Aletheia exposes read-only, versioned evidence for replaying one closed Position
 reconstructing the complete candidate denominator, evaluating a fixed exploratory
 counterfactual registry, and applying seven-layer unique-winner gates.
 
+The current Position counterfactual is deliberately an early-path experiment. Its
+formal output always declares `counterfactual_scope = first_60_minutes` and
+`counterfactual_horizon = 60_minutes_after_each_hypothetical_entry`: every arm
+uses 60 one-minute bars after that arm's hypothetical entry to compare the
+preregistered initial-Stop baseline with the five bounded candidate treatments.
+A delayed arm also reads its delay prefix; therefore `delay_5_bars/v1` can use
+the source open at minute 65 (66 source rows in total). The scope is not a
+strict shared 60-row input window, does not describe a Position's full Holding /
+Exit lifecycle, and must not be read as a rule that Positions should be closed
+after one hour.
+
 This capability has no trading authority. It does not change Ranker, System
 Operator, Risk, Execution, position protection, Learning, Live, or an existing
 experiment cohort.
@@ -64,8 +75,11 @@ behavior owner imports these analytics modules.
 
 Position replay reports exact causal IDs, evidence cutoff, economics residual,
 runtime/behavior identity, ordered-path coverage, canonical OHLCV window hash,
-and explicit unavailable reasons. Candidate replay preserves filtered,
-skipped, rejected, unfilled, and traded terminal states.
+and explicit unavailable reasons. Its `profit_loop_fact/v1` stages and exact
+`holding.trade_path` / `exit` evidence are the Position Lifecycle Story: they
+describe the actual `opened_at` → `closed_at` path, independently of the
+first-60-minute counterfactual. Candidate replay preserves filtered, skipped,
+rejected, unfilled, and traded terminal states.
 
 The gradient report always emits
 `Selection / Decision / Risk / Execution / Holding / Exit / Costs`, quote harm,
@@ -88,8 +102,20 @@ concentration, exclusions, and gate reasons. Its verdict is either
   slippage exactly once.
 - Hypothesis state reads only the completed prefix supplied by its caller.
   Missing machine-evaluable inputs return `not_evaluable`.
-- The counterfactual registry is finite and locked. Delayed entry uses the next
-  bar open; thesis invalidation during the delay produces `no_trade`.
+- The counterfactual registry is finite and locked. Its formal scope is
+  `first_60_minutes` with a per-arm horizon of
+  `60_minutes_after_each_hypothetical_entry`; delayed entry uses the next bar
+  open, and thesis invalidation during the delay produces `no_trade`.
+- `counterfactual_scope = first_60_minutes` is an evidence boundary, not an
+  exit recommendation. A better early-path treatment cannot establish that all
+  Positions should exit within one hour.
+- Position Lifecycle Story evidence and first-60-minute counterfactual results
+  are separate populations and must not be pooled or used as substitutes for
+  one another.
+- If complete lifecycle evidence repeatedly identifies a later holding-period
+  problem such as horizon overrun or post-entry giveback, register a new
+  horizon-aligned Holding / Exit experiment with its own registry identity and
+  evidence window. Do not edit or extend this preregistered 60-minute contract.
 - A counterfactual resolves exactly one immutable profit-loop evidence anchor
   matching the complete opening/closing producer commit, behavior fingerprint,
   and current registry hash. Missing, mixed, conflicting, or duplicate identity
