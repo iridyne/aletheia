@@ -9,7 +9,12 @@ from typing import Any, Iterable, Mapping
 from ..storage.proposal_hypothesis import evaluate_hypothesis_prefix
 
 
-DIAGNOSIS_CONTRACT_VERSION = "profit_loop_diagnosis/v1"
+DIAGNOSIS_CONTRACT_VERSION = "profit_loop_diagnosis/v2"
+_FACT_CONTRACT_VERSION = "profit_loop_fact/v1"
+
+_COST_BASELINE_KINDS = frozenset(
+    {"realizable_limit", "spot_vs_perpetual", "turnover", "venue"}
+)
 
 
 def _finite(value: object) -> float | None:
@@ -31,9 +36,41 @@ def _nested(root: Mapping[str, Any], *keys: str) -> Any:
 
 def _ohlcv_rows(fact: Mapping[str, Any]) -> list[list[Any]]:
     rows = _nested(fact, "stages", "holding", "ohlcv", "rows")
-    if not isinstance(rows, list):
+    if not isinstance(rows, list) or any(not isinstance(row, list) or len(row) < 7 for row in rows):
         return []
-    return [row for row in rows if isinstance(row, list) and len(row) >= 7]
+    previous_timestamp: int | None = None
+    for row in rows:
+        timestamp = _finite(row[0])
+        values = [_finite(row[index]) for index in range(1, 6)]
+        if (
+            timestamp is None
+            or not timestamp.is_integer()
+            or not isinstance(row[6], str)
+            or not row[6].strip()
+            or any(value is None for value in values)
+        ):
+            return []
+        timestamp_i = int(timestamp)
+        if timestamp_i % 60_000 != 0 or (
+            previous_timestamp is not None and timestamp_i != previous_timestamp + 60_000
+        ):
+            return []
+        open_price, high, low, close, volume = values
+        if (
+            open_price is None
+            or high is None
+            or low is None
+            or close is None
+            or volume is None
+            or min(open_price, high, low, close) <= 0
+            or volume < 0
+            or high < max(open_price, close)
+            or low > min(open_price, close)
+            or low > high
+        ):
+            return []
+        previous_timestamp = timestamp_i
+    return rows
 
 
 def _path(fact: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -58,6 +95,28 @@ def _position(fact: Mapping[str, Any]) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
+def _avoidable_cost_evidence(fact: Mapping[str, Any]) -> tuple[Mapping[str, Any] | None, str]:
+    evidence = fact.get("cost_evidence")
+    if not isinstance(evidence, Mapping):
+        return None, "avoidable_cost_baseline_required"
+    if evidence.get("evidence_integrity") != "verified":
+        return None, "cost_evidence_unverified"
+    if not isinstance(evidence.get("evidence_refs"), list) or not evidence.get("evidence_refs"):
+        return None, "cost_evidence_refs_missing"
+    if evidence.get("avoidable") is not True:
+        return None, "cost_not_avoidable"
+    if evidence.get("baseline_kind") not in _COST_BASELINE_KINDS:
+        return None, "cost_baseline_not_realizable"
+    if not str(evidence.get("baseline_id") or "").strip():
+        return None, "cost_baseline_identity_missing"
+    if not str(evidence.get("cost_model_id") or "").strip():
+        return None, "cost_model_identity_missing"
+    extra = _finite(evidence.get("avoidable_extra_cost_quote"))
+    if extra is None or extra < 0:
+        return None, "avoidable_cost_amount_invalid"
+    return evidence, "verified_avoidable_cost_baseline"
+
+
 def _realized_volatility_and_slope(rows: list[list[Any]]) -> tuple[float | None, float | None]:
     closes = [_finite(row[4]) for row in rows]
     if len(closes) < 2 or any(value is None or value <= 0 for value in closes):
@@ -76,6 +135,16 @@ def _realized_volatility_and_slope(rows: list[list[Any]]) -> tuple[float | None,
     return volatility, slope
 
 
+def _safe_hypothesis_state(
+    hypothesis: Mapping[str, Any] | None,
+    completed_bars: list[Mapping[str, Any]],
+) -> str:
+    try:
+        return evaluate_hypothesis_prefix(hypothesis, completed_bars=completed_bars)
+    except (KeyError, TypeError, ValueError):
+        return "not_evaluable"
+
+
 def _hypothesis_states(hypothesis: Mapping[str, Any] | None, rows: list[list[Any]]) -> list[str]:
     states: list[str] = []
     prefix: list[Mapping[str, Any]] = []
@@ -90,12 +159,14 @@ def _hypothesis_states(hypothesis: Mapping[str, Any] | None, rows: list[list[Any
                 "volume": row[5],
             }
         )
-        states.append(evaluate_hypothesis_prefix(hypothesis, completed_bars=prefix))
-    return states or [evaluate_hypothesis_prefix(hypothesis, completed_bars=[])]
+        states.append(_safe_hypothesis_state(hypothesis, prefix))
+    return states or [_safe_hypothesis_state(hypothesis, [])]
 
 
 def position_metrics(fact: Mapping[str, Any]) -> dict[str, Any]:
     """Compute only preregistered minimal metrics from one immutable Position fact."""
+    if not isinstance(fact, Mapping):
+        fact = {}
     path = _path(fact)
     position = _position(fact)
     hypothesis = _hypothesis(fact)
@@ -127,8 +198,10 @@ def position_metrics(fact: Mapping[str, Any]) -> dict[str, Any]:
     gross = _finite(economics.get("gross_pnl"))
     net = _finite(economics.get("net_pnl"))
     cost = gross - net if gross is not None and net is not None else None
-    realized_pct = _finite(path.get("realized_return_pct"))
+    net_realized_pct = _finite(path.get("realized_return_pct"))
+    realized_pct = _finite(path.get("gross_realized_return_pct"))
     giveback = max(0.0, mfe - realized_pct) if mfe is not None and realized_pct is not None else None
+    cost_evidence, cost_evidence_reason = _avoidable_cost_evidence(fact)
     return {
         "directional_fixed_horizon_return_pct": None,
         "mfe_pct": mfe,
@@ -145,6 +218,8 @@ def position_metrics(fact: Mapping[str, Any]) -> dict[str, Any]:
         ),
         "pre_trigger_mfe_lower_bound_pct": _finite(path.get("pre_stop_mfe_lower_bound_pct")),
         "peak_mfe_pct": mfe,
+        "gross_realized_return_pct": realized_pct,
+        "net_realized_return_pct": net_realized_pct,
         "giveback_pct": giveback,
         "first_trigger_time_ms": path.get("first_stop_barrier_open_ms"),
         "realized_volatility_pct": volatility,
@@ -152,6 +227,14 @@ def position_metrics(fact: Mapping[str, Any]) -> dict[str, Any]:
         "regime_transition": "not_evaluable",
         "gross_pnl": gross,
         "net_pnl": net,
+        "accounting_cost_total": cost,
+        "cost_attribution_status": "available" if cost_evidence is not None else "unavailable",
+        "cost_attribution_reason": cost_evidence_reason,
+        "avoidable_extra_cost_quote": (
+            _finite(cost_evidence.get("avoidable_extra_cost_quote"))
+            if cost_evidence is not None
+            else None
+        ),
         "entry_fee": _finite(economics.get("entry_fee")),
         "exit_fee": _finite(economics.get("exit_fee")),
         "funding_cost": _finite(economics.get("funding_cost")),
@@ -162,6 +245,7 @@ def position_metrics(fact: Mapping[str, Any]) -> dict[str, Any]:
         "same_bar_ordering": (
             "ambiguous"
             if path.get("path_evidence_status") == "ambiguous"
+            or path.get("first_stop_barrier_status") == "ambiguous"
             else "ordered"
             if path.get("first_stop_barrier_status") == "available"
             else "unavailable"
@@ -170,20 +254,39 @@ def position_metrics(fact: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def diagnose_position_fact(fact: Mapping[str, Any]) -> dict[str, Any]:
+    fact_is_mapping = isinstance(fact, Mapping)
+    if not fact_is_mapping:
+        fact = {}
     metrics = position_metrics(fact)
+    exclusions = []
+    if fact.get("contract_version") != _FACT_CONTRACT_VERSION:
+        exclusions.append("fact_contract_mismatch")
+    if fact.get("fact_unit") != "position_fact":
+        exclusions.append("fact_unit_mismatch")
+    if fact.get("availability") != "available":
+        exclusions.append("fact_unavailable")
+    if _nested(fact, "producer", "status") != "available":
+        exclusions.append("producer_evidence_unavailable")
+    if _nested(fact, "stages", "exit", "availability") != "available":
+        exclusions.append("exit_stage_unavailable")
     causal = _nested(fact, "causal_link", "status")
     economics_status = _nested(fact, "economics", "availability")
     path_status = _nested(fact, "stages", "holding", "ohlcv", "availability")
-    exclusions = []
+    trade_path_status = _nested(fact, "stages", "holding", "trade_path", "path_evidence_status")
+    raw_ohlcv_rows = _nested(fact, "stages", "holding", "ohlcv", "rows")
+    if not fact_is_mapping:
+        exclusions.append("fact_not_object")
+    if not isinstance(raw_ohlcv_rows, list) or len(_ohlcv_rows(fact)) != len(raw_ohlcv_rows):
+        exclusions.append("ohlcv_rows_invalid")
     if causal != "available":
         exclusions.append("causal_link_unavailable")
     if economics_status != "available":
         exclusions.append("economics_unavailable")
-    if path_status != "available":
+    if path_status != "available" or trade_path_status != "available":
         exclusions.append("ordered_path_unavailable")
-    gross = metrics["gross_pnl"]
-    net = metrics["net_pnl"]
-    cost_drag = gross is not None and net is not None and gross >= 0 > net
+    if "not_evaluable" in metrics["hypothesis_prefix_states"]:
+        exclusions.append("hypothesis_unavailable")
+    cost_attribution_available = metrics["cost_attribution_status"] == "available"
     invalidated = "invalidated" in metrics["hypothesis_prefix_states"]
     giveback_before_trigger = (
         metrics["pre_trigger_mfe_lower_bound_pct"] is not None
@@ -196,9 +299,13 @@ def diagnose_position_fact(fact: Mapping[str, Any]) -> dict[str, Any]:
             "reason": "candidate_denominator_required",
         },
         "direction_hypothesis_failure": {
-            "status": "directional" if invalidated else "insufficient_data",
+            "status": "unavailable" if exclusions else "directional" if invalidated else "insufficient_data",
             "reason": (
-                "frozen_hypothesis_invalidated_in_prefix" if invalidated else "frozen_hypothesis_not_proven_failed"
+                exclusions
+                if exclusions
+                else "frozen_hypothesis_invalidated_in_prefix"
+                if invalidated
+                else "frozen_hypothesis_not_proven_failed"
             ),
         },
         "timing_error": {
@@ -210,16 +317,24 @@ def diagnose_position_fact(fact: Mapping[str, Any]) -> dict[str, Any]:
             "reason": "registered_alternative_risk_expression_required",
         },
         "profit_management_error": {
-            "status": "directional" if giveback_before_trigger else "insufficient_data",
+            "status": "unavailable" if exclusions else "directional" if giveback_before_trigger else "insufficient_data",
             "reason": (
-                "favorable_excursion_preceded_ordered_trigger"
+                exclusions
+                if exclusions
+                else "favorable_excursion_preceded_ordered_trigger"
                 if giveback_before_trigger
                 else "ordered_pre_trigger_excursion_not_proven"
             ),
         },
         "cost_drag": {
-            "status": "measured" if cost_drag else "insufficient_data",
-            "reason": "verified_costs_flip_gross_to_net" if cost_drag else "cost_flip_not_observed",
+            "status": "unavailable" if exclusions else "measured" if cost_attribution_available else "insufficient_data",
+            "reason": (
+                exclusions
+                if exclusions
+                else "verified_avoidable_cost_baseline"
+                if cost_attribution_available
+                else metrics["cost_attribution_reason"]
+            ),
         },
         "decision_latency": {
             "status": "unavailable",
@@ -280,7 +395,63 @@ def _candidate_kind(fact: Mapping[str, Any]) -> str:
 
 
 def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
-    facts = [fact for fact in report.get("facts", []) if isinstance(fact, Mapping)]
+    report_is_mapping = isinstance(report, Mapping)
+    if not report_is_mapping:
+        report = {}
+    raw_facts = report.get("facts")
+    facts = [fact for fact in raw_facts if isinstance(fact, Mapping)] if isinstance(raw_facts, list) else []
+    unavailable_reasons: list[str] = [] if report_is_mapping else ["candidate_report_unavailable"]
+    if report.get("contract_version") != _FACT_CONTRACT_VERSION:
+        unavailable_reasons.append("candidate_report_contract_mismatch")
+    if report.get("fact_unit") != "candidate_fact":
+        unavailable_reasons.append("candidate_report_fact_unit_mismatch")
+    if report.get("availability") != "available":
+        unavailable_reasons.append("candidate_report_unavailable")
+    if report.get("candidate_report_status") not in {None, "available"}:
+        unavailable_reasons.append("candidate_report_unavailable")
+    if report.get("unavailable_count") not in {None, 0}:
+        unavailable_reasons.append("candidate_report_has_unavailable_facts")
+    if report.get("exclusions"):
+        unavailable_reasons.append("candidate_report_has_exclusions")
+    if any(fact.get("availability") not in {None, "available"} for fact in facts):
+        unavailable_reasons.append("candidate_fact_unavailable")
+    if any(
+        fact.get("contract_version") != _FACT_CONTRACT_VERSION
+        or fact.get("fact_unit") != "candidate_fact"
+        for fact in facts
+    ):
+        unavailable_reasons.append("candidate_fact_contract_mismatch")
+    if unavailable_reasons:
+        unique_reasons = list(dict.fromkeys(unavailable_reasons))
+        layers = {
+            layer: {
+                "status": "unavailable",
+                "reason": unique_reasons,
+                "raw_count": len(facts),
+                "eligible_count": 0,
+                "excluded_count": len(facts),
+                "baseline": None,
+                "observed": None,
+                "delta_pct": None,
+                "statistical_unit": "outcome_candidate_key",
+                "economic_unit": "fixed_horizon_net_return_pct",
+            }
+            for layer in ("Selection", "Decision", "Risk")
+        }
+        return {
+            "contract_version": DIAGNOSIS_CONTRACT_VERSION,
+            "fact_unit": "candidate_fact",
+            "read_only": True,
+            "behavior_changed": False,
+            "as_of_at": report.get("as_of_at"),
+            "fixed_horizon": report.get("fixed_horizon"),
+            "status": "unavailable",
+            "raw_count": len(facts),
+            "eligible_count": 0,
+            "coverage": report.get("outcome_coverage"),
+            "limitations": unique_reasons,
+            "layers": layers,
+        }
     comparisons = {
         "Selection": (
             _group_returns(

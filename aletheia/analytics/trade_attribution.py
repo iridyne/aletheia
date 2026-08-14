@@ -7,6 +7,7 @@ Read-only. No DB mutations. No LLM calls.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import logging
 from typing import Any
@@ -14,6 +15,7 @@ from typing import Any
 from aletheia.analytics.outcome_integrity import (
     assess_reportable_outcome,
     eligible_strategy_outcomes,
+    immutable_outcome_row,
     raw_account_events,
 )
 from aletheia.storage import repositories as repo
@@ -145,7 +147,10 @@ def proposal_decision_context(
 
 
 def build_trade_attribution_for_position(
-    position_id: str, *, db: Any = None
+    position_id: str,
+    *,
+    db: Any = None,
+    as_of_at: str | datetime | None = None,
 ) -> dict[str, Any] | None:
     """Build one exact eligible Position attribution without pagination fallback."""
     source = db or repo.get_db()
@@ -155,7 +160,14 @@ def build_trade_attribution_for_position(
     ).fetchone()
     if row is None:
         return None
-    position = dict(row)
+    cutoff = _utc(as_of_at)
+    if as_of_at is not None and cutoff is None:
+        return None
+    if cutoff is not None:
+        closed_at = _utc(row["closed_at"])
+        if closed_at is None or closed_at > cutoff:
+            return None
+    position = immutable_outcome_row(dict(row), db=source, as_of_at=cutoff)
     if not assess_reportable_outcome(position).eligible:
         return None
     return _build_row(position, db=source)
@@ -169,27 +181,21 @@ def build_trade_attribution_rows(
     db: Any = None,
     include_source_status: bool = False,
 ) -> list[dict] | tuple[list[dict], bool | None]:
-    if (
-        closed_after is None
-        and symbol is None
-        and db is None
-        and not include_source_status
-    ):
-        positions = list(reversed(eligible_strategy_outcomes()))[:limit]
-        source_truncated = None
-    else:
+    filters: dict[str, Any] = {}
+    if closed_after is not None:
+        filters["closed_after"] = closed_after
+    if symbol is not None:
+        filters["symbol"] = symbol
+    if db is not None:
+        filters["db"] = db
+    positions = list(
+        reversed(eligible_strategy_outcomes(immutable_exit_evidence=True, **filters))
+    )[:limit]
+    source_truncated = None
+    if include_source_status:
         source_limit = 10_000
-        source_rows = raw_account_events(
-            closed_after=closed_after,
-            symbol=symbol,
-            limit=source_limit,
-            db=db,
-        )
+        source_rows = raw_account_events(limit=source_limit, **filters)
         source_truncated = None if len(source_rows) >= source_limit else False
-        positions = [
-            row for row in source_rows if assess_reportable_outcome(row).eligible
-        ]
-        positions = list(reversed(positions))[:limit]
     rows = []
     for pos in positions:
         row = _build_row(pos, db=db)
@@ -235,10 +241,20 @@ def _build_row(pos: dict, *, db: Any = None) -> dict | None:
         proposal.get("id"), proposal=proposal, db=db
     )
 
-    # Compute realized_pnl_pct
-    entry_price = float(pos.get("entry_price") or 0)
-    realized_pnl = float(pos.get("realized_pnl") or 0)
-    quantity = float(pos.get("quantity") or 0)
+    # Compute realized_pnl_pct. A closed Position must carry its immutable exit
+    # fill price; current_price is mutable mark-to-market state and is not a
+    # replay substitute.
+    try:
+        entry_price = float(pos.get("entry_price") or 0)
+        realized_pnl = float(pos.get("realized_pnl") or 0)
+        quantity = float(pos.get("quantity") or 0)
+    except (TypeError, ValueError):
+        entry_price = realized_pnl = quantity = 0.0
+    raw_exit_price = pos.get("exit_price")
+    try:
+        exit_price = float(raw_exit_price) if raw_exit_price is not None else None
+    except (TypeError, ValueError):
+        exit_price = None
     notional = entry_price * quantity if entry_price and quantity else 0
     realized_pnl_pct = (realized_pnl / notional * 100) if notional else 0.0
 
@@ -280,7 +296,7 @@ def _build_row(pos: dict, *, db: Any = None) -> dict | None:
         "crowding_risk": universe_member.get("crowding_risk") if universe_member else None,
         "risk_flags": risk_flags,
         "entry_price": entry_price,
-        "exit_price": float(pos.get("current_price") or entry_price),
+        "exit_price": exit_price,
         "quantity": quantity,
         "entry_fee": pos.get("entry_fee"),
         "exit_fee": pos.get("exit_fee"),
@@ -394,6 +410,20 @@ def _parse_json_list(raw: Any) -> list:
         except (ValueError, TypeError):
             return []
     return []
+
+
+def _utc(value: str | datetime | None) -> datetime | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _compute_holding_hours(opened_at: str | None, closed_at: str | None) -> float | None:

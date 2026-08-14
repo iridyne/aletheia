@@ -162,6 +162,52 @@ def test_candidate_facts_preserve_traded_skip_reject_and_filtered_units():
     assert report["outcome_coverage"] == 0.75
 
 
+def test_candidate_facts_reject_invalid_as_of_without_using_now():
+    report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="not-a-timestamp", db=_db()
+    )
+
+    assert report["availability"] == "unavailable"
+    assert report["unavailable_reasons"] == {"invalid_as_of_at": 1}
+    assert report["facts"] == []
+
+
+def test_candidate_facts_count_malformed_batch_entries_as_unavailable():
+    db = _db()
+    db.execute(
+        "UPDATE filter_decision_batches SET candidate_facts=? WHERE id='batch-filtered'",
+        (json.dumps([{"decision": "rejected"}, {"reason_code": "missing-key"}]),),
+    )
+
+    report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db
+    )
+
+    assert report["candidate_count"] == 3
+    assert report["unavailable_count"] == 2
+    assert report["unavailable_reasons"] == {"candidate_identity_missing": 2}
+    assert {item["unavailable_reason"] for item in report["exclusions"]} == {
+        "candidate_identity_missing",
+    }
+
+
+def test_candidate_facts_reject_contradictory_backlinks():
+    db = _db()
+    db.execute(
+        "UPDATE trade_proposals SET opportunity_id='other-opportunity' WHERE id='proposal-traded'"
+    )
+
+    report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db
+    )
+    traded = next(fact for fact in report["facts"] if fact["fact_id"] == "outcome-traded")
+
+    assert traded["availability"] == "unavailable"
+    assert traded["terminal_state"] == "unavailable"
+    assert "proposal_opportunity_mismatch" in traded["unavailable_reason"]
+    assert report["unavailable_count"] == 1
+
+
 def test_candidate_facts_reject_variable_horizon():
     db = _db()
 

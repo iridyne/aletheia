@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import math
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from aletheia.analytics.outcome_integrity import assess_reportable_outcome
 from aletheia.analytics import trade_path as trade_path_analytics
@@ -63,11 +63,36 @@ def _rows(db: Any, sql: str, params: Iterable[object]) -> list[dict[str, Any]]:
 def _at_or_before(row: dict[str, Any] | None, cutoff: datetime) -> bool:
     if row is None:
         return False
-    for field in ("created_at", "evaluated_at", "filled_at", "opened_at"):
-        if row.get(field):
-            value = _utc(row[field])
-            return value is not None and value <= cutoff
-    return True
+    seen_timestamp = False
+    for field in ("created_at", "evaluated_at", "filled_at", "opened_at", "closed_at"):
+        raw = row.get(field)
+        if raw in (None, ""):
+            continue
+        seen_timestamp = True
+        value = _utc(raw)
+        if value is None or value > cutoff:
+            return False
+    return seen_timestamp
+
+
+def _snapshot_at_or_before(
+    row: dict[str, Any] | None,
+    cutoff: datetime,
+    *,
+    fields: tuple[str, ...],
+) -> bool:
+    if row is None:
+        return False
+    seen_timestamp = False
+    for field in fields:
+        raw = row.get(field)
+        if raw in (None, ""):
+            continue
+        seen_timestamp = True
+        value = _utc(raw)
+        if value is None or value > cutoff:
+            return False
+    return seen_timestamp
 
 
 def _pi_decision(db: Any, proposal_id: str, cutoff: datetime) -> tuple[dict[str, Any] | None, str | None]:
@@ -168,6 +193,58 @@ def _instrument(discovery: dict[str, Any] | None, position: dict[str, Any]) -> d
 _COUNTERFACTUAL_WINDOW_BARS = 66
 
 
+def _validated_replay_candles(
+    candles: Iterable[Mapping[str, Any]],
+    *,
+    start: int,
+    end: int,
+    exchange: str,
+    market_type: str,
+) -> tuple[tuple[int, float, float, float, float, float, str], ...]:
+    selected: list[tuple[int, float, float, float, float, float, str]] = []
+    seen: set[int] = set()
+    for row in candles:
+        if not isinstance(row, Mapping):
+            raise ValueError("holding_path_evidence_invalid")
+        try:
+            timestamp = int(row["ts"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            raise ValueError("holding_path_evidence_invalid") from None
+        if not start <= timestamp < end:
+            continue
+        if timestamp % _BAR_MS != 0 or timestamp in seen:
+            raise ValueError("holding_path_timeline_invalid")
+        row_exchange = str(row.get("exchange") or "").strip().lower()
+        row_market_type = str(row.get("market_type") or "").strip().lower()
+        if row_exchange != exchange.lower() or row_market_type != market_type.lower():
+            raise ValueError("holding_path_identity_mismatch")
+        if "is_closed" in row and row.get("is_closed") not in {True, 1, "true", "1"}:
+            raise ValueError("holding_path_bar_not_closed")
+        values = [_finite(row.get(key)) for key in ("open", "high", "low", "close", "volume")]
+        if any(value is None for value in values):
+            raise ValueError("holding_path_ohlcv_invalid")
+        open_price, high, low, close, volume = values
+        if (
+            open_price is None
+            or high is None
+            or low is None
+            or close is None
+            or volume is None
+            or min(open_price, high, low, close) <= 0
+            or volume < 0
+            or high < max(open_price, close)
+            or low > min(open_price, close)
+            or low > high
+        ):
+            raise ValueError("holding_path_ohlcv_invalid")
+        selected.append(_canonical_row(row))
+        seen.add(timestamp)
+    expected = tuple(range(start, end, _BAR_MS))
+    if tuple(row[0] for row in selected) != expected:
+        raise ValueError("holding_path_timeline_invalid")
+    return tuple(selected)
+
+
 def _ohlcv_evidence(
     db: Any,
     *,
@@ -209,6 +286,9 @@ def _ohlcv_evidence(
     cutoff_end = int(cutoff.timestamp() * 1000) // _BAR_MS * _BAR_MS
     end = min(max(actual_end, counterfactual_end), cutoff_end)
     expected_i = max(0, (end - start) // _BAR_MS)
+    if expected_i <= 0:
+        base.update({"expected_row_count": expected_i, "unavailable_reason": "holding_path_cutoff_before_window"})
+        return base
     base.update(
         {
             "window_start_ts_ms": start,
@@ -216,16 +296,29 @@ def _ohlcv_evidence(
             "expected_row_count": expected_i,
         }
     )
-    candles = repo.get_ohlcv_candles(
-        str(position.get("symbol") or ""),
-        "1m",
-        limit=expected_i,
-        exchange=str(exchange),
-        market_type=str(market_type),
-        before_ts=end,
-        db=db,
-    )
-    canonical = tuple(_canonical_row(row) for row in candles if start <= int(row["ts"]) < end)
+    try:
+        candles = repo.get_ohlcv_candles(
+            str(position.get("symbol") or ""),
+            "1m",
+            limit=expected_i,
+            exchange=str(exchange),
+            market_type=str(market_type),
+            before_ts=end,
+            db=db,
+        )
+        canonical = _validated_replay_candles(
+            candles,
+            start=start,
+            end=end,
+            exchange=str(exchange),
+            market_type=str(market_type),
+        )
+    except ValueError as exc:
+        base["unavailable_reason"] = str(exc)
+        return base
+    except Exception:
+        base["unavailable_reason"] = "holding_path_evidence_invalid"
+        return base
     if len(canonical) != expected_i:
         base.update(
             {
@@ -249,12 +342,33 @@ def _ohlcv_evidence(
     return base
 
 
-def _economics(position: dict[str, Any]) -> dict[str, Any]:
-    assessment = assess_reportable_outcome(position)
+def _close_fill_vwap(close_fills: Iterable[dict[str, Any]]) -> float | None:
+    total_quantity = 0.0
+    total_notional = 0.0
+    rows = list(close_fills)
+    if not rows:
+        return None
+    for row in rows:
+        price = _finite(row.get("fill_price"))
+        quantity = _finite(row.get("fill_quantity"))
+        if price is None or quantity is None or price <= 0 or quantity <= 0:
+            return None
+        total_quantity += quantity
+        total_notional += price * quantity
+    return total_notional / total_quantity if total_quantity > 0 else None
+
+
+def _economics(
+    position: dict[str, Any], close_fills: Iterable[dict[str, Any]] = ()
+) -> dict[str, Any]:
     entry = _finite(position.get("entry_price"))
-    exit_price = _finite(
-        position.get("current_price") if position.get("current_price") is not None else position.get("exit_price")
-    )
+    # positions has no persisted exit_price column. Close-fill VWAP is therefore
+    # the only durable exit-price source for replay economics.
+    exit_price = _close_fill_vwap(close_fills)
+    assessment_position = dict(position)
+    assessment_position["current_price"] = None
+    assessment_position["exit_price"] = exit_price
+    assessment = assess_reportable_outcome(assessment_position)
     quantity = _finite(position.get("quantity"))
     entry_fee = _finite(position.get("entry_fee"))
     exit_fee = _finite(position.get("exit_fee"))
@@ -276,9 +390,28 @@ def _economics(position: dict[str, Any]) -> dict[str, Any]:
         if expected_net is not None and entry is not None and quantity is not None
         else None
     )
+    residual_within_tolerance = (
+        abs(residual) <= tolerance if residual is not None and tolerance is not None else None
+    )
+    economics_available = (
+        assessment.eligible
+        and exit_price is not None
+        and residual_within_tolerance is True
+    )
+    unavailable_reason = (
+        "exit_fill_price_unavailable"
+        if exit_price is None
+        else "accounting_residual_unavailable"
+        if residual_within_tolerance is None
+        else "accounting_residual_out_of_tolerance"
+        if residual_within_tolerance is False
+        else assessment.reason
+        if not assessment.eligible
+        else None
+    )
     return {
-        "availability": "available" if assessment.eligible else "unavailable",
-        "unavailable_reason": None if assessment.eligible else assessment.reason,
+        "availability": "available" if economics_available else "unavailable",
+        "unavailable_reason": unavailable_reason,
         "gross_pnl": gross,
         "entry_fee": entry_fee,
         "exit_fee": exit_fee,
@@ -287,9 +420,7 @@ def _economics(position: dict[str, Any]) -> dict[str, Any]:
         "expected_net_pnl": expected_net,
         "accounting_residual": residual,
         "accounting_tolerance": tolerance,
-        "residual_within_tolerance": (
-            abs(residual) <= tolerance if residual is not None and tolerance is not None else None
-        ),
+        "residual_within_tolerance": residual_within_tolerance,
         "outcome_key": assessment.outcome_key,
         "horizon": assessment.horizon,
     }
@@ -303,7 +434,18 @@ def build_position_replay(
 ) -> dict[str, Any]:
     """Return one immutable fact projection without mutating runtime state."""
     source = db or repo.get_db()
-    cutoff = _utc(as_of_at) or datetime.now(timezone.utc)
+    parsed_cutoff = _utc(as_of_at)
+    if as_of_at is not None and parsed_cutoff is None:
+        return {
+            "contract_version": FACT_CONTRACT_VERSION,
+            "fact_unit": "position_fact",
+            "fact_id": position_id,
+            "as_of_at": str(as_of_at),
+            "read_only": True,
+            "availability": "unavailable",
+            "unavailable_reason": "invalid_as_of_at",
+        }
+    cutoff = parsed_cutoff or datetime.now(timezone.utc)
     position = _row(source, "positions", position_id)
     base: dict[str, Any] = {
         "contract_version": FACT_CONTRACT_VERSION,
@@ -314,24 +456,49 @@ def build_position_replay(
         "availability": "unavailable",
         "unavailable_reason": "position_not_found",
     }
-    if position is None or not _at_or_before(position, cutoff):
+    if position is None:
+        return base
+    if str(position.get("status") or "").lower() != "closed":
+        base["unavailable_reason"] = "position_not_closed"
         return base
     closed_at = _utc(position.get("closed_at"))
-    if closed_at is not None and closed_at > cutoff:
+    if closed_at is None:
+        base["unavailable_reason"] = "position_close_time_unavailable"
+        return base
+    opened_at = _utc(position.get("opened_at"))
+    if opened_at is None:
+        base["unavailable_reason"] = "position_open_time_unavailable"
+        return base
+    if opened_at >= closed_at:
+        base["unavailable_reason"] = "position_time_order_invalid"
+        return base
+    if closed_at > cutoff:
         base["unavailable_reason"] = "position_state_mutated_after_cutoff"
+        return base
+    if not _at_or_before(position, cutoff):
         return base
 
     proposal = _row(source, "trade_proposals", position.get("proposal_id"))
+    if proposal is not None and not _at_or_before(proposal, cutoff):
+        proposal = None
     entry_order = _row(source, "orders", position.get("order_id"))
+    if entry_order is not None and not _at_or_before(entry_order, cutoff):
+        entry_order = None
     opportunity = _row(source, "opportunities", position.get("opportunity_id"))
+    if opportunity is not None and not _at_or_before(opportunity, cutoff):
+        opportunity = None
     if opportunity is None:
         opportunity = _row(source, "serenity_opportunities", position.get("opportunity_id"))
+        if opportunity is not None and not _at_or_before(opportunity, cutoff):
+            opportunity = None
     member = _row(source, "universe_members", (opportunity or {}).get("universe_member_id"))
     asset = _row(source, "universe_registry", (member or {}).get("asset_id"))
     pi_decision, pi_error = (
         _pi_decision(source, str(proposal["id"]), cutoff) if proposal is not None else (None, "proposal_not_recorded")
     )
     risk = _row(source, "risk_decisions", (entry_order or {}).get("risk_decision_id"))
+    if risk is not None and not _at_or_before(risk, cutoff):
+        risk = None
     entry_fills = (
         _rows(
             source,
@@ -365,12 +532,23 @@ def build_position_replay(
         "SELECT * FROM position_exit_plan_versions WHERE position_id=? ORDER BY version, datetime(effective_at), rowid",
         (position_id,),
     )
-    exit_plans = [row for row in exit_plans if (_utc(row.get("effective_at")) or cutoff) <= cutoff]
+    exit_plans = [
+        row
+        for row in exit_plans
+        if (effective_at := _utc(row.get("effective_at"))) is not None
+        and effective_at <= cutoff
+    ]
     protection_row = source.execute(
         "SELECT * FROM position_protection_state WHERE position_id=?",
         (position_id,),
     ).fetchone()
     protection = dict(protection_row) if protection_row is not None else None
+    if protection is not None and not _snapshot_at_or_before(
+        protection,
+        cutoff,
+        fields=("created_at", "updated_at", "activated_at", "gap_detected_at", "close_filled_at"),
+    ):
+        protection = None
 
     causal_errors = []
     if proposal is None:
@@ -395,19 +573,43 @@ def build_position_replay(
     if pi_error:
         causal_errors.append(pi_error)
 
-    path = getattr(trade_path_analytics, "build_position_trade_path")(position_id, db=source)
+    try:
+        path = getattr(trade_path_analytics, "build_position_trade_path")(
+            position_id, db=source, as_of_at=cutoff
+        )
+    except Exception:
+        path = None
     ohlcv = _ohlcv_evidence(source, position=position, path=path, cutoff=cutoff)
-    economics = _economics(position)
+    economics = _economics(position, close_fills)
     provenance = _runtime_identity(
         source,
         [position, opportunity, proposal, pi_decision, risk, entry_order, *entry_fills, *close_orders, *close_fills],
     )
     market_identity = _instrument(asset, position)
+    fact_errors = list(causal_errors)
+    if provenance.get("status") != "available":
+        fact_errors.append("producer_evidence_unavailable")
+    if economics.get("availability") != "available":
+        fact_errors.append(str(economics.get("unavailable_reason") or "economics_unavailable"))
+    if opportunity is None:
+        fact_errors.append("discovery_unavailable")
+    if proposal is None or pi_decision is None or risk is None:
+        fact_errors.append("decision_unavailable")
+    if entry_order is None or not entry_fills:
+        fact_errors.append("execution_unavailable")
+    if path is None or path.get("path_evidence_status") != "available" or ohlcv.get("availability") != "available":
+        fact_errors.append("holding_evidence_unavailable")
+    if not close_orders or not close_fills:
+        fact_errors.append("exit_unavailable")
+    fact_errors = list(dict.fromkeys(fact_errors))
+    position_snapshot = dict(position)
+    position_snapshot["current_price"] = None
+    position_snapshot["unrealized_pnl"] = None
 
     base.update(
         {
-            "availability": "available",
-            "unavailable_reason": None,
+            "availability": "available" if not fact_errors else "unavailable",
+            "unavailable_reason": None if not fact_errors else fact_errors[0],
             "event_at": position.get("opened_at"),
             "evidence_available_at": position.get("closed_at") or cutoff.isoformat(),
             "identity": {
@@ -465,7 +667,11 @@ def build_position_replay(
                     "entry_fills": entry_fills,
                 },
                 "holding": {
-                    "availability": "available" if path is not None else "unavailable",
+                    "availability": (
+                        "available"
+                        if path is not None and path.get("path_evidence_status") == "available"
+                        else "unavailable"
+                    ),
                     "trade_path": path,
                     "ohlcv": ohlcv,
                     "exit_plan_versions": exit_plans,
@@ -477,7 +683,7 @@ def build_position_replay(
                         if position.get("status") == "closed" and close_orders and close_fills
                         else "unavailable"
                     ),
-                    "position": position,
+                    "position": position_snapshot,
                     "close_orders": close_orders,
                     "close_fills": close_fills,
                     "settlement_identity": {

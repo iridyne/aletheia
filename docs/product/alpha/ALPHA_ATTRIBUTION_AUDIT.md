@@ -312,7 +312,10 @@ Execution cost, not a randomized routing-policy experiment. It measures fees and
 fill-price impact exactly within the Paper simulator, but does not measure whether
 the current router avoided worse fills or outperformed an alternative algorithm.
 It remains read-only with `behavior_authority=false` and
-`promotion_eligible=false`.
+`promotion_eligible=false`. This frictionless accounting evidence is not a
+`profit_gradient/v2` Execution or Costs sample: its fee component must be
+isolated and an avoidable-cost baseline must be proven before seven-layer
+attribution can consume it.
 
 ### Serenity Alpha
 

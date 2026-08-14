@@ -26,7 +26,7 @@ def test_position_and_candidate_diagnosis_commands_emit_versioned_json(monkeypat
     )
     position = runner.invoke(inspect_app, ["position-diagnosis", "--id", "position-1", "--json"])
     assert position.exit_code == 0
-    assert json.loads(position.stdout)["contract_version"] == "profit_loop_diagnosis/v1"
+    assert json.loads(position.stdout)["contract_version"] == "profit_loop_diagnosis/v2"
 
     monkeypatch.setattr(
         candidate_facts_module,

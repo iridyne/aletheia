@@ -24,6 +24,7 @@ def _fact(*, invalidation_threshold: float = 50.0) -> dict:
         )
     return {
         "fact_id": "position-1",
+        "availability": "available",
         "as_of_at": "2026-09-12T05:34:28+00:00",
         "producer": {
             "status": "available",
@@ -54,6 +55,7 @@ def _fact(*, invalidation_threshold: float = 50.0) -> dict:
                 "ohlcv": {"availability": "available", "rows": rows},
             },
             "exit": {
+                "availability": "available",
                 "position": {
                     "opened_at": "2026-08-13T05:34:28+00:00",
                     "direction": "long",
@@ -178,6 +180,44 @@ def test_delay_becomes_no_trade_when_thesis_invalidates_in_completed_prefix():
     assert delay["paired_net_delta_pct"] is None
 
 
+def test_future_verified_cost_model_cannot_enter_historical_evaluation():
+    future = counterfactual.CostModel(
+        model_id="future-cost-v1",
+        source_evidence_hash="a" * 64,
+        verified_at="2026-09-13T00:00:00+00:00",
+        entry_fee_bps=10.0,
+        exit_fee_bps=10.0,
+        slippage_bps_per_side=5.0,
+        funding_bps_per_hour=2.0,
+    )
+
+    result = counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=future)
+
+    assert result["status"] == "not_evaluable"
+    assert result["reason"] == "verified_cost_model_required"
+
+
+def test_malformed_hypothesis_cannot_evaluate_baseline():
+    fact = _fact()
+    fact["stages"]["decision"]["proposal"]["attribution_snapshot"]["position_hypothesis"] = {
+        "contract_version": "position_hypothesis/v1",
+        "invalidation_conditions": [{"kind": "unsupported"}],
+        "initial_risk": {"stop_price": 98.0},
+    }
+
+    result = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
+
+    assert result["status"] == "not_evaluable"
+    assert result["reason"] == "frozen_hypothesis_unavailable"
+
+
+def test_malformed_counterfactual_fact_fails_closed():
+    result = counterfactual.evaluate_counterfactual_registry(None, cost_model=_cost())
+
+    assert result["status"] == "not_evaluable"
+    assert result["reason"] == "position_fact_unavailable"
+
+
 def test_missing_cost_or_fixed_horizon_coverage_is_not_evaluable():
     no_cost = counterfactual.evaluate_counterfactual_registry(_fact(), cost_model=None)
     assert no_cost["status"] == "not_evaluable"
@@ -197,7 +237,7 @@ def test_future_bars_after_pessimistic_stop_cannot_change_result():
     first = counterfactual.evaluate_counterfactual_registry(fact, cost_model=_cost())
     changed = deepcopy(fact)
     for row in changed["stages"]["holding"]["ohlcv"]["rows"][2:]:
-        row[4] = 1_000_000.0
+        row[1:5] = [1_000_000.0, 1_000_001.0, 999_999.0, 1_000_000.0]
     second = counterfactual.evaluate_counterfactual_registry(changed, cost_model=_cost())
 
     assert first["results"] == second["results"]

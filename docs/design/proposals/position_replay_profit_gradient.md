@@ -57,7 +57,7 @@ CLI is `aletheia inspect position-replay --id POSITION_ID [--json]`. Exact
 linkage starts from `pi_decision.proposal_id`; it never substitutes a latest
 Decision across retries.
 
-`profit_loop_diagnosis/v1` consumes frozen facts and reports measured,
+`profit_loop_diagnosis/v2` consumes frozen facts and reports measured,
 directional, insufficient, or unavailable evidence with denominators,
 coverage, confidence intervals, concentration, epochs, and limitations. It is
 stored and tested independently from facts.
@@ -78,7 +78,10 @@ net_pnl = gross_pnl - entry_fee - exit_fee - funding_cost
 
 Reference-to-fill price impact already affects gross PnL and is not deducted
 again as Costs. Residuals beyond the shared outcome-integrity tolerance make
-economic attribution unavailable.
+economic attribution unavailable. The current `positions` schema does not
+persist `exit_price`; replay uses close-fill VWAP as its sole immutable exit
+source and returns unavailable when no valid close fills exist. This proposal
+adds no schema migration.
 
 Replay queries exact one-minute `market_ohlcv` identity and window, fills only
 missing ranges, accepts only proven closed continuous bars, requires complete

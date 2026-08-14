@@ -9,7 +9,11 @@ import json
 import math
 from typing import Any, Callable, Mapping
 
-from ..storage.proposal_hypothesis import evaluate_hypothesis_prefix
+from ..storage.proposal_hypothesis import (
+    HYPOTHESIS_CONTRACT_VERSION,
+    _validated_conditions,
+    evaluate_hypothesis_prefix,
+)
 
 
 COUNTERFACTUAL_CONTRACT_VERSION = "profit_loop_counterfactual/v1"
@@ -111,14 +115,17 @@ class CostModel:
     verified_at: str
     funding_bps_per_hour: float
 
-    def valid(self) -> bool:
+    def valid(self, *, as_of_at: datetime | None = None) -> bool:
         values = (
             self.entry_fee_bps,
             self.exit_fee_bps,
             self.slippage_bps_per_side,
             self.funding_bps_per_hour,
         )
-        verified = _parse_utc(self.verified_at) is not None
+        verified_at = _parse_utc(self.verified_at)
+        verified = verified_at is not None and (
+            as_of_at is None or verified_at <= as_of_at
+        )
         hash_valid = len(self.source_evidence_hash) == 64 and all(
             char in "0123456789abcdef" for char in self.source_evidence_hash.lower()
         )
@@ -265,7 +272,16 @@ def _rows(fact: Mapping[str, Any]) -> list[dict[str, float]]:
             )
         except (TypeError, ValueError, OverflowError):
             return []
-        if not all(math.isfinite(value) for value in (open_, high, low, close, volume)):
+        if (
+            not all(math.isfinite(value) for value in (open_, high, low, close, volume))
+            or min(open_, high, low, close) <= 0
+            or volume < 0
+            or high < max(open_, close)
+            or low > min(open_, close)
+            or low > high
+            or ts % 60_000 != 0
+            or (rows and ts != int(rows[-1]["ts"]) + 60_000)
+        ):
             return []
         rows.append(
             {
@@ -389,6 +405,18 @@ def evaluate_counterfactual_registry(
     hypothesis_evaluator: Callable[..., str] = evaluate_hypothesis_prefix,
 ) -> dict[str, Any]:
     """Evaluate fixed registry; every state call receives only its completed prefix."""
+    if not isinstance(fact, Mapping):
+        return {
+            "contract_version": COUNTERFACTUAL_CONTRACT_VERSION,
+            "fact_id": None,
+            "assignment_unit": _ASSIGNMENT_UNIT,
+            "evidence_class": "exploratory",
+            "promotion_eligible": False,
+            "registry_hash": profit_loop_registry_hash(),
+            "status": "not_evaluable",
+            "reason": "position_fact_unavailable",
+            "results": [],
+        }
     registration = resolve_profit_loop_registration(fact)
     registered = registration if registration and registration.get("status") == "available" else None
     registry = _registry(registered) if registered else ()
@@ -414,6 +442,8 @@ def evaluate_counterfactual_registry(
         return {**base, "status": "not_evaluable", "reason": "registered_cutoff_not_reached", "results": []}
     evaluation_at = _parse_utc(fact.get("as_of_at"))
     requested_as_of = _parse_utc(as_of_at)
+    if as_of_at is not None and requested_as_of is None:
+        return {**base, "status": "not_evaluable", "reason": "invalid_as_of_at", "results": []}
     if evaluation_at is None:
         return {**base, "status": "not_evaluable", "reason": "evaluation_as_of_unavailable", "results": []}
     if requested_as_of is not None and requested_as_of != evaluation_at:
@@ -438,6 +468,7 @@ def evaluate_counterfactual_registry(
         or closed_at is None
         or registration_at is None
         or opened_at < registration_at
+        or opened_at >= closed_at
         or closed_at > cutoff_at
     ):
         return {
@@ -447,10 +478,12 @@ def evaluate_counterfactual_registry(
             "results": [],
         }
     if (
-        _nested(fact, "causal_link", "status") != "available"
+        fact.get("availability") != "available"
+        or _nested(fact, "causal_link", "status") != "available"
         or _nested(fact, "economics", "availability") != "available"
         or _nested(fact, "stages", "holding", "availability") != "available"
         or _nested(fact, "stages", "holding", "ohlcv", "availability") != "available"
+        or _nested(fact, "stages", "exit", "availability") != "available"
     ):
         return {
             **base,
@@ -458,7 +491,7 @@ def evaluate_counterfactual_registry(
             "reason": "complete_position_fact_required",
             "results": [],
         }
-    if cost_model is None or not cost_model.valid():
+    if cost_model is None or not cost_model.valid(as_of_at=evaluation_at):
         return {**base, "status": "not_evaluable", "reason": "verified_cost_model_required", "results": []}
     rows = _rows(fact)
     hypothesis = _nested(
@@ -477,6 +510,21 @@ def evaluate_counterfactual_registry(
         stop = math.nan
     if not rows or not isinstance(hypothesis, Mapping) or direction not in {"long", "short"} or not math.isfinite(stop):
         return {**base, "status": "not_evaluable", "reason": "frozen_inputs_unavailable", "results": []}
+    try:
+        if hypothesis.get("contract_version") != HYPOTHESIS_CONTRACT_VERSION:
+            raise ValueError("hypothesis_contract_version_invalid")
+        if not _validated_conditions(hypothesis.get("invalidation_conditions")):
+            raise ValueError("hypothesis_invalidation_conditions_missing")
+    except Exception:
+        return {**base, "status": "not_evaluable", "reason": "frozen_hypothesis_unavailable", "results": []}
+
+    def safe_hypothesis_evaluator(
+        hypothesis_value: Mapping[str, Any], *, completed_bars: list[dict[str, float]]
+    ) -> str:
+        try:
+            return hypothesis_evaluator(hypothesis_value, completed_bars=completed_bars)
+        except Exception:
+            return "not_evaluable"
 
     baseline = _simulate(
         rows=rows,
@@ -487,7 +535,7 @@ def evaluate_counterfactual_registry(
         exit_on_invalidation=False,
         hypothesis=hypothesis,
         cost_model=cost_model,
-        evaluator=hypothesis_evaluator,
+        evaluator=safe_hypothesis_evaluator,
     )
     results = []
     for spec in registry:
@@ -503,7 +551,7 @@ def evaluate_counterfactual_registry(
             exit_on_invalidation=spec.hypothesis_id.startswith("thesis_invalidation_"),
             hypothesis=hypothesis,
             cost_model=cost_model,
-            evaluator=hypothesis_evaluator,
+            evaluator=safe_hypothesis_evaluator,
         )
         delta = None
         if baseline.get("status") == "evaluated" and treatment.get("status") == "evaluated":

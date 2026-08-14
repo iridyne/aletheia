@@ -4,6 +4,8 @@ import json
 import sqlite3
 from types import SimpleNamespace
 
+import pytest
+
 from typer.testing import CliRunner
 
 import aletheia.analytics.position_replay as position_replay
@@ -161,8 +163,10 @@ def _candles() -> list[dict]:
             "close": 100.5 + index,
             "volume": 10.0,
             "provider": "ccxt",
+            "exchange": "bitget",
+            "market_type": "perp",
         }
-        for index in range(2)
+        for index in range(10)
     ]
 
 
@@ -182,7 +186,7 @@ def test_replay_uses_exact_ids_cutoff_reconciled_economics_and_deterministic_has
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
         "build_position_trade_path",
-        lambda position_id, *, db: _path(),
+        lambda position_id, *, db, **kwargs: _path(),
     )
     monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
@@ -199,9 +203,15 @@ def test_replay_uses_exact_ids_cutoff_reconciled_economics_and_deterministic_has
     assert first["causal_link"] == {"status": "available", "errors": []}
     assert first["economics"]["gross_pnl"] == 2.0
     assert first["economics"]["net_pnl"] == 1.7
+    assert first["stages"]["exit"]["position"]["current_price"] is None
+    db.execute("UPDATE positions SET current_price=999.0 WHERE id='position-1'")
+    replay_after_mark = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+    assert replay_after_mark["economics"]["gross_pnl"] == 2.0
     assert first["economics"]["accounting_residual"] == 0.0
     assert first["economics"]["residual_within_tolerance"] is True
-    assert first["stages"]["holding"]["ohlcv"]["row_count"] == 2
+    assert first["stages"]["holding"]["ohlcv"]["row_count"] == 10
     assert (
         first["stages"]["holding"]["ohlcv"]["ohlcv_window_hash"]
         == second["stages"]["holding"]["ohlcv"]["ohlcv_window_hash"]
@@ -219,7 +229,7 @@ def test_replay_fails_closed_when_a_producer_session_is_unresolved(monkeypatch):
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
         "build_position_trade_path",
-        lambda position_id, *, db: _path(),
+        lambda position_id, *, db, **kwargs: _path(),
     )
     monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
@@ -236,7 +246,7 @@ def test_replay_fails_closed_when_a_producer_row_has_no_identity(monkeypatch):
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
         "build_position_trade_path",
-        lambda position_id, *, db: _path(),
+        lambda position_id, *, db, **kwargs: _path(),
     )
     monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
@@ -253,7 +263,7 @@ def test_replay_rejects_direct_identity_that_disagrees_with_session(monkeypatch)
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
         "build_position_trade_path",
-        lambda position_id, *, db: _path(),
+        lambda position_id, *, db, **kwargs: _path(),
     )
     monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
@@ -269,7 +279,7 @@ def test_replay_fails_closed_instead_of_joining_ambiguous_pi_retry(monkeypatch):
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
         "build_position_trade_path",
-        lambda position_id, *, db: _path(),
+        lambda position_id, *, db, **kwargs: _path(),
     )
     monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
@@ -287,13 +297,192 @@ def test_replay_hides_mutable_position_state_after_historical_cutoff():
     assert replay["unavailable_reason"] == "position_state_mutated_after_cutoff"
 
 
+def test_replay_rejects_invalid_as_of_without_falling_back_to_now():
+    replay = position_replay.build_position_replay("position-1", as_of_at="not-a-timestamp", db=_database())
+
+    assert replay["availability"] == "unavailable"
+    assert replay["unavailable_reason"] == "invalid_as_of_at"
+
+
+def test_replay_rejects_open_positions():
+    db = _database()
+    db.execute("UPDATE positions SET status='open', closed_at=NULL WHERE id='position-1'")
+
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db)
+
+    assert replay["availability"] == "unavailable"
+    assert replay["unavailable_reason"] == "position_not_closed"
+
+
+def test_replay_rejects_closed_position_without_close_time():
+    db = _database()
+    db.execute("UPDATE positions SET closed_at=NULL WHERE id='position-1'")
+
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db)
+
+    assert replay["availability"] == "unavailable"
+    assert replay["unavailable_reason"] == "position_close_time_unavailable"
+
+
+def test_replay_rejects_missing_or_reversed_open_time():
+    db = _database()
+    db.execute("UPDATE positions SET opened_at=NULL WHERE id='position-1'")
+    missing = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db)
+    assert missing["unavailable_reason"] == "position_open_time_unavailable"
+
+    db = _database()
+    db.execute(
+        "UPDATE positions SET opened_at='2026-08-13T00:03:00+00:00' WHERE id='position-1'"
+    )
+    reversed_time = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db
+    )
+    assert reversed_time["unavailable_reason"] == "position_time_order_invalid"
+
+
+def test_replay_ignores_exit_plan_without_provable_effective_time(monkeypatch):
+    db = _database()
+    db.execute("INSERT INTO position_exit_plan_versions VALUES ('position-1',2,NULL)")
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db, **kwargs: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
+
+    replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db)
+
+    assert [row["version"] for row in replay["stages"]["holding"]["exit_plan_versions"]] == [1]
+
+
+def test_replay_requires_close_fill_price_and_rejects_accounting_residual(monkeypatch):
+    db = _database()
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db, **kwargs: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
+
+    db.execute("DELETE FROM fills WHERE id='close-fill'")
+    missing = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db
+    )
+    assert missing["economics"]["availability"] == "unavailable"
+    assert missing["economics"]["unavailable_reason"] == "exit_fill_price_unavailable"
+
+    db = _database()
+    db.execute("UPDATE positions SET realized_pnl=1.8 WHERE id='position-1'")
+    residual = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db
+    )
+    assert residual["economics"]["availability"] == "unavailable"
+    assert residual["economics"]["unavailable_reason"] == "accounting_residual_out_of_tolerance"
+    assert residual["economics"]["residual_within_tolerance"] is False
+
+
+def test_replay_fails_closed_on_malformed_ohlcv(monkeypatch):
+    db = _database()
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db, **kwargs: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(
+        position_replay.repo,
+        "get_ohlcv_candles",
+        lambda *args, **kwargs: [{"ts": "not-a-timestamp"}],
+    )
+
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db
+    )
+
+    assert replay["stages"]["holding"]["ohlcv"]["availability"] == "unavailable"
+    assert replay["stages"]["holding"]["ohlcv"]["unavailable_reason"] == "holding_path_evidence_invalid"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason"),
+    [
+        ("duplicate", "holding_path_timeline_invalid"),
+        ("gap", "holding_path_timeline_invalid"),
+        ("ohlc", "holding_path_ohlcv_invalid"),
+        ("identity", "holding_path_identity_mismatch"),
+    ],
+)
+def test_replay_rejects_invalid_ohlcv_structure(monkeypatch, mutation, reason):
+    db = _database()
+    candles = _candles()
+    if mutation == "duplicate":
+        candles[1]["ts"] = candles[0]["ts"]
+    elif mutation == "gap":
+        candles[1]["ts"] = candles[0]["ts"] + 120_000
+    elif mutation == "ohlc":
+        candles[0]["high"] = candles[0]["low"] - 1.0
+    else:
+        candles[0]["exchange"] = "other"
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db, **kwargs: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: candles)
+
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    assert replay["stages"]["holding"]["ohlcv"]["unavailable_reason"] == reason
+
+
+@pytest.mark.parametrize("path_status", ["bounded", "ambiguous"])
+def test_replay_does_not_promote_non_actionable_path_to_available(monkeypatch, path_status):
+    db = _database()
+    non_actionable_path = {"path_evidence_status": path_status, "path_evidence_reason": path_status}
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db, **kwargs: non_actionable_path,
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db
+    )
+
+    assert replay["stages"]["holding"]["availability"] == "unavailable"
+
+
+def test_replay_does_not_promote_unavailable_path_to_available(monkeypatch):
+    db = _database()
+    unavailable_path = {"path_evidence_status": "unavailable", "path_evidence_reason": "missing"}
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db, **kwargs: unavailable_path,
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db
+    )
+
+    assert replay["stages"]["holding"]["availability"] == "unavailable"
+    assert replay["stages"]["holding"]["ohlcv"]["unavailable_reason"] == "missing"
+
+
 def test_replay_requests_candles_through_fixed_counterfactual_horizon(monkeypatch):
     db = _database()
     captured = {}
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
         "build_position_trade_path",
-        lambda position_id, *, db: _path(),
+        lambda position_id, *, db, **kwargs: _path(),
     )
 
     def candles(*args, **kwargs):
@@ -314,7 +503,7 @@ def test_replay_counterfactual_ohlcv_never_crosses_requested_as_of(monkeypatch):
     monkeypatch.setattr(
         position_replay.trade_path_analytics,
         "build_position_trade_path",
-        lambda position_id, *, db: _path(),
+        lambda position_id, *, db, **kwargs: _path(),
     )
 
     def candles(*args, **kwargs):

@@ -27,12 +27,27 @@ def _utc(value: str | datetime | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _visibility_error(row: dict[str, Any]) -> str | None:
+    fields = ("evaluated_at", "created_at", "entry_ts", "filled_at", "opened_at", "closed_at")
+    populated = [row.get(field) for field in fields if row.get(field) not in (None, "")]
+    if not populated:
+        return "candidate_timestamp_missing"
+    if any(_utc(value) is None for value in populated):
+        return "candidate_timestamp_invalid"
+    return None
+
+
 def _visible(row: dict[str, Any], cutoff: datetime) -> bool:
-    for field in ("evaluated_at", "created_at", "entry_ts", "filled_at"):
-        if row.get(field):
-            value = _utc(row[field])
-            return value is not None and value <= cutoff
-    return True
+    seen_timestamp = False
+    for field in ("evaluated_at", "created_at", "entry_ts", "filled_at", "opened_at", "closed_at"):
+        raw = row.get(field)
+        if raw in (None, ""):
+            continue
+        seen_timestamp = True
+        value = _utc(raw)
+        if value is None or value > cutoff:
+            return False
+    return seen_timestamp
 
 
 def _rows(db: Any, sql: str, params: Iterable[object] = ()) -> list[dict[str, Any]]:
@@ -75,6 +90,16 @@ def _batch_facts(
         "SELECT * FROM filter_decision_batches ORDER BY datetime(evaluated_at), rowid",
     ):
         if not _visible(batch, cutoff):
+            if (reason := _visibility_error(batch)) is not None:
+                exclusions.append(
+                    {
+                        "source_table": "filter_decision_batches",
+                        "source_batch_id": batch.get("id"),
+                        "event_at": batch.get("evaluated_at"),
+                        "availability": "unavailable",
+                        "unavailable_reason": reason,
+                    }
+                )
             continue
         try:
             raw_facts = decode_filter_decision_batch(str(batch.get("candidate_facts") or "[]"))
@@ -91,13 +116,32 @@ def _batch_facts(
             continue
         for sequence, raw in enumerate(raw_facts):
             if not isinstance(raw, dict):
+                exclusions.append(
+                    {
+                        "source_table": "filter_decision_batches",
+                        "source_batch_id": batch.get("id"),
+                        "event_at": batch.get("evaluated_at"),
+                        "availability": "unavailable",
+                        "unavailable_reason": "candidate_fact_not_object",
+                    }
+                )
+                continue
+            candidate_key = raw.get("candidate_key") or raw.get("outcome_candidate_key")
+            if not isinstance(candidate_key, str) or not candidate_key.strip():
+                exclusions.append(
+                    {
+                        "source_table": "filter_decision_batches",
+                        "source_batch_id": batch.get("id"),
+                        "event_at": batch.get("evaluated_at"),
+                        "availability": "unavailable",
+                        "unavailable_reason": "candidate_identity_missing",
+                    }
+                )
                 continue
             fact = {
                 **raw,
                 "id": raw.get("id") or f"{batch['id']}:{sequence}",
-                "candidate_key": raw.get("candidate_key")
-                or raw.get("outcome_candidate_key")
-                or f"{batch['id']}:{sequence}",
+                "candidate_key": candidate_key,
                 "candidate_kind": raw.get("candidate_kind") or batch.get("candidate_kind"),
                 "run_id": raw.get("run_id") or batch.get("run_id"),
                 "filter_name": raw.get("filter_name") or batch.get("filter_name"),
@@ -148,6 +192,53 @@ def _terminal(
     return "traded"
 
 
+def _identity_errors(
+    ordered: list[dict[str, Any]],
+    *,
+    opportunity_id: str | None,
+    decision: dict[str, Any] | None,
+    proposal_id: str | None,
+    proposal: dict[str, Any] | None,
+    risk: dict[str, Any] | None,
+    order: dict[str, Any] | None,
+    position: dict[str, Any] | None,
+) -> list[str]:
+    errors: list[str] = []
+    for field, expected in (
+        ("opportunity_id", opportunity_id),
+        ("proposal_id", proposal_id),
+    ):
+        seen = {str(row[field]) for row in ordered if row.get(field)}
+        if len(seen) > 1 or (expected and any(value != str(expected) for value in seen)):
+            errors.append(f"candidate_{field}_mismatch")
+    if decision is not None:
+        if opportunity_id and decision.get("opportunity_id") not in {None, opportunity_id}:
+            errors.append("decision_opportunity_mismatch")
+        if decision.get("id") and decision.get("proposal_id") and proposal_id:
+            if decision.get("proposal_id") != proposal_id:
+                errors.append("decision_proposal_mismatch")
+    if proposal is not None:
+        if proposal.get("id") != proposal_id:
+            errors.append("proposal_identity_mismatch")
+        if opportunity_id and proposal.get("opportunity_id") != opportunity_id:
+            errors.append("proposal_opportunity_mismatch")
+    if risk is not None and proposal_id and risk.get("proposal_id") != proposal_id:
+        errors.append("risk_proposal_mismatch")
+    if order is not None:
+        if proposal_id and order.get("proposal_id") != proposal_id:
+            errors.append("order_proposal_mismatch")
+        if risk is not None and order.get("risk_decision_id") != risk.get("id"):
+            errors.append("order_risk_mismatch")
+    if position is not None:
+        if proposal_id and "proposal_id" in position and position.get("proposal_id") != proposal_id:
+            errors.append("position_proposal_mismatch")
+        if order is not None and "order_id" in position and position.get("order_id") != order.get("id"):
+            errors.append("position_order_mismatch")
+        if opportunity_id and "opportunity_id" in position and position.get("opportunity_id") != opportunity_id:
+            errors.append("position_opportunity_mismatch")
+    return list(dict.fromkeys(errors))
+
+
 def build_candidate_facts(
     *,
     horizon: str = "24h",
@@ -158,13 +249,41 @@ def build_candidate_facts(
     if horizon not in _FIXED_HORIZONS:
         raise ValueError(f"unsupported fixed horizon: {horizon}")
     source = db or repo.get_db()
-    cutoff = _utc(as_of_at) or datetime.now(timezone.utc)
+    parsed_cutoff = _utc(as_of_at)
+    if as_of_at is not None and parsed_cutoff is None:
+        return {
+            "contract_version": FACT_CONTRACT_VERSION,
+            "fact_unit": "candidate_fact",
+            "as_of_at": str(as_of_at),
+            "read_only": True,
+            "availability": "unavailable",
+            "unavailable_count": 1,
+            "unavailable_reasons": {"invalid_as_of_at": 1},
+            "exclusions": [{"availability": "unavailable", "unavailable_reason": "invalid_as_of_at"}],
+            "facts": [],
+        }
+    cutoff = parsed_cutoff or datetime.now(timezone.utc)
     explicit = _rows(
         source,
         "SELECT * FROM filter_decisions ORDER BY datetime(evaluated_at), sequence_no, rowid",
     )
-    filter_rows = [{**row, "source_table": "filter_decisions"} for row in explicit if _visible(row, cutoff)]
+    filter_rows: list[dict[str, Any]] = []
+    filter_exclusions: list[dict[str, Any]] = []
+    for row in explicit:
+        if _visible(row, cutoff):
+            filter_rows.append({**row, "source_table": "filter_decisions"})
+        elif (reason := _visibility_error(row)) is not None:
+            filter_exclusions.append(
+                {
+                    "source_table": "filter_decisions",
+                    "source_batch_id": row.get("id"),
+                    "event_at": row.get("evaluated_at"),
+                    "availability": "unavailable",
+                    "unavailable_reason": reason,
+                }
+            )
     batch_rows, batch_exclusions = _batch_facts(source, cutoff)
+    batch_exclusions = [*filter_exclusions, *batch_exclusions]
     filter_rows.extend(batch_rows)
 
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -177,12 +296,52 @@ def build_candidate_facts(
         "SELECT * FROM filter_candidate_outcomes WHERE horizon=? ORDER BY datetime(entry_ts), rowid",
         (horizon,),
     )
-    outcome_by_key = {
-        str(row["outcome_candidate_key"]): row
-        for row in outcomes
-        if _visible(row, cutoff) and (not row.get("settled_at") or (_utc(row.get("settled_at")) or cutoff) <= cutoff)
-    }
+    outcome_by_key = {}
+    outcome_exclusions: list[dict[str, Any]] = []
+    for row in outcomes:
+        if not _visible(row, cutoff):
+            if (reason := _visibility_error(row)) is not None:
+                outcome_exclusions.append(
+                    {
+                        "source_table": "filter_candidate_outcomes",
+                        "source_batch_id": row.get("id"),
+                        "event_at": row.get("entry_ts"),
+                        "availability": "unavailable",
+                        "unavailable_reason": reason,
+                    }
+                )
+            continue
+        settled_at = row.get("settled_at")
+        if settled_at not in (None, ""):
+            parsed_settled_at = _utc(settled_at)
+            if parsed_settled_at is None:
+                outcome_exclusions.append(
+                    {
+                        "source_table": "filter_candidate_outcomes",
+                        "source_batch_id": row.get("id"),
+                        "event_at": row.get("settled_at"),
+                        "availability": "unavailable",
+                        "unavailable_reason": "candidate_settled_at_invalid",
+                    }
+                )
+                continue
+            if parsed_settled_at > cutoff:
+                continue
+        candidate_key = row.get("outcome_candidate_key")
+        if isinstance(candidate_key, str) and candidate_key.strip():
+            outcome_by_key[candidate_key] = row
+        else:
+            outcome_exclusions.append(
+                {
+                    "source_table": "filter_candidate_outcomes",
+                    "source_batch_id": row.get("id"),
+                    "event_at": row.get("entry_ts"),
+                    "availability": "unavailable",
+                    "unavailable_reason": "candidate_identity_missing",
+                }
+            )
 
+    batch_exclusions.extend(outcome_exclusions)
     facts: list[dict[str, Any]] = []
     terminal_counts: defaultdict[str, int] = defaultdict(int)
     for fact_id, rows in sorted(grouped.items(), key=lambda item: str(item[1][0].get("evaluated_at") or "")):
@@ -273,7 +432,21 @@ def build_candidate_facts(
         if position is not None and not _visible(position, cutoff):
             position = None
         outcome = outcome_by_key.get(fact_id)
-        terminal = _terminal(ordered, opportunity, decision, proposal, risk, order, position)
+        identity_errors = _identity_errors(
+            ordered,
+            opportunity_id=opportunity_id,
+            decision=decision,
+            proposal_id=proposal_id,
+            proposal=proposal,
+            risk=risk,
+            order=order,
+            position=position,
+        )
+        terminal = (
+            "unavailable"
+            if identity_errors
+            else _terminal(ordered, opportunity, decision, proposal, risk, order, position)
+        )
         terminal_counts[terminal] += 1
         facts.append(
             {
@@ -283,8 +456,8 @@ def build_candidate_facts(
                 "event_at": first.get("evaluated_at"),
                 "evidence_available_at": (outcome or {}).get("settled_at"),
                 "as_of_at": cutoff.isoformat(),
-                "availability": "available",
-                "unavailable_reason": None,
+                "availability": "unavailable" if identity_errors else "available",
+                "unavailable_reason": ";".join(identity_errors) if identity_errors else None,
                 "first_exposure": first,
                 "filter_path": ordered,
                 "terminal_state": terminal,
@@ -317,23 +490,31 @@ def build_candidate_facts(
     outcome_count = sum(
         1
         for fact in facts
-        if fact["fixed_horizon_outcome"] is not None and fact["fixed_horizon_outcome"].get("status") == "settled"
+        if fact.get("availability") == "available"
+        and fact["fixed_horizon_outcome"] is not None
+        and fact["fixed_horizon_outcome"].get("status") == "settled"
     )
+    unavailable_reasons: dict[str, int] = {}
+    for exclusion in batch_exclusions:
+        reason = str(exclusion.get("unavailable_reason") or "candidate_evidence_unavailable")
+        unavailable_reasons[reason] = unavailable_reasons.get(reason, 0) + 1
+    for fact in facts:
+        if fact.get("availability") == "unavailable":
+            unavailable_reasons["candidate_identity_mismatch"] = (
+                unavailable_reasons.get("candidate_identity_mismatch", 0) + 1
+            )
     return {
         "contract_version": FACT_CONTRACT_VERSION,
         "fact_unit": "candidate_fact",
         "as_of_at": cutoff.isoformat(),
         "fixed_horizon": horizon,
         "read_only": True,
+        "availability": "unavailable" if unavailable_reasons else "available",
         "candidate_count": len(facts),
         "settled_outcome_count": outcome_count,
         "outcome_coverage": outcome_count / len(facts) if facts else None,
-        "unavailable_count": len(batch_exclusions),
-        "unavailable_reasons": {
-            "malformed_candidate_facts_json": len(batch_exclusions)
-        }
-        if batch_exclusions
-        else {},
+        "unavailable_count": sum(unavailable_reasons.values()),
+        "unavailable_reasons": unavailable_reasons,
         "exclusions": batch_exclusions,
         "terminal_counts": dict(sorted(terminal_counts.items())),
         "facts": facts,

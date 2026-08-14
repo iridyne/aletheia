@@ -19,10 +19,10 @@ The production entry point is `aletheia inspect`:
 - `candidate-facts --horizon <15m|1h|4h|24h> --as-of <timestamp> --json` emits
   the complete `candidate_fact` denominator at one fixed horizon;
 - `position-diagnosis` and `candidate-diagnosis` emit
-  `profit_loop_diagnosis/v1` artifacts without changing their inputs;
+  `profit_loop_diagnosis/v2` artifacts without changing their inputs;
 - `profit-counterfactual --cost-model <json>` evaluates the fixed
   `profit_loop_counterfactual/v1` registry against one durable evidence epoch;
-- `profit-gradient --evidence <json>` applies `profit_gradient/v1` gates to a
+- `profit-gradient --evidence <json>` applies `profit_gradient/v2` gates to a
   frozen evidence artifact.
 
 All commands are synchronous, read-only inspection commands. The cost-model and
@@ -59,19 +59,38 @@ behavior owner imports these analytics modules.
 
 - Selection, Decision, and Risk use `outcome_candidate_key` and a fixed-horizon
   net outcome;
-- Execution, Holding, Exit, and Costs use exact `position_id` and verified
-  settled net economics.
+- Execution, Holding, Exit, and Costs use verified settled Position economics,
+  but each sample also carries a distinct `harm_event_id` and causal stage
+  window. `position_id` is not a global de-duplication key.
 
 Position replay reports exact causal IDs, evidence cutoff, economics residual,
 runtime/behavior identity, ordered-path coverage, canonical OHLCV window hash,
-and explicit unavailable reasons. Candidate replay preserves filtered,
-skipped, rejected, unfilled, and traded terminal states.
+and explicit unavailable reasons. `positions` has no persisted `exit_price` in
+this scope, so replay/attribution derives its exit price solely from verified
+close-fill VWAP and is unavailable without it; no schema migration is implied.
+Candidate replay preserves filtered, skipped, rejected, unfilled, and traded
+terminal states.
 
 The gradient report always emits
 `Selection / Decision / Risk / Execution / Holding / Exit / Costs`, quote harm,
 basis points, per-100-candidate harm, per-capital-day harm, clustered interval,
-concentration, exclusions, and gate reasons. Its verdict is either
-`unique_max_direction` or `no_unique_direction`.
+concentration, exclusions, residual state, and gate reasons. Its verdict is
+`unique_max_direction` only when the declared comparison method allows a Winner;
+otherwise it is `no_unique_direction`.
+
+Every gradient evidence context must declare
+`gradient_contract_version="profit_gradient/v2"`,
+`evidence_integrity="verified"`, and one comparison method; unverified or old
+v1 evidence is not reinterpreted. Every sample must contain
+`harm_event_id`, `attribution_event_id`, `component`, `ownership`,
+`stage_window`, non-empty `evidence_refs`, and a positive `notional_quote`
+that reconciles `paired_net_delta_bp = paired_net_delta_quote / notional_quote *
+10000`. Position layers additionally require `position_id`. A harm event occurring in
+more than one layer is removed from every affected layer and retained only as an
+unresolved residual; it cannot produce a Winner. `cost_event_id` ownership is
+also global: Execution cannot carry Costs evidence, and one cost event cannot
+cross layers. The same Position may still produce multiple samples when their
+harm events and stage windows are distinct.
 
 ## Invariants and trust boundaries
 
@@ -81,12 +100,19 @@ concentration, exclusions, and gate reasons. Its verdict is either
 - Fixed-horizon candidate outcomes never mix with variable-horizon Position
   economics.
 - Ordered OHLCV paths require exact instrument identity, closed one-minute bars,
-  and complete coverage. Missing coverage is unavailable, not zero.
+  valid OHLC invariants, an exact timestamp set, and complete coverage. Missing
+  or malformed coverage is unavailable, not zero.
 - MFE and MAE are bounded at zero; same-bar Stop/TP order remains ambiguous and
-  uses pessimistic bounds.
+  uses pessimistic bounds. Holding/Exit path classification uses gross realized
+  price return; net return remains a separate accounting field so fees cannot
+  become apparent giveback. If gross return is unavailable, the giveback
+  diagnosis is unavailable rather than falling back to net return.
 - Gross-to-net reconciliation deducts entry fee, exit fee, funding, and
-  slippage exactly once.
-- Hypothesis state reads only the completed prefix supplied by its caller.
+  slippage exactly once. A missing or out-of-tolerance residual makes Position
+  economics unavailable.
+- Hypothesis state reads only the completed prefix supplied by its caller. A
+  malformed hypothesis or candidate/Position fact is unavailable, not a root
+  cause.
   Missing machine-evaluable inputs return `not_evaluable`.
 - The counterfactual registry is finite and locked. Delayed entry uses the next
   bar open; thesis invalidation during the delay produces `no_trade`.
@@ -107,12 +133,28 @@ concentration, exclusions, and gate reasons. Its verdict is either
   timestamp, source-evidence SHA-256, fee, funding, and slippage assumptions.
 - Same-sample counterfactuals are permanently `exploratory` and
   `promotion_eligible=false`.
-- Gradient pooling requires one behavior, policy, market-data, and cost epoch.
-  Coverage, sample size, arm size, Risk-reject count, clustered interval,
-  absolute effect, temporal stability, and Top-1/Top-5 concentration are hard
-  gates.
-- A winner exists only when exactly one layer clears every gate and its harm
-  lower bound exceeds every runner-up upper bound.
+- Gradient pooling requires one behavior, policy, market-data, and cost epoch,
+  plus one declared comparison method. Missing or unknown methods fail closed.
+  `prospective_randomized` requires two arms and the smaller-arm gate;
+  `paired_same_unit` requires unique paired units without inventing arms;
+  `deterministic_decomposition` and `directional_observational` are descriptive
+  only and cannot produce a Winner.
+- Holding evidence requires invalidated hypothesis or expired horizon and no new
+  holding authorization. Exit evidence requires a valid thesis, reasonable
+  continued holding, and a protection-geometry failure. Execution evidence
+  requires an authorized exit decision, an execution baseline, and isolates
+  fill/execution loss with fees and funding explicitly excluded.
+- Costs evidence requires `avoidable=true`, a realizable baseline (`realizable_limit`,
+  `spot_vs_perpetual`, `turnover`, or `venue`), a cost-model identity, and an
+  explicit `cost_event_id`, verified evidence references, and
+  `avoidable_extra_cost_quote` equal to the paired quote delta. `gross - net`, raw fees, funding, or a
+  frictionless-only baseline are accounting observations, not Costs candidates.
+- Coverage, sample size, the applicable arm rule, Risk-reject count, clustered
+  interval, absolute effect, temporal stability, concentration, and cross-layer
+  harm-event integrity are hard gates.
+- A Winner exists only when exactly one layer clears every applicable gate and its
+  harm lower bound exceeds every runner-up upper bound. Unresolved residuals
+  force `no_unique_direction`.
 - No analytics result authorizes an automatic behavior or parameter change.
 
 ## Failure and recovery semantics

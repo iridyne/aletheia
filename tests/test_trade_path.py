@@ -12,7 +12,9 @@ from aletheia.analytics.trade_path import (
     _compute_exit_efficiency,
     _classify_path_bucket,
     _iso_to_ms,
+    _InstrumentIdentity,
     _resolve_instrument_identity,
+    _validated_candle_map,
     build_post_exit_path_observation,
 )
 
@@ -775,3 +777,38 @@ def test_trade_path_missing_instrument_identity_is_unavailable(monkeypatch):
 
     assert result["path_evidence_status"] == "unavailable"
     assert result["path_bucket_reason"] == "instrument_identity_unavailable"
+
+
+def test_trade_path_rejects_negative_ohlcv_volume():
+    candle = _candle(_BASE_TS, high=101.0, low=99.0)
+    candle["volume"] = -1.0
+
+    selected, reason = _validated_candle_map(
+        [candle],
+        start_ts=_BASE_TS,
+        end_ts=_BASE_TS + _BAR_MS,
+        identity=_InstrumentIdentity(exchange="okx", market_type="perp", source="test"),
+    )
+
+    assert selected is None
+    assert reason == "invalid_ohlcv_values"
+
+
+def test_trade_path_uses_gross_return_for_management_buckets(monkeypatch):
+    candles = [
+        _candle(_BASE_TS, high=101.5, low=99.5, close=100.5),
+        _candle(_BASE_TS + _BAR_MS, high=101.0, low=100.0, close=100.8),
+    ]
+    monkeypatch.setattr(
+        "aletheia.analytics.trade_path.repo.get_ohlcv_candles",
+        lambda *args, **kwargs: candles,
+    )
+
+    result = _analyze_path(
+        _row(exit_price=101.0, realized_pnl_pct=-0.5, close_reason="manual"),
+        post_exit_bars=0,
+    )
+
+    assert result["realized_return_pct"] == pytest.approx(-0.5)
+    assert result["gross_realized_return_pct"] == pytest.approx(1.0)
+    assert result["path_bucket"] == "clean_win"

@@ -47,10 +47,15 @@ class _InstrumentIdentity:
 
 
 def build_position_trade_path(
-    position_id: str, *, db: Any = None
+    position_id: str,
+    *,
+    db: Any = None,
+    as_of_at: str | datetime | None = None,
 ) -> dict[str, Any] | None:
     """Build one exact Position path without cohort pagination."""
-    attribution = build_trade_attribution_for_position(position_id, db=db)
+    attribution = build_trade_attribution_for_position(
+        position_id, db=db, as_of_at=as_of_at
+    )
     return _analyze_path(attribution, 0, db=db) if attribution is not None else None
 
 
@@ -195,6 +200,7 @@ def _analyze_path(row: dict, post_exit_bars: int, *, db: Any = None) -> dict:
     entry_price = _positive_float(row.get("entry_price"))
     exit_price = _positive_float(row.get("exit_price"))
     realized_pnl_pct = _finite_float(row.get("realized_pnl_pct"))
+    gross_realized_pnl_pct = _gross_return_pct(direction, entry_price, exit_price)
     entry_ts = _iso_to_ms(row.get("opened_at"))
     exit_ts = _iso_to_ms(row.get("closed_at"))
 
@@ -206,6 +212,7 @@ def _analyze_path(row: dict, post_exit_bars: int, *, db: Any = None) -> dict:
         or entry_price is None
         or exit_price is None
         or realized_pnl_pct is None
+        or gross_realized_pnl_pct is None
         or entry_ts is None
         or exit_ts is None
         or exit_ts <= entry_ts
@@ -317,6 +324,7 @@ def _analyze_path(row: dict, post_exit_bars: int, *, db: Any = None) -> dict:
     result["mae_lower_bound_pct"] = round(mae_lower, 4)
     result["mae_upper_bound_pct"] = round(mae_upper, 4)
     result["realized_return_pct"] = round(realized_pnl_pct, 4)
+    result["gross_realized_return_pct"] = round(gross_realized_pnl_pct, 4)
 
     exact_boundaries = entry_ts % _BAR_MS == 0 and exit_ts % _BAR_MS == 0
     if exact_boundaries:
@@ -328,7 +336,7 @@ def _analyze_path(row: dict, post_exit_bars: int, *, db: Any = None) -> dict:
         )
         result["time_to_mfe_bars"] = time_to_mfe
         result["time_to_mae_bars"] = time_to_mae
-        _set_exact_metrics(result, mfe, mae, realized_pnl_pct)
+        _set_exact_metrics(result, mfe, mae, gross_realized_pnl_pct)
         result["path_evidence_status"] = "available"
         result["path_evidence_reason"] = "complete_exact_1m_path"
     else:
@@ -351,7 +359,7 @@ def _analyze_path(row: dict, post_exit_bars: int, *, db: Any = None) -> dict:
         mfe_lower=mfe_lower,
         mfe_upper=mfe_upper,
         mae_lower=mae_lower,
-        realized_pct=realized_pnl_pct,
+        realized_pct=gross_realized_pnl_pct,
         close_reason=row.get("close_reason"),
     )
     pre_stop_mfe = result.get("pre_stop_mfe_lower_bound_pct")
@@ -595,7 +603,8 @@ def _validated_candle_map(
         ):
             return None, "ohlcv_identity_mismatch"
         values = [_positive_float(candle.get(key)) for key in ("open", "high", "low", "close")]
-        if any(value is None for value in values):
+        volume = _finite_float(candle.get("volume"))
+        if any(value is None for value in values) or volume is None or volume < 0:
             return None, "invalid_ohlcv_values"
         open_price, high, low, close = values
         assert open_price is not None and high is not None and low is not None and close is not None
@@ -837,6 +846,7 @@ def _initialize_evidence_fields(result: dict, post_exit_bars: Any) -> None:
             "mae_lower_bound_pct": None,
             "mae_upper_bound_pct": None,
             "realized_return_pct": result.get("realized_pnl_pct"),
+            "gross_realized_return_pct": None,
             "mfe_capture_ratio": None,
             "mae_to_mfe_ratio": None,
             "time_to_mfe_bars": None,
@@ -879,6 +889,18 @@ def _floor_bar(ts_ms: int) -> int:
 
 def _ceil_bar(ts_ms: int) -> int:
     return ((ts_ms + _BAR_MS - 1) // _BAR_MS) * _BAR_MS
+
+
+def _gross_return_pct(
+    direction: str, entry_price: float | None, exit_price: float | None
+) -> float | None:
+    if entry_price is None or exit_price is None or entry_price <= 0:
+        return None
+    if direction == "long":
+        return (exit_price - entry_price) / entry_price * 100.0
+    if direction == "short":
+        return (entry_price - exit_price) / entry_price * 100.0
+    return None
 
 
 def _finite_float(value: Any) -> float | None:

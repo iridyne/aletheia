@@ -190,7 +190,7 @@ def test_explicit_read_models_partition_closed_positions():
         raw_account_events,
     )
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Position
+    from aletheia.storage.models import Fill, Order, Position
     from tests.test_outcome_closure import _insert_entry_chain
 
     common = {
@@ -256,6 +256,35 @@ def test_explicit_read_models_partition_closed_positions():
     ]
     for row in rows:
         repo.insert_position(row)
+    db = repo.get_db()
+    db.execute("UPDATE positions SET status='open' WHERE id='eligible'")
+    repo.insert_order(Order(
+        id="close-eligible",
+        proposal_id=eligible_proposal,
+        position_id="eligible",
+        client_order_id="close-eligible",
+        close_reason="take_profit",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        order_type="market",
+        quantity=0.1,
+        price=50_100.0,
+        execution_mode="paper_internal",
+        status="filled",
+        created_at="2026-07-12T08:00:00+00:00",
+        filled_at="2026-07-12T08:00:00+00:00",
+    ))
+    repo.insert_fill(Fill(
+        id="fill-eligible",
+        order_id="close-eligible",
+        fill_price=50_100.0,
+        fill_quantity=0.1,
+        fee=0.0,
+        fee_source="estimated",
+        filled_at="2026-07-12T08:00:00+00:00",
+    ))
+    db.execute("UPDATE positions SET status='closed' WHERE id='eligible'")
 
     kwargs = {
         "execution_mode": "paper_internal",
@@ -266,6 +295,19 @@ def test_explicit_read_models_partition_closed_positions():
         "eligible", "admin", "maintenance", "unknown",
     }
     assert [row["id"] for row in eligible_strategy_outcomes(**kwargs)] == ["eligible"]
+    assert [
+        row["id"]
+        for row in eligible_strategy_outcomes(
+            immutable_exit_evidence=True, **kwargs
+        )
+    ] == ["eligible"]
+    db.execute("UPDATE positions SET current_price=99_999.0 WHERE id='eligible'")
+    assert [
+        row["id"]
+        for row in eligible_strategy_outcomes(
+            immutable_exit_evidence=True, **kwargs
+        )
+    ] == ["eligible"]
     assert {row["id"] for row in administrative_closures(**kwargs)} == {
         "admin", "maintenance",
     }

@@ -505,11 +505,94 @@ def raw_account_events(
     return [dict(row) for row in rows]
 
 
-def eligible_strategy_outcomes(**filters) -> list[dict]:
-    """Read only closures proven eligible by the current central semantics."""
+def _utc(value: Any) -> datetime | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _close_fill_vwap(
+    position_id: Any, *, db: Any = None, as_of_at: str | datetime | None = None
+) -> float | None:
+    """Return a verified close-fill VWAP, or None without complete evidence."""
+    if position_id in (None, ""):
+        return None
+    cutoff = _utc(as_of_at)
+    if as_of_at is not None and cutoff is None:
+        return None
+    try:
+        if db is None:
+            from aletheia.storage.sqlite import get_db
+
+            db = get_db()
+        query = (
+            "SELECT f.fill_price, f.fill_quantity, f.filled_at FROM fills f "
+            "JOIN orders o ON o.id=f.order_id "
+            "WHERE o.position_id=? AND COALESCE(trim(o.close_reason),'')!=''"
+        )
+        params: list[Any] = [position_id]
+        if cutoff is not None:
+            query += " AND datetime(f.filled_at) <= datetime(?)"
+            params.append(cutoff.isoformat())
+        query += " ORDER BY datetime(f.filled_at), f.rowid"
+        fills = db.execute(query, tuple(params)).fetchall()
+        total_quantity = 0.0
+        total_notional = 0.0
+        for fill in fills:
+            price = _to_float(fill["fill_price"])
+            quantity = _to_float(fill["fill_quantity"])
+            filled_at = _utc(fill["filled_at"])
+            if (
+                price is None
+                or quantity is None
+                or price <= 0
+                or quantity <= 0
+                or filled_at is None
+                or (cutoff is not None and filled_at > cutoff)
+            ):
+                return None
+            total_quantity += quantity
+            total_notional += price * quantity
+        return total_notional / total_quantity if total_quantity > 0 else None
+    except Exception:
+        return None
+
+
+def immutable_outcome_row(
+    row: dict[str, Any], *, db: Any = None, as_of_at: str | datetime | None = None
+) -> dict[str, Any]:
+    """Project one close without mutable marks; close-fill VWAP is the exit price."""
+    result = dict(row)
+    result["current_price"] = None
+    result["unrealized_pnl"] = None
+    result["exit_price"] = _close_fill_vwap(result.get("id"), db=db, as_of_at=as_of_at)
+    return result
+
+
+def eligible_strategy_outcomes(*, immutable_exit_evidence: bool = False, **filters) -> list[dict]:
+    """Read only closures proven eligible by the central semantics.
+
+    ``immutable_exit_evidence`` is deliberately opt-in for replay/attribution.
+    It avoids broad feedback-cohort behavior changes while refusing mutable marks
+    on those evidence surfaces.
+    """
+    rows = raw_account_events(**filters)
+    if not immutable_exit_evidence:
+        return [row for row in rows if assess_reportable_outcome(row).eligible]
+    db = filters.get("db")
     return [
-        row for row in raw_account_events(**filters)
-        if assess_reportable_outcome(row).eligible
+        candidate
+        for row in rows
+        if (candidate := immutable_outcome_row(row, db=db))
+        and assess_reportable_outcome(candidate).eligible
     ]
 
 
