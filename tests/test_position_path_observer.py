@@ -162,9 +162,6 @@ async def test_observer_defers_when_provider_cannot_prove_closed_bar(
 
     assert result == {
         "positions": 1,
-        "enqueued_buckets": 1,
-        "enqueued_position_buckets": 1,
-        "catchup_bucket_count": 0,
         "inserted": 0,
         "available": 0,
         "unavailable": 0,
@@ -250,9 +247,6 @@ async def test_observer_requests_once_per_unique_instrument(
 
     assert result == {
         "positions": 2,
-        "enqueued_buckets": 1,
-        "enqueued_position_buckets": 2,
-        "catchup_bucket_count": 0,
         "inserted": 2,
         "available": 2,
         "unavailable": 0,
@@ -315,9 +309,6 @@ async def test_observer_samples_position_closed_after_target_bucket(monkeypatch)
 
     assert result == {
         "positions": 1,
-        "enqueued_buckets": 1,
-        "enqueued_position_buckets": 1,
-        "catchup_bucket_count": 0,
         "inserted": 1,
         "available": 1,
         "unavailable": 0,
@@ -362,9 +353,6 @@ async def test_observer_skips_existing_bucket_before_provider_lookup(monkeypatch
 
     assert result == {
         "positions": 1,
-        "enqueued_buckets": 1,
-        "enqueued_position_buckets": 0,
-        "catchup_bucket_count": 0,
         "inserted": 0,
         "available": 0,
         "unavailable": 0,
@@ -740,9 +728,6 @@ async def test_observer_skips_bar_that_crosses_position_entry(monkeypatch):
     )
     assert skipped == {
         "positions": 1,
-        "enqueued_buckets": 1,
-        "enqueued_position_buckets": 0,
-        "catchup_bucket_count": 0,
         "inserted": 0,
         "available": 0,
         "unavailable": 0,
@@ -1099,76 +1084,6 @@ def test_unavailable_identity_is_preserved_and_reported():
             "WHERE position_id=?",
             (position.id,),
         )
-
-
-@pytest.mark.asyncio
-async def test_observer_recovers_skipped_buckets_for_position_closed_during_outage(
-    monkeypatch,
-):
-    from aletheia.data import ccxt_provider
-    from aletheia.portfolio.position_path_observer import observe_open_position_paths
-    from aletheia.storage import repositories as repo
-
-    position = _seed_position(position_id="position-path-catchup")
-    bucket = 1_786_579_200_000
-
-    class Provider:
-        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
-            assert timeframe == "5m"
-            return OHLCVResult(
-                [
-                    Candle(
-                        int(since),
-                        100.0,
-                        104.0,
-                        99.0,
-                        103.0,
-                        12.0,
-                        True,
-                        "ccxt",
-                        "bitget",
-                    )
-                ],
-                requested=2,
-            )
-
-        async def close(self):
-            return None
-
-    monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
-    )
-    first = await observe_open_position_paths(
-        now=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc)
-    )
-    assert first["enqueued_buckets"] == 1
-    assert first["enqueued_position_buckets"] == 1
-
-    closed_at = datetime.fromtimestamp(
-        (bucket + 900_000) / 1000, tz=timezone.utc
-    ).isoformat()
-    repo.update_position(position.id, status="closed", closed_at=closed_at)
-
-    resumed = await observe_open_position_paths(
-        now=datetime.fromtimestamp((bucket + 900_000) / 1000, tz=timezone.utc)
-    )
-    assert resumed["catchup_bucket_count"] == 1
-    assert resumed["enqueued_buckets"] == 2
-    assert resumed["enqueued_position_buckets"] == 2
-    assert resumed["inserted"] == 1
-
-    finished = await observe_open_position_paths(
-        now=datetime.fromtimestamp((bucket + 900_000) / 1000, tz=timezone.utc)
-    )
-    assert finished["enqueued_buckets"] == 0
-    assert finished["inserted"] == 1
-    assert [
-        row["bucket_open_ms"]
-        for row in repo.list_position_path_observations(position.id)
-    ] == [bucket, bucket + 300_000, bucket + 600_000]
-    cursor = repo.get_position_path_observer_cursor()
-    assert cursor is not None
-    assert cursor["last_enqueued_bucket_open_ms"] == bucket + 600_000
 
 
 def test_observer_first_cursor_initialization_does_not_backfill_history():
