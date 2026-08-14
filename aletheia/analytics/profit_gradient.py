@@ -234,7 +234,7 @@ def _randomized_cluster_interval(
     )
     midpoint = len(ordered) // 2
     temporal_effects = []
-    if midpoint:
+    if midpoint and ordered[midpoint - 1]["occurred_at"] != ordered[midpoint]["occurred_at"]:
         for half in (ordered[:midpoint], ordered[midpoint:]):
             treatment_values = [
                 row["paired_net_delta_bp"] for row in half if row["arm"] == "treatment"
@@ -424,9 +424,13 @@ def _same_sign_halves(
 def _concentration_values(values: Iterable[float]) -> tuple[float | None, float | None]:
     contributions = sorted((abs(value) for value in values), reverse=True)
     total = sum(contributions)
-    if total <= 0:
+    if not math.isfinite(total) or total <= 0:
         return None, None
-    return contributions[0] / total, sum(contributions[:5]) / total
+    top1 = contributions[0] / total
+    top5 = sum(contributions[:5]) / total
+    if not math.isfinite(top1) or not math.isfinite(top5):
+        return None, None
+    return top1, top5
 
 
 def _concentration(samples: list[dict[str, Any]]) -> tuple[float | None, float | None]:
@@ -525,11 +529,33 @@ def _layer_result(
         total_quote = sum(sample["paired_net_delta_quote"] for sample in samples)
         top1, top5 = _concentration(samples)
         temporal_stable = _same_sign_halves(samples, expected_effect=estimate)
-        independent_unit_count = unit_count
+        independent_unit_count = len({sample["cluster_id"] for sample in samples})
         smaller_arm = None
+    aggregate_values = (
+        estimate,
+        lower,
+        upper,
+        quote_contrast,
+        total_quote,
+        top1,
+        top5,
+    )
+    sanitized_values = tuple(
+        _finite(value) if value is not None else None for value in aggregate_values
+    )
+    non_finite_aggregate = any(
+        original is not None and sanitized is None
+        for original, sanitized in zip(aggregate_values, sanitized_values)
+    )
+    estimate, lower, upper, quote_contrast, total_quote, top1, top5 = sanitized_values
     frequency = unit_count / candidate_count if candidate_count > 0 else None
-    gradient = frequency * lower if frequency is not None and lower is not None else None
+    raw_gradient = frequency * lower if frequency is not None and lower is not None else None
+    gradient = _finite(raw_gradient) if raw_gradient is not None else None
+    if raw_gradient is not None and gradient is None:
+        non_finite_aggregate = True
     reasons = list(global_reasons)
+    if non_finite_aggregate:
+        reasons.append("non_finite_aggregate_metric")
     minimum_units = int(thresholds.get("minimum_independent_units") or 30)
     minimum_smaller_arm = _finite(thresholds.get("minimum_smaller_arm"))
     if independent_unit_count < minimum_units:
@@ -571,6 +597,27 @@ def _layer_result(
         if top5 > float(thresholds.get("top5_absolute_contribution_share_max") or 0.50):
             reasons.append("top5_concentration_above_50pct")
     reasons.extend(exclusions)
+    harm_per_100 = (
+        total_quote / candidate_count * 100.0
+        if total_quote is not None and candidate_count > 0
+        else None
+    )
+    harm_per_day = (
+        total_quote / capital_days
+        if total_quote is not None and capital_days is not None and capital_days > 0
+        else None
+    )
+    raw_normalized_metrics = (harm_per_100, harm_per_day)
+    normalized_metrics = tuple(
+        _finite(value) if value is not None else None for value in raw_normalized_metrics
+    )
+    if any(
+        original is not None and normalized is None
+        for original, normalized in zip(raw_normalized_metrics, normalized_metrics)
+    ):
+        non_finite_aggregate = True
+        reasons.append("non_finite_aggregate_metric")
+    harm_per_100, harm_per_day = normalized_metrics
     eligible = bool(global_ok and not reasons)
     fact_unit, economic_unit = _expected_units(layer)
     return {
@@ -597,16 +644,8 @@ def _layer_result(
         "upper_95_bp": upper,
         "gradient_lower_bp": gradient,
         "harm_quote": total_quote,
-        "harm_quote_per_100_candidates": (
-            total_quote / candidate_count * 100.0
-            if total_quote is not None and candidate_count > 0
-            else None
-        ),
-        "harm_quote_per_capital_day": (
-            total_quote / capital_days
-            if total_quote is not None and capital_days is not None and capital_days > 0
-            else None
-        ),
+        "harm_quote_per_100_candidates": harm_per_100,
+        "harm_quote_per_capital_day": harm_per_day,
         "top1_absolute_contribution_share": top1,
         "top5_absolute_contribution_share": top5,
         "gate_status": "eligible" if eligible else "ineligible",
