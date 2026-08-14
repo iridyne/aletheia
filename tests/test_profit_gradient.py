@@ -90,9 +90,9 @@ def test_one_separated_layer_is_unique_winner_with_normalized_harm_units():
     assert costs["lower_95_bp"] == pytest.approx(10.0)
     assert costs["gradient_lower_bp"] == pytest.approx(4.0)
     assert costs["cluster_count_by_arm"] == {"control": 20, "treatment": 20}
-    assert costs["harm_quote"] == pytest.approx(1.0)
-    assert costs["harm_quote_per_100_candidates"] == pytest.approx(1.0)
-    assert costs["harm_quote_per_capital_day"] == pytest.approx(0.05)
+    assert costs["harm_quote"] == pytest.approx(20.0)
+    assert costs["harm_quote_per_100_candidates"] == pytest.approx(20.0)
+    assert costs["harm_quote_per_capital_day"] == pytest.approx(1.0)
 
 
 def test_multiple_eligible_layers_or_nonseparated_intervals_have_no_winner():
@@ -238,6 +238,22 @@ def test_prospective_randomized_thresholds_use_independent_cluster_counts():
     assert costs["smaller_arm_count"] == 2
     assert "independent_units_below_30" in costs["gate_reasons"]
     assert "smaller_arm_below_20" in costs["gate_reasons"]
+    assert result["winner_layer"] is None
+
+
+def test_prospective_randomized_rejects_clusters_assigned_to_both_arms():
+    samples = _seven_layers()
+    costs = samples["Costs"]
+    for index, sample in enumerate(costs):
+        cluster = index // 2
+        sample["cluster_id"] = f"shared-{cluster}"
+        sample["arm"] = "control" if index % 2 == 0 else "treatment"
+
+    result = gradient.select_unique_max_direction(samples, evidence_context=_context())
+
+    costs = result["layers"]["Costs"]
+    assert costs["cluster_count_by_arm"] == {"control": 0, "treatment": 0}
+    assert "randomized_cluster_multiple_arms" in costs["gate_reasons"]
     assert result["winner_layer"] is None
 
 
@@ -423,9 +439,75 @@ def test_randomized_quote_harm_uses_cluster_arm_contrast_not_row_sums():
 
     costs = result["layers"]["Costs"]
     assert costs["paired_net_delta_bp"] == pytest.approx(10.0)
-    assert costs["harm_quote"] == pytest.approx(10.0)
+    assert costs["harm_quote"] == pytest.approx(200.0)
+    assert costs["harm_quote_per_100_candidates"] == pytest.approx(200.0)
     assert costs["top1_absolute_contribution_share"] < 0.25
     assert result["winner_layer"] == "Costs"
+
+
+def test_randomized_quote_concentration_centers_common_arm_baseline():
+    samples = _seven_layers()
+    for index, sample in enumerate(samples["Costs"]):
+        if sample["arm"] == "control":
+            sample["paired_net_delta_bp"] = 100.0
+            sample["paired_net_delta_quote"] = 1_000.0
+        else:
+            sample["paired_net_delta_bp"] = 110.0
+            sample["paired_net_delta_quote"] = 1_200.0 if index == 1 else 1_000.0
+
+    result = gradient.select_unique_max_direction(samples, evidence_context=_context())
+
+    costs = result["layers"]["Costs"]
+    assert costs["harm_quote"] == pytest.approx(200.0)
+    assert costs["top1_absolute_contribution_share"] > 0.25
+    assert "top1_concentration_above_25pct" in costs["gate_reasons"]
+    assert result["winner_layer"] is None
+
+
+@pytest.mark.parametrize("treatment_quote", [1_000.0, 900.0])
+def test_randomized_quote_contrast_must_be_positive(treatment_quote):
+    samples = _seven_layers()
+    for sample in samples["Costs"]:
+        if sample["arm"] == "control":
+            sample["paired_net_delta_bp"] = 100.0
+            sample["paired_net_delta_quote"] = 1_000.0
+        else:
+            sample["paired_net_delta_bp"] = 110.0
+            sample["paired_net_delta_quote"] = treatment_quote
+
+    result = gradient.select_unique_max_direction(samples, evidence_context=_context())
+
+    costs = result["layers"]["Costs"]
+    assert "randomized_quote_contrast_not_positive" in costs["gate_reasons"]
+    assert result["winner_layer"] is None
+
+
+def test_randomized_quote_rates_scale_with_treatment_cluster_exposure():
+    samples = _seven_layers()
+    doubled = deepcopy(samples)
+    for index, sample in enumerate(samples["Costs"]):
+        extra = deepcopy(sample)
+        extra["unit_id"] = f"Costs-copy-{index}"
+        extra["cluster_id"] = f"{sample['cluster_id']}-copy"
+        doubled["Costs"].append(extra)
+
+    base = gradient.select_unique_max_direction(samples, evidence_context=_context())
+    scaled = gradient.select_unique_max_direction(
+        doubled,
+        evidence_context=_context(candidate_count=200, capital_days=40.0),
+    )
+
+    base_costs = base["layers"]["Costs"]
+    scaled_costs = scaled["layers"]["Costs"]
+    assert base_costs["eligible_frequency"] == pytest.approx(0.4)
+    assert scaled_costs["eligible_frequency"] == pytest.approx(0.4)
+    assert scaled_costs["harm_quote"] == pytest.approx(base_costs["harm_quote"] * 2.0)
+    assert scaled_costs["harm_quote_per_100_candidates"] == pytest.approx(
+        base_costs["harm_quote_per_100_candidates"]
+    )
+    assert scaled_costs["harm_quote_per_capital_day"] == pytest.approx(
+        base_costs["harm_quote_per_capital_day"]
+    )
 
 
 def test_randomized_bootstrap_seed_ignores_quote_values():

@@ -118,16 +118,17 @@ hard gates. The method-specific gates are:
 
 | comparison method | additional method gate | unique winner |
 | --- | --- | --- |
-| `prospective_randomized` | at least 30 independent clusters, exact `control`/`treatment` arms, at least 20 clusters in the smaller arm, and singular assignment/horizon/outcome/metric/statistical-unit identities | allowed |
+| `prospective_randomized` | at least 30 independent clusters, exact `control`/`treatment` arms with each cluster assigned to one arm, at least 20 clusters in the smaller arm, singular assignment/horizon/outcome/metric/statistical-unit identities, and a positive quote contrast aligned with the basis-point direction | allowed |
 | `paired_same_unit` | at least 30 unique units, with singular horizon/outcome/metric/statistical-unit identities; no arm threshold or arm labels are required | allowed for selecting the next forward question, never automatic behavior change |
 | `deterministic_decomposition` | at least 30 independent units; facts remain descriptive | prohibited; measured fact only |
 | `directional_observational` | at least 30 independent units; association remains directional | prohibited; rank the next question only |
 
 For `prospective_randomized`, the estimand is the equal-weight per-cluster
 `treatment - control` outcome contrast; arm labels affect the estimate and the
-cluster bootstrap. Quote harm and concentration use the same per-cluster arm-
-contrast contributions, not pooled row sums. A pooled mean is not a randomized
-effect. For
+cluster bootstrap. Quote harm converts the mean contrast to the treatment-
+cluster cohort total before denominator normalization. Concentration uses
+translation-invariant, centered per-cluster arm-effect contributions, not pooled
+row sums. A pooled mean is not a randomized effect. For
 `paired_same_unit`, each normalized row contributes one complete, cost-aware
 delta for one unique statistical unit (for the current Exit counterfactual,
 one Position). Duplicate `unit_id` rows are excluded. The paired result is
