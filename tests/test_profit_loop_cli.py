@@ -180,6 +180,7 @@ def test_profit_gradient_command_fails_closed_on_empty_evidence(tmp_path):
                     "candidate_count": 0,
                     "capital_days": 0,
                     "risk_reject_count": 0,
+                    "comparison_method": "paired_same_unit",
                 },
             }
         ),
@@ -193,6 +194,8 @@ def test_profit_gradient_command_fails_closed_on_empty_evidence(tmp_path):
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
+    assert payload["contract_version"] == "profit_gradient/v2"
+    assert payload["comparison_method"] == "paired_same_unit"
     assert payload["verdict"] == "no_unique_direction"
     assert payload["winner_layer"] is None
     assert payload["automatic_behavior_change_authorized"] is False

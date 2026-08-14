@@ -21,12 +21,15 @@ def _context(**overrides) -> dict:
         "candidate_count": 100,
         "capital_days": 20.0,
         "risk_reject_count": 25,
+        "comparison_method": "prospective_randomized",
     }
     context.update(overrides)
     return context
 
 
-def _samples(layer: str, *, effect_bp: float, count: int = 40) -> list[dict]:
+def _samples(
+    layer: str, *, effect_bp: float, count: int = 40, with_arms: bool = True
+) -> list[dict]:
     fact_unit = "candidate_fact" if layer in {"Selection", "Decision", "Risk"} else "position_fact"
     economic_unit = "fixed_horizon_net_return" if fact_unit == "candidate_fact" else "verified_settled_net_economics"
     started = datetime(2026, 8, 1, tzinfo=timezone.utc)
@@ -37,7 +40,9 @@ def _samples(layer: str, *, effect_bp: float, count: int = 40) -> list[dict]:
             "unit_id": f"{layer}-{index}",
             "cluster_id": f"day-{index // 4}",
             "occurred_at": (started + timedelta(hours=index)).isoformat(),
-            "arm": "baseline" if index < count // 2 else "treatment",
+            "arm": (
+                "baseline" if index < count // 2 else "treatment"
+            ) if with_arms else "",
             "paired_net_delta_bp": effect_bp,
             "paired_net_delta_quote": effect_bp / 10.0,
         }
@@ -56,7 +61,9 @@ def test_one_separated_layer_is_unique_winner_with_normalized_harm_units():
     result = gradient.select_unique_max_direction(samples, evidence_context=_context())
 
     assert samples == frozen
-    assert result["contract_version"] == "profit_gradient/v1"
+    assert result["contract_version"] == "profit_gradient/v2"
+    assert result["comparison_method"] == "prospective_randomized"
+    assert result["thresholds"]["minimum_smaller_arm"] == 20
     assert result["verdict"] == "unique_max_direction"
     assert result["winner_layer"] == "Costs"
     assert result["next_action"] == "register_one_single_variable_forward_experiment"
@@ -118,6 +125,116 @@ def test_denominators_risk_rejects_and_concentration_are_hard_gates():
     concentration_result = gradient.select_unique_max_direction(concentrated, evidence_context=_context())
     assert concentration_result["verdict"] == "no_unique_direction"
     assert "top1_concentration_above_25pct" in concentration_result["layers"]["Costs"]["gate_reasons"]
+
+
+def test_paired_same_unit_does_not_require_arm_labels():
+    samples = {
+        layer: _samples(
+            layer,
+            effect_bp=10.0 if layer == "Costs" else 1.0,
+            count=30,
+            with_arms=False,
+        )
+        for layer in gradient.LAYERS
+    }
+
+    result = gradient.select_unique_max_direction(
+        samples,
+        evidence_context=_context(comparison_method="paired_same_unit"),
+    )
+
+    assert result["comparison_method"] == "paired_same_unit"
+    assert result["thresholds"]["minimum_smaller_arm"] is None
+    assert result["layers"]["Costs"]["smaller_arm_count"] is None
+    assert "smaller_arm_below_20" not in result["layers"]["Costs"]["gate_reasons"]
+    assert result["winner_layer"] == "Costs"
+
+
+def test_paired_same_unit_requires_thirty_unique_units():
+    samples = {
+        layer: _samples(layer, effect_bp=10.0, count=29, with_arms=False)
+        for layer in gradient.LAYERS
+    }
+
+    result = gradient.select_unique_max_direction(
+        samples,
+        evidence_context=_context(comparison_method="paired_same_unit"),
+    )
+
+    costs = result["layers"]["Costs"]
+    assert costs["independent_unit_count"] == 29
+    assert costs["smaller_arm_count"] is None
+    assert "independent_units_below_30" in costs["gate_reasons"]
+    assert result["winner_layer"] is None
+
+
+def test_paired_same_unit_rejects_duplicate_position_units():
+    samples = {
+        layer: _samples(layer, effect_bp=10.0, count=30, with_arms=False)
+        for layer in gradient.LAYERS
+    }
+    samples["Costs"][1]["unit_id"] = samples["Costs"][0]["unit_id"]
+
+    result = gradient.select_unique_max_direction(
+        samples,
+        evidence_context=_context(comparison_method="paired_same_unit"),
+    )
+
+    costs = result["layers"]["Costs"]
+    assert costs["independent_unit_count"] == 29
+    assert "duplicate_assignment_unit" in costs["gate_reasons"]
+    assert result["winner_layer"] is None
+
+
+def test_prospective_randomized_retains_two_arm_threshold():
+    samples = _seven_layers()
+    for index, sample in enumerate(samples["Costs"]):
+        sample["arm"] = "treatment" if index < 19 else "control"
+
+    result = gradient.select_unique_max_direction(
+        samples,
+        evidence_context=_context(comparison_method="prospective_randomized"),
+    )
+
+    costs = result["layers"]["Costs"]
+    assert costs["smaller_arm_count"] == 19
+    assert "smaller_arm_below_20" in costs["gate_reasons"]
+    assert result["winner_layer"] is None
+
+
+@pytest.mark.parametrize(
+    ("method", "reason"),
+    [(None, "missing_comparison_method"), ("future_method", "unsupported_comparison_method")],
+)
+def test_missing_or_unknown_comparison_method_fails_closed(method, reason):
+    result = gradient.select_unique_max_direction(
+        _seven_layers(), evidence_context=_context(comparison_method=method)
+    )
+
+    assert result["verdict"] == "no_unique_direction"
+    assert result["winner_layer"] is None
+    assert reason in result["global_gate_reasons"]
+    assert all(layer["gate_status"] == "ineligible" for layer in result["layers"].values())
+
+
+@pytest.mark.parametrize(
+    ("method", "role"),
+    [
+        ("deterministic_decomposition", "measured_only"),
+        ("directional_observational", "directional_only"),
+    ],
+)
+def test_noncausal_comparison_methods_cannot_produce_a_unique_winner(method, role):
+    result = gradient.select_unique_max_direction(
+        _seven_layers(), evidence_context=_context(comparison_method=method)
+    )
+
+    assert result["comparison_method"] == method
+    assert result["evidence_role"] == role
+    assert result["unique_winner_eligible"] is False
+    assert result["layers"]["Costs"]["gate_status"] == "eligible"
+    assert result["winner_layer"] is None
+    assert result["verdict"] == "no_unique_direction"
 
 
 def test_temporal_sign_reversal_blocks_apparent_average_effect():
