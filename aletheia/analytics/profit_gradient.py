@@ -123,6 +123,36 @@ def _cluster_interval(
     return estimate, _percentile(bootstraps, 0.025), _percentile(bootstraps, 0.975)
 
 
+def _paired_unit_interval(
+    samples: list[dict[str, Any]], *, iterations: int = 2_000
+) -> tuple[float | None, float | None, float | None]:
+    clusters: dict[str, list[float]] = defaultdict(list)
+    for sample in samples:
+        value = _finite(sample.get("paired_net_delta_bp"))
+        cluster = sample.get("cluster_id")
+        if value is not None and cluster:
+            clusters[str(cluster)].append(value)
+    if not clusters:
+        return None, None, None
+    all_values = [value for values in clusters.values() for value in values]
+    estimate = sum(all_values) / len(all_values)
+    if len(clusters) < 2:
+        return estimate, None, None
+    seed_material = "|".join(
+        f"{key}:{','.join(f'{value:.12g}' for value in values)}"
+        for key, values in sorted(clusters.items())
+    )
+    seed = int(hashlib.sha256(seed_material.encode()).hexdigest()[:16], 16)
+    rng = random.Random(seed)
+    cluster_keys = sorted(clusters)
+    bootstraps = []
+    for _ in range(iterations):
+        selected = [rng.choice(cluster_keys) for _ in cluster_keys]
+        values = [value for key in selected for value in clusters[key]]
+        bootstraps.append(sum(values) / len(values))
+    return estimate, _percentile(bootstraps, 0.025), _percentile(bootstraps, 0.975)
+
+
 def _randomized_cluster_arm_conflicts(
     samples: list[dict[str, Any]],
 ) -> set[str]:
@@ -222,6 +252,7 @@ def _randomized_cluster_interval(
         len(temporal_effects) == 2
         and all(effect != 0 for effect in temporal_effects)
         and (temporal_effects[0] > 0) == (temporal_effects[1] > 0)
+        and all((effect > 0) == (estimate > 0) for effect in temporal_effects)
     )
     return estimate, _percentile(bootstraps, 0.025), _percentile(bootstraps, 0.975), cluster_counts, temporal_stable
 
@@ -263,6 +294,7 @@ _RANDOMIZED_COHORT_FIELDS = (
     ("outcome_contract_versions", "outcome_contract_version"),
     ("metric_versions", "metric_version"),
     ("statistical_unit_versions", "statistical_unit_version"),
+    ("stages", "stage"),
 )
 
 
@@ -383,7 +415,9 @@ def _normalized_samples(
     return samples, exclusions, raw_count
 
 
-def _same_sign_halves(samples: list[dict[str, Any]]) -> bool:
+def _same_sign_halves(
+    samples: list[dict[str, Any]], *, expected_effect: float | None = None
+) -> bool:
     ordered = sorted(samples, key=lambda sample: (sample["occurred_at"], sample["unit_id"]))
     midpoint = len(ordered) // 2
     if midpoint == 0 or midpoint == len(ordered):
@@ -392,7 +426,16 @@ def _same_sign_halves(samples: list[dict[str, Any]]) -> bool:
         sum(sample["paired_net_delta_bp"] for sample in half) / len(half)
         for half in (ordered[:midpoint], ordered[midpoint:])
     ]
-    return means[0] != 0 and means[1] != 0 and (means[0] > 0) == (means[1] > 0)
+    return (
+        means[0] != 0
+        and means[1] != 0
+        and (means[0] > 0) == (means[1] > 0)
+        and (
+            expected_effect is None
+            or expected_effect == 0
+            or all((mean > 0) == (expected_effect > 0) for mean in means)
+        )
+    )
 
 
 def _concentration_values(values: Iterable[float]) -> tuple[float | None, float | None]:
@@ -480,9 +523,12 @@ def _layer_result(
     if comparison_method == "prospective_randomized":
         estimate, lower, upper, cluster_count_by_arm, temporal_stable = _randomized_cluster_interval(samples)
         quote_contrast, top1, top5 = _randomized_quote_metrics(samples)
+        treatment_exposure_count = sum(
+            sample["arm"] == "treatment" for sample in samples
+        )
         total_quote = (
-            quote_contrast * cluster_count_by_arm["treatment"]
-            if quote_contrast is not None and cluster_count_by_arm["treatment"] > 0
+            quote_contrast * treatment_exposure_count
+            if quote_contrast is not None and treatment_exposure_count > 0
             else None
         )
         independent_unit_count = sum(cluster_count_by_arm.values())
@@ -491,21 +537,25 @@ def _layer_result(
             if set(cluster_count_by_arm) == {"control", "treatment"}
             else None
         )
+    elif comparison_method == "paired_same_unit":
+        estimate, lower, upper = _paired_unit_interval(samples)
+        cluster_count_by_arm = None
+        quote_contrast = None
+        total_quote = sum(sample["paired_net_delta_quote"] for sample in samples)
+        top1, top5 = _concentration(samples)
+        temporal_stable = _same_sign_halves(samples, expected_effect=estimate)
+        independent_unit_count = unit_count
+        smaller_arm = None
     else:
         estimate, lower, upper = _cluster_interval(samples)
         cluster_count_by_arm = None
         quote_contrast = None
         total_quote = sum(sample["paired_net_delta_quote"] for sample in samples)
         top1, top5 = _concentration(samples)
-        temporal_stable = _same_sign_halves(samples)
+        temporal_stable = _same_sign_halves(samples, expected_effect=estimate)
         independent_unit_count = unit_count
         smaller_arm = None
-    frequency_units = (
-        independent_unit_count
-        if comparison_method == "prospective_randomized"
-        else unit_count
-    )
-    frequency = frequency_units / candidate_count if candidate_count > 0 else None
+    frequency = unit_count / candidate_count if candidate_count > 0 else None
     gradient = frequency * lower if frequency is not None and lower is not None else None
     reasons = list(global_reasons)
     minimum_units = int(thresholds.get("minimum_independent_units") or 30)
