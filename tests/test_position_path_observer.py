@@ -1084,3 +1084,53 @@ def test_unavailable_identity_is_preserved_and_reported():
             "WHERE position_id=?",
             (position.id,),
         )
+
+
+def test_observer_first_cursor_initialization_does_not_backfill_history():
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(
+        position_id="position-path-first-cursor",
+        opened_at="2026-08-12T00:00:00+00:00",
+    )
+    bucket = 1_786_579_200_000
+
+    result = repo.enqueue_position_path_observation_buckets_through(
+        bucket,
+        observed_at="2026-08-13T00:05:00+00:00",
+    )
+
+    assert result == {
+        "enqueued_buckets": 1,
+        "enqueued_position_buckets": 1,
+        "catchup_bucket_count": 0,
+    }
+    deferred = repo.list_oldest_deferred_position_path_bucket()
+    assert [(row["position_id"], row["bucket_open_ms"]) for row in deferred] == [
+        (position.id, bucket)
+    ]
+    assert repo.get_position_path_observer_cursor()["last_enqueued_bucket_open_ms"] == bucket
+
+
+def test_observer_cursor_and_deferred_rows_roll_back_together():
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(position_id="position-path-cursor-rollback")
+    bucket = 1_786_579_200_000
+
+    with pytest.raises(Exception):
+        repo.enqueue_position_path_observation_buckets_through(
+            bucket,
+            observed_at="not-a-timestamp",
+        )
+
+    assert repo.get_position_path_observer_cursor() is None
+    assert repo.list_oldest_deferred_position_path_bucket() == []
+
+    result = repo.enqueue_position_path_observation_buckets_through(
+        bucket,
+        observed_at="2026-08-13T00:05:00+00:00",
+    )
+    assert result["enqueued_position_buckets"] == 1
+    assert repo.get_position_path_observer_cursor()["last_enqueued_bucket_open_ms"] == bucket
+    assert repo.list_oldest_deferred_position_path_bucket()[0]["position_id"] == position.id

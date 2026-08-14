@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v27"
+SCHEMA_VERSION = "aletheia-sqlite-v28"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3606,6 +3606,23 @@ _POSITION_PATH_DEFERRED_BUCKETS_CHECKSUM = hashlib.sha256(
     (
         _POSITION_PATH_DEFERRED_BUCKETS_SQL
         + "\ndurable_position_path_retry_v1\nPRAGMA optimize"
+    ).encode("utf-8")
+).hexdigest()
+
+_POSITION_PATH_OBSERVER_CURSOR_SQL = """
+CREATE TABLE IF NOT EXISTS position_path_observer_cursor (
+    stream_id TEXT PRIMARY KEY CHECK(stream_id='position_path_observer'),
+    last_enqueued_bucket_open_ms INTEGER NOT NULL CHECK(
+        last_enqueued_bucket_open_ms >= 0
+        AND last_enqueued_bucket_open_ms % 300000 = 0
+    ),
+    updated_at TEXT NOT NULL
+);
+"""
+_POSITION_PATH_OBSERVER_CURSOR_CHECKSUM = hashlib.sha256(
+    (
+        _POSITION_PATH_OBSERVER_CURSOR_SQL
+        + "\ndurable_position_path_observer_cursor_v1\nPRAGMA optimize"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -4970,6 +4987,15 @@ def _apply_position_path_deferred_buckets_v27(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_position_path_observer_cursor_v28(db: sqlite3.Connection) -> None:
+    """Persist the observer's durable bucket-enrollment cursor."""
+
+    db.executescript(_POSITION_PATH_OBSERVER_CURSOR_SQL)
+    db.execute("PRAGMA optimize")
+
+
+
+
 def _apply_market_signal_identity_v7(db: sqlite3.Connection) -> None:
     """Add structured evidence without changing legacy wake-summary fields."""
 
@@ -5365,8 +5391,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260813_0026_position_path_deferred_buckets_v27",
         checksum=_POSITION_PATH_DEFERRED_BUCKETS_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v27",
         apply=_apply_position_path_deferred_buckets_v27,
+    ),
+    MigrationStep(
+        migration_id="20260814_0027_position_path_observer_cursor_v28",
+        checksum=_POSITION_PATH_OBSERVER_CURSOR_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_position_path_observer_cursor_v28,
     ),
 )
 

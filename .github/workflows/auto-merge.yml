@@ -6,7 +6,7 @@ on:
     types: [opened, reopened, ready_for_review, edited, synchronize, labeled, unlabeled, closed]
   pull_request_review:
     branches: [master]
-    types: [submitted]
+    types: [submitted, dismissed]
   issue_comment:
     types: [created, edited]
   workflow_run:
@@ -31,7 +31,11 @@ jobs:
       ) ||
       (
         github.event_name == 'pull_request_review' &&
-        github.event.review.user.login == 'chatgpt-codex-connector'
+        (
+          github.event.action == 'dismissed' ||
+          github.event.review.user.login == 'chatgpt-codex-connector' ||
+          github.event.review.user.login == 'chatgpt-codex-connector[bot]'
+        )
       ) ||
       (
         github.event_name == 'issue_comment' &&
@@ -54,6 +58,8 @@ jobs:
           retries: 3
           script: |
             const connectorLogin = 'chatgpt-codex-connector';
+            const normalizeLogin = (login) => String(login || '').replace(/\[bot\]$/, '');
+            const isConnectorLogin = (login) => normalizeLogin(login) === connectorLogin;
             const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
             const triagePattern = /^\/codex-triage ([0-9a-f]{40}) (clean|complete)$/;
             const eventName = context.eventName;
@@ -63,11 +69,19 @@ jobs:
             if (eventName === 'pull_request_target') {
               pullRequestNumbers = [payload.pull_request.number];
             } else if (eventName === 'pull_request_review') {
-              if (payload.review.user?.login !== connectorLogin) return;
+              if (payload.action !== 'dismissed' && !isConnectorLogin(payload.review.user?.login)) return;
               pullRequestNumbers = [payload.pull_request.number];
             } else if (eventName === 'issue_comment') {
               if (!trustedAssociations.has(payload.comment.author_association)) {
                 core.info('ignoring Codex triage acknowledgement from an untrusted author');
+                return;
+              }
+              const {data: commenterPermission} = await github.rest.repos.getCollaboratorPermissionLevel({
+                ...context.repo,
+                username: payload.comment.user?.login,
+              });
+              if (!new Set(['admin', 'maintain', 'write']).has(commenterPermission.permission)) {
+                core.info('ignoring Codex triage acknowledgement without write permission');
                 return;
               }
               const [command] = String(payload.comment.body || '').replace(/\r/g, '').split('\n');
@@ -139,6 +153,7 @@ jobs:
     name: Approve a verified release candidate
     if: >-
       github.event_name == 'repository_dispatch' &&
+      github.event.sender.login == 'github-actions[bot]' &&
       github.event.action == 'release_candidate_verified' &&
       startsWith(github.event.client_payload.head_branch, 'release-please--branches--master')
     permissions:
@@ -186,6 +201,17 @@ jobs:
               core.info('release candidate is behind master; rerun the manual release workflow');
               return;
             }
+            const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
+              ...context.repo,
+              pull_number: pullRequest.number,
+              per_page: 100,
+            });
+            if (changedFiles.some(({filename, previous_filename}) =>
+              [filename, previous_filename].includes('.github/workflows/auto-merge.yml'),
+            )) {
+              core.info('merge-authority workflow changes require an explicit manual merge');
+              return;
+            }
             const requiredChecks = [
               'Review checks',
               'Python specifications',
@@ -224,6 +250,7 @@ jobs:
     name: Apply auto-merge update
     if: >-
       github.event_name == 'repository_dispatch' &&
+      github.event.sender.login == 'github-actions[bot]' &&
       github.event.action == 'auto_merge_update'
     permissions:
       contents: write
@@ -281,6 +308,7 @@ jobs:
                       author { login }
                       commit { oid }
                       submittedAt
+                      state
                     }
                   }
                   comments(last: 100) {
@@ -378,12 +406,15 @@ jobs:
               }
 
               const connectorLogin = 'chatgpt-codex-connector';
+              const normalizeLogin = (login) => String(login || '').replace(/\[bot\]$/, '');
+              const isConnectorLogin = (login) => normalizeLogin(login) === connectorLogin;
               const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
               const triagePattern = /^\/codex-triage ([0-9a-f]{40}) (clean|complete)$/;
               const exactHeadReviews = pullRequest.reviews.nodes.filter((review) =>
-                review.author?.login === connectorLogin &&
+                isConnectorLogin(review.author?.login) &&
                 review.commit?.oid === expectedHeadSha &&
-                review.submittedAt
+                review.submittedAt &&
+                review.state !== 'DISMISSED'
               );
               const acknowledgements = pullRequest.comments.nodes.flatMap((comment) => {
                 if (!trustedAssociations.has(comment.authorAssociation)) return [];

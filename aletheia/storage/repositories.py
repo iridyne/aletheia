@@ -2673,6 +2673,135 @@ def list_all_open_positions() -> list[dict]:
     rows = get_db().execute("SELECT * FROM positions WHERE status='open' ORDER BY rowid DESC").fetchall()
     return [dict(row) for row in rows]
 
+
+def _first_full_position_path_bucket_open_ms(opened_at: object) -> int | None:
+    try:
+        if isinstance(opened_at, datetime):
+            parsed = opened_at
+        else:
+            raw = str(opened_at or "").strip()
+            if not raw:
+                return None
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            return None
+        opened_ms = math.ceil(parsed.astimezone(timezone.utc).timestamp() * 1000)
+    except (OSError, OverflowError, TypeError, ValueError):
+        return None
+    return ((opened_ms + 300_000 - 1) // 300_000) * 300_000
+
+
+def get_position_path_observer_cursor() -> dict | None:
+    """Return the durable bucket-enrollment cursor, if initialized."""
+
+    row = get_db().execute(
+        "SELECT stream_id,last_enqueued_bucket_open_ms,updated_at "
+        "FROM position_path_observer_cursor "
+        "WHERE stream_id='position_path_observer'"
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def enqueue_position_path_observation_buckets_through(
+    target_bucket_open_ms: int,
+    *,
+    observed_at: str,
+) -> dict[str, int]:
+    """Enroll eligible Position/bucket pairs through one completed bucket."""
+
+    target = int(target_bucket_open_ms)
+    if target < 0 or target % 300_000:
+        raise ValueError("target_bucket_open_ms must be a non-negative 5m boundary")
+
+    with transaction(immediate=True):
+        db = get_db()
+        cursor = db.execute(
+            "SELECT last_enqueued_bucket_open_ms "
+            "FROM position_path_observer_cursor "
+            "WHERE stream_id='position_path_observer'"
+        ).fetchone()
+        if cursor is None:
+            buckets = [target]
+        else:
+            last = int(cursor["last_enqueued_bucket_open_ms"])
+            if target <= last:
+                return {
+                    "enqueued_buckets": 0,
+                    "enqueued_position_buckets": 0,
+                    "catchup_bucket_count": 0,
+                }
+            buckets = list(range(last + 300_000, target + 300_000, 300_000))
+
+        inserted_position_buckets = 0
+        for bucket_open_ms in buckets:
+            bucket_open = datetime.fromtimestamp(
+                bucket_open_ms / 1000, tz=timezone.utc
+            ).isoformat()
+            bucket_end = datetime.fromtimestamp(
+                (bucket_open_ms + 300_000) / 1000, tz=timezone.utc
+            ).isoformat()
+            positions = db.execute(
+                "SELECT id,opened_at,status,closed_at FROM positions "
+                "WHERE status IN ('open','closed') "
+                "AND datetime(opened_at) <= datetime(?) "
+                "AND (closed_at IS NULL OR datetime(closed_at) >= datetime(?)) "
+                "ORDER BY rowid",
+                (bucket_open, bucket_end),
+            ).fetchall()
+            for position in positions:
+                first_bucket_open_ms = _first_full_position_path_bucket_open_ms(
+                    position["opened_at"]
+                )
+                if first_bucket_open_ms is None or bucket_open_ms < first_bucket_open_ms:
+                    continue
+                inserted = execute_write(
+                    "INSERT INTO position_path_observation_deferred_buckets "
+                    "(position_id,bucket_open_ms,first_deferred_at,last_attempt_at,"
+                    "attempt_count,reason) "
+                    "SELECT ?,?,?,?,?,? "
+                    "WHERE NOT EXISTS ("
+                    "SELECT 1 FROM position_path_observations "
+                    "WHERE position_id=? AND bucket_open_ms=?"
+                    ") AND NOT EXISTS ("
+                    "SELECT 1 FROM position_path_observation_deferred_buckets "
+                    "WHERE position_id=? AND bucket_open_ms=?"
+                    ")",
+                    (
+                        str(position["id"]),
+                        bucket_open_ms,
+                        observed_at,
+                        observed_at,
+                        0,
+                        "scheduled",
+                        str(position["id"]),
+                        bucket_open_ms,
+                        str(position["id"]),
+                        bucket_open_ms,
+                    ),
+                )
+                inserted_position_buckets += max(0, int(inserted.rowcount))
+
+        if cursor is None:
+            execute_write(
+                "INSERT INTO position_path_observer_cursor "
+                "(stream_id,last_enqueued_bucket_open_ms,updated_at) "
+                "VALUES ('position_path_observer',?,?)",
+                (target, observed_at),
+            )
+        else:
+            execute_write(
+                "UPDATE position_path_observer_cursor "
+                "SET last_enqueued_bucket_open_ms=?,updated_at=? "
+                "WHERE stream_id='position_path_observer'",
+                (target, observed_at),
+            )
+        return {
+            "enqueued_buckets": len(buckets),
+            "enqueued_position_buckets": inserted_position_buckets,
+            "catchup_bucket_count": max(0, len(buckets) - 1),
+        }
+
+
 def list_positions_for_path_observation_bucket(
     *, bucket_open: str, bucket_end: str
 ) -> list[dict]:

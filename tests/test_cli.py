@@ -203,3 +203,38 @@ def test_inspect_agent_runs_uses_current_agent_run_fields(cli_db):
     assert rows[0]["status"] == "failed"
     assert rows[0]["duration_s"] == 60.0
     assert rows[0]["error"] == "provider timeout"
+
+
+def test_inspect_opportunity_lifecycle_unknown_has_stable_unavailable_envelope(cli_db):
+    import json as json_mod
+
+    args = [
+        "inspect",
+        "opportunity-lifecycle",
+        "--id",
+        "does-not-exist",
+        "--as-of",
+        "2026-08-13T00:10:00Z",
+        "--json",
+    ]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    data = json_mod.loads(result.output)
+    assert data["contract_version"] == "opportunity_lifecycle/v1"
+    assert data["availability"] == "unavailable"
+    assert data["unavailable_reason"] == "opportunity_not_found"
+    assert data["lifecycle"]["positions"] == []
+
+    human = runner.invoke(app, [arg for arg in args if arg != "--json"])
+    assert human.exit_code == 0, human.output
+    assert "Unavailable reason: opportunity_not_found" in human.output
+    assert "Linkage and evidence limits" in human.output
+
+
+def test_inspect_opportunity_lifecycle_rejects_invalid_as_of(cli_db):
+    result = runner.invoke(
+        app,
+        ["inspect", "opportunity-lifecycle", "--id", "opp-1", "--as-of", "not-a-time"],
+    )
+    assert result.exit_code == 2
+    assert "invalid timestamp; use ISO-8601" in result.output
