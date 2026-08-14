@@ -39,6 +39,13 @@ def _minimal_status(**overrides):
         _learning_authority=lambda: {"influence_gate": "open", "global_refreeze": "none", "influence_enabled": True},
         _runtime_continuity=lambda: {"enabled": False, "paused": False},
         _gateway_running=lambda: False,
+        _position_path_observer_status=lambda: {
+            "available": True,
+            "oldest_missing_bucket": None,
+            "deferred_bucket_count": 0,
+            "observer_lag": {"seconds": 0.0, "buckets": 0},
+            "last_24h": {"available": 0, "unavailable": 0, "skipped": 0},
+        },
     )
     defaults.update(overrides)
 
@@ -55,6 +62,11 @@ def _minimal_status(**overrides):
         patch.object(cmd_mod, "_learning_authority", defaults["_learning_authority"]),
         patch.object(cmd_mod, "_runtime_continuity", defaults["_runtime_continuity"]),
         patch.object(cmd_mod, "_gateway_running", defaults["_gateway_running"]),
+        patch.object(
+            cmd_mod,
+            "_position_path_observer_status",
+            defaults["_position_path_observer_status"],
+        ),
     ):
         return build_control_status()
 
@@ -68,7 +80,8 @@ def test_control_status_has_all_sections():
 
     required = {"as_of", "sha", "gateway_running", "runtime", "authority",
                 "active_experiments", "active_experiments_available",
-                "open_policy_epochs", "evidence_epochs", "window_continuity"}
+                "open_policy_epochs", "evidence_epochs", "window_continuity",
+                "position_path_observer"}
     assert required.issubset(data.keys()), (
         f"Missing keys: {required - set(data.keys())}"
     )
@@ -77,6 +90,22 @@ def test_control_status_has_all_sections():
 # ---------------------------------------------------------------------------
 # Test 2: SHA section correctness
 # ---------------------------------------------------------------------------
+
+def test_control_status_exposes_position_path_recovery():
+    observer = {
+        "available": True,
+        "oldest_missing_bucket": {
+            "position_id": "position-1",
+            "bucket_open_ms": 123,
+            "bucket_open_at": "2026-08-13T00:00:00+00:00",
+        },
+        "deferred_bucket_count": 2,
+        "observer_lag": {"seconds": 600.0, "buckets": 2},
+        "last_24h": {"available": 5, "unavailable": 1, "skipped": 0},
+    }
+    data = _minimal_status(_position_path_observer_status=lambda: observer)
+    assert data["position_path_observer"] == observer
+
 
 def test_sha_section_deployed_matches_config():
     sha = "abc1234567890123"

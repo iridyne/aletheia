@@ -149,9 +149,25 @@ fallback fact, cache a terminal error, mutate a Position, or alter an experiment
 Rerunning against unchanged durable facts and the same cutoff produces the same
 canonical fact and OHLCV hash.
 
-Transient Position path-provider failures are deferred and retried by the
-existing observer. They no longer create an append-only unavailable bucket that
-blocks later recovery.
+Position Path Observer uses a recoverable expected-bucket contract. For every
+open or eligible closed Position it derives the first complete post-entry 5m
+bucket through the latest completed bucket (capped at `closed_at` for a closed
+Position), registers only the oldest not-yet-materialized bucket per bounded
+pass, and preserves each registration durably before provider I/O. A healthy
+observer cycle makes at most two bounded oldest-first passes per
+Position, so recovery converges without a backfill storm; exact
+venue/symbol/spot-perp identity and provider `is_closed` proof remain mandatory.
+Recovered buckets do not reuse current mutable funding/protection state: funding
+is unavailable, and the effective durable ExitPlan is used when present; otherwise
+`exit_plan_version=0` plus nullable levels explicitly signal unavailable plan
+history.
+
+Transient Position path-provider failures stay in the durable deferred queue for
+bounded retries. Once the retry limit is reached, the bucket is materialized as
+an append-only `unavailable` fact and removed from the queue; it cannot remain
+pending forever. `aletheia control status` exposes the oldest missing bucket,
+durable deferred count, observer lag, and trailing 24h available/unavailable/
+skipped counts.
 
 `candidate-diagnosis` and the `opportunity audit --view entry-exit` report root
 both declare `read_only=true` and `behavior_changed=false`. These fields describe

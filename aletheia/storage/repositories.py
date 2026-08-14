@@ -64,6 +64,8 @@ _PHYSICAL_PROTECTION_MARKETS = {
     "usdt_futures": "perp",
 }
 
+POSITION_PATH_MAX_RETRY_ATTEMPTS = 3
+
 
 class PositionProtectionConflict(RuntimeError):
     """A durable protection write conflicts with already-observed authority."""
@@ -2688,6 +2690,15 @@ def list_positions_for_path_observation_bucket(
     return [dict(row) for row in rows]
 
 
+def list_positions_for_path_observation_recovery() -> list[dict]:
+    """Return every open/closed Position whose expected path may need recovery."""
+
+    rows = get_db().execute(
+        "SELECT * FROM positions WHERE status IN ('open','closed') ORDER BY rowid DESC"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_observed_position_ids_for_bucket(
     position_ids: Sequence[str], *, bucket_open_ms: int
 ) -> set[str]:
@@ -2704,6 +2715,36 @@ def get_observed_position_ids_for_bucket(
         ).fetchall()
         observed.update(str(row["position_id"]) for row in rows)
     return observed
+
+
+def get_position_path_bucket_state(
+    position_ids: Sequence[str],
+) -> dict[str, dict[str, set[int]]]:
+    """Return materialized and deferred bucket identities for each Position."""
+
+    state = {
+        str(position_id): {"observed": set(), "deferred": set()}
+        for position_id in position_ids
+    }
+    for offset in range(0, len(position_ids), 400):
+        chunk = position_ids[offset : offset + 400]
+        if not chunk:
+            continue
+        placeholders = ",".join("?" for _ in chunk)
+        for table, key in (
+            ("position_path_observations", "observed"),
+            ("position_path_observation_deferred_buckets", "deferred"),
+        ):
+            rows = get_db().execute(
+                f"SELECT position_id,bucket_open_ms FROM {table} "
+                f"WHERE position_id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                position_state = state.get(str(row["position_id"]))
+                if position_state is not None:
+                    position_state[key].add(int(row["bucket_open_ms"]))
+    return state
 
 def defer_position_path_observation_bucket(
     position_id: str,
@@ -2744,20 +2785,66 @@ def defer_position_path_observation_bucket(
     return int(row["attempt_count"]) if row is not None else 0
 
 
-def list_oldest_deferred_position_path_bucket(*, limit: int = 2_000) -> list[dict]:
-    """Return the oldest retry cohort currently due, without blocking newer buckets."""
+def list_exhausted_deferred_position_path_buckets(*, limit: int = 2_000) -> list[dict]:
+    """Return retry rows that must be materialized as terminal unavailable facts."""
 
     bounded_limit = max(1, min(int(limit), 2_000))
     rows = get_db().execute(
         "SELECT * FROM position_path_observation_deferred_buckets "
-        "WHERE (attempt_count < 3 OR datetime(last_attempt_at) <= datetime('now','-1 hour')) "
-        "AND bucket_open_ms=("
-        "SELECT MIN(bucket_open_ms) FROM position_path_observation_deferred_buckets "
-        "WHERE attempt_count < 3 OR datetime(last_attempt_at) <= datetime('now','-1 hour')"
-        ") ORDER BY position_id LIMIT ?",
-        (bounded_limit,),
+        "WHERE attempt_count >= ? "
+        "ORDER BY bucket_open_ms, position_id LIMIT ?",
+        (POSITION_PATH_MAX_RETRY_ATTEMPTS, bounded_limit),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def list_oldest_deferred_position_path_bucket(*, limit: int = 2_000) -> list[dict]:
+    """Return the oldest due bucket, at most one queued bucket per Position."""
+
+    bounded_limit = max(1, min(int(limit), 2_000))
+    rows = get_db().execute(
+        "WITH due AS ("
+        "SELECT d.* FROM position_path_observation_deferred_buckets d "
+        "WHERE d.attempt_count < ? "
+        "AND NOT EXISTS ("
+        "SELECT 1 FROM position_path_observation_deferred_buckets earlier "
+        "WHERE earlier.position_id=d.position_id "
+        "AND earlier.bucket_open_ms < d.bucket_open_ms"
+        ")"
+        ") "
+        "SELECT * FROM due "
+        "WHERE bucket_open_ms=(SELECT MIN(bucket_open_ms) FROM due) "
+        "ORDER BY position_id LIMIT ?",
+        (POSITION_PATH_MAX_RETRY_ATTEMPTS, bounded_limit),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def count_deferred_position_path_observation_buckets() -> int:
+    """Return the durable Position/bucket retry queue size."""
+
+    row = get_db().execute(
+        "SELECT COUNT(*) AS count FROM position_path_observation_deferred_buckets"
+    ).fetchone()
+    return int(row["count"]) if row else 0
+
+
+def count_position_path_observations_since(since_bucket_open_ms: int) -> dict[str, int]:
+    """Count immutable facts whose bucket starts in the trailing window."""
+
+    rows = get_db().execute(
+        "SELECT evidence_status, COUNT(*) AS count "
+        "FROM position_path_observations "
+        "WHERE bucket_open_ms >= ? "
+        "GROUP BY evidence_status",
+        (int(since_bucket_open_ms),),
+    ).fetchall()
+    counts = {"available": 0, "unavailable": 0}
+    for row in rows:
+        status = str(row["evidence_status"])
+        if status in counts:
+            counts[status] = int(row["count"])
+    return counts
 
 
 def resolve_deferred_position_path_observation(

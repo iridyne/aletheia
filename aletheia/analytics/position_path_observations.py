@@ -8,6 +8,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aletheia.storage import repositories as repo
+from aletheia.portfolio.position_path_observer import (
+    expected_position_path_bucket_bounds,
+)
 from aletheia.analytics.outcome_integrity import (
     assess_reportable_outcome,
     validated_funding_economics,
@@ -35,29 +38,12 @@ def _excursions(
         mae = (max(highs) - entry_price) / entry_price * 100.0
     return max(0.0, mfe), max(0.0, mae)
 
-def _timestamp(value: object) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
-
-
 def _expected_bucket_bounds(position: dict[str, Any]) -> tuple[int | None, int | None]:
-    opened = _timestamp(position.get("opened_at"))
-    closed = _timestamp(position.get("closed_at"))
-    if opened is None or closed is None or closed <= opened:
-        return None, None
-    bucket_ms = 300_000
-    opened_ms = math.ceil(opened.timestamp() * 1000)
-    closed_ms = int(closed.timestamp() * 1000)
-    first = ((opened_ms + bucket_ms - 1) // bucket_ms) * bucket_ms
-    last = (closed_ms // bucket_ms) * bucket_ms - bucket_ms
-    return first, last
+    if str(position.get("status") or "").lower() != "closed":
+        if not position.get("closed_at"):
+            return None, None
+        position = {**position, "status": "closed"}
+    return expected_position_path_bucket_bounds(position)
 
 
 def _path_coverage(
@@ -392,7 +378,11 @@ def build_position_path_report(position_id: str, *, limit: int = 10_000) -> dict
         giveback_pct=giveback_to_exit_pct,
     )
     plan_versions = sorted(
-        {int(row.get("exit_plan_version") or 0) for row in observations}
+        {
+            version
+            for version in (int(row.get("exit_plan_version") or 0) for row in observations)
+            if version > 0
+        }
     )
     return {
         "position_id": position_id,
