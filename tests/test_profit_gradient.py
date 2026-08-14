@@ -202,6 +202,39 @@ def test_prospective_randomized_retains_two_arm_threshold():
     assert result["winner_layer"] is None
 
 
+def test_prospective_randomized_rejects_unassigned_units():
+    samples = _seven_layers()
+    unassigned = _samples("Costs", effect_bp=10.0, count=1)[0]
+    unassigned["unit_id"] = "Costs-unassigned"
+    unassigned["arm"] = ""
+    samples["Costs"].append(unassigned)
+
+    result = gradient.select_unique_max_direction(
+        samples,
+        evidence_context=_context(comparison_method="prospective_randomized"),
+    )
+
+    costs = result["layers"]["Costs"]
+    assert costs["unassigned_arm_count"] == 1
+    assert "randomized_arm_missing" in costs["gate_reasons"]
+    assert result["winner_layer"] is None
+
+
+def test_conflicting_delta_units_are_excluded():
+    samples = _seven_layers()
+    samples["Costs"][0]["paired_net_delta_quote"] = -1.0
+
+    result = gradient.select_unique_max_direction(
+        samples,
+        evidence_context=_context(comparison_method="paired_same_unit"),
+    )
+
+    costs = result["layers"]["Costs"]
+    assert costs["independent_unit_count"] == 39
+    assert "paired_delta_sign_mismatch" in costs["gate_reasons"]
+    assert result["winner_layer"] is None
+
+
 @pytest.mark.parametrize(
     ("method", "reason"),
     [(None, "missing_comparison_method"), ("future_method", "unsupported_comparison_method")],
