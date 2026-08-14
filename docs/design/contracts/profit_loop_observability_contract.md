@@ -159,7 +159,8 @@ row sums. A pooled mean is not a randomized effect. For
 rows with a cluster bootstrap for dependence; each row contributes one complete, cost-aware
 delta for one unique statistical unit (for the current Exit counterfactual,
 one Position). Duplicate `unit_id` rows are excluded. The paired result is
-never made to satisfy the randomized arm gate by inventing `treatment` or
+temporal-stability-ineligible when its chronological midpoint is a timestamp tie
+and is never made to satisfy the randomized arm gate by inventing `treatment` or
 `control` labels. The report exposes the applied threshold profile, arm counts,
 unassigned-arm counts for randomized evidence, and
 `smaller_arm_count: null` when arms do not apply.

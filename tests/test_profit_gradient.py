@@ -696,6 +696,30 @@ def test_paired_bootstrap_seed_ignores_row_order_within_clusters():
     assert baseline == pytest.approx(changed_order)
 
 
+def test_paired_temporal_midpoint_timestamp_tie_fails_closed():
+    samples = {
+        layer: _samples(
+            layer,
+            effect_bp=10.0 if layer == "Costs" else 1.0,
+            count=40,
+            with_arms=False,
+        )
+        for layer in gradient.LAYERS
+    }
+    midpoint_timestamp = samples["Costs"][0]["occurred_at"]
+    for sample in samples["Costs"]:
+        sample["occurred_at"] = midpoint_timestamp
+
+    result = gradient.select_unique_max_direction(
+        samples,
+        evidence_context=_context(comparison_method="paired_same_unit"),
+    )
+
+    costs = result["layers"]["Costs"]
+    assert "temporal_halves_disagree" in costs["gate_reasons"]
+    assert result["winner_layer"] is None
+
+
 def test_noncausal_methods_use_resampling_clusters_for_independence_gate():
     samples = {
         layer: _samples(layer, effect_bp=10.0, count=40, with_arms=False)

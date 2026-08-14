@@ -435,6 +435,8 @@ def _same_sign_halves(
     midpoint = len(ordered) // 2
     if midpoint == 0 or midpoint == len(ordered):
         return False
+    if ordered[midpoint - 1]["occurred_at"] == ordered[midpoint]["occurred_at"]:
+        return False
     means = [
         sum(sample["paired_net_delta_bp"] for sample in half) / len(half)
         for half in (ordered[:midpoint], ordered[midpoint:])
