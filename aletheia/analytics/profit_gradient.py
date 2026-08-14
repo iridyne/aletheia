@@ -112,14 +112,13 @@ def _cluster_interval(
         clusters[str(cluster)].append(value)
     if not clusters:
         return None, None, None
-    cluster_values = [sum(values) / len(values) for values in clusters.values()]
+    cluster_values = tuple(
+        sorted(sum(values) / len(values) for values in clusters.values())
+    )
     estimate = sum(cluster_values) / len(cluster_values)
     if len(cluster_values) < 2:
         return estimate, None, None
-    seed_material = "|".join(
-        f"{key}:{','.join(f'{value:.12g}' for value in sorted(values))}"
-        for key, values in sorted(clusters.items())
-    )
+    seed_material = ",".join(f"{value:.12g}" for value in cluster_values)
     seed = int(hashlib.sha256(seed_material.encode()).hexdigest()[:16], 16)
     rng = random.Random(seed)
     bootstraps = []
