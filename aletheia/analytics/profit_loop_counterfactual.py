@@ -144,6 +144,13 @@ def _parse_utc(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _fixed_cutoff(started_at: datetime) -> datetime | None:
+    try:
+        return started_at + timedelta(days=_DURATION_DAYS)
+    except OverflowError:
+        return None
+
+
 def _nested(root: Mapping[str, Any], *keys: str) -> Any:
     value: Any = root
     for key in keys:
@@ -204,9 +211,12 @@ def resolve_profit_loop_registration(fact: Mapping[str, Any]) -> dict[str, Any] 
     registration_at = _parse_utc(row["started_at"])
     if registration_at is None:
         return {"status": "not_evaluable", "reason": "verified_deployment_registration_required"}
-    cutoff_at = registration_at + timedelta(days=_DURATION_DAYS)
-    ended_at = _parse_utc(row["ended_at"])
-    if row["ended_at"] and ended_at is None:
+    cutoff_at = _fixed_cutoff(registration_at)
+    if cutoff_at is None:
+        return {"status": "not_evaluable", "reason": "registered_epoch_malformed"}
+    raw_ended_at = row["ended_at"]
+    ended_at = _parse_utc(raw_ended_at)
+    if raw_ended_at is not None and ended_at is None:
         return {"status": "not_evaluable", "reason": "registered_epoch_end_malformed"}
     if ended_at is not None and ended_at < cutoff_at:
         return {"status": "not_evaluable", "reason": "registered_epoch_ended_before_cutoff"}
@@ -242,9 +252,10 @@ def profit_loop_registration_cutoffs() -> list[str]:
     except Exception:
         return []
     return [
-        (started + timedelta(days=_DURATION_DAYS)).isoformat()
+        cutoff.isoformat()
         for row in rows
         if (started := _parse_utc(row["started_at"])) is not None
+        if (cutoff := _fixed_cutoff(started)) is not None
     ]
 
 
