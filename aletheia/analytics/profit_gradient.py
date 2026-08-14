@@ -291,7 +291,11 @@ def _randomized_quote_metrics(
         row["paired_net_delta_quote"] * row["exposure_count"] for row in treatment
     )
     treatment_mean = treatment_quote_total / treatment_exposure_count
-    control_mean = sum(row["paired_net_delta_quote"] for row in control) / len(control)
+    control_exposure_count = sum(row["exposure_count"] for row in control)
+    control_quote_total = sum(
+        row["paired_net_delta_quote"] * row["exposure_count"] for row in control
+    )
+    control_mean = control_quote_total / control_exposure_count
     total_quote = treatment_quote_total - control_mean * treatment_exposure_count
     center = (treatment_mean + control_mean) / 2.0
     treatment_contributions = [
@@ -301,7 +305,8 @@ def _randomized_quote_metrics(
     control_contributions = [
         -(row["paired_net_delta_quote"] - center)
         * treatment_exposure_count
-        / len(control)
+        * row["exposure_count"]
+        / control_exposure_count
         for row in control
     ]
     contributions = treatment_contributions + control_contributions
@@ -331,7 +336,11 @@ def _randomized_cohort_identity(
 ) -> tuple[dict[str, str] | None, list[str]]:
     if method == "prospective_randomized":
         required_fields = _RANDOMIZED_COHORT_FIELDS
-    elif method == "paired_same_unit":
+    elif method in {
+        "paired_same_unit",
+        "deterministic_decomposition",
+        "directional_observational",
+    }:
         required_fields = tuple(
             item for item in _RANDOMIZED_COHORT_FIELDS if item[0] != "assignment_salts"
         )

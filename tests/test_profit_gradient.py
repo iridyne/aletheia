@@ -474,6 +474,30 @@ def test_noncausal_comparison_methods_cannot_produce_a_unique_winner(method, rol
     assert result["verdict"] == "no_unique_direction"
 
 
+@pytest.mark.parametrize("method", ["deterministic_decomposition", "directional_observational"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "horizons",
+        "outcome_contract_versions",
+        "metric_versions",
+        "statistical_unit_versions",
+        "stages",
+    ],
+)
+def test_noncausal_cohort_identity_is_required(method, field):
+    context = _context(comparison_method=method)
+    context.pop(field)
+
+    result = gradient.select_unique_max_direction(
+        _seven_layers(), evidence_context=context
+    )
+
+    assert result["cohort_identity"] is None
+    assert f"mixed_or_missing_{field}" in result["global_gate_reasons"]
+    assert result["layers"]["Costs"]["gate_status"] == "ineligible"
+
+
 @pytest.mark.parametrize(
     "field",
     [
@@ -716,6 +740,31 @@ def test_randomized_quote_concentration_weights_exposure():
 
     assert result["layers"]["Costs"]["top1_absolute_contribution_share"] > 0.25
     assert result["winner_layer"] is None
+
+
+def test_randomized_quote_metrics_weight_control_exposure():
+    samples = _seven_layers()
+    costs = samples["Costs"]
+    for sample in costs:
+        if sample["arm"] == "treatment":
+            sample["paired_net_delta_quote"] = 10.0
+        else:
+            sample["paired_net_delta_quote"] = 0.0
+    large = next(sample for sample in costs if sample["arm"] == "control")
+    large["paired_net_delta_bp"] = 15.0
+    large["paired_net_delta_quote"] = 15.0
+    for index in range(99):
+        extra = deepcopy(large)
+        extra["unit_id"] = f"Costs-control-exposure-{index}"
+        costs.append(extra)
+
+    normalized, _, _ = gradient._normalized_samples("Costs", costs)
+    quote_contrast, total_quote, _, _ = gradient._randomized_quote_metrics(normalized)
+
+    expected_control_mean = 1_500.0 / 119.0
+    assert quote_contrast == pytest.approx(10.0 - expected_control_mean)
+    assert total_quote == pytest.approx(200.0 - expected_control_mean * 20.0)
+    assert total_quote < 0
 
 
 def test_cluster_bootstrap_seed_ignores_cluster_labels():

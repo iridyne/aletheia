@@ -146,15 +146,15 @@ hard gates. The method-specific gates are:
 | --- | --- | --- |
 | `prospective_randomized` | at least 30 independent clusters, exact `control`/`treatment` arms with each cluster assigned to one arm, at least 20 clusters in the smaller arm, singular assignment/horizon/outcome/metric/statistical-unit/stage identities, and a positive quote contrast aligned with the basis-point direction | allowed |
 | `paired_same_unit` | at least 30 independent resampling clusters and 30 unique units, with singular horizon/outcome/metric/statistical-unit/stage identities; no arm threshold or arm labels are required | allowed for selecting the next forward question, never automatic behavior change |
-| `deterministic_decomposition` | at least 30 independent resampling clusters and 30 unique units; facts remain descriptive | prohibited; measured fact only |
-| `directional_observational` | at least 30 independent resampling clusters and 30 unique units; association remains directional | prohibited; rank the next question only |
+| `deterministic_decomposition` | at least 30 independent resampling clusters and 30 unique units, with singular horizon/outcome/metric/statistical-unit/stage identities; facts remain descriptive | prohibited; measured fact only |
+| `directional_observational` | at least 30 independent resampling clusters and 30 unique units, with singular horizon/outcome/metric/statistical-unit/stage identities; association remains directional | prohibited; rank the next question only |
 
 For `prospective_randomized`, the estimand is the equal-weight per-cluster
 `treatment - control` outcome contrast; arm labels affect the estimate and the
-cluster bootstrap. Quote harm converts the mean contrast to the treatment-
-exposure cohort total before denominator normalization, weighting each cluster's
-quote contribution by its exposure count; both the contrast and this total must
-be positive. Concentration uses
+cluster bootstrap. Quote harm converts the exposure-weighted treatment and control
+means to the treatment-exposure cohort total before denominator normalization,
+weighting each arm cluster's quote contribution by its own exposure count; both
+the contrast and this total must be positive. Concentration uses
 translation-invariant, centered per-cluster arm-effect contributions, not pooled
 row sums. A pooled mean is not a randomized effect. For
 `paired_same_unit`, the estimand is the unit-weighted mean across normalized
