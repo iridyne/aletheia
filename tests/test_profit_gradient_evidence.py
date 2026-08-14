@@ -277,6 +277,26 @@ def test_incomplete_source_cannot_emit_numeric_coverage():
     )
     assert missing_outcome["outcome_contract_versions"] == []
 
+    mixed_outcome = evidence._coverage_context(
+        registration={},
+        candidate_facts=[],
+        position_facts=[],
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cutoff=cutoff,
+        candidate_source={"status": "available", "unavailable_count": 0},
+        position_source={"status": "available", "error_count": 0},
+        cost_source={"status": "available"},
+        evidence_epoch_id="epoch-1",
+        cost_model_id="v1",
+        layer_samples={
+            "Costs": [
+                {"stage": "paper_10", "outcome_contract_version": "v2"},
+                {"stage": "paper_10"},
+            ]
+        },
+    )
+    assert mixed_outcome["outcome_contract_versions"] == []
+
 
 def test_pairing_rejects_unpaired_units_and_emits_one_contrast_per_arm():
     paired, excluded = evidence._pair_confirmatory_samples(
