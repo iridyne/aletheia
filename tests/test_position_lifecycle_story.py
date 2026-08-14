@@ -315,6 +315,144 @@ def test_story_as_of_prefix_does_not_expose_eventual_close(monkeypatch):
     )
 
 
+def test_story_masks_future_close_fill_but_keeps_known_exit_intent(monkeypatch):
+    db = _db()
+    db.execute(
+        "UPDATE orders SET created_at=? WHERE id='close-order'",
+        ("2026-08-13T00:02:00+00:00",),
+    )
+    db.commit()
+    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+
+    story = lifecycle.build_position_lifecycle_story(
+        "position-1", as_of_at=_CUTOFF, db=db
+    )
+
+    trigger = next(event for event in story["timeline"] if event["event_type"] == "exit_triggered")
+    close_fill = next(event for event in story["timeline"] if event["event_type"] == "exit_filled")
+    assert trigger["evidence_status"] == "available"
+    assert trigger["facts"]["close_reason"] == "stop_loss"
+    assert close_fill["evidence_status"] == "unavailable"
+    assert close_fill["occurred_at"] is None
+
+
+def test_story_open_prefix_never_claims_settled_excursion_or_horizon(monkeypatch):
+    db = _db()
+    db.execute(
+        "UPDATE positions SET status='open', closed_at=NULL, realized_pnl=NULL, "
+        "exit_fill_verified=0, exit_price_source='unavailable' WHERE id='position-1'"
+    )
+    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+
+    story = lifecycle.build_position_lifecycle_story(
+        "position-1", as_of_at=_CUTOFF, db=db
+    )
+
+    assert story["economic_path"]["path_evidence_status"] == "unavailable"
+    assert story["economic_path"]["maximum_favorable_excursion_pct"] is None
+    assert story["economic_path"]["maximum_adverse_excursion_pct"] is None
+    assert not any(
+        event["event_type"] in {"maximum_favorable_excursion", "maximum_adverse_excursion", "expected_horizon_reached"}
+        and event["evidence_status"] == "available"
+        for event in story["timeline"]
+    )
+
+
+def test_story_uses_only_visible_broker_funding_settlement(monkeypatch):
+    db = _db()
+    db.execute(
+        "CREATE TABLE audit_events ("
+        "id TEXT PRIMARY KEY, timestamp TEXT, actor TEXT, source TEXT, event_type TEXT, "
+        "entity_type TEXT, entity_id TEXT, before_state TEXT, after_state TEXT, message TEXT)"
+    )
+    db.execute(
+        "UPDATE positions SET funding_source='broker_ledger' WHERE id='position-1'"
+    )
+    db.execute(
+        "INSERT INTO audit_events VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            "settlement-1",
+            "2026-08-13T00:06:00+00:00",
+            "system",
+            "test",
+            "exchange_position_funding_settled",
+            "position",
+            "position-1",
+            "{}",
+            "{}",
+            "settled",
+        ),
+    )
+    db.commit()
+    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+
+    before_settlement = lifecycle.build_position_lifecycle_story(
+        "position-1", as_of_at="2026-08-13T00:05:30+00:00", db=db
+    )
+    after_settlement = lifecycle.build_position_lifecycle_story(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    assert before_settlement["audit"]["settlement"]["status"] == "unavailable"
+    assert before_settlement["economic_path"]["verified_net_pnl"] is None
+    assert after_settlement["audit"]["settlement"]["status"] == "available"
+    assert after_settlement["economic_path"]["verified_net_pnl"] == -1.7
+
+
+def test_story_preserves_fill_multiplicity_instead_of_verifying_one_fill(monkeypatch):
+    db = _db()
+    db.execute(
+        "INSERT INTO fills VALUES (?,?,?,?,?)",
+        ("entry-fill-2", "entry-order", 101.0, 0.5, "2026-08-13T00:00:10+00:00"),
+    )
+    db.commit()
+    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+
+    story = lifecycle.build_position_lifecycle_story(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    assert story["opening"]["entry_fill_ids"] == ["entry-fill", "entry-fill-2"]
+    entry_event = next(event for event in story["timeline"] if event["event_type"] == "entry_filled")
+    assert entry_event["evidence_status"] == "ambiguous"
+    assert story["economic_path"]["availability"] == "unavailable"
+    assert story["economic_path"]["unavailable_reason"] == "multiple_fills_not_aggregated"
+
+
+def test_story_rejects_fill_quantity_mismatch(monkeypatch):
+    db = _db()
+    db.execute("UPDATE fills SET fill_quantity=0.5 WHERE id='close-fill'")
+    db.commit()
+    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+
+    story = lifecycle.build_position_lifecycle_story(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    assert story["economic_path"]["availability"] == "unavailable"
+    assert story["economic_path"]["unavailable_reason"] == "fill_quantity_mismatch"
+    assert story["economic_path"]["quantity_evidence_status"] == "unavailable"
+    close_fill = next(event for event in story["timeline"] if event["event_type"] == "exit_filled")
+    assert close_fill["evidence_status"] == "unavailable"
+    assert close_fill["facts"]["unavailable_reason"] == "fill_quantity_mismatch"
+
+
+def test_story_rejects_false_risk_approval_and_preserves_exit_reason(monkeypatch):
+    db = _db()
+    db.execute("UPDATE risk_decisions SET approved='0' WHERE id='risk-1'")
+    db.commit()
+    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+
+    story = lifecycle.build_position_lifecycle_story(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    risk = next(event for event in story["timeline"] if event["event_type"] == "risk_approved")
+    assert risk["evidence_status"] == "unavailable"
+    trigger = next(event for event in story["structured_events"] if event["event_type"] == "exit_trigger")
+    assert trigger["facts"]["close_reason"] == "stop_loss" or trigger["facts"]["reason"] == "stop_loss"
+
+
 def test_story_preserves_same_bar_ambiguity(monkeypatch):
     db = _db()
     fact = _fact()

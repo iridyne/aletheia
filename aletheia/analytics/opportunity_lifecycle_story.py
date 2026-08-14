@@ -80,7 +80,7 @@ def _empty_multiplicity() -> dict[str, Any]:
         "orders": 0,
         "fills": 0,
         "positions": 0,
-        "zero_position": True,
+        "zero_position": None,
         "multiple_positions": False,
     }
 
@@ -115,7 +115,12 @@ def _envelope(
             "evidence_gaps": list(evidence_gaps or []),
             "source_status": {},
         },
-        "counterfactual": {"shadow": None, "forward": {}},
+        "counterfactual": {
+            "shadow": None,
+            "shadow_observations": [],
+            "shadow_multiplicity": 0,
+            "forward": {},
+        },
         "primary_cause": None,
     }
 
@@ -161,7 +166,16 @@ def _visible(
             gaps.append(f"{label}:invalid_timestamp:{row.get('id', 'unknown')}")
             continue
         if parsed <= cutoff:
-            visible.append(row)
+            candidate = dict(row)
+            for field in fields[1:]:
+                future = _timestamp(row.get(field))
+                if future is not None and future > cutoff:
+                    candidate[field] = None
+                    if field == "filled_at" and str(candidate.get("status") or "").lower() in {
+                        "filled", "closed", "complete", "completed"
+                    }:
+                        candidate["status"] = "open"
+            visible.append(candidate)
     return visible
 
 
@@ -242,13 +256,32 @@ def _position_rows(
         order_by="datetime(opened_at) ASC, rowid ASC",
         gaps=gaps,
     )
-    return _visible(
+    visible = _visible(
         rows,
         cutoff,
         fields=("opened_at", "created_at"),
         label="positions",
         gaps=gaps,
     )
+    projected: list[dict[str, Any]] = []
+    for row in visible:
+        closed_at = _timestamp(row.get("closed_at"))
+        if closed_at is not None and closed_at > cutoff:
+            row = dict(row)
+            row.update(
+                {
+                    "status": "open",
+                    "closed_at": None,
+                    "current_price": None,
+                    "realized_pnl": None,
+                    "close_reason": None,
+                    "exit_price_source": "unavailable",
+                    "exit_fill_verified": False,
+                    "outcome_eligible": False,
+                }
+            )
+        projected.append(row)
+    return projected
 
 
 def _order_kind(
@@ -257,8 +290,12 @@ def _order_kind(
     order_id = str(order.get("id"))
     if any(str(position.get("order_id")) == order_id for position in positions):
         return "entry"
-    if order.get("close_reason") or order.get("position_id") is not None:
+    if str(order.get("close_reason") or "").strip():
         return "close"
+    # A position-linked order without an explicit close reason is an
+    # averaging/entry leg, not proof of an exit.
+    if order.get("position_id") is not None or order.get("proposal_id") is not None:
+        return "entry"
     return "unknown"
 
 
@@ -269,7 +306,12 @@ def _counterfactual(
     cutoff: datetime,
     gaps: list[str],
 ) -> dict[str, Any]:
-    result: dict[str, Any] = {"shadow": None, "forward": {}}
+    result: dict[str, Any] = {
+        "shadow": None,
+        "shadow_observations": [],
+        "shadow_multiplicity": 0,
+        "forward": {},
+    }
     opportunity_id = str(opportunity.get("id"))
     shadow_rows = _rows(
         db,
@@ -287,37 +329,44 @@ def _counterfactual(
         gaps=gaps,
     )
     if shadow_created:
-        eligible = [
-            row
-            for row in shadow_created
-            if _timestamp(row.get("resolved_at")) is None
-            or _timestamp(row.get("resolved_at")) <= cutoff
-        ]
-        row = (eligible or shadow_created)[0]
-        resolved = _timestamp(row.get("resolved_at"))
-        resolved_visible = resolved is not None and resolved <= cutoff
-        result["shadow"] = {
-            "id": row.get("id"),
-            "pnl_pct": row.get("pnl_pct") if resolved_visible else None,
-            "entry_price": row.get("entry_price"),
-            "exit_price": row.get("exit_price") if resolved_visible else None,
-            "resolved_at": row.get("resolved_at") if resolved_visible else None,
-            "status": "resolved" if resolved_visible else "pending",
-        }
+        observations: list[dict[str, Any]] = []
+        for row in shadow_created:
+            resolved = _timestamp(row.get("resolved_at"))
+            resolved_visible = resolved is not None and resolved <= cutoff
+            observations.append(
+                {
+                    "id": row.get("id"),
+                    "pnl_pct": row.get("pnl_pct") if resolved_visible else None,
+                    "entry_price": row.get("entry_price"),
+                    "exit_price": row.get("exit_price") if resolved_visible else None,
+                    "resolved_at": row.get("resolved_at") if resolved_visible else None,
+                    "status": "resolved" if resolved_visible else "pending",
+                }
+            )
+        result["shadow_observations"] = observations
+        result["shadow_multiplicity"] = len(observations)
+        result["shadow"] = observations[0]
+        if len(observations) > 1:
+            gaps.append("shadow_trades:multiple_observations_not_collapsed")
 
     snapshot_id = opportunity.get("universe_snapshot_id")
     member_id = opportunity.get("universe_member_id")
-    if not snapshot_id or not direction:
+    if not snapshot_id or not member_id or not direction:
+        if snapshot_id and not member_id:
+            gaps.append("universe_forward_outcomes:member_identity_unavailable")
         return result
     if not _table_exists(db, "universe_forward_outcomes"):
         gaps.append("universe_forward_outcomes:table_unavailable")
         return result
+    if not _has_column(db, "universe_forward_outcomes", "member_id"):
+        gaps.append("universe_forward_outcomes:member_id_unavailable")
+        return result
+    if not _has_column(db, "universe_forward_outcomes", "direction"):
+        gaps.append("universe_forward_outcomes:direction_unavailable")
+        return result
     for horizon in ("15m", "1h", "4h", "24h"):
-        clauses = ["snapshot_id=?", "horizon=?", "status='settled'"]
-        params: list[Any] = [snapshot_id, horizon]
-        if member_id is not None and _has_column(db, "universe_forward_outcomes", "member_id"):
-            clauses.append("member_id=?")
-            params.append(member_id)
+        clauses = ["snapshot_id=?", "member_id=?", "direction=?", "horizon=?", "status='settled'"]
+        params: list[Any] = [snapshot_id, member_id, direction, horizon]
         rows = _rows(
             db,
             "universe_forward_outcomes",
@@ -636,6 +685,7 @@ def build_opportunity_lifecycle_story(
         "fills": fill_rows,
         "positions": linked_positions,
     }
+    position_source_available = not any(gap.startswith("positions:") for gap in gaps)
     multiplicity = {
         "decisions": len(direct_decisions),
         "proposals": len(proposals),
@@ -643,17 +693,26 @@ def build_opportunity_lifecycle_story(
         "orders": len(enriched_orders),
         "fills": len({str(row.get("id")) for row in fill_rows}),
         "positions": len(linked_positions),
-        "zero_position": not linked_positions,
+        "zero_position": not linked_positions and position_source_available,
         "multiple_positions": len(linked_positions) > 1,
     }
     counterfactual = _counterfactual(
         db,
         opportunity,
-        str(opportunity.get("direction_bias") or "").lower() or None,
+        {
+            "buy": "long",
+            "sell": "short",
+        }.get(str(opportunity.get("direction_bias") or "").strip().lower(), str(opportunity.get("direction_bias") or "").strip().lower() or None),
         cutoff,
         gaps,
     )
     unique_gaps = list(dict.fromkeys(gaps))
+    source_status = {
+        "opportunity": "available",
+        "decisions": "available" if not any(gap.startswith("pi_decisions:") for gap in unique_gaps) else "unavailable",
+        "proposals": "available" if not any(gap.startswith("trade_proposals:") for gap in unique_gaps) else "unavailable",
+        "positions": "available" if position_source_available else "unavailable",
+    }
     return {
         "contract_version": OPPORTUNITY_LIFECYCLE_CONTRACT_VERSION,
         "story_unit": "opportunity_lifecycle",
@@ -673,12 +732,7 @@ def build_opportunity_lifecycle_story(
         },
         "evidence": {
             "evidence_gaps": unique_gaps,
-            "source_status": {
-                "opportunity": "available",
-                "decisions": "available" if "pi_decisions:table_unavailable" not in unique_gaps else "unavailable",
-                "proposals": "available" if "trade_proposals:table_unavailable" not in unique_gaps else "unavailable",
-                "positions": "available" if "positions:table_unavailable" not in unique_gaps else "unavailable",
-            },
+            "source_status": source_status,
         },
         "counterfactual": counterfactual,
         "primary_cause": None,
@@ -742,7 +796,11 @@ def render_opportunity_lifecycle_story(story: Mapping[str, Any]) -> str:
             f"Positions: {multiplicity.get('positions', 0)}",
         ]
     )
-    if multiplicity.get("zero_position"):
+    source_status = story.get("evidence")
+    source_status = source_status.get("source_status", {}) if isinstance(source_status, Mapping) else {}
+    if story.get("availability") != "available" or source_status.get("positions") == "unavailable":
+        lines.append("Position state: unavailable; zero-position count is not evidence.")
+    elif multiplicity.get("zero_position"):
         lines.append("Position state: zero exact linked Positions (valid evidence).")
     elif multiplicity.get("multiple_positions"):
         lines.append("Position state: multiple exact linked Positions; no singleton collapse.")

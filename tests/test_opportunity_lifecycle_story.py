@@ -176,6 +176,10 @@ def test_exact_chain_preserves_all_ids_fills_and_position_story(monkeypatch):
 def test_as_of_hides_future_close_order_fill_and_position_story_knowledge(monkeypatch):
     db = _db()
     db.execute(
+        "UPDATE orders SET created_at=? WHERE id='close-order'",
+        ("2026-08-13T00:02:00+00:00",),
+    )
+    db.execute(
         "CREATE TABLE shadow_trades ("
         "id TEXT PRIMARY KEY, opportunity_id TEXT, created_at TEXT, "
         "resolved_at TEXT, pnl_pct REAL, entry_price REAL, exit_price REAL)"
@@ -204,13 +208,44 @@ def test_as_of_hides_future_close_order_fill_and_position_story_knowledge(monkey
         "opp-1", as_of_at=_PRE_CLOSE, db=db
     )
 
-    assert [row["id"] for row in story["lifecycle"]["orders"]] == ["entry-order"]
+    assert [row["id"] for row in story["lifecycle"]["orders"]] == ["entry-order", "close-order"]
+    close_order = story["lifecycle"]["orders"][1]
+    assert close_order["filled_at"] is None
+    assert close_order["status"] == "open"
     assert story["multiplicity"]["fills"] == 1
     assert captured[0].isoformat() == _PRE_CLOSE
     assert story["counterfactual"]["shadow"]["status"] == "pending"
     assert story["counterfactual"]["shadow"]["pnl_pct"] is None
     assert story["counterfactual"]["shadow"]["exit_price"] is None
     assert not story["counterfactual"]["forward"]
+
+
+def test_shadow_multiplicity_is_preserved(monkeypatch):
+    db = _db()
+    db.execute(
+        "CREATE TABLE shadow_trades ("
+        "id TEXT PRIMARY KEY, opportunity_id TEXT, created_at TEXT, "
+        "resolved_at TEXT, pnl_pct REAL, entry_price REAL, exit_price REAL)"
+    )
+    db.executemany(
+        "INSERT INTO shadow_trades VALUES (?,?,?,?,?,?,?)",
+        [
+            ("shadow-1", "opp-1", "2026-08-13T00:01:00+00:00", None, None, 100.0, None),
+            ("shadow-2", "opp-1", "2026-08-13T00:01:30+00:00", None, None, 101.0, None),
+        ],
+    )
+    db.commit()
+
+    story = lifecycle.build_opportunity_lifecycle_story(
+        "opp-1", as_of_at=_PRE_CLOSE, db=db
+    )
+
+    assert story["counterfactual"]["shadow_multiplicity"] == 2
+    assert [row["id"] for row in story["counterfactual"]["shadow_observations"]] == [
+        "shadow-2",
+        "shadow-1",
+    ]
+    assert "shadow_trades:multiple_observations_not_collapsed" in story["evidence"]["evidence_gaps"]
 
 
 def test_zero_position_is_valid_and_multiple_positions_are_explicit(monkeypatch):

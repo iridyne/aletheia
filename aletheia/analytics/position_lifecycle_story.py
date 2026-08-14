@@ -62,6 +62,14 @@ def _finite(value: object) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
+def _as_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _mapping(value: object) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return dict(value)
@@ -108,6 +116,34 @@ def _visible(row: Mapping[str, Any] | None, cutoff: datetime, *fields: str) -> b
     timestamps = [_utc(row.get(field)) for field in fields]
     timestamps = [timestamp for timestamp in timestamps if timestamp is not None]
     return bool(timestamps) and max(timestamps) <= cutoff
+
+
+def _visible_created_row(
+    row: Mapping[str, Any] | None,
+    cutoff: datetime,
+    *,
+    created_field: str,
+    mutable_fields: Sequence[str] = (),
+) -> dict[str, Any] | None:
+    """Keep an intent created before cutoff while masking later mutable fields."""
+    if row is None:
+        return None
+    created_at = _utc(row.get(created_field))
+    if created_at is None or created_at > cutoff:
+        return None
+    result = dict(row)
+    for field in mutable_fields:
+        value = _utc(row.get(field))
+        if value is not None and value > cutoff:
+            result[field] = None
+            if field == "filled_at" and str(result.get("status") or "").lower() in {
+                "filled",
+                "closed",
+                "complete",
+                "completed",
+            }:
+                result["status"] = "open"
+    return result
 
 
 def _event(
@@ -191,7 +227,7 @@ _STRUCTURED_EVENT_FACT_KEYS = {
     "opportunity_admitted": (),
     "decision_committed": ("action", "proposal_id"),
     "risk_approved": ("decision_role", "policy_id", "position_id"),
-    "entry_filled": ("fill_price", "fill_quantity", "order_id"),
+    "entry_filled": ("fill_price", "fill_quantity", "order_id", "fill_ids", "fill_count"),
     "first_meaningful_favorable_excursion": ("return_pct", "rule"),
     "maximum_favorable_excursion": ("mfe_pct",),
     "maximum_adverse_excursion": ("mae_pct",),
@@ -204,6 +240,8 @@ _STRUCTURED_EVENT_FACT_KEYS = {
     "stop_revision": ("stop_price", "previous_stop_price"),
     "profit_giveback": ("giveback_pct",),
     "exit_trigger": (
+        "reason",
+        "close_reason",
         "stop_hit",
         "target_hit",
         "bar_open_ms",
@@ -212,7 +250,7 @@ _STRUCTURED_EVENT_FACT_KEYS = {
         "plan_hash",
         "collision_policy",
     ),
-    "close_fill": ("fill_price", "fill_quantity"),
+    "close_fill": ("fill_price", "fill_quantity", "fill_ids", "fill_count"),
     "verified_costs": ("entry_fee", "exit_fee", "funding_cost", "total_costs"),
 }
 
@@ -323,13 +361,31 @@ def _floor_bar(timestamp_ms: int) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _funding_settlement_at(db: Any, position_id: str, *, cutoff: datetime) -> datetime | None:
+    """Return the visible durable funding-settlement timestamp, if recorded."""
+    rows = _rows(
+        db,
+        "SELECT timestamp FROM audit_events "
+        "WHERE entity_type='position' AND entity_id=? "
+        "AND event_type IN ('exchange_position_funding_settled', 'paper_position_funding_settled') "
+        "ORDER BY datetime(timestamp) DESC, rowid DESC",
+        (position_id,),
+    )
+    for row in rows:
+        timestamp = _utc(row.get("timestamp"))
+        if timestamp is not None and timestamp <= cutoff:
+            return timestamp
+    return None
+
+
 def _position_snapshot(
     position: Mapping[str, Any], *, cutoff: datetime
 ) -> tuple[dict[str, Any], bool, datetime | None]:
     """Return a position view that does not expose a future close at ``cutoff``."""
     snapshot = dict(position)
+    status = str(position.get("status") or "").strip().lower()
     closed_at = _utc(position.get("closed_at"))
-    closed_visible = closed_at is not None and closed_at <= cutoff
+    closed_visible = status == "closed" and closed_at is not None and closed_at <= cutoff
     if not closed_visible and closed_at is not None:
         snapshot.update(
             {
@@ -371,18 +427,22 @@ def _related_rows(
         opportunity = _row(db, "serenity_opportunities", position.get("opportunity_id"))
     if opportunity is not None and not _visible(opportunity, cutoff, "created_at"):
         opportunity = None
-    pi_decisions = _rows(
-        db,
-        "SELECT * FROM pi_decisions WHERE proposal_id=? "
-        "AND datetime(created_at) <= datetime(?) ORDER BY datetime(created_at), rowid",
-        (position.get("proposal_id"), cutoff.isoformat()),
-    )
+    pi_decisions = [
+        row
+        for row in _rows(
+            db,
+            "SELECT * FROM pi_decisions WHERE proposal_id=? "
+            "ORDER BY created_at, rowid",
+            (position.get("proposal_id"),),
+        )
+        if _visible(row, cutoff, "created_at")
+    ]
     risk = _row(db, "risk_decisions", (entry_order or {}).get("risk_decision_id"))
     if risk is not None and not _visible(risk, cutoff, "created_at"):
         risk = None
     entry_fills = _rows(
         db,
-        "SELECT * FROM fills WHERE order_id=? ORDER BY datetime(filled_at), rowid",
+        "SELECT * FROM fills WHERE order_id=? ORDER BY filled_at, rowid",
         ((entry_order or {}).get("id"),),
     )
     entry_fills = [
@@ -392,13 +452,18 @@ def _related_rows(
         db,
         "SELECT * FROM orders WHERE position_id=? "
         "AND COALESCE(trim(close_reason),'')!='' "
-        "ORDER BY datetime(created_at), rowid",
+        "ORDER BY created_at, rowid",
         (position.get("id"),),
     )
     close_orders = [
-        row
+        visible
         for row in close_orders
-        if _visible(row, cutoff, "created_at", "filled_at")
+        if (visible := _visible_created_row(
+            row,
+            cutoff,
+            created_field="created_at",
+            mutable_fields=("filled_at",),
+        )) is not None
     ]
     close_fills: list[dict[str, Any]] = []
     for order in close_orders:
@@ -406,7 +471,7 @@ def _related_rows(
             row
             for row in _rows(
                 db,
-                "SELECT * FROM fills WHERE order_id=? ORDER BY datetime(filled_at), rowid",
+                "SELECT * FROM fills WHERE order_id=? ORDER BY filled_at, rowid",
                 (order.get("id"),),
             )
             if _visible(row, cutoff, "filled_at")
@@ -434,10 +499,10 @@ def _exact_reviews(db: Any, position_id: str, cutoff: datetime) -> list[dict[str
     result: list[dict[str, Any]] = []
     for row in _rows(
         db,
-        "SELECT * FROM pi_decisions WHERE datetime(created_at) <= datetime(?) "
-        "ORDER BY datetime(created_at), rowid",
-        (cutoff.isoformat(),),
+        "SELECT * FROM pi_decisions ORDER BY created_at, rowid",
     ):
+        if not _visible(row, cutoff, "created_at"):
+            continue
         manifest = _mapping(row.get("evidence_manifest_json"))
         review = manifest.get("position_review")
         if not isinstance(review, Mapping):
@@ -491,26 +556,55 @@ def _instrument_identity(
     opportunity: Mapping[str, Any] | None,
     db: Any,
 ) -> dict[str, Any]:
+    def symbol_key(value: object) -> str:
+        return str(value or "").strip().upper().replace("-", "/")
+
+    position_symbol = symbol_key(position.get("symbol"))
+    position_market = _physical_market_type(position.get("market_type"))
     existing = fact.get("market_data_identity")
     if isinstance(existing, Mapping):
+        symbol = existing.get("symbol") or position.get("symbol")
+        market_type = _physical_market_type(
+            existing.get("market_type") or position.get("market_type")
+        )
+        if symbol_key(symbol) != position_symbol or market_type != position_market:
+            return {
+                "exchange": None,
+                "symbol": None,
+                "market_type": None,
+                "timeframe": existing.get("timeframe") or "1m",
+                "availability": "unavailable",
+                "unavailable_reason": "market_identity_mismatch",
+            }
         return {
             "exchange": str(existing.get("exchange") or existing.get("venue") or "").lower() or None,
-            "symbol": existing.get("symbol") or position.get("symbol"),
-            "market_type": _physical_market_type(
-                existing.get("market_type") or position.get("market_type")
-            ),
+            "symbol": symbol,
+            "market_type": market_type,
             "timeframe": existing.get("timeframe") or "1m",
+            "availability": "available",
         }
     member_id = (opportunity or {}).get("universe_member_id")
     member = _row(db, "universe_members", member_id)
     asset = _row(db, "universe_registry", (member or {}).get("asset_id"))
+    asset_symbol = symbol_key((asset or {}).get("symbol") or (member or {}).get("symbol"))
+    asset_market = _physical_market_type(
+        (asset or {}).get("market_type") or (member or {}).get("market_type")
+    )
+    if asset_symbol and asset_symbol != position_symbol or asset_market and asset_market != position_market:
+        return {
+            "exchange": None,
+            "symbol": None,
+            "market_type": None,
+            "timeframe": "1m",
+            "availability": "unavailable",
+            "unavailable_reason": "universe_instrument_identity_mismatch",
+        }
     return {
         "exchange": str((asset or {}).get("venue") or "").lower() or None,
         "symbol": position.get("symbol"),
-        "market_type": _physical_market_type(
-            (asset or {}).get("market_type") or position.get("market_type")
-        ),
+        "market_type": asset_market or position_market,
         "timeframe": "1m",
+        "availability": "available" if asset else "unavailable",
     }
 
 
@@ -699,7 +793,7 @@ def _opening(
     fact: Mapping[str, Any],
     instrument: Mapping[str, Any],
     *,
-    entry_fill: Mapping[str, Any] | None,
+    entry_fills: Sequence[Mapping[str, Any]],
     first_plan: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     context = _nested(hypothesis or {}, "opening_decision_context")
@@ -708,6 +802,7 @@ def _opening(
     initial_risk = initial_risk if isinstance(initial_risk, Mapping) else {}
     thesis = hypothesis.get("thesis") if hypothesis else None
     signals = hypothesis.get("supporting_signals") if hypothesis else None
+    entry_fill = entry_fills[0] if len(entry_fills) == 1 else None
     return {
         "position_identity": {
             "position_id": position.get("id"),
@@ -718,7 +813,9 @@ def _opening(
         "direction": position.get("direction") or "not_recorded",
         "entry_price": _finite(position.get("entry_price")),
         "entry_fill_time": _iso(entry_fill.get("filled_at")) if entry_fill else None,
-        "entry_fill_ids": [str(entry_fill.get("id"))] if entry_fill and entry_fill.get("id") else [],
+        "entry_fill_ids": [str(row.get("id")) for row in entry_fills if row.get("id")],
+        "entry_fill_count": len(entry_fills),
+        "entry_fill_aggregation": "single" if len(entry_fills) == 1 else "ambiguous",
         "original_thesis": thesis if thesis not in (None, "") else "not_recorded",
         "supporting_signals": list(signals) if isinstance(signals, (list, tuple)) else "not_recorded",
         "opening_reasoning": context.get("reasoning") or "not_recorded",
@@ -750,8 +847,28 @@ def _opening(
     }
 
 
+def _causal_chain_available(related: Mapping[str, Any], position_id: str) -> bool:
+    proposal = related.get("proposal")
+    entry_order = related.get("entry_order")
+    risk = related.get("risk")
+    if not all(isinstance(item, Mapping) for item in (proposal, entry_order, risk)):
+        return False
+    if str(entry_order.get("position_id") or "") != position_id:
+        return False
+    if str(entry_order.get("proposal_id") or "") != str(proposal.get("id") or ""):
+        return False
+    risk_id = str(entry_order.get("risk_decision_id") or "")
+    if risk_id and risk_id != str(risk.get("id") or ""):
+        return False
+    risk_proposal_id = risk.get("proposal_id")
+    return risk_proposal_id in (None, proposal.get("id"))
+
+
 def _decision_events(
-    related: Mapping[str, Any], position_id: str
+    related: Mapping[str, Any],
+    position_id: str,
+    *,
+    causal_available: bool = True,
 ) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = [
         _event(
@@ -791,7 +908,7 @@ def _decision_events(
     risk = related.get("risk")
     if (
         isinstance(risk, Mapping)
-        and bool(risk.get("approved"))
+        and _as_bool(risk.get("approved"))
         and str(risk.get("decision_role") or "") == "authoritative"
     ):
         events.append(
@@ -810,16 +927,16 @@ def _decision_events(
         )
     else:
         events.append(_event("risk_approved", unavailable_reason="authoritative_risk_approval_not_recorded"))
-    entry_fills = related.get("entry_fills", [])
+    entry_fills = [row for row in related.get("entry_fills", []) if isinstance(row, Mapping)]
     entry_fill = entry_fills[0] if entry_fills else None
-    if isinstance(entry_fill, Mapping):
+    if len(entry_fills) == 1 and entry_fill is not None:
         events.append(
             _event(
                 "entry_filled",
                 occurred_at=entry_fill.get("filled_at"),
                 evidence_status="available",
                 source_entity_type="fill",
-                source_entity_id=str(entry_fill.get("id")),
+                source_entity_id=(str(entry_fill.get("id")) if entry_fill.get("id") else None),
                 facts={
                     "fill_price": entry_fill.get("fill_price"),
                     "fill_quantity": entry_fill.get("fill_quantity"),
@@ -827,8 +944,26 @@ def _decision_events(
                 },
             )
         )
+    elif entry_fills:
+        events.append(
+            _event(
+                "entry_filled",
+                evidence_status="ambiguous",
+                facts={
+                    "fill_ids": [str(row.get("id")) for row in entry_fills if row.get("id")],
+                    "fill_count": len(entry_fills),
+                },
+                unavailable_reason="multiple_entry_fills_not_aggregated",
+            )
+        )
     else:
         events.append(_event("entry_filled", unavailable_reason="entry_fill_not_recorded"))
+    if not causal_available:
+        for event in events:
+            if event.get("evidence_status") == "available":
+                event["evidence_status"] = "unavailable"
+                facts = event.setdefault("facts", {})
+                facts["unavailable_reason"] = "position_replay_causal_link_unavailable"
     return events
 
 
@@ -915,7 +1050,16 @@ def _hypothesis_lifecycle(
         lifecycle["evidence_prefix_end_at"] = datetime.fromtimestamp(
             (int(prefix[-1]["ts"]) + _BAR_MS) / 1000.0, timezone.utc
         ).isoformat()
-    lifecycle["status"] = "available" if prefix else "not_evaluable"
+    states = {
+        str(item.get("state"))
+        for item in lifecycle["states_observed"]
+        if isinstance(item, Mapping)
+    }
+    if states & {"confirming", "weakening", "invalidated"}:
+        lifecycle["status"] = "available"
+    else:
+        lifecycle["status"] = "not_evaluable"
+        lifecycle["unavailable_reason"] = "signal_or_regime_prefix_unavailable"
     earliest: dict[str, dict[str, Any]] = {}
     for event in events:
         earliest.setdefault(str(event["event_type"]), event)
@@ -929,6 +1073,7 @@ def _path_metrics(
     direction: str,
     entry_price: float | None,
     entry_at: datetime | None,
+    entry_fill: Mapping[str, Any] | None,
     exit_fill: Mapping[str, Any] | None,
     path_status: str,
     threshold_pct: float | None,
@@ -966,8 +1111,13 @@ def _path_metrics(
         metrics["availability"] = "unavailable"
         metrics["evidence_reason"] = "entry_identity_unavailable"
         return metrics
-    points: list[tuple[datetime, float, str, int | None]] = [
-        (entry_at, entry_price, "entry_fill", None)
+    points: list[tuple[datetime, float, str, object | None]] = [
+        (
+            entry_at,
+            entry_price,
+            "entry_fill",
+            str(entry_fill.get("id")) if entry_fill and entry_fill.get("id") else None,
+        )
     ]
     for row in bars:
         timestamp = _bar_ts(row)
@@ -986,7 +1136,14 @@ def _path_metrics(
         exit_at = _utc(exit_fill.get("filled_at"))
         exit_price = _finite(exit_fill.get("fill_price"))
         if exit_at is not None and exit_price is not None:
-            points.append((exit_at, exit_price, "exit_fill", None))
+            points.append(
+                (
+                    exit_at,
+                    exit_price,
+                    "exit_fill",
+                    str(exit_fill.get("id")) if exit_fill.get("id") else None,
+                )
+            )
             metrics["exit_return_pct"] = round(
                 _directional_return_pct(direction, entry_price, exit_price), 8
             )
@@ -1118,38 +1275,68 @@ def _mark_to_market_curve(
 def _economics(
     fact: Mapping[str, Any],
     position: Mapping[str, Any],
+    entry_fill: Mapping[str, Any] | None,
     exit_fill: Mapping[str, Any] | None,
+    *,
+    fill_aggregation_ambiguous: bool = False,
+    funding_settlement_visible: bool = True,
 ) -> dict[str, Any]:
     source = fact.get("economics")
     source = source if isinstance(source, Mapping) else {}
     entry = _finite(position.get("entry_price"))
     quantity = _finite(position.get("quantity"))
+    entry_fill_quantity = _finite(entry_fill.get("fill_quantity")) if entry_fill else None
+    exit_fill_quantity = _finite(exit_fill.get("fill_quantity")) if exit_fill else None
     exit_price = _finite(exit_fill.get("fill_price")) if exit_fill else None
-    notional = entry * quantity if entry is not None and quantity is not None else None
-    price_verified = bool(
-        position.get("entry_fill_verified")
-        and position.get("exit_fill_verified")
-        and str(position.get("entry_price_source") or "") in {"local_fill", "broker_fill"}
-        and str(position.get("exit_price_source") or "") in {"local_fill", "broker_fill"}
-        and exit_fill is not None
+    direction = str(position.get("direction") or "").strip().lower()
+    valid_price_identity = bool(
+        direction in {"long", "short"}
         and entry is not None
+        and entry > 0
         and exit_price is not None
+        and exit_price > 0
         and quantity is not None
         and quantity > 0
     )
+    notional = entry * quantity if valid_price_identity else None
+    quantity_tolerance = max(1e-9, abs(quantity or 0.0) * 1e-8)
+    quantities_verified = bool(
+        entry_fill_quantity is not None
+        and exit_fill_quantity is not None
+        and quantity is not None
+        and abs(entry_fill_quantity - quantity) <= quantity_tolerance
+        and abs(exit_fill_quantity - quantity) <= quantity_tolerance
+    )
+    price_verified = bool(
+        not fill_aggregation_ambiguous
+        and valid_price_identity
+        and quantities_verified
+        and _as_bool(position.get("entry_fill_verified"))
+        and _as_bool(position.get("exit_fill_verified"))
+        and str(position.get("entry_price_source") or "") in {"local_fill", "broker_fill"}
+        and str(position.get("exit_price_source") or "") in {"local_fill", "broker_fill"}
+        and entry_fill is not None
+        and exit_fill is not None
+    )
     entry_fee = _finite(position.get("entry_fee"))
     exit_fee = _finite(position.get("exit_fee"))
-    funding = _finite(position.get("funding_cost"))
+    funding = _finite(position.get("funding_cost")) if funding_settlement_visible else None
     verified_costs = (
         entry_fee + exit_fee + funding
         if entry_fee is not None and exit_fee is not None and funding is not None
         else None
     )
-    costs_complete = verified_costs is not None
+    costs_complete = bool(
+        verified_costs is not None
+        and entry_fee is not None
+        and entry_fee >= 0
+        and exit_fee is not None
+        and exit_fee >= 0
+    )
     gross = _finite(source.get("gross_pnl"))
     net = _finite(source.get("net_pnl"))
     if gross is None and price_verified and entry is not None and exit_price is not None and quantity is not None:
-        gross = (exit_price - entry) * quantity if str(position.get("direction")) == "long" else (entry - exit_price) * quantity
+        gross = (exit_price - entry) * quantity if direction == "long" else (entry - exit_price) * quantity
     if net is None:
         net = _finite(position.get("realized_pnl"))
     expected_net = gross - verified_costs if gross is not None and verified_costs is not None else None
@@ -1160,10 +1347,18 @@ def _economics(
         and costs_complete
         and net is not None
         and accounting_ok
-        and (bool(source.get("availability") == "available") or bool(position.get("outcome_eligible")))
+        and source.get("availability") == "available"
     )
     unavailable_reason = None
-    if not price_verified:
+    if entry_fill is None or exit_fill is None:
+        unavailable_reason = "verified_close_fill_unavailable"
+    elif fill_aggregation_ambiguous and position.get("status") == "closed":
+        unavailable_reason = "multiple_fills_not_aggregated"
+    elif not quantities_verified:
+        unavailable_reason = "fill_quantity_mismatch"
+    elif not funding_settlement_visible:
+        unavailable_reason = "funding_settlement_after_cutoff"
+    elif not price_verified:
         unavailable_reason = "verified_close_fill_unavailable"
     elif not costs_complete:
         unavailable_reason = "verified_cost_evidence_incomplete"
@@ -1179,6 +1374,8 @@ def _economics(
         "verified_net_pnl": net if eligible else None,
         "cost_evidence_status": "complete" if costs_complete else "incomplete",
         "price_evidence_status": "verified" if price_verified else "unavailable",
+        "quantity_evidence_status": "verified" if quantities_verified else "unavailable",
+        "fill_aggregation": "ambiguous" if fill_aggregation_ambiguous else "single",
         "notional": notional,
         "realized_return_pct": round(net / notional * 100.0, 8) if eligible and net is not None and notional and notional > 0 else None,
         "gross_return_pct": round(gross / notional * 100.0, 8) if price_verified and gross is not None and notional and notional > 0 else None,
@@ -1206,11 +1403,22 @@ def _management_opportunities(
         }:
             continue
         occurred = _utc(event.get("occurred_at"))
+        trigger_names = {
+            "hypothesis_weakening": {"hypothesis_weakening", "thesis_weakening"},
+            "hypothesis_invalidated": {"hypothesis_invalidated", "thesis_invalidated"},
+            "expected_horizon_reached": {"horizon_due", "horizon_reached", "expected_horizon_reached"},
+            "profit_protection_activated": {"protection", "profit_protection", "stop_protection"},
+        }.get(str(event.get("event_type")), set())
         linked = [
             row
             for row in reviews
             if (created := _utc(row.get("created_at"))) is not None
-            and (occurred is None or created >= occurred)
+            and occurred is not None
+            and created >= occurred
+            and str(
+                _mapping(row.get("position_review")).get("trigger")
+                or ""
+            ).strip().lower() in trigger_names
         ]
         plan_changed = bool(linked) and any(
             int(plan.get("version") or 0) > 1
@@ -1355,6 +1563,7 @@ def build_position_lifecycle_story(
             },
             "observer": {},
             "replay": {"status": "unavailable", "reason": "position_not_found"},
+            "settlement": {"status": "unavailable", "settled_at": None},
         },
     }
     if position is None or not _visible(position, cutoff, "opened_at"):
@@ -1362,20 +1571,59 @@ def build_position_lifecycle_story(
             result["unavailable_reason"] = "position_opened_after_cutoff"
         return result
 
+    raw_status = str(position.get("status") or "").strip().lower()
+    raw_closed_at = _utc(position.get("closed_at"))
+    if (raw_status == "closed" and raw_closed_at is None) or (
+        raw_status == "open" and position.get("closed_at") not in (None, "")
+    ) or raw_status not in {"open", "closed"}:
+        result["availability"] = "unavailable"
+        result["unavailable_reason"] = "position_close_boundary_invalid"
+        result["audit"]["replay"] = {
+            "status": "unavailable",
+            "reason": "position_close_boundary_invalid",
+        }
+        return result
+
+    settlement_at = _funding_settlement_at(source, position_id, cutoff=cutoff)
+    funding_settlement_visible = True
     snapshot, closed_visible, closed_at = _position_snapshot(position, cutoff=cutoff)
+    if (
+        _physical_market_type(position.get("market_type")) == "perp"
+        and str(position.get("funding_source") or "") == "broker_ledger"
+        and settlement_at is None
+    ):
+        funding_settlement_visible = False
+        snapshot.update(
+            {
+                "funding_cost": None,
+                "funding_source": "unavailable",
+                "realized_pnl": None,
+                "outcome_eligible": False,
+                "outcome_exclusion_reason": "funding_settlement_after_cutoff",
+            }
+        )
+    result["audit"]["settlement"] = {
+        "status": "available" if funding_settlement_visible else "unavailable",
+        "settled_at": settlement_at.isoformat() if settlement_at is not None else None,
+        "reason": None if funding_settlement_visible else "funding_settlement_after_cutoff",
+    }
     lifecycle_cutoff = (
         closed_at if closed_visible and closed_at is not None else cutoff
     )
     related = _related_rows(source, snapshot, cutoff=lifecycle_cutoff)
     proposal = related.get("proposal")
-    entry_fills = related.get("entry_fills", [])
+    entry_fills = [row for row in related.get("entry_fills", []) if isinstance(row, Mapping)]
     entry_fill = entry_fills[0] if entry_fills else None
-    entry_fill = entry_fill if isinstance(entry_fill, Mapping) else None
-    entry_at = _utc(entry_fill.get("filled_at")) if entry_fill else None
-    close_fills = related.get("close_fills", [])
+    entry_at_candidates = [
+        timestamp
+        for row in entry_fills
+        if (timestamp := _utc(row.get("filled_at"))) is not None
+    ]
+    entry_at = min(entry_at_candidates) if entry_at_candidates else None
+    close_fills = [row for row in related.get("close_fills", []) if isinstance(row, Mapping)]
     exit_fill = close_fills[-1] if close_fills else None
-    exit_fill = exit_fill if isinstance(exit_fill, Mapping) else None
     exit_at = _utc(exit_fill.get("filled_at")) if exit_fill else None
+    fill_aggregation_ambiguous = len(entry_fills) != 1 or len(close_fills) != 1
     if exit_at is not None and exit_at > cutoff:
         exit_fill = None
         exit_at = None
@@ -1393,7 +1641,24 @@ def build_position_lifecycle_story(
         "status": fact.get("availability", "unavailable"),
         "reason": fact.get("unavailable_reason") or replay_error,
     }
+    causal_link = fact.get("causal_link")
+    causal_status = (
+        str(causal_link.get("status") or "available")
+        if isinstance(causal_link, Mapping)
+        else "available"
+    )
+    causal_chain_available = causal_status == "available" and _causal_chain_available(
+        related, position_id
+    )
+    if causal_status != "available":
+        result["evidence_gaps"].append("position_replay_causal_link_unavailable")
+    if not causal_chain_available:
+        result["evidence_gaps"].append("position_causal_chain_unavailable")
     instrument = _instrument_identity(fact, snapshot, related.get("opportunity"), source)
+    if instrument.get("availability") != "available":
+        result["evidence_gaps"].append(
+            str(instrument.get("unavailable_reason") or "instrument_identity_unavailable")
+        )
     hypothesis = _hypothesis_from(fact, proposal)
     plans = _plan_rows(source, position_id, lifecycle_cutoff)
     result["opening"] = _opening(
@@ -1402,14 +1667,18 @@ def build_position_lifecycle_story(
         hypothesis,
         fact,
         instrument,
-        entry_fill=entry_fill,
+        entry_fills=entry_fills,
         first_plan=plans[0] if plans else None,
     )
 
     path = _nested(fact, "stages", "holding", "trade_path")
     path = path if isinstance(path, Mapping) else {}
 
-    timeline = _decision_events(related, position_id)
+    timeline = _decision_events(
+        related,
+        position_id,
+        causal_available=causal_chain_available,
+    )
     if closed_visible:
         if path:
             bars, path_status, path_reason = _replay_prefix_bars(
@@ -1425,6 +1694,9 @@ def build_position_lifecycle_story(
             cutoff=cutoff,
             exit_at=closed_at,
         )
+    if closed_visible and fill_aggregation_ambiguous:
+        path_status = "ambiguous"
+        path_reason = "multiple_fills_not_aggregated"
     if not closed_visible and bars and path_status == "available":
         # A live/as-of prefix is useful for hypothesis evidence, but is not a
         # realized MFE/MAE claim because there is no verified exit boundary.
@@ -1434,7 +1706,14 @@ def build_position_lifecycle_story(
         }
     else:
         path_for_metrics = dict(path)
-    economics = _economics(fact, snapshot, exit_fill)
+    economics = _economics(
+        fact,
+        snapshot,
+        entry_fill,
+        exit_fill,
+        fill_aggregation_ambiguous=fill_aggregation_ambiguous,
+        funding_settlement_visible=funding_settlement_visible,
+    )
     mark_to_market_curve = _mark_to_market_curve(
         bars,
         path_status=path_status,
@@ -1457,8 +1736,13 @@ def build_position_lifecycle_story(
         direction=str(snapshot.get("direction") or "").lower(),
         entry_price=_finite(snapshot.get("entry_price")),
         entry_at=entry_at,
+        entry_fill=entry_fill,
         exit_fill=exit_fill,
-        path_status=(path_status if path_for_metrics else "unavailable"),
+        path_status=(
+            "unavailable"
+            if not closed_visible
+            else (path_status if path_for_metrics else "unavailable")
+        ),
         threshold_pct=threshold,
     )
 
@@ -1528,7 +1812,11 @@ def build_position_lifecycle_story(
                 occurred_at=metrics.get("adverse_peak_at"),
                 evidence_status="available",
                 source_entity_type="market_ohlcv_bar" if metrics.get("adverse_peak_source_entity_id") else "fill",
-                source_entity_id=metrics.get("adverse_peak_source_entity_id") or (str(entry_fill.get("id")) if entry_fill else None),
+                source_entity_id=metrics.get("adverse_peak_source_entity_id") or (
+                    str(entry_fill.get("id"))
+                    if entry_fill and entry_fill.get("id")
+                    else None
+                ),
                 facts={"mae_pct": metrics.get("maximum_adverse_excursion_pct")},
             )
         )
@@ -1549,7 +1837,7 @@ def build_position_lifecycle_story(
         if entry_at is not None and expected_hours is not None and expected_hours > 0
         else None
     )
-    if horizon_at is not None and horizon_at <= cutoff:
+    if horizon_at is not None and horizon_at <= lifecycle_cutoff:
         timeline.append(
             _event(
                 "expected_horizon_reached",
@@ -1570,6 +1858,8 @@ def build_position_lifecycle_story(
 
     reviews = _exact_reviews(source, position_id, lifecycle_cutoff)
     for review in reviews:
+        review_manifest = review.get("position_review")
+        review_manifest = review_manifest if isinstance(review_manifest, Mapping) else {}
         timeline.append(
             _event(
                 "position_reviewed",
@@ -1581,6 +1871,8 @@ def build_position_lifecycle_story(
                     "target_position_id": position_id,
                     "action": review.get("action"),
                     "reasoning": review.get("reasoning") or "not_recorded",
+                    "trigger": review_manifest.get("trigger", "not_recorded"),
+                    "wake_batches": review_manifest.get("wake_batches", "not_recorded"),
                 },
             )
         )
@@ -1649,7 +1941,7 @@ def build_position_lifecycle_story(
                     occurred_at=exit_fill.get("filled_at"),
                     evidence_status="available",
                     source_entity_type="fill",
-                    source_entity_id=str(exit_fill.get("id")),
+                    source_entity_id=(str(exit_fill.get("id")) if exit_fill.get("id") else None),
                     facts={"giveback_pct": metrics.get("giveback_from_peak_to_exit_pct")},
                 )
             )
@@ -1691,21 +1983,50 @@ def build_position_lifecycle_story(
                 occurred_at=close_order.get("created_at"),
                 evidence_status="available",
                 source_entity_type="order",
-                source_entity_id=str(close_order.get("id")),
+                source_entity_id=(str(close_order.get("id")) if close_order.get("id") else None),
                 facts={"close_reason": close_order.get("close_reason")},
+            )
+        )
+    elif str(snapshot.get("close_reason") or "").strip():
+        timeline.append(
+            _event(
+                "exit_triggered",
+                occurred_at=closed_at,
+                evidence_status="available",
+                source_entity_type="position",
+                source_entity_id=position_id,
+                facts={"close_reason": snapshot.get("close_reason")},
             )
         )
     else:
         timeline.append(_event("exit_triggered", unavailable_reason="close_trigger_not_recorded"))
-    if exit_fill is not None:
+    if len(close_fills) == 1 and exit_fill is not None:
+        quantity_verified = economics.get("quantity_evidence_status") == "verified"
         timeline.append(
             _event(
                 "exit_filled",
-                occurred_at=exit_fill.get("filled_at"),
-                evidence_status="available",
+                occurred_at=exit_fill.get("filled_at") if quantity_verified else None,
+                evidence_status="available" if quantity_verified else "unavailable",
                 source_entity_type="fill",
-                source_entity_id=str(exit_fill.get("id")),
+                source_entity_id=(str(exit_fill.get("id")) if exit_fill.get("id") else None),
                 facts={"fill_price": exit_fill.get("fill_price"), "fill_quantity": exit_fill.get("fill_quantity")},
+                unavailable_reason=(
+                    None
+                    if quantity_verified
+                    else str(economics.get("unavailable_reason") or "fill_quantity_mismatch")
+                ),
+            )
+        )
+    elif close_fills:
+        timeline.append(
+            _event(
+                "exit_filled",
+                evidence_status="ambiguous",
+                facts={
+                    "fill_ids": [str(row.get("id")) for row in close_fills if row.get("id")],
+                    "fill_count": len(close_fills),
+                },
+                unavailable_reason="multiple_close_fills_not_aggregated",
             )
         )
     else:
@@ -1758,8 +2079,14 @@ def build_position_lifecycle_story(
     )
     result["economic_path"] = {
         **economics,
-        "path_evidence_status": path_status,
-        "path_evidence_reason": path_reason,
+        "path_evidence_status": (
+            "unavailable" if not closed_visible else path_status
+        ),
+        "path_evidence_reason": (
+            "open_position_prefix_has_no_exit_boundary"
+            if not closed_visible
+            else path_reason
+        ),
         "mark_to_market_curve": mark_to_market_curve,
         "maximum_favorable_excursion_pct": metrics.get("maximum_favorable_excursion_pct"),
         "maximum_adverse_excursion_pct": metrics.get("maximum_adverse_excursion_pct"),
@@ -1884,7 +2211,13 @@ def render_position_lifecycle_story(story: Mapping[str, Any]) -> str:
     instrument = instrument if isinstance(instrument, Mapping) else {}
     symbol = instrument.get("symbol") or story.get("position_id") or "unknown"
     direction = opening.get("direction") or "unknown"
-    lines = [f"Position: {symbol} {direction}", "", "Opening"]
+    lines = [f"Position: {symbol} {direction}"]
+    if story.get("availability") != "available":
+        lines.append(
+            f"Availability: {story.get('availability') or 'unavailable'}; "
+            f"reason={story.get('unavailable_reason') or 'not recorded'}."
+        )
+    lines.extend(["", "Opening"])
     if opening.get("entry_fill_time"):
         lines.append(
             f"{opening['entry_fill_time']} - Entry filled at "
