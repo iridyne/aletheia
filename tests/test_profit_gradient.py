@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import aletheia.analytics.profit_gradient as gradient
+import aletheia.analytics.profit_gradient_estimators as estimators
 
 
 def _context(**overrides) -> dict:
@@ -179,13 +180,15 @@ def test_paired_effect_is_unit_weighted_not_cluster_weighted():
     normalized, exclusions, _ = gradient._normalized_samples(
         "Costs", [*samples, *large_cluster]
     )
-    estimate, lower, upper = gradient._paired_unit_interval(normalized)
+    estimate = estimators.estimate_paired_same_unit(normalized)
 
     assert exclusions == []
-    assert estimate == pytest.approx((29 * 10.0 - 100 * 20.0) / 129.0)
-    assert estimate < 0
-    assert lower is not None
-    assert upper is not None
+    assert estimate.paired_net_delta_bp == pytest.approx(
+        (29 * 10.0 - 100 * 20.0) / 129.0
+    )
+    assert estimate.paired_net_delta_bp < 0
+    assert estimate.lower_95_bp is not None
+    assert estimate.upper_95_bp is not None
 
 
 def test_paired_same_unit_requires_thirty_unique_units():
@@ -696,11 +699,22 @@ def test_randomized_bootstrap_seed_ignores_quote_values():
 
     baseline_samples, _, _ = gradient._normalized_samples("Costs", samples["Costs"])
     scaled_samples, _, _ = gradient._normalized_samples("Costs", scaled["Costs"])
-    baseline = gradient._randomized_cluster_interval(baseline_samples)
-    changed_quotes = gradient._randomized_cluster_interval(scaled_samples)
+    baseline = estimators.estimate_prospective_randomized(baseline_samples)
+    changed_quotes = estimators.estimate_prospective_randomized(scaled_samples)
 
-    assert baseline[:3] == pytest.approx(changed_quotes[:3])
-    assert baseline[3:] == changed_quotes[3:]
+    assert (
+        baseline.paired_net_delta_bp,
+        baseline.lower_95_bp,
+        baseline.upper_95_bp,
+    ) == pytest.approx(
+        (
+            changed_quotes.paired_net_delta_bp,
+            changed_quotes.lower_95_bp,
+            changed_quotes.upper_95_bp,
+        )
+    )
+    assert baseline.cluster_count_by_arm == changed_quotes.cluster_count_by_arm
+    assert baseline.temporal_stable == changed_quotes.temporal_stable
 
 
 def test_randomized_bootstrap_seed_ignores_cluster_labels():
@@ -715,11 +729,10 @@ def test_randomized_bootstrap_seed_ignores_cluster_labels():
     }
     for sample in renamed:
         sample["cluster_id"] = labels[sample["cluster_id"]]
-    baseline = gradient._randomized_cluster_interval(normalized)
-    changed = gradient._randomized_cluster_interval(list(reversed(renamed)))
+    baseline = estimators.estimate_prospective_randomized(normalized)
+    changed = estimators.estimate_prospective_randomized(list(reversed(renamed)))
 
-    assert baseline[:3] == pytest.approx(changed[:3])
-    assert baseline[3:] == changed[3:]
+    assert baseline == changed
 
 
 def test_randomized_quote_concentration_weights_exposure():
@@ -759,12 +772,14 @@ def test_randomized_quote_metrics_weight_control_exposure():
         costs.append(extra)
 
     normalized, _, _ = gradient._normalized_samples("Costs", costs)
-    quote_contrast, total_quote, _, _ = gradient._randomized_quote_metrics(normalized)
+    estimate = estimators.estimate_prospective_randomized(normalized)
 
     expected_control_mean = 1_500.0 / 119.0
-    assert quote_contrast == pytest.approx(10.0 - expected_control_mean)
-    assert total_quote == pytest.approx(200.0 - expected_control_mean * 20.0)
-    assert total_quote < 0
+    assert estimate.quote_contrast == pytest.approx(10.0 - expected_control_mean)
+    assert estimate.harm_quote == pytest.approx(
+        200.0 - expected_control_mean * 20.0
+    )
+    assert estimate.harm_quote < 0
 
 
 def test_cluster_bootstrap_seed_ignores_cluster_labels():
@@ -784,9 +799,9 @@ def test_cluster_bootstrap_seed_ignores_cluster_labels():
     for sample in renamed:
         sample["cluster_id"] = labels[sample["cluster_id"]]
 
-    assert gradient._cluster_interval(normalized) == pytest.approx(
-        gradient._cluster_interval(renamed)
-    )
+    assert estimators.estimate_deterministic_decomposition(
+        normalized
+    ) == estimators.estimate_deterministic_decomposition(renamed)
 
 
 def test_paired_bootstrap_seed_ignores_row_order_within_clusters():
@@ -800,10 +815,10 @@ def test_paired_bootstrap_seed_ignores_row_order_within_clusters():
     normalized, _, _ = gradient._normalized_samples("Costs", samples)
     reordered = list(reversed(normalized))
 
-    baseline = gradient._paired_unit_interval(normalized)
-    changed_order = gradient._paired_unit_interval(reordered)
+    baseline = estimators.estimate_paired_same_unit(normalized)
+    changed_order = estimators.estimate_paired_same_unit(reordered)
 
-    assert baseline == pytest.approx(changed_order)
+    assert baseline == changed_order
 
 
 def test_paired_bootstrap_seed_ignores_cluster_labels():
@@ -823,9 +838,9 @@ def test_paired_bootstrap_seed_ignores_cluster_labels():
     for sample in renamed:
         sample["cluster_id"] = labels[sample["cluster_id"]]
 
-    assert gradient._paired_unit_interval(normalized) == pytest.approx(
-        gradient._paired_unit_interval(renamed)
-    )
+    assert estimators.estimate_paired_same_unit(
+        normalized
+    ) == estimators.estimate_paired_same_unit(renamed)
 
 
 def test_paired_temporal_midpoint_timestamp_tie_fails_closed():
@@ -953,12 +968,28 @@ def test_pair_level_samples_count_arms_without_double_counting_units():
 
 
 def test_one_dependent_cluster_cannot_produce_confidence_interval():
-    estimate, lower, upper = gradient._cluster_interval(
+    estimate = estimators.estimate_deterministic_decomposition(
         [
-            {"cluster_id": "same-day", "paired_net_delta_bp": 5.0},
-            {"cluster_id": "same-day", "paired_net_delta_bp": 15.0},
-        ]
+            {
+                "unit_id": "one",
+                "cluster_id": "same-day",
+                "paired_net_delta_bp": 5.0,
+                "paired_net_delta_quote": 0.5,
+                "occurred_at": 1.0,
+                "arm": "",
+                "arm_counts": None,
+            },
+            {
+                "unit_id": "two",
+                "cluster_id": "same-day",
+                "paired_net_delta_bp": 15.0,
+                "paired_net_delta_quote": 1.5,
+                "occurred_at": 2.0,
+                "arm": "",
+                "arm_counts": None,
+            },
+        ],
     )
-    assert estimate == 10.0
-    assert lower is None
-    assert upper is None
+    assert estimate.paired_net_delta_bp == 10.0
+    assert estimate.lower_95_bp is None
+    assert estimate.upper_95_bp is None
