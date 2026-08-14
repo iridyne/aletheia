@@ -1371,6 +1371,7 @@ def _coverage_context(
         "cost_model_epochs": set(),
     }
     stage_values: set[str] = set()
+    outcome_contract_values: set[str] = set()
     for fact in cohort_candidates:
         outcome = fact.get("fixed_horizon_outcome")
         if isinstance(outcome, Mapping):
@@ -1409,6 +1410,8 @@ def _coverage_context(
                     identity_values[target].add(str(sample[field]))
             if sample.get("stage") or sample.get("experiment_stage"):
                 stage_values.add(str(sample.get("stage") or sample.get("experiment_stage")))
+            if sample.get("outcome_contract_version"):
+                outcome_contract_values.add(str(sample["outcome_contract_version"]))
 
     for fact in cohort_positions:
         producer = fact.get("producer")
@@ -1494,7 +1497,7 @@ def _coverage_context(
         "cost_model_epochs": cost_epochs,
         "comparison_method": _GRADIENT_COMPARISON_METHOD,
         "horizons": [_FIXED_CANDIDATE_HORIZON],
-        "outcome_contract_versions": [_GRADIENT_OUTCOME_CONTRACT_VERSION],
+        "outcome_contract_versions": sorted(outcome_contract_values),
         "metric_versions": [METRIC_VERSION],
         "statistical_unit_versions": [_GRADIENT_STATISTICAL_UNIT_VERSION],
         "stages": sorted(stage_values),
