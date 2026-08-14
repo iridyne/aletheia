@@ -82,8 +82,9 @@ function InstrumentNavigator({ groups, active, search, onSearch, onSelect, defau
         const collapsed = collapsedGroupIds.has(group.id)
         const bodyId = `${bodyIdBase}-${group.id}`
         return <section className="market-instrument-group" key={group.id}>
-          <button
+          <Button
             type="button"
+            variant="ghost"
             className="market-instrument-group-title"
             aria-expanded={!collapsed}
             aria-controls={bodyId}
@@ -94,7 +95,7 @@ function InstrumentNavigator({ groups, active, search, onSearch, onSelect, defau
               <Badge>{group.items.length}</Badge>
               <span className="market-instrument-group-chevron" aria-hidden="true">{collapsed ? '›' : '⌄'}</span>
             </span>
-          </button>
+          </Button>
           <div id={bodyId} hidden={collapsed}>
             {group.items.length ? group.items.map((item, index) =>
               renderRow(item.instrument, item.primary, item.secondary, `${instrumentKey(item.instrument)}|${index}`, item.direction)
@@ -244,14 +245,15 @@ function TimeframeMenu({ open, anchorRef, current, onSelect, onClose }: {
       {OVERFLOW_TIMEFRAME_GROUPS.map(group => <div className="market-tf-menu-group" key={group.title}>
         <div className="market-tf-menu-group-title" role="presentation">{group.title}</div>
         <div className="market-tf-menu-grid">
-          {group.items.map(value => <button
+          {group.items.map(value => <Button
             key={value}
             type="button"
+            variant="ghost"
             role="menuitem"
             aria-checked={value === current}
             className="market-tf-menu-item"
             onClick={() => { onSelect(value); onClose() }}
-          >{value}</button>)}
+          >{value}</Button>)}
         </div>
       </div>)}
     </div>
@@ -678,9 +680,9 @@ export default function Charts() {
 
     <div className="market-workbench-context">
       <span className="market-context-static mono">{fmtSymbol(active.symbol, active.marketType)}</span>
-      <button className="market-context-picker" aria-expanded={pickerOpen} aria-controls={dialogId} onClick={() => setPickerOpen(true)}>
+      <Button variant="ghost" className="market-context-picker" aria-expanded={pickerOpen} aria-controls={dialogId} onClick={() => setPickerOpen(true)}>
         <span>Choose instrument</span><strong>{fmtSymbol(active.symbol, active.marketType)} · {active.marketType}</strong><span aria-hidden="true">⌄</span>
-      </button>
+      </Button>
       <strong className="market-context-price mono">{currentSnapshot?.price == null ? 'Price not available' : fmtNum(currentSnapshot.price)}</strong>
       {currentSnapshot?.change_pct_24h != null && <span className={currentSnapshot.change_pct_24h > 0 ? 'pnl-positive' : currentSnapshot.change_pct_24h < 0 ? 'pnl-negative' : 'text-muted'}>{fmtDelta(currentSnapshot.change_pct_24h)}%</span>}
       <span>{active.exchange || 'default exchange'} · {active.marketType}</span>
@@ -692,15 +694,16 @@ export default function Charts() {
         <div id="market-chart-toolbar" className="market-chart-toolbar">
           <div className="seg-toggle" aria-label="Timeframe">
             {PINNED_TIMEFRAMES.map(value => <Button key={value} variant="ghost" className={`seg-btn${timeframe === value ? ' active' : ''}`} aria-pressed={timeframe === value} onClick={() => setTimeframe(value)}>{value}</Button>)}
-            <button
+            <Button
               ref={timeframeOverflowRef}
               type="button"
-              className={`btn-ghost seg-btn market-tf-overflow${!PINNED_TIMEFRAMES.includes(timeframe) ? ' active' : ''}`}
+              variant="ghost"
+              className={`seg-btn market-tf-overflow${!PINNED_TIMEFRAMES.includes(timeframe) ? ' active' : ''}`}
               aria-haspopup="menu"
               aria-expanded={timeframeMenuOpen}
               aria-label="More timeframes"
               onClick={() => setTimeframeMenuOpen(open => !open)}
-            >{PINNED_TIMEFRAMES.includes(timeframe) ? '⋯' : timeframe}</button>
+            >{PINNED_TIMEFRAMES.includes(timeframe) ? '⋯' : timeframe}</Button>
           </div>
           <Button variant="ghost" className="market-chart-settings-button" aria-haspopup="dialog" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(true)}>Chart settings</Button>
         </div>

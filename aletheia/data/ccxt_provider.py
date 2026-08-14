@@ -65,7 +65,6 @@ logger = logging.getLogger("aletheia.ccxt_provider")
 # unsupported when paginating.
 _TF_MS = {
     "1m": 60_000,
-    "3m": 180_000,
     "5m": 300_000,
     "15m": 900_000,
     "30m": 1_800_000,

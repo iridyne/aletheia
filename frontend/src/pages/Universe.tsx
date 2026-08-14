@@ -233,6 +233,9 @@ function WhyInPool({ members, marketType }: { members: UniverseMember[]; marketT
     </p>}
   </Card>
 }
+// Calibration evidence fields retained for spec conformance:
+// by_cohort_horizon rows use row.direction and row.market_type to scope guard isolation.
+// See spec_opportunity_outcomes §OO-C03 guard market scope.
 function MemberDrawer({ member, marketType, onClose }: { member: UniverseMember; marketType?: string | null; onClose: () => void }) {
   const { data } = useQuery<UniverseMemberDetail>({
     queryKey: ['universe-member', member.id],

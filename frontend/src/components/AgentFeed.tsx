@@ -124,10 +124,10 @@ export default function AgentFeed() {
     let animationFrame = 0
     const measure = () => {
       const viewportHeight = window.visualViewport?.height ?? window.innerHeight
-      const cardDocumentTop = card.getBoundingClientRect().top + window.scrollY
+      const top = card.getBoundingClientRect().top + window.scrollY
       const nextHeight = Math.max(
         MIN_FEED_HEIGHT,
-        Math.floor(viewportHeight - cardDocumentTop - VIEWPORT_BOTTOM_GAP),
+        Math.floor(viewportHeight - Math.max(0, top) - VIEWPORT_BOTTOM_GAP),
       )
       setAvailableHeight(current => current === nextHeight ? current : nextHeight)
     }

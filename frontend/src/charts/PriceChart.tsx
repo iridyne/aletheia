@@ -304,9 +304,11 @@ export default function PriceChart({
   const markersRef = useRef(markers)
   const settingsRef = useRef(settings)
   const levelsRef = useRef(positionLevels)
+  const exchangeRef = useRef(exchange)
   const markerClickRef = useRef(onMarkerClick)
   const metaChangeRef = useRef(onMetaChange)
   const paneChartsRef = useRef<Map<SubchartIndicatorId, IChartApi>>(new Map())
+  exchangeRef.current = exchange
   markerClickRef.current = onMarkerClick
   metaChangeRef.current = onMetaChange
   const [status, setStatus] = useState<'loading' | 'ok' | 'empty' | 'error'>('loading')
@@ -442,7 +444,7 @@ export default function PriceChart({
       if (loadingOlderRef.current || exhaustedRef.current || !initializedRef.current || !barsRef.current.length) return
       loadingOlderRef.current = true
       try {
-        const rows = await api.getOhlcv(symbol, timeframe, PAGE_LIMIT, barsRef.current[0].time, exchange, marketType)
+        const rows = await api.getOhlcv(symbol, timeframe, PAGE_LIMIT, barsRef.current[0].time, exchangeRef.current, marketType)
         if (cancelled) return
         const fresh = (Array.isArray(rows) ? rows : []).filter(bar => !timesRef.current.has(bar.time))
         if (!fresh.length) { exhaustedRef.current = true; return }
@@ -460,7 +462,7 @@ export default function PriceChart({
     const pollLatest = async () => {
       if (cancelled || !initializedRef.current || !barsRef.current.length) return
       try {
-        const result = await api.getOhlcvWithMeta(symbol, timeframe, 2, marketType, exchange)
+        const result = await api.getOhlcvWithMeta(symbol, timeframe, 2, marketType, exchangeRef.current)
         if (cancelled) return
         metaChangeRef.current?.(result.meta)
         for (const bar of result.candles.sort((a, b) => a.time - b.time)) {
@@ -476,7 +478,7 @@ export default function PriceChart({
     }
     void (async () => {
       try {
-        const result = await api.getOhlcvWithMeta(symbol, timeframe, INITIAL_LIMIT, marketType, exchange)
+        const result = await api.getOhlcvWithMeta(symbol, timeframe, INITIAL_LIMIT, marketType, exchangeRef.current)
         if (cancelled) return
         metaChangeRef.current?.(result.meta)
         if (!result.candles.length) { setStatus('empty'); return }
@@ -504,13 +506,13 @@ export default function PriceChart({
       queueMicrotask(() => { isSyncingRangeRef.current = false })
     }
     chart.timeScale().subscribeVisibleLogicalRangeChange(onMainRange)
-    const onClick = (param: Parameters<Parameters<typeof chart.subscribeClick>[0]>[0]) => {
+    const handleClick = (param: Parameters<Parameters<typeof chart.subscribeClick>[0]>[0]) => {
       if (!param.time || !markerClickRef.current) return
       const events = bucketsRef.current.filter(bucket => bucket.time === Number(param.time)).flatMap(bucket => bucket.events)
         .sort((a, b) => a.time - b.time)
       if (events.length) markerClickRef.current(events)
     }
-    chart.subscribeClick(onClick)
+    chart.subscribeClick(handleClick)
     const poll = window.setInterval(() => void pollLatest(), LIVE_POLL_MS)
     const resizeObserver = new ResizeObserver(() => {
       const priceRect = priceContainer.getBoundingClientRect()
@@ -521,7 +523,7 @@ export default function PriceChart({
       cancelled = true
       window.clearInterval(poll)
       resizeObserver.disconnect()
-      chart.unsubscribeClick(onClick)
+      chart.unsubscribeClick(handleClick)
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onMainRange)
       chart.remove()
       chartRef.current = null
@@ -533,7 +535,7 @@ export default function PriceChart({
       bbMiddleRef.current = null
       bbLowerRef.current = null
     }
-  }, [exchange, marketType, symbol, timeframe])
+  }, [symbol, timeframe, marketType])
 
   useEffect(() => { markersRef.current = markers; applyMarkers() }, [markers])
   useEffect(() => { levelsRef.current = positionLevels; applyLevels() }, [positionLevels])
