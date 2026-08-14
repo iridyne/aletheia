@@ -44,8 +44,13 @@ from aletheia.counterfactual.filter_replay import (
 # --------------------------------------------------------------------------- #
 
 
+# Full production TTL range: family registry uses values up to 86_400
+# seconds (see aletheia/universe/allocator.py). At the boundary,
+# ``_bounded_alternatives`` must return an EMPTY list because there is
+# no strictly-greater TTL to consider — clamping to 86_400 must not
+# fold ``current_ttl`` back onto itself.
 @given(
-    current_ttl=st.integers(min_value=1, max_value=3600),
+    current_ttl=st.integers(min_value=1, max_value=86_400),
     proposals=st.lists(
         st.one_of(
             st.integers(min_value=-1000, max_value=1_000_000),
@@ -72,7 +77,7 @@ def test_bounded_alternatives_are_sorted_unique_and_capped(
 
 
 @given(
-    current_ttl=st.integers(min_value=1, max_value=3600),
+    current_ttl=st.integers(min_value=1, max_value=86_400),
     proposals=st.lists(
         st.integers(min_value=1, max_value=200_000), max_size=12
     ),
@@ -95,6 +100,17 @@ def test_bounded_alternatives_uses_the_documented_fallback_ladder() -> None:
     refactor does not silently narrow the search space."""
     out = _bounded_alternatives(60, None)
     assert out == [90, 120, 240, 480]
+
+
+def test_bounded_alternatives_returns_empty_at_max_ttl() -> None:
+    """At the 86_400-second sanity ceiling the fallback ladder collapses
+    against the clamp; the correct answer is to admit no alternatives
+    rather than fold ``current_ttl`` back onto itself and produce an
+    equal-TTL 'alternative'. Downstream replay must see zero candidates,
+    not a spurious control-equals-treatment cohort."""
+    assert _bounded_alternatives(86_400, None) == []
+    # Explicit proposals above the clamp collapse the same way.
+    assert _bounded_alternatives(86_400, [172_800, 200_000]) == []
 
 
 # --------------------------------------------------------------------------- #

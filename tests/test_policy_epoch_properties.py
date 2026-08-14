@@ -140,14 +140,21 @@ def test_epoch_hash_is_path_id_order_and_duplicate_independent(
 def test_epoch_hash_ignores_secret_shaped_keys(
     base: dict[str, object], fragment: str, secret_value: str
 ) -> None:
-    """Any top-level key containing a secret fragment (case-insensitive)
-    must be stripped before hashing. Otherwise, a config that
-    accidentally holds a credential rotates the epoch hash whenever the
-    credential rotates, and the credential enters the audit trail."""
+    """Every fragment in ``_SECRET_FRAGMENTS`` independently forces
+    redaction. The poisoned key contains the sampled fragment plus
+    benign padding that must NOT contain any other fragment; otherwise a
+    single generic suffix like ``_secret`` masks the removal of specific
+    fragments (``api_key``, ``private_key``, ...), and the test could
+    pass even when a credential-shaped field would leak into audit rows.
+    """
+    # Benign padding whose lowercase form contains no fragment.
+    filler = "myapp"
+    for other in _SECRET_FRAGMENTS:
+        assert other not in filler.lower(), "padding must not shadow a fragment"
     # Skip cases where the fragment collides with a real key in ``base``.
     if any(fragment in k.lower() for k in base):
         return
-    poisoned_key = f"MyAPP_{fragment}_secret"
+    poisoned_key = f"{filler}_{fragment}_"
     poisoned = {**base, poisoned_key: secret_value}
     clean_epoch = build_policy_epoch(
         "test_kind", base, affected_path_ids=(), safety_required=False

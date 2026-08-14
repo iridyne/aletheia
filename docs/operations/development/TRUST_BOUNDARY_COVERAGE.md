@@ -52,11 +52,15 @@ the tests that exercise the boundaries, then:
    percentage math and regression detection).
 2. `scripts/coverage_floors.py` (compares measured coverage to `FLOORS`).
 
-Local reproduction:
+Local reproduction — must stay in sync with the ``Trust-boundary
+coverage floors`` step in ``.github/workflows/ci.yml``. Property tests
+contribute non-trivially to the frozen percentages, so omitting them
+will fail floors that pass in CI:
 
 ```sh
 uv run pytest \
   tests/test_profit_gradient.py \
+  tests/test_profit_gradient_properties.py \
   tests/test_profit_gradient_evidence.py \
   tests/test_p3_evidence_epoch.py \
   tests/test_filter_replay.py \
@@ -67,7 +71,12 @@ uv run pytest \
   tests/test_position_reconciler.py \
   tests/test_scheduler_reconcile.py \
   tests/test_reconciliation_integrity_incident.py \
+  tests/test_reconciliation_properties.py \
   tests/test_context_effectiveness.py \
+  tests/test_context_artifacts_properties.py \
+  tests/test_filter_replay_properties.py \
+  tests/test_policy_epoch_properties.py \
+  tests/test_profit_gradient_evidence_properties.py \
   --cov --cov-report=term-missing:skip-covered -q
 uv run python scripts/coverage_floors.py
 ```

@@ -168,25 +168,34 @@ def test_metadata_handles_none_and_empty() -> None:
 # --------------------------------------------------------------------------- #
 
 
-@given(
-    artifacts=st.lists(
-        st.dictionaries(
-            keys=st.text(max_size=16),
-            values=st.one_of(st.text(max_size=32), st.integers(), st.none()),
-            max_size=8,
-        ),
-        max_size=6,
-    )
+# Mix of dict rows and non-mapping rows. A bare string / None / int
+# row is a real caller mistake the recorder promises to survive silently
+# — an ``AttributeError`` at ``artifact.get(...)`` would crash the whole
+# batch, so the property must exercise these shapes explicitly.
+_poisoned_row = st.one_of(
+    st.dictionaries(
+        keys=st.text(max_size=16),
+        values=st.one_of(st.text(max_size=32), st.integers(), st.none()),
+        max_size=8,
+    ),
+    st.none(),
+    st.text(max_size=16),
+    st.integers(),
+    st.lists(st.integers(), max_size=3),
 )
+
+
+@given(artifacts=st.lists(_poisoned_row, max_size=6))
 @settings(
-    max_examples=100,
+    max_examples=200,
     deadline=None,
     suppress_health_check=[HealthCheck.function_scoped_fixture],
 )
-def test_record_never_raises_on_poisoned_input(artifacts: list[dict]) -> None:
+def test_record_never_raises_on_poisoned_input(artifacts: list) -> None:
     """The recorder is documented as best-effort. Poisoned or arbitrary
-    input must not propagate an exception; the return value is the number
-    of rows the recorder was willing to persist (may be 0)."""
+    input — including bare strings, ``None``, integers, lists — must
+    not propagate an exception; the return value is the number of rows
+    the recorder was willing to persist (may be 0)."""
     result = record_context_artifacts(
         run_id=None, caller="propcheck", symbol=None, artifacts=artifacts
     )
@@ -209,20 +218,70 @@ def test_record_rejects_rows_with_invalid_kind_or_missing_stable_id() -> None:
     )
     assert result == 0
 
-    # A single good row alongside bad ones records exactly one.
-    mixed = bad_rows + [{"kind": "news", "stable_id": "news_item:1"}]
+    # A single good row alongside bad ones records exactly one — the bad
+    # rows are silently dropped by the row filter, they must not poison
+    # or short-circuit the whole batch.
+    from aletheia.economics.schema import ensure_economics_schema
+
+    ensure_economics_schema()
+    mixed = bad_rows + [{"kind": "news", "stable_id": "news_item:filter-check"}]
     result = record_context_artifacts(
-        run_id=None, caller="propcheck", symbol=None, artifacts=mixed
+        run_id=None, caller="propcheck-filter", symbol=None, artifacts=mixed
     )
-    assert result in (0, 1)  # 0 iff DB unavailable; 1 on success.
+    assert result == 1
 
 
-def test_record_freshness_is_normalised_to_allow_list() -> None:
-    """Freshness outside the allow-list falls back to 'unknown', so downstream
-    aggregation never sees a rogue label. Documented invariant of the module."""
-    # We can only observe this via the internal constant since the recorder
-    # is best-effort against a DB. The constant IS the allow-list, so this
-    # test locks its shape and any silent expansion would need to be
-    # deliberate.
+def test_allow_lists_are_locked() -> None:
+    """Lock the shape of the freshness/kind allow-lists so a silent
+    expansion has to be deliberate. Complements the persistence check
+    below — the constant is the source of truth, but downstream
+    aggregation is what actually observes the normalised value."""
     assert _ALLOWED_FRESHNESS == {"fresh", "stale", "unknown"}
     assert _ALLOWED_KINDS == {"environment", "news", "learning"}
+
+
+def test_record_persists_normalised_freshness_for_rogue_labels() -> None:
+    """A row whose ``freshness_status`` is not in the allow-list must be
+    stored as ``"unknown"`` (not dropped, not persisted verbatim). This
+    exercises the normalisation branch through the recorder + SQLite
+    round trip, so mutating the branch itself would trip the test even
+    if ``_ALLOWED_FRESHNESS`` were unchanged.
+    """
+    from aletheia.economics.schema import ensure_economics_schema
+    from aletheia.storage.sqlite import get_db
+
+    ensure_economics_schema()
+    # Two rows, one legitimate freshness and one bogus label the recorder
+    # must normalise. Distinct ``stable_id`` values so we can pick each
+    # row back out unambiguously.
+    written = record_context_artifacts(
+        run_id=None,
+        caller="propcheck-freshness",
+        symbol=None,
+        artifacts=[
+            {
+                "kind": "news",
+                "stable_id": "propcheck:legitimate",
+                "freshness_status": "fresh",
+            },
+            {
+                "kind": "news",
+                "stable_id": "propcheck:rogue",
+                "freshness_status": "absolutely-not-a-valid-label",
+            },
+        ],
+    )
+    assert written == 2
+    rows = {
+        row["stable_id"]: row["freshness_status"]
+        for row in get_db()
+        .execute(
+            "SELECT stable_id, freshness_status FROM llm_context_artifacts "
+            "WHERE caller=?",
+            ("propcheck-freshness",),
+        )
+        .fetchall()
+    }
+    assert rows["propcheck:legitimate"] == "fresh"
+    # The invariant: rogue labels collapse to ``"unknown"``, never persist verbatim.
+    assert rows["propcheck:rogue"] == "unknown"

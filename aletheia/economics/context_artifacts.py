@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
+from collections.abc import Mapping
 from typing import Any
 
 from aletheia.economics.schema import ensure_economics_schema
@@ -60,6 +61,11 @@ def record_context_artifacts(
     now = observed_at or _utcnow()
     rows: list[tuple[Any, ...]] = []
     for artifact in artifacts:
+        # Best-effort contract: silently drop rows that aren't mappings.
+        # A caller passing a bare string / None / dataclass would otherwise
+        # crash the recorder at ``.get()`` and lose the whole batch.
+        if not isinstance(artifact, Mapping):
+            continue
         kind = str(artifact.get("kind") or "")
         if kind not in _ALLOWED_KINDS:
             continue

@@ -777,7 +777,12 @@ def _bounded_alternatives(
         except (TypeError, ValueError):
             continue
         if parsed > current_ttl:
-            sanitized.add(max(1, min(parsed, 86_400)))
+            clamped = max(1, min(parsed, 86_400))
+            # Re-check after clamping: when current_ttl >= 86_400 the clamp
+            # would otherwise fold ``parsed`` back onto ``current_ttl`` and
+            # break the strict-greater contract downstream replay assumes.
+            if clamped > current_ttl:
+                sanitized.add(clamped)
     out = sorted(sanitized)
     return out[:_MAX_ALTERNATIVES]
 
