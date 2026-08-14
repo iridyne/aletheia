@@ -112,7 +112,8 @@ def _cluster_interval(
     if len(cluster_values) < 2:
         return estimate, None, None
     seed_material = "|".join(
-        f"{key}:{','.join(f'{value:.12g}' for value in values)}" for key, values in sorted(clusters.items())
+        f"{key}:{','.join(f'{value:.12g}' for value in sorted(values))}"
+        for key, values in sorted(clusters.items())
     )
     seed = int(hashlib.sha256(seed_material.encode()).hexdigest()[:16], 16)
     rng = random.Random(seed)
@@ -139,7 +140,7 @@ def _paired_unit_interval(
     if len(clusters) < 2:
         return estimate, None, None
     seed_material = "|".join(
-        f"{key}:{','.join(f'{value:.12g}' for value in values)}"
+        f"{key}:{','.join(f'{value:.12g}' for value in sorted(values))}"
         for key, values in sorted(clusters.items())
     )
     seed = int(hashlib.sha256(seed_material.encode()).hexdigest()[:16], 16)
@@ -313,12 +314,13 @@ def _randomized_cohort_identity(
     reasons = []
     for field, output_field in required_fields:
         values = context.get(field)
-        normalized = [str(value) for value in values] if isinstance(values, list) else []
-        if (
-            not normalized
-            or any(value is None or not str(value).strip() for value in values)
-            or len(set(normalized)) != 1
-        ):
+        valid_strings = (
+            isinstance(values, list)
+            and bool(values)
+            and all(isinstance(value, str) and value.strip() for value in values)
+        )
+        normalized = [value.strip() for value in values] if valid_strings else []
+        if not valid_strings or len(set(normalized)) != 1:
             reasons.append(f"mixed_or_missing_{field}")
             continue
         identity[output_field] = normalized[0]
@@ -544,7 +546,7 @@ def _layer_result(
         total_quote = sum(sample["paired_net_delta_quote"] for sample in samples)
         top1, top5 = _concentration(samples)
         temporal_stable = _same_sign_halves(samples, expected_effect=estimate)
-        independent_unit_count = unit_count
+        independent_unit_count = len({sample["cluster_id"] for sample in samples})
         smaller_arm = None
     else:
         estimate, lower, upper = _cluster_interval(samples)
@@ -585,6 +587,10 @@ def _layer_result(
         quote_contrast is None or quote_contrast <= 0
     ):
         reasons.append("randomized_quote_contrast_not_positive")
+    if comparison_method == "paired_same_unit" and (
+        total_quote is None or total_quote <= 0
+    ):
+        reasons.append("paired_quote_harm_not_positive")
     if not temporal_stable:
         reasons.append("temporal_halves_disagree")
     if top1 is None or top5 is None:
