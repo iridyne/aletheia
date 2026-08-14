@@ -45,7 +45,12 @@ def test_doctor_json_deep_includes_compact_trading_diagnostics():
     assert result.exit_code in (0, 1)
     payload = json.loads(result.output)
     trading = payload["diagnostics"]["trading"]
-    assert set(trading) == {"alpha", "funnel", "sizing", "thesis"}
+    assert set(trading) == {
+        "alpha", "candidate_market_facts", "funnel", "sizing", "thesis",
+    }
+    assert trading["candidate_market_facts"]["status"] in {
+        "complete", "partial", "no_pending", "unavailable",
+    }
     assert "main_bottleneck" in trading["alpha"]
     assert "universe_twin_evidence" in trading["alpha"]
     assert "exit_paired_evidence" in trading["alpha"]
