@@ -253,6 +253,77 @@ async def test_pending_feature_refresh_bypasses_recent_row_suppression(
     assert buffered[0].id != "feature-recent"
 
 
+@pytest.mark.asyncio
+async def test_pending_feature_refresh_retains_complete_row_when_4h_fails(
+    tmp_path, monkeypatch,
+):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.models import UniverseFeatureSnapshot
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.features import _fetch_single_feature
+
+    now = datetime.now(timezone.utc)
+
+    class PartialExchange:
+        id = "okx"
+
+        async def fetch_ohlcv(self, symbol, timeframe, limit):
+            if timeframe == "4h":
+                raise TimeoutError("4h unavailable")
+            count = 100 if timeframe == "15m" else 168
+            step = 900_000 if timeframe == "15m" else 3_600_000
+            end = int(now.timestamp() * 1000)
+            return [
+                [
+                    end - (count - 1 - i) * step,
+                    99.0,
+                    101.0,
+                    98.0,
+                    100.0,
+                    10.0,
+                ]
+                for i in range(count)
+            ]
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO universe_registry (id, venue, market_type, symbol) "
+        "VALUES ('asset-partial', 'okx', 'spot', 'BTC/USDT')"
+    )
+    db.execute(
+        "INSERT INTO universe_feature_snapshots "
+        "(id, asset_id, ts, rsi_14, rsi_4h, data_freshness_sec) "
+        "VALUES ('feature-complete', 'asset-partial', ?, 50, 50, 30)",
+        ((now - timedelta(minutes=5)).isoformat(),),
+    )
+    db.commit()
+    buffered: list[UniverseFeatureSnapshot] = []
+
+    feature = await _fetch_single_feature(
+        PartialExchange(),
+        {
+            "id": "asset-partial",
+            "venue": "okx",
+            "market_type": "spot",
+            "symbol": "BTC/USDT",
+        },
+        {"quoteVolume": 1_000_000.0, "bid": 99.9, "ask": 100.1},
+        now,
+        lambda symbol: symbol,
+        snapshot_buffer=buffered,
+        force_persist=True,
+    )
+
+    assert feature is None
+    assert buffered == []
+    assert db.execute(
+        "SELECT id FROM universe_feature_snapshots "
+        "WHERE asset_id='asset-partial' ORDER BY datetime(ts) DESC LIMIT 1"
+    ).fetchone()["id"] == "feature-complete"
+
+
 def test_pi_decision_persists_exact_evidence_manifest():
     from aletheia.agent_shell.reflection import _build_pi_decision
 

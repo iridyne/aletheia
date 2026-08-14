@@ -234,6 +234,33 @@ def test_candidate_report_names_missing_ohlcv_and_mark(tmp_path, monkeypatch):
     assert "candidate_entry_mark_unavailable" in item["reasons"]
 
 
+def test_candidate_report_all_unavailable_is_not_partial(monkeypatch):
+    from aletheia.data import candidate_market_facts
+
+    monkeypatch.setattr(
+        candidate_market_facts,
+        "list_pending_candidate_facts",
+        lambda: [
+            {
+                "opportunity_id": "opp-a",
+                "identity_status": "unavailable",
+                "identity_reason": "linked_asset_unavailable",
+            },
+            {
+                "opportunity_id": "opp-b",
+                "identity_status": "unavailable",
+                "identity_reason": "legacy_asset_identity_not_unique",
+            },
+        ],
+    )
+
+    report = candidate_market_facts.build_pending_candidate_market_report()
+
+    assert report["status"] == "unavailable"
+    assert report["partial_count"] == 0
+    assert report["unavailable_count"] == 2
+
+
 def test_candidate_technical_reason_keeps_missing_incomplete_and_stale_typed():
     from aletheia.agent_shell.decision_facts import (
         candidate_context_unavailable_reason,

@@ -520,7 +520,11 @@ def build_pending_candidate_market_report(
     unavailable = sum(item["availability"] == "unavailable" for item in items)
     partial = len(items) - complete - unavailable
     return {
-        "status": "complete" if complete == len(items) else "partial",
+        "status": (
+            "complete" if complete == len(items)
+            else "unavailable" if unavailable == len(items)
+            else "partial"
+        ),
         "pending_total": len(items),
         "complete_count": complete,
         "partial_count": partial,

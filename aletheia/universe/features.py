@@ -546,6 +546,18 @@ async def _fetch_single_feature(
     ohlcv_1h = _closed_rows(ohlcv_1h, "1h")
     ohlcv_4h = _closed_rows(ohlcv_4h, "4h")
 
+    if force_persist:
+        required_rows = {"15m": ohlcv_15m, "1h": ohlcv_1h, "4h": ohlcv_4h}
+        missing_timeframes = [
+            timeframe for timeframe, rows in required_rows.items() if not rows
+        ]
+        if missing_timeframes:
+            for timeframe in missing_timeframes:
+                _record_priority_failure(
+                    asset, f"feature_ohlcv_{timeframe}", "ohlcv_not_updated",
+                )
+            return None
+
     def _technical_bars(rows: list) -> list[TechnicalBar]:
         return [
             TechnicalBar(
