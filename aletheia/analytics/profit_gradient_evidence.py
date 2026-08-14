@@ -38,7 +38,7 @@ _COMPILER_PRODUCER = {
 }
 _FIXED_CANDIDATE_HORIZON = "24h"
 _LAYER_PATH_IDS = {
-    "Selection": ("universe_family_calibration",),
+    "Selection": (),
     "Decision": (),
     "Risk": (),
     "Execution": (),
@@ -397,15 +397,20 @@ def _load_positions(db: Any, cutoff: datetime) -> tuple[dict[str, Any], list[dic
     except (sqlite3.Error, OSError):
         return _unavailable("position_source_unavailable"), []
     ids = []
+    errors: Counter[str] = Counter()
     for row in rows:
         opened = _time(row.get("opened_at"))
         closed = _time(row.get("closed_at")) if row.get("closed_at") else None
+        if row.get("status") == "closed" and (
+            opened is None or closed is None
+        ):
+            errors["malformed_closed_position_timestamp"] += 1
+            continue
         if opened is None or opened > cutoff or (closed is not None and closed > cutoff):
             continue
         if row.get("status") == "closed" and closed is not None:
             ids.append(str(row["id"]))
     facts: list[dict[str, Any]] = []
-    errors: Counter[str] = Counter()
     for position_id in ids:
         try:
             fact = build_position_replay(position_id, as_of_at=_iso(cutoff), db=db)
@@ -423,7 +428,13 @@ def _load_positions(db: Any, cutoff: datetime) -> tuple[dict[str, Any], list[dic
         "replayed_count": len(facts),
         "error_count": sum(errors.values()),
         "error_types": dict(sorted(errors.items())),
-        "source_hash": _hash({"position_ids": ids, "facts": facts}),
+        "source_hash": _hash(
+            {
+                "position_ids": ids,
+                "errors": dict(sorted(errors.items())),
+                "facts": facts,
+            }
+        ),
     }, facts
 
 

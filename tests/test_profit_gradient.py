@@ -136,6 +136,16 @@ def test_temporal_sign_reversal_blocks_apparent_average_effect():
     assert "temporal_halves_disagree" in result["layers"]["Costs"]["gate_reasons"]
 
 
+def test_null_epoch_identity_fails_closed_after_normalization():
+    result = gradient.select_unique_max_direction(
+        _seven_layers(),
+        evidence_context=_context(behavior_fingerprints=[None]),
+    )
+
+    assert result["global_gate_status"] == "ineligible"
+    assert "mixed_or_missing_behavior_fingerprints" in result["global_gate_reasons"]
+
+
 def test_missing_epoch_value_fails_closed_even_when_another_value_is_present():
     result = gradient.select_unique_max_direction(
         _seven_layers(),

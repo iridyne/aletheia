@@ -49,11 +49,10 @@ Position economics use the verified accounting
 identity `net = gross - entry_fee - exit_fee - funding`; candidate costs are not
 deducted again from Position economics.
 
-The current durable contracts provide a confirmatory path mapping only for
-Selection; Decision, Risk, Execution, Holding, Exit, and Costs remain unavailable
-until their own registered layer contracts and paired sources exist. They also do
-not provide a market-data epoch for this path. Those gates therefore remain
-unavailable until the source contract is extended. The fixed
+The current durable contracts provide no confirmatory seven-layer path mapping;
+all layers remain unavailable until their own registered layer contracts and
+paired sources exist. They also do not provide a market-data epoch for this path.
+Those gates therefore remain unavailable until the source contract is extended. The fixed
 profit-loop counterfactual registry is emitted only under `exploratory_evidence`,
 marked `promotion_eligible: false`, and is excluded from `layer_samples`. This
 prevents exploratory evidence from becoming confirmatory evidence by operator
