@@ -136,6 +136,41 @@ def test_temporal_sign_reversal_blocks_apparent_average_effect():
     assert "temporal_halves_disagree" in result["layers"]["Costs"]["gate_reasons"]
 
 
+def test_null_epoch_identity_fails_closed_after_normalization():
+    result = gradient.select_unique_max_direction(
+        _seven_layers(),
+        evidence_context=_context(behavior_fingerprints=[None]),
+    )
+
+    assert result["global_gate_status"] == "ineligible"
+    assert "mixed_or_missing_behavior_fingerprints" in result["global_gate_reasons"]
+
+
+def test_missing_epoch_value_fails_closed_even_when_another_value_is_present():
+    result = gradient.select_unique_max_direction(
+        _seven_layers(),
+        evidence_context=_context(cost_model_epochs=["cost-v1", ""]),
+    )
+
+    assert result["global_gate_status"] == "ineligible"
+    assert "mixed_or_missing_cost_model_epochs" in result["global_gate_reasons"]
+
+
+def test_pair_level_samples_count_arms_without_double_counting_units():
+    samples = _samples("Costs", effect_bp=10.0, count=30)
+    for sample in samples:
+        sample.update({"arm": "paired", "arm_counts": {"treatment": 1, "control": 1}})
+
+    result = gradient.select_unique_max_direction(
+        {layer: samples if layer == "Costs" else [] for layer in gradient.LAYERS},
+        evidence_context=_context(),
+    )
+
+    costs = result["layers"]["Costs"]
+    assert costs["independent_unit_count"] == 30
+    assert costs["smaller_arm_count"] == 30
+
+
 def test_one_dependent_cluster_cannot_produce_confidence_interval():
     estimate, lower, upper = gradient._cluster_interval(
         [

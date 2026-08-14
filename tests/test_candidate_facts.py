@@ -222,6 +222,42 @@ def test_candidate_facts_preserve_malformed_plain_json_as_unavailable_evidence()
     ]
 
 
+def test_candidate_facts_reject_decoded_batch_count_mismatch():
+    db = _db()
+    db.execute("ALTER TABLE filter_decision_batches ADD COLUMN candidate_count INTEGER")
+    db.execute(
+        "UPDATE filter_decision_batches SET candidate_count=?, candidate_facts=? WHERE id=?",
+        (
+            2,
+            json.dumps(
+                {
+                    "fields": ["candidate_key"],
+                    "rows": [[1, "decoded"], [1]],
+                }
+            ),
+            "batch-filtered",
+        ),
+    )
+
+    report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db
+    )
+
+    assert report["unavailable_count"] == 1
+    assert report["unavailable_reasons"] == {"candidate_fact_count_mismatch": 1}
+    assert report["exclusions"] == [
+        {
+            "source_table": "filter_decision_batches",
+            "source_batch_id": "batch-filtered",
+            "event_at": "2026-08-13T00:00:30+00:00",
+            "availability": "unavailable",
+            "unavailable_reason": "candidate_fact_count_mismatch",
+            "declared_candidate_count": 2,
+            "decoded_candidate_count": 1,
+        }
+    ]
+
+
 def test_candidate_exact_pi_identity_does_not_join_other_retry():
     db = _db()
     db.execute(

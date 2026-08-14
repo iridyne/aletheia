@@ -100,6 +100,24 @@ def _normalized_samples(
         delta_bp = _finite(raw.get("paired_net_delta_bp"))
         delta_quote = _finite(raw.get("paired_net_delta_quote"))
         occurred_at = _timestamp(raw.get("occurred_at"))
+        arm_counts = raw.get("arm_counts")
+        normalized_arm_counts = None
+        if arm_counts is not None:
+            if not isinstance(arm_counts, Mapping):
+                exclusions.append("incomplete_paired_sample")
+                continue
+            try:
+                normalized_arm_counts = {
+                    str(arm): int(float(count))
+                    for arm, count in arm_counts.items()
+                    if int(float(count)) > 0
+                }
+            except (TypeError, ValueError, OverflowError):
+                exclusions.append("incomplete_paired_sample")
+                continue
+            if not {"treatment", "control"} <= set(normalized_arm_counts):
+                exclusions.append("incomplete_paired_sample")
+                continue
         if not unit_id or not cluster_id or delta_bp is None or delta_quote is None or occurred_at is None:
             exclusions.append("incomplete_paired_sample")
             continue
@@ -115,6 +133,7 @@ def _normalized_samples(
                 "paired_net_delta_quote": delta_quote,
                 "occurred_at": occurred_at,
                 "arm": str(raw.get("arm") or ""),
+                "arm_counts": normalized_arm_counts,
             }
         )
     return samples, exclusions, raw_count
@@ -149,7 +168,15 @@ def _epoch_gate(context: Mapping[str, Any]) -> tuple[bool, list[str]]:
         "cost_model_epochs",
     ):
         values = context.get(field)
-        if not isinstance(values, list) or len(set(str(value) for value in values if value)) != 1:
+        if (
+            not isinstance(values, list)
+            or not values
+            or any(not isinstance(value, str) or not value.strip() for value in values)
+        ):
+            reasons.append(f"mixed_or_missing_{field}")
+            continue
+        normalized = [value.strip() for value in values]
+        if len(set(normalized)) != 1:
             reasons.append(f"mixed_or_missing_{field}")
     return not reasons, reasons
 
@@ -186,7 +213,10 @@ def _layer_result(
     unit_count = len(samples)
     arms = defaultdict(int)
     for sample in samples:
-        if sample["arm"]:
+        if isinstance(sample.get("arm_counts"), Mapping):
+            for arm, count in sample["arm_counts"].items():
+                arms[str(arm)] += int(count)
+        elif sample["arm"]:
             arms[sample["arm"]] += 1
     smaller_arm = min(arms.values()) if len(arms) >= 2 else 0
     top1, top5 = _concentration(samples)

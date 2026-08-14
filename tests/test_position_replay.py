@@ -201,6 +201,7 @@ def test_replay_uses_exact_ids_cutoff_reconciled_economics_and_deterministic_has
     assert first["economics"]["net_pnl"] == 1.7
     assert first["economics"]["accounting_residual"] == 0.0
     assert first["economics"]["residual_within_tolerance"] is True
+    assert first["cost_identity"]["cost_model_id"] == "paper-execution-reference/v1"
     assert first["stages"]["holding"]["ohlcv"]["row_count"] == 2
     assert (
         first["stages"]["holding"]["ohlcv"]["ohlcv_window_hash"]
