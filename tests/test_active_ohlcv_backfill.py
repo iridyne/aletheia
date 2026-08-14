@@ -111,6 +111,48 @@ def test_plan_repairs_active_member_even_when_not_yet_execution_eligible(monkeyp
     }
 
 
+def test_pending_candidate_refreshes_stale_ohlcv_before_regular_members(monkeypatch):
+    from aletheia.data import active_ohlcv_backfill as backfill
+    from aletheia.data import candidate_market_facts
+    from aletheia.data.symbols import InstrumentId
+
+    now = datetime(2026, 8, 14, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        candidate_market_facts,
+        "pending_candidate_instruments",
+        lambda: [InstrumentId.from_parts("okx", "PEND/USDT", "perp")],
+    )
+    monkeypatch.setattr(
+        backfill.repo,
+        "get_active_universe_members",
+        lambda limit=50: [_member("REG/USDT", "regular", rank=1)],
+    )
+    monkeypatch.setattr(
+        backfill.repo,
+        "get_universe_asset",
+        lambda asset_id: {"venue": "okx", "market_type": "perp"},
+    )
+
+    def coverage(symbol, timeframe, **kwargs):
+        age_hours = 12 if symbol == "PEND/USDT" else 1
+        return {
+            "bar_count": 300,
+            "newest_ts": int((now - timedelta(hours=age_hours)).timestamp() * 1000),
+        }
+
+    monkeypatch.setattr(backfill.repo, "get_ohlcv_coverage", coverage)
+    monkeypatch.setattr(backfill.repo, "get_ohlcv_backfill_state", lambda *args: None)
+    monkeypatch.setattr(backfill.repo, "upsert_ohlcv_backfill_state", lambda **kwargs: None)
+
+    planned = backfill.plan_active_ohlcv_backfill(
+        min_bars=200, max_pairs=2, now=now,
+    )
+    assert [(item.symbol, item.timeframe, item.rank) for item in planned] == [
+        ("PEND/USDT", "1h", -1),
+        ("PEND/USDT", "4h", -1),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_run_records_partial_coverage_and_defers_retry(monkeypatch):
     from aletheia.data import active_ohlcv_backfill as backfill

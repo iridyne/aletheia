@@ -242,6 +242,51 @@ def test_complete_trade_without_authoritative_mark_is_retryable(monkeypatch):
     assert exc_info.value.filter_trace[-1]["filter_name"] == "operator_entry_mark"
 
 
+def test_complete_trade_rejects_same_symbol_mark_from_wrong_venue(monkeypatch):
+    import asyncio
+    import aletheia.agent_shell.trading_decision as td
+
+    async def assess(_ctx):
+        return _complete_trade_payload(market_type="usdt_futures")
+
+    monkeypatch.setattr(td, "_assess_opportunity", assess)
+    context = {
+        "layer2": {
+            "pending_signals": [{
+                "opportunity_id": "opp-exact-venue",
+                "signal_source": "market_observer",
+                "symbol": "BTC/USDT",
+                "direction": "long",
+                "market_type": "usdt_futures",
+                "venue": "okx",
+            }],
+            "entry_mark": {
+                "status": "available",
+                "symbol": "BTC/USDT",
+                "market_type": "usdt_futures",
+                "venue": "binance",
+                "price": 100.0,
+                "authority": "fresh_exact_market_mark",
+            },
+        },
+    }
+
+    with pytest.raises(
+        DecisionUnavailable,
+        match="candidate_entry_mark_identity_mismatch",
+    ) as exc_info:
+        asyncio.run(td.evaluate_trading_opportunity(context))
+
+    assert exc_info.value.stage == "operator_entry_plan"
+
+    context["layer2"]["pending_signals"][0]["venue"] = None
+    with pytest.raises(
+        DecisionUnavailable,
+        match="candidate_entry_mark_identity_unavailable",
+    ):
+        asyncio.run(td.evaluate_trading_opportunity(context))
+
+
 def test_inverted_prompt_mark_geometry_uses_bounded_output_repair(monkeypatch):
     """A reversed authored stop is repaired before Proposal preparation."""
     import asyncio
@@ -621,6 +666,7 @@ def test_candidate_entry_mark_is_exact_and_visible_to_operator(tmp_path, monkeyp
                 "symbol": "BTC/USDT",
                 "direction": "long",
                 "market_type": "usdt_futures",
+                "venue": "binance",
                 "opportunity_id": "opp-entry-plan",
             }],
         },

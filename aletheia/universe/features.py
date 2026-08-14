@@ -138,6 +138,30 @@ def _is_derivatives_market(market_type: object) -> bool:
     return str(market_type or "").lower() in _DERIVATIVES_MARKET_TYPES
 
 
+def _record_priority_failure(asset: dict, component: str, reason: str) -> None:
+    """Record only typed, exact identity for pending-candidate refresh failures."""
+    try:
+        from aletheia.data.candidate_market_facts import (
+            record_candidate_refresh_failure,
+        )
+        from aletheia.data.symbols import InstrumentId, MARKET_PERP, MARKET_SPOT
+
+        market_type = (
+            MARKET_PERP if _is_derivatives_market(asset.get("market_type"))
+            else MARKET_SPOT
+        )
+        instrument = InstrumentId.from_parts(
+            str(asset.get("venue") or ""),
+            str(asset.get("symbol") or ""),
+            market_type,
+        )
+        record_candidate_refresh_failure(
+            instrument, component=component, reason=reason,
+        )
+    except Exception:
+        logger.debug("Could not record pending candidate refresh failure", exc_info=True)
+
+
 def _pct_return(closes: list[float], bars: int) -> float | None:
     """Percentage return over the last N bars."""
     if len(closes) < bars + 1:
@@ -316,11 +340,13 @@ def _evaluate_ticker_prefilters(
     to_ccxt_perp,
     *,
     min_volume: float,
+    priority_asset_ids: set[str] | None = None,
 ) -> tuple[list[tuple[dict, dict]], list[dict], list[dict]]:
     """Evaluate ticker availability and volume in order without sampling facts."""
     candidates: list[tuple[dict, dict]] = []
     ticker_facts: list[dict] = []
     volume_facts: list[dict] = []
+    priority_asset_ids = priority_asset_ids or set()
 
     for asset in assets:
         symbol = str(asset.get("symbol") or "")
@@ -363,7 +389,7 @@ def _evaluate_ticker_prefilters(
             inputs={"ticker_symbol": ccxt_symbol},
         ))
         volume = _quote_volume_24h(exchange, ccxt_symbol, ticker)
-        if volume < min_volume:
+        if volume < min_volume and asset_id not in priority_asset_ids:
             volume_facts.append(_ticker_candidate_fact(
                 asset,
                 decision="rejected",
@@ -374,8 +400,12 @@ def _evaluate_ticker_prefilters(
 
         volume_facts.append(_ticker_candidate_fact(
             asset,
-            decision="passed",
-            reason_code="quote_volume_prefilter_sufficient",
+            decision=("not_applicable" if asset_id in priority_asset_ids else "passed"),
+            reason_code=(
+                "pending_candidate_volume_prefilter_bypassed"
+                if asset_id in priority_asset_ids
+                else "quote_volume_prefilter_sufficient"
+            ),
             inputs={"quote_volume_24h": volume},
         ))
         candidates.append((asset, ticker))
@@ -441,6 +471,7 @@ async def _fetch_single_feature(
     btc_return_4h: float | None = None,
     btc_closes_1h: list[float] | None = None,
     snapshot_buffer: list[UniverseFeatureSnapshot] | None = None,
+    force_persist: bool = False,
 ) -> dict | None:
     """Fetch OHLCV + enrich for a single asset. Returns feature dict or None."""
     symbol = asset.get("symbol", "")
@@ -465,16 +496,29 @@ async def _fetch_single_feature(
             exchange.fetch_ohlcv(ccxt_sym, timeframe="15m", limit=_OHLCV_15M_LIMIT),
             timeout=_OHLCV_TIMEOUT,
         )
-    except (asyncio.TimeoutError, Exception):
-        pass
+    except Exception as exc:
+        if force_persist:
+            _record_priority_failure(asset, "feature_ohlcv_15m", "ohlcv_not_updated")
+            logger.warning(
+                "Pending candidate OHLCV refresh failed for %s:%s:%s [15m]: %s",
+                asset.get("venue"),
+                symbol,
+                asset.get("market_type"),
+                type(exc).__name__,
+            )
 
     try:
         ohlcv_1h = await asyncio.wait_for(
             exchange.fetch_ohlcv(ccxt_sym, timeframe="1h", limit=_OHLCV_1H_LIMIT),
             timeout=_OHLCV_TIMEOUT,
         )
-    except (asyncio.TimeoutError, Exception):
-        pass
+    except Exception as exc:
+        if force_persist:
+            _record_priority_failure(asset, "feature_ohlcv_1h", "ohlcv_not_updated")
+            logger.warning(
+                "Pending candidate OHLCV refresh failed for %s:%s:%s [1h]: %s",
+                asset.get("venue"), symbol, asset.get("market_type"), type(exc).__name__,
+            )
 
     # P1b: 4h candles for multi-timeframe features
     try:
@@ -482,8 +526,13 @@ async def _fetch_single_feature(
             exchange.fetch_ohlcv(ccxt_sym, timeframe="4h", limit=50),
             timeout=_OHLCV_TIMEOUT,
         )
-    except (asyncio.TimeoutError, Exception):
-        pass
+    except Exception as exc:
+        if force_persist:
+            _record_priority_failure(asset, "feature_ohlcv_4h", "ohlcv_not_updated")
+            logger.warning(
+                "Pending candidate OHLCV refresh failed for %s:%s:%s [4h]: %s",
+                asset.get("venue"), symbol, asset.get("market_type"), type(exc).__name__,
+            )
 
     now_ms = int(now.timestamp() * 1000)
 
@@ -798,12 +847,13 @@ async def _fetch_single_feature(
     )
     feat["_computed_feature_snapshot"] = snap
     feat["feature_snapshot_id"] = snap.id
+    feat["feature_ts"] = snap.ts
 
     # Phase 3 retention: change-suppression. Skip near-duplicate writes; force
     # a write past the 60-min heartbeat floor so per-asset freshness stays live.
     prev_row = repo.get_latest_feature_snapshot(asset_id)
     should_write = True
-    if prev_row is not None:
+    if prev_row is not None and not force_persist:
         age_sec = _seconds_between(prev_row.get("ts"), now)
         if age_sec is not None:
             if age_sec < _FEATURE_SUPPRESSION_MIN_SEC:
@@ -812,11 +862,13 @@ async def _fetch_single_feature(
                 # Reuse the previous snapshot id for downstream consumers so
                 # the feat dict still references a real row.
                 feat["feature_snapshot_id"] = prev_row.get("id", snap.id)
+                feat["feature_ts"] = prev_row.get("ts") or snap.ts
             elif age_sec < _FEATURE_SUPPRESSION_HEARTBEAT_SEC:
                 # 30-60 min window — write only if the numeric shape moved.
                 if _feature_snapshot_equivalent(prev_row, snap):
                     should_write = False
                     feat["feature_snapshot_id"] = prev_row.get("id", snap.id)
+                    feat["feature_ts"] = prev_row.get("ts") or snap.ts
 
     if should_write:
         if snapshot_buffer is None:
@@ -831,6 +883,7 @@ async def collect_features(
     assets: list[dict],
     cfg: AletheiaConfig,
     scanner_run_id: str | None = None,
+    priority_asset_ids: set[str] | None = None,
 ) -> list[dict]:
     """Two-phase feature collection: batch tickers → volume pre-filter → concurrent OHLCV.
 
@@ -847,6 +900,7 @@ async def collect_features(
     fallback_venue = md.ccxt_fallback or venue
     provider = CCXTProvider(exchange=venue, fallback_exchange=fallback_venue)
     results = []
+    priority_asset_ids = set(priority_asset_ids or ())
 
     try:
         exchange = provider._ensure_primary()
@@ -877,7 +931,15 @@ async def collect_features(
             exchange,
             to_ccxt_perp,
             min_volume=min_vol,
+            priority_asset_ids=priority_asset_ids,
         )
+        candidate_asset_ids = {str(asset.get("id") or "") for asset, _ in candidates}
+        for asset in assets:
+            asset_id = str(asset.get("id") or "")
+            if asset_id in priority_asset_ids and asset_id not in candidate_asset_ids:
+                _record_priority_failure(
+                    asset, "feature_ticker", "upstream_quote_unavailable",
+                )
         _record_ticker_prefilter_batches(
             scanner_run_id, ticker_facts, volume_facts, cfg,
         )
@@ -918,9 +980,22 @@ async def collect_features(
                         btc_return_4h=btc_return_4h,
                         btc_closes_1h=btc_closes_1h,
                         snapshot_buffer=pending_snapshots,
+                        force_persist=(
+                            str(asset.get("id") or "") in priority_asset_ids
+                        ),
                     )
                 except Exception as e:
-                    logger.debug("Feature collect failed for %s: %s", asset.get("symbol"), e)
+                    if str(asset.get("id") or "") in priority_asset_ids:
+                        _record_priority_failure(
+                            asset, "feature_snapshot", "feature_not_updated",
+                        )
+                        logger.warning(
+                            "Pending candidate feature refresh failed for %s:%s:%s: %s",
+                            asset.get("venue"), asset.get("symbol"),
+                            asset.get("market_type"), type(e).__name__,
+                        )
+                    else:
+                        logger.debug("Feature collect failed for %s: %s", asset.get("symbol"), e)
                     return None
 
         gathered = await asyncio.gather(
@@ -939,6 +1014,15 @@ async def collect_features(
                     len(pending_snapshots),
                     exc,
                 )
+                for snapshot in pending_snapshots:
+                    if snapshot.asset_id in priority_asset_ids:
+                        asset = next(
+                            (row for row in assets if row.get("id") == snapshot.asset_id),
+                            {},
+                        )
+                        _record_priority_failure(
+                            asset, "feature_snapshot", "feature_not_updated",
+                        )
 
         # Phase A (2026-07-19) — fingerprint-refresh wake.
         # `skip_policy.candidate_feature_refresh_wakes_operator=True` (skip_policy.py:44)
@@ -953,11 +1037,38 @@ async def collect_features(
         committed_asset_ids = {
             snap.asset_id
             for snap in pending_snapshots
-            if snap.id not in failed_snapshot_ids and snap.asset_id
+            if (
+                snap.id not in failed_snapshot_ids
+                and snap.asset_id in priority_asset_ids
+            )
         }
+        available_asset_ids: set[str] = set()
         if committed_asset_ids:
+            from aletheia.agent_shell.decision_facts import (
+                candidate_context_unavailable_reason,
+            )
+
+            for result in gathered:
+                if not isinstance(result, dict):
+                    continue
+                asset_id = str(result.get("asset_id") or "")
+                if asset_id not in committed_asset_ids:
+                    continue
+                reason = candidate_context_unavailable_reason({
+                    "layer1": {"features": [result]},
+                    "layer2": {"pending_signals": [{
+                        "opportunity_id": asset_id,
+                        "signal_source": "market_observer",
+                        "asset_id": asset_id,
+                        "symbol": result.get("symbol"),
+                        "market_type": result.get("market_type"),
+                    }]},
+                }, opportunity_id=asset_id)
+                if reason is None:
+                    available_asset_ids.add(asset_id)
+        if available_asset_ids:
             try:
-                _wake_pi_daemon_for_refreshed_defers(committed_asset_ids)
+                _wake_pi_daemon_for_refreshed_defers(available_asset_ids)
             except Exception:
                 logger.debug(
                     "feature_snapshot pi_daemon wake failed", exc_info=True
@@ -976,48 +1087,15 @@ async def collect_features(
 
 
 def _wake_pi_daemon_for_refreshed_defers(asset_ids: set[str]) -> None:
-    """Wake pi_daemon iff a deferred carrier depends on one of these assets.
+    """Wake only exact-asset technical defers; market-quiet defers stay asleep."""
+    from aletheia.data.candidate_market_facts import wake_pending_candidate_defers
 
-    A carrier is "depending on this batch" when it has (a) a live
-    ``pi_decisions.action='signal_pending'`` row for a symbol registered under
-    one of ``asset_ids`` in ``universe_registry`` AND (b) an active
-    ``operator_evaluation_events`` defer with ``defer_until > now``. The join
-    checks both in a single query and short-circuits at LIMIT 1. Without this
-    guard the daemon wakes on every universe_refresh even when nothing is
-    deferred — that is safe (2 s debounce + 45 s cooldown absorb noise) but
-    it defeats the whole point of the wake, which is to notice defers.
-
-    Only candidate-specific (data-availability) defer reasons trigger a wake.
-    Market-quiet defers — ``direct_skip_not_confirmed``, ``operator_low_conviction``,
-    ``debate_not_confirmed`` — reflect the operator's judgment, not missing data.
-    Feature refreshes do not resolve the confirmation issue, so waking on them
-    creates a tight re-evaluation loop with no change in outcome.
-    """
-    from aletheia.storage.sqlite import get_db
-
-    if not asset_ids:
-        return
-    placeholders = ",".join("?" for _ in asset_ids)
-    now_iso = datetime.now(timezone.utc).isoformat()
-    row = get_db().execute(
-        "SELECT 1 FROM operator_evaluation_events e "
-        "JOIN pi_decisions p "
-        "  ON json_extract(e.queue_snapshot_json, '$.opportunity_id')"
-        "     = p.opportunity_id "
-        "JOIN universe_registry r ON r.symbol = p.symbol "
-        "WHERE e.event_kind LIKE 'operator_decision_deferred_%' "
-        "AND json_extract(e.queue_snapshot_json, '$.defer_until') > ? "
-        "AND p.action = 'signal_pending' "
-        "AND json_extract(e.queue_snapshot_json, '$.defer_reason') IN ("
-        "    'candidate_technical_snapshot_unavailable',"
-        "    'candidate_technical_snapshot_incomplete',"
-        "    'candidate_technical_snapshot_stale') "
-        f"AND r.id IN ({placeholders}) "
-        "LIMIT 1",
-        (now_iso, *asset_ids),
-    ).fetchone()
-    if row is None:
-        return
-    from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
-
-    notify_pi_daemon(source="feature_snapshot_committed")
+    wake_pending_candidate_defers(
+        asset_ids=asset_ids,
+        defer_reasons={
+            "candidate_technical_snapshot_unavailable",
+            "candidate_technical_snapshot_incomplete",
+            "candidate_technical_snapshot_stale",
+        },
+        source="feature_snapshot_committed",
+    )

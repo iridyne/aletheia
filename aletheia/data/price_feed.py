@@ -1,4 +1,4 @@
-"""Fast in-memory price cache for open-position symbols + universe watchlist.
+"""Fast in-memory price cache for positions, pending candidates, and Universe.
 
 Refreshed every 30s via scheduler (batch CCXT fetch_tickers).
 position_manager and pnl reads check this cache first, falling back to
@@ -13,7 +13,8 @@ Design:
   fall back to the 5-min SQLite snapshots.
 - Display/PnL remains fail-open to SQLite. Protective close pricing is fail-closed:
   its typed SQLite fallback must be no older than 120 seconds.
-- Universe members tick-gated: refreshed every 3rd tick (90s) to stay
+- Pending candidates refresh every tick; ordinary Universe members are tick-gated
+  every 3rd tick (90s) to stay
   within the scheduler's 45s timeout budget at large symbol counts.
 """
 
@@ -135,7 +136,7 @@ def get_fresh_mark_for_protective_close(
     venue: str,
 ) -> dict | None:
     """Return a fresh exact mark with bounded, non-secret provenance."""
-    from aletheia.data.symbols import to_bitget, to_canonical
+    from aletheia.data.symbols import to_canonical
 
     canonical = to_canonical(symbol)
     physical_market = _protective_market_type(market_type)
@@ -158,29 +159,9 @@ def get_fresh_mark_for_protective_close(
     if cached is not None:
         return cached
 
-    from aletheia.storage.repositories import list_market_snapshots
-
-    # Query only exact market identities.  The extra symbol/market spellings are
-    # legacy storage compatibility, not a symbol-only or cross-market fallback.
-    stored_symbols = [canonical]
-    legacy_symbol = to_bitget(canonical)
-    if legacy_symbol != canonical:
-        stored_symbols.append(legacy_symbol)
-    stored_markets = [physical_market]
-    if market_type == "usdt_futures":
-        stored_markets.append("usdt_futures")
-    rows: list[dict] = []
-    for stored_symbol in stored_symbols:
-        for stored_market in stored_markets:
-            rows.extend(list_market_snapshots(
-                symbol=stored_symbol,
-                exchange=exact_venue,
-                market_type=stored_market,
-                limit=1,
-            ))
-    if not rows:
+    row = get_latest_exact_market_snapshot(canonical, market_type, exact_venue)
+    if row is None:
         return None
-    row = max(rows, key=lambda item: str(item.get("snapshot_at") or ""))
     raw_ts = row.get("snapshot_at")
     if not raw_ts:
         return None
@@ -198,6 +179,41 @@ def get_fresh_mark_for_protective_close(
         symbol=canonical,
         market_type=physical_market,
     )
+
+
+def get_latest_exact_market_snapshot(
+    symbol: str,
+    market_type: str,
+    venue: str,
+) -> dict | None:
+    """Return the newest stored observation for one exact physical instrument."""
+    from aletheia.data.symbols import to_bitget, to_canonical
+    from aletheia.storage.repositories import list_market_snapshots
+
+    canonical = to_canonical(symbol)
+    physical_market = _protective_market_type(market_type)
+    exact_venue = str(venue or "").strip().lower()
+    if physical_market is None or not exact_venue:
+        return None
+    symbols = [canonical]
+    legacy_symbol = to_bitget(canonical)
+    if legacy_symbol != canonical:
+        symbols.append(legacy_symbol)
+    markets = [physical_market]
+    if market_type == "usdt_futures":
+        markets.append("usdt_futures")
+    rows = [
+        row
+        for stored_symbol in symbols
+        for stored_market in markets
+        for row in list_market_snapshots(
+            symbol=stored_symbol,
+            exchange=exact_venue,
+            market_type=stored_market,
+            limit=1,
+        )
+    ]
+    return max(rows, key=lambda item: str(item.get("snapshot_at") or "")) if rows else None
 
 
 def get_fresh_price_for_protective_close(
@@ -222,7 +238,7 @@ def get_fresh_price_for_protective_close(
 
 
 def get_watched_instruments():
-    """Return exact instruments for open positions + executable universe members.
+    """Return exact instruments for positions, pending candidates, and Universe.
 
     Stock tokens (xStocks) are filtered against the venue listing cache before
     being added.  The cache is populated by collect_market_snapshots (async, 5min
@@ -303,6 +319,18 @@ def get_watched_instruments():
     except Exception as e:
         logger.warning("price_feed: failed to get position symbols: %s", e)
 
+    # Pending candidates are an always-on high-priority set. Their exact mark is
+    # required for entry planning, so they must not inherit the Universe tick gate.
+    try:
+        from aletheia.data.candidate_market_facts import pending_candidate_instruments
+
+        for instrument in pending_candidate_instruments():
+            append_instrument(
+                instrument.symbol, instrument.market_type, instrument.exchange,
+            )
+    except Exception as e:
+        logger.warning("price_feed: pending candidate expansion failed: %s", type(e).__name__)
+
     # Universe members — tick-gated
     try:
         if cfg.event_triggers.enabled and cfg.event_triggers.watch_universe_members:
@@ -357,6 +385,7 @@ async def refresh_watched_prices() -> dict:
 
     refreshed: list[str] = []
     errors: list[str] = []
+    refreshed_instruments = []
     try:
         from collections import defaultdict
 
@@ -369,6 +398,13 @@ async def refresh_watched_prices() -> dict:
         from aletheia.config.loader import load_config
 
         cfg = load_config()
+        from aletheia.data.candidate_market_facts import (
+            pending_candidate_instruments,
+            record_candidate_refresh_failure,
+            wake_pending_candidate_defers,
+        )
+
+        pending_identities = {str(item) for item in pending_candidate_instruments()}
         groups = defaultdict(list)
         for instrument in instruments:
             groups[instrument.exchange].append(instrument)
@@ -421,8 +457,21 @@ async def refresh_watched_prices() -> dict:
                                 _check_event_triggers(sym, pct, volume_24h, prev_entry.get("volume_24h"), cfg)
 
                             refreshed.append(sym)
+                            refreshed_instruments.append(instrument)
+                        elif str(instrument) in pending_identities:
+                            record_candidate_refresh_failure(
+                                instrument,
+                                component="price_mark",
+                                reason="upstream_quote_unavailable",
+                            )
                     except Exception as e:
                         errors.append(f"{instrument}: {e}")
+                        if str(instrument) in pending_identities:
+                            record_candidate_refresh_failure(
+                                instrument,
+                                component="price_mark",
+                                reason="upstream_quote_unavailable",
+                            )
             finally:
                 await provider.close()
     except Exception as e:
@@ -433,6 +482,20 @@ async def refresh_watched_prices() -> dict:
         logger.debug("price_feed: refreshed %d symbols", len(refreshed))
     if errors:
         logger.warning("price_feed: %d errors: %s", len(errors), errors[:3])
+
+    refreshed_candidates = [
+        instrument for instrument in refreshed_instruments
+        if str(instrument) in pending_identities
+    ] if "pending_identities" in locals() else []
+    if refreshed_candidates:
+        try:
+            wake_pending_candidate_defers(
+                instruments=refreshed_candidates,
+                defer_reasons={"candidate_entry_mark_unavailable"},
+                source="candidate_entry_mark_refreshed",
+            )
+        except Exception:
+            logger.debug("candidate entry-mark wake failed", exc_info=True)
 
     return {"refreshed": len(refreshed), "symbols": refreshed, "errors": errors}
 

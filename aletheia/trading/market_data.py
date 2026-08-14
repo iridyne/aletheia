@@ -221,15 +221,16 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
 
     Sources (first occurrence wins for dedup):
       1. Open position symbols (never capped; lifecycle pricing comes first)
-      2. Config core symbols (always included when capacity remains)
-      3. Active universe members (dynamic — the main altcoin source)
+      2. Active pending candidates (never displaced by discovery work)
+      3. Config core symbols (always included when capacity remains)
+      4. Active universe members (dynamic — the main altcoin source)
 
     Discovery sources are capped at _MAX_DYNAMIC_INSTRUMENTS to keep collection
     within the scheduler budget; the total expands when open Positions exceed it.
     """
     exchange = cfg.market_data.ccxt_exchange or "binance"
 
-    seen: dict[tuple[str, str], InstrumentId] = {}
+    seen: dict[tuple[str, str, str], InstrumentId] = {}
     try:
         from aletheia.storage import repositories as repo
         for pos in repo.list_all_open_positions():
@@ -239,16 +240,35 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
             try:
                 mt = _instrument_market_from_row(pos.get("market_type"))
                 iid = InstrumentId.from_parts(exchange, sym, mt)
-                seen.setdefault((iid.symbol, iid.market_type), iid)
+                seen.setdefault((iid.exchange, iid.symbol, iid.market_type), iid)
             except (ValueError, Exception):
                 pass
     except Exception:
         pass
     n_open = len(seen)
 
+    try:
+        from aletheia.data.candidate_market_facts import (
+            pending_candidate_instruments,
+            record_candidate_refresh_failure,
+        )
+
+        for iid in pending_candidate_instruments():
+            if iid.exchange != exchange:
+                record_candidate_refresh_failure(
+                    iid,
+                    component="market_snapshot_schedule",
+                    reason="venue_not_configured",
+                )
+                continue
+            seen.setdefault((iid.exchange, iid.symbol, iid.market_type), iid)
+    except Exception:
+        logger.debug("market_snapshots: pending candidate expansion failed", exc_info=True)
+    n_pending = len(seen) - n_open
+
     for iid in observed_instruments_from_config(cfg):
-        seen.setdefault((iid.symbol, iid.market_type), iid)
-    n_config = len(seen) - n_open
+        seen.setdefault((iid.exchange, iid.symbol, iid.market_type), iid)
+    n_config = len(seen) - n_open - n_pending
 
     try:
         from aletheia.storage import repositories as repo
@@ -262,7 +282,7 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
                 # so a perp universe member gets its perp ticker collected.
                 mt = _instrument_market_from_row(m.get("market_type"))
                 iid = InstrumentId.from_parts(exchange, sym, mt)
-                seen.setdefault((iid.symbol, iid.market_type), iid)
+                seen.setdefault((iid.exchange, iid.symbol, iid.market_type), iid)
             except (ValueError, Exception):
                 pass
     except Exception:
@@ -271,14 +291,16 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
     # The cap protects discovery work, never an existing Position. When open
     # positions alone exceed it, expand the cycle rather than silently starving
     # a stop/PnL lifecycle of fresh prices.
-    effective_cap = max(_MAX_DYNAMIC_INSTRUMENTS, n_open)
+    effective_cap = max(_MAX_DYNAMIC_INSTRUMENTS, n_open + n_pending)
     instruments = list(seen.values())[:effective_cap]
     logger.debug(
-        "market_snapshots: collecting %d instruments (open=%d config=%d dynamic=%d)",
+        "market_snapshots: collecting %d instruments "
+        "(open=%d pending=%d config=%d dynamic=%d)",
         len(instruments),
         n_open,
+        n_pending,
         n_config,
-        max(0, len(instruments) - n_open - n_config),
+        max(0, len(instruments) - n_open - n_pending - n_config),
     )
     return instruments
 
@@ -286,8 +308,8 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
 async def collect_market_snapshots() -> dict:
     """Fetch a ticker for each observed instrument and persist a market snapshot.
 
-    Dynamically includes universe members and open-position symbols so that
-    altcoin candidates have fresh price data for paper trading.
+    Includes open Positions and exact pending carriers before bounded discovery
+    sources so active entry candidates retain durable price observations.
 
     xStock instruments are pre-filtered against the Bitget venue listing cache
     (TTL 6h) before the fetch loop so that delisted tokens never enter the

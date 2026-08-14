@@ -1268,6 +1268,93 @@ def test_universe_market_coverage_ok_when_enabled_markets_both_produce_features(
     assert "perp=1" in verdict.detail
 
 
+def test_pending_candidate_market_coverage_complete_is_ok(monkeypatch):
+    from aletheia.data import candidate_market_facts
+
+    monkeypatch.setattr(
+        candidate_market_facts,
+        "build_pending_candidate_market_report",
+        lambda: {
+            "status": "complete",
+            "pending_total": 2,
+            "complete_count": 2,
+            "partial_count": 0,
+            "unavailable_count": 0,
+            "items": [],
+        },
+    )
+    report = dx.Report(generated_at="t")
+    dx._probe_pending_candidate_market_coverage(report)
+    assert report.checks[0].severity == "ok"
+    assert "complete=2" in report.checks[0].detail
+
+
+def test_pending_candidate_market_coverage_partial_is_warn_with_bounded_sample(
+    monkeypatch,
+):
+    from aletheia.data import candidate_market_facts
+
+    items = [
+        {
+            "venue": "binance",
+            "symbol": f"C{index}/USDT",
+            "physical_market_type": "perp",
+            "availability": "partial",
+            "reasons": ["candidate_entry_mark_unavailable"],
+        }
+        for index in range(5)
+    ]
+    monkeypatch.setattr(
+        candidate_market_facts,
+        "build_pending_candidate_market_report",
+        lambda: {
+            "status": "partial",
+            "pending_total": 5,
+            "complete_count": 0,
+            "partial_count": 5,
+            "unavailable_count": 0,
+            "items": items,
+        },
+    )
+    report = dx.Report(generated_at="t")
+    dx._probe_pending_candidate_market_coverage(report)
+    verdict = report.checks[0]
+    assert verdict.severity == "warn"
+    assert "C0/USDT" in verdict.detail and "C2/USDT" in verdict.detail
+    assert "C3/USDT" not in verdict.detail
+
+
+def test_pending_candidate_market_coverage_without_pending_has_no_denominator(
+    monkeypatch,
+):
+    from aletheia.data import candidate_market_facts
+
+    monkeypatch.setattr(
+        candidate_market_facts,
+        "build_pending_candidate_market_report",
+        lambda: {"status": "no_pending", "pending_total": 0},
+    )
+    report = dx.Report(generated_at="t")
+    dx._probe_pending_candidate_market_coverage(report)
+    assert report.checks[0].severity == "info"
+    assert "no denominator" in report.checks[0].detail
+
+
+def test_pending_candidate_market_coverage_read_failure_is_unavailable(monkeypatch):
+    from aletheia.data import candidate_market_facts
+
+    def fail():
+        raise sqlite3.OperationalError("simulated read failure")
+
+    monkeypatch.setattr(
+        candidate_market_facts, "build_pending_candidate_market_report", fail,
+    )
+    report = dx.Report(generated_at="t")
+    dx._probe_pending_candidate_market_coverage(report)
+    assert report.checks[0].severity == "info"
+    assert "coverage unavailable" in report.checks[0].detail
+
+
 def test_profit_loop_success_only_claims_proposal_flow_liveness(tmp_path, monkeypatch):
     from aletheia.storage.sqlite import get_db
 

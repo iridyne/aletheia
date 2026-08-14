@@ -1072,6 +1072,7 @@ def test_proposal_preflight_unavailable_does_not_claim_pending_source(
                     "symbol": opportunity.symbol,
                     "direction": "long",
                     "market_type": "spot",
+                    "venue": "binance",
                     "opportunity_id": opportunity.id,
                     "signal_source": "market_observer",
                     "at": pending.created_at,
@@ -1091,6 +1092,7 @@ def test_proposal_preflight_unavailable_does_not_claim_pending_source(
             "status": "available",
             "symbol": opportunity.symbol,
             "market_type": "spot",
+            "venue": "binance",
             "price": 100.0,
             "authority": "fresh_exact_market_mark",
         }
@@ -1428,6 +1430,7 @@ def test_refreshed_mark_invalidating_plan_is_typed_defer(
                     "symbol": opportunity.symbol,
                     "direction": "long",
                     "market_type": "spot",
+                    "venue": "test",
                     "opportunity_id": opportunity.id,
                     "signal_source": "market_observer",
                     "at": pending.created_at,
@@ -1580,6 +1583,7 @@ def test_unrepaired_reward_risk_envelope_does_not_claim_pending_source(
                     "symbol": opportunity.symbol,
                     "direction": "long",
                     "market_type": "spot",
+                    "venue": "test",
                     "opportunity_id": opportunity.id,
                     "signal_source": "market_observer",
                     "at": pending.created_at,
@@ -1714,6 +1718,7 @@ def test_operator_spot_short_cannot_relabel_or_consume_carrier(tmp_path, monkeyp
                     "symbol": opportunity.symbol,
                     "direction": "short",
                     "market_type": "spot",
+                    "venue": "test",
                     "opportunity_id": opportunity.id,
                     "signal_source": "market_observer",
                     "at": pending.created_at,
@@ -4308,7 +4313,12 @@ def test_single_candidate_scope_requires_explicit_market_for_selected_carrier(
             market_type=market,
         ))
         insert_market_snapshot(
-            MarketSnapshot(symbol=opportunity.symbol, market_type=market, price=100.0)
+            MarketSnapshot(
+                symbol=opportunity.symbol,
+                market_type=market,
+                exchange=cfg.market_data.ccxt_exchange,
+                price=100.0,
+            )
         )
         opportunity_ids.append(opportunity.id)
 

@@ -111,9 +111,39 @@ def _print_deep_diagnostics(bundle: dict) -> None:
         alpha = trading.get("alpha") or {}
         funnel = trading.get("funnel") or {}
         sizing = trading.get("sizing") or {}
+        candidate_facts = trading.get("candidate_market_facts") or {}
+
+        typer.echo("Pending candidate market facts:")
+        if candidate_facts.get("status") == "unavailable":
+            typer.echo(f"  unavailable: {candidate_facts.get('reason')}")
+        elif candidate_facts.get("status") == "no_pending":
+            typer.echo("  no active pending carriers — no denominator")
+        else:
+            typer.echo(
+                f"  {candidate_facts.get('complete_count', 0)}/"
+                f"{candidate_facts.get('pending_total', 0)} complete"
+            )
+            for item in candidate_facts.get("items") or []:
+                feature = item.get("feature") or {}
+                ohlcv = item.get("ohlcv") or {}
+                mark = item.get("entry_mark") or {}
+                typer.echo(
+                    f"  - {item.get('venue') or 'unknown'}:"
+                    f"{item.get('symbol') or 'unknown'}:"
+                    f"{item.get('physical_market_type') or 'unknown'} "
+                    f"{item.get('availability')}: "
+                    f"{','.join(item.get('reasons') or ['available'])}"
+                )
+                typer.echo(
+                    f"    feature={feature.get('snapshot_at')} "
+                    f"source_age={feature.get('data_freshness_sec')}s; "
+                    f"ohlcv_1h={(ohlcv.get('1h') or {}).get('newest_at')} "
+                    f"ohlcv_4h={(ohlcv.get('4h') or {}).get('newest_at')}; "
+                    f"mark={mark.get('observed_at')}"
+                )
 
         alpha_b = alpha.get("main_bottleneck") or {}
-        typer.echo("Alpha:")
+        typer.echo("\nAlpha:")
         if alpha.get("available") is False:
             typer.echo(f"  unavailable: {alpha.get('reason')}")
         else:

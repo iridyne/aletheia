@@ -41,6 +41,9 @@ _CANDIDATE_SPECIFIC_EXACT: frozenset[str] = frozenset(
         "candidate_technical_snapshot_unavailable",
         "candidate_technical_snapshot_incomplete",
         "candidate_technical_snapshot_stale",
+        "candidate_entry_mark_unavailable",
+        "candidate_entry_mark_identity_unavailable",
+        "candidate_entry_mark_identity_mismatch",
     }
 )
 

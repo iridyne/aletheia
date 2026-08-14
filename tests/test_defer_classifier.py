@@ -47,6 +47,9 @@ class TestCandidateSpecificReasons:
             "candidate_technical_snapshot_unavailable",
             "candidate_technical_snapshot_incomplete",
             "candidate_technical_snapshot_stale",
+            "candidate_entry_mark_unavailable",
+            "candidate_entry_mark_identity_unavailable",
+            "candidate_entry_mark_identity_mismatch",
         ],
     )
     def test_snapshot_variants(self, code):
