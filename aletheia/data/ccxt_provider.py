@@ -206,6 +206,9 @@ class CCXTProvider:
         timeframe: str = "1h",
         limit: int = 100,
         since: int | None = None,
+        *,
+        _record_venue_health: bool = True,
+        _persist_result: bool = True,
     ) -> OHLCVResult:
         ccxt_symbol, canon, mkt = _resolve_ccxt_symbol(symbol)
 
@@ -243,7 +246,8 @@ class CCXTProvider:
                 raw = await ensure().fetch_ohlcv(
                     ccxt_symbol, timeframe=timeframe, since=since, limit=limit
                 )
-                record_venue_success(name)
+                if _record_venue_health:
+                    record_venue_success(name)
                 parsed = [
                     parse_ohlcv_candle(row, provider="ccxt", exchange=name)
                     for row in raw
@@ -281,14 +285,15 @@ class CCXTProvider:
                 # on the scheduler event loop stalls unrelated async jobs and API
                 # work during bursty OHLCV refreshes, so keep the write awaited but
                 # move the blocking wait to a worker thread.
-                await asyncio.to_thread(
-                    self._persist,
-                    canon,
-                    timeframe,
-                    candles,
-                    name,
-                    market_type=mkt,
-                )
+                if _persist_result:
+                    await asyncio.to_thread(
+                        self._persist,
+                        canon,
+                        timeframe,
+                        candles,
+                        name,
+                        market_type=mkt,
+                    )
                 result = OHLCVResult(
                     candles,
                     requested=limit,
@@ -308,7 +313,7 @@ class CCXTProvider:
                     outcome="failed",
                     reason=type(e).__name__,
                 ))
-                if is_venue_refusal(e):
+                if _record_venue_health and is_venue_refusal(e):
                     record_venue_failure(name, e)
                 logger.warning("ohlcv fetch failed on %s for %s: %s", name, ccxt_symbol, e)
         if attempts and any(attempt.outcome == "empty" for attempt in attempts):
@@ -321,6 +326,24 @@ class CCXTProvider:
             last_err.ohlcv_attempts = tuple(attempts)  # type: ignore[attr-defined]
             raise last_err
         raise RuntimeError("ohlcv fetch failed")
+
+    async def get_ohlcv_observation(
+        self,
+        symbol: InstrumentId | str,
+        timeframe: str = "1h",
+        limit: int = 100,
+        since: int | None = None,
+    ) -> OHLCVResult:
+        """Fetch OHLCV without changing venue health or market-data history."""
+
+        return await self.get_ohlcv(
+            symbol,
+            timeframe=timeframe,
+            limit=limit,
+            since=since,
+            _record_venue_health=False,
+            _persist_result=False,
+        )
 
     @staticmethod
     def _persist(

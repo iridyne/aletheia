@@ -18,6 +18,7 @@
 | 5 | paper_trader | 3min + on-demand | agents | Collect signals → signal_pending PiDecisions (System Operator submits proposals — Phase 4a). `scheduler.notify_paper_trader(source)` coalesces committed Opportunity, eligibility-config, Guard-set, Universe refresh/TTL-slide, and Operator queue-slot-release events into an immediate run. The source list is persisted in `AgentRun.trigger_type`; 3min remains the safety fallback. |
 | 6 | pi_trading_decision | ~15min (configurable) | agents | System Operator heartbeat (daemon fallback) |
 | 7 | position_manager | 5min | io | Manage open positions (trailing stop, exit) |
+| 7a | position_path_observer | 5min | io | Recover and materialize the oldest expected complete 5m Position bucket |
 | 8 | tpsl_fill_check | 90s | io | Check exchange TP/SL order fills |
 | 9 | position_reconcile | 5min | io | Reconcile local vs exchange positions |
 | 10 | post_trade_reviewer | 4h | agents | Review closed trades for lessons |
@@ -320,6 +321,28 @@ durably queued and independently retried by `outcome_hook_replay`.
   only their prompt display is bounded.
 - **Position X authority**: explicit owner aggregate-row or sanitized holder-batch imports and their 1h/4h/24h outcomes are observation-only. Holder batches are reduced to aggregate snapshots and never persist holder identities. The read-only evaluator compares gross weighted/equal/individual/no-structure baselines and rejects retrospective imports, mixed epochs, or mixed feature contracts; cost-aware evidence remains unavailable. No automatic source or scheduler is claimed, `ready_for_research_review` grants no promotion, and the evidence never changes Agent, Risk, or Execution authority.
 - **Safety**: Never executes orders directly. A complete `trade` prepares one immutable Proposal for the Gateway; `close_one` uses the central close router with an exact fresh mark.
+
+#### position_path_observer
+
+- **Trigger**: scheduler every 5min on the shared `io` executor
+- **Inputs**: all open/eligible closed Positions, append-only Position-path observations,
+  and the durable deferred-bucket queue
+- **Outputs**: one append-only `available`/`unavailable` observation per resolved
+  Position/5m bucket, or a bounded retry row while transient market-data evidence is
+  unavailable
+- **Expected-bucket contract**: the first bucket starts at the first complete 5m
+  interval after `opened_at`; open Positions end at the latest completed bucket, and
+  closed Positions end at the last bucket completed before `closed_at`. Each run
+  registers only the earliest not-yet-materialized bucket for a Position, then consumes
+  the oldest due bucket cohort. A retry reaches terminal `unavailable` after the
+  bounded attempt limit; it never remains pending forever.
+- **Identity contract**: OHLCV lookup and deduplication use the exact physical
+  `InstrumentId` (venue + canonical symbol + spot/perp market). A bar is available
+  only with the exact timestamp and provider `is_closed` proof.
+- **Side effects**: observation-only. It never mutates Position, ExitPlan, Proposal,
+  RiskDecision, Order, Fill, Learning, or Live state. `aletheia control status` exposes
+  oldest missing bucket, deferred count, observer lag, and trailing 24h available /
+  unavailable / skipped counts.
 
 #### position_manager
 

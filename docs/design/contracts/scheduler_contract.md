@@ -26,7 +26,7 @@
 
 **暂停所有权**：`runtime.paused` 是 `runtime.pause_owners` 是否非空的兼容投影，不再是可由任一恢复循环独占清除的单一事实。人工操作、Exchange Connectivity、Startup Behavior Gate 与 LLM Startup Gate 各持有带 `reason`、`generation`、`acquired_at` 的 durable lease；一个恢复路径只能释放自身匹配 generation 的 lease。仅最后一个 owner 成功释放时才调用一次 `resume_scheduler()`；公开 `resume_scheduler()` 会在同一进程级 pause-transition `RLock` 内重新读取 durable owners，并在任一 owner 存在时拒绝修改 APScheduler，因此 Settings 的 `scheduler_enabled=true` 也不能旁路所有权。若调度器恢复调用失败，原 lease 会恢复到配置中并保持 fail-closed。旧配置中的 `paused_by_connectivity`/generation/timestamp 会迁移为 `exchange_connectivity` owner，无法归因的旧 `paused=true` 则诚实迁移为时间与 generation 均未知的 `manual` owner。`GET /api/status` 的 `pause_owners` 与 Doctor 的 `config.paused` 项是该状态的只读观测面。
 
-当前 essential 集合：`market_data`、`data_collectors`、`data_collector_context`、`connectivity_monitor`、`portfolio_snapshot`、`price_feed`、`position_manager`、`ohlcv_nightly_backfill`、`ohlcv_active_backfill`、`exchange_sync`、`health_check`、`cleanup`、`news_fetch`、`okx_demo_symbols`、`reconciliation`、`position_reconcile`、`tpsl_fill_check`、`outcome_settler`、`paper_funding_settler`、`outcome_hook_replay`、`shadow_resolver`、`learning_contribution_evaluator`、`learning_measurement_startup_catchup`、`learning_lifecycle_audit_reconciler`、`universe_scanner_audit_reconciler`。
+当前 essential 集合：`market_data`、`data_collectors`、`data_collector_context`、`connectivity_monitor`、`portfolio_snapshot`、`price_feed`、`position_manager`、`position_path_observer`、`ohlcv_nightly_backfill`、`ohlcv_active_backfill`、`exchange_sync`、`health_check`、`cleanup`、`news_fetch`、`okx_demo_symbols`、`reconciliation`、`position_reconcile`、`tpsl_fill_check`、`outcome_settler`、`paper_funding_settler`、`outcome_hook_replay`、`shadow_resolver`、`learning_contribution_evaluator`、`learning_measurement_startup_catchup`、`learning_lifecycle_audit_reconciler`、`universe_scanner_audit_reconciler`。
 
 ---
 
@@ -85,7 +85,8 @@ _EXECUTOR_WORKERS = {
 | 13 | `pi_trading_decision` | 376 | interval | minutes=15（固定安全网周期） | agents | 300 | 120 |
 | 14 | `price_feed` | 381 | interval | seconds=30 | fast_io | 45 | 15 |
 | 15 | `position_manager` | 385 | interval | minutes=5 | io | — | 60 |
-| 16 | `position_reconcile` | 389 | interval | minutes=5 | io | — | 60 |
+| 15a | `position_path_observer` | 389 | interval | minutes=5 | io | 90 | 120 |
+| 16 | `position_reconcile` | 393 | interval | minutes=5 | io | — | 60 |
 | 17 | `tpsl_fill_check` | 394 | interval | seconds=90 | io | 45 | 30 |
 | 18 | `cleanup` | 399 | cron | hour=3, minute=17, tz=Asia/Shanghai | io | — | 600 |
 | 19 | `health_check` | 403 | interval | minutes=10 | io | — | 120 |

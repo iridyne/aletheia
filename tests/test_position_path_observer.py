@@ -363,6 +363,303 @@ async def test_observer_skips_existing_bucket_before_provider_lookup(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_observer_recovers_oldest_missing_bucket_one_per_position_per_round(
+    monkeypatch,
+):
+    from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Candle, OHLCVResult
+    from aletheia.portfolio import position_path_observer as observer
+    from aletheia.storage import repositories as repo
+
+    bucket = 1_786_579_200_000
+    position = _seed_position(position_id="position-path-gap")
+    observer._store_unavailable(
+        position.model_dump(),
+        bucket_open_ms=bucket + 1_500_000,
+        observed_at="2026-08-13T00:25:00+00:00",
+        reason="seeded_latest_bucket",
+    )
+    requested: list[int] = []
+
+    class Provider:
+        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+            requested.append(since)
+            return OHLCVResult(
+                [
+                    Candle(
+                        since,
+                        100.0,
+                        104.0,
+                        99.0,
+                        103.0,
+                        12.0,
+                        True,
+                        "ccxt",
+                        "bitget",
+                    )
+                ],
+                requested=2,
+            )
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+    )
+    now = datetime.fromtimestamp((bucket + 1_800_000) / 1000, tz=timezone.utc)
+
+    first = await observer.observe_open_position_paths(now=now)
+    second = await observer.observe_open_position_paths(now=now)
+
+    assert first["inserted"] == 1
+    assert second["inserted"] == 1
+    assert requested == [bucket, bucket + 300_000]
+    assert [
+        row["bucket_open_ms"] for row in repo.list_position_path_observations(position.id)
+    ] == [bucket, bucket + 300_000, bucket + 1_500_000]
+
+
+@pytest.mark.asyncio
+async def test_observer_recovers_closed_position_path_after_missed_runs(monkeypatch):
+    from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Candle, OHLCVResult
+    from aletheia.portfolio import position_path_observer as observer
+    from aletheia.storage import repositories as repo
+
+    bucket = 1_786_579_200_000
+    position = _seed_position(position_id="position-path-closed-gap")
+    repo.update_position(
+        position.id,
+        status="closed",
+        closed_at=datetime.fromtimestamp(
+            (bucket + 900_000) / 1000, tz=timezone.utc
+        ).isoformat(),
+    )
+    requested: list[int] = []
+
+    class Provider:
+        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+            requested.append(since)
+            return OHLCVResult(
+                [
+                    Candle(
+                        since,
+                        100.0,
+                        104.0,
+                        99.0,
+                        103.0,
+                        12.0,
+                        True,
+                        "ccxt",
+                        "bitget",
+                    )
+                ],
+                requested=2,
+            )
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+    )
+    now = datetime.fromtimestamp((bucket + 1_800_000) / 1000, tz=timezone.utc)
+
+    for _ in range(3):
+        result = await observer.observe_open_position_paths(now=now)
+        assert result["inserted"] == 1
+
+    assert requested == [bucket, bucket + 300_000, bucket + 600_000]
+    rows = repo.list_position_path_observations(position.id)
+    assert [row["bucket_open_ms"] for row in rows] == [
+        bucket,
+        bucket + 300_000,
+        bucket + 600_000,
+    ]
+    assert all(row["capture_mode"] == "post_close_final_snapshot" for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_observer_terminal_recovery_uses_position_budget_for_the_round(
+    monkeypatch,
+):
+    from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Candle, OHLCVResult
+    from aletheia.portfolio import position_path_observer as observer
+    from aletheia.storage import repositories as repo
+
+    bucket = 1_786_579_200_000
+    position = _seed_position(position_id="position-path-terminal-budget")
+    repo.defer_position_path_observation_bucket(
+        position.id,
+        bucket_open_ms=bucket,
+        attempted_at="2026-08-13T00:05:00+00:00",
+        reason="scheduled",
+    )
+    for _ in range(3):
+        repo.defer_position_path_observation_bucket(
+            position.id,
+            bucket_open_ms=bucket,
+            attempted_at="2026-08-13T00:10:00+00:00",
+            reason="market_data_fetch_failed",
+        )
+    requested: list[int] = []
+
+    class Provider:
+        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+            requested.append(since)
+            return OHLCVResult(
+                [
+                    Candle(
+                        since,
+                        100.0,
+                        104.0,
+                        99.0,
+                        103.0,
+                        12.0,
+                        True,
+                        "ccxt",
+                        "bitget",
+                    )
+                ],
+                requested=2,
+            )
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+    )
+    now = datetime.fromtimestamp((bucket + 600_000) / 1000, tz=timezone.utc)
+
+    first = await observer.observe_open_position_paths(now=now)
+    assert first["unavailable"] == 1
+    assert requested == []
+    assert repo.list_oldest_deferred_position_path_bucket() == []
+
+    second = await observer.observe_open_position_paths(now=now)
+    assert second["available"] == 1
+    assert requested == [bucket + 300_000]
+
+
+@pytest.mark.asyncio
+async def test_observer_rejects_closed_bar_with_wrong_provider_identity(monkeypatch):
+    from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Candle, OHLCVResult
+    from aletheia.portfolio import position_path_observer as observer
+    from aletheia.storage import repositories as repo
+
+    bucket = 1_786_579_200_000
+    position = _seed_position(position_id="position-path-bar-identity")
+
+    class Provider:
+        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+            return OHLCVResult(
+                [
+                    Candle(
+                        bucket,
+                        100.0,
+                        104.0,
+                        99.0,
+                        103.0,
+                        12.0,
+                        True,
+                        "ccxt",
+                        "okx",
+                    )
+                ],
+                requested=2,
+            )
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+    )
+
+    result = await observer.observe_open_position_paths(
+        now=datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc)
+    )
+
+    assert result["deferred"] == 1
+    assert repo.list_position_path_observations(position.id) == []
+
+
+def test_position_path_observer_status_exposes_recovery_and_24h_counts():
+    from aletheia.portfolio.position_path_observer import (
+        _store_unavailable,
+        build_position_path_observer_status,
+    )
+    from aletheia.storage import repositories as repo
+
+    bucket = 1_786_579_200_000
+    now = datetime.fromtimestamp((bucket + 1_800_000) / 1000, tz=timezone.utc)
+    position = _seed_position(position_id="position-path-status")
+    assert repo.insert_position_path_observation(
+        {
+            "position_id": position.id,
+            "bucket_open_ms": bucket + 300_000,
+            "observed_at": "2026-08-13T00:06:00+00:00",
+            "venue": "bitget",
+            "symbol": "BTC/USDT",
+            "market_type": "perp",
+            "direction": "long",
+            "entry_price": 100.0,
+            "quantity": 0.01,
+            "bar_open": 100.0,
+            "bar_high": 104.0,
+            "bar_low": 99.0,
+            "bar_close": 103.0,
+            "bar_volume": 12.0,
+            "bar_provider": "ccxt",
+            "mark_price": 103.0,
+            "unrealized_pnl": 0.03,
+            "entry_fee": 0.01,
+            "funding_cost": 0.0,
+            "funding_source": "local_paper_funding_v2",
+            "stop_price": 95.0,
+            "take_profit_price": 110.0,
+            "exit_plan_version": 0,
+            "evidence_status": "available",
+            "evidence_reason": "complete_exact_5m_bar",
+            "producer_commit": None,
+            "runtime_session_id": None,
+            "capture_mode": "open_snapshot",
+        }
+    )
+    assert _store_unavailable(
+        position.model_dump(),
+        bucket_open_ms=bucket + 600_000,
+        observed_at="2026-08-13T00:11:00+00:00",
+        reason="exact_5m_bar_unavailable",
+    )
+    repo.defer_position_path_observation_bucket(
+        position.id,
+        bucket_open_ms=bucket,
+        attempted_at="2026-08-13T00:05:00+00:00",
+        reason="scheduled",
+    )
+
+    status = build_position_path_observer_status(now=now)
+
+    assert status["oldest_missing_bucket"] == {
+        "position_id": position.id,
+        "bucket_open_ms": bucket,
+        "bucket_open_at": "2026-08-13T00:00:00+00:00",
+    }
+    assert status["deferred_bucket_count"] == 1
+    assert status["observer_lag"] == {"seconds": 1500.0, "buckets": 5}
+    assert status["last_24h"] == {
+        "available": 1,
+        "unavailable": 1,
+        "skipped": 3,
+    }
+
+
+@pytest.mark.asyncio
 async def test_observer_skips_bar_that_crosses_position_entry(monkeypatch):
     from aletheia.data import ccxt_provider
     from aletheia.portfolio.position_path_observer import observe_open_position_paths
@@ -685,7 +982,7 @@ async def test_observer_persists_invalid_opened_at_as_unavailable(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_observer_backs_off_transient_market_data_retries_without_terminal_fact(
+async def test_observer_persists_unavailable_after_bounded_market_data_retries(
     monkeypatch,
 ):
     from aletheia.data import ccxt_provider
@@ -714,26 +1011,23 @@ async def test_observer_backs_off_transient_market_data_retries_without_terminal
             )
         )
 
-    assert [result["deferred"] for result in results] == [1, 1, 1]
-    assert repo.list_position_path_observations(position.id) == []
-    retry = get_db().execute(
-        "SELECT attempt_count,reason FROM position_path_observation_deferred_buckets "
-        "WHERE position_id=? AND bucket_open_ms=?",
-        (position.id, bucket),
-    ).fetchone()
-    assert dict(retry) == {
-        "attempt_count": 3,
-        "reason": "market_data_fetch_failed",
-    }
-    get_db().execute(
-        "UPDATE position_path_observation_deferred_buckets "
-        "SET last_attempt_at=datetime('now') "
-        "WHERE position_id=? AND bucket_open_ms=?",
-        (position.id, bucket),
-    )
-    assert all(
-        row["bucket_open_ms"] != bucket
-        for row in repo.list_oldest_deferred_position_path_bucket()
+    assert [result["deferred"] for result in results] == [1, 1, 0]
+    assert [result["inserted"] for result in results] == [0, 0, 1]
+    assert results[-1]["unavailable"] == 1
+    rows = repo.list_position_path_observations(position.id)
+    assert len(rows) == 1
+    assert rows[0]["evidence_status"] == "unavailable"
+    assert rows[0]["evidence_reason"] == "max_retries_exceeded:market_data_fetch_failed"
+    assert repo.list_oldest_deferred_position_path_bucket() == []
+    assert (
+        get_db()
+        .execute(
+            "SELECT COUNT(*) FROM position_path_observation_deferred_buckets "
+            "WHERE position_id=? AND bucket_open_ms=?",
+            (position.id, bucket),
+        )
+        .fetchone()[0]
+        == 0
     )
 
 
