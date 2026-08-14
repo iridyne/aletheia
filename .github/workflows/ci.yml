@@ -45,6 +45,38 @@ jobs:
       - name: Verify architecture and CI invariants
         run: uv run pytest tests/test_architecture_fitness.py tests/test_ci_workflow_contract.py -q --tb=short
 
+      # Trust-boundary branch coverage. Scoped to eight files where a wrong
+      # answer misleads a decision, corrupts state, or bypasses a check
+      # (see .coveragerc). No repo-wide fail-under; floors live in
+      # scripts/coverage_floors.py and only ratchet up.
+      - name: Trust-boundary coverage floors
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-cov
+        run: |
+          set -euo pipefail
+          uv run pytest \
+            tests/test_profit_gradient.py \
+            tests/test_profit_gradient_evidence.py \
+            tests/test_p3_evidence_epoch.py \
+            tests/test_filter_replay.py \
+            tests/test_position_replay.py \
+            tests/test_reconciliation.py \
+            tests/test_oco_reconcile.py \
+            tests/test_cr_ex01_reconcile.py \
+            tests/test_position_reconciler.py \
+            tests/test_scheduler_reconcile.py \
+            tests/test_reconciliation_integrity_incident.py \
+            tests/test_reconciliation_properties.py \
+            tests/test_context_effectiveness.py \
+            tests/test_context_artifacts_properties.py \
+            tests/test_filter_replay_properties.py \
+            tests/test_policy_epoch_properties.py \
+            tests/test_profit_gradient_evidence_properties.py \
+            --cov --cov-report=term-missing:skip-covered \
+            -q --tb=short --timeout=120
+          uv run python scripts/coverage_floors.py --selftest
+          uv run python scripts/coverage_floors.py
+
       - name: Check documentation governance
         run: uv run python scripts/check_docs.py
 

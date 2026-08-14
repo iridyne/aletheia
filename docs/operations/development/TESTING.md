@@ -1,6 +1,7 @@
 # Testing Guide
 
 > Aletheia 的测试体系分两层：常规 pytest 测试 + SDD executable claims。
+> Trust-boundary branch coverage: 参见 [`TRUST_BOUNDARY_COVERAGE.md`](TRUST_BOUNDARY_COVERAGE.md)。
 
 ---
 

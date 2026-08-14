@@ -217,3 +217,119 @@ def test_kill_switch_module_has_required_interface():
     assert callable(getattr(kill_switch, "is_active", None))
     assert callable(getattr(kill_switch, "activate", None))
     assert callable(getattr(kill_switch, "deactivate", None))
+
+
+# ---------------------------------------------------------------------------
+# Trust-boundary coverage registry
+#
+# See docs/operations/development/TRUST_BOUNDARY_COVERAGE.md and
+# scripts/coverage_floors.py. If a new module is created on one of the
+# canonical trust-boundary paths (Profit Gradient, epoch/cutoff, artifact
+# compiler, replay, cost reconciliation) it MUST be registered in
+# .coveragerc's include= list, otherwise a PR could grow silently
+# unmeasured code on a path whose wrong answer misleads a decision,
+# corrupts state, or bypasses a check.
+#
+# Registration is the contract; the floor in coverage_floors.py can be
+# added or raised in a follow-up.
+# ---------------------------------------------------------------------------
+
+
+def test_trust_boundary_files_are_registered_in_coveragerc():
+    """Every file on a canonical trust-boundary path must be listed in
+    ``.coveragerc``'s ``include=`` block. Missing the registration means
+    a silent hole in the coverage gate.
+    """
+    import fnmatch
+    import re
+
+    repo_root = Path(__file__).resolve().parent.parent
+    coveragerc = (repo_root / ".coveragerc").read_text()
+
+    # Parse the ``include =`` block. coverage.py accepts either
+    # ``aletheia/...`` or ``*/aletheia/...``; we accept both by stripping
+    # a leading ``*/``.
+    run_section = re.search(r"\[run\](.*?)(?:\n\[|\Z)", coveragerc, re.S)
+    assert run_section is not None, ".coveragerc is missing a [run] section"
+    include_match = re.search(
+        r"^include\s*=\s*\n((?:[ \t]+\S.*\n?)+)",
+        run_section.group(1),
+        re.M,
+    )
+    assert include_match is not None, ".coveragerc [run] has no include= block"
+    registered = {
+        line.strip().removeprefix("*/")
+        for line in include_match.group(1).splitlines()
+        if line.strip()
+    }
+
+    # Canonical trust-boundary path patterns. Any *.py file inside
+    # aletheia/ whose repo-relative path matches one of these globs is a
+    # trust boundary and must be registered. Patterns are anchored on
+    # ``aletheia/...``.
+    patterns = (
+        "aletheia/analytics/profit_gradient*.py",
+        "aletheia/execution/reconciliation.py",
+        "aletheia/economics/context_artifacts.py",
+        "aletheia/learning/*epoch*.py",
+        "aletheia/learning/policy_epochs.py",
+        # Replay lives under two subpackages today; both count.
+        "aletheia/analytics/*replay*.py",
+        "aletheia/counterfactual/*replay*.py",
+    )
+
+    aletheia_root = repo_root / "aletheia"
+    unregistered: list[str] = []
+    for path in aletheia_root.rglob("*.py"):
+        if path.name == "__init__.py":
+            continue
+        rel = path.relative_to(repo_root).as_posix()
+        if any(fnmatch.fnmatchcase(rel, pat) for pat in patterns):
+            if rel not in registered:
+                unregistered.append(rel)
+
+    assert not unregistered, (
+        "TRUST-BOUNDARY REGISTRATION MISSING:\n  "
+        + "\n  ".join(unregistered)
+        + "\n\nAdd each path to .coveragerc's include= block and set a floor "
+        "in scripts/coverage_floors.py. See "
+        "docs/operations/development/TRUST_BOUNDARY_COVERAGE.md."
+    )
+
+
+def test_coverage_floors_match_coveragerc_registry():
+    """Every include= entry in .coveragerc must have a floor, and every
+    floor must correspond to a registered path. Prevents drift between
+    what's measured and what's gated.
+    """
+    import re
+    import sys
+
+    repo_root = Path(__file__).resolve().parent.parent
+    coveragerc = (repo_root / ".coveragerc").read_text()
+    run_section = re.search(r"\[run\](.*?)(?:\n\[|\Z)", coveragerc, re.S)
+    include_match = re.search(
+        r"^include\s*=\s*\n((?:[ \t]+\S.*\n?)+)",
+        run_section.group(1),
+        re.M,
+    )
+    registered = {
+        line.strip().removeprefix("*/")
+        for line in include_match.group(1).splitlines()
+        if line.strip()
+    }
+
+    sys.path.insert(0, str(repo_root / "scripts"))
+    try:
+        import coverage_floors  # type: ignore[import-not-found]
+    finally:
+        sys.path.pop(0)
+
+    floors = set(coverage_floors.FLOORS.keys())
+    missing_floor = registered - floors
+    orphan_floor = floors - registered
+    assert not missing_floor and not orphan_floor, (
+        f"coverage registry drift: "
+        f"registered-but-no-floor={sorted(missing_floor)}, "
+        f"floor-but-not-registered={sorted(orphan_floor)}"
+    )

@@ -1,0 +1,43 @@
+# Coverage is intentionally scoped to trust-boundary modules only.
+# Repo-wide line coverage would be theater (see PR #986); the gate exists to
+# prevent silent regressions on the paths where a wrong result corrupts
+# evidence, epoch/cutoff logic, or execution accounting.
+#
+# Add a module here only if it is a trust boundary that a wrong answer at
+# would mislead a decision, corrupt state, or bypass a check. Not for
+# routine plumbing.
+
+[run]
+branch = True
+parallel = True
+# include= is used instead of source= because coverage.py ignores include when
+# source is set. That gives us file-level scoping: only these eight trust-
+# boundary files are measured; everything else in the repo is invisible to
+# the report. That is intentional (see PR #986): the gate exists to catch
+# regressions on paths where a wrong answer misleads a decision, corrupts
+# state, or bypasses a check. Not a whole-repo target.
+include =
+    */aletheia/analytics/profit_gradient.py
+    */aletheia/analytics/profit_gradient_evidence.py
+    */aletheia/analytics/position_replay.py
+    */aletheia/counterfactual/filter_replay.py
+    */aletheia/economics/context_artifacts.py
+    */aletheia/execution/reconciliation.py
+    */aletheia/learning/evidence_epoch.py
+    */aletheia/learning/policy_epochs.py
+
+[report]
+# Fail closed on missing data so a misconfigured job cannot pass silently.
+skip_empty = False
+show_missing = True
+precision = 1
+exclude_also =
+    if TYPE_CHECKING:
+    raise NotImplementedError
+    ^\s*\.\.\.$
+    ^\s*pass$
+
+[paths]
+source =
+    aletheia/
+    */site-packages/aletheia/
