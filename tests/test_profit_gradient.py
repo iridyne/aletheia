@@ -661,6 +661,55 @@ def test_paired_bootstrap_seed_ignores_row_order_within_clusters():
     assert baseline == pytest.approx(changed_order)
 
 
+def test_noncausal_methods_use_resampling_clusters_for_independence_gate():
+    samples = {
+        layer: _samples(layer, effect_bp=10.0, count=40, with_arms=False)
+        for layer in gradient.LAYERS
+    }
+    for index, sample in enumerate(samples["Costs"]):
+        sample["cluster_id"] = f"cluster-{index // 20}"
+
+    for method in ("deterministic_decomposition", "directional_observational"):
+        result = gradient.select_unique_max_direction(
+            samples,
+            evidence_context=_context(comparison_method=method),
+        )
+
+        costs = result["layers"]["Costs"]
+        assert costs["independent_unit_count"] == 2
+        assert "independent_units_below_30" in costs["gate_reasons"]
+        assert costs["gate_status"] == "ineligible"
+
+
+def test_non_finite_aggregate_evidence_is_ineligible():
+    samples = _seven_layers()
+    for sample in samples["Costs"]:
+        sample["paired_net_delta_bp"] = 1e308
+        sample["paired_net_delta_quote"] = 1e308
+
+    result = gradient.select_unique_max_direction(
+        samples,
+        evidence_context=_context(comparison_method="paired_same_unit"),
+    )
+
+    costs = result["layers"]["Costs"]
+    assert costs["paired_net_delta_bp"] is None
+    assert costs["harm_quote"] is None
+    assert "non_finite_aggregate_metric" in costs["gate_reasons"]
+    assert result["winner_layer"] is None
+
+
+def test_randomized_temporal_midpoint_timestamp_tie_fails_closed():
+    samples = _seven_layers()
+    costs = samples["Costs"]
+    costs[20]["occurred_at"] = costs[19]["occurred_at"]
+
+    result = gradient.select_unique_max_direction(samples, evidence_context=_context())
+
+    assert "temporal_halves_disagree" in result["layers"]["Costs"]["gate_reasons"]
+    assert result["winner_layer"] is None
+
+
 def test_temporal_sign_reversal_blocks_apparent_average_effect():
     samples = _seven_layers()
     costs = samples["Costs"]
