@@ -18,6 +18,7 @@ parallel = True
 # state, or bypasses a check. Not a whole-repo target.
 include =
     */aletheia/analytics/profit_gradient.py
+    */aletheia/analytics/profit_gradient_estimators.py
     */aletheia/analytics/profit_gradient_evidence.py
     */aletheia/analytics/position_replay.py
     */aletheia/counterfactual/filter_replay.py

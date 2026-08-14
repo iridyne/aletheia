@@ -18,6 +18,7 @@ or bypasses a check — nothing else.
 | Boundary | File |
 |---|---|
 | Profit Gradient | `aletheia/analytics/profit_gradient.py` |
+| Profit Gradient estimators | `aletheia/analytics/profit_gradient_estimators.py` |
 | Profit Gradient evidence | `aletheia/analytics/profit_gradient_evidence.py` |
 | Policy epoch | `aletheia/learning/policy_epochs.py` |
 | Evidence epoch / cutoff | `aletheia/learning/evidence_epoch.py` |
@@ -75,7 +76,8 @@ uv run python scripts/coverage_floors.py
 
 | Module | Combined line+branch |
 |---|---|
-| `aletheia/analytics/profit_gradient.py` | 92.8 % |
+| `aletheia/analytics/profit_gradient_estimators.py` | 97.6 % |
+| `aletheia/analytics/profit_gradient.py` | 92.3 % |
 | `aletheia/learning/evidence_epoch.py` | 88.5 % |
 | `aletheia/learning/policy_epochs.py` | 85.3 % |
 | `aletheia/analytics/position_replay.py` | 76.3 % |

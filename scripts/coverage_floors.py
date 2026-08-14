@@ -33,6 +33,7 @@ import coverage
 # a floor to unblock a PR — fix the regression instead.
 FLOORS: dict[str, float] = {
     "aletheia/analytics/profit_gradient.py": 90.0,
+    "aletheia/analytics/profit_gradient_estimators.py": 90.0,
     "aletheia/analytics/profit_gradient_evidence.py": 50.0,
     "aletheia/analytics/position_replay.py": 75.0,
     "aletheia/counterfactual/filter_replay.py": 50.0,
