@@ -564,6 +564,33 @@ def test_randomized_quote_harm_uses_cluster_arm_contrast_not_row_sums():
     assert result["winner_layer"] == "Costs"
 
 
+def test_randomized_quote_harm_weights_heterogeneous_cluster_exposures():
+    samples = _seven_layers()
+    costs = samples["Costs"]
+    treatment = next(sample for sample in costs if sample["arm"] == "treatment")
+    treatment["cluster_id"] = "day-treatment-large"
+    treatment["paired_net_delta_bp"] = 0.0
+    treatment["paired_net_delta_quote"] = 0.0
+    for index in range(99):
+        extra = deepcopy(treatment)
+        extra["unit_id"] = f"Costs-treatment-large-{index + 1}"
+        costs.append(extra)
+
+    for sample in costs:
+        if sample["arm"] == "control":
+            sample["paired_net_delta_bp"] = 0.0
+            sample["paired_net_delta_quote"] = 0.0
+        elif sample["cluster_id"] != "day-treatment-large":
+            sample["paired_net_delta_bp"] = 110.0
+            sample["paired_net_delta_quote"] = 10.0
+
+    result = gradient.select_unique_max_direction(samples, evidence_context=_context())
+
+    costs = result["layers"]["Costs"]
+    assert costs["harm_quote"] == pytest.approx(190.0)
+    assert result["winner_layer"] == "Costs"
+
+
 def test_randomized_quote_concentration_centers_common_arm_baseline():
     samples = _seven_layers()
     for index, sample in enumerate(samples["Costs"]):

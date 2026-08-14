@@ -150,7 +150,8 @@ hard gates. The method-specific gates are:
 For `prospective_randomized`, the estimand is the equal-weight per-cluster
 `treatment - control` outcome contrast; arm labels affect the estimate and the
 cluster bootstrap. Quote harm converts the mean contrast to the treatment-
-exposure cohort total before denominator normalization. Concentration uses
+exposure cohort total before denominator normalization, weighting each cluster's
+quote contribution by its exposure count. Concentration uses
 translation-invariant, centered per-cluster arm-effect contributions, not pooled
 row sums. A pooled mean is not a randomized effect. For
 `paired_same_unit`, the estimand is the unit-weighted mean across normalized

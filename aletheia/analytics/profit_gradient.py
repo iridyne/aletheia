@@ -192,6 +192,7 @@ def _randomized_cluster_rows(
                 {
                     "cluster_id": str(cluster_id),
                     "arm": arm,
+                    "exposure_count": len(rows),
                     "occurred_at": sum(row["occurred_at"] for row in rows) / len(rows),
                     "paired_net_delta_bp": sum(row["paired_net_delta_bp"] for row in rows) / len(rows),
                     "paired_net_delta_quote": sum(row["paired_net_delta_quote"] for row in rows) / len(rows),
@@ -265,14 +266,19 @@ def _randomized_cluster_interval(
 
 def _randomized_quote_metrics(
     samples: list[dict[str, Any]],
-) -> tuple[float | None, float | None, float | None]:
+) -> tuple[float | None, float | None, float | None, float | None]:
     arm_clusters = _randomized_cluster_rows(samples)
     treatment = arm_clusters["treatment"]
     control = arm_clusters["control"]
     if not treatment or not control:
-        return None, None, None
+        return None, None, None, None
     treatment_mean = sum(row["paired_net_delta_quote"] for row in treatment) / len(treatment)
     control_mean = sum(row["paired_net_delta_quote"] for row in control) / len(control)
+    treatment_exposure_count = sum(row["exposure_count"] for row in treatment)
+    treatment_quote_total = sum(
+        row["paired_net_delta_quote"] * row["exposure_count"] for row in treatment
+    )
+    total_quote = treatment_quote_total - control_mean * treatment_exposure_count
     center = (treatment_mean + control_mean) / 2.0
     treatment_contributions = [
         (row["paired_net_delta_quote"] - center) / len(treatment)
@@ -285,7 +291,7 @@ def _randomized_quote_metrics(
     contributions = treatment_contributions + control_contributions
     quote_contrast = treatment_mean - control_mean
     top1, top5 = _concentration_values(contributions)
-    return quote_contrast, top1, top5
+    return quote_contrast, total_quote, top1, top5
 
 
 def _expected_units(layer: str) -> tuple[str, str]:
@@ -542,15 +548,7 @@ def _layer_result(
     }
     if comparison_method == "prospective_randomized":
         estimate, lower, upper, cluster_count_by_arm, temporal_stable = _randomized_cluster_interval(samples)
-        quote_contrast, top1, top5 = _randomized_quote_metrics(samples)
-        treatment_exposure_count = sum(
-            sample["arm"] == "treatment" for sample in samples
-        )
-        total_quote = (
-            quote_contrast * treatment_exposure_count
-            if quote_contrast is not None and treatment_exposure_count > 0
-            else None
-        )
+        quote_contrast, total_quote, top1, top5 = _randomized_quote_metrics(samples)
         independent_unit_count = sum(cluster_count_by_arm.values())
         smaller_arm = (
             min(cluster_count_by_arm.values())
