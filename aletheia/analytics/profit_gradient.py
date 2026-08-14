@@ -525,7 +525,16 @@ def _layer_result(
         elif sample["arm"]:
             arms[sample["arm"]] += 1
     requires_two_arms = bool(profile and profile["requires_two_arms"])
-    unassigned_arm_count = unit_count - sum(arms.values()) if requires_two_arms else None
+    unassigned_arm_count = (
+        sum(sample["arm"] not in {"control", "treatment"} for sample in samples)
+        if requires_two_arms
+        else None
+    )
+    pair_level_clusters = {
+        sample["cluster_id"]
+        for sample in samples
+        if isinstance(sample.get("arm_counts"), Mapping)
+    }
     if comparison_method == "prospective_randomized":
         estimate, lower, upper, cluster_count_by_arm, temporal_stable = _randomized_cluster_interval(samples)
         quote_contrast, top1, top5 = _randomized_quote_metrics(samples)
@@ -543,6 +552,9 @@ def _layer_result(
             if set(cluster_count_by_arm) == {"control", "treatment"}
             else None
         )
+        if not any(sample["arm"] in {"control", "treatment"} for sample in samples):
+            independent_unit_count = len(pair_level_clusters)
+            smaller_arm = min(arms.get("control", 0), arms.get("treatment", 0)) or None
     elif comparison_method == "paired_same_unit":
         estimate, lower, upper = _paired_unit_interval(samples)
         cluster_count_by_arm = None
