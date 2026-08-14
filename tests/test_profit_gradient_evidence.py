@@ -239,10 +239,63 @@ def test_incomplete_source_cannot_emit_numeric_coverage():
         cost_source={"status": "available"},
         evidence_epoch_id="epoch-1",
         cost_model_id="v1",
+        layer_samples={"Costs": [{"stage": "paper_10", "outcome_contract_version": "v2"}]},
     )
 
     assert context["candidate_outcome_coverage"] is None
     assert context["position_causal_link_completeness"] is None
+    assert context["comparison_method"] == "paired_same_unit"
+    assert context["horizons"] == ["24h"]
+    assert context["outcome_contract_versions"] == ["v2"]
+    assert context["metric_versions"] == [evidence.METRIC_VERSION]
+    assert context["statistical_unit_versions"] == ["profit_loop_fact/v1"]
+    assert context["stages"] == ["paper_10"]
+
+    missing_outcome = evidence._coverage_context(
+        registration={},
+        candidate_facts=[
+            {
+                "event_at": "2026-08-13T00:00:00+00:00",
+                "fixed_horizon_outcome": {
+                    "status": "settled",
+                    "settled_at": "2026-08-14T00:00:00+00:00",
+                    "cost_model_version": "v1",
+                    "horizon": "24h",
+                    "net_return_pct": 1.0,
+                },
+            }
+        ],
+        position_facts=[],
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cutoff=cutoff,
+        candidate_source={"status": "available", "unavailable_count": 1},
+        position_source={"status": "available", "error_count": 1},
+        cost_source={"status": "available"},
+        evidence_epoch_id="epoch-1",
+        cost_model_id="v1",
+        layer_samples={"Costs": [{"stage": "paper_10"}]},
+    )
+    assert missing_outcome["outcome_contract_versions"] == []
+
+    mixed_outcome = evidence._coverage_context(
+        registration={},
+        candidate_facts=[],
+        position_facts=[],
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cutoff=cutoff,
+        candidate_source={"status": "available", "unavailable_count": 0},
+        position_source={"status": "available", "error_count": 0},
+        cost_source={"status": "available"},
+        evidence_epoch_id="epoch-1",
+        cost_model_id="v1",
+        layer_samples={
+            "Costs": [
+                {"stage": "paper_10", "outcome_contract_version": "v2"},
+                {"stage": "paper_10"},
+            ]
+        },
+    )
+    assert mixed_outcome["outcome_contract_versions"] == []
 
 
 def test_pairing_rejects_unpaired_units_and_emits_one_contrast_per_arm():
