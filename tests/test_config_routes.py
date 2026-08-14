@@ -909,6 +909,42 @@ async def test_settings_update_controls_persist_new_config_fields(client):
 
 
 @pytest.mark.anyio
+async def test_trading_mandate_settings_control_validates_and_redacts_nested_unknowns(client):
+    mandate = {
+        "enabled": True,
+        "contract_version": "trading_mandate/v1",
+        "mandate_id": "settings-test",
+        "mandate_version": 1,
+        "status": "active",
+        "enforcement_mode": "observe_only",
+        "market_scope": {
+            "allowed_asset_classes": ["crypto"],
+            "allowed_physical_market_types": ["spot"],
+        },
+        "edge_scope": {"allowed_directions": ["long"]},
+    }
+    saved = await client.post("/api/settings/trading-mandate", json={"mandate": mandate})
+    assert saved.status_code == 200
+    assert saved.json()["trading_mandate"]["resolution_status"] == "active"
+    assert saved.json()["trading_mandate"]["market_scope"]["allowed_asset_classes"] == ["crypto"]
+
+    settings = (await client.get("/api/settings")).json()
+    assert settings["trading_mandate"]["mandate_id"] == "settings-test"
+
+    malformed = {
+        **mandate,
+        "market_scope": {**mandate["market_scope"], "api_key": "do-not-return"},
+    }
+    rejected = await client.post("/api/settings/trading-mandate", json={"mandate": malformed})
+    assert rejected.status_code == 422
+    assert "do-not-return" not in rejected.text
+
+    disabled = await client.post("/api/settings/trading-mandate", json={"mandate": None})
+    assert disabled.status_code == 200
+    assert disabled.json()["trading_mandate"]["resolution_status"] == "not_configured"
+
+
+@pytest.mark.anyio
 async def test_settings_rejects_mismatched_or_invalid_config_controls(client):
     """UI/API mismatches must fail loudly instead of silently ignoring fields."""
     resp = await client.post("/api/settings/trading", json={"slip_bps": 3})

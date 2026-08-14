@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 
 import pytest
 from pydantic import ValidationError
@@ -16,6 +17,7 @@ from aletheia.trading.trading_mandate import (
     build_trading_mandate_provenance,
     freeze_trading_mandate_provenance,
     resolve_trading_mandate,
+    validate_frozen_trading_mandate_provenance,
 )
 
 
@@ -131,6 +133,51 @@ def test_config_missing_disabled_and_malformed_are_explicit():
     assert resolve_trading_mandate(unknown_null).status == "mandate_unavailable"
     active = AletheiaConfig.model_validate({"trading_mandate": {"enabled": True, **_mandate().model_dump(mode="json")}})
     assert resolve_trading_mandate(active).status == "active"
+
+
+@pytest.mark.parametrize("enabled", [0, None, "", [], {}])
+def test_false_like_enabled_values_are_unavailable_not_not_configured(enabled):
+    cfg = AletheiaConfig.model_validate({"trading_mandate": {"enabled": enabled}})
+    assert resolve_trading_mandate(cfg).status == "mandate_unavailable"
+
+
+def test_malformed_collection_and_horizon_types_fail_closed_without_type_error():
+    for field, value in (
+        ("market_scope", {"allowed_asset_classes": 1}),
+        ("edge_scope", {"max_intended_holding_horizon_hours": "12"}),
+    ):
+        cfg = AletheiaConfig.model_validate(
+            {"trading_mandate": {"enabled": True, field: value}}
+        )
+        result = resolve_trading_mandate(cfg)
+        assert result.status == "mandate_unavailable"
+
+
+def test_frozen_identity_requires_complete_contract_shape():
+    opportunity, decision, proposal = _facts()
+    evidence = build_trading_mandate_provenance(
+        configured=_mandate(), opportunity=opportunity, decision=decision, proposal=proposal
+    )
+    for identity in (
+        {},
+        {**evidence["trading_mandate_identity"], "content_hash": "bogus"},
+    ):
+        with pytest.raises(ValueError):
+            validate_frozen_trading_mandate_provenance(
+                {
+                    "trading_mandate_identity": identity,
+                    "trading_mandate_fit": evidence["trading_mandate_fit"],
+                }
+            )
+
+
+def test_open_position_duration_uses_report_timestamp():
+    from aletheia.analytics.trading_mandate_compliance import _duration
+
+    assert _duration(
+        {"opened_at": "2026-01-01T00:00:00+00:00", "closed_at": None},
+        as_of=datetime(2026, 1, 1, 6, tzinfo=timezone.utc),
+    ) == 6.0
 
 
 def test_enabled_mandate_round_trips_through_yaml_without_activation_drift(tmp_path, monkeypatch):

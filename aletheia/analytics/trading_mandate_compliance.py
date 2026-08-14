@@ -181,9 +181,13 @@ def _horizon_declaration(proposal: dict[str, Any] | None) -> tuple[float | None,
     return _finite(declared.get("min_hours")), _finite(declared.get("max_hours")), evidence["status"]
 
 
-def _duration(position: dict[str, Any]) -> float | None:
+def _duration(
+    position: dict[str, Any],
+    *,
+    as_of: datetime | None = None,
+) -> float | None:
     opened = _utc(position.get("opened_at"))
-    closed = _utc(position.get("closed_at"))
+    closed = _utc(position.get("closed_at")) or as_of
     if opened is None or closed is None or closed < opened:
         return None
     return (closed - opened).total_seconds() / 3600.0
@@ -316,7 +320,7 @@ def _aggregate_report(*, db: Any, hours: int, configured: dict[str, Any]) -> dic
                 duration_summary["not_available_count"] += 1
         else:
             duration_summary["declared_horizon_positions"] += 1
-            actual_hours = _duration(position)
+            actual_hours = _duration(position, as_of=now)
             if actual_hours is None:
                 duration_summary["not_available_count"] += 1
             else:
@@ -327,7 +331,7 @@ def _aggregate_report(*, db: Any, hours: int, configured: dict[str, Any]) -> dic
                 duration_summary["compatible_count" if compatible else "incompatible_count"] += 1
             if maximum is not None:
                 overrun["declared_max_horizon_positions"] += 1
-                actual_hours = _duration(position)
+                actual_hours = _duration(position, as_of=now)
                 if actual_hours is None:
                     overrun["not_measurable_count"] += 1
                 else:

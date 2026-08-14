@@ -1917,7 +1917,12 @@ def _compute_proposal_hash(p: TradeProposal) -> str:
     return sha256_json(payload)[:16]
 
 
-def insert_trade_proposal(p: TradeProposal, *, decision_inputs: object | None = None) -> None:
+def insert_trade_proposal(
+    p: TradeProposal,
+    *,
+    decision_inputs: object | None = None,
+    mandate_config: object | None = None,
+) -> None:
     # Provenance is immutable Proposal identity, so stamp it on both the model
     # and persisted payload *before* computing the hash. Hashing first produced
     # a commit that could never be verified from a real runtime-stamped row.
@@ -1937,9 +1942,9 @@ def insert_trade_proposal(p: TradeProposal, *, decision_inputs: object | None = 
 
     # Config is read before the writer transaction; mandate assessment is
     # evidence-only and must not hold the SQLite write lock across file I/O.
-    mandate_config = None
     if (
-        p.source == "native"
+        mandate_config is None
+        and p.source == "native"
         and p.execution_mode == "paper_internal"
         and p.opportunity_id
         and p.direction in {"long", "short"}

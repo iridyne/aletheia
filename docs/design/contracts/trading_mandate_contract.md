@@ -19,11 +19,11 @@ not proof that a mandate is configured or that this capability is active.
 
 ## Configuration
 
-Configuration is optional and is not exposed through a new or editable
-Settings page, mutation endpoint, Dashboard editor, registry, or automatic
-selection mechanism. The existing sanitized settings read may show the raw
-configured object for schema visibility. Missing
-or disabled configuration is `not_configured`. An enabled malformed object is
+Configuration is optional. The existing sanitized Settings read exposes the
+resolved status, and the validated `POST /api/settings/trading-mandate` control
+accepts one complete object (or `null` to disable it). The control persists no
+secrets or unknown nested fields in its response or audit record. Missing or
+disabled configuration is `not_configured`. An enabled malformed object is
 reported as `mandate_unavailable`; no values are guessed.
 
 Example template (not enabled by default):
@@ -172,7 +172,8 @@ This contract does not add or imply:
 - portfolio allocation (deferred);
 - mandate enforcement (deferred);
 - a Strategy Factory, RuleSet, strategy lifecycle, or parallel strategy authority;
-- a new Agent, scheduler, service, Settings page, or editable UI surface.
+- a new Agent, scheduler, service, Settings page, or editable UI surface beyond
+  the validated existing Settings API control.
 
 Mandate compliance is descriptive until a separate registered experiment proves
 contribution. Schema existence alone is not proof of configuration, runtime

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import math
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
@@ -81,11 +82,11 @@ def _normalised_collection(
             raise ValueError(f"{field_name} must be a non-empty collection")
         return None
     if isinstance(value, (str, bytes)) or not isinstance(value, (Sequence, set, frozenset)):
-        raise TypeError(f"{field_name} must be a collection")
+        raise ValueError(f"{field_name} must be a collection")
     values: set[str] = set()
     for item in value:
         if not isinstance(item, str):
-            raise TypeError(f"{field_name} values must be strings")
+            raise ValueError(f"{field_name} values must be strings")
         normalized = normalise(item)
         if not normalized:
             raise ValueError(f"{field_name} values must be non-empty")
@@ -246,7 +247,7 @@ class EdgeScope(_MandateModel):
         if value is None:
             return None
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise TypeError("holding horizon must be a finite number")
+            raise ValueError("holding horizon must be a finite number")
         number = float(value)
         if not math.isfinite(number) or number <= 0:
             raise ValueError("holding horizon must be finite and positive")
@@ -387,8 +388,9 @@ def resolve_trading_mandate(config_or_value: object) -> MandateResolution:
     )
     if value is None:
         return MandateResolution("not_configured", reason_codes=("not_configured",))
-    if isinstance(value, TradingMandateConfig) and not value.enabled:
-        return MandateResolution("not_configured", reason_codes=("not_configured",))
+    if isinstance(value, TradingMandateConfig):
+        if "enabled" not in value.model_fields_set or value.enabled is False:
+            return MandateResolution("not_configured", reason_codes=("not_configured",))
     raw = _config_mapping(value)
     if raw is None:
         return MandateResolution(
@@ -854,6 +856,35 @@ def build_trading_mandate_provenance(
     }
 
 
+_MANDATE_IDENTITY_FIELDS = frozenset(
+    {
+        "contract_version",
+        "mandate_id",
+        "mandate_version",
+        "content_hash",
+        "enforcement_mode",
+    }
+)
+
+
+def _validate_mandate_identity(identity: Mapping[str, Any]) -> None:
+    if set(identity) != _MANDATE_IDENTITY_FIELDS:
+        raise ValueError("trading mandate identity is incomplete or contains unsupported fields")
+    if identity.get("contract_version") != TRADING_MANDATE_VERSION:
+        raise ValueError("trading mandate identity contract is invalid or unsupported")
+    mandate_id = identity.get("mandate_id")
+    if not isinstance(mandate_id, str) or not mandate_id.strip():
+        raise ValueError("trading mandate identity mandate_id is invalid")
+    mandate_version = identity.get("mandate_version")
+    if isinstance(mandate_version, bool) or not isinstance(mandate_version, int) or mandate_version < 1:
+        raise ValueError("trading mandate identity mandate_version is invalid")
+    content_hash = identity.get("content_hash")
+    if not isinstance(content_hash, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", content_hash) is None:
+        raise ValueError("trading mandate identity content_hash is invalid")
+    if identity.get("enforcement_mode") != MANDATE_ENFORCEMENT_MODE:
+        raise ValueError("trading mandate identity enforcement mode is invalid")
+
+
 def validate_frozen_trading_mandate_provenance(snapshot: Mapping[str, Any]) -> None:
     """Validate an already-frozen pair without consulting current configuration."""
     has_identity = "trading_mandate_identity" in snapshot
@@ -866,6 +897,8 @@ def validate_frozen_trading_mandate_provenance(snapshot: Mapping[str, Any]) -> N
     fit = snapshot.get("trading_mandate_fit")
     if identity is not None and not isinstance(identity, Mapping):
         raise ValueError("trading mandate identity is malformed")
+    if isinstance(identity, Mapping):
+        _validate_mandate_identity(identity)
     if not isinstance(fit, Mapping):
         raise ValueError("trading mandate fit is malformed")
     if fit.get("contract_version") != TRADING_MANDATE_FIT_VERSION:

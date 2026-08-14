@@ -53,6 +53,22 @@ _NEW_ENTRY_ACTIONS = {"trade", "scale_in", "flip"}
 _POSITION_ACTIONS = {"close", "reduce"}
 
 
+def _mandate_config_for_proposal(proposal):
+    if (
+        proposal is not None
+        and proposal.source == "native"
+        and proposal.execution_mode == "paper_internal"
+        and proposal.opportunity_id
+        and proposal.direction in {"long", "short"}
+        and proposal.quantity is not None
+        and proposal.quantity > 0
+    ):
+        from aletheia.config.loader import load_config
+
+        return load_config(persist_migrations=False)
+    return None
+
+
 def _normalized_direction(value: Any) -> str:
     direction = str(value or "").lower()
     return {"bullish": "long", "bearish": "short"}.get(direction, direction)
@@ -324,6 +340,7 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
     )
 
     pi_dec = _build_pi_decision(decision_result)
+    mandate_config = _mandate_config_for_proposal(proposal)
     claim_failure: str | None = None
     with transaction(immediate=True, savepoint=True):
         classification = (
@@ -373,7 +390,11 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
             claim_failure = _pending_claim_authority_failure(pi_dec)
         if proposal is not None:
             if claim_failure is None:
-                insert_trade_proposal(proposal, decision_inputs=pi_dec)
+                insert_trade_proposal(
+                    proposal,
+                    decision_inputs=pi_dec,
+                    mandate_config=mandate_config,
+                )
                 pi_dec.proposal_id = proposal.id
                 pi_dec.proposal_status = "submitting"
                 pi_dec.proposal_reason = None
@@ -453,6 +474,7 @@ def recover_interrupted_decision(
     if not decision_id:
         raise ValueError("interrupted_decision_missing_id")
 
+    mandate_config = _mandate_config_for_proposal(proposal)
     with repo.transaction(immediate=True):
         row = repo._select_one("pi_decisions", decision_id)
         if row is None:
@@ -483,7 +505,11 @@ def recover_interrupted_decision(
         ):
             raise ValueError("interrupted_proposal_identity_mismatch")
 
-        repo.insert_trade_proposal(proposal, decision_inputs=row)
+        repo.insert_trade_proposal(
+            proposal,
+            decision_inputs=row,
+            mandate_config=mandate_config,
+        )
         repo.update_pi_decision(
             decision_id,
             proposal_id=proposal.id,

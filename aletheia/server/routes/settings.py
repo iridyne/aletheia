@@ -1,7 +1,7 @@
 """Settings API routes."""
 
 import asyncio
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator
@@ -101,6 +101,49 @@ class ExchangeModeRequest(SettingsRequest):
     mode: str
 
 
+class TradingMandateRequest(SettingsRequest):
+    mandate: dict[str, Any] | None
+
+
+def _trading_mandate_view(cfg) -> dict[str, Any] | None:
+    value = getattr(cfg, "trading_mandate", None)
+    if value is None:
+        return None
+    from aletheia.trading.trading_mandate import resolve_trading_mandate
+
+    try:
+        resolution = resolve_trading_mandate(cfg)
+    except Exception:
+        resolution = None
+    if resolution is not None and resolution.mandate is not None:
+        return {
+            "enabled": True,
+            "resolution_status": "active",
+            **resolution.mandate.model_dump(mode="json"),
+        }
+
+    raw = value.model_dump(mode="json") if isinstance(value, BaseModel) else {}
+    view: dict[str, Any] = {
+        "resolution_status": (
+            resolution.status if resolution is not None else "mandate_unavailable"
+        ),
+    }
+    for key in (
+        "enabled",
+        "contract_version",
+        "mandate_id",
+        "mandate_version",
+        "status",
+        "enforcement_mode",
+    ):
+        item = raw.get(key)
+        if key in raw and (item is None or isinstance(item, (str, int, float, bool))):
+            view[key] = item
+    if resolution is not None and resolution.validation_errors:
+        view["validation_errors"] = list(resolution.validation_errors)
+    return view
+
+
 @router.get("")
 def get_settings():
     cfg = load_config()
@@ -128,26 +171,6 @@ def get_settings():
             "inference_queue_capacity": p.inference_queue_capacity,
             "inference_reserved_high_priority_slots": p.inference_reserved_high_priority_slots,
             "inference_timeout_sec": p.inference_timeout_sec,
-        }
-    mandate_value = getattr(cfg, "trading_mandate", None)
-    mandate_view = None
-    if isinstance(mandate_value, BaseModel):
-        raw_mandate = mandate_value.model_dump(mode="json")
-        visible_mandate_fields = {
-            "enabled",
-            "contract_version",
-            "mandate_id",
-            "mandate_version",
-            "status",
-            "enforcement_mode",
-            "market_scope",
-            "edge_scope",
-            "default_behavior",
-            "holding_governance",
-        }
-        mandate_view = {
-            key: value for key, value in raw_mandate.items()
-            if key in visible_mandate_fields
         }
     return {
         "app": cfg.app.model_dump(mode="json"),
@@ -195,9 +218,47 @@ def get_settings():
         "economics": cfg.economics.model_dump(mode="json"),
         # Read-only visibility keeps the config schema honest; unknown mandate
         # fields are intentionally omitted so this GET cannot echo credentials.
-        "trading_mandate": mandate_view,
+        "trading_mandate": _trading_mandate_view(cfg),
         "learning_path_options": list(paper_influence_path_options()),
     }
+
+
+@router.post("/trading-mandate")
+async def set_trading_mandate(req: TradingMandateRequest):
+    from aletheia.trading.trading_mandate import TradingMandateConfig, resolve_trading_mandate
+
+    candidate = TradingMandateConfig.model_validate(
+        {"enabled": False} if req.mandate is None else req.mandate
+    )
+    resolution = resolve_trading_mandate(candidate)
+    if resolution.status == "mandate_unavailable":
+        raise HTTPException(
+            422,
+            detail={
+                "code": "trading_mandate_invalid",
+                "validation_errors": list(resolution.validation_errors),
+            },
+        )
+    if resolution.status == "not_configured":
+        candidate = TradingMandateConfig(enabled=False)
+
+    cfg = load_config()
+    before = _trading_mandate_view(cfg)
+    cfg.trading_mandate = candidate
+    save_config(cfg)
+    after = _trading_mandate_view(cfg)
+    from aletheia.files.jsonl import write_audit
+
+    write_audit({
+        "actor": "human",
+        "source": "dashboard",
+        "event_type": "trading_mandate_changed",
+        "entity_type": "trading_mandate",
+        "before": before,
+        "after": after,
+        "message": "observe-only trading mandate updated",
+    })
+    return {"trading_mandate": after}
 
 
 # ---------------------------------------------------------------------------
