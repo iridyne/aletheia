@@ -1385,6 +1385,7 @@ def _coverage_context(
     }
     stage_values: set[str] = set()
     outcome_contract_values: set[str] = set()
+    outcome_contract_missing = False
     for fact in cohort_candidates:
         outcome = fact.get("fixed_horizon_outcome")
         if isinstance(outcome, Mapping):
@@ -1425,6 +1426,8 @@ def _coverage_context(
                 stage_values.add(str(sample.get("stage") or sample.get("experiment_stage")))
             if sample.get("outcome_contract_version"):
                 outcome_contract_values.add(str(sample["outcome_contract_version"]))
+            else:
+                outcome_contract_missing = True
 
     for fact in cohort_positions:
         producer = fact.get("producer")
@@ -1510,7 +1513,9 @@ def _coverage_context(
         "cost_model_epochs": cost_epochs,
         "comparison_method": _GRADIENT_COMPARISON_METHOD,
         "horizons": [_FIXED_CANDIDATE_HORIZON],
-        "outcome_contract_versions": sorted(outcome_contract_values),
+        "outcome_contract_versions": (
+            [] if outcome_contract_missing else sorted(outcome_contract_values)
+        ),
         "metric_versions": [METRIC_VERSION],
         "statistical_unit_versions": [_GRADIENT_STATISTICAL_UNIT_VERSION],
         "stages": sorted(stage_values),
