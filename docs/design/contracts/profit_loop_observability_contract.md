@@ -2,9 +2,10 @@
 
 ## Purpose and current scope
 
-Aletheia exposes read-only, versioned evidence for replaying one closed Position,
-reconstructing the complete candidate denominator, evaluating a fixed exploratory
-counterfactual registry, and applying seven-layer unique-winner gates.
+Aletheia exposes read-only, versioned evidence for replaying one Position,
+rendering its deterministic lifecycle story, reconstructing the complete candidate
+denominator, evaluating a fixed exploratory counterfactual registry, and applying
+seven-layer unique-winner gates.
 
 The current Position counterfactual is deliberately an early-path experiment. Its
 formal output always declares `counterfactual_scope = first_60_minutes` and
@@ -27,6 +28,10 @@ The production entry point is `aletheia inspect`:
 
 - `position-replay --id <position_id> --as-of <timestamp> --json` emits one
   `profit_loop_fact/v1` Position fact;
+- `position-story --id <position_id> --as-of <timestamp> [--json]` renders one
+  deterministic `position_lifecycle_story/v1` explanation. Its
+  `structured_events` projection is machine-facing; human text is not a
+  statistical input;
 - `candidate-facts --horizon <15m|1h|4h|24h> --as-of <timestamp> --json` emits
   the complete `candidate_fact` denominator at one fixed horizon;
 - `position-diagnosis` and `candidate-diagnosis` emit
@@ -55,6 +60,18 @@ configuration field, or Learning treatment is introduced.
 Position replay joins existing immutable IDs across Opportunity, PI decision,
 Proposal, authoritative Risk decision, Order, Fill, Position, exit plan,
 protection state, settlement, runtime provenance, and `market_ohlcv`.
+The lifecycle boundary is:
+
+```text
+Position Path Facts → Position Replay → Position Lifecycle Story
+                                      → human review / dashboard / post-trade review
+                                      → evidence compiler → statistical attribution
+```
+
+The Story exposes a deterministic readable view plus `structured_events`. The
+future evidence compiler and gradient consume structured event facts, never
+rendered prose or an LLM-generated narrative. No Story or replay artifact is
+persisted by this contract.
 
 New native entry Proposals freeze `position_hypothesis/v1` inside the existing
 immutable `trade_proposals.attribution_snapshot` before the Proposal commit hash
@@ -80,6 +97,13 @@ and explicit unavailable reasons. Its `profit_loop_fact/v1` stages and exact
 describe the actual `opened_at` → `closed_at` path, independently of the
 first-60-minute counterfactual. Candidate replay preserves filtered, skipped,
 rejected, unfilled, and traded terminal states.
+
+The lifecycle Story reports the structured event vocabulary needed for
+post-trade review: first meaningful favorable excursion, maximum favorable
+excursion, hypothesis weakening and invalidation, expected horizon, management
+decisions, ExitPlan revisions, protection activation, exit triggers, close fills,
+and verified costs. It may also render opening thesis and review context for a
+human; those narrative fields are not evidence-compiler inputs.
 
 The gradient report always emits
 `Selection / Decision / Risk / Execution / Holding / Exit / Costs`, quote harm,
@@ -190,13 +214,16 @@ time, and concentration identities.
   timestamp, source-evidence SHA-256, fee, funding, and slippage assumptions.
 - Same-sample counterfactuals are permanently `exploratory` and
   `promotion_eligible=false`.
-- Gradient pooling requires one behavior, policy, market-data, and cost epoch,
-  plus the declared comparison method. Coverage, sample size, the applicable
-  arm rule, Risk-reject count, clustered interval, absolute effect, temporal
-  stability, and Top-1/Top-5 concentration are hard gates.
-- A unique winner exists only when the declared method permits one, exactly one
-  layer clears every applicable gate, and its harm lower bound exceeds every
-  runner-up upper bound.
+- Gradient pooling requires one behavior, policy, market-data, and cost epoch.
+  Coverage, sample size, arm size, Risk-reject count, clustered interval,
+  absolute effect, temporal stability, and Top-1/Top-5 concentration are hard
+  gates.
+- A winner exists only when exactly one layer clears every gate and its harm
+  lower bound exceeds every runner-up upper bound.
+- Lifecycle Story rendering is deterministic and has no LLM/model call.
+- `structured_events` is the only Story projection suitable for a future
+  evidence compiler; rendered/free-text story content cannot enter Learning or
+  statistical attribution.
 - No analytics result authorizes an automatic behavior or parameter change.
 
 ## Failure and recovery semantics
@@ -249,6 +276,7 @@ A manifest remains prohibited until one of those observable triggers occurs.
 - `tests/test_profit_gradient.py`
 - `tests/test_profit_loop_cli.py`
 - `tests/test_position_path_observer.py`
+- `tests/test_position_lifecycle_story.py`
 - `tests/test_stop_loss_path_attribution.py`
 
 ## Known gaps
