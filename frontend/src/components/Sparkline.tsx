@@ -15,11 +15,10 @@ export default function Sparkline({ symbol, width = 80, height = 24 }: Sparkline
     staleTime: 30_000,
   })
 
-  const candles = data?.candles || data
-  if (!Array.isArray(candles) || candles.length < 2) return null
+  const candles = data || []
+  if (candles.length < 2) return null
 
-  const closes = candles.map((c: any) => c.close ?? c[4]).filter((v: any) => v != null) as number[]
-  if (closes.length < 2) return null
+  const closes = candles.map(candle => candle.close)
 
   const min = Math.min(...closes)
   const max = Math.max(...closes)

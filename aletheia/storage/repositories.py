@@ -469,6 +469,55 @@ def insert_opportunity(opp: Opportunity) -> None:
 def list_opportunities(limit: int = 50) -> list[dict]:
     return _select_all("opportunities", limit=limit)
 
+def list_opportunity_instruments() -> list[dict]:
+    """Return one latest-state summary for each exact Opportunity instrument."""
+    rows = get_db().execute(
+        """
+        WITH ranked AS (
+            SELECT
+                symbol,
+                market,
+                created_at,
+                status,
+                direction_bias,
+                COUNT(*) OVER (PARTITION BY symbol, market) AS total_count,
+                SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END)
+                    OVER (PARTITION BY symbol, market) AS open_count,
+                ROW_NUMBER() OVER (
+                    PARTITION BY symbol, market
+                    ORDER BY datetime(created_at) DESC, rowid DESC
+                ) AS latest_rank
+            FROM opportunities
+        )
+        SELECT
+            symbol,
+            market,
+            total_count,
+            open_count,
+            created_at AS latest_created_at,
+            status AS latest_status,
+            direction_bias AS latest_direction_bias
+        FROM ranked
+        WHERE latest_rank = 1
+        ORDER BY (open_count > 0) DESC, datetime(latest_created_at) DESC
+        """
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_opportunities_for_instrument(
+    symbol: str,
+    market: str,
+    limit: int = 500,
+) -> list[dict]:
+    return _select_all(
+        "opportunities",
+        where="symbol = ? AND market = ?",
+        params=(symbol, market),
+        order="created_at DESC, rowid DESC",
+        limit=limit,
+    )
+
 
 def list_open_opportunities(limit: int = 50) -> list[dict]:
     """Return a bounded FIFO working set without reviewed-history crowd-out.
