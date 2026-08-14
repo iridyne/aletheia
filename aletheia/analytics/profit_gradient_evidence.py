@@ -1437,8 +1437,12 @@ def _finalize(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def verify_profit_gradient_evidence(payload: Mapping[str, Any]) -> tuple[bool, str | None]:
-    """Verify a compiler artifact before the selector consumes it."""
+def verify_profit_gradient_evidence(
+    payload: Mapping[str, Any],
+    *,
+    revalidate_sources: bool = False,
+) -> tuple[bool, str | None]:
+    """Verify an artifact; optionally rebuild its frozen sources for CLI trust."""
     if payload.get("contract_version") != PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
         return False, "evidence_contract_version_mismatch"
     if payload.get("producer") != _COMPILER_PRODUCER:
@@ -1488,7 +1492,20 @@ def verify_profit_gradient_evidence(payload: Mapping[str, Any]) -> tuple[bool, s
     if not isinstance(supplied, str) or len(supplied) != 64:
         return False, "evidence_content_hash_missing"
     expected = _hash({key: value for key, value in payload.items() if key != "content_hash"})
-    return (supplied == expected, None if supplied == expected else "evidence_content_hash_mismatch")
+    if supplied != expected:
+        return False, "evidence_content_hash_mismatch"
+    if revalidate_sources:
+        try:
+            rebuilt = build_profit_gradient_evidence(
+                evidence_epoch_id=str(inputs["evidence_epoch_id"]),
+                cutoff_at=str(inputs["cutoff_at"]),
+                cost_model_id=str(inputs["cost_model_id"]),
+            )
+        except (OSError, sqlite3.Error, ValueError):
+            return False, "evidence_source_revalidation_failed"
+        if rebuilt.get("content_hash") != supplied:
+            return False, "evidence_source_revalidation_mismatch"
+    return True, None
 
 
 def build_profit_gradient_evidence(
@@ -1630,7 +1647,9 @@ def build_profit_gradient_evidence(
             "candidate_facts": _hash(base["source_status"]["candidate_facts"]),
             "position_replays": _hash(base["source_status"]["position_replays"]),
             "cost_model": _hash(base["source_status"]["cost_model"]),
-            "counterfactual_registry": _hash(base["source_status"]["counterfactual"]),
+            "counterfactual_registry": str(
+                base["source_status"]["counterfactual"].get("registry_hash") or ""
+            ),
         }
         base["exclusion_waterfall"] = {
             "order": list(_WATERFALL_ORDER),

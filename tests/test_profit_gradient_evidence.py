@@ -210,6 +210,24 @@ def test_compiled_artifact_rejects_empty_provenance_even_with_rehashed_content()
     assert reason == "evidence_registration_invalid"
 
 
+def test_cli_rejects_rehashed_fabricated_sources(tmp_path):
+    report = evidence.build_profit_gradient_evidence(
+        evidence_epoch_id="missing-epoch",
+        cutoff_at="2026-08-14T00:00:00+00:00",
+        cost_model_id="missing-cost-model",
+    )
+    report = dict(report)
+    report["evidence_context"] = {"candidate_count": 30}
+    report["content_hash"] = evidence._hash({key: value for key, value in report.items() if key != "content_hash"})
+    path = tmp_path / "fabricated.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+
+    result = runner.invoke(inspect_app, ["profit-gradient", "--evidence", str(path), "--json"])
+
+    assert result.exit_code != 0
+    assert "evidence_source_revalidation_mismatch" in result.output
+
+
 def test_compiled_artifact_hash_rejects_tampering():
     report = evidence.build_profit_gradient_evidence(
         evidence_epoch_id="missing-epoch",

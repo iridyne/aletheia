@@ -36,10 +36,10 @@ The compiler bounds facts to the registered epoch and cutoff, requires exact
 exposure identity and producer provenance, requires an explicit one-treatment /
 one-control assignment-unit pair, emits one pair-level contrast (with separate arm
 counts), rejects duplicate units, and records the first exclusion reason.
-Missing evidence stays unavailable; it is never converted to zero. `content_hash`
-is an integrity check for the frozen artifact, not a
-cryptographic authorship signature; the CLI also requires the compiler's
-complete producer metadata and artifact shape.
+Missing evidence stays unavailable; it is never converted to zero. `content_hash` is an integrity check for the frozen artifact. Before
+`profit-gradient` adjudicates, the CLI rebuilds the source-bound artifact from
+its exact inputs and requires the rebuilt hash to match; static metadata alone
+cannot authorize hand-authored samples.
 
 Candidate outcomes use one fixed `24h` net-return contract, a persisted
 `settled_at <= cutoff`, and the exact supplied cost-model version. Position
