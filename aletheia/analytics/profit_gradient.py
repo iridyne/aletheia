@@ -208,8 +208,12 @@ def _randomized_cluster_interval(
     arm_clusters = _randomized_cluster_rows(samples)
 
     cluster_counts = {arm: len(rows) for arm, rows in arm_clusters.items()}
-    treatment = arm_clusters["treatment"]
-    control = arm_clusters["control"]
+    treatment = sorted(
+        arm_clusters["treatment"], key=lambda row: row["paired_net_delta_bp"]
+    )
+    control = sorted(
+        arm_clusters["control"], key=lambda row: row["paired_net_delta_bp"]
+    )
     if not treatment or not control:
         return None, None, None, cluster_counts, False
 
@@ -282,20 +286,22 @@ def _randomized_quote_metrics(
     control = arm_clusters["control"]
     if not treatment or not control:
         return None, None, None, None
-    treatment_mean = sum(row["paired_net_delta_quote"] for row in treatment) / len(treatment)
-    control_mean = sum(row["paired_net_delta_quote"] for row in control) / len(control)
     treatment_exposure_count = sum(row["exposure_count"] for row in treatment)
     treatment_quote_total = sum(
         row["paired_net_delta_quote"] * row["exposure_count"] for row in treatment
     )
+    treatment_mean = treatment_quote_total / treatment_exposure_count
+    control_mean = sum(row["paired_net_delta_quote"] for row in control) / len(control)
     total_quote = treatment_quote_total - control_mean * treatment_exposure_count
     center = (treatment_mean + control_mean) / 2.0
     treatment_contributions = [
-        (row["paired_net_delta_quote"] - center) / len(treatment)
+        (row["paired_net_delta_quote"] - center) * row["exposure_count"]
         for row in treatment
     ]
     control_contributions = [
-        -(row["paired_net_delta_quote"] - center) / len(control)
+        -(row["paired_net_delta_quote"] - center)
+        * treatment_exposure_count
+        / len(control)
         for row in control
     ]
     contributions = treatment_contributions + control_contributions

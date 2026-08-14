@@ -691,10 +691,31 @@ def test_randomized_bootstrap_seed_ignores_cluster_labels():
     }
     for sample in renamed:
         sample["cluster_id"] = labels[sample["cluster_id"]]
+    baseline = gradient._randomized_cluster_interval(normalized)
+    changed = gradient._randomized_cluster_interval(list(reversed(renamed)))
 
-    assert gradient._randomized_cluster_interval(normalized) == pytest.approx(
-        gradient._randomized_cluster_interval(renamed)
-    )
+    assert baseline[:3] == pytest.approx(changed[:3])
+    assert baseline[3:] == changed[3:]
+
+
+def test_randomized_quote_concentration_weights_exposure():
+    samples = _seven_layers()
+    costs = samples["Costs"]
+    for sample in costs:
+        if sample["arm"] == "control":
+            sample["paired_net_delta_quote"] = 0.0
+        else:
+            sample["paired_net_delta_quote"] = 10.0
+    large = next(sample for sample in costs if sample["arm"] == "treatment")
+    for index in range(99):
+        extra = deepcopy(large)
+        extra["unit_id"] = f"Costs-exposure-{index}"
+        costs.append(extra)
+
+    result = gradient.select_unique_max_direction(samples, evidence_context=_context())
+
+    assert result["layers"]["Costs"]["top1_absolute_contribution_share"] > 0.25
+    assert result["winner_layer"] is None
 
 
 def test_cluster_bootstrap_seed_ignores_cluster_labels():
