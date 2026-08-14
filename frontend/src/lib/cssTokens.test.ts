@@ -42,8 +42,10 @@ function stripComments(source: string): string {
  * Custom properties injected at runtime from JS rather than declared in CSS.
  * `--settings-nav-width` is set by the Settings shell's inline style so the
  * resizable nav width can drive CSS; it is legitimately absent from :root.
+ * `--charts-shell-height` is computed from window.innerHeight in Charts.tsx.
+ * `--market-chart-grid-rows` is set per-render in PriceChart.tsx.
  */
-const RUNTIME_INJECTED = new Set(["--settings-nav-width"]);
+const RUNTIME_INJECTED = new Set(["--settings-nav-width", "--charts-shell-height", "--market-chart-grid-rows"]);
 
 /** Custom properties referenced via var(), with or without a fallback. */
 function referencedTokens(source: string): Set<string> {

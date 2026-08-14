@@ -1131,7 +1131,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 .universe-allocation-row strong { font-family: var(--mono); text-align: right; }
 .universe-allocation-row small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .universe-allocation-track { height: 5px; background: var(--surface-2); overflow: hidden; }
-.universe-allocation-track span { display: block; height: 100%; background: var(--accent); }
+.universe-allocation-track span, .universe-allocation-bar { display: block; height: 100%; background: var(--accent); }
 .universe-why-pool { display: flex; flex-direction: column; }
 .universe-why-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
 .universe-why-row {

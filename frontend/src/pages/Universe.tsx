@@ -165,7 +165,7 @@ export default function Universe() {
             const top = members.find(member => (member.scanner_family || 'unknown') === family)
             return <div className="universe-allocation-row" key={family}>
               <span className={familyClass(family)}>{humanize(family)}</span>
-              <div className="universe-allocation-track"><span style={{ width: `${count * 100 / members.length}%` }} /></div>
+              <div className="universe-allocation-track"><span className="universe-allocation-bar" ref={el => { if (el) el.style.width = `${count * 100 / members.length}%` }} /></div>
               <strong>{count}</strong>
               <small>{top ? `Top ${fmtSymbol(top.symbol, snapshot?.market_type)} · ${top.total_score.toFixed(0)}` : 'No candidate'}</small>
             </div>
