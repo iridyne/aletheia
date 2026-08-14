@@ -149,7 +149,8 @@ def _epoch_gate(context: Mapping[str, Any]) -> tuple[bool, list[str]]:
         "cost_model_epochs",
     ):
         values = context.get(field)
-        if not isinstance(values, list) or len(set(str(value) for value in values if value)) != 1:
+        normalized = [str(value) for value in values] if isinstance(values, list) else []
+        if not normalized or any(not value.strip() for value in normalized) or len(set(normalized)) != 1:
             reasons.append(f"mixed_or_missing_{field}")
     return not reasons, reasons
 

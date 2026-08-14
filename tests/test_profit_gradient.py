@@ -136,6 +136,16 @@ def test_temporal_sign_reversal_blocks_apparent_average_effect():
     assert "temporal_halves_disagree" in result["layers"]["Costs"]["gate_reasons"]
 
 
+def test_missing_epoch_value_fails_closed_even_when_another_value_is_present():
+    result = gradient.select_unique_max_direction(
+        _seven_layers(),
+        evidence_context=_context(cost_model_epochs=["cost-v1", ""]),
+    )
+
+    assert result["global_gate_status"] == "ineligible"
+    assert "mixed_or_missing_cost_model_epochs" in result["global_gate_reasons"]
+
+
 def test_one_dependent_cluster_cannot_produce_confidence_interval():
     estimate, lower, upper = gradient._cluster_interval(
         [
