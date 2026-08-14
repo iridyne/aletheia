@@ -44,9 +44,9 @@ cannot authorize hand-authored samples.
 The compiler's paired contrasts declare `evidence_context.comparison_method` as
 `paired_same_unit`. The same context carries the singular `horizons`,
 `outcome_contract_versions`, `metric_versions`, `statistical_unit_versions`, and
-`stages` arrays consumed by the v3 selector. A missing or mixed stage remains
-ineligible; the compiler never labels a precomputed pair contrast as a
-prospective randomized arm observation.
+`stages` arrays consumed by the v3 selector. A missing or mixed outcome-contract
+or stage identity remains ineligible; the compiler never labels a precomputed
+pair contrast as a prospective randomized arm observation.
 
 Candidate outcomes use one fixed `24h` net-return contract, a persisted
 `settled_at <= cutoff`, and the exact supplied cost-model version. Compressed

@@ -1164,6 +1164,19 @@ def _pair_confirmatory_samples(
             continue
         treatment = by_arm["treatment"]
         control = by_arm["control"]
+        metadata_mismatch = any(
+            any(values) and (not all(values) or len(set(values)) != 1)
+            for values in (
+                [str(raw.get(field) or "").strip() for raw in (treatment, control)]
+                for field in ("outcome_contract_version", "stage")
+            )
+        )
+        if metadata_mismatch:
+            excluded.extend(
+                (str(raw.get("unit_id") or ""), "ambiguous_identity")
+                for raw in group
+            )
+            continue
         treatment_quote = _finite(treatment.get("arm_net_delta_quote"))
         control_quote = _finite(control.get("arm_net_delta_quote"))
         treatment_bp = _finite(treatment.get("arm_net_delta_bp"))
