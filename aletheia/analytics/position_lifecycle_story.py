@@ -62,6 +62,39 @@ def _finite(value: object) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
+def _aggregate_fills(fills: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """Return one quantity-weighted fill view while retaining every source ID."""
+    if not fills:
+        return None
+    normalized: list[tuple[Mapping[str, Any], float, float, datetime]] = []
+    for row in fills:
+        quantity = _finite(row.get("fill_quantity"))
+        price = _finite(row.get("fill_price"))
+        filled_at = _utc(row.get("filled_at"))
+        if quantity is None or quantity <= 0 or price is None or price <= 0 or filled_at is None:
+            return None
+        normalized.append((row, quantity, price, filled_at))
+    total_quantity = sum(quantity for _, quantity, _, _ in normalized)
+    if total_quantity <= 0:
+        return None
+    weighted_price = sum(price * quantity for _, quantity, price, _ in normalized) / total_quantity
+    fill_ids = [str(row.get("id")) for row, _, _, _ in normalized if row.get("id")]
+    order_ids = {str(row.get("order_id")) for row, _, _, _ in normalized if row.get("order_id")}
+    latest = max(normalized, key=lambda item: item[3])
+    earliest = min(normalized, key=lambda item: item[3])
+    return {
+        "id": str(normalized[0][0].get("id")) if len(normalized) == 1 and normalized[0][0].get("id") else None,
+        "order_id": next(iter(order_ids)) if len(order_ids) == 1 else None,
+        "fill_price": weighted_price,
+        "fill_quantity": total_quantity,
+        "filled_at": latest[0].get("filled_at") or latest[3].isoformat(),
+        "first_filled_at": earliest[0].get("filled_at") or earliest[3].isoformat(),
+        "fill_ids": fill_ids,
+        "fill_count": len(normalized),
+        "aggregation": "single" if len(normalized) == 1 else "quantity_weighted",
+    }
+
+
 def _as_bool(value: object) -> bool:
     if isinstance(value, bool):
         return value
@@ -142,7 +175,8 @@ def _visible_created_row(
                 "complete",
                 "completed",
             }:
-                result["status"] = "open"
+                result["status"] = None
+                result["status_evidence"] = "unavailable"
     return result
 
 
@@ -794,6 +828,7 @@ def _opening(
     instrument: Mapping[str, Any],
     *,
     entry_fills: Sequence[Mapping[str, Any]],
+    entry_fill: Mapping[str, Any] | None,
     first_plan: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     context = _nested(hypothesis or {}, "opening_decision_context")
@@ -802,7 +837,6 @@ def _opening(
     initial_risk = initial_risk if isinstance(initial_risk, Mapping) else {}
     thesis = hypothesis.get("thesis") if hypothesis else None
     signals = hypothesis.get("supporting_signals") if hypothesis else None
-    entry_fill = entry_fills[0] if len(entry_fills) == 1 else None
     return {
         "position_identity": {
             "position_id": position.get("id"),
@@ -811,11 +845,15 @@ def _opening(
         },
         "instrument_identity": dict(instrument),
         "direction": position.get("direction") or "not_recorded",
-        "entry_price": _finite(position.get("entry_price")),
-        "entry_fill_time": _iso(entry_fill.get("filled_at")) if entry_fill else None,
+        "entry_price": _finite((entry_fill or {}).get("fill_price")) or _finite(position.get("entry_price")),
+        "entry_fill_time": _iso(
+            (entry_fill or {}).get("first_filled_at") or (entry_fill or {}).get("filled_at")
+        )
+        if entry_fill
+        else None,
         "entry_fill_ids": [str(row.get("id")) for row in entry_fills if row.get("id")],
         "entry_fill_count": len(entry_fills),
-        "entry_fill_aggregation": "single" if len(entry_fills) == 1 else "ambiguous",
+        "entry_fill_aggregation": (entry_fill or {}).get("aggregation", "unavailable"),
         "original_thesis": thesis if thesis not in (None, "") else "not_recorded",
         "supporting_signals": list(signals) if isinstance(signals, (list, tuple)) else "not_recorded",
         "opening_reasoning": context.get("reasoning") or "not_recorded",
@@ -928,19 +966,21 @@ def _decision_events(
     else:
         events.append(_event("risk_approved", unavailable_reason="authoritative_risk_approval_not_recorded"))
     entry_fills = [row for row in related.get("entry_fills", []) if isinstance(row, Mapping)]
-    entry_fill = entry_fills[0] if entry_fills else None
-    if len(entry_fills) == 1 and entry_fill is not None:
+    entry_fill = _aggregate_fills(entry_fills)
+    if entry_fill is not None:
         events.append(
             _event(
                 "entry_filled",
                 occurred_at=entry_fill.get("filled_at"),
                 evidence_status="available",
-                source_entity_type="fill",
-                source_entity_id=(str(entry_fill.get("id")) if entry_fill.get("id") else None),
+                source_entity_type="fill" if entry_fill.get("id") else "fill_aggregate",
+                source_entity_id=entry_fill.get("id"),
                 facts={
                     "fill_price": entry_fill.get("fill_price"),
                     "fill_quantity": entry_fill.get("fill_quantity"),
                     "order_id": entry_fill.get("order_id"),
+                    "fill_ids": entry_fill.get("fill_ids", []),
+                    "fill_count": entry_fill.get("fill_count", 0),
                 },
             )
         )
@@ -948,12 +988,12 @@ def _decision_events(
         events.append(
             _event(
                 "entry_filled",
-                evidence_status="ambiguous",
+                evidence_status="unavailable",
                 facts={
                     "fill_ids": [str(row.get("id")) for row in entry_fills if row.get("id")],
                     "fill_count": len(entry_fills),
                 },
-                unavailable_reason="multiple_entry_fills_not_aggregated",
+                unavailable_reason="fill_evidence_invalid",
             )
         )
     else:
@@ -1164,6 +1204,7 @@ def _path_metrics(
     metrics["peak_source_entity_type"] = peak[2]
     metrics["peak_source_entity_id"] = str(peak[3]) if peak[3] is not None else None
     metrics["adverse_peak_at"] = adverse_peak[0].isoformat()
+    metrics["adverse_peak_source_entity_type"] = adverse_peak[2]
     metrics["adverse_peak_source_entity_id"] = str(adverse_peak[3]) if adverse_peak[3] is not None else None
     mfe = _directional_return_pct(direction, entry_price, peak[1])
     metrics["maximum_favorable_excursion_pct"] = round(max(0.0, mfe), 8)
@@ -1261,8 +1302,9 @@ def _mark_to_market_curve(
                 "return_pct": round(
                     _directional_return_pct(direction, entry_price, exit_price), 8
                 ),
-                "source_entity_type": "fill",
-                "source_entity_id": str(exit_fill.get("id")),
+                "source_entity_type": "fill" if exit_fill.get("id") else "fill_aggregate",
+                "source_entity_id": exit_fill.get("id"),
+                "source_entity_ids": list(exit_fill.get("fill_ids") or []),
             }
         )
     if not points:
@@ -1278,7 +1320,7 @@ def _economics(
     entry_fill: Mapping[str, Any] | None,
     exit_fill: Mapping[str, Any] | None,
     *,
-    fill_aggregation_ambiguous: bool = False,
+    fill_aggregation: str = "single",
     funding_settlement_visible: bool = True,
 ) -> dict[str, Any]:
     source = fact.get("economics")
@@ -1308,7 +1350,7 @@ def _economics(
         and abs(exit_fill_quantity - quantity) <= quantity_tolerance
     )
     price_verified = bool(
-        not fill_aggregation_ambiguous
+        fill_aggregation != "unavailable"
         and valid_price_identity
         and quantities_verified
         and _as_bool(position.get("entry_fill_verified"))
@@ -1352,8 +1394,8 @@ def _economics(
     unavailable_reason = None
     if entry_fill is None or exit_fill is None:
         unavailable_reason = "verified_close_fill_unavailable"
-    elif fill_aggregation_ambiguous and position.get("status") == "closed":
-        unavailable_reason = "multiple_fills_not_aggregated"
+    elif fill_aggregation == "unavailable":
+        unavailable_reason = "fill_evidence_invalid"
     elif not quantities_verified:
         unavailable_reason = "fill_quantity_mismatch"
     elif not funding_settlement_visible:
@@ -1375,7 +1417,7 @@ def _economics(
         "cost_evidence_status": "complete" if costs_complete else "incomplete",
         "price_evidence_status": "verified" if price_verified else "unavailable",
         "quantity_evidence_status": "verified" if quantities_verified else "unavailable",
-        "fill_aggregation": "ambiguous" if fill_aggregation_ambiguous else "single",
+        "fill_aggregation": fill_aggregation,
         "notional": notional,
         "realized_return_pct": round(net / notional * 100.0, 8) if eligible and net is not None and notional and notional > 0 else None,
         "gross_return_pct": round(gross / notional * 100.0, 8) if price_verified and gross is not None and notional and notional > 0 else None,
@@ -1619,17 +1661,30 @@ def build_position_lifecycle_story(
     related = _related_rows(source, snapshot, cutoff=lifecycle_cutoff)
     proposal = related.get("proposal")
     entry_fills = [row for row in related.get("entry_fills", []) if isinstance(row, Mapping)]
-    entry_fill = entry_fills[0] if entry_fills else None
-    entry_at_candidates = [
-        timestamp
-        for row in entry_fills
-        if (timestamp := _utc(row.get("filled_at"))) is not None
-    ]
-    entry_at = min(entry_at_candidates) if entry_at_candidates else None
+    entry_fill = _aggregate_fills(entry_fills)
+    entry_at = _utc(
+        (entry_fill or {}).get("first_filled_at") or (entry_fill or {}).get("filled_at")
+    ) if entry_fill else None
+    if entry_at is None:
+        entry_at_candidates = [
+            timestamp
+            for row in entry_fills
+            if (timestamp := _utc(row.get("filled_at"))) is not None
+        ]
+        entry_at = min(entry_at_candidates) if entry_at_candidates else None
     close_fills = [row for row in related.get("close_fills", []) if isinstance(row, Mapping)]
-    exit_fill = close_fills[-1] if close_fills else None
+    exit_fill = _aggregate_fills(close_fills)
     exit_at = _utc(exit_fill.get("filled_at")) if exit_fill else None
-    fill_aggregation_ambiguous = len(entry_fills) != 1 or len(close_fills) != 1
+    fill_aggregation = (
+        "unavailable"
+        if (entry_fills and entry_fill is None) or (close_fills and exit_fill is None)
+        else "quantity_weighted"
+        if len(entry_fills) > 1 or len(close_fills) > 1
+        else "single"
+    )
+    if entry_fill is not None:
+        snapshot["entry_price"] = entry_fill["fill_price"]
+        snapshot["quantity"] = entry_fill["fill_quantity"]
     if exit_at is not None and exit_at > cutoff:
         exit_fill = None
         exit_at = None
@@ -1674,6 +1729,7 @@ def build_position_lifecycle_story(
         fact,
         instrument,
         entry_fills=entry_fills,
+        entry_fill=entry_fill,
         first_plan=plans[0] if plans else None,
     )
 
@@ -1700,9 +1756,9 @@ def build_position_lifecycle_story(
             cutoff=cutoff,
             exit_at=closed_at,
         )
-    if closed_visible and fill_aggregation_ambiguous:
-        path_status = "ambiguous"
-        path_reason = "multiple_fills_not_aggregated"
+    if closed_visible and fill_aggregation == "unavailable":
+        path_status = "unavailable"
+        path_reason = "fill_evidence_invalid"
     if not closed_visible and bars and path_status == "available":
         # A live/as-of prefix is useful for hypothesis evidence, but is not a
         # realized MFE/MAE claim because there is no verified exit boundary.
@@ -1717,7 +1773,7 @@ def build_position_lifecycle_story(
         snapshot,
         entry_fill,
         exit_fill,
-        fill_aggregation_ambiguous=fill_aggregation_ambiguous,
+        fill_aggregation=fill_aggregation,
         funding_settlement_visible=funding_settlement_visible,
     )
     mark_to_market_curve = _mark_to_market_curve(
@@ -1817,7 +1873,7 @@ def build_position_lifecycle_story(
                 "maximum_adverse_excursion",
                 occurred_at=metrics.get("adverse_peak_at"),
                 evidence_status="available",
-                source_entity_type="market_ohlcv_bar" if metrics.get("adverse_peak_source_entity_id") else "fill",
+                source_entity_type=metrics.get("adverse_peak_source_entity_type"),
                 source_entity_id=metrics.get("adverse_peak_source_entity_id") or (
                     str(entry_fill.get("id"))
                     if entry_fill and entry_fill.get("id")
@@ -2006,16 +2062,21 @@ def build_position_lifecycle_story(
         )
     else:
         timeline.append(_event("exit_triggered", unavailable_reason="close_trigger_not_recorded"))
-    if len(close_fills) == 1 and exit_fill is not None:
+    if exit_fill is not None:
         quantity_verified = economics.get("quantity_evidence_status") == "verified"
         timeline.append(
             _event(
                 "exit_filled",
                 occurred_at=exit_fill.get("filled_at") if quantity_verified else None,
                 evidence_status="available" if quantity_verified else "unavailable",
-                source_entity_type="fill",
-                source_entity_id=(str(exit_fill.get("id")) if exit_fill.get("id") else None),
-                facts={"fill_price": exit_fill.get("fill_price"), "fill_quantity": exit_fill.get("fill_quantity")},
+                source_entity_type="fill" if exit_fill.get("id") else "fill_aggregate",
+                source_entity_id=exit_fill.get("id"),
+                facts={
+                    "fill_price": exit_fill.get("fill_price"),
+                    "fill_quantity": exit_fill.get("fill_quantity"),
+                    "fill_ids": exit_fill.get("fill_ids", []),
+                    "fill_count": exit_fill.get("fill_count", 0),
+                },
                 unavailable_reason=(
                     None
                     if quantity_verified
@@ -2027,12 +2088,12 @@ def build_position_lifecycle_story(
         timeline.append(
             _event(
                 "exit_filled",
-                evidence_status="ambiguous",
+                evidence_status="unavailable",
                 facts={
                     "fill_ids": [str(row.get("id")) for row in close_fills if row.get("id")],
                     "fill_count": len(close_fills),
                 },
-                unavailable_reason="multiple_close_fills_not_aggregated",
+                unavailable_reason="fill_evidence_invalid",
             )
         )
     else:

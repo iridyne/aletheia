@@ -61,6 +61,16 @@ def _has_column(db: Any, table: str, column: str) -> bool:
         return False
 
 
+def _mask_mutable_opportunity_state(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep current Opportunity state out of historical stories without a version log."""
+    masked = dict(row)
+    for field in ("status", "valid_until", "last_ranked_at"):
+        if field in masked:
+            masked[field] = None
+            masked[f"{field}_evidence"] = "unavailable"
+    return masked
+
+
 def _empty_lifecycle() -> dict[str, Any]:
     return {
         "decisions": [],
@@ -461,6 +471,7 @@ def build_opportunity_lifecycle_story(
             availability="unavailable",
             unavailable_reason="opportunity_created_after_cutoff",
         )
+    opportunity = _mask_mutable_opportunity_state(opportunity)
     opportunity["canonical_identity"] = {"opportunity_id": canonical_id}
 
     direct_decisions = _visible(

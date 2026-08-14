@@ -221,6 +221,33 @@ def test_as_of_hides_future_close_order_fill_and_position_story_knowledge(monkey
     assert not story["counterfactual"]["forward"]
 
 
+def test_as_of_masks_mutable_opportunity_and_proposal_state(monkeypatch):
+    db = _db()
+    db.execute("ALTER TABLE opportunities ADD COLUMN status TEXT")
+    db.execute("ALTER TABLE opportunities ADD COLUMN valid_until TEXT")
+    db.execute("ALTER TABLE opportunities ADD COLUMN last_ranked_at TEXT")
+    db.execute("ALTER TABLE trade_proposals ADD COLUMN status TEXT")
+    db.execute(
+        "UPDATE opportunities SET status='reviewed', valid_until=?, last_ranked_at=? WHERE id='opp-1'",
+        ("2026-08-13T01:00:00+00:00", "2026-08-13T00:05:00+00:00"),
+    )
+    db.execute("UPDATE trade_proposals SET status='executed' WHERE id='proposal-1'")
+    db.commit()
+
+    story = lifecycle.build_opportunity_lifecycle_story(
+        "opp-1", as_of_at=_PRE_CLOSE, db=db
+    )
+
+    opportunity = story["opportunity"]
+    assert opportunity["status"] is None
+    assert opportunity["valid_until"] is None
+    assert opportunity["last_ranked_at"] is None
+    assert opportunity["status_evidence"] == "unavailable"
+    proposal = story["lifecycle"]["proposals"][0]
+    assert proposal["status"] is None
+    assert proposal["status_evidence"] == "unavailable"
+
+
 def test_shadow_multiplicity_is_preserved(monkeypatch):
     db = _db()
     db.execute(

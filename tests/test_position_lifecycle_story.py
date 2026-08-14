@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
+import pytest
 from typer.testing import CliRunner
 
 import aletheia.analytics.position_lifecycle_story as lifecycle
@@ -285,6 +286,11 @@ def test_story_is_deterministic_read_only_and_reports_multiple_mechanisms(monkey
     assert any(event["event_type"] == "exit_plan_revised" for event in first["timeline"])
     assert any(event["event_type"] == "profit_protection_activated" for event in first["timeline"])
     assert first["audit"]["position_management_linkage"]["exact_position_id_used"] is True
+    horizon = next(
+        item for item in first["management_opportunities"]
+        if item["node_type"] == "expected_horizon_reached"
+    )
+    assert horizon["exit_plan_changed"] is False
 
     curve = first["economic_path"]["mark_to_market_curve"]
     assert curve["status"] == "available"
@@ -313,6 +319,41 @@ def test_story_as_of_prefix_does_not_expose_eventual_close(monkeypatch):
         point["source_entity_type"] == "market_ohlcv_bar"
         for point in live_curve["points"]
     )
+
+
+def test_story_rejects_closed_position_without_close_boundary(monkeypatch):
+    db = _db()
+    db.execute("UPDATE positions SET status='closed', closed_at=NULL WHERE id='position-1'")
+    db.commit()
+
+    story = lifecycle.build_position_lifecycle_story(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    assert story["availability"] == "unavailable"
+    assert story["unavailable_reason"] == "position_close_boundary_invalid"
+
+
+def test_story_preserves_adverse_peak_source_type(monkeypatch):
+    db = _db()
+    db.execute("UPDATE fills SET fill_price=101.0 WHERE id='close-fill'")
+    db.commit()
+    fact = _fact()
+    for row in fact["stages"]["holding"]["ohlcv"]["rows"]:
+        row[2] = 100.0
+        row[3] = 100.0
+    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: fact)
+
+    story = lifecycle.build_position_lifecycle_story(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+    adverse = next(
+        event for event in story["timeline"]
+        if event["event_type"] == "maximum_adverse_excursion"
+    )
+
+    assert adverse["source_entity_type"] == "entry_fill"
+    assert adverse["source_entity_id"] == "entry-fill"
 
 
 def test_story_masks_future_close_fill_but_keeps_known_exit_intent(monkeypatch):
@@ -405,18 +446,41 @@ def test_story_preserves_fill_multiplicity_instead_of_verifying_one_fill(monkeyp
         "INSERT INTO fills VALUES (?,?,?,?,?)",
         ("entry-fill-2", "entry-order", 101.0, 0.5, "2026-08-13T00:00:10+00:00"),
     )
+    db.execute(
+        "UPDATE positions SET quantity=1.5, entry_price=?, realized_pnl=? WHERE id='position-1'",
+        (100.33333333333333, -3.7),
+    )
+    db.execute(
+        "INSERT INTO orders VALUES (?,?,?,?,?,?,?)",
+        ("close-order-2", None, None, "position-1", "stop_loss", "2026-08-13T00:04:55+00:00", "2026-08-13T00:05:00+00:00"),
+    )
+    db.execute(
+        "INSERT INTO fills VALUES (?,?,?,?,?)",
+        ("close-fill-2", "close-order-2", 97.0, 0.5, "2026-08-13T00:05:00+00:00"),
+    )
     db.commit()
-    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+    fact = _fact()
+    fact["economics"]["gross_pnl"] = -3.5
+    fact["economics"]["net_pnl"] = -3.7
+    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: fact)
 
     story = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
     )
 
     assert story["opening"]["entry_fill_ids"] == ["entry-fill", "entry-fill-2"]
+    assert story["opening"]["entry_fill_aggregation"] == "quantity_weighted"
+    assert story["opening"]["entry_price"] == pytest.approx(100.33333333333333)
     entry_event = next(event for event in story["timeline"] if event["event_type"] == "entry_filled")
-    assert entry_event["evidence_status"] == "ambiguous"
-    assert story["economic_path"]["availability"] == "unavailable"
-    assert story["economic_path"]["unavailable_reason"] == "multiple_fills_not_aggregated"
+    assert entry_event["evidence_status"] == "available"
+    assert entry_event["source_entity_type"] == "fill_aggregate"
+    assert entry_event["facts"]["fill_ids"] == ["entry-fill", "entry-fill-2"]
+    exit_event = next(event for event in story["timeline"] if event["event_type"] == "exit_filled")
+    assert exit_event["evidence_status"] == "available"
+    assert exit_event["facts"]["fill_ids"] == ["close-fill", "close-fill-2"]
+    assert story["economic_path"]["availability"] == "available"
+    assert story["economic_path"]["fill_aggregation"] == "quantity_weighted"
+    assert story["economic_path"]["verified_gross_pnl"] == pytest.approx(-3.5)
 
 
 def test_story_rejects_fill_quantity_mismatch(monkeypatch):
