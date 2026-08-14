@@ -131,7 +131,7 @@ def get_settings():
         }
     mandate_value = getattr(cfg, "trading_mandate", None)
     mandate_view = None
-    if mandate_value is not None and hasattr(mandate_value, "model_dump"):
+    if isinstance(mandate_value, BaseModel):
         raw_mandate = mandate_value.model_dump(mode="json")
         visible_mandate_fields = {
             "enabled",
