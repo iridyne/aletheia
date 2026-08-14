@@ -1,4 +1,9 @@
-"""Seven-layer profit attribution with explicit comparison-method gates."""
+"""Seven-layer profit attribution with explicit comparison-method gates.
+
+This module intentionally accepts structured cohort samples only.  It does not
+import or consume Position Lifecycle Story text; narrative rendering remains a
+human-review surface, not a Learning/statistical input.
+"""
 
 from __future__ import annotations
 
