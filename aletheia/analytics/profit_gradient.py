@@ -123,6 +123,18 @@ def _cluster_interval(
     return estimate, _percentile(bootstraps, 0.025), _percentile(bootstraps, 0.975)
 
 
+def _randomized_cluster_arm_conflicts(
+    samples: list[dict[str, Any]],
+) -> set[str]:
+    arms_by_cluster: dict[str, set[str]] = defaultdict(set)
+    for sample in samples:
+        if sample["arm"] in {"control", "treatment"}:
+            arms_by_cluster[sample["cluster_id"]].add(sample["arm"])
+    return {
+        cluster_id for cluster_id, arms in arms_by_cluster.items() if len(arms) > 1
+    }
+
+
 def _randomized_cluster_rows(
     samples: list[dict[str, Any]],
 ) -> dict[str, list[dict[str, Any]]]:
@@ -131,8 +143,11 @@ def _randomized_cluster_rows(
         if sample["arm"] in {"control", "treatment"}:
             by_cluster[sample["cluster_id"]][sample["arm"]].append(sample)
 
+    conflicting_clusters = _randomized_cluster_arm_conflicts(samples)
     arm_clusters: dict[str, list[dict[str, Any]]] = {"control": [], "treatment": []}
     for cluster_id, arms in sorted(by_cluster.items()):
+        if cluster_id in conflicting_clusters:
+            continue
         for arm in arm_clusters:
             rows = arms.get(arm, [])
             if not rows:
@@ -219,16 +234,21 @@ def _randomized_quote_metrics(
     control = arm_clusters["control"]
     if not treatment or not control:
         return None, None, None
+    treatment_mean = sum(row["paired_net_delta_quote"] for row in treatment) / len(treatment)
+    control_mean = sum(row["paired_net_delta_quote"] for row in control) / len(control)
+    center = (treatment_mean + control_mean) / 2.0
     treatment_contributions = [
-        row["paired_net_delta_quote"] / len(treatment) for row in treatment
+        (row["paired_net_delta_quote"] - center) / len(treatment)
+        for row in treatment
     ]
     control_contributions = [
-        -row["paired_net_delta_quote"] / len(control) for row in control
+        -(row["paired_net_delta_quote"] - center) / len(control)
+        for row in control
     ]
     contributions = treatment_contributions + control_contributions
-    total_quote = sum(contributions)
+    quote_contrast = treatment_mean - control_mean
     top1, top5 = _concentration_values(contributions)
-    return total_quote, top1, top5
+    return quote_contrast, top1, top5
 
 
 def _expected_units(layer: str) -> tuple[str, str]:
@@ -429,7 +449,12 @@ def _layer_result(
     unassigned_arm_count = unit_count - sum(arms.values()) if requires_two_arms else None
     if comparison_method == "prospective_randomized":
         estimate, lower, upper, cluster_count_by_arm, temporal_stable = _randomized_cluster_interval(samples)
-        total_quote, top1, top5 = _randomized_quote_metrics(samples)
+        quote_contrast, top1, top5 = _randomized_quote_metrics(samples)
+        total_quote = (
+            quote_contrast * cluster_count_by_arm["treatment"]
+            if quote_contrast is not None and cluster_count_by_arm["treatment"] > 0
+            else None
+        )
         independent_unit_count = sum(cluster_count_by_arm.values())
         smaller_arm = (
             min(cluster_count_by_arm.values())
@@ -439,12 +464,18 @@ def _layer_result(
     else:
         estimate, lower, upper = _cluster_interval(samples)
         cluster_count_by_arm = None
+        quote_contrast = None
         total_quote = sum(sample["paired_net_delta_quote"] for sample in samples)
         top1, top5 = _concentration(samples)
         temporal_stable = _same_sign_halves(samples)
         independent_unit_count = unit_count
         smaller_arm = None
-    frequency = unit_count / candidate_count if candidate_count > 0 else None
+    frequency_units = (
+        independent_unit_count
+        if comparison_method == "prospective_randomized"
+        else unit_count
+    )
+    frequency = frequency_units / candidate_count if candidate_count > 0 else None
     gradient = frequency * lower if frequency is not None and lower is not None else None
     reasons = list(global_reasons)
     minimum_units = int(thresholds.get("minimum_independent_units") or 30)
@@ -454,6 +485,8 @@ def _layer_result(
     if requires_two_arms:
         if set(arms) != {"control", "treatment"}:
             reasons.append("randomized_arm_labels_required")
+        if _randomized_cluster_arm_conflicts(samples):
+            reasons.append("randomized_cluster_multiple_arms")
         if len(arms) != 2:
             reasons.append("randomized_two_arms_required")
         if unassigned_arm_count:
@@ -468,6 +501,10 @@ def _layer_result(
         reasons.append("cluster_interval_crosses_zero")
     if estimate is None or estimate <= 0:
         reasons.append("direction_does_not_reduce_harm")
+    if comparison_method == "prospective_randomized" and (
+        quote_contrast is None or quote_contrast <= 0
+    ):
+        reasons.append("randomized_quote_contrast_not_positive")
     if not temporal_stable:
         reasons.append("temporal_halves_disagree")
     if top1 is None or top5 is None:
