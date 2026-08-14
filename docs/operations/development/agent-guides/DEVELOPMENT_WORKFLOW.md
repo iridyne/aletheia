@@ -41,6 +41,25 @@ uv run aletheia doctor
 - Commit only scoped files and publish through the normal PR workflow. GitHub
   Actions uses self-hosted runners only. Disable a broken workflow; do not
   archive the repository.
+- Heavy Python regression validation runs first through PR CI on the repository's
+  self-hosted GitHub Actions runners. Those configured tiers are the PR gate,
+  not a claim that every test module has run. If a complete suite is required
+  and the result cannot wait, use an isolated Fedora CI/Test process in a
+  dedicated Worktree with a temporary data root, no secrets, and no execution
+  authority; never use the stable Runtime checkout or primary data. Windows is
+  not a validation dependency or fallback.
+
+  Run the Fedora fallback only inside a dedicated credential-free CI identity
+  or container which cannot read the stable Runtime root, OS keyring, provider
+  credentials, or execution credentials:
+
+  ```sh
+  export ALETHEIA_DATA_DIR="$(mktemp -d /var/tmp/aletheia-ci.XXXXXX)"
+  trap 'rm -rf "$ALETHEIA_DATA_DIR"' EXIT
+  uv run pytest tests/ -q --tb=line
+  ```
+
+  A Worktree alone does not provide this isolation.
 - Ordinary Ready PRs accumulate until an operationally useful release batch is
   needed; only then run `Prepare and tag releases`. See the
   [release contract](../../deployment/MODULAR_MONOLITH_RELEASE.md).
@@ -53,7 +72,9 @@ uv run aletheia doctor
 ## Common commands
 
 - Focused test: `uv run pytest tests/test_<area>.py -q`
-- Full suite, never on macOS: `uv run pytest tests/ -q --tb=line`
+- Full suite: PR CI proves its configured regression tiers. Run the complete
+  suite only through the isolated Fedora process above; never run it on macOS
+  or use Windows as a validation fallback.
 - Gateway: `uv run aletheia gateway <start|stop|restart|status|logs>`
 - Daily/release UI: `http://127.0.0.1:8787/`
 - Worktree HMR: Vite `http://127.0.0.1:5173/`; read

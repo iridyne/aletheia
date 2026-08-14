@@ -29,7 +29,7 @@ Git 操作不再自动重启稳定 Gateway；PR merge 也不等于 Qualification
 - `data/` 为空陷阱：不要在 Worktree 里 restart Gateway，交易系统会连接错误/空状态；
 - 稳定 Runtime 使用 primary data root；Preview 自动使用
   `~/.aletheia/instances/dev-preview/<checkout-id>/<port>`；
-- 同一 Windows 主机并行 Preview 时，每个 API/Vite 进程使用唯一端口；
+- 同一主机并行 Preview 时，每个 API/Vite 进程使用唯一端口；
 - 共享 hooks：任何 machine-level hook 必须有 stable owner/main-worktree 守卫；
 - `.git` 是文件而非目录；stale lock 位于主仓
   `.git/worktrees/<name>/index.lock`；

@@ -113,10 +113,10 @@ This is for UI and API development, not paper-trading simulation. Use focused
 tests or the stable gateway's explicitly authorized paper workflow for trading
 behavior verification.
 
-## Parallel Windows previews
+## Parallel remote previews
 
-A Windows qualification/CI host may run several isolated Preview pairs while
-the stable gateway remains pinned on `8787`. Each pair must come from its own
+A remote development host may run several isolated Preview pairs while the
+stable gateway remains pinned on `8787`. Each pair must come from its own
 Worktree and use unique host ports.
 
 ```text
@@ -126,7 +126,23 @@ Worktree B: API 8792, Vite 5174
 Worktree C: API 8793, Vite 5175
 ```
 
-Example, from separate Worktrees and terminals:
+On POSIX remote hosts, from separate Worktrees and terminals:
+
+```sh
+# Worktree A
+uv run aletheia dev api --port 8791
+cd frontend && VITE_API_TARGET=http://127.0.0.1:8791 npm run dev -- --port 5173
+
+# Worktree B
+uv run aletheia dev api --port 8792
+cd frontend && VITE_API_TARGET=http://127.0.0.1:8792 npm run dev -- --port 5174
+
+# Worktree C
+uv run aletheia dev api --port 8793
+cd frontend && VITE_API_TARGET=http://127.0.0.1:8793 npm run dev -- --port 5175
+```
+
+On Windows, use the equivalent launcher:
 
 ```powershell
 # Worktree A
@@ -178,7 +194,7 @@ edits visible. If an owner-approved gateway restart is needed for a release,
 perform it from the owning checkout and prove the current commit with the normal
 runtime checks.
 
-A merged PR is not a qualification deployment. The Windows qualification
+A merged PR is not a qualification deployment. The owner-selected qualification
 Runtime remains pinned until the owner explicitly selects a new candidate. See
 [`Qualification Development Protocol`](QUALIFICATION_DEVELOPMENT_PROTOCOL.md)
 for observation-window rules.

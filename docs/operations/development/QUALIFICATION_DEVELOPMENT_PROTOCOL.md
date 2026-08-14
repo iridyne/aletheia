@@ -73,25 +73,29 @@ scope 与 doctor 投影，不能仅靠复制目录或环境变量绕过。
 - ORCA、Claude Code、Codex 等外部 Agent 编排；
 - 创建 Worktree、分支、提交、PR 与代码审查；
 - 前端 HMR、短时 Preview API 和小范围 focused tests；
-- 观察 Windows Runtime、读取 doctor/日志/数据库只读结果；
+- 观察 Fedora Runtime、读取 doctor/日志/数据库只读结果；
 - macOS 专属打包与人工 release acceptance。
 
 约束：
 
-- 不在 Mac 上运行大规模 pytest；通过 SSH 或 CI 交给 Windows/self-hosted Runner；
+- 不在 Mac 上运行大规模 pytest；首选仓库 GitHub Actions 的 self-hosted Runner；
+  Runner 不可用且验证不能等待时，才在远程 Fedora 的隔离 CI/Test process 中回退执行；
+- Windows 不属于验证依赖或回退路径；
 - Worktree 不得 restart/stop/update 稳定 Gateway；
 - 开发 checkout 不承担长期 Qualification observation window。
 
-### Windows：Qualification 与重型验证面
+### Fedora：Qualification Runtime 与最后回退验证面
 
 负责：
 
 - 一个固定 SHA 的稳定 `qualification-main` Runtime；
 - 长时间 scheduler、paper loop、outcome settlement 与 Learning qualification；
-- self-hosted CI、完整测试、stability soak；
+- self-hosted GitHub Actions Runner 承担首选的完整测试；
+- 仅当 Runner 不可用且验证不能等待时，Fedora 主机才运行隔离的临时 CI/Test process；
+  该进程不得使用稳定 Runtime checkout、primary data、secrets 或 execution authority；
 - 必要时并行运行多个无执行权的 Preview API。
 
-Windows 上的参考布局：
+Fedora 上的参考布局：
 
 ```text
 qualification-main
@@ -112,6 +116,11 @@ dev-preview-b
   Vite:                5174
   data:                ~/.aletheia/instances/dev-preview/<checkout-b>/8792
   authority:           shadow-only；无 secrets、无 execution
+
+ci-test-<task>
+  data:               OS temp 或任务专属 ALETHEIA_DATA_DIR
+  code:               独立 Worktree
+  authority:          无 secrets、无 execution
 ```
 
 ## 5. 实例角色合同
@@ -192,29 +201,14 @@ runtime 自动改走签名发布与 Tray 激活链路。`update --no-restart` �
 5. 完成 focused checks 后提交 PR；
 6. PR/CI 是代码证明，`doctor` 是机器运行事实。
 
-### 7.2 同一 Windows 主机运行多个 Preview
+### 7.2 同一远程主机运行多个 Preview
 
-同一主机的每个 Preview 必须使用唯一 API port 和唯一 Vite port：
-
-```powershell
-# Worktree A，terminal 1
-uv run aletheia dev api --port 8791
-
-# Worktree A，terminal 2
-.\scripts\dev.ps1 -UiPort 5173 -ApiPort 8791
-
-# Worktree B，terminal 1
-uv run aletheia dev api --port 8792
-
-# Worktree B，terminal 2
-.\scripts\dev.ps1 -UiPort 5174 -ApiPort 8792
-```
-
-规则：
+需要并行 Preview 时，遵循
+[`Development Preview`](DEVELOPMENT_PREVIEW.md)，并保持每个 Worktree 的端口和数据根隔离：
 
 - 同一主机不可复用已占用端口；
 - 同一 Worktree 若同时开两个 API，也必须使用不同 API port；
-- 不要手工设置 Preview 环境变量连接 primary data root；
+- Preview 不得连接 primary data root；
 - Preview 只证明 UI/API 合同，不证明 paper trading 行为或经济表现；
 - 结束后停止对应前台进程；确认不再需要历史 Preview state 后才删除其 instance 目录。
 
