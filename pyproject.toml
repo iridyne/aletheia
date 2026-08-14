@@ -100,6 +100,9 @@ dev = [
     "hypothesis>=6.155.3",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
+    # Branch coverage on trust boundaries only (see .coveragerc and
+    # scripts/coverage_floors.py). No repo-wide fail-under.
+    "pytest-cov>=5.0",
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.9",
