@@ -63,6 +63,13 @@ def _finite(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _positive_integer(value: Any) -> int | None:
+    number = _finite(value)
+    if number is None or number <= 0 or not number.is_integer():
+        return None
+    return int(number)
+
+
 def _timestamp(value: Any) -> float | None:
     if not value:
         return None
@@ -116,9 +123,9 @@ def _cluster_interval(
     return estimate, _percentile(bootstraps, 0.025), _percentile(bootstraps, 0.975)
 
 
-def _randomized_cluster_interval(
-    samples: list[dict[str, Any]], *, iterations: int = 2_000
-) -> tuple[float | None, float | None, float | None, dict[str, int], bool]:
+def _randomized_cluster_rows(
+    samples: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
     by_cluster: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
     for sample in samples:
         if sample["arm"] in {"control", "treatment"}:
@@ -139,6 +146,13 @@ def _randomized_cluster_interval(
                     "paired_net_delta_quote": sum(row["paired_net_delta_quote"] for row in rows) / len(rows),
                 }
             )
+    return arm_clusters
+
+
+def _randomized_cluster_interval(
+    samples: list[dict[str, Any]], *, iterations: int = 2_000
+) -> tuple[float | None, float | None, float | None, dict[str, int], bool]:
+    arm_clusters = _randomized_cluster_rows(samples)
 
     cluster_counts = {arm: len(rows) for arm, rows in arm_clusters.items()}
     treatment = arm_clusters["treatment"]
@@ -153,7 +167,7 @@ def _randomized_cluster_interval(
         return estimate, None, None, cluster_counts, False
 
     seed_material = "|".join(
-        f"{arm}:{row['cluster_id']}:{row['paired_net_delta_bp']:.12g}:{row['paired_net_delta_quote']:.12g}"
+        f"{arm}:{row['cluster_id']}:{row['paired_net_delta_bp']:.12g}"
         for arm in ("control", "treatment")
         for row in sorted(arm_clusters[arm], key=lambda item: item["cluster_id"])
     )
@@ -197,6 +211,26 @@ def _randomized_cluster_interval(
     return estimate, _percentile(bootstraps, 0.025), _percentile(bootstraps, 0.975), cluster_counts, temporal_stable
 
 
+def _randomized_quote_metrics(
+    samples: list[dict[str, Any]],
+) -> tuple[float | None, float | None, float | None]:
+    arm_clusters = _randomized_cluster_rows(samples)
+    treatment = arm_clusters["treatment"]
+    control = arm_clusters["control"]
+    if not treatment or not control:
+        return None, None, None
+    treatment_contributions = [
+        row["paired_net_delta_quote"] / len(treatment) for row in treatment
+    ]
+    control_contributions = [
+        -row["paired_net_delta_quote"] / len(control) for row in control
+    ]
+    contributions = treatment_contributions + control_contributions
+    total_quote = sum(contributions)
+    top1, top5 = _concentration_values(contributions)
+    return total_quote, top1, top5
+
+
 def _expected_units(layer: str) -> tuple[str, str]:
     if layer in _CANDIDATE_LAYERS:
         return "candidate_fact", "fixed_horizon_net_return"
@@ -215,11 +249,17 @@ _RANDOMIZED_COHORT_FIELDS = (
 def _randomized_cohort_identity(
     context: Mapping[str, Any], method: str | None
 ) -> tuple[dict[str, str] | None, list[str]]:
-    if method != "prospective_randomized":
+    if method == "prospective_randomized":
+        required_fields = _RANDOMIZED_COHORT_FIELDS
+    elif method == "paired_same_unit":
+        required_fields = tuple(
+            item for item in _RANDOMIZED_COHORT_FIELDS if item[0] != "assignment_salts"
+        )
+    else:
         return None, []
     identity: dict[str, str] = {}
     reasons = []
-    for field, output_field in _RANDOMIZED_COHORT_FIELDS:
+    for field, output_field in required_fields:
         values = context.get(field)
         normalized = [str(value) for value in values] if isinstance(values, list) else []
         if (
@@ -316,12 +356,18 @@ def _same_sign_halves(samples: list[dict[str, Any]]) -> bool:
     return means[0] != 0 and means[1] != 0 and (means[0] > 0) == (means[1] > 0)
 
 
-def _concentration(samples: list[dict[str, Any]]) -> tuple[float | None, float | None]:
-    contributions = sorted((abs(sample["paired_net_delta_quote"]) for sample in samples), reverse=True)
+def _concentration_values(values: Iterable[float]) -> tuple[float | None, float | None]:
+    contributions = sorted((abs(value) for value in values), reverse=True)
     total = sum(contributions)
     if total <= 0:
         return None, None
     return contributions[0] / total, sum(contributions[:5]) / total
+
+
+def _concentration(samples: list[dict[str, Any]]) -> tuple[float | None, float | None]:
+    return _concentration_values(
+        sample["paired_net_delta_quote"] for sample in samples
+    )
 
 
 def _epoch_gate(context: Mapping[str, Any]) -> tuple[bool, list[str]]:
@@ -353,6 +399,8 @@ def _global_gate(context: Mapping[str, Any]) -> tuple[bool, list[str]]:
     candidate_count = _finite(context.get("candidate_count"))
     if candidate_count is None or candidate_count <= 0:
         reasons.append("candidate_count_not_positive")
+    elif not candidate_count.is_integer():
+        reasons.append("candidate_count_not_integral")
     epoch_ok, epoch_reasons = _epoch_gate(context)
     reasons.extend(epoch_reasons)
     return bool(epoch_ok and not reasons), reasons
@@ -379,25 +427,29 @@ def _layer_result(
             arms[sample["arm"]] += 1
     requires_two_arms = bool(profile and profile["requires_two_arms"])
     unassigned_arm_count = unit_count - sum(arms.values()) if requires_two_arms else None
-    smaller_arm = min(arms.values()) if requires_two_arms and len(arms) == 2 else None
     if comparison_method == "prospective_randomized":
         estimate, lower, upper, cluster_count_by_arm, temporal_stable = _randomized_cluster_interval(samples)
-        total_quote = (
-            sum(sample["paired_net_delta_quote"] for sample in samples if sample["arm"] == "treatment")
-            - sum(sample["paired_net_delta_quote"] for sample in samples if sample["arm"] == "control")
+        total_quote, top1, top5 = _randomized_quote_metrics(samples)
+        independent_unit_count = sum(cluster_count_by_arm.values())
+        smaller_arm = (
+            min(cluster_count_by_arm.values())
+            if set(cluster_count_by_arm) == {"control", "treatment"}
+            else None
         )
     else:
         estimate, lower, upper = _cluster_interval(samples)
         cluster_count_by_arm = None
         total_quote = sum(sample["paired_net_delta_quote"] for sample in samples)
+        top1, top5 = _concentration(samples)
         temporal_stable = _same_sign_halves(samples)
-    top1, top5 = _concentration(samples)
+        independent_unit_count = unit_count
+        smaller_arm = None
     frequency = unit_count / candidate_count if candidate_count > 0 else None
     gradient = frequency * lower if frequency is not None and lower is not None else None
     reasons = list(global_reasons)
     minimum_units = int(thresholds.get("minimum_independent_units") or 30)
     minimum_smaller_arm = _finite(thresholds.get("minimum_smaller_arm"))
-    if unit_count < minimum_units:
+    if independent_unit_count < minimum_units:
         reasons.append(f"independent_units_below_{minimum_units}")
     if requires_two_arms:
         if set(arms) != {"control", "treatment"}:
@@ -436,7 +488,7 @@ def _layer_result(
         "eligible_sample_count": unit_count,
         "excluded_sample_count": raw_count - unit_count,
         "exclusion_waterfall": dict(sorted(Counter(exclusions).items())),
-        "independent_unit_count": unit_count,
+        "independent_unit_count": independent_unit_count,
         "cluster_count": len({sample["cluster_id"] for sample in samples}),
         "cluster_count_by_arm": cluster_count_by_arm,
         "comparison_method": comparison_method,
@@ -452,9 +504,15 @@ def _layer_result(
         "upper_95_bp": upper,
         "gradient_lower_bp": gradient,
         "harm_quote": total_quote,
-        "harm_quote_per_100_candidates": (total_quote / candidate_count * 100.0 if candidate_count > 0 else None),
+        "harm_quote_per_100_candidates": (
+            total_quote / candidate_count * 100.0
+            if total_quote is not None and candidate_count > 0
+            else None
+        ),
         "harm_quote_per_capital_day": (
-            total_quote / capital_days if capital_days is not None and capital_days > 0 else None
+            total_quote / capital_days
+            if total_quote is not None and capital_days is not None and capital_days > 0
+            else None
         ),
         "top1_absolute_contribution_share": top1,
         "top5_absolute_contribution_share": top5,
@@ -480,7 +538,7 @@ def select_unique_max_direction(
     thresholds = _thresholds_for(comparison_method)
     profile = _COMPARISON_PROFILES.get(comparison_method or "")
     unique_winner_eligible = bool(profile and profile["allows_unique_winner"])
-    candidate_count = int(_finite(evidence_context.get("candidate_count")) or 0)
+    candidate_count = _positive_integer(evidence_context.get("candidate_count")) or 0
     capital_days = _finite(evidence_context.get("capital_days"))
     risk_reject_count = int(_finite(evidence_context.get("risk_reject_count")) or 0)
     layers = {
