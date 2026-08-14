@@ -14,6 +14,9 @@ from aletheia.analytics.outcome_integrity import assess_reportable_outcome
 from aletheia.analytics import trade_path as trade_path_analytics
 from aletheia.storage import repositories as repo
 from aletheia.storage.market_ohlcv_tiering import _canonical_row, _content_hash
+from aletheia.trading.trading_mandate import (
+    validate_frozen_trading_mandate_provenance,
+)
 
 
 FACT_CONTRACT_VERSION = "profit_loop_fact/v1"
@@ -249,8 +252,74 @@ def _ohlcv_evidence(
     return base
 
 
-def _economics(position: dict[str, Any]) -> dict[str, Any]:
-    assessment = assess_reportable_outcome(position)
+def _frozen_mandate_provenance(
+    proposal: dict[str, Any] | None,
+    *,
+    source_identities: dict[str, Any],
+) -> dict[str, Any]:
+    """Expose only the Proposal-frozen pair; never resolve current config."""
+    base = {
+        "status": "not_recorded",
+        "identity": None,
+        "fit": None,
+        "source_identities": source_identities,
+        "unavailable_reason": "mandate_provenance_not_recorded",
+    }
+    if proposal is None:
+        return base
+    snapshot = _json(proposal.get("attribution_snapshot"))
+    if not isinstance(snapshot, dict):
+        return base
+    has_identity = "trading_mandate_identity" in snapshot
+    has_fit = "trading_mandate_fit" in snapshot
+    if not has_identity and not has_fit:
+        return base
+    identity = snapshot.get("trading_mandate_identity")
+    fit = snapshot.get("trading_mandate_fit")
+    try:
+        validate_frozen_trading_mandate_provenance(snapshot)
+    except ValueError as exc:
+        return {
+            **base,
+            "status": "mandate_unavailable",
+            "identity": identity if isinstance(identity, dict) else None,
+            "fit": fit,
+            "unavailable_reason": "malformed_frozen_mandate_provenance",
+            "validation_error": str(exc),
+        }
+    status = fit.get("status") if isinstance(fit, dict) else None
+    if status not in {
+        "in_scope",
+        "out_of_scope",
+        "not_assessable",
+        "not_configured",
+        "mandate_unavailable",
+    }:
+        return {
+            **base,
+            "status": "mandate_unavailable",
+            "identity": identity if isinstance(identity, dict) else None,
+            "fit": fit,
+            "unavailable_reason": "unsupported_frozen_mandate_fit_status",
+        }
+    return {
+        "status": status,
+        "identity": identity,
+        "fit": fit,
+        "source_identities": source_identities,
+        "unavailable_reason": None,
+    }
+
+
+def _economics(position: dict[str, Any], *, db: Any = None) -> dict[str, Any]:
+    try:
+        assessment = assess_reportable_outcome(position, db=db)
+    except TypeError as exc:
+        # Keep lightweight test doubles and older optional consumers compatible;
+        # production's shared evaluator accepts the read context.
+        if "unexpected keyword argument 'db'" not in str(exc):
+            raise
+        assessment = assess_reportable_outcome(position)
     entry = _finite(position.get("entry_price"))
     exit_price = _finite(
         position.get("current_price") if position.get("current_price") is not None else position.get("exit_price")
@@ -302,7 +371,41 @@ def build_position_replay(
     db: Any = None,
 ) -> dict[str, Any]:
     """Return one immutable fact projection without mutating runtime state."""
-    source = db or repo.get_db()
+    if db is None:
+        from aletheia.storage.sqlite import readonly_db
+
+        try:
+            with readonly_db() as read_db:
+                return build_position_replay(
+                    position_id,
+                    as_of_at=as_of_at,
+                    db=read_db,
+                )
+        except FileNotFoundError:
+            cutoff = _utc(as_of_at) or datetime.now(timezone.utc)
+            return {
+                "contract_version": FACT_CONTRACT_VERSION,
+                "fact_unit": "position_fact",
+                "fact_id": position_id,
+                "as_of_at": cutoff.isoformat(),
+                "read_only": True,
+                "availability": "unavailable",
+                "unavailable_reason": "database_not_available",
+                "trading_mandate": {
+                    "status": "not_recorded",
+                    "identity": None,
+                    "fit": None,
+                    "source_identities": {
+                        "opportunity_id": None,
+                        "decision_id": None,
+                        "proposal_id": None,
+                    },
+                    "unavailable_reason": "mandate_provenance_not_recorded",
+                },
+                "trading_mandate_identity": None,
+                "trading_mandate_fit": None,
+            }
+    source = db
     cutoff = _utc(as_of_at) or datetime.now(timezone.utc)
     position = _row(source, "positions", position_id)
     base: dict[str, Any] = {
@@ -313,6 +416,19 @@ def build_position_replay(
         "read_only": True,
         "availability": "unavailable",
         "unavailable_reason": "position_not_found",
+        "trading_mandate": {
+            "status": "not_recorded",
+            "identity": None,
+            "fit": None,
+            "source_identities": {
+                "opportunity_id": None,
+                "decision_id": None,
+                "proposal_id": None,
+            },
+            "unavailable_reason": "mandate_provenance_not_recorded",
+        },
+        "trading_mandate_identity": None,
+        "trading_mandate_fit": None,
     }
     if position is None or not _at_or_before(position, cutoff):
         return base
@@ -395,9 +511,18 @@ def build_position_replay(
     if pi_error:
         causal_errors.append(pi_error)
 
+    mandate_source_identities = {
+        "opportunity_id": position.get("opportunity_id"),
+        "decision_id": (pi_decision or {}).get("id"),
+        "proposal_id": (proposal or {}).get("id") or position.get("proposal_id"),
+    }
+    mandate_provenance = _frozen_mandate_provenance(
+        proposal,
+        source_identities=mandate_source_identities,
+    )
     path = getattr(trade_path_analytics, "build_position_trade_path")(position_id, db=source)
     ohlcv = _ohlcv_evidence(source, position=position, path=path, cutoff=cutoff)
-    economics = _economics(position)
+    economics = _economics(position, db=source)
     provenance = _runtime_identity(
         source,
         [position, opportunity, proposal, pi_decision, risk, entry_order, *entry_fills, *close_orders, *close_fills],
@@ -408,6 +533,9 @@ def build_position_replay(
         {
             "availability": "available",
             "unavailable_reason": None,
+            "trading_mandate": mandate_provenance,
+            "trading_mandate_identity": mandate_provenance["identity"],
+            "trading_mandate_fit": mandate_provenance["fit"],
             "event_at": position.get("opened_at"),
             "evidence_available_at": position.get("closed_at") or cutoff.isoformat(),
             "identity": {
@@ -416,6 +544,8 @@ def build_position_replay(
                 "proposal_id": position.get("proposal_id"),
                 "pi_decision_id": (pi_decision or {}).get("id"),
                 "risk_decision_id": (risk or {}).get("id"),
+                "trading_mandate_identity": mandate_provenance["identity"],
+                "trading_mandate_fit": mandate_provenance["fit"],
                 "entry_order_id": position.get("order_id"),
                 "entry_fill_ids": [row["id"] for row in entry_fills],
                 "close_order_ids": [row["id"] for row in close_orders],

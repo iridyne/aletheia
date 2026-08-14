@@ -50,6 +50,7 @@ REQUIRED_CONTRACTS = [
     "learning_evolution",
     "learning_observability",
     "llm_inference_harness_contract",
+    "trading_mandate_contract",
     # subsystem observer claims register under "agent_contracts" by design —
     # equity_observer / prediction_observer are agents, not a separate contract.
 ]

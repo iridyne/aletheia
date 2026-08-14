@@ -169,7 +169,7 @@ def outcome_write_eligibility(
     return assessment.eligible, assessment.reason
 
 
-def attribution_chain_complete(row: dict[str, Any]) -> bool:
+def attribution_chain_complete(row: dict[str, Any], *, db: Any = None) -> bool:
     """Prove that every entry leg names the Position's relational chain.
 
     Producer-side hooks run immediately after commit, before the read cohort has
@@ -184,10 +184,13 @@ def attribution_chain_complete(row: dict[str, Any]) -> bool:
     opportunity_id = str(row.get("opportunity_id") or "").strip()
     if not position_id or not proposal_id or not order_id or not opportunity_id:
         return False
-    from aletheia.storage.sqlite import get_db
+    if db is None:
+        from aletheia.storage.sqlite import get_db
+
+        db = get_db()
 
     try:
-        matched = get_db().execute(
+        matched = db.execute(
             """
             SELECT CASE WHEN
                 EXISTS (
@@ -299,7 +302,9 @@ def classify_closure(row: dict[str, Any]) -> ClosureSemantics:
     return _semantics(category, True, "eligible", row)
 
 
-def assess_position_closure(row: dict[str, Any]) -> OutcomeAssessment:
+def assess_position_closure(
+    row: dict[str, Any], *, db: Any = None
+) -> OutcomeAssessment:
     """Return closure eligibility plus complete realized economics."""
     closure = classify_closure(row)
     if not closure.eligible:
@@ -386,7 +391,14 @@ def assess_position_closure(row: dict[str, Any]) -> OutcomeAssessment:
         attribution_complete = _to_bool(row.get("_attribution_complete"))
     else:
         try:
-            attribution_complete = attribution_chain_complete(row)
+            try:
+                attribution_complete = attribution_chain_complete(row, db=db)
+            except TypeError as exc:
+                # Keep older test doubles/optional readers compatible with the
+                # additive read-context parameter.
+                if "unexpected keyword argument 'db'" not in str(exc):
+                    raise
+                attribution_complete = attribution_chain_complete(row)
         except AttributionReadError:
             return _assessment_from_closure(
                 closure, reason="attribution_read_failed"
@@ -401,9 +413,11 @@ def assess_position_closure(row: dict[str, Any]) -> OutcomeAssessment:
     )
 
 
-def assess_reportable_outcome(row: dict[str, Any]) -> OutcomeAssessment:
+def assess_reportable_outcome(
+    row: dict[str, Any], *, db: Any = None
+) -> OutcomeAssessment:
     """Add the versioned clean-window gate to economic close eligibility."""
-    assessment = assess_position_closure(row)
+    assessment = assess_position_closure(row, db=db)
     if not assessment.eligible:
         return assessment
     from aletheia.analytics.learning_window import assess_outcome_window

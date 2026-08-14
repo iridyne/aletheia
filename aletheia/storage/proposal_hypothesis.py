@@ -7,6 +7,11 @@ import math
 from typing import Any, Mapping
 
 from aletheia.storage.models import TradeProposal
+from aletheia.trading.trading_mandate import (
+    build_trading_mandate_provenance,
+    freeze_trading_mandate_provenance,
+    validate_frozen_trading_mandate_provenance,
+)
 
 
 HYPOTHESIS_CONTRACT_VERSION = "position_hypothesis/v1"
@@ -116,6 +121,27 @@ def _market_identity(db: Any, opportunity: dict[str, Any] | None, proposal: Trad
     }
 
 
+def _mandate_opportunity(db: Any, proposal: TradeProposal) -> dict[str, Any] | None:
+    """Add the exact Universe venue to the Opportunity facts when available."""
+    opportunity = _opportunity(db, proposal)
+    if opportunity is None or opportunity.get("venue"):
+        return opportunity
+    member_id = opportunity.get("universe_member_id")
+    if not member_id:
+        return opportunity
+    try:
+        row = db.execute(
+            "SELECT a.venue FROM universe_members m "
+            "JOIN universe_registry a ON a.id=m.asset_id WHERE m.id=?",
+            (member_id,),
+        ).fetchone()
+    except Exception:
+        return opportunity
+    if row is None or not row["venue"]:
+        return opportunity
+    return {**opportunity, "venue": row["venue"]}
+
+
 def _decision_input_values(value: object) -> dict[str, Any]:
     dump = getattr(value, "model_dump", None)
     row = dump() if callable(dump) else value
@@ -212,8 +238,102 @@ def _validate_existing_hypothesis(existing: Mapping[str, Any], proposal: TradePr
         raise ValueError("position hypothesis conflicts with Proposal identity or risk geometry")
 
 
+def _freeze_trading_mandate(
+    proposal: TradeProposal,
+    *,
+    db: Any,
+    snapshot: dict[str, Any],
+    opportunity: Mapping[str, Any] | None,
+    decision: object | None,
+    mandate_config: object | None,
+) -> bool:
+    """Freeze mandate evidence only for a new native local-Paper entry."""
+    has_identity = "trading_mandate_identity" in snapshot
+    has_fit = "trading_mandate_fit" in snapshot
+    stored_row = db.execute(
+        "SELECT attribution_snapshot FROM trade_proposals WHERE id=? LIMIT 1",
+        (proposal.id,),
+    ).fetchone()
+    eligible_new_entry = (
+        proposal.source == "native"
+        and proposal.execution_mode == "paper_internal"
+        and bool(proposal.opportunity_id)
+        and proposal.direction in {"long", "short"}
+        and proposal.quantity is not None
+        and proposal.quantity > 0
+    )
+
+    if has_identity or has_fit:
+        validate_frozen_trading_mandate_provenance(snapshot)
+        current_pair = {
+            "trading_mandate_identity": snapshot.get("trading_mandate_identity"),
+            "trading_mandate_fit": snapshot.get("trading_mandate_fit"),
+        }
+        if stored_row is not None:
+            stored_snapshot = _mapping(stored_row["attribution_snapshot"])
+            stored_has_identity = "trading_mandate_identity" in stored_snapshot
+            stored_has_fit = "trading_mandate_fit" in stored_snapshot
+            if not (stored_has_identity and stored_has_fit):
+                raise ValueError("trading mandate provenance cannot be added to an existing Proposal")
+            validate_frozen_trading_mandate_provenance(stored_snapshot)
+            expected_pair = {
+                "trading_mandate_identity": stored_snapshot.get("trading_mandate_identity"),
+                "trading_mandate_fit": stored_snapshot.get("trading_mandate_fit"),
+            }
+        else:
+            if not eligible_new_entry:
+                raise ValueError("trading mandate provenance is unsupported for this Proposal path")
+            if mandate_config is None:
+                from aletheia.config.loader import load_config
+
+                mandate_config = load_config(persist_migrations=False)
+            expected_pair = build_trading_mandate_provenance(
+                configured=mandate_config,
+                opportunity=opportunity,
+                decision=decision,
+                proposal=proposal,
+            )
+        expected_pair = {
+            "trading_mandate_identity": expected_pair.get("trading_mandate_identity"),
+            "trading_mandate_fit": expected_pair.get("trading_mandate_fit"),
+        }
+        if json.dumps(expected_pair, sort_keys=True, separators=(",", ":")) != json.dumps(
+            current_pair, sort_keys=True, separators=(",", ":")
+        ):
+            raise ValueError("trading mandate provenance is immutable")
+        return False
+
+    # A loaded historical Proposal must never be backfilled from today's config.
+    # New rows are the only rows for which this function may add evidence.
+    if stored_row is not None:
+        return False
+
+    # The active runtime scope is native local Paper. Demo, adopted, close, and
+    # administrative paths remain explicitly un-attributed rather than guessed.
+    if not eligible_new_entry:
+        return False
+
+    if mandate_config is None:
+        from aletheia.config.loader import load_config
+
+        mandate_config = load_config(persist_migrations=False)
+
+    evidence = build_trading_mandate_provenance(
+        configured=mandate_config,
+        opportunity=opportunity,
+        decision=decision,
+        proposal=proposal,
+    )
+    freeze_trading_mandate_provenance(snapshot, evidence)
+    return True
+
+
 def freeze_position_hypothesis(
-    proposal: TradeProposal, *, db: Any, decision: object | None = None
+    proposal: TradeProposal,
+    *,
+    db: Any,
+    decision: object | None = None,
+    mandate_config: object | None = None,
 ) -> None:
     """Freeze evidence before hashing/persistence; never rewrite an existing contract."""
     if (
@@ -225,11 +345,24 @@ def freeze_position_hypothesis(
     ):
         return
     snapshot = _mapping(proposal.attribution_snapshot)
+    opportunity = _mandate_opportunity(db, proposal)
+    mandate_changed = _freeze_trading_mandate(
+        proposal,
+        db=db,
+        snapshot=snapshot,
+        opportunity=opportunity,
+        decision=decision,
+        mandate_config=mandate_config,
+    )
     existing = snapshot.get("position_hypothesis")
     if existing is not None:
         if not isinstance(existing, Mapping):
             raise ValueError("position hypothesis contract is invalid or unsupported")
         _validate_existing_hypothesis(existing, proposal)
+        if mandate_changed:
+            proposal.attribution_snapshot = json.dumps(
+                snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            )
         return
 
     opportunity = _opportunity(db, proposal)

@@ -129,6 +129,26 @@ def get_settings():
             "inference_reserved_high_priority_slots": p.inference_reserved_high_priority_slots,
             "inference_timeout_sec": p.inference_timeout_sec,
         }
+    mandate_value = getattr(cfg, "trading_mandate", None)
+    mandate_view = None
+    if mandate_value is not None and hasattr(mandate_value, "model_dump"):
+        raw_mandate = mandate_value.model_dump(mode="json")
+        visible_mandate_fields = {
+            "enabled",
+            "contract_version",
+            "mandate_id",
+            "mandate_version",
+            "status",
+            "enforcement_mode",
+            "market_scope",
+            "edge_scope",
+            "default_behavior",
+            "holding_governance",
+        }
+        mandate_view = {
+            key: value for key, value in raw_mandate.items()
+            if key in visible_mandate_fields
+        }
     return {
         "app": cfg.app.model_dump(mode="json"),
         "runtime": cfg.runtime.model_dump(mode="json"),
@@ -173,6 +193,9 @@ def get_settings():
         "controller": cfg.controller.model_dump(mode="json"),
         "learning": cfg.learning.model_dump(mode="json"),
         "economics": cfg.economics.model_dump(mode="json"),
+        # Read-only visibility keeps the config schema honest; unknown mandate
+        # fields are intentionally omitted so this GET cannot echo credentials.
+        "trading_mandate": mandate_view,
         "learning_path_options": list(paper_influence_path_options()),
     }
 
