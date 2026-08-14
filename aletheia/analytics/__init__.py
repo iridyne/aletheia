@@ -34,6 +34,7 @@ from aletheia.analytics.temporal import (
 )
 
 from aletheia.analytics.position_lifecycle_story import (
+    POSITION_LIFECYCLE_EVENT_TYPES,
     build_position_lifecycle_story,
     render_position_lifecycle_story,
 )
@@ -66,6 +67,7 @@ __all__ = [
     "bucket_by_weekday",
     "temporal_summary",
     # position_lifecycle_story
+    "POSITION_LIFECYCLE_EVENT_TYPES",
     "build_position_lifecycle_story",
     "render_position_lifecycle_story",
     # opportunity_lifecycle_story

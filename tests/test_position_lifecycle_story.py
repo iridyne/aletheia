@@ -510,3 +510,37 @@ def test_story_reports_missing_path_and_missing_management_linkage(monkeypatch):
     assert "ordered_1m_path_unavailable" in story["evidence_gaps"]
     assert story["audit"]["position_management_linkage"]["status"] == "unavailable"
     assert "position_management_linkage_not_recorded" in story["evidence_gaps"]
+
+
+def test_structured_events_are_the_only_machine_facing_story_projection(monkeypatch):
+    db = _db()
+    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+
+    story = lifecycle.build_position_lifecycle_story(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+    structured = story["structured_events"]
+    event_types = {event["event_type"] for event in structured}
+    required = {
+        "first_meaningful_favorable_excursion",
+        "maximum_favorable_excursion",
+        "hypothesis_invalidated",
+        "expected_horizon_reached",
+        "management_decision",
+        "exit_plan_revision",
+        "protection_activation",
+        "exit_trigger",
+        "close_fill",
+        "verified_costs",
+    }
+
+    assert required <= event_types
+    assert event_types <= set(lifecycle.POSITION_LIFECYCLE_EVENT_TYPES)
+    payload = json.dumps(structured, ensure_ascii=False, sort_keys=True)
+    assert "momentum continuation" not in payload
+    assert "breakout with trend support" not in payload
+    management = next(event for event in structured if event["event_type"] == "management_decision")
+    assert "reasoning" not in management["facts"]
+    costs = next(event for event in structured if event["event_type"] == "verified_costs")
+    assert costs["evidence_status"] == "available"
+    assert costs["facts"]["total_costs"] == 0.2

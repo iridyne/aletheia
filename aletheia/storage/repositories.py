@@ -2754,7 +2754,7 @@ def enqueue_position_path_observation_buckets_through(
                 )
                 if first_bucket_open_ms is None or bucket_open_ms < first_bucket_open_ms:
                     continue
-                inserted = db.execute(
+                inserted = execute_write(
                     "INSERT INTO position_path_observation_deferred_buckets "
                     "(position_id,bucket_open_ms,first_deferred_at,last_attempt_at,"
                     "attempt_count,reason) "
@@ -2782,14 +2782,14 @@ def enqueue_position_path_observation_buckets_through(
                 inserted_position_buckets += max(0, int(inserted.rowcount))
 
         if cursor is None:
-            db.execute(
+            execute_write(
                 "INSERT INTO position_path_observer_cursor "
                 "(stream_id,last_enqueued_bucket_open_ms,updated_at) "
                 "VALUES ('position_path_observer',?,?)",
                 (target, observed_at),
             )
         else:
-            db.execute(
+            execute_write(
                 "UPDATE position_path_observer_cursor "
                 "SET last_enqueued_bucket_open_ms=?,updated_at=? "
                 "WHERE stream_id='position_path_observer'",

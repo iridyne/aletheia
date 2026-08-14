@@ -1,8 +1,10 @@
 """Deterministic, read-only explanation of one Position's lifecycle.
 
 This module joins persisted Position facts, the existing immutable replay, the
-existing exact trade-path diagnostics, and the append-only observer.  It does
-not collect new evidence, write trading state, or select a causal winner.
+existing exact trade-path diagnostics, and the append-only observer. It exposes a
+human-readable renderer and a narrative-free ``structured_events`` projection;
+the latter is the only machine-facing Story output. It does not collect new
+evidence, write trading state, call an LLM, or select a causal winner.
 """
 
 from __future__ import annotations
@@ -149,7 +151,100 @@ _EVENT_ORDER = {
     "profit_giveback": 150,
     "exit_triggered": 160,
     "exit_filled": 170,
+    "verified_costs": 180,
 }
+
+# This is the machine-facing vocabulary.  The human renderer may use the
+# legacy event names above, but a future evidence compiler must consume only
+# this projection and never rendered or agent-authored prose.
+POSITION_LIFECYCLE_EVENT_TYPES = (
+    "opportunity_admitted",
+    "decision_committed",
+    "risk_approved",
+    "entry_filled",
+    "first_meaningful_favorable_excursion",
+    "maximum_favorable_excursion",
+    "maximum_adverse_excursion",
+    "hypothesis_weakening",
+    "hypothesis_invalidated",
+    "expected_horizon_reached",
+    "management_decision",
+    "exit_plan_revision",
+    "protection_activation",
+    "stop_revision",
+    "profit_giveback",
+    "exit_trigger",
+    "close_fill",
+    "verified_costs",
+)
+
+_STRUCTURED_EVENT_ALIASES = {
+    "position_reviewed": "management_decision",
+    "exit_plan_revised": "exit_plan_revision",
+    "profit_protection_activated": "protection_activation",
+    "stop_revised": "stop_revision",
+    "exit_triggered": "exit_trigger",
+    "exit_filled": "close_fill",
+}
+
+_STRUCTURED_EVENT_FACT_KEYS = {
+    "opportunity_admitted": (),
+    "decision_committed": ("action", "proposal_id"),
+    "risk_approved": ("decision_role", "policy_id", "position_id"),
+    "entry_filled": ("fill_price", "fill_quantity", "order_id"),
+    "first_meaningful_favorable_excursion": ("return_pct", "rule"),
+    "maximum_favorable_excursion": ("mfe_pct",),
+    "maximum_adverse_excursion": ("mae_pct",),
+    "hypothesis_weakening": ("from", "to", "bar_ts_ms"),
+    "hypothesis_invalidated": ("from", "to", "bar_ts_ms"),
+    "expected_horizon_reached": ("expected_horizon_hours",),
+    "management_decision": ("target_position_id", "action", "trigger", "wake_batches"),
+    "exit_plan_revision": ("version", "stop_price", "take_profit_price"),
+    "protection_activation": ("activation_evidence",),
+    "stop_revision": ("stop_price", "previous_stop_price"),
+    "profit_giveback": ("giveback_pct",),
+    "exit_trigger": (
+        "stop_hit",
+        "target_hit",
+        "bar_open_ms",
+        "bar_hash",
+        "plan_version",
+        "plan_hash",
+        "collision_policy",
+    ),
+    "close_fill": ("fill_price", "fill_quantity"),
+    "verified_costs": ("entry_fee", "exit_fee", "funding_cost", "total_costs"),
+}
+
+
+def _structured_events(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Project timeline facts without narrative fields for future statistics."""
+    projected: list[dict[str, Any]] = []
+    for event in events:
+        legacy_type = str(event.get("event_type") or "")
+        event_type = _STRUCTURED_EVENT_ALIASES.get(legacy_type, legacy_type)
+        if event_type not in POSITION_LIFECYCLE_EVENT_TYPES:
+            continue
+        raw_facts = event.get("facts")
+        raw_facts = raw_facts if isinstance(raw_facts, Mapping) else {}
+        facts = {
+            key: raw_facts[key]
+            for key in _STRUCTURED_EVENT_FACT_KEYS.get(event_type, ())
+            if key in raw_facts
+        }
+        item = {
+            "event_type": event_type,
+            "occurred_at": _iso(event.get("occurred_at")),
+            "evidence_status": event.get("evidence_status") or "unavailable",
+            "source_entity_type": event.get("source_entity_type"),
+            "source_entity_id": event.get("source_entity_id"),
+            "facts": facts,
+        }
+        reason = event.get("unavailable_reason") or raw_facts.get("unavailable_reason")
+        if reason:
+            item["unavailable_reason"] = str(reason)
+        projected.append(item)
+    return projected
 
 
 def _event_sort_key(event: Mapping[str, Any]) -> tuple[int, str, int, str]:
@@ -1244,6 +1339,7 @@ def build_position_lifecycle_story(
         "unavailable_reason": "position_not_found" if position is None else None,
         "opening": {},
         "timeline": [],
+        "structured_events": [],
         "economic_path": {},
         "hypothesis_lifecycle": {},
         "management_opportunities": [],
@@ -1615,8 +1711,40 @@ def build_position_lifecycle_story(
     else:
         timeline.append(_event("exit_filled", unavailable_reason="verified_close_fill_not_recorded"))
 
+    if economics.get("verified_costs") is not None:
+        timeline.append(
+            _event(
+                "verified_costs",
+                occurred_at=exit_at,
+                evidence_status="available",
+                source_entity_type="position",
+                source_entity_id=position_id,
+                facts={
+                    "entry_fee": snapshot.get("entry_fee"),
+                    "exit_fee": snapshot.get("exit_fee"),
+                    "funding_cost": snapshot.get("funding_cost"),
+                    "total_costs": economics.get("verified_costs"),
+                },
+            )
+        )
+    else:
+        timeline.append(
+            _event(
+                "verified_costs",
+                evidence_status="unavailable",
+                source_entity_type="position",
+                source_entity_id=position_id,
+                facts={"cost_evidence_status": economics.get("cost_evidence_status")},
+                unavailable_reason=(
+                    economics.get("unavailable_reason")
+                    or "verified_cost_evidence_unavailable"
+                ),
+            )
+        )
+
     timeline.sort(key=_event_sort_key)
     result["timeline"] = timeline
+    result["structured_events"] = _structured_events(timeline)
     peak_at = _utc(metrics.get("peak_at"))
     invalidation_at = _utc(
         next(
@@ -1799,6 +1927,7 @@ def render_position_lifecycle_story(story: Mapping[str, Any]) -> str:
         "profit_protection_activated": "Profit protection activated.",
         "profit_giveback": "Prior favorable excursion was given back.",
         "exit_filled": "Close fill verified.",
+        "verified_costs": "Verified costs recorded.",
     }
     for event in available_events:
         event_type = str(event.get("event_type") or "unknown_event")
@@ -1925,6 +2054,7 @@ def render_position_lifecycle_story(story: Mapping[str, Any]) -> str:
 
 __all__ = [
     "MEANINGFUL_EXCURSION_RULE_VERSION",
+    "POSITION_LIFECYCLE_EVENT_TYPES",
     "STORY_CONTRACT_VERSION",
     "build_position_lifecycle_story",
     "render_position_lifecycle_story",
