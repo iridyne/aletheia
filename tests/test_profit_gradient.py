@@ -697,6 +697,28 @@ def test_randomized_bootstrap_seed_ignores_cluster_labels():
     )
 
 
+def test_cluster_bootstrap_seed_ignores_cluster_labels():
+    samples = _samples("Costs", effect_bp=1.0, count=40, with_arms=False)
+    for index, sample in enumerate(samples):
+        sample["cluster_id"] = f"cluster-{index // 2}"
+        sample["paired_net_delta_bp"] = float(index + 1)
+
+    normalized, _, _ = gradient._normalized_samples("Costs", samples)
+    renamed = deepcopy(normalized)
+    labels = {
+        cluster_id: f"renamed-{index}"
+        for index, cluster_id in enumerate(
+            reversed(sorted({sample["cluster_id"] for sample in normalized}))
+        )
+    }
+    for sample in renamed:
+        sample["cluster_id"] = labels[sample["cluster_id"]]
+
+    assert gradient._cluster_interval(normalized) == pytest.approx(
+        gradient._cluster_interval(renamed)
+    )
+
+
 def test_paired_bootstrap_seed_ignores_row_order_within_clusters():
     samples = _samples("Costs", effect_bp=1.0, count=12, with_arms=False)
     values = [1.0, 4.0, 8.0, 13.0, 21.0, 34.0]
