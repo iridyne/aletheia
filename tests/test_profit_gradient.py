@@ -496,6 +496,31 @@ def test_paired_cohort_identity_is_required(field):
 
 
 @pytest.mark.parametrize(
+    "method", ["deterministic_decomposition", "directional_observational"]
+)
+@pytest.mark.parametrize(
+    "field",
+    [
+        "horizons",
+        "outcome_contract_versions",
+        "metric_versions",
+        "statistical_unit_versions",
+        "stages",
+    ],
+)
+def test_descriptive_cohort_identity_is_required(method, field):
+    context = _context(comparison_method=method)
+    context.pop(field)
+
+    result = gradient.select_unique_max_direction(_seven_layers(), evidence_context=context)
+
+    assert result["cohort_identity"] is None
+    assert f"mixed_or_missing_{field}" in result["global_gate_reasons"]
+    assert result["layers"]["Costs"]["gate_status"] == "ineligible"
+    assert result["winner_layer"] is None
+
+
+@pytest.mark.parametrize(
     "field",
     [
         "assignment_salts",
@@ -597,6 +622,35 @@ def test_randomized_quote_harm_weights_heterogeneous_cluster_exposures(
     if expected_harm < 0:
         assert "randomized_quote_harm_not_positive" in costs["gate_reasons"]
     assert result["winner_layer"] == expected_winner
+
+
+def test_randomized_quote_harm_weights_control_exposure():
+    samples = _seven_layers()
+    costs = samples["Costs"]
+    for sample in costs:
+        if sample["arm"] == "treatment":
+            sample["paired_net_delta_bp"] = 10.0
+            sample["paired_net_delta_quote"] = 10.0
+        else:
+            sample["paired_net_delta_bp"] = 0.0
+            sample["paired_net_delta_quote"] = 0.0
+
+    large = next(sample for sample in costs if sample["arm"] == "control")
+    large["cluster_id"] = "day-control-large"
+    large["paired_net_delta_bp"] = 15.0
+    large["paired_net_delta_quote"] = 15.0
+    for index in range(99):
+        extra = deepcopy(large)
+        extra["unit_id"] = f"Costs-control-large-{index + 1}"
+        costs.append(extra)
+
+    result = gradient.select_unique_max_direction(samples, evidence_context=_context())
+
+    costs = result["layers"]["Costs"]
+    assert costs["harm_quote"] == pytest.approx(200.0 - (1_500.0 / 119.0) * 20.0)
+    assert "randomized_quote_contrast_not_positive" in costs["gate_reasons"]
+    assert "randomized_quote_harm_not_positive" in costs["gate_reasons"]
+    assert result["winner_layer"] is None
 
 
 def test_randomized_quote_concentration_centers_common_arm_baseline():
