@@ -75,6 +75,36 @@ def test_cost_model_source_does_not_admit_future_settlement():
     assert resolved["reason"] == "cost_model_not_recorded"
 
 
+def test_incomplete_source_cannot_emit_numeric_coverage():
+    cutoff = datetime(2026, 8, 14, tzinfo=timezone.utc)
+    context = evidence._coverage_context(
+        registration={},
+        candidate_facts=[
+            {
+                "event_at": "2026-08-13T00:00:00+00:00",
+                "fixed_horizon_outcome": {
+                    "status": "settled",
+                    "settled_at": "2026-08-14T00:00:00+00:00",
+                    "cost_model_version": "v1",
+                    "horizon": "24h",
+                    "net_return_pct": 1.0,
+                },
+            }
+        ],
+        position_facts=[],
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cutoff=cutoff,
+        candidate_source={"status": "available", "unavailable_count": 1},
+        position_source={"status": "available", "error_count": 1},
+        cost_source={"status": "available"},
+        evidence_epoch_id="epoch-1",
+        cost_model_id="v1",
+    )
+
+    assert context["candidate_outcome_coverage"] is None
+    assert context["position_causal_link_completeness"] is None
+
+
 def test_pairing_rejects_unpaired_units_and_emits_one_contrast_per_arm():
     paired, excluded = evidence._pair_confirmatory_samples(
         [
@@ -106,10 +136,11 @@ def test_pairing_rejects_unpaired_units_and_emits_one_contrast_per_arm():
     )
 
     assert excluded == [("unpaired", "paired_evidence_unavailable")]
-    assert len(paired) == 2
-    assert {sample["arm"] for sample in paired} == {"treatment", "control"}
-    assert {sample["paired_net_delta_bp"] for sample in paired} == {100.0}
-    assert {sample["paired_net_delta_quote"] for sample in paired} == {2.0}
+    assert len(paired) == 1
+    assert paired[0]["arm"] == "paired"
+    assert paired[0]["arm_counts"] == {"treatment": 1, "control": 1}
+    assert paired[0]["paired_net_delta_bp"] == 100.0
+    assert paired[0]["paired_net_delta_quote"] == 2.0
 
 
 def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_horizon_net_once():

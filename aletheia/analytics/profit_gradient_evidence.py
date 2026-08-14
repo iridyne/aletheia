@@ -18,6 +18,7 @@ from typing import Any, Iterable, Mapping
 
 from aletheia.analytics.candidate_facts import build_candidate_facts
 from aletheia.learning.outcomes import assess_candidate_outcome
+from aletheia.analytics.execution_contribution import COST_MODEL_VERSION as POSITION_COST_MODEL_ID
 from aletheia.analytics.position_replay import build_position_replay
 from aletheia.analytics.profit_gradient import LAYERS
 from aletheia.analytics.profit_loop_counterfactual import (
@@ -36,6 +37,15 @@ _COMPILER_PRODUCER = {
     "manual_layer_samples": False,
 }
 _FIXED_CANDIDATE_HORIZON = "24h"
+_LAYER_PATH_IDS = {
+    "Selection": ("universe_family_calibration",),
+    "Decision": (),
+    "Risk": (),
+    "Execution": (),
+    "Holding": (),
+    "Exit": (),
+    "Costs": (),
+}
 _EPOCH_KIND = "evidence_anchor:profit_loop_observability"
 _PROFIT_LOOP_BEHAVIOR_CONTRACT = "profit_loop_counterfactual/v1"
 _PROFIT_LOOP_REGISTRY_DURATION_DAYS = 30
@@ -434,6 +444,77 @@ def _exposure_pair_id(row: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _confirmatory_exposure_reason(
+    db: Any,
+    row: Mapping[str, Any],
+    *,
+    fact: Mapping[str, Any],
+    layer: str | None,
+    exposed_at: datetime,
+) -> str | None:
+    """Validate the durable experiment/hypothesis contract before pairing."""
+    experiment_id = str(row.get("experiment_id") or "")
+    hypothesis_id = str(row.get("hypothesis_id") or "")
+    path_id = str(row.get("path_id") or "")
+    if layer is not None and path_id not in _LAYER_PATH_IDS.get(layer, ()):
+        return "paired_evidence_unavailable"
+    if not _table_exists(db, "learning_experiments") or not _table_exists(db, "learning_hypotheses"):
+        return "missing_identity"
+    try:
+        experiments = _rows(db, "SELECT * FROM learning_experiments WHERE experiment_id=?", (experiment_id,))
+        hypotheses = _rows(db, "SELECT * FROM learning_hypotheses WHERE hypothesis_id=?", (hypothesis_id,))
+    except (sqlite3.Error, OSError):
+        return "source_unavailable"
+    if len(experiments) != 1 or len(hypotheses) != 1:
+        return "ambiguous_identity"
+    experiment = experiments[0]
+    hypothesis = hypotheses[0]
+    if experiment.get("hypothesis_id") != hypothesis_id or hypothesis.get("path_id") != path_id:
+        return "ambiguous_identity"
+    if str(experiment.get("stage") or "") not in {"paper_10", "paper_25", "paper_50", "paper_active"}:
+        return "paired_evidence_unavailable"
+    if str(row.get("experiment_stage") or "") != str(experiment.get("stage") or ""):
+        return "ambiguous_identity"
+    if str(hypothesis.get("target_horizon") or "") != _FIXED_CANDIDATE_HORIZON:
+        return "stale_evidence"
+    if str(experiment.get("primary_metric") or "") != "net_return_pct":
+        return "stale_evidence"
+    if isinstance(fact.get("fixed_horizon_outcome"), Mapping):
+        if str(row.get("outcome_contract_version") or "") != "v1":
+            return "stale_evidence"
+    started = _time(experiment.get("started_at"))
+    ended = _time(experiment.get("ended_at")) if experiment.get("ended_at") else None
+    if started is None or exposed_at < started or (ended is not None and exposed_at > ended):
+        return "outside_epoch"
+    policy_epoch = str(row.get("concurrent_policy_epoch") or "")
+    try:
+        policy_rows = _rows(
+            db,
+            "SELECT effective_values_hash FROM learning_policy_epochs WHERE epoch_id=? AND epoch_kind=?",
+            (policy_epoch, f"decision_policy:{path_id}"),
+        )
+    except (sqlite3.Error, OSError):
+        return "source_unavailable"
+    if len(policy_rows) != 1 or not policy_rows[0].get("effective_values_hash"):
+        return "epoch_mismatch"
+    try:
+        from aletheia.learning.behavior_contracts import build_behavior_contract_hash
+        from aletheia.learning.verdicts import METRIC_VERSION
+
+        expected_hash = build_behavior_contract_hash(
+            path_id=path_id,
+            policy_hash=str(policy_rows[0]["effective_values_hash"]),
+            target_horizon=str(hypothesis["target_horizon"]),
+            outcome_contract_version=str(row.get("outcome_contract_version") or ""),
+            metric_version=METRIC_VERSION,
+        )
+    except (KeyError, TypeError, ValueError):
+        return "epoch_mismatch"
+    if str(row.get("behavior_contract_hash") or "") != expected_hash:
+        return "epoch_mismatch"
+    return None
+
+
 def _lookup_assignment(
     db: Any,
     *,
@@ -443,6 +524,7 @@ def _lookup_assignment(
     epoch_id: str,
     observed_at: datetime | None = None,
     registration: Mapping[str, Any] | None = None,
+    layer: str | None = None,
 ) -> tuple[str, str, str | None, str | None, str | None, str | None]:
     """Return arm, unit, pair, policy epoch, producer commit, and exclusion reason."""
     strict = registration is not None
@@ -469,7 +551,7 @@ def _lookup_assignment(
     if strict:
         required |= {
             "experiment_id", "hypothesis_id", "path_id", "outcome_contract_version",
-            "behavior_contract_hash", "code_commit",
+            "experiment_stage", "behavior_contract_hash", "code_commit",
         }
         required.add("outcome_candidate_key" if isinstance(fact.get("fixed_horizon_outcome"), Mapping) else "position_id")
         if isinstance(fact.get("fixed_horizon_outcome"), Mapping):
@@ -534,6 +616,17 @@ def _lookup_assignment(
                 return "", "", None, None, None, "missing_identity"
             if expected_commit and str(row.get("code_commit")) != expected_commit:
                 continue
+            contract_reason = _confirmatory_exposure_reason(
+                db,
+                row,
+                fact=fact,
+                layer=layer,
+                exposed_at=exposed,
+            )
+            if contract_reason is not None:
+                if contract_reason == "source_unavailable":
+                    return "", "", None, None, None, contract_reason
+                continue
         valid.append(row)
     if not valid:
         return "", "", None, None, None, "epoch_mismatch" if expected_commit else "missing_identity"
@@ -581,6 +674,8 @@ def _lookup_assignment(
         pair_id = "|".join(
             (experiment_id, hypothesis_id, path_id, policy_epoch, behavior_hash, producer_commit, pair_id)
         )
+    if strict and layer is not None and path_id not in _LAYER_PATH_IDS.get(layer, ()):
+        return arm, cluster, None, policy_epoch, str(valid[0].get("code_commit")), "paired_evidence_unavailable"
     if strict and not pair_id:
         # An assignment unit is not a treatment/control pair by itself.  Do not
         # invent a match from time, symbol, or a neighboring exposure.
@@ -662,6 +757,7 @@ def _candidate_sample(
         epoch_id=epoch_id,
         observed_at=occurred,
         registration=registration,
+        layer=layer,
     )
     if assignment_reason is not None:
         return None, assignment_reason
@@ -728,6 +824,12 @@ def _fact_cost_model_id(fact: Mapping[str, Any]) -> str | None:
             value = root.get("cost_model_id") or root.get("cost_model_version")
             if value not in (None, ""):
                 return str(value)
+    if isinstance(cost_identity, Mapping) and {
+        "entry_fee_sources", "exit_fee_sources", "funding_source"
+    } <= set(cost_identity):
+        # This is the exact immutable contract used by execution_contribution;
+        # no model is guessed from an arbitrary fee-source string.
+        return POSITION_COST_MODEL_ID
     return None
 
 
@@ -757,6 +859,7 @@ def _position_assignment(
     *,
     observed_at: datetime | None = None,
     registration: Mapping[str, Any] | None = None,
+    layer: str | None = None,
 ) -> tuple[str, str, str | None, str | None, str | None, str | None]:
     return _lookup_assignment(
         db,
@@ -766,6 +869,7 @@ def _position_assignment(
         epoch_id=epoch_id,
         observed_at=observed_at,
         registration=registration,
+        layer=layer,
     )
 
 
@@ -778,6 +882,7 @@ def _position_cost_sample(
     cost_model_id: str,
     epoch_id: str,
     registration: Mapping[str, Any] | None = None,
+    layer: str = "Costs",
 ) -> tuple[dict[str, Any] | None, str | None]:
     unit_id, opened_at, closed_at = _position_identity(fact)
     if not unit_id or opened_at is None:
@@ -812,6 +917,7 @@ def _position_cost_sample(
         db, fact, cutoff, epoch_start, epoch_id,
         observed_at=closed_at,
         registration=registration,
+        layer=layer,
     )
     if assignment_reason is not None:
         return None, assignment_reason
@@ -829,10 +935,10 @@ def _position_cost_sample(
         "arm": arm,
         "policy_epoch": policy_epoch,
         "producer_commit": producer_commit,
-        "arm_net_delta_bp": delta_quote / notional * 10_000.0,
-        "arm_net_delta_quote": delta_quote,
-        "paired_net_delta_bp": delta_bp,
-        "paired_net_delta_quote": delta_quote,
+        "arm_net_delta_bp": -delta_quote / notional * 10_000.0,
+        "arm_net_delta_quote": -delta_quote,
+        "paired_net_delta_bp": -delta_bp,
+        "paired_net_delta_quote": -delta_quote,
         "cost_model_id": cost_model_id,
         "cost_applied_once": True,
         "notional_quote": notional,
@@ -850,6 +956,7 @@ def _position_execution_sample(
     cost_model_id: str,
     epoch_id: str,
     registration: Mapping[str, Any] | None = None,
+    layer: str = "Execution",
 ) -> tuple[dict[str, Any] | None, str | None]:
     unit_id, opened_at, closed_at = _position_identity(fact)
     if not unit_id or opened_at is None:
@@ -912,6 +1019,7 @@ def _position_execution_sample(
         db, fact, cutoff, epoch_start, epoch_id,
         observed_at=closed_at,
         registration=registration,
+        layer=layer,
     )
     if assignment_reason is not None:
         return None, assignment_reason
@@ -925,10 +1033,10 @@ def _position_execution_sample(
         "arm": arm,
         "policy_epoch": policy_epoch,
         "producer_commit": producer_commit,
-        "arm_net_delta_bp": delta_quote / notional * 10_000.0,
-        "arm_net_delta_quote": delta_quote,
-        "paired_net_delta_bp": delta_bp,
-        "paired_net_delta_quote": delta_quote,
+        "arm_net_delta_bp": -delta_quote / notional * 10_000.0,
+        "arm_net_delta_quote": -delta_quote,
+        "paired_net_delta_bp": -delta_bp,
+        "paired_net_delta_quote": -delta_quote,
         "cost_model_id": cost_model_id,
         "cost_applied_once": True,
         "notional_quote": notional,
@@ -984,18 +1092,23 @@ def _pair_confirmatory_samples(
         if not math.isfinite(delta_quote) or not math.isfinite(delta_bp):
             excluded.extend((str(raw.get("unit_id") or ""), "nonfinite_delta") for raw in group)
             continue
-        for raw in (treatment, control):
-            sample = dict(raw)
-            sample.update(
-                {
-                    "cluster_id": pair_id,
-                    "paired_net_delta_bp": delta_bp,
-                    "paired_net_delta_quote": delta_quote,
-                    "pairing": "explicit_treatment_control_assignment_unit_pair",
-                    "cost_applied_once": True,
-                }
-            )
-            paired.append(sample)
+        sample = dict(treatment)
+        sample.update(
+            {
+                "unit_id": pair_id,
+                "cluster_id": pair_id,
+                "pair_id": pair_id,
+                "treatment_unit_id": treatment.get("unit_id"),
+                "control_unit_id": control.get("unit_id"),
+                "arm": "paired",
+                "arm_counts": {"treatment": 1, "control": 1},
+                "paired_net_delta_bp": delta_bp,
+                "paired_net_delta_quote": delta_quote,
+                "pairing": "explicit_treatment_control_assignment_unit_pair",
+                "cost_applied_once": True,
+            }
+        )
+        paired.append(sample)
     return paired, excluded
 
 
@@ -1267,20 +1380,16 @@ def _coverage_context(
         "registration_deploy_commit": registration.get("deploy_commit"),
         "candidate_count": len(cohort_candidates) if candidate_complete else None,
         "candidate_outcome_coverage": (
-            candidate_eligible / len(cohort_candidates) if cohort_candidates else 0.0
-            if candidate_complete else None
+            None if not candidate_complete else candidate_eligible / len(cohort_candidates) if cohort_candidates else 0.0
         ),
         "position_causal_link_completeness": (
-            causal_complete / causal_total if causal_total else 0.0
-            if position_complete else None
+            None if not position_complete else causal_complete / causal_total if causal_total else 0.0
         ),
         "verified_settled_economics_coverage": (
-            economics_complete / causal_total if causal_total else 0.0
-            if position_complete else None
+            None if not position_complete else economics_complete / causal_total if causal_total else 0.0
         ),
         "ordered_path_coverage": (
-            path_complete / causal_total if causal_total else 0.0
-            if position_complete else None
+            None if not position_complete else path_complete / causal_total if causal_total else 0.0
         ),
         "risk_reject_count": risk_reject_count,
         "capital_days": capital_days if capital_day_count else None,
@@ -1292,6 +1401,7 @@ def _coverage_context(
         "candidate_economic_unit": "fixed_horizon_net_return",
         "position_economic_unit": "verified_settled_net_economics",
         "confirmatory_evidence_only": True,
+        "layer_path_mapping": {layer: list(paths) for layer, paths in _LAYER_PATH_IDS.items()},
     }
 
 
@@ -1505,7 +1615,11 @@ def build_profit_gradient_evidence(
             "profit_loop_counterfactual": base["source_status"]["counterfactual"]
         }
         base["source_hashes"] = {
-            key: _hash(value) for key, value in base["source_status"].items()
+            "evidence_epoch": _hash(base["source_status"]["evidence_epoch"]),
+            "candidate_facts": _hash(base["source_status"]["candidate_facts"]),
+            "position_replays": _hash(base["source_status"]["position_replays"]),
+            "cost_model": _hash(base["source_status"]["cost_model"]),
+            "counterfactual_registry": _hash(base["source_status"]["counterfactual"]),
         }
         base["exclusion_waterfall"] = {
             "order": list(_WATERFALL_ORDER),
