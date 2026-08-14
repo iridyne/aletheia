@@ -45,3 +45,7 @@ owned by the
 The [Universe Twin Shadow Evidence Contract](universe_twin_shadow_contract.md)
 owns the current non-authoritative continuous-score evidence, allocation replay,
 identity, persistence, and retention boundary.
+
+The [Trading Mandate Contract](trading_mandate_contract.md) owns the single
+optional observe-only mandate's canonical identity, deterministic fit evidence,
+Proposal freeze, Position Replay exposure, and descriptive compliance reports.

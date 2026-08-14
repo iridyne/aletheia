@@ -1,8 +1,9 @@
 """Config schema using Pydantic v2 models."""
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 import logging
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -1525,6 +1526,19 @@ class LearningConfig(BaseModel):
 
 
 class AletheiaConfig(BaseModel):
+    @field_validator("trading_mandate", mode="before")
+    @classmethod
+    def _preserve_malformed_trading_mandate(cls, value: object):
+        # Keep malformed enabled objects loadable so the read-only resolver can
+        # report ``mandate_unavailable`` instead of guessing or bricking startup.
+        from aletheia.trading.trading_mandate import TradingMandateConfig
+
+        if value is None or isinstance(value, TradingMandateConfig):
+            return value
+        if isinstance(value, Mapping):
+            return TradingMandateConfig.model_validate(dict(value))
+        return TradingMandateConfig(enabled=True, raw_value=value)
+
     app: AppConfig = Field(default_factory=AppConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     exchange: ExchangeConfig = Field(default_factory=ExchangeConfig)
@@ -1555,3 +1569,6 @@ class AletheiaConfig(BaseModel):
     controller: ControllerConfig = Field(default_factory=ControllerConfig)
     learning: LearningConfig = Field(default_factory=LearningConfig)
     economics: EconomicsConfig = Field(default_factory=EconomicsConfig)
+    # Optional, single observe-only governance declaration. Strict validation is
+    # deferred to resolve_trading_mandate() so malformed enabled config is honest.
+    trading_mandate: Any = None

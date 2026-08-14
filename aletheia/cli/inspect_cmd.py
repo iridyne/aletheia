@@ -106,6 +106,45 @@ def position_replay(
     _output(report, json_output)
 
 
+@inspect_app.command("trading-mandate")
+def trading_mandate(
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Show the one configured Trading Mandate, if any (read-only)."""
+    from aletheia.config.loader import load_config
+    from aletheia.trading.trading_mandate import resolve_trading_mandate
+
+    resolution = resolve_trading_mandate(load_config(persist_migrations=False))
+    report = resolution.as_dict()
+    if resolution.mandate is not None:
+        report["canonical_payload"] = resolution.mandate.canonical_payload()
+        report["canonical_json"] = resolution.mandate.canonical_json()
+    report["read_only"] = True
+    _output(report, json_output)
+
+
+@inspect_app.command("mandate-compliance")
+def mandate_compliance(
+    proposal_id: Optional[str] = typer.Option(None, "--proposal-id"),
+    position_id: Optional[str] = typer.Option(None, "--position-id"),
+    hours: int = typer.Option(720, "--hours", help="Aggregate lookback in hours"),
+    json_output: bool = typer.Option(False, "--json"),
+):
+    """Inspect frozen mandate evidence without evaluating or writing state."""
+    if proposal_id and position_id:
+        raise typer.BadParameter("use either --proposal-id or --position-id")
+    from aletheia.analytics.trading_mandate_compliance import (
+        build_mandate_compliance_report,
+    )
+
+    report = build_mandate_compliance_report(
+        proposal_id=proposal_id,
+        position_id=position_id,
+        hours=max(1, int(hours)),
+    )
+    _output(report, json_output)
+
+
 @inspect_app.command("candidate-facts")
 def candidate_facts(
     horizon: str = typer.Option("24h", "--horizon"),

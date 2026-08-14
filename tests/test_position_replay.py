@@ -194,6 +194,8 @@ def test_replay_uses_exact_ids_cutoff_reconciled_economics_and_deterministic_has
     assert db.total_changes == before
     assert first["identity"]["pi_decision_id"] == "decision-1"
     assert first["identity"]["risk_decision_id"] == "risk-1"
+    assert first["trading_mandate"]["status"] == "not_recorded"
+    assert first["trading_mandate"]["unavailable_reason"] == "mandate_provenance_not_recorded"
     assert first["identity"]["entry_fill_ids"] == ["entry-fill"]
     assert first["identity"]["close_fill_ids"] == ["close-fill"]
     assert first["causal_link"] == {"status": "available", "errors": []}
@@ -209,6 +211,53 @@ def test_replay_uses_exact_ids_cutoff_reconciled_economics_and_deterministic_has
     )
     assert first["producer"]["status"] == "available"
     assert first["producer"]["behavior_fingerprints"] == ["behavior-a"]
+
+
+def test_replay_exposes_exact_frozen_mandate_pair_without_current_config(monkeypatch):
+    db = _database()
+    frozen_identity = {
+        "contract_version": "trading_mandate/v1",
+        "mandate_id": "redacted-mandate",
+        "mandate_version": 1,
+        "content_hash": "sha256:" + "a" * 64,
+        "enforcement_mode": "observe_only",
+    }
+    frozen_fit = {
+        "contract_version": "trading_mandate_fit/v1",
+        "status": "out_of_scope",
+        "mandate_identity": frozen_identity,
+        "checks": [],
+        "reasons": ["symbol_disallowed"],
+        "behavior_changed": False,
+    }
+    snapshot = {
+        "position_hypothesis": {"contract_version": "position_hypothesis/v1"},
+        "trading_mandate_identity": frozen_identity,
+        "trading_mandate_fit": frozen_fit,
+    }
+    db.execute(
+        "UPDATE trade_proposals SET attribution_snapshot=? WHERE id='proposal-1'",
+        (json.dumps(snapshot),),
+    )
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
+
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    assert replay["trading_mandate_identity"] == frozen_identity
+    assert replay["trading_mandate_fit"] == frozen_fit
+    assert replay["trading_mandate"]["source_identities"] == {
+        "opportunity_id": "opp-1",
+        "decision_id": "decision-1",
+        "proposal_id": "proposal-1",
+    }
 
 
 def test_replay_fails_closed_when_a_producer_session_is_unresolved(monkeypatch):

@@ -811,6 +811,7 @@ _PROTECTED_PATHS = {
     "/api/settings/permission-mode",
     "/api/settings/learning",
     "/api/settings/autonomous-learning",
+    "/api/settings/trading-mandate",
     "/api/gateway/restart",
     "/api/gateway/stop",
     # #42 completion: operator command surfaces can trigger the AI to execute trades
