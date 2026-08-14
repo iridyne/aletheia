@@ -33,7 +33,7 @@ The production entry point is `aletheia inspect`:
   `profit_loop_diagnosis/v1` artifacts without changing their inputs;
 - `profit-counterfactual --cost-model <json>` evaluates the fixed
   `profit_loop_counterfactual/v1` registry against one durable evidence epoch;
-- `profit-gradient --evidence <json>` applies `profit_gradient/v1` gates to a
+- `profit-gradient --evidence <json>` applies `profit_gradient/v2` gates to a
   frozen evidence artifact.
 
 All commands are synchronous, read-only inspection commands. The cost-model and
@@ -87,6 +87,47 @@ basis points, per-100-candidate harm, per-capital-day harm, clustered interval,
 concentration, exclusions, and gate reasons. Its verdict is either
 `unique_max_direction` or `no_unique_direction`.
 
+### Profit-gradient v2 comparison method
+
+Every gradient evidence artifact must declare one
+`evidence_context.comparison_method`:
+
+```json
+{
+  "comparison_method":
+  "prospective_randomized|paired_same_unit|deterministic_decomposition|directional_observational"
+}
+```
+
+A missing or unknown method is ineligible; v1 evidence is historical and is not
+implicitly assigned a method, relabeled, pooled, or compared with v2 evidence.
+One artifact does not mix methods implicitly. A caller evaluating a different
+method creates a separately identified evidence artifact.
+
+All methods retain the existing coverage, epoch, unit-integrity, clustered
+interval, practical-effect, temporal-stability, concentration, and Risk-layer
+hard gates. The method-specific gates are:
+
+| comparison method | additional method gate | unique winner |
+| --- | --- | --- |
+| `prospective_randomized` | at least 30 independent units, exactly two non-empty arms, and at least 20 units in the smaller arm | allowed |
+| `paired_same_unit` | at least 30 unique units; no arm threshold or arm labels are required | allowed for selecting the next forward question, never automatic behavior change |
+| `deterministic_decomposition` | at least 30 independent units; facts remain descriptive | prohibited; measured fact only |
+| `directional_observational` | at least 30 independent units; association remains directional | prohibited; rank the next question only |
+
+For `paired_same_unit`, each normalized row contributes one complete,
+cost-aware delta for one unique statistical unit (for the current Exit
+counterfactual, one Position). Duplicate `unit_id` rows are excluded. The
+paired result is never made to satisfy the randomized arm gate by inventing
+`treatment` or `control` labels. The report exposes the applied threshold
+profile, arm counts, and `smaller_arm_count: null` when arms do not apply.
+
+The current delayed-entry, breakeven, and hypothesis-invalidation registry is
+an exploratory paired counterfactual and remains `promotion_eligible=false`.
+If its deltas are adapted into gradient evidence, the adapter must declare
+`paired_same_unit` and preserve the frozen Position, cost, epoch, cluster,
+time, and concentration identities.
+
 ## Invariants and trust boundaries
 
 - Replay never selects a latest related record as a fallback. Every causal join
@@ -133,12 +174,13 @@ concentration, exclusions, and gate reasons. Its verdict is either
   timestamp, source-evidence SHA-256, fee, funding, and slippage assumptions.
 - Same-sample counterfactuals are permanently `exploratory` and
   `promotion_eligible=false`.
-- Gradient pooling requires one behavior, policy, market-data, and cost epoch.
-  Coverage, sample size, arm size, Risk-reject count, clustered interval,
-  absolute effect, temporal stability, and Top-1/Top-5 concentration are hard
-  gates.
-- A winner exists only when exactly one layer clears every gate and its harm
-  lower bound exceeds every runner-up upper bound.
+- Gradient pooling requires one behavior, policy, market-data, and cost epoch,
+  plus the declared comparison method. Coverage, sample size, the applicable
+  arm rule, Risk-reject count, clustered interval, absolute effect, temporal
+  stability, and Top-1/Top-5 concentration are hard gates.
+- A unique winner exists only when the declared method permits one, exactly one
+  layer clears every applicable gate, and its harm lower bound exceeds every
+  runner-up upper bound.
 - No analytics result authorizes an automatic behavior or parameter change.
 
 ## Failure and recovery semantics
