@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { bootApi, type OverviewBootstrap, type ShellBootstrap } from '../api/boot'
 import PnLZone from '../components/PnLZone'
 import AgentFeed from '../components/AgentFeed'
-import { Card, StatusText } from '../components/ui'
+import { Button, Card, Meter, StatusText } from '../components/ui'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
 import { humanize } from '../lib/format'
 import { api, type GoLiveScorecard } from '../api/client'
@@ -108,7 +108,7 @@ function SystemCard({ shell }: { shell?: ShellBootstrap }) {
   ]
   return (
     <Card className="rail-card system-panel">
-      <div className="flex items-center justify-between mb-2"><h3>System</h3><button className="btn-control secondary" onClick={() => navigate('/settings?tab=runtime')}>Details →</button></div>
+      <div className="flex items-center justify-between mb-2"><h3>System</h3><Button type="button" variant="secondary" className="btn-control" onClick={() => navigate('/settings?tab=runtime')}>Details →</Button></div>
       <table className="status-board"><tbody>{rows.map(([label, light, value]) => <tr className="status-row" key={label}><th>{label}</th><td className="status-cell"><span className={`status-light light-${light === 'green' || light === 'red' || light === 'yellow' || light === 'muted' ? light : 'muted'}`} /><span className="status-value">{value}</span></td></tr>)}</tbody></table>
       {shell?.health?.issues?.length ? <p className="hint mb-0">{shell.health.issues.join(' · ')}</p> : null}
     </Card>
@@ -132,10 +132,10 @@ function GoLiveScoreCard() {
   const { data } = useQuery<GoLiveScorecard>({ queryKey: ['go-live-scorecard'], queryFn: api.getGoLiveScorecard, staleTime: 60_000, enabled: expanded })
   return (
     <Card className="rail-card scorecard-panel">
-      <button className="scorecard-header" onClick={() => setExpanded(value => !value)} aria-expanded={expanded}>
+      <Button type="button" variant="ghost" className="scorecard-header" onClick={() => setExpanded(value => !value)} aria-expanded={expanded}>
         <div className="scorecard-title"><h3>Go-Live</h3><StatusText tone="yellow">{data ? (data.traffic_light || 'NOT READY').toUpperCase() : 'deferred'}</StatusText></div><span className="text-muted text-xs">{expanded ? '▲' : '▼'}</span>
-      </button>
-      {expanded && data && <div className="scorecard-criteria">{data.criteria.map(item => <div key={item.key} className="scorecard-row"><span className="scorecard-label">{item.label}</span><div className="scorecard-bar-bg"><div className="scorecard-bar-fill" style={{ width: `${item.score}%` }} /></div><span className="scorecard-detail">{item.detail}</span></div>)}{data.blockers.length > 0 && <div className="scorecard-blockers"><span className="text-xs text-error">Blockers: {data.blockers.join(' · ')}</span></div>}</div>}
+      </Button>
+      {expanded && data && <div className="scorecard-criteria">{data.criteria.map(item => <div key={item.key} className="scorecard-row"><span className="scorecard-label">{item.label}</span><div className="scorecard-bar-bg"><Meter pct={item.score} className="scorecard-bar-fill" /></div><span className="scorecard-detail">{item.detail}</span></div>)}{data.blockers.length > 0 && <div className="scorecard-blockers"><span className="text-xs text-error">Blockers: {data.blockers.join(' · ')}</span></div>}</div>}
       {expanded && !data && <p className="text-muted text-sm">Loading qualification details…</p>}
     </Card>
   )

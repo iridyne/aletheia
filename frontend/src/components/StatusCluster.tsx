@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { RealtimeStatus } from '../lib/useRealtimeUpdates'
 import type { ShellBootstrap } from '../api/boot'
+import { deriveMasterState } from '../lib/systemState'
 
 const StatusDiagnostics = lazy(() => import('./StatusDiagnostics'))
 const MODES = ['Observe', 'Paper', 'Full'] as const
@@ -25,6 +26,14 @@ export default function StatusCluster({
   const running = !!data?.gateway?.running
   const killed = !!data?.kill_switch?.active
   const permission = String(data?.permission?.mode || '')
+  const master = deriveMasterState({
+    gatewayRunning: running,
+    killed,
+    paused,
+    riskState: String(data?.risk?.status || ''),
+    operatorStatus: data?.operator?.status,
+    operatorMode: data?.operator?.mode,
+  })
   const realtimeTone = realtime.state === 'connected' ? 'green' : realtime.state === 'disconnected' ? 'muted' : 'yellow'
   const pause = useMutation({
     mutationFn: paused ? api.resume : api.pause,
@@ -51,7 +60,7 @@ export default function StatusCluster({
         <span className={`dot dot-${data?.live?.enabled ? 'yellow' : 'muted'}`} />
         <span className={`dot dot-${killed ? 'red' : 'muted'}`} />
       </span>
-      <span className="status-cluster-state">{paused ? 'PAUSED' : killed ? 'BLOCKED' : running ? 'READY' : 'OFFLINE'}</span>
+      <span className={`status-cluster-state status-cluster-${master.tone}`}>{master.word}</span>
       <span className="realtime-state mono" aria-label={`Realtime transport: ${realtime.state}`}>
         <span className={`dot dot-${realtimeTone}`} />{realtime.state === 'connected' ? 'push' : realtime.state}
       </span>

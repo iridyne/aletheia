@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import shutil
 import time
 
 from fastapi import APIRouter, Response
 
 from aletheia import __version__
+from aletheia.config.secrets import get_secret
 from aletheia.config.loader import load_config
 from aletheia.server.routes.health import _cached_compute_health, _cached_head_commit
 from aletheia.storage.sqlite import get_db
@@ -50,9 +52,29 @@ def _risk_snapshot(cfg) -> dict:
         if cfg.exchange.mode == "live" and cfg.agent.permission_mode == "Observe":
             status = "warning"
             violations.append(f"permission_mode_not_live_eligible:{cfg.agent.permission_mode}")
-        if not violations:
+        if not violations and repo.list_risk_decisions(limit=1):
             status = "healthy"
     return {"status": status, "violations": violations, "kill_switch_active": cfg.runtime.kill_switch_active}
+
+
+def _model_provider_usable(cfg) -> bool:
+    """Return whether at least one configured provider can actually serve work."""
+    from aletheia.model_provider.registry import CLI_PROVIDER_TYPES
+
+    default_commands = {"codex_cli": "codex", "claude_cli": "claude", "pi_cli": "pi"}
+    for name, provider in cfg.models.providers.items():
+        provider_type = getattr(provider, "type", "") or name
+        for secret_ref in (
+            getattr(provider, "api_key_secret_ref", None),
+            getattr(provider, "oauth_token_ref", None),
+        ):
+            if secret_ref and get_secret(secret_ref):
+                return True
+        if provider_type in CLI_PROVIDER_TYPES:
+            command = getattr(provider, "command", "") or default_commands.get(provider_type, provider_type)
+            if shutil.which(command):
+                return True
+    return False
 
 
 def _scheduler_snapshot() -> dict:
@@ -97,24 +119,28 @@ def _ticker_snapshot() -> dict[str, dict]:
 def _compact_activity() -> list[dict]:
     db = get_db()
     rows = db.execute(
-        "SELECT id, agent_name, status, started_at, ended_at FROM agent_runs ORDER BY started_at DESC LIMIT 8"
+        "SELECT id, agent_name, trigger_type, status, started_at, ended_at, model_provider, "
+        "substr(outputs_created, 1, 400) AS outputs_created, substr(errors, 1, 400) AS errors "
+        "FROM agent_runs ORDER BY started_at DESC LIMIT 8"
     ).fetchall()
     items = [
-        {"id": row["id"], "kind": "run", "agent": row["agent_name"], "status": row["status"], "timestamp": row["started_at"], "headline": f"{row['agent_name']} {row['status']}"}
+        {"id": row["id"], "kind": "run", "agent": row["agent_name"], "agent_name": row["agent_name"], "trigger_type": row["trigger_type"], "status": row["status"], "timestamp": row["started_at"], "started_at": row["started_at"], "ended_at": row["ended_at"], "model_provider": row["model_provider"], "outputs_created": row["outputs_created"], "errors": row["errors"], "headline": f"{row['agent_name']} {row['status']}"}
         for row in rows
     ]
     rows = db.execute(
-        "SELECT id, symbol, market, direction_bias, confidence_score, source_agent, created_at, status, substr(thesis, 1, 180) AS excerpt FROM opportunities ORDER BY created_at DESC LIMIT 8"
+        "SELECT id, symbol, market, direction_bias, thesis, confidence, confidence_score, source_agent, created_at, status, "
+        "substr(thesis, 1, 180) AS excerpt FROM opportunities ORDER BY created_at DESC LIMIT 8"
     ).fetchall()
     items.extend(
-        {"id": row["id"], "kind": "opportunity", "symbol": row["symbol"], "market": row["market"], "agent": row["source_agent"], "status": row["status"], "timestamp": row["created_at"], "headline": f"{row['direction_bias'] or 'unknown'} {row['symbol']}", "excerpt": row["excerpt"]}
+        {"id": row["id"], "kind": "opportunity", "symbol": row["symbol"], "market": row["market"], "direction_bias": row["direction_bias"], "confidence": row["confidence"], "confidence_score": row["confidence_score"], "source_agent": row["source_agent"], "agent": row["source_agent"], "status": row["status"], "timestamp": row["created_at"], "created_at": row["created_at"], "thesis": row["thesis"], "headline": f"{row['direction_bias'] or 'unknown'} {row['symbol']}", "excerpt": row["excerpt"]}
         for row in rows
     )
     rows = db.execute(
-        "SELECT id, symbol, market_type, direction, execution_mode, status, created_at, substr(agent_rationale, 1, 180) AS excerpt FROM trade_proposals ORDER BY created_at DESC LIMIT 8"
+        "SELECT id, symbol, market_type, direction, execution_mode, status, created_at, agent_rationale, "
+        "substr(agent_rationale, 1, 180) AS excerpt FROM trade_proposals ORDER BY created_at DESC LIMIT 8"
     ).fetchall()
     items.extend(
-        {"id": row["id"], "kind": "proposal", "symbol": row["symbol"], "market_type": row["market_type"], "direction": row["direction"], "execution_mode": row["execution_mode"], "status": row["status"], "timestamp": row["created_at"], "headline": f"{row['direction']} {row['symbol']}", "excerpt": row["excerpt"]}
+        {"id": row["id"], "kind": "proposal", "symbol": row["symbol"], "market_type": row["market_type"], "direction": row["direction"], "execution_mode": row["execution_mode"], "status": row["status"], "timestamp": row["created_at"], "created_at": row["created_at"], "agent_rationale": row["agent_rationale"], "headline": f"{row['direction']} {row['symbol']}", "excerpt": row["excerpt"]}
         for row in rows
     )
     return sorted(items, key=lambda item: item.get("timestamp") or "", reverse=True)[:16]
@@ -125,7 +151,7 @@ def _count_summary() -> dict:
     return {
         "pending_proposals": int(db.execute("SELECT COUNT(*) FROM trade_proposals WHERE status = 'pending'").fetchone()[0]),
         "open_opportunities": int(db.execute("SELECT COUNT(*) FROM opportunities WHERE status = 'open'").fetchone()[0]),
-        "runs_24h": int(db.execute("SELECT COUNT(*) FROM agent_runs WHERE started_at >= datetime('now', '-1 day')").fetchone()[0]),
+        "runs_24h": int(db.execute("SELECT COUNT(*) FROM agent_runs WHERE replace(started_at, ' ', 'T') >= replace(datetime('now', '-1 day'), ' ', 'T')").fetchone()[0]),
     }
 
 
@@ -180,9 +206,8 @@ def overview_bootstrap(response: Response):
     summary = _safe("summary", _count_summary, {"pending_proposals": 0, "open_opportunities": 0, "runs_24h": 0})
     activity = _safe("activity", _compact_activity, [])
     cfg = _safe("config", lambda: load_config(persist_migrations=False), None)
-    setup_required = False
-    if cfg["value"] is not None:
-        setup_required = not bool(getattr(cfg["value"].models, "default_provider", ""))
+    setup = _safe("setup", lambda: _model_provider_usable(cfg["value"]) if cfg["value"] is not None else False, False)
+    setup_required = not bool(setup["value"])
     p = portfolio["value"] or {}
     account = {key: p.get(key) for key in (
         "total_value_usdt", "account_equity_usdt", "today_pnl", "today_realized_pnl",
@@ -205,7 +230,7 @@ def overview_bootstrap(response: Response):
         "activity": activity["value"],
         "setup_required": setup_required,
         "coverage": {"availability": "unavailable", "reason": "deferred_until_diagnostics"},
-        "errors": {key: value["reason"] for key, value in {"portfolio": portfolio, "summary": summary, "activity": activity, "config": cfg}.items() if value["reason"]},
+        "errors": {key: value["reason"] for key, value in {"portfolio": portfolio, "summary": summary, "activity": activity, "config": cfg, "setup": setup}.items() if value["reason"]},
     }
     response.headers["Cache-Control"] = "no-store"
     response.headers["Server-Timing"] = f"local;dur={(time.perf_counter() - started) * 1000:.1f}"

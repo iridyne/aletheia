@@ -96,7 +96,7 @@ export default function App() {
   return (
     <div className={`layout${railCollapsed ? ' rail' : ''}`}>
       <FetchProgress />
-      {paletteRequested && <Suspense fallback={null}><CommandPalette /></Suspense>}
+      {paletteRequested && <Suspense fallback={null}><CommandPalette initialOpen /></Suspense>}
       {updateRequested && shell.data?.runtime?.mode === 'packaged' && <Suspense fallback={null}><PackagedUpdateBanner /></Suspense>}
       {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
       <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
