@@ -35,6 +35,11 @@ runtime connection at `2026-08-15T16:54Z`: `7d05e966c547` is closed with 142
 available rows, zero unavailable rows, zero duplicates, and zero deferred
 buckets.
 
+The acceptance Position was rechecked again against the latest explicit
+read-only snapshot at `2026-08-15T17:25Z`: it remains closed with exactly
+142 rows across 142 distinct buckets, all available, zero unavailable rows,
+and zero deferred buckets. The archive table is still absent from Fedora.
+
 ## Fedora read-only capture
 
 At `2026-08-15T16:20:53Z`, the same script ran over
