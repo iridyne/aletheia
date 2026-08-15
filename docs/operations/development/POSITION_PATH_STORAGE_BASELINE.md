@@ -140,6 +140,17 @@ were discovered within 72 hours. This is a live-source sanity snapshot, not a
 replacement for the versioned full dbstat capture. It is recorded under
 `latest_read_only_sanity_snapshot` in the JSON artifact.
 
+The newest explicit read-only physical snapshot at `2026-08-15T17:57:56Z`
+measured 5,965 observation rows across 87 Positions and 261 deferred rows.
+The observation table plus primary-key/index allocations was 2,084,864 bytes;
+including deferred-table and index allocations the hot footprint was 2,150,400
+bytes, or `0.134597%` of `app.db` (database 1,597,657,088 bytes; WAL
+38,402,552 bytes). The archive table remained absent. The underlying recovery
+split remained 13 buckets at `<=72h` and 248 at `>72h`, with oldest hot/cold
+bucket timestamps unchanged at `2026-08-12T18:35:00Z` /
+`2026-08-08T12:45:00Z`. This is a newer live-source sanity snapshot; the full
+dbstat artifact remains the earlier reproducible capture.
+
 ## Fixture benchmark (not an acceptance result)
 
 The reproducible benchmark was also run against a local migrated fixture with
@@ -257,6 +268,14 @@ unavailable and quantity-variation/scale-in evidence, and remains
 sanity result is under `latest_read_only_stream_sanity` in
 `POSITION_PATH_ARCHIVE_FEDORA_SHADOW.json`.
 
+The newest read-only stream sanity run at `2026-08-15T17:57:33Z` verified 5,598
+eligible rows across 77 segments from 5,965 source rows and 76 eligible
+Positions. It used 426,869 raw bytes and 183,434 payload bytes (42.97%
+payload ratio), with deterministic byte identity and median `as_of` parity.
+Encode/decode p95 were `10.99 ms` / `5.48 ms`. The stream still lacks
+unavailable and quantity-variation/scale-in evidence, and remains
+`archive_persisted=false` with `read_model_parity=not_run`.
+
 A second read-only check at `2026-08-15T16:24:22Z` streamed the current Fedora
 source population into a disposable SQLite copy, applied the current
 migration, and persisted archive segments there. It covered 5,563 source rows,
@@ -300,12 +319,12 @@ gates.
 | Gate | Evidence in this branch | State |
 | --- | --- | --- |
 | Archived storage no more than 40% of the hot table plus indexes | Local migrated fixture: 24,576 / 114,688 = 21.43%; Fedora has no archive table | Fixture-only pass; production unverified |
-| Exact field round-trip and semantic/compressed hashes | Focused archive tests and latest explicit-snapshot Fedora stream: 5,264 rows; persisted-copy artifact: 3,619 rows | Pass for tested codec/shadow stream |
+| Exact field round-trip and semantic/compressed hashes | Focused archive tests and latest explicit-snapshot Fedora stream: 5,598 rows; persisted-copy artifact: 3,619 rows | Pass for tested codec/shadow stream |
 | Deterministic bytes and corruption fail-closed | Focused tests plus Fedora stream byte identity | Pass |
 | 2048-bucket decode p95 below 100 ms on Fedora | No real Fedora 2048-bucket path; local synthetic sample only | Open |
 | Observer write latency unchanged | Disposable local SQLite clones only: p95 0.266 ms with schema vs 0.285 ms without | Open for Fedora observer |
 | Real Fedora persisted archive/read-model parity | Disposable Fedora-data copy: source unchanged, all shadow parity projections true; deployed Fedora still has no archive table | Copy pass; deployed gate open |
-| Materiality of the optimization | Detailed Fedora dbstat artifact: 0.126499%; latest read-only sanity snapshot: 0.134214% including deferred allocations | Fails materiality case; do not enable production compaction |
+| Materiality of the optimization | Detailed Fedora dbstat artifact: 0.126499%; latest read-only sanity snapshot: 0.134597% including deferred allocations | Fails materiality case; do not enable production compaction |
 
 The branch therefore stops at additive validation. It does not claim deployed
 archive storage, does not delete source rows, and does not open a recovery issue

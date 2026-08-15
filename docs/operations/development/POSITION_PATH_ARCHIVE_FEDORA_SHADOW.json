@@ -219,26 +219,26 @@
     "snapshot": "explicit read-only SQLite BEGIN"
   },
   "latest_read_only_stream_sanity": {
-    "captured_at": "2026-08-15T17:42:07.012091+00:00",
+    "captured_at": "2026-08-15T17:57:33.158674+00:00",
     "source": "fedora_read_only_row_stream",
-    "source_rows": 5931,
+    "source_rows": 5965,
     "positions_total": 347,
-    "eligible_positions": 74,
-    "eligible_rows": 5264,
-    "rows_verified": 5264,
-    "segments": 75,
-    "raw_bytes": 401572,
-    "payload_bytes": 174148,
-    "payload_ratio": 0.4336656938232745,
-    "available_count": 5264,
+    "eligible_positions": 76,
+    "eligible_rows": 5598,
+    "rows_verified": 5598,
+    "segments": 77,
+    "raw_bytes": 426869,
+    "payload_bytes": 183434,
+    "payload_ratio": 0.42971965638170023,
+    "available_count": 5598,
     "unavailable_count": 0,
     "deterministic_byte_identity": true,
     "as_of_parity": true,
     "production_codec_timing_ms": {
-      "encode_p50": 1.748125,
-      "encode_p95": 10.17475,
-      "decode_p50": 0.86475,
-      "decode_p95": 4.955125
+      "encode_p50": 1.781709,
+      "encode_p95": 10.986708,
+      "decode_p50": 0.886666,
+      "decode_p95": 5.475625
     },
     "sample_coverage": {
       "short_1_to_10_buckets": true,
@@ -258,7 +258,7 @@
     ],
     "skips": {
       "deferred_buckets_remain": 260,
-      "incomplete_or_unexpected_buckets": 7,
+      "incomplete_or_unexpected_buckets": 5,
       "invalid_position_time_bounds": 5,
       "position_not_closed": 1
     },
