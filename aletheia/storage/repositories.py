@@ -4485,6 +4485,7 @@ def list_knowledge_items(
 
 def list_pending_trade_case_studies(
     limit: int = 10, *, after_cursor: str | None = None,
+    before_cursor: str | None = None,
 ) -> list[dict]:
     """Return oldest active trade cases without active lesson evidence."""
 
@@ -4511,6 +4512,16 @@ def list_pending_trade_case_studies(
                 AND (
                     ki.created_at > ?
                     OR (ki.created_at = ? AND ki.id > ?)
+                )
+            """
+            params.extend((created_at, created_at, case_id))
+    if before_cursor:
+        created_at, separator, case_id = str(before_cursor).partition("|")
+        if separator and created_at and case_id:
+            where += """
+                AND (
+                    ki.created_at < ?
+                    OR (ki.created_at = ? AND ki.id < ?)
                 )
             """
             params.extend((created_at, created_at, case_id))

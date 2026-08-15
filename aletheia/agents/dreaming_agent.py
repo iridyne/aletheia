@@ -294,12 +294,29 @@ async def _extract_lessons(
 
     health = get_learning_job_health("dreaming_daily")
     cursor = health.input_cursor
-    reviews = list_pending_trade_case_studies(limit=10, after_cursor=cursor)
-    wrapped = bool(cursor and not reviews)
-    if wrapped:
-        # Wrap once the durable scan cursor reaches the end. Pending cases
-        # remain eligible, so an invalid case cannot strand newer cases.
+    reviews: list[dict] = []
+    has_forward_batch = cursor is None
+    wrapped = False
+    if cursor:
+        # Reopened cases can sort behind the monotonic frontier. Scan that
+        # prefix independently so a continuously non-empty suffix cannot
+        # starve them.
+        reviews = list_pending_trade_case_studies(
+            limit=10, before_cursor=cursor,
+        )
+        if len(reviews) < 10:
+            suffix = list_pending_trade_case_studies(
+                limit=10 - len(reviews), after_cursor=cursor,
+            )
+            reviews.extend(suffix)
+            has_forward_batch = bool(suffix)
+    else:
         reviews = list_pending_trade_case_studies(limit=10)
+    if cursor and not reviews:
+        # No pending work exists on either side of the frontier. A full scan
+        # is retained for cursor compatibility and delayed rows.
+        reviews = list_pending_trade_case_studies(limit=10)
+        wrapped = bool(reviews)
     if not reviews:
         return []
 
@@ -485,7 +502,8 @@ async def _extract_lessons(
         outputs.append(f"lesson:{created.lesson_id}")
         artifact_refs.append({"artifact_type": "lesson", "artifact_id": created.lesson_id})
     if (
-        not wrapped
+        has_forward_batch
+        and not wrapped
         and len(batch_case_ids) == len(reviews)
         and covered_case_ids == batch_case_ids
     ):

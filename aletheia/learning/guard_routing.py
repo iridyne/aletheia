@@ -73,37 +73,39 @@ def route_automatic_block_recommendation(
         "block_candidate": True,
         "score_penalty": 0,
     }
-    try:
-        from aletheia.learning.hypotheses import nominate_learning_hypothesis
+    from aletheia.learning.hypotheses import nominate_learning_hypothesis
 
-        hypothesis = nominate_learning_hypothesis(
-            path_id="ranker_learned_guard",
-            scope={"guard_id": guard_id},
-            action=hypothesis_action,
-            source_type="guard_candidate",
-            source_artifact_ids=[source_id, guard_candidate_id],
-            source_cohort=f"learned_guard:{guard_id}:v1",
-            consumer="paper_trader_ranker",
-            target_horizon="4h",
-            evidence_summary={
-                "guard_candidate_id": guard_candidate_id,
-                "applies_to": scope,
-                "evidence": evidence,
-            },
-        )
-    except Exception as exc:
-        return {
-            "action": "guard_shadow_candidate",
-            "guard_id": guard_id,
+    hypothesis = nominate_learning_hypothesis(
+        path_id="ranker_learned_guard",
+        scope={"guard_id": guard_id},
+        action=hypothesis_action,
+        source_type="guard_candidate",
+        source_artifact_ids=[source_id, guard_candidate_id],
+        source_cohort=f"learned_guard:{guard_id}:v1",
+        consumer="paper_trader_ranker",
+        target_horizon="4h",
+        evidence_summary={
             "guard_candidate_id": guard_candidate_id,
-            "hypothesis_status": "nomination_failed",
-            "nomination_error": f"{type(exc).__name__}:{str(exc)[:160]}",
-            "original_action": action,
-        }
+            "applies_to": scope,
+            "evidence": evidence,
+        },
+    )
+    # A repeated nomination may return the original fingerprinted hypothesis
+    # while this call created a fresh candidate row. Report the candidate that
+    # the durable hypothesis actually names, not the unlinked fresh row.
+    linked_candidate_id = guard_candidate_id
+    try:
+        artifact_ids = json.loads(hypothesis.source_artifact_ids_json or "[]")
+    except (TypeError, ValueError, AttributeError):
+        artifact_ids = []
+    for artifact_id in reversed(artifact_ids):
+        if str(artifact_id) and str(artifact_id) != source_id:
+            linked_candidate_id = str(artifact_id)
+            break
     return {
         "action": "guard_shadow_candidate",
         "guard_id": guard_id,
-        "guard_candidate_id": guard_candidate_id,
+        "guard_candidate_id": linked_candidate_id,
         "hypothesis_id": hypothesis.hypothesis_id,
         "hypothesis_status": "proposed",
         "original_action": action,
