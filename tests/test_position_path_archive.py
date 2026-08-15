@@ -196,6 +196,30 @@ def test_segment_boundaries_are_fixed_bucket_windows_not_utc_days():
         )
 
 
+def test_long_path_splits_only_at_fixed_2048_bucket_boundary():
+    rows = [
+        _row("position-over-2048", bucket)
+        for bucket in range(0, 2049 * 300_000, 300_000)
+    ]
+    first = encode_segment(
+        rows[:2048],
+        position_id="position-over-2048",
+        segment_start_ms=0,
+    )
+    second = encode_segment(
+        rows[2048:],
+        position_id="position-over-2048",
+        segment_start_ms=SEGMENT_MS,
+    )
+
+    assert first.row_count == 2048
+    assert first.first_bucket_open_ms == 0
+    assert first.last_bucket_open_ms == SEGMENT_MS - 300_000
+    assert second.row_count == 1
+    assert second.first_bucket_open_ms == SEGMENT_MS
+    assert second.segment_number == 1
+
+
 def test_segment_supports_unavailable_rows_long_paths_and_wrong_versions():
     boundary = SEGMENT_MS
     rows = [
