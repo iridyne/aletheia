@@ -48,7 +48,7 @@ def main() -> int:
         for position_key in shadow_position_ids
     }
     reports_before = {
-        position_key: build_position_path_report(position_key)
+        position_key: build_position_path_report(position_key, as_of=as_of)
         for position_key in shadow_position_ids
     }
     stories_before = {
@@ -110,7 +110,7 @@ def main() -> int:
             _canonical_rows(expected) == _canonical_rows(unified)
         )
     reports_after = {
-        position_key: build_position_path_report(position_key)
+        position_key: build_position_path_report(position_key, as_of=as_of)
         for position_key in sorted(archive_position_ids)
     }
     stories_after = {
