@@ -479,6 +479,7 @@ def _underpowered_current_stage_authority_allowed(verdict: dict[str, Any]) -> bo
     return (
         isinstance(metrics, dict)
         and metrics.get("harm_state") == "indeterminate"
+        and metrics.get("harm_indeterminate_reason") == "insufficient_samples"
     )
 
 

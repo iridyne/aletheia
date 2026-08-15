@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
+
+
+def _fresh_ranker_mark(_opp: dict) -> dict:
+    return {
+        "price": 100.0,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "venue": "bitget",
+    }
 
 
 def _operator_prompt_context() -> dict:
@@ -255,6 +264,7 @@ def test_ranker_learning_deltas_are_refrozen_behind_separate_authority(monkeypat
     from aletheia.regime.detector import MarketRegime
 
     monkeypatch.setattr(ranker, "get_current_regime", lambda: MarketRegime(state="bull", confidence=0.8))
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
     monkeypatch.setattr(ranker, "_lesson_penalty", lambda *_: -12.0)
     monkeypatch.setattr(ranker, "_memo_scoring", lambda *_: 8.0)
 
@@ -309,6 +319,7 @@ def test_ranker_case_shadow_uses_exact_candidate_identity_for_assignment(monkeyp
     from aletheia.learning.experiments import InfluenceDecision
 
     calls = []
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
 
     def capture(**kwargs):
         calls.append(kwargs)
@@ -361,10 +372,37 @@ def test_ranker_case_shadow_uses_exact_candidate_identity_for_assignment(monkeyp
     }
 
 
+def test_ranker_case_without_exact_entry_mark_fails_closed(monkeypatch):
+    import aletheia.agents.paper_trader_ranker as ranker
+
+    calls = []
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", lambda _opp: None)
+    monkeypatch.setattr(
+        "aletheia.learning.experiments.apply_numeric_treatment",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    trace = []
+
+    value = ranker._authorized_ranker_delta(
+        path_id="ranker_case_score",
+        proposed_delta=-7.0,
+        opp={"id": "opportunity-no-mark", "symbol": "BTC/USDT"},
+        direction="long",
+        scope={"symbol": "BTC/USDT", "direction": "long"},
+        source_cohort="trade_case_study:v1",
+        learning_trace=trace,
+    )
+
+    assert value == 0.0
+    assert calls == []
+    assert trace[0]["reason"] == "ranker_entry_mark_unavailable"
+
+
 def test_ranker_case_shadow_forces_nonzero_adapter_result_to_baseline(monkeypatch):
     import aletheia.agents.paper_trader_ranker as ranker
     from aletheia.learning.experiments import InfluenceDecision
 
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
     monkeypatch.setattr(
         "aletheia.learning.experiments.apply_numeric_treatment",
         lambda **_: InfluenceDecision(
@@ -402,6 +440,7 @@ def test_ranker_case_valid_candidate_persists_one_shadow_exposure(monkeypatch):
     from aletheia.learning import experiments
     from aletheia.storage.sqlite import get_db
     monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
 
     opp = {
         "id": "opportunity-carrier",
@@ -442,14 +481,16 @@ def test_ranker_case_valid_candidate_persists_one_shadow_exposure(monkeypatch):
         ("ranker_case_score", ranker_key),
     ).fetchone()[0] == 1
 
-def test_ranker_case_registers_outcome_before_exposure(monkeypatch):
+def test_ranker_case_pairs_outcome_with_exposure(monkeypatch):
     import aletheia.agents.paper_trader_ranker as ranker
     from aletheia.learning.experiments import InfluenceDecision
 
     events = []
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
 
     def record_outcome(**kwargs):
         events.append(("outcome", kwargs["entry_ts"]))
+        return 1
 
     def record_exposure(**kwargs):
         events.append(("exposure", kwargs["manifest"]["prospective_t0"]))
@@ -479,8 +520,47 @@ def test_ranker_case_registers_outcome_before_exposure(monkeypatch):
         entry_price_usd=100.0,
     )
 
-    assert [event[0] for event in events] == ["outcome", "exposure"]
+    assert [event[0] for event in events] == ["exposure", "outcome"]
     assert events[0][1] == events[1][1]
+
+
+def test_ranker_case_rolls_back_exposure_when_outcome_seed_fails(monkeypatch):
+    import aletheia.agents.paper_trader_ranker as ranker
+    from aletheia.learning import experiments
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
+
+    def fail_seed(**_kwargs):
+        raise RuntimeError("seed failure")
+
+    monkeypatch.setattr(ranker, "_register_ranker_case_outcome", fail_seed)
+    trace = []
+
+    value = ranker._authorized_ranker_delta(
+        path_id="ranker_case_score",
+        proposed_delta=0.0,
+        opp={
+            "id": "opportunity-atomic",
+            "symbol": "BTC/USDT",
+            "market": "spot",
+            "universe_snapshot_id": "snapshot-atomic",
+            "universe_member_id": "member-atomic",
+        },
+        direction="long",
+        scope={"symbol": "BTC/USDT", "direction": "long"},
+        source_cohort="trade_case_study:v1",
+        learning_trace=trace,
+    )
+
+    assert value == 0.0
+    assert trace[0]["reason"] == "ranker_evidence_pair_unavailable"
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM learning_exposures "
+        "WHERE path_id='ranker_case_score' AND candidate_key=?",
+        ("ranker_member:snapshot-atomic:member-atomic:spot",),
+    ).fetchone()[0] == 0
 
 
 def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanner: str,

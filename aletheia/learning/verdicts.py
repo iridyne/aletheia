@@ -186,6 +186,10 @@ def evaluate_cohort(
             "insufficient unique prospective treatment/control samples in continuous window",
         )
     assert delta is not None
+    if not actual_treatment and not paper_authority_supported:
+        # A Shadow-only path has no behavior contrast. Its randomized arms are
+        # useful for identity/settlement checks, never for causal harm claims.
+        return result("insufficient_data", "no_actual_intervention")
     if harm_metrics["breached"]:
         return result("negative", _reason("harm gate breached", harm_metrics["breach_reasons"]))
     if not actual_treatment:

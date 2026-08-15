@@ -259,7 +259,7 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
     key_queries = []
 
     def open_learning_keys(path_ids, behavior_contract_hash=None):
-        key_queries.append(behavior_contract_hash)
+        key_queries.append((tuple(path_ids), behavior_contract_hash))
         return (
             {"current-ufc-candidate:4h"}
             if behavior_contract_hash == "current-behavior"
@@ -339,7 +339,11 @@ def test_filter_outcome_settler_prioritizes_open_universe_learning_epoch(
         "previous-build-ufc",
         "historical-backlog",
     ]
-    assert key_queries == ["current-behavior", None]
+    assert key_queries == [
+        (("universe_family_calibration",), "current-behavior"),
+        (("ranker_case_score",), "current-behavior"),
+        (("universe_family_calibration", "ranker_case_score"), None),
+    ]
 
 
 @spec_claim(

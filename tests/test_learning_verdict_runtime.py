@@ -1247,6 +1247,47 @@ def test_underpowered_harm_is_indeterminate_and_does_not_claim_a_breach():
     assert metrics["breach_reasons"] == []
 
 
+def test_ranker_shadow_no_intervention_precedes_harm_breach(monkeypatch):
+    hypothesis, experiment = _experiment(
+        min_samples=1,
+        path_id="ranker_case_score",
+        stage="paper_10",
+    )
+    for index in range(1):
+        for assignment, net in (("treatment", -10.0), ("control", 10.0)):
+            candidate = f"ranker-shadow-{assignment}-{index}"
+            _exposure(
+                experiment,
+                hypothesis,
+                candidate=candidate,
+                assignment=assignment,
+                authority_applied=False,
+                authority_reason="experiment_stage_not_paper",
+                behavior_changed=False,
+                contract="ranker-case-filter-candidate/v1",
+            )
+            _filter_outcome(candidate, net=net, mae=-10.0)
+
+    from aletheia.learning import verdicts
+
+    monkeypatch.setattr(
+        verdicts,
+        "_harm_metrics",
+        lambda *_args, **_kwargs: {
+            "breached": True,
+            "breach_reasons": ["synthetic_harm_breach"],
+            "harm_state": "breached",
+        },
+    )
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert metrics["breached"] is True
+    assert verdict.verdict == "insufficient_data"
+    assert verdict.reason == "no_actual_intervention"
+
+
 def test_loss_rate_gate_is_reachable_after_fifty_samples_per_arm():
     hypothesis, experiment = _experiment(min_samples=50)
     from aletheia.storage.sqlite import get_db

@@ -13,6 +13,14 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 _CONTRACT = "learning_evolution"
 
 
+def _fresh_ranker_mark(_opp: dict) -> dict:
+    return {
+        "price": 100.0,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "venue": "bitget",
+    }
+
+
 @spec_claim(
     SpecClaim(
         "LE-B02",
@@ -418,6 +426,7 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
     from aletheia.storage.sqlite import get_db
 
     monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
     common = {
         "path_id": "ranker_case_score",
         "proposed_delta": 0.0,
@@ -469,22 +478,20 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
     for candidate_key, outcome in (("member-1", 0.4), (opposite, -0.2)):
         outcome_key = ranker_key(candidate_key)
         db.execute(
-            "INSERT INTO filter_candidate_outcomes ("
-            "id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
-            "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
-            "estimated_fee_pct, estimated_spread_slippage_pct, mae_pct, "
-            "cost_model_version, status"
-            ") VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', '4h', "
-            "100, ?, ?, ?, ?, 0.05, 0.05, -0.5, 'cost-v1', 'settled')",
+            "UPDATE filter_candidate_outcomes SET entry_ts=?, due_at=?, settled_at=?, "
+            "net_return_pct=?, estimated_fee_pct=0.05, "
+            "estimated_spread_slippage_pct=0.05, mae_pct=-0.5, "
+            "cost_model_version='cost-v1', status='settled' "
+            "WHERE outcome_candidate_key=? AND horizon='4h'",
             (
-                f"outcome-{candidate_key}",
-                outcome_key,
                 outcome_time,
                 outcome_time,
                 outcome_time,
                 outcome,
+                outcome_key,
             ),
         )
+        assert db.execute("SELECT changes()").fetchone()[0] == 1
     db.commit()
 
     cohorts = build_experiment_cohorts(experiment.experiment_id)
@@ -519,6 +526,7 @@ def test_ranker_case_excludes_wrong_horizon_and_incomplete_cost(monkeypatch):
     from aletheia.storage.sqlite import get_db
 
     monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
     common = {
         "proposed_delta": 0.0,
         "path_id": "ranker_case_score",
@@ -545,21 +553,25 @@ def test_ranker_case_excludes_wrong_horizon_and_incomplete_cost(monkeypatch):
         )
 
     db = get_db()
-    now = datetime.now(timezone.utc).isoformat()
+    now = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
     for candidate_key, horizon, fee in (
         ("wrong-horizon", "1h", 0.05),
         ("missing-cost", "4h", None),
     ):
         outcome_key = ranker_key(candidate_key)
         db.execute(
-            "INSERT INTO filter_candidate_outcomes ("
-            "id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
-            "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
-            "estimated_fee_pct, estimated_spread_slippage_pct, cost_model_version, status"
-            ") VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', ?, "
-            "100, ?, ?, ?, 0.4, ?, 0.05, 'cost-v1', 'settled')",
-            (f"outcome-{candidate_key}", outcome_key, horizon, now, now, now, fee),
+            "UPDATE filter_candidate_outcomes SET horizon=?, entry_ts=?, due_at=?, "
+            "settled_at=?, net_return_pct=0.4, estimated_fee_pct=?, "
+            "estimated_spread_slippage_pct=?, cost_model_version=?, status='settled' "
+            "WHERE outcome_candidate_key=? AND horizon='4h'",
+            (
+                horizon, now, now, now, fee,
+                0.05,
+                "cost-v1",
+                outcome_key,
+            ),
         )
+        assert db.execute("SELECT changes()").fetchone()[0] == 1
     db.commit()
     experiment_id = db.execute(
         "SELECT experiment_id FROM learning_exposures "

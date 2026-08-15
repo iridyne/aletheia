@@ -345,6 +345,7 @@ def apply_numeric_treatment(
     expected_hypothesis_fingerprint: str | None = None,
     expected_experiment_id: str | None = None,
     suppress_shadow_if_paper_active: bool = False,
+    exposed_at: str | None = None,
 ) -> InfluenceDecision:
     """Record prospective exposure and apply only an authorized paper treatment."""
     baseline_value = float(baseline)
@@ -523,6 +524,7 @@ def apply_numeric_treatment(
         # into policy_epoch above, so a rebuild rotates the epoch on restart).
         code_commit=_code_fingerprint(),
         behavior_contract_hash=behavior_contract_hash,
+        **({"exposed_at": exposed_at} if exposed_at is not None else {}),
     )
     inserted = insert_exposure(
         exposure,
