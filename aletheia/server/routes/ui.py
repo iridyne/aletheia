@@ -9,6 +9,7 @@ import time
 from fastapi import APIRouter, Response
 
 from aletheia import __version__
+from aletheia.config.exchange_alignment import exchange_alignment
 from aletheia.config.secrets import get_secret
 from aletheia.config.loader import load_config
 from aletheia.server.routes.health import _cached_compute_health, _cached_head_commit
@@ -176,6 +177,14 @@ def shell_bootstrap(response: Response):
         killed = bool(cfg.runtime.kill_switch_active)
     ticker = _safe("ticker", _ticker_snapshot, {})
     risk = _safe("risk", lambda: _risk_snapshot(cfg), {"status": "not_evaluated", "violations": []})
+    alignment = _safe("exchange_alignment", lambda: exchange_alignment(cfg).to_dict(), {
+        "status": "not_available",
+        "execution_exchange": None,
+        "data_exchange": None,
+        "diverged": False,
+        "paper_execution_mode": None,
+    })
+    alignment_value = alignment["value"]
     current_commit = _safe("current_commit", _cached_head_commit, None)
     packaged = _safe("packaged_mode", lambda: __import__("aletheia.update.packaged_commands", fromlist=["is_packaged_mode"]).is_packaged_mode(), False)
     payload = {
@@ -188,6 +197,13 @@ def shell_bootstrap(response: Response):
         "permission": {"mode": str(cfg.agent.permission_mode)},
         "kill_switch": {"active": killed},
         "risk": risk["value"],
+        "exchange": {
+            "status": alignment_value.get("status"),
+            "execution_exchange": alignment_value.get("execution_exchange"),
+            "data_exchange": alignment_value.get("data_exchange"),
+            "exchange_diverged": bool(alignment_value.get("diverged")),
+            "paper_execution_mode": alignment_value.get("paper_execution_mode"),
+        },
         "operator": operator["value"],
         "connectivity": {"state": "not_available", "reason": "deferred_until_diagnostics"},
         "health": {"status": health["value"].get("status", "not_available"), "issues": health["value"].get("issues", [])[:3], "availability": health["availability"], "reason": health["reason"]},

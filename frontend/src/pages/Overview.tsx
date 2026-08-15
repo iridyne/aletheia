@@ -65,7 +65,7 @@ export default function Overview() {
         <AgentFeed bootstrap={overview.data} />
         <div className="cockpit-rail">
           <RiskCard shell={shell.data} />
-          <SystemCard shell={shell.data} />
+          <SystemCard shell={shell.data} coverage={overview.data?.coverage} />
           <GoLiveScoreCard />
         </div>
       </div>
@@ -97,14 +97,25 @@ function RiskCard({ shell }: { shell?: ShellBootstrap }) {
   )
 }
 
-function SystemCard({ shell }: { shell?: ShellBootstrap }) {
+function SystemCard({ shell, coverage }: { shell?: ShellBootstrap; coverage?: OverviewBootstrap['coverage'] }) {
   const navigate = useNavigate()
   const scheduler = shell?.scheduler
   const runtime = shell?.runtime
+  const exchange = shell?.exchange
+  const exchangeDiverged = !!exchange?.exchange_diverged || exchange?.status === 'diverged'
+  const exchangeAligned = exchange?.status === 'aligned'
+  const exchangeLabel = exchange?.status === 'local_paper'
+    ? 'Local paper · no exchange'
+    : exchangeDiverged
+      ? `${exchange?.execution_exchange || 'unknown'} exec · ${exchange?.data_exchange || 'unknown'} data`
+      : exchange?.execution_exchange || exchange?.data_exchange || 'not available'
+  const coverageAvailable = coverage?.availability === 'available'
   const rows = [
     ['Gateway', shell?.gateway?.running ? 'green' : shell ? 'red' : 'muted', shell ? (shell.gateway?.paused ? 'paused' : 'running') : 'not available'],
     ['Scheduler', scheduler?.running ? 'green' : scheduler ? 'yellow' : 'muted', scheduler?.state || 'not available'],
     ['Connectivity', shell?.connectivity?.state === 'reachable' ? 'green' : 'muted', shell?.connectivity?.state || 'deferred'],
+    ['Exchange', exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted', exchangeLabel],
+    ['Data coverage', coverageAvailable ? 'green' : coverage ? 'yellow' : 'muted', coverageAvailable ? 'available' : coverage ? 'not available' : 'deferred'],
     ['Live', shell?.live?.enabled ? 'yellow' : 'muted', humanize(shell?.live?.state || 'not available')],
     ['Runtime', runtime?.boot_commit ? runtime.boot_commit.slice(0, 12) : 'not available', runtime?.mode || 'not available'],
   ]

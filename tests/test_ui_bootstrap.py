@@ -20,6 +20,7 @@ def test_shell_bootstrap_is_compact_local_and_no_store():
     assert "proposals" not in payload
     assert "equity_history" not in payload
     assert "credentials" not in payload
+    assert "exchange_diverged" in payload["exchange"]
     assert len(str(payload)) < 20_000
 
 
