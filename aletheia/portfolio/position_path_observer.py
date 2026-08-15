@@ -8,6 +8,7 @@ rather than guessed, so later analysis can distinguish absence from zero.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 import math
 import time
 from datetime import datetime, timezone
@@ -44,6 +45,29 @@ def _finite(value: object) -> float | None:
     except (TypeError, ValueError, OverflowError):
         return None
     return number if math.isfinite(number) else None
+def _fee_in_quote(
+    *,
+    fee: float | None,
+    fee_currency: object,
+    fill_price: float,
+    symbol: str,
+) -> float | None:
+    """Convert a directly observable Fill fee into the instrument quote asset."""
+    if fee is None:
+        return None
+    if fee == 0:
+        return 0.0
+    canonical = to_canonical(symbol)
+    base, separator, quote = canonical.partition("/")
+    currency = str(fee_currency or quote).strip().upper()
+    if not separator or not base or not quote or not currency:
+        return None
+    if currency == quote.upper():
+        return fee
+    if currency == base.upper():
+        return fee * fill_price
+    return None
+
 
 
 def _normalize_direction(value: object) -> str | None:
@@ -219,33 +243,289 @@ def _base_observation(position: dict[str, Any], *, bucket_open_ms: int, observed
     }
 
 
-def _store_unavailable(
-    position: dict[str, Any],
-    *,
-    bucket_open_ms: int,
-    observed_at: str,
-    reason: str,
-    historical: bool = False,
-) -> bool:
-    if historical:
-        position = _historical_position_snapshot(
-            position, bucket_open_ms=bucket_open_ms
-        )
-    observation = _base_observation(
-        position, bucket_open_ms=bucket_open_ms, observed_at=observed_at
-    )
-    observation["evidence_reason"] = reason
-    return insert_position_path_observation(observation)
+def _historical_state_unavailable(reason: str) -> dict[str, Any]:
+    return {
+        "quantity": None,
+        "entry_price": None,
+        "current_price": None,
+        "unrealized_pnl": None,
+        "entry_fee": None,
+        "realized_pnl": None,
+        "remaining_notional": None,
+        "funding_cost": None,
+        "funding_source": "unavailable",
+        "_historical_state_reason": reason,
+    }
+
+
+def _project_position_state_as_of(
+    position: dict[str, Any], *, as_of_ms: int
+) -> dict[str, Any]:
+    """Project Position state from immutable lifecycle facts at one timestamp."""
+
+    projected = _historical_state_unavailable("historical_position_state_unavailable")
+    try:
+        cutoff = datetime.fromtimestamp(as_of_ms / 1000, timezone.utc)
+        position_id = str(position.get("id") or "").strip()
+        if not position_id:
+            return _historical_state_unavailable("position_identity_unavailable")
+        expected_symbol = to_canonical(str(position.get("symbol") or ""))
+        expected_market = _physical_market_type(position.get("market_type"))
+        expected_direction = _normalize_direction(position.get("direction"))
+        if not expected_symbol or not expected_market or not expected_direction:
+            return _historical_state_unavailable("position_identity_invalid")
+
+        db = repo.get_db()
+        primary_order_id = str(position.get("order_id") or "").strip()
+        order_rows = db.execute(
+            "SELECT *, rowid AS _rowid FROM orders "
+            "WHERE position_id=? OR id=? "
+            "ORDER BY datetime(COALESCE(filled_at, created_at)), rowid",
+            (position_id, primary_order_id),
+        ).fetchall()
+        orders: dict[str, dict[str, Any]] = {}
+        for raw_order in order_rows:
+            order = dict(raw_order)
+            order_id = str(order.get("id") or "").strip()
+            if order_id:
+                orders[order_id] = order
+        if not orders:
+            return _historical_state_unavailable("entry_fill_evidence_unavailable")
+
+        def identity_matches(row: Mapping[str, Any]) -> bool:
+            return (
+                to_canonical(str(row.get("symbol") or "")) == expected_symbol
+                and _physical_market_type(row.get("market_type")) == expected_market
+                and _normalize_direction(row.get("direction")) == expected_direction
+                and str(row.get("execution_mode") or "")
+                == str(position.get("execution_mode") or "")
+            )
+
+
+        def close_identity_matches(row: Mapping[str, Any]) -> bool:
+            return (
+                to_canonical(str(row.get("symbol") or "")) == expected_symbol
+                and _normalize_direction(row.get("direction")) == expected_direction
+                and str(row.get("execution_mode") or "")
+                == str(position.get("execution_mode") or "")
+            )
+
+
+        lifecycle: list[
+            tuple[
+                datetime,
+                int,
+                str,
+                str,
+                float,
+                float,
+                float | None,
+                float | None,
+            ]
+        ] = []
+        entry_seen = False
+        close_fill_lifecycle: list[
+            tuple[
+                datetime,
+                int,
+                str,
+                str,
+                float,
+                float,
+                float | None,
+                float | None,
+            ]
+        ] = []
+        for order_id, order in orders.items():
+            is_close_order = bool(str(order.get("close_reason") or "").strip())
+            fill_rows = db.execute(
+                "SELECT *, rowid AS _rowid FROM fills "
+                "WHERE order_id=? ORDER BY datetime(filled_at), rowid",
+                (order_id,),
+            ).fetchall()
+            for raw_fill in fill_rows:
+                fill = dict(raw_fill)
+                filled_at = _parse_position_timestamp(fill.get("filled_at"))
+                if filled_at is None:
+                    return _historical_state_unavailable(
+                        "historical_fill_timestamp_invalid"
+                    )
+                if filled_at > cutoff:
+                    continue
+                if not identity_matches(order):
+                    return _historical_state_unavailable(
+                        "historical_lifecycle_identity_mismatch"
+                    )
+                quantity = _finite(fill.get("fill_quantity"))
+                price = _finite(fill.get("fill_price"))
+                if quantity is None or quantity <= 0 or price is None or price <= 0:
+                    return _historical_state_unavailable(
+                        "historical_fill_economics_invalid"
+                    )
+                event_kind = "close_fill" if is_close_order else "entry_fill"
+                if event_kind == "close_fill":
+                    close_fill_lifecycle.append(
+                        (
+                            filled_at,
+                            1,
+                            str(fill.get("id") or order_id),
+                            event_kind,
+                            quantity,
+                            price,
+                            None,
+                            None,
+                        )
+                    )
+                    continue
+                fee = _fee_in_quote(
+                    fee=_finite(fill.get("fee")),
+                    fee_currency=fill.get("fee_currency"),
+                    fill_price=price,
+                    symbol=expected_symbol,
+                )
+                entry_seen = True
+                lifecycle.append(
+                    (
+                        filled_at,
+                        0,
+                        str(fill.get("id") or order_id),
+                        event_kind,
+                        quantity,
+                        price,
+                        fee,
+                        None,
+                    )
+                )
+
+        close_event_rows = db.execute(
+            "SELECT *, rowid AS _rowid FROM position_close_events "
+            "WHERE position_id=? ORDER BY datetime(closed_at), rowid",
+            (position_id,),
+        ).fetchall()
+        ledger_close_seen = False
+        for raw_event in close_event_rows:
+            event = dict(raw_event)
+            closed_at = _parse_position_timestamp(event.get("closed_at"))
+            if closed_at is None:
+                return _historical_state_unavailable(
+                    "historical_close_timestamp_invalid"
+                )
+            if closed_at > cutoff:
+                continue
+            if not close_identity_matches(event):
+                return _historical_state_unavailable(
+                    "historical_lifecycle_identity_mismatch"
+                )
+            quantity = _finite(event.get("closed_qty"))
+            price = _finite(event.get("exit_price"))
+            entry_fee = _finite(event.get("entry_fee"))
+            realized = _finite(event.get("realized_pnl"))
+            if quantity is None or quantity <= 0:
+                return _historical_state_unavailable(
+                    "historical_close_quantity_invalid"
+                )
+            # Exit price is useful for realized economics, but not required to
+            # reconstruct remaining quantity or weighted entry cost.
+            if price is None or price <= 0:
+                price = 0.0
+            ledger_close_seen = True
+            lifecycle.append(
+                (
+                    closed_at,
+                    1,
+                    str(event.get("id") or event.get("_rowid") or ""),
+                    "close_event",
+                    quantity,
+                    price,
+                    entry_fee,
+                    realized,
+                )
+            )
+
+        if not ledger_close_seen:
+            lifecycle.extend(close_fill_lifecycle)
+
+        if not entry_seen:
+            return _historical_state_unavailable("entry_fill_evidence_unavailable")
+
+        lifecycle.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+        quantity = 0.0
+        notional = 0.0
+        entry_fee = 0.0
+        fee_complete = True
+        realized_pnl = 0.0
+        realized_complete = True
+        for (
+            _event_at,
+            _priority,
+            _event_id,
+            event_kind,
+            event_quantity,
+            event_price,
+            event_fee,
+            event_realized,
+        ) in lifecycle:
+            if event_kind == "entry_fill":
+                quantity += event_quantity
+                notional += event_quantity * event_price
+                if event_fee is None:
+                    fee_complete = False
+                else:
+                    entry_fee += event_fee
+                continue
+            if quantity <= 0 or event_quantity > quantity + max(1e-12, quantity * 1e-9):
+                return _historical_state_unavailable(
+                    "historical_close_exceeds_open_quantity"
+                )
+            average_entry = notional / quantity
+            quantity -= event_quantity
+            notional = max(0.0, notional - average_entry * event_quantity)
+            if event_fee is None:
+                fee_complete = False
+            else:
+                entry_fee -= event_fee
+            if event_realized is None:
+                realized_complete = False
+            else:
+                realized_pnl += event_realized
+
+        if quantity <= max(1e-12, quantity * 1e-9) or notional <= 0:
+            return _historical_state_unavailable(
+                "historical_position_fully_closed"
+            )
+        average_entry = notional / quantity
+        projected = {
+            "quantity": quantity,
+            "entry_price": average_entry,
+            "current_price": None,
+            "unrealized_pnl": None,
+            "entry_fee": max(0.0, entry_fee) if fee_complete else None,
+            "realized_pnl": realized_pnl if realized_complete else None,
+            "remaining_notional": notional,
+            "funding_cost": None,
+            "funding_source": "unavailable",
+            "_historical_state_reason": None,
+        }
+        return projected
+    except Exception:
+        return projected
 
 
 def _historical_position_snapshot(
     position: dict[str, Any], *, bucket_open_ms: int
 ) -> dict[str, Any]:
-    """Use durable historical protection facts; never attach current mutable state."""
+    """Project state at a bucket without copying mutable current Position values."""
 
     snapshot = dict(position)
-    snapshot["funding_cost"] = None
-    snapshot["funding_source"] = "unavailable"
+    snapshot.update(
+        # A recovered bucket is the half-open interval
+        # [bucket_open_ms, bucket_open_ms + _BUCKET_MS); project the state
+        # immediately before its closing boundary so events exactly at the
+        # boundary belong to the following lifecycle interval.
+        _project_position_state_as_of(
+            position, as_of_ms=bucket_open_ms + _BUCKET_MS - 1
+        )
+    )
     snapshot["stop_price"] = None
     snapshot["take_profit_price"] = None
     snapshot["exit_plan_version"] = 0
@@ -262,6 +542,26 @@ def _historical_position_snapshot(
         snapshot["take_profit_price"] = _finite(plan.get("take_profit_price"))
         snapshot["exit_plan_version"] = max(0, int(plan.get("version") or 0))
     return snapshot
+
+
+def _store_unavailable(
+    position: dict[str, Any],
+    *,
+    bucket_open_ms: int,
+    observed_at: str,
+    reason: str,
+    historical: bool = False,
+) -> bool:
+    if historical:
+        position = _historical_position_snapshot(
+            position, bucket_open_ms=bucket_open_ms
+        )
+    observation = _base_observation(
+        position, bucket_open_ms=bucket_open_ms, observed_at=observed_at
+    )
+    state_reason = position.get("_historical_state_reason")
+    observation["evidence_reason"] = str(state_reason or reason)
+    return insert_position_path_observation(observation)
 
 
 def _store_latest_position_result(
@@ -333,10 +633,12 @@ def _store_latest_position_result(
             "evidence_reason": "complete_exact_5m_bar",
         }
     )
-    if position.get("status") != "closed":
+    if historical or position.get("status") != "closed":
         observation["mark_price"] = close
         observation["unrealized_pnl"] = (
-            (close - entry) * quantity if direction == "long" else (entry - close) * quantity
+            (close - entry) * quantity
+            if direction == "long"
+            else (entry - close) * quantity
         )
     return insert_position_path_observation(observation), "available"
 

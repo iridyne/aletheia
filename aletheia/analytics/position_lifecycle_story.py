@@ -208,6 +208,7 @@ _EVENT_ORDER = {
     "decision_committed": 20,
     "risk_approved": 30,
     "entry_filled": 40,
+    "position_path_observed": 45,
     "first_meaningful_favorable_excursion": 50,
     "maximum_favorable_excursion": 60,
     "maximum_adverse_excursion": 70,
@@ -232,6 +233,7 @@ POSITION_LIFECYCLE_EVENT_TYPES = (
     "decision_committed",
     "risk_approved",
     "entry_filled",
+    "position_path_observed",
     "first_meaningful_favorable_excursion",
     "maximum_favorable_excursion",
     "maximum_adverse_excursion",
@@ -262,6 +264,36 @@ _STRUCTURED_EVENT_FACT_KEYS = {
     "decision_committed": ("action", "proposal_id", "candidate_decision_ids"),
     "risk_approved": ("decision_role", "policy_id", "position_id"),
     "entry_filled": ("fill_price", "fill_quantity", "order_id", "fill_ids", "fill_count"),
+    "position_path_observed": (
+        "position_id",
+        "bucket_open_ms",
+        "observed_at",
+        "producer_commit",
+        "runtime_session_id",
+        "capture_mode",
+        "evidence_status",
+        "evidence_reason",
+        "venue",
+        "symbol",
+        "market_type",
+        "direction",
+        "entry_price",
+        "quantity",
+        "mark_price",
+        "unrealized_pnl",
+        "entry_fee",
+        "funding_cost",
+        "funding_source",
+        "bar_open",
+        "bar_high",
+        "bar_low",
+        "bar_close",
+        "bar_volume",
+        "bar_provider",
+        "stop_price",
+        "take_profit_price",
+        "exit_plan_version",
+    ),
     "first_meaningful_favorable_excursion": ("return_pct", "rule"),
     "maximum_favorable_excursion": ("mfe_pct",),
     "maximum_adverse_excursion": ("mae_pct",),
@@ -1566,6 +1598,60 @@ def _observer_audit(
         "missing_bucket_count": len(missing),
         "missing_bucket_open_ms": missing,
     }
+def _visible_position_path_observations(
+    db: Any,
+    position_id: str,
+    *,
+    entry_at: datetime | None,
+    cutoff: datetime,
+    closed_at: datetime | None,
+) -> list[dict[str, Any]]:
+    if entry_at is None:
+        return []
+    boundary = closed_at if closed_at is not None and closed_at <= cutoff else cutoff
+    first = ((int(entry_at.timestamp() * 1000) + _BUCKET_MS - 1) // _BUCKET_MS) * _BUCKET_MS
+    last = (int(boundary.timestamp() * 1000) // _BUCKET_MS) * _BUCKET_MS
+    if last <= first:
+        return []
+    rows = _rows(
+        db,
+        "SELECT * FROM position_path_observations "
+        "WHERE position_id=? AND bucket_open_ms>=? AND bucket_open_ms<? "
+        "ORDER BY bucket_open_ms ASC",
+        (position_id, first, last),
+    )
+    return [
+        row
+        for row in rows
+        if (_utc(row.get("observed_at")) or cutoff) <= cutoff
+    ]
+
+
+def _position_path_events(
+    observations: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for row in observations:
+        bucket = row.get("bucket_open_ms")
+        if bucket is None:
+            continue
+        facts = dict(row)
+        events.append(
+            _event(
+                "position_path_observed",
+                occurred_at=_utc(row.get("observed_at")),
+                evidence_status=str(row.get("evidence_status") or "unavailable"),
+                source_entity_type="position_path_observation",
+                source_entity_id=f"{row.get('position_id')}:{int(bucket)}",
+                facts=facts,
+                unavailable_reason=(
+                    str(row.get("evidence_reason"))
+                    if row.get("evidence_status") != "available" and row.get("evidence_reason")
+                    else None
+                ),
+            )
+        )
+    return events
 
 
 # ---------------------------------------------------------------------------
@@ -1596,6 +1682,7 @@ def build_position_lifecycle_story(
         "opening": {},
         "timeline": [],
         "structured_events": [],
+        "periodic_observations": [],
         "economic_path": {},
         "hypothesis_lifecycle": {},
         "management_opportunities": [],
@@ -1672,12 +1759,25 @@ def build_position_lifecycle_story(
             if (timestamp := _utc(row.get("filled_at"))) is not None
         ]
         entry_at = min(entry_at_candidates) if entry_at_candidates else None
+    observation_entry_at = entry_at or _utc(snapshot.get("opened_at"))
+    periodic_observations = _visible_position_path_observations(
+        source,
+        position_id,
+        entry_at=observation_entry_at,
+        cutoff=cutoff,
+        closed_at=closed_at,
+    )
     close_fills = [row for row in related.get("close_fills", []) if isinstance(row, Mapping)]
     exit_fill = _aggregate_fills(close_fills)
     exit_at = _utc(exit_fill.get("filled_at")) if exit_fill else None
     fill_aggregation = (
         "unavailable"
-        if (entry_fills and entry_fill is None) or (close_fills and exit_fill is None)
+        if (
+            not entry_fills
+            or (closed_visible and not close_fills)
+            or (entry_fills and entry_fill is None)
+            or (close_fills and exit_fill is None)
+        )
         else "quantity_weighted"
         if len(entry_fills) > 1 or len(close_fills) > 1
         else "single"
@@ -1741,7 +1841,9 @@ def build_position_lifecycle_story(
         position_id,
         causal_available=causal_chain_available,
     )
-    if closed_visible:
+    if fill_aggregation == "unavailable":
+        bars, path_status, path_reason = [], "unavailable", "fill_evidence_invalid"
+    elif closed_visible:
         if path:
             bars, path_status, path_reason = _replay_prefix_bars(
                 fact, entry_at=entry_at, cutoff=cutoff, exit_at=closed_at
@@ -1756,10 +1858,9 @@ def build_position_lifecycle_story(
             cutoff=cutoff,
             exit_at=closed_at,
         )
-    if closed_visible and fill_aggregation == "unavailable":
-        path_status = "unavailable"
-        path_reason = "fill_evidence_invalid"
-    if not closed_visible and bars and path_status == "available":
+    if fill_aggregation == "unavailable":
+        path_for_metrics = {"path_evidence_reason": path_reason}
+    elif not closed_visible and bars and path_status == "available":
         # A live/as-of prefix is useful for hypothesis evidence, but is not a
         # realized MFE/MAE claim because there is no verified exit boundary.
         path_for_metrics: dict[str, Any] = {
@@ -1768,6 +1869,7 @@ def build_position_lifecycle_story(
         }
     else:
         path_for_metrics = dict(path)
+    timeline.extend(_position_path_events(periodic_observations))
     economics = _economics(
         fact,
         snapshot,
@@ -2132,6 +2234,7 @@ def build_position_lifecycle_story(
 
     timeline.sort(key=_event_sort_key)
     result["timeline"] = timeline
+    result["periodic_observations"] = periodic_observations
     result["structured_events"] = _structured_events(timeline)
     peak_at = _utc(metrics.get("peak_at"))
     invalidation_at = _utc(
@@ -2343,6 +2446,12 @@ def render_position_lifecycle_story(story: Mapping[str, Any]) -> str:
             description = (
                 "Maximum adverse excursion reached: "
                 f"{_render_value(facts.get('mae_pct'))}%."
+            )
+        elif event_type == "position_path_observed":
+            description = (
+                "5m Position-path observation recorded: "
+                f"bucket={_render_value(facts.get('bucket_open_ms'))}, "
+                f"status={_render_value(event.get('evidence_status'))}."
             )
         elif event_type == "exit_plan_revised":
             description = (

@@ -87,8 +87,338 @@ def _seed_position(
         opened_at=opened_at,
     )
     repo.insert_position(position)
+    entry_order_id = f"test-entry-order-{position_id}"
+    db.execute(
+        "INSERT INTO orders "
+        "(id,symbol,market_type,direction,order_type,quantity,price,"
+        "execution_mode,position_id,status,source,created_at,filled_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            entry_order_id,
+            symbol,
+            "usdt_futures",
+            "long",
+            "market",
+            0.01,
+            100.0,
+            "paper_internal",
+            position_id,
+            "filled",
+            "native",
+            opened_at,
+            opened_at,
+        ),
+    )
+    db.execute(
+        "INSERT INTO fills "
+        "(id,order_id,fill_price,fill_quantity,fee,fee_currency,fee_source,filled_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            f"test-entry-fill-{position_id}",
+            entry_order_id,
+            100.0,
+            0.01,
+            0.01,
+            "USDT",
+            "estimated",
+            opened_at,
+        ),
+    )
+    db.commit()
+    repo.update_position(position_id, order_id=entry_order_id)
     return position
 
+
+def _insert_entry_leg(
+    position: Position,
+    *,
+    leg_id: str,
+    quantity: float,
+    price: float,
+    filled_at: str,
+    fee: float,
+) -> None:
+    from aletheia.storage import repositories as repo
+
+    db = repo.get_db()
+    order_id = f"{leg_id}-order"
+    db.execute(
+        "INSERT INTO orders "
+        "(id,symbol,market_type,direction,order_type,quantity,price,"
+        "execution_mode,position_id,status,source,created_at,filled_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            order_id,
+            position.symbol,
+            position.market_type,
+            position.direction,
+            "market",
+            quantity,
+            price,
+            position.execution_mode,
+            position.id,
+            "filled",
+            "native",
+            filled_at,
+            filled_at,
+        ),
+    )
+    db.execute(
+        "INSERT INTO fills "
+        "(id,order_id,fill_price,fill_quantity,fee,fee_currency,fee_source,filled_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            f"{leg_id}-fill",
+            order_id,
+            price,
+            quantity,
+            fee,
+            "USDT",
+            "estimated",
+            filled_at,
+        ),
+    )
+    db.commit()
+
+
+def _insert_close_event(
+    position: Position,
+    *,
+    event_id: str,
+    quantity: float,
+    price: float | None,
+    closed_at: str,
+    entry_fee: float | None,
+    realized_pnl: float | None,
+    is_partial: int,
+) -> None:
+    from aletheia.storage import repositories as repo
+
+    repo.get_db().execute(
+        "INSERT INTO position_close_events "
+        "(id,position_id,symbol,direction,execution_mode,close_reason,"
+        "exit_price,closed_qty,realized_pnl,entry_fee,exit_fee,is_partial,closed_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            event_id,
+            position.id,
+            position.symbol,
+            position.direction,
+            position.execution_mode,
+            "manual",
+            price,
+            quantity,
+            realized_pnl,
+            entry_fee,
+            0.01,
+            is_partial,
+            closed_at,
+        ),
+    )
+    repo.get_db().commit()
+
+
+def test_projector_projects_single_entry_as_of_bucket():
+    from aletheia.portfolio.position_path_observer import _project_position_state_as_of
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(position_id="position-path-single-entry")
+    state = _project_position_state_as_of(
+        repo.get_position(position.id),
+        as_of_ms=1_786_579_200_000,
+    )
+
+    assert state["quantity"] == 0.01
+    assert state["entry_price"] == 100.0
+    assert state["remaining_notional"] == 1.0
+    assert state["entry_fee"] == 0.01
+
+
+def test_projector_weights_multiple_entry_fills_only_when_visible():
+    from aletheia.portfolio.position_path_observer import _project_position_state_as_of
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(position_id="position-path-multiple-entry")
+    _insert_entry_leg(
+        position,
+        leg_id="multiple-entry-leg",
+        quantity=0.02,
+        price=120.0,
+        filled_at="2026-08-13T00:04:00+00:00",
+        fee=0.02,
+    )
+    state = _project_position_state_as_of(
+        repo.get_position(position.id),
+        as_of_ms=1_786_579_500_000,
+    )
+
+    assert state["quantity"] == 0.03
+    assert state["entry_price"] == pytest.approx(113.3333333333)
+    assert state["entry_fee"] == pytest.approx(0.03)
+
+
+def test_projector_applies_scale_in_and_partial_reduction_as_of_time():
+    from aletheia.portfolio.position_path_observer import _project_position_state_as_of
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(position_id="position-path-partial-projector")
+    _insert_entry_leg(
+        position,
+        leg_id="partial-scale-in-leg",
+        quantity=0.02,
+        price=120.0,
+        filled_at="2026-08-13T00:04:00+00:00",
+        fee=0.02,
+    )
+    _insert_close_event(
+        position,
+        event_id="partial-reduction-event",
+        quantity=0.01,
+        price=130.0,
+        closed_at="2026-08-13T00:06:00+00:00",
+        entry_fee=0.01,
+        realized_pnl=0.19,
+        is_partial=1,
+    )
+    state = _project_position_state_as_of(
+        repo.get_position(position.id),
+        as_of_ms=1_786_579_800_000,
+    )
+
+    assert state["quantity"] == pytest.approx(0.02)
+    assert state["entry_price"] == pytest.approx(113.3333333333)
+    assert state["remaining_notional"] == pytest.approx(2.2666666667)
+    assert state["entry_fee"] == pytest.approx(0.02)
+    assert state["realized_pnl"] == pytest.approx(0.19)
+
+
+def test_historical_snapshot_uses_exit_plan_effective_at_bucket():
+    import hashlib
+    import json
+
+    from aletheia.portfolio.position_path_observer import (
+        _historical_position_snapshot,
+    )
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(position_id="position-path-plan-projector")
+    db = repo.get_db()
+    for version, effective_at, stop_price in (
+        (1, "2026-08-13T00:00:00+00:00", 95.0),
+        (2, "2026-08-13T00:07:00+00:00", 97.0),
+    ):
+        plan_json = json.dumps(
+            {
+                "stop_price": stop_price,
+                "take_profit_price": 110.0,
+                "exit_limit_price": None,
+                "exit_limit_source": None,
+            },
+            sort_keys=True,
+        )
+        db.execute(
+            "INSERT INTO position_exit_plan_versions "
+            "(position_id,version,effective_at,stop_price,take_profit_price,"
+            "exit_limit_price,exit_limit_source,plan_json,plan_hash,provenance,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                position.id,
+                version,
+                effective_at,
+                stop_price,
+                110.0,
+                None,
+                None,
+                plan_json,
+                hashlib.sha256(plan_json.encode()).hexdigest(),
+                "test",
+                effective_at,
+            ),
+        )
+    db.commit()
+
+    first = _historical_position_snapshot(
+        repo.get_position(position.id),
+        bucket_open_ms=1_786_579_200_000,
+    )
+    second = _historical_position_snapshot(
+        repo.get_position(position.id),
+        bucket_open_ms=1_786_579_800_000,
+    )
+
+    assert (first["exit_plan_version"], first["stop_price"]) == (1, 95.0)
+    assert (second["exit_plan_version"], second["stop_price"]) == (2, 97.0)
+
+
+def test_projector_terminalizes_final_close_without_reusing_current_state():
+    from aletheia.portfolio.position_path_observer import _project_position_state_as_of
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(position_id="position-path-final-close-projector")
+    db = repo.get_db()
+    close_order_id = "final-close-projector-order"
+    close_at = "2026-08-13T00:12:00+00:00"
+    db.execute(
+        "INSERT INTO orders "
+        "(id,symbol,market_type,direction,order_type,quantity,price,"
+        "execution_mode,position_id,close_reason,status,source,created_at,filled_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            close_order_id,
+            position.symbol,
+            position.market_type,
+            position.direction,
+            "market",
+            0.01,
+            130.0,
+            position.execution_mode,
+            position.id,
+            "stop_loss",
+            "filled",
+            "native",
+            close_at,
+            close_at,
+        ),
+    )
+    db.execute(
+        "INSERT INTO fills "
+        "(id,order_id,fill_price,fill_quantity,fee,fee_currency,fee_source,filled_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "final-close-projector-fill",
+            close_order_id,
+            130.0,
+            0.01,
+            0.01,
+            "USDT",
+            "estimated",
+            close_at,
+        ),
+    )
+    db.commit()
+    _insert_close_event(
+        position,
+        event_id="final-close-projector-event",
+        quantity=0.01,
+        price=None,
+        closed_at=close_at,
+        entry_fee=0.01,
+        realized_pnl=0.29,
+        is_partial=0,
+    )
+
+    before_close = _project_position_state_as_of(
+        repo.get_position(position.id),
+        as_of_ms=1_786_579_800_000,
+    )
+    after_close = _project_position_state_as_of(
+        repo.get_position(position.id),
+        as_of_ms=1_786_580_100_000,
+    )
+
+    assert before_close["quantity"] == 0.01
+    assert after_close["quantity"] is None
+    assert after_close["_historical_state_reason"] == "historical_position_fully_closed"
 
 @pytest.mark.asyncio
 async def test_observer_defers_when_provider_cannot_prove_closed_bar(
@@ -448,6 +778,11 @@ async def test_observer_recovers_closed_position_path_after_missed_runs(monkeypa
     repo.update_position(
         position.id,
         status="closed",
+        quantity=0.005,
+        entry_price=120.0,
+        current_price=130.0,
+        unrealized_pnl=0.0,
+        entry_fee=0.005,
         closed_at=datetime.fromtimestamp(
             (bucket + 900_000) / 1000, tz=timezone.utc
         ).isoformat(),
@@ -496,6 +831,11 @@ async def test_observer_recovers_closed_position_path_after_missed_runs(monkeypa
         bucket + 600_000,
     ]
     assert all(row["capture_mode"] == "post_close_final_snapshot" for row in rows)
+    assert all(row["quantity"] == 0.01 for row in rows)
+    assert all(row["entry_price"] == 100.0 for row in rows)
+    assert all(row["mark_price"] == 103.0 for row in rows)
+    assert all(row["unrealized_pnl"] == pytest.approx(0.03) for row in rows)
+    assert len({(row["position_id"], row["bucket_open_ms"]) for row in rows}) == 3
 
 
 @pytest.mark.asyncio
@@ -1134,3 +1474,246 @@ def test_observer_cursor_and_deferred_rows_roll_back_together():
     assert result["enqueued_position_buckets"] == 1
     assert repo.get_position_path_observer_cursor()["last_enqueued_bucket_open_ms"] == bucket
     assert repo.list_oldest_deferred_position_path_bucket()[0]["position_id"] == position.id
+
+
+def test_historical_snapshot_projects_state_from_lifecycle_facts():
+    from aletheia.portfolio.position_path_observer import (
+        _historical_position_snapshot,
+        _project_position_state_as_of,
+    )
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(
+        position_id="position-path-historical-projector",
+        opened_at="2026-08-13T00:00:00+00:00",
+    )
+    db = repo.get_db()
+    db.execute(
+        "INSERT INTO orders "
+        "(id,symbol,market_type,direction,order_type,quantity,price,"
+        "execution_mode,position_id,status,source,created_at,filled_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "historical-entry-order",
+            position.symbol,
+            position.market_type,
+            "long",
+            "market",
+            1.0,
+            100.0,
+            "paper_internal",
+            position.id,
+            "filled",
+            "native",
+            position.opened_at,
+            position.opened_at,
+        ),
+    )
+    db.execute(
+        "INSERT INTO fills "
+        "(id,order_id,fill_price,fill_quantity,fee,fee_currency,fee_source,filled_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "historical-entry-fill",
+            "historical-entry-order",
+            100.0,
+            1.0,
+            0.1,
+            "USDT",
+            "estimated",
+            position.opened_at,
+        ),
+    )
+    db.execute(
+        "INSERT INTO orders "
+        "(id,symbol,market_type,direction,order_type,quantity,price,"
+        "execution_mode,position_id,status,source,created_at,filled_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "historical-scale-in-order",
+            position.symbol,
+            position.market_type,
+            "long",
+            "market",
+            0.5,
+            120.0,
+            "paper_internal",
+            position.id,
+            "filled",
+            "native",
+            "2026-08-13T00:07:00+00:00",
+            "2026-08-13T00:07:00+00:00",
+        ),
+    )
+    db.execute(
+        "INSERT INTO fills "
+        "(id,order_id,fill_price,fill_quantity,fee,fee_currency,fee_source,filled_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "historical-scale-in-fill",
+            "historical-scale-in-order",
+            120.0,
+            0.5,
+            0.06,
+            "USDT",
+            "estimated",
+            "2026-08-13T00:07:00+00:00",
+        ),
+    )
+    close_order_id = "historical-partial-close-order"
+    close_at = "2026-08-13T00:12:00+00:00"
+    db.execute(
+        "INSERT INTO orders "
+        "(id,symbol,market_type,direction,order_type,quantity,price,"
+        "execution_mode,position_id,close_reason,status,source,created_at,filled_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            close_order_id,
+            position.symbol,
+            position.market_type,
+            "long",
+            "market",
+            0.25,
+            130.0,
+            "paper_internal",
+            position.id,
+            "manual",
+            "filled",
+            "native",
+            close_at,
+            close_at,
+        ),
+    )
+    db.execute(
+        "INSERT INTO fills "
+        "(id,order_id,fill_price,fill_quantity,fee,fee_currency,fee_source,filled_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "historical-partial-close-fill",
+            close_order_id,
+            130.0,
+            0.25,
+            0.0325,
+            "USDT",
+            "estimated",
+            close_at,
+        ),
+    )
+    db.execute(
+        "INSERT INTO position_close_events "
+        "(id,position_id,symbol,direction,execution_mode,close_reason,"
+        "exit_price,closed_qty,realized_pnl,entry_fee,exit_fee,is_partial,closed_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "historical-partial-close",
+            position.id,
+            position.symbol,
+            "long",
+            "paper_internal",
+            "manual",
+            130.0,
+            0.25,
+            7.475,
+            0.025,
+            0.0325,
+            1,
+            "2026-08-13T00:12:00+00:00",
+        ),
+    )
+    db.commit()
+    repo.update_position(
+        position.id,
+        status="closed",
+        quantity=1.26,
+        entry_price=106.6225165563,
+        current_price=130.0,
+        unrealized_pnl=0.0,
+        entry_fee=0.145,
+        funding_cost=9.0,
+        closed_at="2026-08-13T00:17:00+00:00",
+    )
+
+    snapshot = _historical_position_snapshot(
+        repo.get_position(position.id),
+        bucket_open_ms=1_786_579_200_000,
+    )
+
+    assert snapshot["quantity"] == 1.01
+    assert snapshot["entry_price"] == 100.0
+    assert snapshot["current_price"] is None
+    assert snapshot["unrealized_pnl"] is None
+    assert snapshot["entry_fee"] == 0.11
+    assert snapshot["funding_cost"] is None
+
+    after_partial = _project_position_state_as_of(
+        repo.get_position(position.id),
+        as_of_ms=1_786_580_100_000,
+    )
+    assert after_partial["quantity"] == 1.26
+    assert after_partial["entry_price"] == pytest.approx(106.6225165563)
+    assert after_partial["remaining_notional"] == pytest.approx(134.3443708609)
+    assert after_partial["entry_fee"] == pytest.approx(0.145)
+    assert after_partial["realized_pnl"] == pytest.approx(7.475)
+
+
+def test_historical_snapshot_projects_scale_in_through_bucket_close():
+    from aletheia.portfolio.position_path_observer import _historical_position_snapshot
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(position_id="position-path-bucket-close")
+    _insert_entry_leg(
+        position,
+        leg_id="bucket-close-scale-in",
+        quantity=0.5,
+        price=120.0,
+        filled_at="2026-08-13T00:04:00+00:00",
+        fee=0.06,
+    )
+
+    snapshot = _historical_position_snapshot(
+        repo.get_position(position.id),
+        bucket_open_ms=1_786_579_200_000,
+    )
+
+    assert snapshot["quantity"] == pytest.approx(0.51)
+    assert snapshot["entry_price"] == pytest.approx(119.6078431373)
+    assert snapshot["entry_fee"] == pytest.approx(0.07)
+
+
+def test_projector_converts_base_asset_fill_fee_to_quote():
+    from aletheia.portfolio.position_path_observer import _project_position_state_as_of
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(position_id="position-path-base-fee")
+    repo.get_db().execute(
+        "UPDATE fills SET fee=?, fee_currency=? WHERE order_id=?",
+        (0.001, "BTC", f"test-entry-order-{position.id}"),
+    )
+    repo.get_db().commit()
+
+    state = _project_position_state_as_of(
+        repo.get_position(position.id),
+        as_of_ms=1_786_579_200_000,
+    )
+
+    assert state["entry_fee"] == pytest.approx(0.1)
+
+
+def test_projector_rejects_fill_with_mismatched_execution_mode():
+    from aletheia.portfolio.position_path_observer import _project_position_state_as_of
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(position_id="position-path-mode-mismatch")
+    repo.get_db().execute(
+        "UPDATE orders SET execution_mode=? WHERE position_id=?",
+        ("okx_demo", position.id),
+    )
+    repo.get_db().commit()
+
+    state = _project_position_state_as_of(
+        repo.get_position(position.id),
+        as_of_ms=1_786_579_200_000,
+    )
+
+    assert state["quantity"] is None
+    assert state["_historical_state_reason"] == "historical_lifecycle_identity_mismatch"
