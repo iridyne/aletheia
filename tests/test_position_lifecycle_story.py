@@ -763,3 +763,36 @@ def test_structured_events_are_the_only_machine_facing_story_projection(monkeypa
     costs = next(event for event in structured if event["event_type"] == "verified_costs")
     assert costs["evidence_status"] == "available"
     assert costs["facts"]["total_costs"] == 0.2
+
+def test_story_exposes_visible_periodic_path_and_hides_late_recovery():
+    db = _db()
+    db.execute(
+        "INSERT INTO position_path_observations "
+        "(position_id, bucket_open_ms, observed_at, evidence_status) "
+        "VALUES (?, ?, ?, ?)",
+        ("position-1", 1_786_579_200_000, "2026-08-13T00:11:00+00:00", "available"),
+    )
+    late = lifecycle.build_position_lifecycle_story(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+    assert late["periodic_observations"] == []
+    assert not any(
+        event["event_type"] == "position_path_observed"
+        for event in late["timeline"]
+    )
+
+    db.execute(
+        "UPDATE position_path_observations SET observed_at=?",
+        ("2026-08-13T00:01:00+00:00",),
+    )
+    visible = lifecycle.build_position_lifecycle_story(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+    assert [row["bucket_open_ms"] for row in visible["periodic_observations"]] == [
+        1_786_579_200_000
+    ]
+    event = next(
+        event for event in visible["structured_events"]
+        if event["event_type"] == "position_path_observed"
+    )
+    assert event["facts"]["bucket_open_ms"] == 1_786_579_200_000
