@@ -1035,6 +1035,9 @@ def test_read_only_fedora_stream_shadow_roundtrips_without_database_writes():
     assert "sample_coverage" in report
     assert report["sample_coverage"]["short_1_to_10_buckets"] is True
     assert report["representative_input_complete"] is False
+    assert "quantity_variation_scale_in_or_partial_signal" in report[
+        "representative_input_missing"
+    ]
     assert shadow_stream({"positions": [], "deferred": [], "rows": []})["status"] == "insufficient_data"
 
 

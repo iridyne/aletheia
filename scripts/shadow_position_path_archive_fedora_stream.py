@@ -121,9 +121,10 @@ def shadow_stream(payload: Mapping[str, Any], *, as_of: str | None = None) -> di
         "quantity_variation_scale_in_or_partial_signal",
         "late_recovered_observations",
     )
-    representative_input_complete = all(
-        bool(sample_coverage[key]) for key in required_coverage
-    )
+    representative_input_missing = [
+        key for key in required_coverage if not bool(sample_coverage[key])
+    ]
+    representative_input_complete = not representative_input_missing
     acceptance_reasons = [
         "deployed_fedora_archive_read_model_shadow_pending",
         "observer_write_latency_unmeasured",
@@ -251,6 +252,7 @@ def shadow_stream(payload: Mapping[str, Any], *, as_of: str | None = None) -> di
         },
         "sample_coverage": sample_coverage,
         "representative_input_complete": representative_input_complete,
+        "representative_input_missing": representative_input_missing,
         "skips": dict(sorted(skips.items())),
     }
 

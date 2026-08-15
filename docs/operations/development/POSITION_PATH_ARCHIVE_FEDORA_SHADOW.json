@@ -252,6 +252,10 @@
       "late_recovered_observations": true,
       "path_count": 87
     },
+    "representative_input_missing": [
+      "unavailable_observations",
+      "quantity_variation_scale_in_or_partial_signal"
+    ],
     "skips": {
       "deferred_buckets_remain": 260,
       "incomplete_or_unexpected_buckets": 7,
