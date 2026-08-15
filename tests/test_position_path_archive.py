@@ -863,7 +863,7 @@ def test_archive_rejects_unexpected_buckets():
     assert result["skip_reasons"] == {"unexpected_buckets": 1}
 
 
-def test_bucket_state_uses_exact_archived_rows_not_whole_day():
+def test_bucket_state_uses_exact_archived_rows_not_whole_day(monkeypatch):
     position = Position(
         id="position-archive-state",
         symbol="BTC/USDT",
@@ -881,13 +881,18 @@ def test_bucket_state_uses_exact_archived_rows_not_whole_day():
     for bucket in (0, 300_000, 600_000):
         repo.insert_position_path_observation(_row(position.id, bucket))
     repo.archive_position_path_segments(position.id)
+    monkeypatch.setattr(
+        repo,
+        "list_archived_position_path_observations",
+        lambda *args, **kwargs: pytest.fail("observer state must use archive metadata"),
+    )
 
     state = repo.get_position_path_bucket_state([position.id])[position.id]
 
     assert state["observed"] == {0, 300_000, 600_000}
 
 
-def test_observed_position_lookup_uses_exact_archive_bucket_bounds():
+def test_observed_position_lookup_uses_exact_archive_bucket_bounds(monkeypatch):
     position = Position(
         id="position-archive-exact-bucket",
         symbol="BTC/USDT",
@@ -905,6 +910,11 @@ def test_observed_position_lookup_uses_exact_archive_bucket_bounds():
     for bucket in (300_000, 600_000, 900_000):
         assert repo.insert_position_path_observation(_row(position.id, bucket))
     repo.archive_position_path_segments(position.id)
+    monkeypatch.setattr(
+        repo,
+        "list_archived_position_path_observations",
+        lambda *args, **kwargs: pytest.fail("observer lookup must use archive metadata"),
+    )
 
     assert repo.get_observed_position_ids_for_bucket(
         [position.id], bucket_open_ms=0

@@ -92,6 +92,54 @@ def _sqlite_table_exists(db: sqlite3.Connection, table_name: str) -> bool:
     )
 
 
+def _archived_segment_ranges(
+    position_ids: Sequence[str], *, db: sqlite3.Connection
+) -> list[tuple[str, int, int]]:
+    """Return verified metadata ranges without decoding archive payloads."""
+
+    if not position_ids or not _sqlite_table_exists(
+        db, "position_path_archive_segments"
+    ):
+        return []
+    ranges: list[tuple[str, int, int]] = []
+    for offset in range(0, len(position_ids), 400):
+        chunk = position_ids[offset : offset + 400]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = db.execute(
+            "SELECT position_id, first_bucket_open_ms, last_bucket_open_ms, row_count "
+            "FROM position_path_archive_segments "
+            f"WHERE position_id IN ({placeholders})",
+            tuple(chunk),
+        ).fetchall()
+        for row in rows:
+            position_id = str(row["position_id"])
+            row_count = int(row["row_count"])
+            first = row["first_bucket_open_ms"]
+            last = row["last_bucket_open_ms"]
+            if row_count == 0:
+                if first is not None or last is not None:
+                    raise ValueError(
+                        f"invalid empty archive range for {position_id}"
+                    )
+                continue
+            if first is None or last is None:
+                raise ValueError(f"invalid archive range for {position_id}")
+            first_ms = int(first)
+            last_ms = int(last)
+            if (
+                first_ms < 0
+                or last_ms < first_ms
+                or first_ms % 300_000
+                or last_ms % 300_000
+                or (last_ms - first_ms) // 300_000 + 1 != row_count
+            ):
+                raise ValueError(
+                    f"invalid archive range for {position_id}:{first_ms}"
+                )
+            ranges.append((position_id, first_ms, last_ms))
+    return ranges
+
+
 class PositionProtectionConflict(RuntimeError):
     """A durable protection write conflicts with already-observed authority."""
 
@@ -2894,26 +2942,12 @@ def get_observed_position_ids_for_bucket(
             (bucket_open_ms, *chunk),
         ).fetchall()
         observed.update(str(row["position_id"]) for row in rows)
-    if _sqlite_table_exists(db, "position_path_archive_segments"):
-        for offset in range(0, len(position_ids), 400):
-            chunk = position_ids[offset : offset + 400]
-            placeholders = ",".join("?" for _ in chunk)
-            candidates = db.execute(
-                "SELECT DISTINCT position_id FROM position_path_archive_segments "
-                f"WHERE first_bucket_open_ms<=? AND last_bucket_open_ms>=? "
-                f"AND position_id IN ({placeholders})",
-                (int(bucket_open_ms), int(bucket_open_ms), *chunk),
-            ).fetchall()
-            for row in candidates:
-                position_id = str(row["position_id"])
-                exact = list_archived_position_path_observations(
-                    position_id,
-                    start_ms=int(bucket_open_ms),
-                    end_ms=int(bucket_open_ms) + 300_000,
-                    db=db,
-                )
-                if exact:
-                    observed.add(position_id)
+    if int(bucket_open_ms) % 300_000 == 0:
+        for position_id, first_ms, last_ms in _archived_segment_ranges(
+            position_ids, db=db
+        ):
+            if first_ms <= int(bucket_open_ms) <= last_ms:
+                observed.add(position_id)
     return observed
 
 
@@ -2946,14 +2980,14 @@ def get_position_path_bucket_state(
                 position_state = state.get(str(row["position_id"]))
                 if position_state is not None:
                     position_state[key].add(int(row["bucket_open_ms"]))
-        if _sqlite_table_exists(get_db(), "position_path_archive_segments"):
-            for position_id in chunk:
-                for row in list_archived_position_path_observations(
-                    str(position_id), db=get_db()
-                ):
-                    position_state = state.get(str(position_id))
-                    if position_state is not None:
-                        position_state["observed"].add(int(row["bucket_open_ms"]))
+    for position_id, first_ms, last_ms in _archived_segment_ranges(
+        position_ids, db=get_db()
+    ):
+        position_state = state.get(position_id)
+        if position_state is not None:
+            position_state["observed"].update(
+                range(first_ms, last_ms + 300_000, 300_000)
+            )
     return state
 
 def defer_position_path_observation_bucket(
