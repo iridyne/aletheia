@@ -784,12 +784,17 @@ def _compute_trade_score(
 
 def _ranker_candidate_key(opp: dict) -> str | None:
     """Derive ranker identity without borrowing the Universe treatment key."""
-    market_type = str(opp.get("market") or opp.get("market_type") or "spot")
-    member_id = opp.get("universe_member_id")
+    market_type = (
+        str(opp.get("market") or opp.get("market_type") or "spot").strip().lower()
+        or "spot"
+    )
+    member_id = str(opp.get("universe_member_id") or "").strip()
     if member_id:
-        snapshot_id = opp.get("universe_snapshot_id") or "unknown"
+        snapshot_id = str(opp.get("universe_snapshot_id") or "").strip()
+        if not snapshot_id:
+            return None
         return f"ranker_member:{snapshot_id}:{member_id}:{market_type}"
-    opportunity_id = opp.get("id")
+    opportunity_id = str(opp.get("id") or "").strip()
     return f"ranker_opportunity:{opportunity_id}" if opportunity_id else None
 
 

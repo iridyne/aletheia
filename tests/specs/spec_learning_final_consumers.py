@@ -398,6 +398,37 @@ def test_ranker_case_without_exact_entry_mark_fails_closed(monkeypatch):
     assert trace[0]["reason"] == "ranker_entry_mark_unavailable"
 
 
+def test_ranker_case_member_without_snapshot_fails_closed(monkeypatch):
+    import aletheia.agents.paper_trader_ranker as ranker
+
+    calls = []
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
+    monkeypatch.setattr(
+        "aletheia.learning.experiments.apply_numeric_treatment",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    trace = []
+
+    value = ranker._authorized_ranker_delta(
+        path_id="ranker_case_score",
+        proposed_delta=-7.0,
+        opp={
+            "id": "opportunity-missing-snapshot",
+            "symbol": "BTC/USDT",
+            "market": "spot",
+            "universe_member_id": "member-without-snapshot",
+        },
+        direction="long",
+        scope={"symbol": "BTC/USDT", "direction": "long"},
+        source_cohort="trade_case_study:v1",
+        learning_trace=trace,
+    )
+
+    assert value == 0.0
+    assert calls == []
+    assert trace[0]["reason"] == "ranker_candidate_identity_unavailable"
+
+
 def test_ranker_case_shadow_forces_nonzero_adapter_result_to_baseline(monkeypatch):
     import aletheia.agents.paper_trader_ranker as ranker
     from aletheia.learning.experiments import InfluenceDecision
