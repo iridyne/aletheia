@@ -306,19 +306,27 @@ def _stop_loss_decomposition(
     }
 
 
-def build_position_path_report(position_id: str, *, limit: int = 10_000) -> dict[str, Any]:
+def build_position_path_report(
+    position_id: str,
+    *,
+    limit: int = 10_000,
+    as_of: datetime | str | None = None,
+) -> dict[str, Any]:
     """Summarize one Position without inventing unavailable path facts."""
 
     position = repo.get_position(position_id)
     if position is None:
         return {
             "position_id": position_id,
+            "as_of_at": as_of.isoformat() if isinstance(as_of, datetime) else as_of,
             "status": "unavailable",
             "reason": "position_not_found",
             "observations": [],
         }
     observations = repo.list_position_path_observations_unified(
-        position_id, limit=limit
+        position_id,
+        limit=limit,
+        as_of=as_of,
     )
     available = [
         row for row in observations if row.get("evidence_status") == "available"
@@ -388,6 +396,7 @@ def build_position_path_report(position_id: str, *, limit: int = 10_000) -> dict
     )
     return {
         "position_id": position_id,
+        "as_of_at": as_of.isoformat() if isinstance(as_of, datetime) else as_of,
         "position_status": position.get("status"),
         "symbol": position.get("symbol"),
         "market_type": position.get("market_type"),

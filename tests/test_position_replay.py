@@ -211,6 +211,47 @@ def test_replay_uses_exact_ids_cutoff_reconciled_economics_and_deterministic_has
     )
     assert first["producer"]["status"] == "available"
     assert first["producer"]["behavior_fingerprints"] == ["behavior-a"]
+    assert first["stages"]["holding"]["position_path"] == {
+        "availability": "unavailable",
+        "unavailable_reason": "position_path_observations_unavailable",
+        "row_count": 0,
+        "rows": [],
+    }
+
+
+def test_replay_reads_five_minute_path_through_unified_reader(monkeypatch):
+    db = _database()
+    captured = {}
+    expected_rows = [{"position_id": "position-1", "bucket_open_ms": 0}]
+    monkeypatch.setattr(
+        position_replay.repo,
+        "list_position_path_observations_unified",
+        lambda position_id, *, as_of, db: captured.update(
+            {"position_id": position_id, "as_of": as_of, "db": db}
+        )
+        or expected_rows,
+    )
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
+
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    assert captured["position_id"] == "position-1"
+    assert captured["db"] is db
+    assert captured["as_of"].isoformat() == "2026-08-13T00:10:00+00:00"
+    assert replay["stages"]["holding"]["position_path"] == {
+        "availability": "available",
+        "unavailable_reason": None,
+        "row_count": 1,
+        "rows": expected_rows,
+    }
 
 
 def test_replay_exposes_exact_frozen_mandate_pair_without_current_config(monkeypatch):

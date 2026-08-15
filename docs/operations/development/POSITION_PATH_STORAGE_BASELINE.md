@@ -319,10 +319,11 @@ are `scripts/shadow_position_path_archive.py` and
 `scripts/compact_position_path_archive.py`; the latter is required to remain
 dry-run-only in this phase.
 
-All direct five-minute readers now use the repository unified boundary. Position
-Replay itself reads the separate exact 1-minute `trade_path` evidence contract,
-not `position_path_observations`; it was intentionally left unchanged so the
-#1007 replay semantics are not widened or reinterpreted.
+All direct five-minute readers now use the repository unified boundary, including
+the Position Replay holding projection. Position Replay still retains its
+separate exact 1-minute `trade_path` contract; it additionally exposes the
+5-minute `position_path` rows through the unified reader without changing the
+#1007 trade-path semantics.
 
 The compaction command is intentionally dry-run-only. A later focused PR may
 add atomic archive-plus-delete after real Fedora shadow parity, but must retain

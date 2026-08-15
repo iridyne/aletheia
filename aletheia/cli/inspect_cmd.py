@@ -80,6 +80,7 @@ def positions(
 def position_path(
     position_id: str = typer.Option(..., "--id", "--position-id"),
     limit: int = typer.Option(10_000, "--limit", "-n"),
+    as_of: Optional[str] = typer.Option(None, "--as-of"),
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Inspect append-only five-minute observations for one Position."""
@@ -88,7 +89,7 @@ def position_path(
         build_position_path_report,
     )
 
-    report = build_position_path_report(position_id, limit=limit)
+    report = build_position_path_report(position_id, limit=limit, as_of=as_of)
     _output(report, json_output)
 
 

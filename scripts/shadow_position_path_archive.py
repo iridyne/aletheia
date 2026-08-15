@@ -10,6 +10,7 @@ from typing import Any
 
 from aletheia.analytics.position_lifecycle_story import build_position_lifecycle_story
 from aletheia.analytics.position_path_observations import build_position_path_report
+from aletheia.analytics.position_replay import build_position_replay
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.position_path_archive import canonical_row
@@ -52,6 +53,14 @@ def main() -> int:
     }
     stories_before = {
         position_key: build_position_lifecycle_story(
+            position_key,
+            as_of_at=as_of,
+            db=db,
+        )
+        for position_key in shadow_position_ids
+    }
+    replays_before = {
+        position_key: build_position_replay(
             position_key,
             as_of_at=as_of,
             db=db,
@@ -112,6 +121,14 @@ def main() -> int:
         )
         for position_key in sorted(archive_position_ids)
     }
+    replays_after = {
+        position_key: build_position_replay(
+            position_key,
+            as_of_at=as_of,
+            db=db,
+        )
+        for position_key in sorted(archive_position_ids)
+    }
     report_parity = all(
         _canonical_json(reports_before.get(position_key))
         == _canonical_json(reports_after.get(position_key))
@@ -120,6 +137,11 @@ def main() -> int:
     story_parity = all(
         _canonical_json(stories_before.get(position_key))
         == _canonical_json(stories_after.get(position_key))
+        for position_key in archive_position_ids
+    )
+    position_replay_parity = all(
+        _position_replay_projection(replays_before.get(position_key))
+        == _position_replay_projection(replays_after.get(position_key))
         for position_key in archive_position_ids
     )
     coverage_parity = all(
@@ -162,8 +184,14 @@ def main() -> int:
         "story_events": story_event_parity,
         "as_of": as_of_parity,
         "provenance_and_evidence_gaps": provenance_evidence_gap_parity,
+        "position_replay_position_path": position_replay_parity,
     }
-    read_model_parity = all(parity_checks.values()) and report_parity and story_parity
+    read_model_parity = (
+        all(parity_checks.values())
+        and report_parity
+        and story_parity
+        and position_replay_parity
+    )
     source_unchanged = hot_before == hot_after and source_before == source_after
     no_archive_for_skipped = (
         (
@@ -200,6 +228,7 @@ def main() -> int:
         "unified_parity": unified_parity,
         "position_path_report_parity": report_parity,
         "position_lifecycle_story_parity": story_parity,
+        "position_replay_parity": position_replay_parity,
         "read_model_parity": read_model_parity,
         "parity_checks": parity_checks,
         "hot_rows_before": hot_before,
@@ -362,6 +391,13 @@ def _structured_events(value: Any) -> list[Any]:
     story = value if isinstance(value, dict) else {}
     events = story.get("structured_events")
     return events if isinstance(events, list) else []
+
+
+def _position_replay_projection(value: Any) -> str:
+    replay = value if isinstance(value, dict) else {}
+    stages = replay.get("stages") if isinstance(replay.get("stages"), dict) else {}
+    holding = stages.get("holding") if isinstance(stages.get("holding"), dict) else {}
+    return _canonical_json(holding.get("position_path"))
 
 
 def _provenance_projection(rows: list[dict]) -> list[dict[str, Any]]:

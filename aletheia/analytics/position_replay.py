@@ -521,6 +521,19 @@ def build_position_replay(
         source_identities=mandate_source_identities,
     )
     path = getattr(trade_path_analytics, "build_position_trade_path")(position_id, db=source)
+    position_path_rows = repo.list_position_path_observations_unified(
+        position_id,
+        as_of=cutoff,
+        db=source,
+    )
+    position_path = {
+        "availability": "available" if position_path_rows else "unavailable",
+        "unavailable_reason": (
+            None if position_path_rows else "position_path_observations_unavailable"
+        ),
+        "row_count": len(position_path_rows),
+        "rows": position_path_rows,
+    }
     ohlcv = _ohlcv_evidence(source, position=position, path=path, cutoff=cutoff)
     economics = _economics(position, db=source)
     provenance = _runtime_identity(
@@ -598,6 +611,7 @@ def build_position_replay(
                 "holding": {
                     "availability": "available" if path is not None else "unavailable",
                     "trade_path": path,
+                    "position_path": position_path,
                     "ohlcv": ohlcv,
                     "exit_plan_versions": exit_plans,
                     "protection_state": protection,

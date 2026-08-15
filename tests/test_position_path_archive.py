@@ -938,6 +938,22 @@ def test_position_path_cli_json_and_human_use_unified_archive_reader():
     assert human_result.exit_code == 0, human_result.stdout
     assert position.id in human_result.stdout
 
+    cutoff_result = _CLI_RUNNER.invoke(
+        inspect_app,
+        [
+            "position-path",
+            "--id",
+            position.id,
+            "--as-of",
+            "2026-08-14T23:59:59+00:00",
+            "--json",
+        ],
+    )
+    assert cutoff_result.exit_code == 0, cutoff_result.stdout
+    cutoff_report = json.loads(cutoff_result.stdout)
+    assert cutoff_report["as_of_at"] == "2026-08-14T23:59:59+00:00"
+    assert cutoff_report["observations"] == []
+
 
 def test_read_only_fedora_stream_shadow_roundtrips_without_database_writes():
     position_id = "position-archive-stream"
