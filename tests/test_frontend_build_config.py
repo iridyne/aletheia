@@ -76,3 +76,14 @@ def test_vite_dev_proxy_blocks_writes_to_the_master_gateway():
     assert "VITE_API_TARGET" in cfg
     assert "isMasterGatewayTarget" in cfg
     assert "entryFileNames" not in cfg
+
+
+def test_generated_dashboard_artifact_requires_complete_modern_tree(tmp_path):
+    from aletheia.gateway.preflight import dashboard_artifact_errors
+
+    static = tmp_path / "dashboard"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text("x" * 300, encoding="utf-8")
+    (static / ".vite").mkdir()
+    (static / ".vite" / "manifest.json").write_text("{}", encoding="utf-8")
+    assert "performance.json missing" in dashboard_artifact_errors(static)

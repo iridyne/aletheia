@@ -7,12 +7,51 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="theme-color" content="#0a0e17" />
 <title>Aletheia Trading OS</title>
+<style>
+html, body { min-height: 100%; margin: 0; background: #0a0e12; }
+#boot-skeleton { display: flex; min-height: 100vh; color: #7d8997; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+#boot-skeleton aside { width: 240px; flex: 0 0 240px; background: #141a21; border-right: 1px solid #232c36; }
+#boot-skeleton .boot-brand { display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 20px; border-bottom: 1px solid #232c36; }
+#boot-skeleton .boot-mark { width: 12px; height: 12px; border: 2px solid #22d3ee; transform: rotate(45deg); }
+#boot-skeleton .boot-brand-name { color: #e6edf3; font-weight: 700; letter-spacing: .14em; }
+#boot-skeleton .boot-nav { padding: 12px 8px; }
+#boot-skeleton .boot-line, #boot-skeleton .boot-card-line { border-radius: 5px; background: #1a212a; animation: boot-shimmer 1.4s ease-in-out infinite; }
+#boot-skeleton .boot-nav-line { width: 72%; height: 12px; margin: 14px 12px; }
+#boot-skeleton .boot-nav-line:nth-child(3n) { width: 54%; }
+#boot-skeleton .boot-content { flex: 1; min-width: 0; }
+#boot-skeleton .boot-topbar { display: flex; align-items: center; justify-content: space-between; height: 52px; padding: 0 24px; background: #141a21; border-bottom: 1px solid #232c36; }
+#boot-skeleton .boot-ticker { width: min(52%, 420px); height: 12px; }
+#boot-skeleton .boot-status { width: 144px; height: 16px; }
+#boot-skeleton .boot-main { min-height: calc(100vh - 52px); padding: 16px 20px; background: #0f141a; }
+#boot-skeleton .boot-title { width: 120px; height: 22px; margin-bottom: 12px; }
+#boot-skeleton .boot-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: 12px; }
+#boot-skeleton .boot-card { min-height: 140px; padding: 16px; border: 1px solid #232c36; border-radius: 8px; background: #141a21; }
+#boot-skeleton .boot-wide { grid-column: 1 / -1; min-height: 96px; }
+#boot-skeleton .boot-card-line { width: 42%; height: 12px; margin-bottom: 14px; }
+#boot-skeleton .boot-card-line:nth-child(2) { width: 78%; }
+#boot-skeleton .boot-card-line:nth-child(3) { width: 60%; }
+@keyframes boot-shimmer { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) { #boot-skeleton * { animation: none !important; } }
+@media (max-width: 700px) { #boot-skeleton aside { display: none; } #boot-skeleton .boot-main { padding: 12px 16px; } #boot-skeleton .boot-grid { grid-template-columns: 1fr; } #boot-skeleton .boot-wide { grid-column: auto; } }
+</style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root">
+  <div id="boot-skeleton" role="status" aria-label="Loading Aletheia dashboard" aria-busy="true">
+    <aside aria-hidden="true"><div class="boot-brand"><span class="boot-mark"></span><span class="boot-brand-name">ALETHEIA</span></div><div class="boot-nav"><div class="boot-line boot-nav-line"></div><div class="boot-line boot-nav-line"></div><div class="boot-line boot-nav-line"></div><div class="boot-line boot-nav-line"></div><div class="boot-line boot-nav-line"></div><div class="boot-line boot-nav-line"></div><div class="boot-line boot-nav-line"></div></div></aside>
+    <div class="boot-content" aria-hidden="true"><header class="boot-topbar"><span class="boot-line boot-ticker"></span><span class="boot-line boot-status"></span></header><main class="boot-main"><div class="boot-line boot-title"></div><div class="boot-grid"><div class="boot-card boot-wide"><div class="boot-card-line"></div><div class="boot-card-line"></div><div class="boot-card-line"></div></div><div class="boot-card"><div class="boot-card-line"></div><div class="boot-card-line"></div><div class="boot-card-line"></div></div><div class="boot-card"><div class="boot-card-line"></div><div class="boot-card-line"></div><div class="boot-card-line"></div></div></div></main></div>
+  </div>
+</div>
 <script>
-// Unregister any legacy Service Worker (PWA removed — localhost dashboard needs no offline cache)
-if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then(r => r.forEach(sw => sw.unregister()));
+performance.mark('aletheia:boot-script-start');
+performance.mark('aletheia:boot-skeleton-visible');
+// PWA was removed. Keep the migration cleanup one-shot; never scan registrations
+// on every dashboard boot and never cache trading data offline.
+(() => {
+  const marker = 'aletheia:legacy-sw-cleanup:v1';
+  if (!('serviceWorker' in navigator) || localStorage.getItem(marker) === 'done') return;
+  navigator.serviceWorker.getRegistrations().then(registrations => Promise.all(registrations.map(registration => registration.unregister()))).then(() => localStorage.setItem(marker, 'done')).catch(() => {});
+})();
 </script>
 <script type="module" src="/src/main.tsx"></script>
 </body>

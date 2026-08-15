@@ -56,13 +56,6 @@ export default defineConfig(() => {
       outDir: outputDir,
       emptyOutDir: true,
       manifest: true,
-      rollupOptions: {
-        output: {
-          manualChunks: {
-            recharts: ['recharts'],
-          },
-        },
-      },
     },
     server: {
       proxy: {

@@ -1,16 +1,42 @@
-import { useLayoutEffect, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api/client'
 import MetricTile from './MetricTile'
-import AccountEquityChart from '../charts/AccountEquityChart'
+import type { OverviewBootstrap } from '../api/boot'
 import { fmtNum, fmtSigned, fmtCompactSigned, fmtSymbol } from '../lib/format'
+
+const AccountEquityChart = lazy(() => import('../charts/AccountEquityChart'))
+// Bootstrap refresh replaces the old portfolio query cadence:
+// const OVERVIEW_PNL_REFRESH_MS = 10_000
+// refetchInterval: OVERVIEW_PNL_REFRESH_MS
+
+function DeferredEquityChart({ days }: { days?: number }) {
+  const hostRef = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        setVisible(true)
+        observer.disconnect()
+      }
+    }, { rootMargin: '160px' })
+    observer.observe(host)
+    return () => observer.disconnect()
+  }, [])
+  return (
+    <div ref={hostRef} style={{ minHeight: 220 }}>
+      {visible
+        ? <Suspense fallback={<div className="chart-placeholder" role="status">Chart loads…</div>}><AccountEquityChart days={days} /></Suspense>
+        : <div className="chart-placeholder" role="status">Chart loads when visible.</div>}
+    </div>
+  )
+}
 
 // Palette for pie slices — cycles if more than 6 coins (rare)
 const SLICE_COLORS = ['#00e5ff', '#7c3aed', '#f59e0b', '#10b981', '#f43f5e', '#3b82f6']
 // The backend refreshes local mark prices on this cadence. Keep the Overview
 // money panel aligned so an open page never freezes at its initial value.
-const OVERVIEW_PNL_REFRESH_MS = 10_000
 
 interface AssetItem { coin: string; usdt_value: number; pct: number }
 
@@ -193,31 +219,19 @@ function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip }
 }
 
 /** PnL / Account zone — hero account value (UTA unified > exchange > local notional) + context tiles + equity curve. */
-export default function PnLZone() {
+export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }) {
   const navigate = useNavigate()
-  const { data: portfolio } = useQuery({
-    queryKey: ['portfolio'],
-    queryFn: api.getPortfolio,
-    refetchInterval: OVERVIEW_PNL_REFRESH_MS,
-    staleTime: OVERVIEW_PNL_REFRESH_MS - 2000,
-  })
-  const { data: status } = useQuery({
-    queryKey: ['status'],
-    queryFn: api.getStatus,
-    refetchInterval: OVERVIEW_PNL_REFRESH_MS,
-    staleTime: 8000,
-  })
-  const { data: utaState } = useQuery({ queryKey: ['utaState'], queryFn: api.getUtaState, refetchInterval: 30000, staleTime: 28000 })
   const [hovered, setHovered] = useState(false)
   const [rangeDays, setRangeDays] = useState<number | undefined>(30)
 
-  const exchangeMode = String((status as any)?.exchange_mode || 'demo')
-  const isLocalPaper = (status as any)?.execution_target === 'local_paper'
+  const portfolio = bootstrap?.account
+  const exchangeMode = String((portfolio as any)?.exchange_mode || 'demo')
+  const isLocalPaper = String((portfolio as any)?.execution_mode || '') === 'paper_internal'
 
   const toneOf = (n: number | null) => (n == null ? 'muted' : n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral')
 
   const p = portfolio as any
-  const uta = utaState as any
+  const uta = p?.uta_state as any
 
   // UTA unified equity takes priority when available and has multiple accounts
   const utaEquity = uta?.sync_status === 'ok' && uta?.total_equity_usdt > 0 ? uta.total_equity_usdt : null
@@ -369,7 +383,7 @@ export default function PnLZone() {
             ))}
           </div>
         </div>
-        <AccountEquityChart days={rangeDays} />
+        <DeferredEquityChart days={rangeDays} />
       </div>
     </div>
   )

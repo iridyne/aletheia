@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { useQueries } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { useQuery } from '@tanstack/react-query'
+import { bootApi } from '../api/boot'
 import { fmtNum, fmtSigned, fmtTimestamp, isoToEpochSeconds } from '../lib/format'
 
 /**
@@ -56,20 +56,15 @@ export default function MarketTicker() {
     return () => clearInterval(t)
   }, [])
 
-  // One query per symbol so majors never fall out of a shared "latest N" window.
-  const results = useQueries({
-    queries: CRYPTO.map(({ sym }) => ({
-      queryKey: ['ticker-snap', sym],
-      queryFn: () => api.getMarketSnapshots(sym, 1),
-      refetchInterval: 15000,
-      meta: { background: true },
-    })),
+  const { data: shell } = useQuery({
+    queryKey: ['ui-shell-bootstrap'],
+    queryFn: ({ signal }) => bootApi.getShellBootstrap({ signal }),
+    staleTime: 5_000,
+    refetchInterval: 10_000,
+    meta: { background: true },
   })
 
-  const snaps = CRYPTO.map((_, i) => {
-    const rows = (results[i]?.data as any[]) || []
-    return rows[0] || null
-  })
+  const snaps = CRYPTO.map(({ sym }) => shell?.ticker?.[sym] || null) as any[]
 
   const nowSec = Math.floor(now.getTime() / 1000)
 

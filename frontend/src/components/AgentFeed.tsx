@@ -1,7 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useReducer, useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api/client'
+import type { OverviewBootstrap } from '../api/boot'
 import type { AgentRun, Opportunity, TradeProposal } from '../types'
 import { DetailDrawer, DrawerSection, DrawerField } from './DetailDrawer'
 import ThesisText from './ThesisText'
@@ -93,7 +92,7 @@ function outputsCount(run: AgentRun): number {
   try { return JSON.parse(run.outputs_created || '[]').length } catch { return 0 }
 }
 
-export default function AgentFeed() {
+export default function AgentFeed({ bootstrap }: { bootstrap?: OverviewBootstrap }) {
   const navigate = useNavigate()
   const cardRef = useRef<HTMLDivElement>(null)
   const [availableHeight, setAvailableHeight] = useState<number | null>(null)
@@ -163,57 +162,54 @@ export default function AgentFeed() {
     }
   }, [])
 
-  const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, refetchInterval: 10000, staleTime: 8000 })
-  const { data: opportunities = [] } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities, staleTime: 30000 })
-  const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals, staleTime: 30000 })
-
   const items: FeedItem[] = []
+  const activity = bootstrap?.activity || []
 
   // ----- ops/both track: agent runs -----
   if (mode === 'ops' || mode === 'both') {
-    for (const r of (runs as AgentRun[])) {
+    for (const r of activity.filter(item => item.kind === 'run') as any[]) {
       items.push({
         key: `run-${r.id}`,
-        ts: r.started_at,
+        ts: String(r.timestamp || ''),
         kind: 'run',
-        agent: r.agent_name,
-        icon: agentIcon(r.agent_name),
+        agent: String(r.agent || 'agent'),
+        icon: agentIcon(String(r.agent || '')),
         status: r.status,
-        headline: `${r.agent_name} ${r.status === 'completed' ? 'completed' : r.status}`,
-        run: r,
+        headline: r.headline || `${r.agent || 'agent'} ${r.status || ''}`,
+        run: r as AgentRun,
       })
     }
   }
 
   // ----- narrative/both track: outputs (opportunities + proposals) -----
   if (mode === 'narrative' || mode === 'both') {
-    for (const o of (opportunities as Opportunity[])) {
-      const score = o.confidence_score != null || o.confidence != null
-        ? ` (${fmtOpportunityScore(o.source_agent, o.confidence_score, o.confidence)})`
+    for (const o of activity.filter(item => item.kind === 'opportunity') as any[]) {
+      const score = o.confidence_score != null
+        ? ` (${fmtOpportunityScore(o.agent, o.confidence_score, null)})`
         : ''
       items.push({
         key: `opp-${o.id}`,
-        ts: o.created_at,
+        ts: String(o.timestamp || ''),
         kind: 'opportunity',
-        agent: o.source_agent || 'agent',
-        icon: agentIcon(o.source_agent || ''),
-        headline: `${o.source_agent || 'Agent'} found ${o.direction_bias} opportunity on ${fmtSymbol(o.symbol, o.market)}${score}`,
-        detail: o.thesis || undefined,
-        opportunity: o,
+        agent: o.agent || 'agent',
+        icon: agentIcon(o.agent || ''),
+        headline: o.headline || `${o.agent || 'Agent'} found ${o.direction_bias || 'unknown'} opportunity on ${fmtSymbol(o.symbol, o.market)}${score}`,
+        detail: o.excerpt || undefined,
+        opportunity: o as Opportunity,
       })
     }
-    for (const p of (proposals as TradeProposal[])) {
+    for (const p of activity.filter(item => item.kind === 'proposal') as any[]) {
       if (p.status === 'pending') continue
       items.push({
         key: `prop-${p.id}`,
-        ts: p.created_at,
+        ts: String(p.timestamp || ''),
         kind: 'proposal',
         agent: 'strategy',
         icon: '📐',
         status: p.status,
-        headline: `Proposal: ${p.direction} ${fmtSymbol(p.symbol, p.market_type)} (${p.execution_mode})`,
-        detail: p.agent_rationale || undefined,
-        proposal: p,
+        headline: p.headline || `Proposal: ${p.direction || 'unknown'} ${fmtSymbol(p.symbol, p.market_type)} (${p.execution_mode || 'unknown'})`,
+        detail: p.excerpt || undefined,
+        proposal: p as TradeProposal,
       })
     }
   }

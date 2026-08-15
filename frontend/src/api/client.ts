@@ -377,7 +377,7 @@ export function extractApiError(status: number, body: string): string {
 // stuck for minutes when the backend is slow to respond after a restart.
 const _FETCH_TIMEOUT_MS = 15_000;
 
-async function fetchJson<T>(
+export async function fetchJson<T>(
 	path: string,
 	init?: RequestInit,
 	decode?: (body: unknown, headers: Headers) => T,
@@ -2445,9 +2445,10 @@ export const api = {
 	},
 	getPortfolioHistory: (days?: number) =>
 		fetchJson<any[]>(`/market/portfolio-history${days ? `?days=${days}` : ""}`),
-	getAccountEquityHistory: (days?: number) =>
+	getAccountEquityHistory: (days?: number, maxPoints = 500, signal?: AbortSignal) =>
 		fetchJson<AccountEquityHistory>(
-			`/market/account-equity-history${days ? `?days=${days}` : ""}`,
+			`/market/account-equity-history?${new URLSearchParams({ ...(days ? { days: String(days) } : {}), max_points: String(maxPoints) })}`,
+			{ signal },
 		),
 
 	// Capital events (deposit/withdraw tracking)

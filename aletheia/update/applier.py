@@ -193,6 +193,12 @@ def _build_frontend() -> dict:
     if result.returncode or not (_STAGED_DASHBOARD_STATIC / "index.html").is_file():
         shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
         return {"ok": False, "reason": "frontend_build_failed"}
+    from aletheia.gateway.preflight import dashboard_artifact_errors
+
+    artifact_errors = dashboard_artifact_errors(_STAGED_DASHBOARD_STATIC)
+    if artifact_errors:
+        shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
+        return {"ok": False, "reason": "frontend_artifact_incomplete", "detail": artifact_errors}
     return {"ok": True}
 
 

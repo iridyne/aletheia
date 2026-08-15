@@ -1,4 +1,5 @@
 from pathlib import Path
+import gzip
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -19,6 +20,46 @@ def _static_fixture(tmp_path: Path) -> Path:
     )
     (assets / "index-test.js").write_text("console.log('ok')", encoding="utf-8")
     return static_dir
+
+
+def _compressed_static_fixture(tmp_path: Path) -> Path:
+    static_dir = _static_fixture(tmp_path)
+    source = (static_dir / "assets" / "index-test.js").read_bytes()
+    (static_dir / "assets" / "index-test.js").write_bytes(source * 200)
+    source = (static_dir / "assets" / "index-test.js").read_bytes()
+    (static_dir / "assets" / "index-test.js.gz").write_bytes(gzip.compress(source, mtime=0))
+    (static_dir / "index.html.gz").write_bytes(gzip.compress((static_dir / "index.html").read_bytes(), mtime=0))
+    return static_dir
+
+
+@pytest.mark.anyio
+async def test_frontdoor_negotiates_gzip_and_keeps_hashed_asset_cache_contract(tmp_path):
+    from aletheia.gateway.frontdoor import create_app
+
+    static_dir = _compressed_static_fixture(tmp_path)
+    app = create_app(static_dir=static_dir, backend_url="http://127.0.0.1:9")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        response = await client.get("/assets/index-test.js", headers={"Accept-Encoding": "gzip"})
+        head = await client.head("/assets/index-test.js", headers={"Accept-Encoding": "gzip"})
+        conditional = await client.get(
+            "/assets/index-test.js",
+            headers={"Accept-Encoding": "gzip", "If-None-Match": response.headers["etag"]},
+        )
+        missing_asset = await client.get("/assets/missing.js")
+        sidecar = await client.get("/assets/index-test.js.gz")
+
+    assert response.status_code == 200
+    assert response.headers["content-encoding"] == "gzip"
+    assert response.headers["cache-control"].endswith("immutable")
+    assert response.headers["vary"] == "Accept-Encoding"
+    assert response.headers["content-type"].startswith("text/javascript")
+    assert len(response.content) > 256
+    assert head.status_code == 200
+    assert head.headers["content-encoding"] == "gzip"
+    assert head.headers["etag"] == response.headers["etag"]
+    assert conditional.status_code == 304
+    assert missing_asset.status_code == 404
+    assert sidecar.status_code == 404
 
 
 @pytest.mark.anyio

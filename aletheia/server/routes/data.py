@@ -1511,7 +1511,11 @@ def get_portfolio_history(limit: int | None = None, days: int | None = None):
 
 
 @router.get("/market/account-equity-history")
-def get_account_equity_history(limit: int | None = None, days: int | None = None):
+def get_account_equity_history(
+    limit: Annotated[int | None, Query(ge=1, le=5000)] = None,
+    days: Annotated[int | None, Query(ge=1, le=3650)] = None,
+    max_points: Annotated[int | None, Query(ge=32, le=1000)] = None,
+):
     """One stable account-equity curve for the Overview.
 
     The endpoint selects the current account's explicit equity snapshot field.
@@ -1521,7 +1525,7 @@ def get_account_equity_history(limit: int | None = None, days: int | None = None
     _ensure_db()
     local_paper = load_config().exchange.paper_execution_mode == "paper_internal"
     execution_mode = "paper_internal" if local_paper else "exchange_account"
-    cache_key = (days, limit, execution_mode)
+    cache_key = (days, limit, max_points, execution_mode)
     now = time.monotonic()
     with _equity_history_cache_lock:
         entry = _equity_history_cache.get(cache_key)
@@ -1575,6 +1579,16 @@ def get_account_equity_history(limit: int | None = None, days: int | None = None
                     ),
                 }
             )
+    if max_points and len(points) > max_points:
+        # Stable first/last plus evenly spaced interior samples keep the chart
+        # bounded without selecting a favorable window or changing values.
+        indexes = {0, len(points) - 1}
+        step = (len(points) - 1) / (max_points - 1)
+        indexes.update(round(index * step) for index in range(max_points))
+        selected = sorted(indexes)
+        points = [points[index] for index in selected]
+        adjusted_points = [adjusted_points[index] for index in selected]
+
     result = {
         "source": "local_paper_ledger" if local_paper else "exchange_account_snapshot",
         "state": "available" if points else "unavailable",

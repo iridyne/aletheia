@@ -15,7 +15,7 @@ export default function AccountEquityChart({ days }: Props) {
   const chartRef = useRef<IChartApi | null>(null)
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['account-equity-history', days],
-    queryFn: () => api.getAccountEquityHistory(days),
+    queryFn: ({ signal }) => api.getAccountEquityHistory(days, 500, signal),
     refetchInterval: 60_000,
     staleTime: 58_000,
   })
