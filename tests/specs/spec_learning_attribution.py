@@ -198,6 +198,38 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     )
 
     assert routed["action"] == "guard_shadow_candidate"
+    assert routed["hypothesis_status"] == "proposed"
+    assert routed["hypothesis_id"]
+    assert routed["guard_candidate_id"] == "candidate-item"
+    from aletheia.learning.ledger import get_record, list_records
+    hypothesis_row = get_record("learning_hypotheses", routed["hypothesis_id"])
+    assert hypothesis_row is not None
+    assert hypothesis_row["path_id"] == "ranker_learned_guard"
+    assert hypothesis_row["consumer"] == "paper_trader_ranker"
+    assert hypothesis_row["target_horizon"] == "4h"
+    assert hypothesis_row["source_type"] == "guard_candidate"
+    assert json.loads(hypothesis_row["scope_json"]) == {
+        "guard_id": routed["guard_id"],
+    }
+    assert json.loads(hypothesis_row["action_json"]) == {
+        "block_candidate": True,
+        "guard_id": routed["guard_id"],
+        "score_penalty": 0,
+        "type": "candidate_guard",
+    }
+    assert json.loads(hypothesis_row["source_artifact_ids_json"]) == [
+        "case-1", "candidate-item",
+    ]
+    repeated = guard_routing.route_automatic_block_recommendation(
+        {"action": "block_scanner", "scanner": "momentum"},
+        evidence=evidence_with_scope,
+        source_id="case-1",
+    )
+    assert repeated["hypothesis_id"] == routed["hypothesis_id"]
+    assert len(list_records("learning_hypotheses")) == 1
+    assert list_records("learning_experiments") == []
+    assert list_records("learning_exposures") == []
+    assert list_records("learning_contribution_verdicts") == []
     assert captured["status"] == "candidate"
     assert captured["enforcement"] == "advisory"
     assert captured["shadow_only"] is True

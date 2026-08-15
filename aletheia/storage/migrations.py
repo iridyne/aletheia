@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v28"
+SCHEMA_VERSION = "aletheia-sqlite-v29"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3489,6 +3489,23 @@ _LEARNING_HYPOTHESIS_IDENTITY_CHECKSUM = hashlib.sha256(
         + "\nadditive_learning_hypothesis_identity_v1"
     ).encode("utf-8")
 ).hexdigest()
+_LEARNING_DREAMING_BACKLOG_COLUMNS = (
+    ("input_cursor", "learning_job_health", "TEXT"),
+)
+_LEARNING_DREAMING_BACKLOG_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_knowledge_trade_case_created
+    ON knowledge_items(item_type, status, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_ps_lessons_trade_case_source
+    ON ps_lessons(source_type, source_id);
+"""
+_LEARNING_DREAMING_BACKLOG_CHECKSUM = hashlib.sha256(
+    (
+        repr(_LEARNING_DREAMING_BACKLOG_COLUMNS)
+        + _LEARNING_DREAMING_BACKLOG_INDEX_SQL
+        + "\ndurable_dreaming_backlog_v1"
+    ).encode("utf-8")
+).hexdigest()
+
 
 _UFC_CANONICAL_IDENTITY = (
     "universe_family_calibration",
@@ -4731,6 +4748,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260812_0024_ufc_canonical_identity_v25": (
         "materialize fingerprint-verified identity for the active UFC Paper"
     ),
+    "20260815_0028_learning_dreaming_backlog_v29": (
+        "durable Dreaming case cursor and pending-backlog indexes"
+    ),
 }
 
 
@@ -4891,6 +4911,57 @@ def _apply_exit_trailing_recovery_v23(db: sqlite3.Connection) -> None:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
             existing.add(column)
     db.executescript(_EXIT_TRAILING_RECOVERY_SQL)
+    db.execute("PRAGMA optimize")
+
+
+def _apply_learning_dreaming_backlog_v29(db: sqlite3.Connection) -> None:
+    """Add the existing job-health cursor and backlog lookup indexes."""
+
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS learning_job_health (
+            job_id TEXT PRIMARY KEY,
+            schedule_key TEXT NOT NULL,
+            last_expected_at TEXT,
+            last_started_at TEXT,
+            last_succeeded_at TEXT,
+            next_due_at TEXT,
+            input_watermark TEXT,
+            input_cursor TEXT,
+            backlog_count INTEGER NOT NULL DEFAULT 0,
+            oldest_backlog_at TEXT,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL,
+            last_error TEXT,
+            last_failed_at TEXT,
+            last_failure_reason TEXT,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    for column, table, column_type in _LEARNING_DREAMING_BACKLOG_COLUMNS:
+        existing = {
+            str(row[1])
+            for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    tables = {
+        str(row[0])
+        for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "knowledge_items" in tables:
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_trade_case_created "
+            "ON knowledge_items(item_type, status, created_at, id)"
+        )
+    if "ps_lessons" in tables:
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ps_lessons_trade_case_source "
+            "ON ps_lessons(source_type, source_id)"
+        )
     db.execute("PRAGMA optimize")
 
 
@@ -5397,8 +5468,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260814_0027_position_path_observer_cursor_v28",
         checksum=_POSITION_PATH_OBSERVER_CURSOR_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v28",
         apply=_apply_position_path_observer_cursor_v28,
+    ),
+    MigrationStep(
+        migration_id="20260815_0028_learning_dreaming_backlog_v29",
+        checksum=_LEARNING_DREAMING_BACKLOG_CHECKSUM,
+        schema_version="aletheia-sqlite-v29",
+        apply=_apply_learning_dreaming_backlog_v29,
     ),
 )
 

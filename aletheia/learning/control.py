@@ -16,7 +16,10 @@ from aletheia.learning.ledger import (
     upsert_job_health,
 )
 from aletheia.learning.models import LearningJobHealth, LessonReviewerAttempt
-from aletheia.storage.repositories import transaction
+from aletheia.storage.repositories import (
+    pending_trade_case_studies_summary,
+    transaction,
+)
 from aletheia.storage.sqlite import get_db
 
 
@@ -143,6 +146,20 @@ def get_learning_job_health(job_id: str) -> LearningJobHealth:
     if row:
         return LearningJobHealth(**row)
     return LearningJobHealth(job_id=job_id, schedule_key=_schedule_key(job_id))
+
+
+def advance_learning_job_cursor(job_id: str, cursor: str) -> None:
+    """Persist a producer scan cursor without changing schedule watermarks."""
+
+    if not is_autonomous_learning_job(job_id) or not cursor:
+        return
+    health = get_learning_job_health(job_id)
+    now = utc_now()
+    with transaction():
+        upsert_job_health(health.model_copy(update={
+            "input_cursor": cursor,
+            "updated_at": now.isoformat(),
+        }))
 
 
 # Absorbs ordinary scheduler jitter so a job that fires a few seconds late is
@@ -302,6 +319,14 @@ def _lesson_backlog() -> tuple[int, str | None]:
     return int(row[0] or 0), row[1]
 
 
+def _job_backlog(job_id: str) -> tuple[int, str | None]:
+    if job_id == "dreaming_daily":
+        return pending_trade_case_studies_summary()
+    if job_id == "lesson_reviewer":
+        return _lesson_backlog()
+    return 0, None
+
+
 def record_learning_job_started(job_id: str) -> str | None:
     if not is_autonomous_learning_job(job_id):
         return None
@@ -360,7 +385,7 @@ def record_learning_job_success(job_id: str, *, attempt_id: str | None = None) -
             raise RuntimeError(f"lesson reviewer attempt is missing: {attempt_id}")
         updates["input_watermark"] = attempt["input_watermark"]
     if job_id in {"dreaming_daily", "lesson_reviewer"}:
-        count, oldest = _lesson_backlog()
+        count, oldest = _job_backlog(job_id)
         updates["backlog_count"] = count
         updates["oldest_backlog_at"] = oldest
     with transaction():
@@ -384,7 +409,7 @@ def record_learning_job_failure(
     health = get_learning_job_health(job_id)
     count, oldest = (health.backlog_count, health.oldest_backlog_at)
     if job_id in {"dreaming_daily", "lesson_reviewer"}:
-        count, oldest = _lesson_backlog()
+        count, oldest = _job_backlog(job_id)
     message = str(error)[:1000]
     with transaction():
         upsert_job_health(health.model_copy(update={

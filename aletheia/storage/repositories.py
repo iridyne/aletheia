@@ -4483,6 +4483,74 @@ def list_knowledge_items(
     return _select_all("knowledge_items", where=where, params=tuple(params_list), limit=limit)
 
 
+def list_pending_trade_case_studies(
+    limit: int = 10, *, after_cursor: str | None = None,
+) -> list[dict]:
+    """Return oldest active trade cases without active lesson evidence."""
+
+    bounded_limit = max(1, min(int(limit), 100))
+    where = """
+        ki.item_type = 'trade_case_study'
+        AND (ki.status = 'active' OR ki.status IS NULL)
+        AND NOT EXISTS (
+            SELECT 1
+            FROM ps_lessons AS pl
+            WHERE pl.source_type = 'trade_case_study'
+              AND (pl.status IS NULL OR pl.status IN ('proposed', 'accepted', 'applied'))
+              AND (
+                  pl.source_id = ki.id
+                  OR instr(pl.evidence_json, '"' || ki.id || '"') > 0
+              )
+        )
+    """
+    params: list[str | int] = []
+    if after_cursor:
+        created_at, separator, case_id = str(after_cursor).partition("|")
+        if separator and created_at and case_id:
+            where += """
+                AND (
+                    ki.created_at > ?
+                    OR (ki.created_at = ? AND ki.id > ?)
+                )
+            """
+            params.extend((created_at, created_at, case_id))
+    rows = get_db().execute(
+        f"""
+        SELECT ki.*
+        FROM knowledge_items AS ki
+        WHERE {where}
+        ORDER BY ki.created_at ASC, ki.id ASC
+        LIMIT ?
+        """,
+        (*params, bounded_limit),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def pending_trade_case_studies_summary() -> tuple[int, str | None]:
+    """Return pending case count and oldest creation time for job health."""
+
+    row = get_db().execute(
+        """
+        SELECT COUNT(*) AS pending_count, MIN(ki.created_at) AS oldest_created_at
+        FROM knowledge_items AS ki
+        WHERE ki.item_type = 'trade_case_study'
+          AND (ki.status = 'active' OR ki.status IS NULL)
+          AND NOT EXISTS (
+              SELECT 1
+              FROM ps_lessons AS pl
+              WHERE pl.source_type = 'trade_case_study'
+                AND (pl.status IS NULL OR pl.status IN ('proposed', 'accepted', 'applied'))
+                AND (
+                    pl.source_id = ki.id
+                    OR instr(pl.evidence_json, '"' || ki.id || '"') > 0
+                )
+          )
+        """
+    ).fetchone()
+    return int(row["pending_count"] or 0), row["oldest_created_at"]
+
+
 def knowledge_hash_exists(item_type: str, content_hash: str) -> bool:
     """Check if a knowledge item with this content hash already exists."""
     rows = _select_all(
