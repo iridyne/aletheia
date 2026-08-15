@@ -271,8 +271,9 @@ def test_ranker_learning_deltas_are_refrozen_behind_separate_authority(monkeypat
     monkeypatch.setattr("aletheia.learning.experiments.apply_numeric_treatment", refrozen)
     opp = {
         "id": "opp-ranker", "symbol": "BTC/USDT", "confidence_score": 50,
-        "scanner_family": "momentum",
-        "metadata": json.dumps({"learning_candidate_key": "member-1"}),
+        "scanner_family": "momentum", "market": "spot",
+        "universe_snapshot_id": "snapshot-1", "universe_member_id": "member-1",
+        "metadata": json.dumps({"learning_candidate_key": "unrelated-universe-key"}),
     }
     trace = []
     refrozen_score = ranker._compute_trade_score(
@@ -287,7 +288,12 @@ def test_ranker_learning_deltas_are_refrozen_behind_separate_authority(monkeypat
     )
     assert refrozen_score == static_score
     assert {c["path_id"] for c in calls} == {"ranker_case_score", "ranker_memo_score"}
-    assert all(c["outcome_candidate_key"] == "member-1:4h" for c in calls)
+    assert {
+        (c["path_id"], c["outcome_candidate_key"]) for c in calls
+    } == {
+        ("ranker_case_score", "ranker_member:snapshot-1:member-1:spot:4h"),
+        ("ranker_memo_score", "unrelated-universe-key:4h"),
+    }
     assert {row["path_id"] for row in trace} == {"ranker_case_score", "ranker_memo_score"}
 
     from aletheia.learning.registry import get_learning_path
@@ -328,7 +334,10 @@ def test_ranker_case_shadow_uses_exact_candidate_identity_for_assignment(monkeyp
             opp={
                 "id": opportunity_id,
                 "symbol": "BTC/USDT",
-                "metadata": json.dumps({"learning_candidate_key": "member-1"}),
+                "market": "spot",
+                "universe_snapshot_id": "snapshot-1",
+                "universe_member_id": "member-1",
+                "metadata": json.dumps({"learning_candidate_key": "unrelated-universe-key"}),
             },
             direction="long",
             scope={"symbol": "BTC/USDT", "direction": "long"},
@@ -339,10 +348,17 @@ def test_ranker_case_shadow_uses_exact_candidate_identity_for_assignment(monkeyp
 
     assert len(calls) == 2
     assert {(call["candidate_key"], call["assignment_key"]) for call in calls} == {
-        ("member-1", "member-1"),
+        (
+            "ranker_member:snapshot-1:member-1:spot",
+            "ranker_member:snapshot-1:member-1:spot",
+        ),
     }
-    assert {call["outcome_candidate_key"] for call in calls} == {"member-1:4h"}
-    assert {row["assignment_unit_key"] for row in trace} == {"member-1"}
+    assert {call["outcome_candidate_key"] for call in calls} == {
+        "ranker_member:snapshot-1:member-1:spot:4h",
+    }
+    assert {row["assignment_unit_key"] for row in trace} == {
+        "ranker_member:snapshot-1:member-1:spot",
+    }
 
 
 def test_ranker_case_shadow_forces_nonzero_adapter_result_to_baseline(monkeypatch):
@@ -385,12 +401,15 @@ def test_ranker_case_valid_candidate_persists_one_shadow_exposure(monkeypatch):
     import aletheia.agents.paper_trader_ranker as ranker
     from aletheia.learning import experiments
     from aletheia.storage.sqlite import get_db
-
     monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+
     opp = {
         "id": "opportunity-carrier",
         "symbol": "BTC/USDT",
-        "metadata": json.dumps({"learning_candidate_key": "member-1"}),
+        "market": "spot",
+        "universe_snapshot_id": "snapshot-1",
+        "universe_member_id": "member-1",
+        "metadata": json.dumps({"learning_candidate_key": "unrelated-universe-key"}),
     }
     kwargs = dict(
         path_id="ranker_case_score",
@@ -400,25 +419,27 @@ def test_ranker_case_valid_candidate_persists_one_shadow_exposure(monkeypatch):
         scope={"symbol": "BTC/USDT", "direction": "long"},
         source_cohort="trade_case_study:v1",
         learning_trace=[],
+        entry_price_usd=100.0,
     )
     first = ranker._authorized_ranker_delta(**kwargs)
     second = ranker._authorized_ranker_delta(**kwargs)
 
     assert first == second == 0.0
     assert second is not None
+    ranker_key = "ranker_member:snapshot-1:member-1:spot"
     row = get_db().execute(
         "SELECT * FROM learning_exposures WHERE path_id=? AND candidate_key=?",
-        ("ranker_case_score", "member-1"),
+        ("ranker_case_score", ranker_key),
     ).fetchone()
-    assert row["assignment_unit_key"] == "member-1"
-    assert row["outcome_candidate_key"] == "member-1:4h"
+    assert row["assignment_unit_key"] == ranker_key
+    assert row["outcome_candidate_key"] == f"{ranker_key}:4h"
     assert row["experiment_stage"] == "shadow"
     assert json.loads(row["before_json"])["value"] == 0.0
     assert json.loads(row["after_json"])["value"] == 0.0
     assert json.loads(row["manifest_json"])["authority_applied"] is False
     assert get_db().execute(
         "SELECT COUNT(*) FROM learning_exposures WHERE path_id=? AND candidate_key=?",
-        ("ranker_case_score", "member-1"),
+        ("ranker_case_score", ranker_key),
     ).fetchone()[0] == 1
 
 

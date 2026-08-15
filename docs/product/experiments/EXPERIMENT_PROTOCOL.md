@@ -133,8 +133,13 @@ to its classification.
 
 ## 5. Current measured Learning protocol
 
-The registry is the executable path inventory. Only
-`universe_family_calibration` is currently measurement-supported.
+The registry is the executable path inventory. Both
+`universe_family_calibration` and `ranker_case_score` are currently
+measurement-supported; UFC is the only Paper-authority-capable path.
+
+`ranker_case_score` uses an exact candidate-level 4h
+`filter_candidate_outcomes` contract and remains Shadow-only. It does not
+emit UFC trial-integrity readiness or grant Paper authority.
 
 ### Shadow measurement
 

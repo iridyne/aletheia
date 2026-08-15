@@ -225,6 +225,8 @@ def semantic_truth_failures() -> list[str]:
     current_truth = {
         Path("docs/design/contracts/learning_contract.md"):
             "UFC remains the only Paper-authority-capable path;",
+        Path("docs/product/experiments/EXPERIMENT_PROTOCOL.md"):
+            "Both\n`universe_family_calibration` and `ranker_case_score` are currently",
         Path("docs/product/CAPABILITY_GROUND_TRUTH.md"):
             "LN-08 | Learned guard generation and observation",
         Path("docs/product/capability-integrity/CAPABILITY_INVENTORY.md"):

@@ -118,12 +118,10 @@ def evaluate_cohort(
 
     if cohort.invalid_reasons:
         return result("invalid", _reason("invalid evidence", cohort.invalid_reasons))
-    shadow_trial_required = min(SHADOW_TRIAL_MIN_SAMPLES_PER_ARM, required)
-    shadow_trial_days = min(
-        SHADOW_TRIAL_MIN_MARKET_DAYS,
-        max(0, int(cohort.experiment.min_market_days)),
-    )
     rejection_reasons = harm_metrics["treatment_authority_rejection_reasons"]
+    paper_authority_supported = get_learning_path(
+        cohort.hypothesis.path_id
+    ).paper_authority_supported
     full_measurement_ready = (
         len(assigned_treatment) >= required
         and len(raw_control) >= required
@@ -131,8 +129,14 @@ def evaluate_cohort(
         and len(qualified_assigned_treatment) >= required
         and len(control) >= required
     )
+    shadow_trial_required = min(SHADOW_TRIAL_MIN_SAMPLES_PER_ARM, required)
+    shadow_trial_days = min(
+        SHADOW_TRIAL_MIN_MARKET_DAYS,
+        max(0, int(cohort.experiment.min_market_days)),
+    )
     shadow_trial_integrity_ready = (
-        cohort.experiment.stage == "shadow"
+        paper_authority_supported
+        and cohort.experiment.stage == "shadow"
         and not full_measurement_ready
         and not authority_applied_treatment
         and not actual_treatment
@@ -142,25 +146,26 @@ def evaluate_cohort(
         and not bool(harm_metrics["breached"])
         and set(rejection_reasons) == {"experiment_stage_not_paper"}
     )
-    harm_metrics["trial_integrity_readiness"] = {
-        "contract_version": SHADOW_TRIAL_INTEGRITY_CONTRACT,
-        "required_per_arm": shadow_trial_required,
-        "required_market_days": shadow_trial_days,
-        "qualified_treatment_n": len(qualified_assigned_treatment),
-        "qualified_control_n": len(control),
-        "current_consecutive_market_days": int(
-            coverage["current_consecutive_market_days"]
-        ),
-        "status": (
-            "not_applicable"
-            if cohort.experiment.stage != "shadow"
-            else "mature"
-            if full_measurement_ready
-            else "ready"
-            if shadow_trial_integrity_ready
-            else "collecting"
-        ),
-    }
+    if paper_authority_supported:
+        harm_metrics["trial_integrity_readiness"] = {
+            "contract_version": SHADOW_TRIAL_INTEGRITY_CONTRACT,
+            "required_per_arm": shadow_trial_required,
+            "required_market_days": shadow_trial_days,
+            "qualified_treatment_n": len(qualified_assigned_treatment),
+            "qualified_control_n": len(control),
+            "current_consecutive_market_days": int(
+                coverage["current_consecutive_market_days"]
+            ),
+            "status": (
+                "not_applicable"
+                if cohort.experiment.stage != "shadow"
+                else "mature"
+                if full_measurement_ready
+                else "ready"
+                if shadow_trial_integrity_ready
+                else "collecting"
+            ),
+        }
     if shadow_trial_integrity_ready:
         # Shadow runs the static baseline in both arms, so waiting for the full
         # confirmatory window cannot estimate treatment contribution.  This

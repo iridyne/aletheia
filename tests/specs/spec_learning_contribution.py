@@ -427,14 +427,20 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
         "learning_trace": None,
     }
 
+    def ranker_key(candidate_key: str) -> str:
+        return f"ranker_member:snapshot-1:{candidate_key}:spot"
+
     def expose(candidate_key: str) -> None:
         ranker._authorized_ranker_delta(
             **common,
             opp={
                 "id": f"carrier-{candidate_key}",
                 "symbol": "BTC/USDT",
+                "market": "spot",
+                "universe_snapshot_id": "snapshot-1",
+                "universe_member_id": candidate_key,
                 "metadata": json.dumps({
-                    "learning_candidate_key": candidate_key,
+                    "learning_candidate_key": f"unrelated:{candidate_key}",
                 }),
             },
         )
@@ -453,12 +459,15 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
     opposite = next(
         f"member-{index}"
         for index in range(2, 1000)
-        if stable_assignment(experiment, f"member-{index}") != first["assignment"]
+        if stable_assignment(
+            experiment, ranker_key(f"member-{index}")
+        ) != first["assignment"]
     )
     expose(opposite)
 
     outcome_time = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
     for candidate_key, outcome in (("member-1", 0.4), (opposite, -0.2)):
+        outcome_key = ranker_key(candidate_key)
         db.execute(
             "INSERT INTO filter_candidate_outcomes ("
             "id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
@@ -467,8 +476,14 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
             "cost_model_version, status"
             ") VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', '4h', "
             "100, ?, ?, ?, ?, 0.05, 0.05, -0.5, 'cost-v1', 'settled')",
-            (f"outcome-{candidate_key}", candidate_key, outcome_time, outcome_time,
-             outcome_time, outcome),
+            (
+                f"outcome-{candidate_key}",
+                outcome_key,
+                outcome_time,
+                outcome_time,
+                outcome_time,
+                outcome,
+            ),
         )
     db.commit()
 
@@ -476,7 +491,7 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
     assert len(cohorts) == 1
     cohort = cohorts[0]
     assert {sample.assignment_unit_key for sample in cohort.samples} == {
-        "member-1", opposite,
+        ranker_key("member-1"), ranker_key(opposite),
     }, cohort.inspection()
     assert {sample.outcome_source for sample in cohort.samples} == {
         "filter_candidate_outcomes",
@@ -511,13 +526,20 @@ def test_ranker_case_excludes_wrong_horizon_and_incomplete_cost(monkeypatch):
         "source_cohort": "trade_case_study:v1",
         "learning_trace": None,
     }
+
+    def ranker_key(candidate_key: str) -> str:
+        return f"ranker_member:snapshot-1:{candidate_key}:spot"
+
     for candidate_key in ("wrong-horizon", "missing-cost"):
         ranker._authorized_ranker_delta(
             **common,
             opp={
                 "id": f"carrier-{candidate_key}",
                 "symbol": "BTC/USDT",
-                "metadata": json.dumps({"learning_candidate_key": candidate_key}),
+                "market": "spot",
+                "universe_snapshot_id": "snapshot-1",
+                "universe_member_id": candidate_key,
+                "metadata": json.dumps({"learning_candidate_key": "unrelated"}),
             },
         )
 
@@ -527,6 +549,7 @@ def test_ranker_case_excludes_wrong_horizon_and_incomplete_cost(monkeypatch):
         ("wrong-horizon", "1h", 0.05),
         ("missing-cost", "4h", None),
     ):
+        outcome_key = ranker_key(candidate_key)
         db.execute(
             "INSERT INTO filter_candidate_outcomes ("
             "id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
@@ -534,7 +557,7 @@ def test_ranker_case_excludes_wrong_horizon_and_incomplete_cost(monkeypatch):
             "estimated_fee_pct, estimated_spread_slippage_pct, cost_model_version, status"
             ") VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', ?, "
             "100, ?, ?, ?, 0.4, ?, 0.05, 'cost-v1', 'settled')",
-            (f"outcome-{candidate_key}", candidate_key, horizon, now, now, now, fee),
+            (f"outcome-{candidate_key}", outcome_key, horizon, now, now, now, fee),
         )
     db.commit()
     experiment_id = db.execute(

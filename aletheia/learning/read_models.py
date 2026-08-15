@@ -420,16 +420,15 @@ def _project_experiment(
         lifecycle_reason,
         stage=stage,
     )
-    if (
+    authority_blocked_recommendation = (
         path is not None
         and not path.paper_authority_supported
         and recommended in {"promote_stage", "admit_trial"}
-    ):
+    )
+    if authority_blocked_recommendation:
         recommended = "hold"
     inference_block_reason = (
-        "authority_unwired"
-        if path is not None and not path.paper_authority_supported
-        else None
+        "authority_unwired" if authority_blocked_recommendation else None
     )
     if recommended == "promote_stage" and lifecycle_verdict is not None:
         inference_block_reason = inference_authority_reason(lifecycle_verdict)
