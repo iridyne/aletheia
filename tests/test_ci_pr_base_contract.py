@@ -16,7 +16,11 @@ def _workflow() -> dict:
 
 
 def _review_step(name: str) -> dict:
-    return next(step for step in _workflow()["jobs"]["review"]["steps"] if step.get("name") == name)
+    return next(
+        step
+        for step in _workflow()["jobs"]["review-core"]["steps"]
+        if step.get("name") == name
+    )
 
 
 def test_pull_request_review_attribution_uses_current_merge_ref_base() -> None:
