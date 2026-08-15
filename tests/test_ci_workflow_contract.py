@@ -65,17 +65,19 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
 
     assert set(jobs) == {
         "review",
+        "unit",
         "tests",
         "runtime-state-tests",
         "release-candidate",
         "release-pr-ci",
     }
     assert jobs["review"]["name"] == "Review checks"
+    assert jobs["unit"]["name"] == "Python unit"
     assert jobs["tests"]["name"] == "Python ${{ matrix.name }}"
     assert jobs["runtime-state-tests"]["name"] == "Python runtime state"
     handoff = jobs["release-candidate"]
     assert handoff["name"] == "Hand off verified release candidate"
-    assert handoff["needs"] == ["review", "tests", "runtime-state-tests"]
+    assert handoff["needs"] == ["review", "unit", "tests", "runtime-state-tests"]
     assert "event_name == 'workflow_dispatch'" in handoff["if"]
     assert "release-please--branches--master" in handoff["if"]
     assert handoff["permissions"] == {"contents": "write"}
@@ -90,7 +92,7 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
 
     pr_handoff = jobs["release-pr-ci"]
     assert pr_handoff["name"] == "Hand off verified release pull request"
-    assert pr_handoff["needs"] == ["review", "tests", "runtime-state-tests"]
+    assert pr_handoff["needs"] == ["review", "unit", "tests", "runtime-state-tests"]
     assert "event_name == 'pull_request'" in pr_handoff["if"]
     assert "release-please--branches--master" in pr_handoff["if"]
     pr_script = pr_handoff["steps"][0]["with"]["script"]
@@ -98,8 +100,10 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
     assert "release_after_merge: true" in pr_script
 
     regression = jobs["tests"]["steps"][-1]["run"]
+    unit_regression = jobs["unit"]["steps"][-1]["run"]
     runtime_regression = jobs["runtime-state-tests"]["steps"][-1]["run"]
     assert "--ignore=tests/test_connectivity.py" in regression
+    assert "-m \"tier_unit\"" in unit_regression
     assert "uv run pytest tests/test_connectivity.py" in runtime_regression
     assert "-connectivity" in runtime_regression
 
@@ -123,7 +127,7 @@ def test_ci_jobs_use_self_hosted_runners_and_minimum_permissions() -> None:
     workflow = _workflow()
 
     assert workflow["permissions"] == {"contents": "read"}
-    for job_name in ("review", "tests", "runtime-state-tests"):
+    for job_name in ("review", "unit", "tests", "runtime-state-tests"):
         job = workflow["jobs"][job_name]
         assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
         setup_uv = next(step for step in job["steps"] if str(step.get("uses", "")).startswith("astral-sh/setup-uv@"))
@@ -279,30 +283,52 @@ def test_native_host_build_uses_self_contained_linker() -> None:
 
 def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> None:
     workflow = _workflow()
+    review_job = workflow["jobs"]["review"]
+    unit_job = workflow["jobs"]["unit"]
     tier_job = workflow["jobs"]["tests"]
+    runtime_job = workflow["jobs"]["runtime-state-tests"]
+    unit_commands = _run_commands(unit_job)
     tier_commands = _run_commands(tier_job)
     matrix = tier_job["strategy"]["matrix"]["include"]
 
+    # Stage 1 is the only work eligible at T0. With the repository's two
+    # self-hosted runners this makes Review + Unit the deterministic first
+    # useful signals instead of relying on matrix or queue ordering.
+    assert "needs" not in review_job
+    assert "needs" not in unit_job
+    assert unit_job["name"] == "Python unit"
+    assert tier_job["needs"] == ["review", "unit"]
+    assert runtime_job["needs"] == ["review", "unit"]
+
+    # Once Stage 1 succeeds, deep tiers still report independently.
     assert tier_job["strategy"]["fail-fast"] == "false"
     assert matrix == [
         {"name": "specifications", "marker": "tier_spec"},
-        {"name": "unit", "marker": "tier_unit"},
         {"name": "integration", "marker": "tier_integration"},
         {"name": "end-to-end", "marker": "tier_e2e"},
     ]
-    assert "uv run pytest tests/" in tier_commands
-    assert "--ignore=tests/simulation" in tier_commands
-    assert "--ignore=tests/test_auto_resume.py" in tier_commands
-    assert "--ignore=tests/test_operator_cli.py" in tier_commands
-    assert "--ignore=tests/test_pause_ownership.py" in tier_commands
+
+    for commands in (unit_commands, tier_commands):
+        assert "uv run pytest tests/" in commands
+        assert "--ignore=tests/simulation" in commands
+        assert "--ignore=tests/test_auto_resume.py" in commands
+        assert "--ignore=tests/test_connectivity.py" in commands
+        assert "--ignore=tests/test_operator_cli.py" in commands
+        assert "--ignore=tests/test_pause_ownership.py" in commands
+        assert "--dist loadfile" in commands
+    assert '-m "tier_unit"' in unit_commands
     assert "${{ matrix.marker }}" in tier_commands
-    assert "--dist loadfile" in tier_commands
+
+    unit_env = unit_job["steps"][-1]["env"]["ALETHEIA_DATA_DIR"]
+    assert "${{ runner.temp }}" in unit_env
+    assert "${{ github.run_attempt }}" in unit_env
+    assert "tier_unit" in unit_env
     tier_env = tier_job["steps"][-1]["env"]["ALETHEIA_DATA_DIR"]
     assert "${{ runner.temp }}" in tier_env
     assert "${{ github.run_attempt }}" in tier_env
     assert "${{ matrix.marker }}" in tier_env
 
-    runtime_commands = _run_commands(workflow["jobs"]["runtime-state-tests"])
+    runtime_commands = _run_commands(runtime_job)
     assert "tests/test_auto_resume.py tests/test_operator_cli.py" in runtime_commands
     assert "uv run pytest tests/test_pause_ownership.py" in runtime_commands
     assert "GITHUB_RUN_ATTEMPT}-pause-ownership" in runtime_commands
