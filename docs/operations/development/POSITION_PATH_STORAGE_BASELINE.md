@@ -278,7 +278,7 @@ gates.
 | Gate | Evidence in this branch | State |
 | --- | --- | --- |
 | Archived storage no more than 40% of the hot table plus indexes | Local migrated fixture: 24,576 / 114,688 = 21.43%; Fedora has no archive table | Fixture-only pass; production unverified |
-| Exact field round-trip and semantic/compressed hashes | Focused archive tests and latest explicit-snapshot Fedora stream: 3,919 rows; persisted-copy artifact: 3,619 rows | Pass for tested codec/shadow stream |
+| Exact field round-trip and semantic/compressed hashes | Focused archive tests and latest explicit-snapshot Fedora stream: 5,251 rows; persisted-copy artifact: 3,619 rows | Pass for tested codec/shadow stream |
 | Deterministic bytes and corruption fail-closed | Focused tests plus Fedora stream byte identity | Pass |
 | 2048-bucket decode p95 below 100 ms on Fedora | No real Fedora 2048-bucket path; local synthetic sample only | Open |
 | Observer write latency unchanged | Disposable local SQLite clones only: p95 0.266 ms with schema vs 0.285 ms without | Open for Fedora observer |
