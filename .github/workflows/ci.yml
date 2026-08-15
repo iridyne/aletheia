@@ -38,7 +38,20 @@ jobs:
             exit 0
           fi
 
-          base="${{ github.event.pull_request.base.sha }}"
+          # actions/checkout checks out GitHub's synthetic PR merge commit.
+          # Parent 1 is the exact current base snapshot for this CI head; parent
+          # 2 must be the exact PR head. Using payload.base.sha is wrong for a
+          # long-lived PR because it stays pinned to the base from PR creation
+          # and attributes later base-branch changes to the PR.
+          base="$(git rev-parse HEAD^1)"
+          merge_pr_head="$(git rev-parse HEAD^2)"
+          expected_pr_head="${{ github.event.pull_request.head.sha }}"
+          if [ "$merge_pr_head" != "$expected_pr_head" ]; then
+            echo "pull-request merge ref does not match exact PR head" >&2
+            exit 1
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
           # Changes to the CI controller must exercise every conditional path.
           if ! git diff --quiet "$base"...HEAD -- .github/workflows/ci.yml; then
             echo 'coverage=true' >> "$GITHUB_OUTPUT"
@@ -148,7 +161,7 @@ jobs:
         run: uv run ruff check aletheia/ tests/
 
       - name: Verify architecture and CI invariants
-        run: uv run pytest tests/test_architecture_fitness.py tests/test_ci_workflow_contract.py -q --tb=short
+        run: uv run pytest tests/test_architecture_fitness.py tests/test_ci_workflow_contract.py tests/test_ci_pr_base_contract.py -q --tb=short
 
       # Trust-boundary branch coverage. Scoped to files where a wrong answer
       # misleads a decision, corrupts state, or bypasses a check (see
@@ -219,7 +232,17 @@ jobs:
           printf '%s  %s\n' "$expected" "$archive" | sha256sum --check -
           mkdir -p "$install_dir"
           tar -xzf "$archive" -C "$install_dir" gitleaks
-          "$install_dir/gitleaks" git --redact --log-opts="${{ github.event.pull_request.base.sha || 'HEAD^' }}..HEAD"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            pr_base="${{ steps.changes.outputs.base }}"
+            if [ -z "$pr_base" ]; then
+              echo "missing resolved pull-request base" >&2
+              exit 1
+            fi
+            log_opts="$pr_base..HEAD"
+          else
+            log_opts="HEAD^..HEAD"
+          fi
+          "$install_dir/gitleaks" git --redact --log-opts="$log_opts"
 
       - name: Install Node.js
         if: steps.changes.outputs.frontend == 'true' || steps.changes.outputs.operator == 'true'
