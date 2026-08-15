@@ -25,6 +25,111 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Detect affected review surfaces
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo 'coverage=true' >> "$GITHUB_OUTPUT"
+            echo 'frontend=true' >> "$GITHUB_OUTPUT"
+            echo 'operator=true' >> "$GITHUB_OUTPUT"
+            echo 'native=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base="${{ github.event.pull_request.base.sha }}"
+          # Changes to the CI controller must exercise every conditional path.
+          if ! git diff --quiet "$base"...HEAD -- .github/workflows/ci.yml; then
+            echo 'coverage=true' >> "$GITHUB_OUTPUT"
+            echo 'frontend=true' >> "$GITHUB_OUTPUT"
+            echo 'operator=true' >> "$GITHUB_OUTPUT"
+            echo 'native=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Coverage is expensive (~60s in a recent Review job), so ordinary
+          # PRs pay for it only when a measured trust boundary, its direct test
+          # surface, or coverage/pytest tooling and configuration changes.
+          if git diff --quiet "$base"...HEAD -- \
+            .coveragerc \
+            pyproject.toml \
+            pytest.toml \
+            .pytest.toml \
+            pytest.ini \
+            .pytest.ini \
+            tox.ini \
+            setup.cfg \
+            conftest.py \
+            uv.lock \
+            scripts/coverage_floors.py \
+            tests/conftest.py \
+            aletheia/analytics/profit_gradient.py \
+            aletheia/analytics/profit_gradient_estimators.py \
+            aletheia/analytics/profit_gradient_evidence.py \
+            aletheia/analytics/position_replay.py \
+            aletheia/counterfactual/filter_replay.py \
+            aletheia/economics/context_artifacts.py \
+            aletheia/execution/reconciliation.py \
+            aletheia/learning/evidence_epoch.py \
+            aletheia/learning/policy_epochs.py \
+            tests/test_profit_gradient.py \
+            tests/test_profit_gradient_properties.py \
+            tests/test_profit_gradient_evidence.py \
+            tests/test_p3_evidence_epoch.py \
+            tests/test_filter_replay.py \
+            tests/test_position_replay.py \
+            tests/test_reconciliation.py \
+            tests/test_oco_reconcile.py \
+            tests/test_cr_ex01_reconcile.py \
+            tests/test_position_reconciler.py \
+            tests/test_scheduler_reconcile.py \
+            tests/test_reconciliation_integrity_incident.py \
+            tests/test_reconciliation_properties.py \
+            tests/test_context_effectiveness.py \
+            tests/test_context_artifacts_properties.py \
+            tests/test_filter_replay_properties.py \
+            tests/test_policy_epoch_properties.py \
+            tests/test_profit_gradient_evidence_properties.py; then
+            echo 'coverage=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'coverage=true' >> "$GITHUB_OUTPUT"
+          fi
+
+          # npm workspaces can make commands launched from a child project
+          # inherit the repository-root manifest, lockfile, and npm config.
+          if git diff --quiet "$base"...HEAD -- \
+            frontend/ \
+            package.json \
+            package-lock.json \
+            npm-shrinkwrap.json \
+            .npmrc; then
+            echo 'frontend=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'frontend=true' >> "$GITHUB_OUTPUT"
+          fi
+          if git diff --quiet "$base"...HEAD -- \
+            operator-shell/ \
+            package.json \
+            package-lock.json \
+            npm-shrinkwrap.json \
+            .npmrc; then
+            echo 'operator=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'operator=true' >> "$GITHUB_OUTPUT"
+          fi
+          if git diff --quiet "$base"...HEAD -- \
+            native/ \
+            .cargo/ \
+            Cargo.toml \
+            Cargo.lock \
+            rust-toolchain \
+            rust-toolchain.toml; then
+            echo 'native=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'native=true' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -45,11 +150,12 @@ jobs:
       - name: Verify architecture and CI invariants
         run: uv run pytest tests/test_architecture_fitness.py tests/test_ci_workflow_contract.py -q --tb=short
 
-      # Trust-boundary branch coverage. Scoped to eight files where a wrong
-      # answer misleads a decision, corrupts state, or bypasses a check
-      # (see .coveragerc). No repo-wide fail-under; floors live in
+      # Trust-boundary branch coverage. Scoped to files where a wrong answer
+      # misleads a decision, corrupts state, or bypasses a check (see
+      # .coveragerc). No repo-wide fail-under; floors live in
       # scripts/coverage_floors.py and only ratchet up.
       - name: Trust-boundary coverage floors
+        if: steps.changes.outputs.coverage == 'true'
         env:
           ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-cov
         run: |
@@ -116,11 +222,13 @@ jobs:
           "$install_dir/gitleaks" git --redact --log-opts="${{ github.event.pull_request.base.sha || 'HEAD^' }}..HEAD"
 
       - name: Install Node.js
+        if: steps.changes.outputs.frontend == 'true' || steps.changes.outputs.operator == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
 
       - name: Check dashboard
+        if: steps.changes.outputs.frontend == 'true'
         working-directory: frontend
         run: |
           npm ci
@@ -129,6 +237,7 @@ jobs:
           npx tsc -b --pretty false
 
       - name: Check Operator Shell
+        if: steps.changes.outputs.operator == 'true'
         working-directory: operator-shell
         run: |
           npm ci
@@ -141,6 +250,7 @@ jobs:
       # job times out when egress is merely unresponsive. This probe needs no
       # network, so an already-provisioned runner stops depending on one.
       - name: Check for a preinstalled Rust toolchain
+        if: steps.changes.outputs.native == 'true'
         id: rust
         shell: bash
         run: |
@@ -153,10 +263,11 @@ jobs:
 
       # Kept as the fallback so a fresh runner still provisions itself.
       - name: Install stable Rust toolchain
-        if: steps.rust.outputs.preinstalled != 'true'
+        if: steps.changes.outputs.native == 'true' && steps.rust.outputs.preinstalled != 'true'
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
 
       - name: Ensure the self-contained Linux target is available
+        if: steps.changes.outputs.native == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -166,6 +277,7 @@ jobs:
           fi
 
       - name: Test the platform-neutral native host
+        if: steps.changes.outputs.native == 'true'
         working-directory: native/aletheia-host
         env:
           RUSTFLAGS: -C linker=rust-lld
