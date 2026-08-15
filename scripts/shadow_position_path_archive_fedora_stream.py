@@ -124,6 +124,13 @@ def shadow_stream(payload: Mapping[str, Any], *, as_of: str | None = None) -> di
     representative_input_complete = all(
         bool(sample_coverage[key]) for key in required_coverage
     )
+    acceptance_reasons = [
+        "deployed_fedora_archive_read_model_shadow_pending",
+        "observer_write_latency_unmeasured",
+        "2048_bucket_decode_sample_unavailable",
+    ]
+    if not representative_input_complete:
+        acceptance_reasons.append("representative_input_incomplete")
     production_encode_ms: list[float] = []
     production_decode_ms: list[float] = []
     for (position_id, segment_start), rows in sorted(groups.items()):
@@ -211,6 +218,10 @@ def shadow_stream(payload: Mapping[str, Any], *, as_of: str | None = None) -> di
         "source": "fedora_read_only_row_stream",
         "status": status,
         "archive_persisted": False,
+        "acceptance": {
+            "status": "incomplete",
+            "reasons": acceptance_reasons,
+        },
         "read_model_parity": "not_run",
         "positions_total": len(positions),
         "eligible_positions": eligible_positions,

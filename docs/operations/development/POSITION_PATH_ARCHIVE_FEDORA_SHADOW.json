@@ -169,6 +169,15 @@
     "captured_at": "2026-08-15T17:24:58.605368+00:00",
     "contract_version": "position_path_archive_fedora_stream/v1",
     "deterministic_byte_identity": true,
+    "acceptance": {
+      "status": "incomplete",
+      "reasons": [
+        "deployed_fedora_archive_read_model_shadow_pending",
+        "observer_write_latency_unmeasured",
+        "2048_bucket_decode_sample_unavailable",
+        "representative_input_incomplete"
+      ]
+    },
     "eligible_positions": 73,
     "eligible_rows": 5251,
     "payload_bytes": 173161,
