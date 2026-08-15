@@ -12,6 +12,10 @@ from aletheia.agents.helpers import elapsed_ms, llm_complete, llm_structured, lo
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.knowledge.manager import create_daily_review, create_dreaming_log
+from aletheia.learning.control import (
+    advance_learning_job_cursor,
+    get_learning_job_health,
+)
 from aletheia.storage.repositories import list_agent_runs
 
 logger = logging.getLogger("aletheia.agents.dreaming_agent")
@@ -280,65 +284,46 @@ async def _extract_lessons(
     outputs: list[str],
     errors: list[str],
 ) -> list[dict[str, str]]:
-    """Extract structured lessons from recent trade_case_study items into ps_lessons.
+    """Extract structured lessons from oldest pending trade cases into ps_lessons.
 
     C4: reads trade_case_study (real closed-trade PnL) not post_trade_review, which was
     reclassified to medium_confidence and contained LLM-generated narrative, not signal.
     """
-    from datetime import datetime, timezone, timedelta
-    from aletheia.storage.repositories import list_knowledge_items
+    from aletheia.storage.repositories import list_pending_trade_case_studies
     from aletheia.learning.lessons import LessonStore
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-    reviews = [
-        r for r in list_knowledge_items(item_type="trade_case_study", limit=50)
-        if (r.get("created_at") or "") >= cutoff
-    ]
-    if not reviews:
-        return []
-
-    # #17 fix: previously the dreaming agent re-processed the SAME case study
-    # every day for its 24h post-close window — no processed-ID tracking meant
-    # a case study created within 24h could feed the extractor multiple times
-    # (each daily cron run), producing duplicate/near-duplicate lessons that
-    # then compete in downstream ranking. Skip case studies that already have
-    # a lesson row citing them as source_id. Cheap query — ps_lessons is small
-    # relative to knowledge_items.
-    try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        review_ids = [r.get("id") for r in reviews if r.get("id")]
-        if review_ids:
-            placeholders = ",".join("?" for _ in review_ids)
-            processed_rows = db.execute(
-                f"SELECT source_id, evidence_json FROM ps_lessons "
-                f"WHERE source_type = 'trade_case_study' AND source_id IN ({placeholders})",
-                tuple(review_ids),
-            ).fetchall()
-            processed = {row["source_id"] for row in processed_rows}
-            for row in processed_rows:
-                try:
-                    processed.update(
-                        json.loads(row["evidence_json"] or "{}").get(
-                            "supporting_source_ids", []
-                        )
-                    )
-                except (TypeError, ValueError):
-                    pass
-            if processed:
-                reviews = [r for r in reviews if r.get("id") not in processed]
-    except Exception:
-        # Defensive — a query failure must NOT block the extractor; better to
-        # re-process (previous behavior) than to skip everything.
-        pass
-
+    health = get_learning_job_health("dreaming_daily")
+    cursor = health.input_cursor
+    reviews: list[dict] = []
+    has_forward_batch = cursor is None
+    wrapped = False
+    if cursor:
+        # Reopened cases can sort behind the monotonic frontier. Scan that
+        # prefix independently so a continuously non-empty suffix cannot
+        # starve them.
+        reviews = list_pending_trade_case_studies(
+            limit=10, before_cursor=cursor,
+        )
+        if len(reviews) < 10:
+            suffix = list_pending_trade_case_studies(
+                limit=10 - len(reviews), after_cursor=cursor,
+            )
+            reviews.extend(suffix)
+            has_forward_batch = bool(suffix)
+    else:
+        reviews = list_pending_trade_case_studies(limit=10)
+    if cursor and not reviews:
+        # No pending work exists on either side of the frontier. A full scan
+        # is retained for cursor compatibility and delayed rows.
+        reviews = list_pending_trade_case_studies(limit=10)
+        wrapped = bool(reviews)
     if not reviews:
         return []
 
     # Build rich case lines including PnL metrics so the LLM has something
     # concrete to summarise and the evidence_json is populated for lesson_reviewer.
     case_lines = []
-    for r in reviews[:10]:
+    for r in reviews:
         from aletheia.knowledge.frontmatter import parse_frontmatter
         from pathlib import Path
         meta: dict = {}
@@ -362,8 +347,8 @@ async def _extract_lessons(
 
     payload, err = await llm_structured(
         system=(
-            "You are a trading lesson extractor. Given recent trade case studies with "
-            "quantitative metrics (outcome, realized_pnl_pct, factor_key, scanner_family, "
+            "You are a trading lesson extractor. Given the oldest pending trade case studies "
+            "with quantitative metrics (outcome, realized_pnl_pct, factor_key, scanner_family, "
             "close_reason), extract 1-3 actionable lessons grounded in the data. "
             "Return a JSON object with a lessons array where each object has: "
             '"summary" (one sentence referencing specific metrics), '
@@ -380,7 +365,7 @@ async def _extract_lessons(
             'omit entirely if lesson is general advice without a concrete constraint). '
             "Return ONLY the JSON object, no other text."
         ),
-        user=f"Recent trade case studies:\n{summaries}\n\nExtract lessons with evidence.",
+        user=f"Pending trade case studies:\n{summaries}\n\nExtract lessons with evidence.",
         schema=_LessonExtractionResult,
         max_tokens=600,
         provider=get_provider_for_tier("deep"),
@@ -416,7 +401,7 @@ async def _extract_lessons(
         factors: list[str] = []
         scanners: list[str] = []
         factor_source_ids: dict[str, list[str]] = {}
-        for r in reviews[:10]:
+        for r in reviews:
             fpath = r.get("file_path")
             if fpath:
                 try:
@@ -451,6 +436,8 @@ async def _extract_lessons(
 
     store = LessonStore()
     artifact_refs: list[dict[str, str]] = []
+    batch_case_ids = {str(row["id"]) for row in reviews if row.get("id")}
+    covered_case_ids: set[str] = set()
     for lesson in lessons[:3]:
         if not isinstance(lesson, dict) or not lesson.get("summary"):
             continue
@@ -488,6 +475,7 @@ async def _extract_lessons(
                     rec["scanner"], losses, total,
                 )
         source_id = supporting_source_ids[0]
+        covered_case_ids.update(set(supporting_source_ids) & batch_case_ids)
         if rec and rec.get("action") in {"block_scanner", "block_direction", "block_symbol"}:
             from aletheia.learning.guard_routing import route_automatic_block_recommendation
             rec = route_automatic_block_recommendation(
@@ -513,6 +501,21 @@ async def _extract_lessons(
         )
         outputs.append(f"lesson:{created.lesson_id}")
         artifact_refs.append({"artifact_type": "lesson", "artifact_id": created.lesson_id})
+    if (
+        has_forward_batch
+        and not wrapped
+        and len(batch_case_ids) == len(reviews)
+        and covered_case_ids == batch_case_ids
+    ):
+        # Advance only after every selected case is durably represented by
+        # lesson source/evidence identity. Partial or ambiguous batches retry.
+        last = reviews[-1]
+        created_at = str(last.get("created_at") or "")
+        case_id = str(last.get("id") or "")
+        if created_at and case_id:
+            advance_learning_job_cursor(
+                "dreaming_daily", f"{created_at}|{case_id}",
+            )
     return artifact_refs
 
 

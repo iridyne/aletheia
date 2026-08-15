@@ -58,9 +58,57 @@ def route_automatic_block_recommendation(
         )
     except Exception:
         return {"action": "guard_shadow_unavailable", "reason": "candidate_persist_failed"}
+
+    guard_candidate_id = str(getattr(item, "id", "") or "")
+    if not guard_candidate_id:
+        return {
+            "action": "guard_shadow_candidate",
+            "guard_id": guard_id,
+            "hypothesis_status": "source_identity_unavailable",
+            "original_action": action,
+        }
+    hypothesis_action = {
+        "type": "candidate_guard",
+        "guard_id": guard_id,
+        "block_candidate": True,
+        "score_penalty": 0,
+    }
+    from aletheia.learning.hypotheses import nominate_learning_hypothesis
+
+    hypothesis = nominate_learning_hypothesis(
+        path_id="ranker_learned_guard",
+        scope={"guard_id": guard_id},
+        action=hypothesis_action,
+        source_type="guard_candidate",
+        source_artifact_ids=[source_id, guard_candidate_id],
+        source_cohort=f"learned_guard:{guard_id}:v1",
+        consumer="paper_trader_ranker",
+        target_horizon="4h",
+        evidence_summary={
+            "guard_candidate_id": guard_candidate_id,
+            "applies_to": scope,
+            "evidence": evidence,
+        },
+    )
+    # A repeated nomination may return the original fingerprinted hypothesis
+    # while this call created a fresh candidate row. Report the candidate that
+    # the durable hypothesis actually names, not the unlinked fresh row.
+    linked_candidate_id = guard_candidate_id
+    try:
+        artifact_ids = json.loads(hypothesis.source_artifact_ids_json or "[]")
+    except (TypeError, ValueError, AttributeError):
+        artifact_ids = []
+    for artifact_id in reversed(artifact_ids):
+        if str(artifact_id) and str(artifact_id) != source_id:
+            linked_candidate_id = str(artifact_id)
+            break
     return {
-        "action": "guard_shadow_candidate", "guard_id": guard_id,
-        "guard_candidate_id": getattr(item, "id", None), "original_action": action,
+        "action": "guard_shadow_candidate",
+        "guard_id": guard_id,
+        "guard_candidate_id": linked_candidate_id,
+        "hypothesis_id": hypothesis.hypothesis_id,
+        "hypothesis_status": "proposed",
+        "original_action": action,
     }
 
 

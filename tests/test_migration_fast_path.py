@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 29)
+        f"aletheia-sqlite-v{version}" for version in range(2, 30)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v28"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v29"
     connection.close()
 
 
@@ -575,7 +575,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         "VALUES (?, ?, ?, '2026-08-08T00:00:00+00:00', 0)",
         [
             (step.migration_id, step.checksum, step.schema_version)
-            for step in migrations._MIGRATIONS[:-5]
+            for step in migrations._MIGRATIONS[:-6]
         ],
     )
     connection.commit()
@@ -593,9 +593,13 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260814_0027_position_path_observer_cursor_v28",
-        "aletheia-sqlite-v28",
+        "20260815_0028_learning_dreaming_backlog_v29",
+        "aletheia-sqlite-v29",
     )
+    health_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(learning_job_health)")
+    }
+    assert "input_cursor" in health_columns
     legacy = connection.execute(
         "SELECT inference_role, authority_eligible "
         "FROM learning_contribution_verdicts WHERE verdict_id='legacy-positive'"

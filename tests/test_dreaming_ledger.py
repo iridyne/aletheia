@@ -43,18 +43,20 @@ def _mock_llm_unavailable(monkeypatch):
     monkeypatch.setattr(dreaming_agent, "llm_complete", _fail)
 
 
-def _seed_trade_case_study() -> None:
+def _seed_trade_case_study(
+    case_id: str = "case-1", created_at: str | None = None,
+) -> None:
     from aletheia.storage.sqlite import get_db
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = created_at or datetime.now(timezone.utc).isoformat()
     get_db().execute(
         "INSERT INTO knowledge_items "
         "(id,item_type,title,status,confidence,created_at,updated_at) "
         "VALUES (?,?,?,?,?,?,?)",
         (
-            "case-1",
+            case_id,
             "trade_case_study",
-            "Case: BTC/USDT long (stop_loss)",
+            f"Case: {case_id}",
             "active",
             "high_confidence",
             now,
@@ -89,6 +91,8 @@ async def test_lesson_extraction_reports_invalid_structured_output(
     setup_env(tmp_path, monkeypatch)
 
     from aletheia.agents import dreaming_agent
+    from aletheia.learning.control import get_learning_job_health
+    from aletheia.storage.repositories import pending_trade_case_studies_summary
     _seed_trade_case_study()
 
     async def _legacy_invalid(*_args, **_kwargs):
@@ -114,6 +118,9 @@ async def test_lesson_extraction_reports_invalid_structured_output(
         "lesson_extraction_invalid_output:structured_parse_error: "
         "no valid JSON object found"
     ]
+
+    assert get_learning_job_health("dreaming_daily").input_cursor is None
+    assert pending_trade_case_studies_summary()[0] == 1
 
 
 async def test_lesson_extraction_persists_schema_valid_lesson(
@@ -163,6 +170,200 @@ async def test_lesson_extraction_persists_schema_valid_lesson(
     assert "BTC long stop-loss" in row["summary"]
     assert "outcome_counts" in row["evidence_json"]
     assert json.loads(row["evidence_json"])["supporting_factor_keys"] == []
+
+
+async def test_lesson_extraction_drains_cases_with_durable_cursor(
+    tmp_path, monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agents import dreaming_agent
+    from aletheia.learning.control import (
+        get_learning_job_health,
+        job_health_view,
+    )
+    from aletheia.storage.repositories import pending_trade_case_studies_summary
+
+    _seed_trade_case_study("case-1", "2026-08-15T01:00:00+00:00")
+
+    async def _structured_success(*_args, **_kwargs):
+        return {"lessons": [{"summary": "A durable lesson"}]}, None
+
+    monkeypatch.setattr(dreaming_agent, "llm_structured", _structured_success)
+    await dreaming_agent._extract_lessons(None, [], [])
+    _seed_trade_case_study("case-2", "2026-08-15T02:00:00+00:00")
+    await dreaming_agent._extract_lessons(None, [], [])
+
+    # A delayed case older than the cursor is recovered by the durable wrap.
+    _seed_trade_case_study("case-delayed", "2026-08-15T00:30:00+00:00")
+    await dreaming_agent._extract_lessons(None, [], [])
+
+    health = get_learning_job_health("dreaming_daily")
+    assert health.input_cursor == "2026-08-15T02:00:00+00:00|case-2"
+    view = job_health_view(health)
+    assert view["input_cursor"] == health.input_cursor
+    assert view["backlog_count"] == 0
+    assert pending_trade_case_studies_summary() == (0, None)
+
+
+
+
+async def test_reopened_prefix_does_not_starve_forward_cases(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from pathlib import Path
+
+    from aletheia.agents import dreaming_agent
+    from aletheia.learning.control import get_learning_job_health
+    from aletheia.learning.lessons import LessonStore
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    factor_by_case = {
+        "case-1": "momentum:BTC/USDT:long",
+        "case-reopened": "momentum:ETH/USDT:long",
+        "case-newer": "volatility:SOL/USDT:short",
+    }
+
+    def seed_case(case_id: str, created_at: str) -> None:
+        factor = factor_by_case[case_id]
+        path = Path(tmp_path) / f"{case_id}.md"
+        path.write_text(
+            "---\n"
+            "outcome: loss\n"
+            "realized_pnl_pct: -1.0\n"
+            f"factor_key: {factor}\n"
+            "scanner_family: momentum\n"
+            "---\n",
+            encoding="utf-8",
+        )
+        db.execute(
+            "INSERT INTO knowledge_items "
+            "(id,item_type,title,status,confidence,file_path,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                case_id, "trade_case_study", case_id, "active", "high_confidence",
+                str(path), created_at, created_at,
+            ),
+        )
+        db.commit()
+
+    seed_case("case-1", "2026-08-15T01:00:00+00:00")
+    calls = 0
+
+    async def _structured_success(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"lessons": [{
+                "summary": "Initial lesson",
+                "supporting_factor_keys": [factor_by_case["case-1"]],
+            }]}, None
+        return {"lessons": [
+            {
+                "summary": "Reopened lesson",
+                "supporting_factor_keys": [factor_by_case["case-reopened"]],
+            },
+            {
+                "summary": "Forward lesson",
+                "supporting_factor_keys": [factor_by_case["case-newer"]],
+            },
+        ]}, None
+
+    monkeypatch.setattr(dreaming_agent, "llm_structured", _structured_success)
+    await dreaming_agent._extract_lessons(None, [], [])
+
+    seed_case("case-reopened", "2026-08-15T00:30:00+00:00")
+    rejected = LessonStore().create(
+        "Reopened lesson", source_type="trade_case_study", source_id="case-reopened",
+    )
+    LessonStore().reject(rejected.lesson_id)
+    seed_case("case-newer", "2026-08-15T02:00:00+00:00")
+
+    await dreaming_agent._extract_lessons(None, [], [])
+
+    assert calls == 2
+    assert get_learning_job_health("dreaming_daily").input_cursor == (
+        "2026-08-15T02:00:00+00:00|case-newer"
+    )
+    source_ids = {
+        row["source_id"]
+        for row in db.execute(
+            "SELECT source_id FROM ps_lessons WHERE status='proposed'"
+        ).fetchall()
+    }
+    assert {"case-reopened", "case-newer"} <= source_ids
+
+
+async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from pathlib import Path
+
+    from aletheia.agents import dreaming_agent
+    from aletheia.learning import hypotheses
+    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.repositories import pending_trade_case_studies_summary
+
+    factor = "momentum:BTC/USDT:long:medium_confidence:not_late"
+    path = Path(tmp_path) / "case-retry.md"
+    path.write_text(
+        "---\n"
+        "outcome: loss\n"
+        "realized_pnl_pct: -2.0\n"
+        f"factor_key: {factor}\n"
+        "scanner_family: momentum\n"
+        "---\n",
+        encoding="utf-8",
+    )
+    db = get_db()
+    db.execute(
+        "INSERT INTO knowledge_items "
+        "(id,item_type,title,status,confidence,file_path,created_at,updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "case-retry", "trade_case_study", "case-retry", "active",
+            "high_confidence", str(path), "2026-08-15T01:00:00+00:00",
+            "2026-08-15T01:00:00+00:00",
+        ),
+    )
+    db.commit()
+
+    async def _structured_recommendation(*_args, **_kwargs):
+        return {"lessons": [{
+            "summary": "Retryable guard hypothesis",
+            "supporting_factor_keys": [factor],
+            "recommendation": {"action": "block_scanner", "scanner": "momentum"},
+        }]}, None
+
+    def fail_nomination(**_):
+        raise RuntimeError("temporary nomination failure")
+
+    monkeypatch.setattr(dreaming_agent, "llm_structured", _structured_recommendation)
+    monkeypatch.setattr(hypotheses, "nominate_learning_hypothesis", fail_nomination)
+
+    with pytest.raises(RuntimeError, match="temporary nomination failure"):
+        await dreaming_agent._extract_lessons(None, [], [])
+
+    assert db.execute("SELECT COUNT(*) FROM ps_lessons").fetchone()[0] == 0
+    assert pending_trade_case_studies_summary()[0] == 1
+
+
+def test_pending_trade_case_reopens_after_rejected_lesson(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.learning.lessons import LessonStore
+    from aletheia.storage.repositories import (
+        list_pending_trade_case_studies,
+        pending_trade_case_studies_summary,
+    )
+
+    _seed_trade_case_study("case-rejected", "2026-08-15T01:00:00+00:00")
+    lesson = LessonStore().create(
+        "Rejected lesson",
+        source_type="trade_case_study",
+        source_id="case-rejected",
+    )
+    LessonStore().reject(lesson.lesson_id)
+
+    assert [row["id"] for row in list_pending_trade_case_studies()] == ["case-rejected"]
+    assert pending_trade_case_studies_summary()[0] == 1
 
 
 async def test_lesson_extraction_links_each_lesson_to_its_supporting_case(

@@ -239,8 +239,12 @@ export interface DreamingSummary {
 		artifacts?: Array<{ artifact_type: string; artifact_id: string; created_at: string }>;
 	}>;
 	dreaming_job: {
-		status: string; last_started_at: string | null; last_succeeded_at: string | null;
-		next_due_at?: string | null; backlog_count: number | null;
+		job_id: string; schedule_key: string;
+		last_expected_at?: string | null; last_started_at: string | null; last_succeeded_at: string | null;
+		next_due_at?: string | null; input_watermark?: string | null; input_cursor?: string | null;
+		backlog_count: number | null; oldest_backlog_at?: string | null; consecutive_failures?: number;
+		status: string; last_failed_at?: string | null; updated_at?: string | null;
+		overdue?: boolean; overdue_seconds?: number | null;
 	} | null;
 	dreaming_job_availability: "available" | "unavailable";
 }

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -177,10 +179,11 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     from aletheia.learning import guard_routing
 
     captured = {}
+    created_ids = iter(("candidate-item", "candidate-item-2"))
 
     def fake_create(*, title, content, metadata):
         captured.update(metadata)
-        return SimpleNamespace(id="candidate-item")
+        return SimpleNamespace(id=next(created_ids))
 
     monkeypatch.setattr(guard_routing, "create_guard_candidate", fake_create)
     # Evidence must include factor_keys encoding symbol so scope can be derived (#197).
@@ -198,6 +201,39 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     )
 
     assert routed["action"] == "guard_shadow_candidate"
+    assert routed["hypothesis_status"] == "proposed"
+    assert routed["hypothesis_id"]
+    assert routed["guard_candidate_id"] == "candidate-item"
+    from aletheia.learning.ledger import get_record, list_records
+    hypothesis_row = get_record("learning_hypotheses", routed["hypothesis_id"])
+    assert hypothesis_row is not None
+    assert hypothesis_row["path_id"] == "ranker_learned_guard"
+    assert hypothesis_row["consumer"] == "paper_trader_ranker"
+    assert hypothesis_row["target_horizon"] == "4h"
+    assert hypothesis_row["source_type"] == "guard_candidate"
+    assert json.loads(hypothesis_row["scope_json"]) == {
+        "guard_id": routed["guard_id"],
+    }
+    assert json.loads(hypothesis_row["action_json"]) == {
+        "block_candidate": True,
+        "guard_id": routed["guard_id"],
+        "score_penalty": 0,
+        "type": "candidate_guard",
+    }
+    assert json.loads(hypothesis_row["source_artifact_ids_json"]) == [
+        "case-1", "candidate-item",
+    ]
+    repeated = guard_routing.route_automatic_block_recommendation(
+        {"action": "block_scanner", "scanner": "momentum"},
+        evidence=evidence_with_scope,
+        source_id="case-1",
+    )
+    assert repeated["hypothesis_id"] == routed["hypothesis_id"]
+    assert repeated["guard_candidate_id"] == "candidate-item"
+    assert len(list_records("learning_hypotheses")) == 1
+    assert list_records("learning_experiments") == []
+    assert list_records("learning_exposures") == []
+    assert list_records("learning_contribution_verdicts") == []
     assert captured["status"] == "candidate"
     assert captured["enforcement"] == "advisory"
     assert captured["shadow_only"] is True
@@ -252,6 +288,38 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     )
     result = guard_promotion.run_promotion_check()
     assert result["promotions"] == 0
+
+
+@spec_claim(SpecClaim(
+    "LE-B19c", "learning_evolution", "§9.7 nomination retry", "L2b",
+    "A failed hypothesis nomination propagates instead of returning a lesson-ready "
+    "recommendation, so the enclosing Dreaming batch leaves its source case pending "
+    "for a later retry.",
+    status="implemented",
+))
+def test_automatic_block_recommendation_propagates_nomination_failure(monkeypatch):
+    from aletheia.learning import guard_routing, hypotheses
+
+    monkeypatch.setattr(
+        guard_routing,
+        "create_guard_candidate",
+        lambda **_: SimpleNamespace(id="candidate-item"),
+    )
+
+    def fail_nomination(**_):
+        raise RuntimeError("temporary nomination failure")
+
+    monkeypatch.setattr(hypotheses, "nominate_learning_hypothesis", fail_nomination)
+
+    with pytest.raises(RuntimeError, match="temporary nomination failure"):
+        guard_routing.route_automatic_block_recommendation(
+            {"action": "block_scanner", "scanner": "momentum"},
+            evidence={
+                "factor_keys": ["momentum:BTCUSDT:long:medium_confidence:not_late"],
+                "scanner_families": ["momentum"],
+            },
+            source_id="case-retry",
+        )
 
 
 @spec_claim(SpecClaim(
