@@ -162,7 +162,8 @@ jobs:
       issues: write
       pull-requests: write
       statuses: write
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    # Metadata-only control plane; do not contend with scarce self-hosted test runners.
+    runs-on: ubuntu-24.04
     steps:
       - name: Release the verified candidate hold
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
