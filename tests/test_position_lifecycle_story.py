@@ -842,3 +842,6 @@ def test_story_uses_opened_boundary_for_periodic_path_without_entry_fill():
     assert [row["bucket_open_ms"] for row in story["periodic_observations"]] == [
         1_786_579_200_000
     ]
+    assert story["economic_path"]["fill_aggregation"] == "unavailable"
+    assert story["economic_path"]["path_evidence_status"] == "unavailable"
+    assert story["economic_path"]["mark_to_market_curve"]["status"] == "unavailable"

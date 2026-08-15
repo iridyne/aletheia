@@ -1560,6 +1560,45 @@ def test_historical_snapshot_projects_state_from_lifecycle_facts():
             "2026-08-13T00:07:00+00:00",
         ),
     )
+    close_order_id = "historical-partial-close-order"
+    close_at = "2026-08-13T00:12:00+00:00"
+    db.execute(
+        "INSERT INTO orders "
+        "(id,symbol,market_type,direction,order_type,quantity,price,"
+        "execution_mode,position_id,close_reason,status,source,created_at,filled_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            close_order_id,
+            position.symbol,
+            position.market_type,
+            "long",
+            "market",
+            0.25,
+            130.0,
+            "paper_internal",
+            position.id,
+            "manual",
+            "filled",
+            "native",
+            close_at,
+            close_at,
+        ),
+    )
+    db.execute(
+        "INSERT INTO fills "
+        "(id,order_id,fill_price,fill_quantity,fee,fee_currency,fee_source,filled_at) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "historical-partial-close-fill",
+            close_order_id,
+            130.0,
+            0.25,
+            0.0325,
+            "USDT",
+            "estimated",
+            close_at,
+        ),
+    )
     db.execute(
         "INSERT INTO position_close_events "
         "(id,position_id,symbol,direction,execution_mode,close_reason,"
@@ -1615,3 +1654,66 @@ def test_historical_snapshot_projects_state_from_lifecycle_facts():
     assert after_partial["remaining_notional"] == pytest.approx(134.3443708609)
     assert after_partial["entry_fee"] == pytest.approx(0.145)
     assert after_partial["realized_pnl"] == pytest.approx(7.475)
+
+
+def test_historical_snapshot_projects_scale_in_through_bucket_close():
+    from aletheia.portfolio.position_path_observer import _historical_position_snapshot
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(position_id="position-path-bucket-close")
+    _insert_entry_leg(
+        position,
+        leg_id="bucket-close-scale-in",
+        quantity=0.5,
+        price=120.0,
+        filled_at="2026-08-13T00:04:00+00:00",
+        fee=0.06,
+    )
+
+    snapshot = _historical_position_snapshot(
+        repo.get_position(position.id),
+        bucket_open_ms=1_786_579_200_000,
+    )
+
+    assert snapshot["quantity"] == pytest.approx(0.51)
+    assert snapshot["entry_price"] == pytest.approx(119.6078431373)
+    assert snapshot["entry_fee"] == pytest.approx(0.07)
+
+
+def test_projector_converts_base_asset_fill_fee_to_quote():
+    from aletheia.portfolio.position_path_observer import _project_position_state_as_of
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(position_id="position-path-base-fee")
+    repo.get_db().execute(
+        "UPDATE fills SET fee=?, fee_currency=? WHERE order_id=?",
+        (0.001, "BTC", f"test-entry-order-{position.id}"),
+    )
+    repo.get_db().commit()
+
+    state = _project_position_state_as_of(
+        repo.get_position(position.id),
+        as_of_ms=1_786_579_200_000,
+    )
+
+    assert state["entry_fee"] == pytest.approx(0.1)
+
+
+def test_projector_rejects_fill_with_mismatched_execution_mode():
+    from aletheia.portfolio.position_path_observer import _project_position_state_as_of
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(position_id="position-path-mode-mismatch")
+    repo.get_db().execute(
+        "UPDATE orders SET execution_mode=? WHERE position_id=?",
+        ("okx_demo", position.id),
+    )
+    repo.get_db().commit()
+
+    state = _project_position_state_as_of(
+        repo.get_position(position.id),
+        as_of_ms=1_786_579_200_000,
+    )
+
+    assert state["quantity"] is None
+    assert state["_historical_state_reason"] == "historical_lifecycle_identity_mismatch"

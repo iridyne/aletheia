@@ -1772,7 +1772,12 @@ def build_position_lifecycle_story(
     exit_at = _utc(exit_fill.get("filled_at")) if exit_fill else None
     fill_aggregation = (
         "unavailable"
-        if (entry_fills and entry_fill is None) or (close_fills and exit_fill is None)
+        if (
+            not entry_fills
+            or (closed_visible and not close_fills)
+            or (entry_fills and entry_fill is None)
+            or (close_fills and exit_fill is None)
+        )
         else "quantity_weighted"
         if len(entry_fills) > 1 or len(close_fills) > 1
         else "single"

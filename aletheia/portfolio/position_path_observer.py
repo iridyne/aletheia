@@ -45,6 +45,29 @@ def _finite(value: object) -> float | None:
     except (TypeError, ValueError, OverflowError):
         return None
     return number if math.isfinite(number) else None
+def _fee_in_quote(
+    *,
+    fee: float | None,
+    fee_currency: object,
+    fill_price: float,
+    symbol: str,
+) -> float | None:
+    """Convert a directly observable Fill fee into the instrument quote asset."""
+    if fee is None:
+        return None
+    if fee == 0:
+        return 0.0
+    canonical = to_canonical(symbol)
+    base, separator, quote = canonical.partition("/")
+    currency = str(fee_currency or quote).strip().upper()
+    if not separator or not base or not quote or not currency:
+        return None
+    if currency == quote.upper():
+        return fee
+    if currency == base.upper():
+        return fee * fill_price
+    return None
+
 
 
 def _normalize_direction(value: object) -> str | None:
@@ -274,15 +297,19 @@ def _project_position_state_as_of(
                 to_canonical(str(row.get("symbol") or "")) == expected_symbol
                 and _physical_market_type(row.get("market_type")) == expected_market
                 and _normalize_direction(row.get("direction")) == expected_direction
+                and str(row.get("execution_mode") or "")
+                == str(position.get("execution_mode") or "")
             )
+
 
         def close_identity_matches(row: Mapping[str, Any]) -> bool:
             return (
                 to_canonical(str(row.get("symbol") or "")) == expected_symbol
                 and _normalize_direction(row.get("direction")) == expected_direction
-                and str(row.get("execution_mode") or position.get("execution_mode") or "")
+                and str(row.get("execution_mode") or "")
                 == str(position.get("execution_mode") or "")
             )
+
 
         lifecycle: list[
             tuple[
@@ -297,6 +324,18 @@ def _project_position_state_as_of(
             ]
         ] = []
         entry_seen = False
+        close_fill_lifecycle: list[
+            tuple[
+                datetime,
+                int,
+                str,
+                str,
+                float,
+                float,
+                float | None,
+                float | None,
+            ]
+        ] = []
         for order_id, order in orders.items():
             is_close_order = bool(str(order.get("close_reason") or "").strip())
             fill_rows = db.execute(
@@ -319,33 +358,51 @@ def _project_position_state_as_of(
                     )
                 quantity = _finite(fill.get("fill_quantity"))
                 price = _finite(fill.get("fill_price"))
-                fee = _finite(fill.get("fee"))
                 if quantity is None or quantity <= 0 or price is None or price <= 0:
                     return _historical_state_unavailable(
                         "historical_fill_economics_invalid"
                     )
                 event_kind = "close_fill" if is_close_order else "entry_fill"
-                if event_kind == "entry_fill":
-                    entry_seen = True
-                    lifecycle.append(
+                if event_kind == "close_fill":
+                    close_fill_lifecycle.append(
                         (
                             filled_at,
-                            0,
+                            1,
                             str(fill.get("id") or order_id),
                             event_kind,
                             quantity,
                             price,
-                            fee,
+                            None,
                             None,
                         )
                     )
+                    continue
+                fee = _fee_in_quote(
+                    fee=_finite(fill.get("fee")),
+                    fee_currency=fill.get("fee_currency"),
+                    fill_price=price,
+                    symbol=expected_symbol,
+                )
+                entry_seen = True
+                lifecycle.append(
+                    (
+                        filled_at,
+                        0,
+                        str(fill.get("id") or order_id),
+                        event_kind,
+                        quantity,
+                        price,
+                        fee,
+                        None,
+                    )
+                )
 
         close_event_rows = db.execute(
             "SELECT *, rowid AS _rowid FROM position_close_events "
             "WHERE position_id=? ORDER BY datetime(closed_at), rowid",
             (position_id,),
         ).fetchall()
-        close_event_keys: set[tuple[datetime, float]] = set()
+        ledger_close_seen = False
         for raw_event in close_event_rows:
             event = dict(raw_event)
             closed_at = _parse_position_timestamp(event.get("closed_at"))
@@ -371,7 +428,7 @@ def _project_position_state_as_of(
             # reconstruct remaining quantity or weighted entry cost.
             if price is None or price <= 0:
                 price = 0.0
-            close_event_keys.add((closed_at, quantity))
+            ledger_close_seen = True
             lifecycle.append(
                 (
                     closed_at,
@@ -385,50 +442,8 @@ def _project_position_state_as_of(
                 )
             )
 
-        # Older close chains may have Order/Fill facts without the per-close
-        # ledger. Use those facts only when no matching immutable close event
-        # exists; never count a full close twice.
-        for order_id, order in orders.items():
-            if not str(order.get("close_reason") or "").strip():
-                continue
-            fill_rows = db.execute(
-                "SELECT *, rowid AS _rowid FROM fills "
-                "WHERE order_id=? ORDER BY datetime(filled_at), rowid",
-                (order_id,),
-            ).fetchall()
-            for raw_fill in fill_rows:
-                fill = dict(raw_fill)
-                filled_at = _parse_position_timestamp(fill.get("filled_at"))
-                if filled_at is None:
-                    return _historical_state_unavailable(
-                        "historical_fill_timestamp_invalid"
-                    )
-                if filled_at > cutoff:
-                    continue
-                if not identity_matches(order):
-                    return _historical_state_unavailable(
-                        "historical_lifecycle_identity_mismatch"
-                    )
-                quantity = _finite(fill.get("fill_quantity"))
-                price = _finite(fill.get("fill_price"))
-                if quantity is None or quantity <= 0 or price is None or price <= 0:
-                    return _historical_state_unavailable(
-                        "historical_fill_economics_invalid"
-                    )
-                if (filled_at, quantity) in close_event_keys:
-                    continue
-                lifecycle.append(
-                    (
-                        filled_at,
-                        1,
-                        str(fill.get("id") or order_id),
-                        "close_fill",
-                        quantity,
-                        price,
-                        None,
-                        None,
-                    )
-                )
+        if not ledger_close_seen:
+            lifecycle.extend(close_fill_lifecycle)
 
         if not entry_seen:
             return _historical_state_unavailable("entry_fill_evidence_unavailable")
@@ -503,10 +518,14 @@ def _historical_position_snapshot(
 
     snapshot = dict(position)
     snapshot.update(
-        _project_position_state_as_of(position, as_of_ms=bucket_open_ms)
+        # A recovered bucket is the half-open interval
+        # [bucket_open_ms, bucket_open_ms + _BUCKET_MS); project the state
+        # immediately before its closing boundary so events exactly at the
+        # boundary belong to the following lifecycle interval.
+        _project_position_state_as_of(
+            position, as_of_ms=bucket_open_ms + _BUCKET_MS - 1
+        )
     )
-    snapshot["funding_cost"] = None
-    snapshot["funding_source"] = "unavailable"
     snapshot["stop_price"] = None
     snapshot["take_profit_price"] = None
     snapshot["exit_plan_version"] = 0
