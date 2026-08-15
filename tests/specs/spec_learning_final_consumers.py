@@ -298,6 +298,130 @@ def test_ranker_learning_deltas_are_refrozen_behind_separate_authority(monkeypat
     }) == 3
 
 
+def test_ranker_case_shadow_uses_exact_candidate_identity_for_assignment(monkeypatch):
+    import aletheia.agents.paper_trader_ranker as ranker
+    from aletheia.learning.experiments import InfluenceDecision
+
+    calls = []
+
+    def capture(**kwargs):
+        calls.append(kwargs)
+        return InfluenceDecision(
+            value=kwargs["baseline"],
+            applied=False,
+            assignment="control",
+            reason="baseline:control_assignment",
+            hypothesis_id="hypothesis",
+            experiment_id="experiment",
+            exposure_id=f"exposure-{len(calls)}",
+        )
+
+    monkeypatch.setattr(
+        "aletheia.learning.experiments.apply_numeric_treatment",
+        capture,
+    )
+    trace = []
+    for opportunity_id in ("opportunity-a", "opportunity-b"):
+        value = ranker._authorized_ranker_delta(
+            path_id="ranker_case_score",
+            proposed_delta=0.0,
+            opp={
+                "id": opportunity_id,
+                "symbol": "BTC/USDT",
+                "metadata": json.dumps({"learning_candidate_key": "member-1"}),
+            },
+            direction="long",
+            scope={"symbol": "BTC/USDT", "direction": "long"},
+            source_cohort="trade_case_study:v1",
+            learning_trace=trace,
+        )
+        assert value == 0.0
+
+    assert len(calls) == 2
+    assert {(call["candidate_key"], call["assignment_key"]) for call in calls} == {
+        ("member-1", "member-1"),
+    }
+    assert {call["outcome_candidate_key"] for call in calls} == {"member-1:4h"}
+    assert {row["assignment_unit_key"] for row in trace} == {"member-1"}
+
+
+def test_ranker_case_shadow_forces_nonzero_adapter_result_to_baseline(monkeypatch):
+    import aletheia.agents.paper_trader_ranker as ranker
+    from aletheia.learning.experiments import InfluenceDecision
+
+    monkeypatch.setattr(
+        "aletheia.learning.experiments.apply_numeric_treatment",
+        lambda **_: InfluenceDecision(
+            7.0,
+            True,
+            "treatment",
+            "unexpected_authorized_delta",
+            "hypothesis",
+            "experiment",
+            "exposure",
+        ),
+    )
+    trace = []
+    value = ranker._authorized_ranker_delta(
+        path_id="ranker_case_score",
+        proposed_delta=-7.0,
+        opp={
+            "id": "opportunity-shadow",
+            "symbol": "BTC/USDT",
+            "metadata": json.dumps({"learning_candidate_key": "member-2"}),
+        },
+        direction="long",
+        scope={"symbol": "BTC/USDT", "direction": "long"},
+        source_cohort="trade_case_study:v1",
+        learning_trace=trace,
+    )
+
+    assert value == 0.0
+    assert trace[0]["actual_delta"] == 0.0
+    assert trace[0]["reason"] == "shadow_zero_delta_enforced"
+
+
+def test_ranker_case_valid_candidate_persists_one_shadow_exposure(monkeypatch):
+    import aletheia.agents.paper_trader_ranker as ranker
+    from aletheia.learning import experiments
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+    opp = {
+        "id": "opportunity-carrier",
+        "symbol": "BTC/USDT",
+        "metadata": json.dumps({"learning_candidate_key": "member-1"}),
+    }
+    kwargs = dict(
+        path_id="ranker_case_score",
+        proposed_delta=0.0,
+        opp=opp,
+        direction="long",
+        scope={"symbol": "BTC/USDT", "direction": "long"},
+        source_cohort="trade_case_study:v1",
+        learning_trace=[],
+    )
+    first = ranker._authorized_ranker_delta(**kwargs)
+    second = ranker._authorized_ranker_delta(**kwargs)
+
+    assert first == second == 0.0
+    assert second is not None
+    row = get_db().execute(
+        "SELECT * FROM learning_exposures WHERE path_id=? AND candidate_key=?",
+        ("ranker_case_score", "member-1"),
+    ).fetchone()
+    assert row["assignment_unit_key"] == "member-1"
+    assert row["outcome_candidate_key"] == "member-1:4h"
+    assert row["experiment_stage"] == "shadow"
+    assert json.loads(row["before_json"])["value"] == 0.0
+    assert json.loads(row["after_json"])["value"] == 0.0
+    assert json.loads(row["manifest_json"])["authority_applied"] is False
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM learning_exposures WHERE path_id=? AND candidate_key=?",
+        ("ranker_case_score", "member-1"),
+    ).fetchone()[0] == 1
+
+
 def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanner: str,
                             complete: bool = True) -> None:
     from datetime import datetime, timedelta, timezone

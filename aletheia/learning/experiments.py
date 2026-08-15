@@ -35,7 +35,6 @@ from aletheia.learning.ledger import (
 from aletheia.learning.models import LearningExperiment, LearningExposure, LearningHypothesis
 from aletheia.learning.registry import get_learning_path
 from aletheia.learning.policy_epochs import PolicyEpoch, build_policy_epoch
-from aletheia.learning.verdicts import METRIC_VERSION
 
 # Hypothesis statuses that forbid opening a *new* experiment.  `refrozen` is
 # written by the lifecycle controller when it invalidates an experiment, and is
@@ -355,7 +354,8 @@ def apply_numeric_treatment(
     gate_reason = _learning_gate_reason()
     if gate_reason is not None:
         return InfluenceDecision(baseline_value, False, "disabled", gate_reason)
-    if not get_learning_path(path_id).measurement_supported:
+    path = get_learning_path(path_id)
+    if not path.measurement_supported:
         return InfluenceDecision(
             baseline_value, False, "disabled", "measurement_unsupported"
         )
@@ -447,16 +447,25 @@ def apply_numeric_treatment(
         path_id=path_id,
         policy_epoch=policy_epoch,
         target_horizon=target_horizon,
-        outcome_contract_version="v1",
-        metric_version=METRIC_VERSION,
+        outcome_contract_version=path.outcome_contract_version,
+        metric_version=path.metric_version,
     )
     from aletheia.learning.authority import resolve_learning_authority
     authority = resolve_learning_authority(path_id, experiment, policy_epoch)
+    authority_authorized = authority.authorized
+    authority_reason = authority.reason
+    if not path.paper_authority_supported:
+        authority_authorized = False
+        authority_reason = (
+            "experiment_stage_not_paper"
+            if experiment.stage == "shadow"
+            else "authority_unwired"
+        )
     authorized, authority_reason = _enforce_shadow_authority_provenance(
         path_id=path_id,
         experiment=experiment,
-        authorized=authority.authorized,
-        reason=authority.reason,
+        authorized=authority_authorized,
+        reason=authority_reason,
     )
     # Permission provenance and realized behavior are intentionally distinct:
     # a treatment assignment can be authorized yet produce no numeric delta.
@@ -490,7 +499,7 @@ def apply_numeric_treatment(
         consumer=consumer,
         consumer_stage=f"{consumer_stage}:{stage}" if consumer_stage else stage,
         path_id=path_id,
-        overlap_group=get_learning_path(path_id).overlap_group,
+        overlap_group=path.overlap_group,
         assignment_unit_key=assignment_unit_key,
         candidate_key=candidate_key,
         opportunity_id=opportunity_id,
@@ -506,6 +515,7 @@ def apply_numeric_treatment(
         }, sort_keys=True),
         outcome_candidate_key=outcome_candidate_key,
         outcome_source="fixed_horizon_candidate" if outcome_candidate_key else None,
+        outcome_contract_version=path.outcome_contract_version,
         experiment_stage=experiment.stage,
         concurrent_policy_epoch=policy_epoch,
         # P1-1: attribute the exposure to the running build so evidence produced by

@@ -787,27 +787,37 @@ def _authorized_ranker_delta(
     source_cohort: str,
     learning_trace: list[dict] | None,
 ) -> float:
-    """Return a prospective-authorized score delta, otherwise the static zero.
+    """Return an authorized score delta and persist ranker Shadow evidence.
 
-    A fixed-horizon key is mandatory for a writable/creditable exposure. Legacy or
-    non-Universe opportunities therefore fail closed instead of creating an
-    unresolvable experiment row.
+    ``learning_candidate_key`` is the exact candidate-level causal identity for
+    ``ranker_case_score``. Opportunity ids are carrier records, not assignment
+    units, so they must not split or duplicate one candidate's evidence.
     """
     try:
         meta = _json.loads(opp.get("metadata") or "{}")
     except (TypeError, ValueError):
         meta = {}
     learning_key = meta.get("learning_candidate_key")
+    ranker_candidate_key = str(learning_key) if learning_key else None
     opportunity_id = opp.get("id")
-    candidate_key = (
-        f"opportunity:{opportunity_id}"
-        if opportunity_id and learning_key else None
-    )
-    outcome_key = f"{learning_key}:4h" if learning_key else None
+    if path_id == "ranker_case_score":
+        candidate_key = ranker_candidate_key
+        assignment_key = ranker_candidate_key
+    else:
+        candidate_key = (
+            f"opportunity:{opportunity_id}"
+            if opportunity_id and ranker_candidate_key else None
+        )
+        assignment_key = None
+    outcome_key = f"{ranker_candidate_key}:4h" if ranker_candidate_key else None
 
     from aletheia.learning.experiments import InfluenceDecision, apply_numeric_treatment
 
-    if abs(float(proposed_delta)) < 1e-9:
+    # Ranker Case measures every valid candidate, including candidates whose
+    # proposed case delta is zero. Otherwise the control arm would never be
+    # exposed and the path could not form a causal cohort.
+    measure_candidate = path_id == "ranker_case_score" and candidate_key is not None
+    if abs(float(proposed_delta)) < 1e-9 and not measure_candidate:
         decision = InfluenceDecision(0.0, False, "baseline", "no_proposed_delta")
     else:
         try:
@@ -818,6 +828,7 @@ def _authorized_ranker_delta(
                 source_cohort=source_cohort,
                 target_horizon="4h",
                 candidate_key=candidate_key,
+                assignment_key=assignment_key,
                 baseline=0.0,
                 treatment=float(proposed_delta),
                 consumer="paper_trader_ranker",
@@ -828,11 +839,29 @@ def _authorized_ranker_delta(
                     "proposed_delta": float(proposed_delta),
                     "symbol": opp.get("symbol"),
                     "direction": direction,
+                    "candidate_identity": ranker_candidate_key,
+                    "assignment_unit_key": assignment_key,
+                    "outcome_candidate_key": outcome_key,
                 },
             )
         except Exception as exc:
             logger.warning("Ranker Learning adapter failed closed for %s: %s", path_id, exc)
             decision = InfluenceDecision(0.0, False, "unavailable", "adapter_error")
+    if path_id == "ranker_case_score" and decision.value != 0.0:
+        logger.error(
+            "Ranker Case Shadow attempted a non-zero delta; forcing baseline "
+            "for candidate %s",
+            ranker_candidate_key,
+        )
+        decision = InfluenceDecision(
+            0.0,
+            False,
+            decision.assignment,
+            "shadow_zero_delta_enforced",
+            decision.hypothesis_id,
+            decision.experiment_id,
+            decision.exposure_id,
+        )
     if learning_trace is not None:
         learning_trace.append({
             "path_id": path_id,
@@ -845,6 +874,9 @@ def _authorized_ranker_delta(
             "hypothesis_id": decision.hypothesis_id,
             "experiment_id": decision.experiment_id,
             "exposure_id": decision.exposure_id,
+            "candidate_key": candidate_key,
+            "assignment_unit_key": assignment_key,
+            "outcome_candidate_key": outcome_key,
         })
     return float(decision.value)
 

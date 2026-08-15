@@ -13,7 +13,7 @@ from statistics import fmean
 from typing import Any
 
 from aletheia.learning.cohorts import ContributionCohort, CohortSample
-
+from aletheia.learning.registry import get_learning_path, metric_version_for_path
 
 METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v10"
 RANDOMIZATION_INFERENCE_VERSION = "conditional-randomization-itt/v1"
@@ -554,8 +554,15 @@ def _harm_metrics(
     control_selected_member_n = sum(
         sample.selected_member_count for sample in control
     )
+    try:
+        metric_version = metric_version_for_path(cohort.hypothesis.path_id)
+    except (AttributeError, KeyError):
+        metric_version = METRIC_VERSION
     return {
-        "metric_version": METRIC_VERSION,
+        "metric_version": metric_version,
+        "statistical_unit": get_learning_path(
+            cohort.hypothesis.path_id
+        ).statistical_unit,
         "stage": cohort.experiment.stage,
         "iid_bootstrap": "retired_overlapping_horizon_outcomes",
         "policy_epoch": cohort.key.policy_epoch,

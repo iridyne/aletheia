@@ -19,11 +19,17 @@ from typing import Any
 from aletheia.learning.ledger import get_record
 from aletheia.learning.models import LearningExperiment, LearningHypothesis
 from aletheia.learning.outcomes import assess_candidate_outcome
-from aletheia.learning.registry import LEARNING_PATHS
+from aletheia.learning.registry import (
+    LEARNING_PATHS,
+    get_learning_path,
+    outcome_contract_version_for_path,
+)
 from aletheia.storage.sqlite import get_db
 
 
 SUPPORTED_PATH_ID = "universe_family_calibration"
+RANKER_CASE_PATH_ID = "ranker_case_score"
+RANKER_CASE_OUTCOME_SOURCE = "filter_candidate_outcomes"
 # Consumer wiring is not causal measurement support. A path enters this set only
 # after its exact outcome and statistical-unit contracts are executable AND have
 # focused passing cohort tests that exercise the full round-trip.
@@ -33,20 +39,10 @@ SUPPORTED_PATH_ID = "universe_family_calibration"
 #   - allocation_selected: populated by universe/service._register_experiment_candidate_outcomes
 #   - statistical unit: full-arm Universe allocation member
 #
-# The paths below are consumer_wired (the runtime reads their authority) but are
-# NOT measurement_supported — the cohort builder's _load_exact_outcomes requires
-# allocation_selected to be non-null, which their filter_candidate_outcomes rows
-# cannot supply by contract. Including them would leave every such outcome
-# permanently unmeasured ("missing_allocation_result", now a benign exclusion —
-# see _IDENTITY_EXCLUSION_REASONS) rather than measured, so keep them out until a
-# per-path cohort adapter exists. See issue #324 for the full audit.
-#
-# Paths blocked from measurement until per-path cohort adapters are implemented:
-#   operator_learning_bundle:   needs decision-utility outcome after prompt treatment
-#   observer_advisory_bundle:   needs path-specific statistical-unit/outcome contract
-#   ranker_case_score:          needs path-specific statistical-unit/outcome contract
-#   ranker_memo_score:          needs path-specific statistical-unit/outcome contract
-#   ranker_factor_filter:       needs path-specific statistical-unit/outcome contract
+# Ranker case support:
+#   - outcome contract: filter_candidate_outcomes keyed by learning_candidate_key
+#   - allocation_selected: deliberately ignored; ranker evidence is candidate-level
+#   - statistical unit: one exact ranker candidate identity
 SUPPORTED_PATH_IDS = frozenset(
     path.path_id for path in LEARNING_PATHS if path.measurement_supported
 )
@@ -188,6 +184,9 @@ class ContributionCohort:
             "policy_epoch": self.key.policy_epoch,
             "horizon": self.key.horizon,
             "outcome_contract_version": self.key.outcome_contract_version,
+            "statistical_unit": get_learning_path(
+                self.hypothesis.path_id
+            ).statistical_unit,
             "behavior_contract_hash": self.key.behavior_contract_hash or None,
             "source_code_commits": sorted(self.source_code_commits),
             "source_code_commit_unknown_n": self.source_code_commit_unknown_n,
@@ -340,8 +339,10 @@ def build_experiment_cohorts(
         if not key.horizon:
             cohort.invalid_reasons["missing_target_horizon"] += 1
             continue
-        if not key.outcome_contract_version:
-            cohort.invalid_reasons["missing_outcome_contract_version"] += 1
+        if key.outcome_contract_version != outcome_contract_version_for_path(
+            hypothesis.path_id
+        ):
+            cohort.invalid_reasons["outcome_contract_version_mismatch"] += 1
             continue
         if not key.behavior_contract_hash:
             cohort.invalid_reasons["missing_behavior_contract_hash"] += 1
@@ -650,6 +651,8 @@ def _load_exact_outcomes(
 ]:
     """Resolve all requested outcomes with two bounded, exact-key query sets."""
     requested = {key for key in outcome_candidate_keys if key}
+    if path_id == RANKER_CASE_PATH_ID:
+        return _load_ranker_case_outcomes(requested, horizon)
     filter_keys = {_filter_base_key(key, horizon) for key in requested}
     filter_rows = _rows_for_keys("filter_candidate_outcomes", filter_keys)
     universe_rows = _rows_for_keys("universe_forward_outcomes", requested)
@@ -805,6 +808,98 @@ def _load_exact_outcomes(
             None,
             "wrong_horizon" if all_rows else "missing_exact_outcome",
             0,
+            wrong_horizon_n,
+            None,
+            None,
+        )
+    return resolved
+
+def _load_ranker_case_outcomes(
+    requested: set[str],
+    horizon: str,
+) -> dict[
+    str,
+    tuple[
+        dict[str, Any] | None,
+        str | None,
+        int,
+        int,
+        str | None,
+        dict[str, Any] | None,
+    ],
+]:
+    """Resolve ranker candidates against their exact outcome contract.
+
+    The exposure identity carries ``<candidate>:<horizon>`` while the existing
+    filter outcome table stores the candidate key without that suffix. Match
+    both representations by exact candidate base and still require the
+    requested horizon; never fall back to symbol or time proximity.
+    """
+    filter_keys = {
+        key
+        for outcome_key in requested
+        for key in (
+            outcome_key,
+            _filter_base_key(outcome_key, horizon),
+        )
+    }
+    rows = _rows_for_keys("filter_candidate_outcomes", filter_keys)
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        row_key = str(row.get("outcome_candidate_key") or "")
+        row_horizon = str(row.get("horizon") or "")
+        grouped[_filter_base_key(row_key, row_horizon)].append(row)
+
+    resolved: dict[str, tuple[Any, ...]] = {}
+    for outcome_key in requested:
+        base_key = _filter_base_key(outcome_key, horizon)
+        all_rows = grouped.get(base_key, [])
+        matches = [
+            row for row in all_rows
+            if str(row.get("horizon") or "") == horizon
+        ]
+        wrong_horizon_n = len(all_rows) - len(matches)
+        if not matches:
+            resolved[outcome_key] = (
+                None,
+                "wrong_horizon" if all_rows else "missing_exact_outcome",
+                0,
+                wrong_horizon_n,
+                None,
+                None,
+            )
+            continue
+        distinct = {_outcome_fingerprint(row) for row in matches}
+        if len(distinct) > 1:
+            fingerprint = _conflict_fingerprint(
+                "ambiguous_duplicate_outcome", matches
+            )
+            resolved[outcome_key] = (
+                None,
+                "ambiguous_duplicate_outcome",
+                0,
+                wrong_horizon_n,
+                fingerprint,
+                _conflict_provenance(
+                    "ambiguous_duplicate_outcome",
+                    outcome_key,
+                    [("filter_candidate_outcomes", row) for row in matches],
+                ),
+            )
+            continue
+        canonical = dict(matches[0])
+        resolved[outcome_key] = (
+            {
+                **canonical,
+                "_learning_outcome_source": RANKER_CASE_OUTCOME_SOURCE,
+                "_mirrored_universe_row_n": 0,
+                # Ranker case evidence measures candidate utility, not Universe
+                # allocation. The candidate itself is the statistical unit.
+                "_allocation_selected": True,
+                "_allocation_selection_source": "ranker_candidate_identity",
+            },
+            None,
+            len(matches) - 1,
             wrong_horizon_n,
             None,
             None,

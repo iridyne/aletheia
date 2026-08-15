@@ -8,8 +8,9 @@ _CONTRACT = "learning_contract"
 
 @spec_claim(SpecClaim(
     "LC-S01", _CONTRACT, "§1.2 measured-path maturity", "L2a",
-    "Only Universe calibration is measurement-supported; consumer wiring "
-    "and Settings visibility do not imply measurement or authority.",
+    "Only paths with an executable exact outcome/statistical-unit adapter are "
+    "measurement-supported; consumer wiring and Settings visibility do not imply "
+    "measurement or authority.",
     status="implemented",
 ))
 def test_only_declared_closed_loops_are_measurement_supported():
@@ -20,7 +21,7 @@ def test_only_declared_closed_loops_are_measurement_supported():
         for path in LEARNING_PATHS
         if path.measurement_supported
     }
-    assert supported == {"universe_family_calibration"}
+    assert supported == {"universe_family_calibration", "ranker_case_score"}
     assert any(
         path.consumer_wired and not path.measurement_supported
         for path in LEARNING_PATHS
