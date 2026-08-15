@@ -9,6 +9,7 @@ import msgpack
 import pytest
 import zstandard
 from typer.testing import CliRunner
+from aletheia.analytics.position_path_observations import build_position_path_report
 from aletheia.cli.inspect_cmd import inspect_app
 from aletheia.storage import repositories as repo
 from aletheia.storage import position_path_archive as archive_codec
@@ -417,6 +418,41 @@ def test_as_of_filters_rows_inside_one_archived_segment_and_preserves_timestamp_
     )
     assert [row["bucket_open_ms"] for row in visible] == [0, 600_000]
     assert visible[0]["observed_at"] == "2026-08-15T00:00:00Z"
+
+
+def test_position_path_report_hides_future_close_state_at_as_of_cutoff():
+    position = Position(
+        id="position-archive-report-cutoff",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=110.0,
+        realized_pnl=-1.0,
+        execution_mode="paper_internal",
+        opened_at="2026-08-15T00:01:00+00:00",
+        closed_at="2026-08-15T00:20:00+00:00",
+        close_reason="stop_loss",
+        status="closed",
+    )
+    repo.insert_position(position)
+    bucket = int(datetime.fromisoformat("2026-08-15T00:05:00+00:00").timestamp() * 1000)
+    assert repo.insert_position_path_observation(_row(position.id, bucket))
+
+    report = build_position_path_report(
+        position.id,
+        as_of="2026-08-15T00:10:00+00:00",
+    )
+
+    assert report["position_status"] == "open"
+    assert report["closed_at"] is None
+    assert report["close_reason"] is None
+    assert report["realized_pnl"] is None
+    assert report["expected_bucket_count"] == 1
+    assert report["covered_bucket_count"] == 1
+    assert report["path_evidence_status"] == "complete"
+    assert report["giveback_to_exit_pct"] is None
 
 
 def test_payload_uses_fixed_columns_deltas_dictionaries_and_null_bitmaps():

@@ -46,6 +46,58 @@ def _expected_bucket_bounds(position: dict[str, Any]) -> tuple[int | None, int |
     return expected_position_path_bucket_bounds(position)
 
 
+def _as_of_timestamp(value: datetime | str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError("as_of must be an ISO timestamp") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _position_snapshot_at_cutoff(
+    position: dict[str, Any], cutoff: datetime | None
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Hide close-only fields when the Position was still open at ``cutoff``."""
+
+    if cutoff is None:
+        return position, position
+    opened_at = _as_of_timestamp(position.get("opened_at"))
+    if opened_at is not None and opened_at > cutoff:
+        return {
+            **position,
+            "status": "not_recorded_at_cutoff",
+            "closed_at": None,
+            "close_reason": None,
+            "realized_pnl": None,
+            "current_price": None,
+        }, {
+            **position,
+            "status": "closed",
+            "closed_at": cutoff.isoformat(),
+        }
+    closed_at = _as_of_timestamp(position.get("closed_at"))
+    if closed_at is None or closed_at <= cutoff:
+        return position, position
+    visible = {
+        **position,
+        "status": "open",
+        "closed_at": None,
+        "close_reason": None,
+        "realized_pnl": None,
+        "current_price": None,
+    }
+    coverage = {
+        **visible,
+        "status": "closed",
+        "closed_at": cutoff.isoformat(),
+    }
+    return visible, coverage
+
+
 def _path_coverage(
     position: dict[str, Any], observations: list[dict[str, Any]]
 ) -> tuple[str, str, int, int, list[dict[str, Any]]]:
@@ -323,6 +375,18 @@ def build_position_path_report(
             "reason": "position_not_found",
             "observations": [],
         }
+    cutoff = _as_of_timestamp(as_of)
+    visible_position, coverage_position = _position_snapshot_at_cutoff(
+        position, cutoff
+    )
+    if visible_position.get("status") == "not_recorded_at_cutoff":
+        return {
+            "position_id": position_id,
+            "as_of_at": as_of.isoformat() if isinstance(as_of, datetime) else as_of,
+            "status": "unavailable",
+            "reason": "position_not_recorded_at_cutoff",
+            "observations": [],
+        }
     observations = repo.list_position_path_observations_unified(
         position_id,
         limit=limit,
@@ -342,15 +406,15 @@ def build_position_path_report(
         expected_bucket_count,
         covered_bucket_count,
         complete_rows,
-    ) = _path_coverage(position, observations)
+    ) = _path_coverage(coverage_position, observations)
 
-    entry = _finite(position.get("entry_price"))
+    entry = _finite(visible_position.get("entry_price"))
     exit_price = _finite(
-        position.get("current_price")
-        if position.get("current_price") is not None
-        else position.get("exit_price")
+        visible_position.get("current_price")
+        if visible_position.get("current_price") is not None
+        else visible_position.get("exit_price")
     )
-    direction = str(position.get("direction") or "").lower()
+    direction = str(visible_position.get("direction") or "").lower()
     mfe_pct = mae_pct = giveback_to_last_pct = giveback_to_exit_pct = None
     if (
         coverage_status == "complete"
@@ -378,7 +442,7 @@ def build_position_path_report(
             giveback_to_exit_pct = max(0.0, mfe_pct - exit_return_pct)
 
     decomposition = _stop_loss_decomposition(
-        position,
+        visible_position,
         coverage_status=coverage_status,
         coverage_reason=coverage_reason,
         expected_bucket_count=expected_bucket_count,
@@ -390,21 +454,23 @@ def build_position_path_report(
     plan_versions = sorted(
         {
             version
-            for version in (int(row.get("exit_plan_version") or 0) for row in observations)
+            for version in (
+                int(row.get("exit_plan_version") or 0) for row in observations
+            )
             if version > 0
         }
     )
     return {
         "position_id": position_id,
         "as_of_at": as_of.isoformat() if isinstance(as_of, datetime) else as_of,
-        "position_status": position.get("status"),
-        "symbol": position.get("symbol"),
-        "market_type": position.get("market_type"),
-        "direction": position.get("direction"),
-        "opened_at": position.get("opened_at"),
-        "closed_at": position.get("closed_at"),
-        "close_reason": position.get("close_reason"),
-        "realized_pnl": position.get("realized_pnl"),
+        "position_status": visible_position.get("status"),
+        "symbol": visible_position.get("symbol"),
+        "market_type": visible_position.get("market_type"),
+        "direction": visible_position.get("direction"),
+        "opened_at": visible_position.get("opened_at"),
+        "closed_at": visible_position.get("closed_at"),
+        "close_reason": visible_position.get("close_reason"),
+        "realized_pnl": visible_position.get("realized_pnl"),
         "observation_count": len(observations),
         "available_count": len(available),
         "unavailable_count": len(observations) - len(available),

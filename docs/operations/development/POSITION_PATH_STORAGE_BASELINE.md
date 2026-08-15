@@ -289,7 +289,7 @@ isolated SQLite comparison only; it is not proof that the Fedora observer's
 write latency is unchanged, so the production gate remains open.
 
 The latest focused storage/reader, CLI/control, Position Replay, and exact-trade-path
-regression set in this checkout passed `249 passed, 2 skipped in 2.86s`. Ruff,
+regression set in this checkout passed `250 passed, 2 skipped in 2.85s`. Ruff,
 `uv lock --check`, Python bytecode compilation, and `git diff --check` also
 passed; no full repository suite was run on macOS. Earlier replay/profit and
 retention evidence remains historical and does not close the Fedora deployment
