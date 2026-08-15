@@ -96,12 +96,24 @@ jobs:
             echo 'coverage=true' >> "$GITHUB_OUTPUT"
           fi
 
-          if git diff --quiet "$base"...HEAD -- frontend/; then
+          # npm workspaces can make commands launched from a child project
+          # inherit the repository-root manifest, lockfile, and npm config.
+          if git diff --quiet "$base"...HEAD -- \
+            frontend/ \
+            package.json \
+            package-lock.json \
+            npm-shrinkwrap.json \
+            .npmrc; then
             echo 'frontend=false' >> "$GITHUB_OUTPUT"
           else
             echo 'frontend=true' >> "$GITHUB_OUTPUT"
           fi
-          if git diff --quiet "$base"...HEAD -- operator-shell/; then
+          if git diff --quiet "$base"...HEAD -- \
+            operator-shell/ \
+            package.json \
+            package-lock.json \
+            npm-shrinkwrap.json \
+            .npmrc; then
             echo 'operator=false' >> "$GITHUB_OUTPUT"
           else
             echo 'operator=true' >> "$GITHUB_OUTPUT"
