@@ -283,20 +283,59 @@ jobs:
           RUSTFLAGS: -C linker=rust-lld
         run: cargo test --locked --all-targets --target x86_64-unknown-linux-musl
 
+  # Stage 1: with two self-hosted runners, Review and Unit are the only jobs
+  # eligible at T0. This makes the first useful failure signal deterministic
+  # without relying on matrix creation order or runner queue ordering.
+  unit:
+    name: Python unit
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.0"
+          python-version: "3.12"
+          enable-cache: false
+
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Run unit regression tier
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-tier_unit
+        run: >-
+          uv run pytest tests/
+          --ignore=tests/simulation
+          --ignore=tests/test_auto_resume.py
+          --ignore=tests/test_connectivity.py
+          --ignore=tests/test_operator_cli.py
+          --ignore=tests/test_pause_ownership.py
+          -m "tier_unit"
+          -n auto
+          --dist loadfile
+          -q --tb=short
+          --timeout=120
+
+  # Stage 2: deep tiers retain independent reporting, but only become eligible
+  # after the exact-head Review and Unit gates have both succeeded.
   tests:
     name: Python ${{ matrix.name }}
+    needs: [review, unit]
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 20
     strategy:
-      # A contract failure must not hide an unrelated integration or end-to-end
-      # regression. Keep every tier authoritative and report them independently.
+      # A deep-tier failure must not hide another deep regression. Stage-1
+      # failures stop deep CI before it consumes runner capacity instead.
       fail-fast: false
       matrix:
         include:
           - name: specifications
             marker: tier_spec
-          - name: unit
-            marker: tier_unit
           - name: integration
             marker: tier_integration
           - name: end-to-end
@@ -334,6 +373,7 @@ jobs:
 
   runtime-state-tests:
     name: Python runtime state
+    needs: [review, unit]
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 15
 
@@ -391,7 +431,7 @@ jobs:
 
   release-candidate:
     name: Hand off verified release candidate
-    needs: [review, tests, runtime-state-tests]
+    needs: [review, unit, tests, runtime-state-tests]
     if: >-
       github.event_name == 'workflow_dispatch' &&
       startsWith(github.ref_name, 'release-please--branches--master')
@@ -415,7 +455,7 @@ jobs:
 
   release-pr-ci:
     name: Hand off verified release pull request
-    needs: [review, tests, runtime-state-tests]
+    needs: [review, unit, tests, runtime-state-tests]
     if: >-
       github.event_name == 'pull_request' &&
       startsWith(github.head_ref, 'release-please--branches--master')
