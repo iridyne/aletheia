@@ -321,6 +321,23 @@ def test_codec_preserves_null_zero_and_float64_values():
     assert decoded[1]["bar_close"] == 100.12345678901234
 
 
+def test_codec_preserves_quantity_changes_and_exit_plan_revisions():
+    rows = [
+        _row("position-partial-reduction", 0, exit_plan_version=1),
+        _row("position-partial-reduction", 300_000, exit_plan_version=2),
+    ]
+    rows[1]["quantity"] = 0.005
+    rows[1]["exit_plan_version"] = 2
+
+    encoded = encode_segment(
+        rows,
+        position_id="position-partial-reduction",
+        segment_start_ms=0,
+    )
+
+    assert decode_segment(encoded.payload)["rows"] == rows
+
+
 def test_encoder_preserves_the_v26_available_unavailable_contract():
     invalid_available = _row("position-contract", 0)
     invalid_available["evidence_reason"] = "market_data_fetch_failed"
