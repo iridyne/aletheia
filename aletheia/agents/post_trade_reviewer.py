@@ -37,6 +37,19 @@ _CLOSED_STRATEGY_CTE = """
         GROUP BY strategy_id
     )
 """
+_REOPENED_STRATEGY_CTE = """
+    WITH reopened_strategies AS (
+        SELECT DISTINCT
+            strategy_id,
+            CASE
+                WHEN strategy_id IS NULL THEN '0:'
+                ELSE '1:' || strategy_id
+            END AS strategy_key
+        FROM knowledge_items
+        WHERE item_type = 'post_trade_review'
+          AND status IN ('archived', 'deprecated')
+    )
+"""
 
 
 
@@ -172,11 +185,11 @@ def _closed_strategy_prefix_page(
     cursor_key: str | None,
     page_size: int,
 ) -> list[dict]:
-    """Read a bounded page before the forward cursor.
+    """Read a bounded page of reopened strategies before the forward cursor.
 
-    A continuously growing suffix must not prevent older strategies from being
-    retried. The prefix has its own cursor in the same durable round-robin
-    record, and this page wraps inside ``strategy_key < frontier_key`` only.
+    Archived/deprecated reviews are no longer active evidence, so their
+    strategies get an independent retry cursor. Ordinary identities stay on
+    the forward rotation and retain its bounded-round semantics.
     """
     if page_size < 1 or not frontier_key:
         return []
@@ -185,10 +198,10 @@ def _closed_strategy_prefix_page(
     db = get_db()
     if cursor_key and cursor_key < frontier_key:
         first = db.execute(
-            _CLOSED_STRATEGY_CTE
+            _REOPENED_STRATEGY_CTE
             + """
                 SELECT strategy_id, strategy_key
-                FROM closed_strategies
+                FROM reopened_strategies
                 WHERE strategy_key >= ? AND strategy_key < ?
                 ORDER BY strategy_key ASC
                 LIMIT ?
@@ -198,10 +211,10 @@ def _closed_strategy_prefix_page(
         page = [dict(row) for row in first]
         if len(page) < page_size:
             wrapped = db.execute(
-                _CLOSED_STRATEGY_CTE
+                _REOPENED_STRATEGY_CTE
                 + """
                     SELECT strategy_id, strategy_key
-                    FROM closed_strategies
+                    FROM reopened_strategies
                     WHERE strategy_key < ?
                     ORDER BY strategy_key ASC
                     LIMIT ?
@@ -212,10 +225,10 @@ def _closed_strategy_prefix_page(
         return page
 
     rows = db.execute(
-        _CLOSED_STRATEGY_CTE
+        _REOPENED_STRATEGY_CTE
         + """
             SELECT strategy_id, strategy_key
-            FROM closed_strategies
+            FROM reopened_strategies
             WHERE strategy_key < ?
             ORDER BY strategy_key ASC
             LIMIT ?

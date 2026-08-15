@@ -221,6 +221,23 @@ async def test_post_trade_reviewer_scans_prefix_while_forward_page_stays_nonempt
             ),
         )
 
+    # These archived reviews represent re-opened evidence. Ordinary completed
+    # strategies remain on the forward cursor rather than being rescanned.
+    db.executemany(
+        "INSERT INTO knowledge_items "
+        "(id, item_type, title, strategy_id, status, tags) "
+        "VALUES (?, 'post_trade_review', ?, ?, 'archived', ?)",
+        [
+            (
+                f"archived-review-{strategy_id}",
+                "Archived review",
+                strategy_id,
+                f'["position:position-{strategy_id}"]',
+            )
+            for strategy_id in (f"a-{index:02d}" for index in range(21))
+        ],
+    )
+
     state_key = "agents.post_trade_reviewer.strategy_round_robin.v1"
     DurableRoundRobin(state_key).advance_after(
         [{"strategy_key": "1:y-99"}, {"strategy_key": "1:z-00"}],
