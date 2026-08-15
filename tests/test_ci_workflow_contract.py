@@ -76,20 +76,32 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
         "review-native",
         "review",
         "unit",
-        "tests",
         "runtime-state-tests",
+        "integration",
+        "specifications",
+        "end-to-end",
         "release-candidate",
         "release-pr-ci",
     }
     assert jobs["review-core"]["name"] == "Review core"
     assert jobs["review"]["name"] == "Review checks"
     assert jobs["unit"]["name"] == "Python unit"
-    assert jobs["tests"]["name"] == "Python ${{ matrix.name }}"
     assert jobs["runtime-state-tests"]["name"] == "Python runtime state"
+    assert jobs["integration"]["name"] == "Python integration"
+    assert jobs["specifications"]["name"] == "Python specifications"
+    assert jobs["end-to-end"]["name"] == "Python end-to-end"
 
+    expected_handoff_needs = [
+        "review",
+        "unit",
+        "runtime-state-tests",
+        "specifications",
+        "integration",
+        "end-to-end",
+    ]
     handoff = jobs["release-candidate"]
     assert handoff["name"] == "Hand off verified release candidate"
-    assert handoff["needs"] == ["review", "unit", "tests", "runtime-state-tests"]
+    assert handoff["needs"] == expected_handoff_needs
     assert "event_name == 'workflow_dispatch'" in handoff["if"]
     assert "release-please--branches--master" in handoff["if"]
     assert handoff["permissions"] == {"contents": "write"}
@@ -104,18 +116,24 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
 
     pr_handoff = jobs["release-pr-ci"]
     assert pr_handoff["name"] == "Hand off verified release pull request"
-    assert pr_handoff["needs"] == ["review", "unit", "tests", "runtime-state-tests"]
+    assert pr_handoff["needs"] == expected_handoff_needs
     assert "event_name == 'pull_request'" in pr_handoff["if"]
     assert "release-please--branches--master" in pr_handoff["if"]
     pr_script = pr_handoff["steps"][0]["with"]["script"]
     assert "event_type: 'auto_merge_update'" in pr_script
     assert "release_after_merge: true" in pr_script
 
-    regression = jobs["tests"]["steps"][-1]["run"]
-    unit_regression = jobs["unit"]["steps"][-1]["run"]
-    runtime_regression = jobs["runtime-state-tests"]["steps"][-1]["run"]
-    assert "--ignore=tests/test_connectivity.py" in regression
-    assert "-m \"tier_unit\"" in unit_regression
+    unit_regression = _run_commands(jobs["unit"])
+    spec_regression = _run_commands(jobs["specifications"])
+    integration_regression = _run_commands(jobs["integration"])
+    e2e_regression = _run_commands(jobs["end-to-end"])
+    runtime_regression = _run_commands(jobs["runtime-state-tests"])
+    for commands in (spec_regression, integration_regression, e2e_regression):
+        assert "--ignore=tests/test_connectivity.py" in commands
+    assert '-m "tier_unit"' in unit_regression
+    assert '-m "tier_spec"' in spec_regression
+    assert '-m "tier_integration"' in integration_regression
+    assert '-m "tier_e2e"' in e2e_regression
     assert "uv run pytest tests/test_connectivity.py" in runtime_regression
     assert "-connectivity" in runtime_regression
 
@@ -142,7 +160,13 @@ def test_ci_runner_topology_and_minimum_permissions() -> None:
     assert workflow["permissions"] == {"contents": "read"}
 
     # Scarce Fedora runners are reserved for authoritative Python regression.
-    for job_name in ("unit", "tests", "runtime-state-tests"):
+    for job_name in (
+        "unit",
+        "runtime-state-tests",
+        "integration",
+        "specifications",
+        "end-to-end",
+    ):
         assert jobs[job_name]["runs-on"] == SELF_HOSTED
 
     # Review control/surfaces are portable and must not compete for Fedora.
@@ -159,8 +183,10 @@ def test_ci_runner_topology_and_minimum_permissions() -> None:
         "review-core",
         "review-coverage",
         "unit",
-        "tests",
         "runtime-state-tests",
+        "integration",
+        "specifications",
+        "end-to-end",
     ):
         setup_uv = next(
             step
@@ -366,19 +392,15 @@ def test_native_host_build_uses_self_contained_linker() -> None:
 
 
 def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> None:
-    workflow = _workflow()
-    jobs = workflow["jobs"]
+    jobs = _workflow()["jobs"]
     review_core = jobs["review-core"]
     review_job = jobs["review"]
     unit_job = jobs["unit"]
-    tier_job = jobs["tests"]
     runtime_job = jobs["runtime-state-tests"]
-    unit_commands = _run_commands(unit_job)
-    tier_commands = _run_commands(tier_job)
-    matrix = tier_job["strategy"]["matrix"]["include"]
+    integration_job = jobs["integration"]
+    spec_job = jobs["specifications"]
+    e2e_job = jobs["end-to-end"]
 
-    # Stage 1 begins with portable Review core plus the authoritative Unit job.
-    # The required Review check is an aggregate over any relevant hosted surface.
     assert "needs" not in review_core
     assert "needs" not in unit_job
     assert review_job["needs"] == [
@@ -388,17 +410,29 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
         "review-native",
     ]
     assert unit_job["name"] == "Python unit"
-    assert tier_job["needs"] == ["review", "unit"]
+
+    # Stage 2 has exactly two deterministic lane heads.
     assert runtime_job["needs"] == ["review", "unit"]
+    assert integration_job["needs"] == ["review", "unit"]
+    assert spec_job["needs"] == ["review", "unit", "runtime-state-tests"]
+    assert e2e_job["needs"] == ["review", "unit", "integration"]
 
-    assert tier_job["strategy"]["fail-fast"] == "false"
-    assert matrix == [
-        {"name": "specifications", "marker": "tier_spec"},
-        {"name": "integration", "marker": "tier_integration"},
-        {"name": "end-to-end", "marker": "tier_e2e"},
-    ]
+    # Predecessors order lanes but do not suppress independent regression data.
+    for follower, predecessor in (
+        (spec_job, "runtime-state-tests"),
+        (e2e_job, "integration"),
+    ):
+        condition = follower["if"]
+        assert "!cancelled()" in condition
+        assert "needs.review.result == 'success'" in condition
+        assert "needs.unit.result == 'success'" in condition
+        assert f"needs.{predecessor}.result == 'success'" not in condition
 
-    for commands in (unit_commands, tier_commands):
+    unit_commands = _run_commands(unit_job)
+    integration_commands = _run_commands(integration_job)
+    spec_commands = _run_commands(spec_job)
+    e2e_commands = _run_commands(e2e_job)
+    for commands in (unit_commands, integration_commands, spec_commands, e2e_commands):
         assert "uv run pytest tests/" in commands
         assert "--ignore=tests/simulation" in commands
         assert "--ignore=tests/test_auto_resume.py" in commands
@@ -407,16 +441,26 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
         assert "--ignore=tests/test_pause_ownership.py" in commands
         assert "--dist loadfile" in commands
     assert '-m "tier_unit"' in unit_commands
-    assert "${{ matrix.marker }}" in tier_commands
+    assert "-n 6" in unit_commands
+    assert '-m "tier_integration"' in integration_commands
+    assert '-m "tier_spec"' in spec_commands
+    assert '-m "tier_e2e"' in e2e_commands
+    for commands in (integration_commands, spec_commands, e2e_commands):
+        assert "-n 4" in commands
 
     unit_env = unit_job["steps"][-1]["env"]["ALETHEIA_DATA_DIR"]
     assert "${{ runner.temp }}" in unit_env
     assert "${{ github.run_attempt }}" in unit_env
     assert "tier_unit" in unit_env
-    tier_env = tier_job["steps"][-1]["env"]["ALETHEIA_DATA_DIR"]
-    assert "${{ runner.temp }}" in tier_env
-    assert "${{ github.run_attempt }}" in tier_env
-    assert "${{ matrix.marker }}" in tier_env
+    for job_name, marker in (
+        ("integration", "tier_integration"),
+        ("specifications", "tier_spec"),
+        ("end-to-end", "tier_e2e"),
+    ):
+        data_dir = jobs[job_name]["steps"][-1]["env"]["ALETHEIA_DATA_DIR"]
+        assert "${{ runner.temp }}" in data_dir
+        assert "${{ github.run_attempt }}" in data_dir
+        assert marker in data_dir
 
     runtime_commands = _run_commands(runtime_job)
     assert "tests/test_auto_resume.py tests/test_operator_cli.py" in runtime_commands
