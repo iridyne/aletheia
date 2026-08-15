@@ -32,6 +32,15 @@ The production entry point is `aletheia inspect`:
   deterministic `position_lifecycle_story/v1` explanation. Its
   `structured_events` projection is machine-facing; human text is not a
   statistical input;
+
+The `position_lifecycle_story/v1` machine-facing shape includes the
+cutoff-visible `periodic_observations` projection and corresponding
+`position_path_observed` entries in `structured_events`. Their `occurred_at`
+is the durable observation time (`observed_at`), not the bucket opening time,
+and their facts preserve `producer_commit` and `runtime_session_id` so a
+consumer can reject evidence mixed across producer builds or Runtime Sessions.
+These are additive v1 fields; an incompatible change to their meaning or
+required shape requires a new Story contract version.
 - `candidate-facts --horizon <15m|1h|4h|24h> --as-of <timestamp> --json` emits
   the complete `candidate_fact` denominator at one fixed horizon;
 - `position-diagnosis` and `candidate-diagnosis` emit

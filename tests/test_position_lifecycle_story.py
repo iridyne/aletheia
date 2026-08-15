@@ -94,7 +94,7 @@ def _db() -> sqlite3.Connection:
         );
         CREATE TABLE position_path_observations (
             position_id TEXT, bucket_open_ms INTEGER, observed_at TEXT,
-            evidence_status TEXT
+            evidence_status TEXT, producer_commit TEXT, runtime_session_id TEXT
         );
         CREATE TABLE market_ohlcv (
             ts INTEGER, open REAL, high REAL, low REAL, close REAL,
@@ -501,6 +501,27 @@ def test_story_rejects_fill_quantity_mismatch(monkeypatch):
     assert close_fill["facts"]["unavailable_reason"] == "fill_quantity_mismatch"
 
 
+def test_story_blocks_path_metrics_when_fill_aggregation_is_invalid(monkeypatch):
+    db = _db()
+    db.execute("UPDATE fills SET fill_price=NULL WHERE id='close-fill'")
+    db.commit()
+    monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
+
+    story = lifecycle.build_position_lifecycle_story(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    assert story["economic_path"]["availability"] == "unavailable"
+    assert story["economic_path"]["fill_aggregation"] == "unavailable"
+    assert story["economic_path"]["mark_to_market_curve"]["reason"] == "fill_evidence_invalid"
+    assert story["economic_path"]["mark_to_market_curve"]["status"] == "unavailable"
+    assert not any(
+        event["event_type"] == "maximum_favorable_excursion"
+        and event["evidence_status"] == "available"
+        for event in story["timeline"]
+    )
+
+
 def test_story_rejects_false_risk_approval_and_preserves_exit_reason(monkeypatch):
     db = _db()
     db.execute("UPDATE risk_decisions SET approved='0' WHERE id='risk-1'")
@@ -782,8 +803,9 @@ def test_story_exposes_visible_periodic_path_and_hides_late_recovery():
     )
 
     db.execute(
-        "UPDATE position_path_observations SET observed_at=?",
-        ("2026-08-13T00:01:00+00:00",),
+        "UPDATE position_path_observations "
+        "SET observed_at=?, producer_commit=?, runtime_session_id=?",
+        ("2026-08-13T00:01:00+00:00", "path-commit", "path-session"),
     )
     visible = lifecycle.build_position_lifecycle_story(
         "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
@@ -796,3 +818,27 @@ def test_story_exposes_visible_periodic_path_and_hides_late_recovery():
         if event["event_type"] == "position_path_observed"
     )
     assert event["facts"]["bucket_open_ms"] == 1_786_579_200_000
+    assert event["occurred_at"] == "2026-08-13T00:01:00+00:00"
+    assert event["facts"]["producer_commit"] == "path-commit"
+    assert event["facts"]["runtime_session_id"] == "path-session"
+
+
+def test_story_uses_opened_boundary_for_periodic_path_without_entry_fill():
+    db = _db()
+    db.execute("DELETE FROM fills WHERE id='entry-fill'")
+    db.execute(
+        "INSERT INTO position_path_observations "
+        "(position_id, bucket_open_ms, observed_at, evidence_status) "
+        "VALUES (?, ?, ?, ?)",
+        ("position-1", 1_786_579_200_000, "2026-08-13T00:04:00+00:00", "available"),
+    )
+    db.commit()
+
+    story = lifecycle.build_position_lifecycle_story(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    assert story["opening"]["entry_fill_aggregation"] == "unavailable"
+    assert [row["bucket_open_ms"] for row in story["periodic_observations"]] == [
+        1_786_579_200_000
+    ]

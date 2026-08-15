@@ -268,6 +268,8 @@ _STRUCTURED_EVENT_FACT_KEYS = {
         "position_id",
         "bucket_open_ms",
         "observed_at",
+        "producer_commit",
+        "runtime_session_id",
         "capture_mode",
         "evidence_status",
         "evidence_reason",
@@ -1637,7 +1639,7 @@ def _position_path_events(
         events.append(
             _event(
                 "position_path_observed",
-                occurred_at=datetime.fromtimestamp(int(bucket) / 1000.0, timezone.utc),
+                occurred_at=_utc(row.get("observed_at")),
                 evidence_status=str(row.get("evidence_status") or "unavailable"),
                 source_entity_type="position_path_observation",
                 source_entity_id=f"{row.get('position_id')}:{int(bucket)}",
@@ -1757,10 +1759,11 @@ def build_position_lifecycle_story(
             if (timestamp := _utc(row.get("filled_at"))) is not None
         ]
         entry_at = min(entry_at_candidates) if entry_at_candidates else None
+    observation_entry_at = entry_at or _utc(snapshot.get("opened_at"))
     periodic_observations = _visible_position_path_observations(
         source,
         position_id,
-        entry_at=entry_at,
+        entry_at=observation_entry_at,
         cutoff=cutoff,
         closed_at=closed_at,
     )
@@ -1833,7 +1836,9 @@ def build_position_lifecycle_story(
         position_id,
         causal_available=causal_chain_available,
     )
-    if closed_visible:
+    if fill_aggregation == "unavailable":
+        bars, path_status, path_reason = [], "unavailable", "fill_evidence_invalid"
+    elif closed_visible:
         if path:
             bars, path_status, path_reason = _replay_prefix_bars(
                 fact, entry_at=entry_at, cutoff=cutoff, exit_at=closed_at
@@ -1848,7 +1853,9 @@ def build_position_lifecycle_story(
             cutoff=cutoff,
             exit_at=closed_at,
         )
-    if not closed_visible and bars and path_status == "available":
+    if fill_aggregation == "unavailable":
+        path_for_metrics = {"path_evidence_reason": path_reason}
+    elif not closed_visible and bars and path_status == "available":
         # A live/as-of prefix is useful for hypothesis evidence, but is not a
         # realized MFE/MAE claim because there is no verified exit boundary.
         path_for_metrics: dict[str, Any] = {
