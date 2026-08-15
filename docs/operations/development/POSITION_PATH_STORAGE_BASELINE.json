@@ -403,6 +403,8 @@
       "table_index_bytes": 2056192,
       "payload_bytes": 1786709,
       "unused_bytes": 38657,
+      "table_index_payload_bytes": 1927629,
+      "table_index_unused_bytes": 67974,
       "hot_table_index_bytes_including_deferred": 2121728,
       "percentage_of_app_db": 0.133096,
       "bytes_per_bucket": {
@@ -449,6 +451,8 @@
       },
       "deferred_bucket_rows": 263,
       "deferred_positions": 263,
+      "deferred_age_buckets": {"<1h": 0, "1-6h": 2, "6-24h": 261, "1-3d": 0, ">3d": 0},
+      "deferred_reason_counts": {"scheduled": 263},
       "deferred_table": {
         "bytes": 65536,
         "table_bytes": 32768,
