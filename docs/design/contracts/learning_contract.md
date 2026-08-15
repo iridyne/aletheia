@@ -71,7 +71,7 @@ results can influence a later trading judgment, even when it lives outside `alet
 | Operator Learning bundle | `learning/prompt_bundles.py`, `agent_shell/trading_decision.py` | consumer-wired but measurement-unsupported: the existing Opportunity 4h market return predates prompt exposure and does not measure the resulting trade/skip decision utility, so the static no-Learning prompt baseline remains active |
 | Learned guards | `knowledge/guards.py`, `analytics/guard_promotion.py` | seed/manual guards retain their static safety class. Learned guards remain observe-only because `ranker_learned_guard` is measurement-unsupported; retrospective matches alone cannot grant block/penalty authority. |
 | Trust guard chain | `trust/guard_chain.py` | pre-risk observability only; even a `block` verdict does not block execution |
-| Case/memo score | `agents/paper_trader_ranker.py`, `learning/experiments.py` | retrospective case/memo values are diagnostics only. Both ranker paths are measurement-unsupported, create no formal exposure, and return static zero deltas. |
+| Case/memo score | `agents/paper_trader_ranker.py`, `learning/experiments.py` | retrospective case/memo values remain diagnostics. `ranker_case_score` has candidate-level Shadow measurement with exact 4h outcomes and a static zero delta; `ranker_memo_score` remains measurement-unsupported, creates no formal exposure, and returns the static zero delta. |
 | Advisory retrieval | `knowledge/router.py`, `knowledge/retrieval.py` | ordinary advisory context remains available; the separate `observer_advisory_bundle` treatment hook is measurement-unsupported and injects no experimental bundle |
 | Persona learning | `trading/persona.py`, `persona_rollout.py`, `sizing_policy.py`, `trading/sizing.py` | clean realized history can calculate a bounded proposal, but `persona_sizing` is measurement-unsupported and actual notional remains the static baseline; downstream Risk caps remain unchanged |
 | Exit diagnostics | `analytics/trade_path.py`, `analytics/exit_policy_advisor.py`, `analytics/exit_breakeven_shadow.py` | exact-protected stop exits may prove favorable excursion before the materialized first stop trigger; retrospective advice can only recommend the prospective paired shadow, and neither path mutates an exit or grants Learning authority |
@@ -287,10 +287,11 @@ loop contributes positively. Current behavior has these contract-relevant limita
   artifact/funnel counts remain activity-oriented and cannot establish
   contribution.
 
-The shared measured lifecycle is current for Universe calibration; every other declared path uses
-its static fallback. Broader path expansion, overlap arbitration, artifact demotion and skill/filter evolution
-remain proposed in [`learning_evolution.md`](../proposals/learning_evolution.md); they are not
-normative current behavior.
+The shared measured lifecycle is current for Universe calibration. `ranker_case_score` has a separate
+candidate-level Shadow evaluator and exact outcome adapter, but remains Paper-authority-unwired and
+uses the static Ranker baseline. Every other declared path uses its static fallback. Broader path
+expansion, overlap arbitration, artifact demotion and skill/filter evolution remain proposed in
+[`learning_evolution.md`](../proposals/learning_evolution.md); they are not normative current behavior.
 
 ### 1.4 Phase 0 measurement-integrity baseline
 
