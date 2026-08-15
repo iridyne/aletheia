@@ -839,6 +839,105 @@ async def test_observer_recovers_closed_position_path_after_missed_runs(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_observer_recovers_oldest_bucket_for_each_position(monkeypatch):
+    from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Candle, OHLCVResult
+    from aletheia.portfolio import position_path_observer as observer
+    from aletheia.storage import repositories as repo
+
+    first_position = _seed_position(
+        position_id="position-path-batch-1",
+        opened_at="2026-08-13T00:00:01+00:00",
+        identity_suffix="batch-1",
+    )
+    second_position = _seed_position(
+        position_id="position-path-batch-2",
+        opened_at="2026-08-13T01:00:01+00:00",
+        symbol="ETH/USDT",
+        identity_suffix="batch-2",
+    )
+    repo.update_position(
+        first_position.id,
+        status="closed",
+        closed_at="2026-08-13T00:16:00+00:00",
+    )
+    repo.update_position(
+        second_position.id,
+        status="closed",
+        closed_at="2026-08-13T01:16:00+00:00",
+    )
+    requested: list[int] = []
+
+    class Provider:
+        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+            requested.append(since)
+            return OHLCVResult(
+                [
+                    Candle(
+                        since,
+                        100.0,
+                        104.0,
+                        99.0,
+                        103.0,
+                        12.0,
+                        True,
+                        "ccxt",
+                        "bitget",
+                    )
+                ],
+                requested=2,
+            )
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+    )
+    now = datetime.fromisoformat("2026-08-13T02:00:00+00:00")
+
+    result = await observer.observe_open_position_paths(now=now)
+
+    assert result["inserted"] == 4
+    assert result["available"] == 4
+    assert sorted(requested) == [
+        int(datetime.fromisoformat(value).timestamp() * 1000)
+        for value in (
+            "2026-08-13T00:05:00+00:00",
+            "2026-08-13T00:10:00+00:00",
+            "2026-08-13T01:05:00+00:00",
+            "2026-08-13T01:10:00+00:00",
+        )
+    ]
+    assert {
+        (row["position_id"], row["bucket_open_ms"])
+        for row in repo.list_position_path_observations(first_position.id)
+    } == {
+        (
+            first_position.id,
+            int(datetime.fromisoformat(value).timestamp() * 1000),
+        )
+        for value in (
+            "2026-08-13T00:05:00+00:00",
+            "2026-08-13T00:10:00+00:00",
+        )
+    }
+    assert {
+        (row["position_id"], row["bucket_open_ms"])
+        for row in repo.list_position_path_observations(second_position.id)
+    } == {
+        (
+            second_position.id,
+            int(datetime.fromisoformat(value).timestamp() * 1000),
+        )
+        for value in (
+            "2026-08-13T01:05:00+00:00",
+            "2026-08-13T01:10:00+00:00",
+        )
+    }
+
+
+@pytest.mark.asyncio
 async def test_observer_terminal_recovery_uses_position_budget_for_the_round(
     monkeypatch,
 ):

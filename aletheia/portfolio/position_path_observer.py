@@ -26,6 +26,7 @@ _OBSERVATION_CYCLE_TIMEOUT_SECONDS = 60.0
 _PROVIDER_CLOSE_TIMEOUT_SECONDS = 5.0
 _MAX_DURABLE_OBSERVATION_ATTEMPTS = repo.POSITION_PATH_MAX_RETRY_ATTEMPTS
 _MAX_RECOVERY_PASSES_PER_CYCLE = 2
+_MAX_DEFERRED_BUCKETS_PER_PASS = _MAX_CONCURRENT_OHLCV_REQUESTS * 2
 
 
 def _physical_market_type(value: object) -> str | None:
@@ -774,36 +775,27 @@ async def observe_open_position_paths(
             )
             state["deferred"].add(missing_bucket_open_ms)
 
-    deferred_rows = repo.list_oldest_deferred_position_path_bucket()
-    bucket_open_ms = int(deferred_rows[0]["bucket_open_ms"]) if deferred_rows else None
-    bucket_end_ms = bucket_open_ms + _BUCKET_MS if bucket_open_ms is not None else None
+    deferred_rows = repo.list_oldest_deferred_position_path_bucket(
+        limit=_MAX_DEFERRED_BUCKETS_PER_PASS
+    )
     deferred_positions = [
-        position
+        (position, int(row["bucket_open_ms"]))
         for row in deferred_rows
         if (position := repo.get_position(str(row["position_id"]))) is not None
     ]
-    observed_position_ids = {
-        str(position["id"])
-        for position in deferred_positions
-        if bucket_open_ms in bucket_state.get(str(position["id"]), {}).get("observed", set())
-    }
     providers: dict[str, MarketDataProvider] = {}
-    tasks: list[asyncio.Task[tuple[InstrumentId, Candle | None, str, str | None]]] = []
-    task_instruments: dict[
-        asyncio.Task[tuple[InstrumentId, Candle | None, str, str | None]],
-        InstrumentId,
-    ] = {}
+    tasks: list[asyncio.Task[Any]] = []
+    task_buckets: dict[asyncio.Task[Any], tuple[InstrumentId, int]] = {}
     semaphore = asyncio.Semaphore(_MAX_CONCURRENT_OHLCV_REQUESTS)
 
     def store_result(
         position_id: str,
         *,
+        bucket_open_ms: int,
         instrument: InstrumentId | None,
         bar: Candle | None,
         reason: str,
     ) -> None:
-        if bucket_open_ms is None or bucket_end_ms is None:
-            return
         try:
             result = _store_latest_position_result(
                 position_id,
@@ -811,7 +803,7 @@ async def observe_open_position_paths(
                 bar=bar,
                 reason=reason,
                 bucket_open_ms=bucket_open_ms,
-                bucket_end_ms=bucket_end_ms,
+                bucket_end_ms=bucket_open_ms + _BUCKET_MS,
                 observed_at=observed_at,
                 historical=bucket_open_ms < latest_completed_bucket_open_ms,
             )
@@ -830,7 +822,11 @@ async def observe_open_position_paths(
                 {"position_id": position_id, "error_type": type(exc).__name__}
             )
             try:
-                defer_retry(position_id, reason="observation_store_failed")
+                defer_retry(
+                    position_id,
+                    bucket_open_ms=bucket_open_ms,
+                    reason="observation_store_failed",
+                )
             except Exception as retry_exc:
                 summary["errors"].append(
                     {
@@ -839,9 +835,9 @@ async def observe_open_position_paths(
                     }
                 )
 
-    def defer_retry(position_id: str, *, reason: str) -> None:
-        if bucket_open_ms is None:
-            return
+    def defer_retry(
+        position_id: str, *, bucket_open_ms: int, reason: str
+    ) -> None:
         attempt_count = repo.defer_position_path_observation_bucket(
             position_id,
             bucket_open_ms=bucket_open_ms,
@@ -873,8 +869,9 @@ async def observe_open_position_paths(
         )
 
     async def fetch_bar(
-        instrument: InstrumentId,
-    ) -> tuple[InstrumentId, Candle | None, str, str | None]:
+        instrument: InstrumentId, bucket_open_ms: int
+    ) -> tuple[tuple[InstrumentId, int], Candle | None, str, str | None]:
+        bucket_key = (instrument, bucket_open_ms)
         async with semaphore:
             try:
                 provider = providers.get(instrument.exchange)
@@ -920,20 +917,16 @@ async def observe_open_position_paths(
                         if bar is not None
                         else "exact_5m_bar_unavailable"
                     )
-                return instrument, bar, reason, None
+                return bucket_key, bar, reason, None
             except Exception as exc:
-                return (
-                    instrument,
-                    None,
-                    "market_data_fetch_failed",
-                    type(exc).__name__,
-                )
+                return bucket_key, None, "market_data_fetch_failed", type(exc).__name__
 
     try:
-        instrument_groups: dict[InstrumentId, list[str]] = {}
-        for position in deferred_positions:
+        instrument_groups: dict[tuple[InstrumentId, int], list[str]] = {}
+        for position, bucket_open_ms in deferred_positions:
             position_id = str(position["id"])
-            if position_id in observed_position_ids:
+            state = bucket_state.get(position_id)
+            if state is not None and bucket_open_ms in state["observed"]:
                 repo.resolve_deferred_position_path_observation(
                     position_id, bucket_open_ms=bucket_open_ms
                 )
@@ -947,6 +940,7 @@ async def observe_open_position_paths(
                         bucket_open_ms=bucket_open_ms,
                         observed_at=observed_at,
                         reason="position_opened_at_invalid",
+                        historical=bucket_open_ms < latest_completed_bucket_open_ms,
                     )
                     repo.resolve_deferred_position_path_observation(
                         position_id, bucket_open_ms=bucket_open_ms
@@ -965,53 +959,71 @@ async def observe_open_position_paths(
             if instrument is None:
                 store_result(
                     position_id,
+                    bucket_open_ms=bucket_open_ms,
                     instrument=None,
                     bar=None,
                     reason=identity_reason,
                 )
                 continue
-            instrument_groups.setdefault(instrument, []).append(position_id)
+            instrument_groups.setdefault(
+                (instrument, bucket_open_ms), []
+            ).append(position_id)
 
-        task_instruments = {
-            asyncio.create_task(fetch_bar(instrument)): instrument
-            for instrument in instrument_groups
-        }
-        tasks = list(task_instruments)
+        for bucket_key in instrument_groups:
+            task = asyncio.create_task(fetch_bar(*bucket_key))
+            task_buckets[task] = bucket_key
+        tasks = list(task_buckets)
         try:
             for completed in asyncio.as_completed(
                 tasks, timeout=_OBSERVATION_CYCLE_TIMEOUT_SECONDS
             ):
-                instrument, bar, reason, error_type = await completed
+                bucket_key, bar, reason, error_type = await completed
+                instrument, bucket_open_ms = bucket_key
+                position_ids_for_bucket = instrument_groups[bucket_key]
                 if error_type is not None:
                     summary["errors"].append(
                         {"instrument": str(instrument), "error_type": error_type}
                     )
-                    for position_id in instrument_groups[instrument]:
-                        defer_retry(position_id, reason=reason)
+                    for position_id in position_ids_for_bucket:
+                        defer_retry(
+                            position_id,
+                            bucket_open_ms=bucket_open_ms,
+                            reason=reason,
+                        )
                     continue
                 if bar is None:
-                    for position_id in instrument_groups[instrument]:
-                        defer_retry(position_id, reason=reason)
+                    for position_id in position_ids_for_bucket:
+                        defer_retry(
+                            position_id,
+                            bucket_open_ms=bucket_open_ms,
+                            reason=reason,
+                        )
                     continue
-                for position_id in instrument_groups[instrument]:
+                for position_id in position_ids_for_bucket:
                     store_result(
                         position_id,
+                        bucket_open_ms=bucket_open_ms,
                         instrument=instrument,
                         bar=bar,
                         reason=reason,
                     )
         except TimeoutError:
-            for task, instrument in task_instruments.items():
+            for task, bucket_key in task_buckets.items():
                 if task.done():
                     continue
+                instrument, bucket_open_ms = bucket_key
                 summary["errors"].append(
                     {
                         "instrument": str(instrument),
                         "error_type": "ObservationCycleTimeout",
                     }
                 )
-                for position_id in instrument_groups[instrument]:
-                    defer_retry(position_id, reason="observation_cycle_timeout")
+                for position_id in instrument_groups[bucket_key]:
+                    defer_retry(
+                        position_id,
+                        bucket_open_ms=bucket_open_ms,
+                        reason="observation_cycle_timeout",
+                    )
     finally:
         for task in tasks:
             if not task.done():
