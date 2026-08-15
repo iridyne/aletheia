@@ -23,6 +23,21 @@ _REVIEW_POSITION_LIMIT = 10
 _STRATEGY_ROUND_ROBIN_STATE_KEY = (
     "agents.post_trade_reviewer.strategy_round_robin.v1"
 )
+_CLOSED_STRATEGY_CTE = """
+    WITH closed_strategies AS (
+        SELECT
+            strategy_id,
+            CASE
+                WHEN strategy_id IS NULL THEN '0:'
+                ELSE '1:' || strategy_id
+            END AS strategy_key
+        FROM positions
+        WHERE status = 'closed'
+          AND outcome_eligible = 1
+        GROUP BY strategy_id
+    )
+"""
+
 
 
 def _fills_window_key(strategy_id: str | None, fills: list) -> str:
@@ -108,20 +123,8 @@ def _closed_strategy_page(
     if page_size < 1:
         return []
     db = get_db()
-    cte = """
-        WITH closed_strategies AS (
-            SELECT
-                strategy_id,
-                CASE
-                    WHEN strategy_id IS NULL THEN '0:'
-                    ELSE '1:' || strategy_id
-                END AS strategy_key
-            FROM positions
-            WHERE status = 'closed'
-              AND outcome_eligible = 1
-            GROUP BY strategy_id
-        )
-    """
+    cte = _CLOSED_STRATEGY_CTE
+
     if next_key:
         first = db.execute(
             cte
@@ -163,6 +166,66 @@ def _closed_strategy_page(
     return page
 
 
+def _closed_strategy_prefix_page(
+    *,
+    frontier_key: str | None,
+    cursor_key: str | None,
+    page_size: int,
+) -> list[dict]:
+    """Read a bounded page before the forward cursor.
+
+    A continuously growing suffix must not prevent older strategies from being
+    retried. The prefix has its own cursor in the same durable round-robin
+    record, and this page wraps inside ``strategy_key < frontier_key`` only.
+    """
+    if page_size < 1 or not frontier_key:
+        return []
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    if cursor_key and cursor_key < frontier_key:
+        first = db.execute(
+            _CLOSED_STRATEGY_CTE
+            + """
+                SELECT strategy_id, strategy_key
+                FROM closed_strategies
+                WHERE strategy_key >= ? AND strategy_key < ?
+                ORDER BY strategy_key ASC
+                LIMIT ?
+            """,
+            (cursor_key, frontier_key, page_size),
+        ).fetchall()
+        page = [dict(row) for row in first]
+        if len(page) < page_size:
+            wrapped = db.execute(
+                _CLOSED_STRATEGY_CTE
+                + """
+                    SELECT strategy_id, strategy_key
+                    FROM closed_strategies
+                    WHERE strategy_key < ?
+                    ORDER BY strategy_key ASC
+                    LIMIT ?
+                """,
+                (cursor_key, page_size - len(page)),
+            ).fetchall()
+            page.extend(dict(row) for row in wrapped)
+        return page
+
+    rows = db.execute(
+        _CLOSED_STRATEGY_CTE
+        + """
+            SELECT strategy_id, strategy_key
+            FROM closed_strategies
+            WHERE strategy_key < ?
+            ORDER BY strategy_key ASC
+            LIMIT ?
+        """,
+        (frontier_key, page_size),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+
 @register_agent("post_trade_reviewer")
 async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str | None = None, **kwargs) -> dict:
     """Review centrally eligible closed outcomes grouped by strategy."""
@@ -183,18 +246,50 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
 
     round_robin = DurableRoundRobin(_STRATEGY_ROUND_ROBIN_STATE_KEY)
     started_at = time.monotonic()
+    frontier_key = round_robin.next_key()
+    prefix_cursor = round_robin.prefix_key()
+    if frontier_key and prefix_cursor and prefix_cursor >= frontier_key:
+        round_robin.reset_prefix_key()
+        prefix_cursor = None
     strategy_page = _closed_strategy_page(
-        next_key=round_robin.next_key(),
+        next_key=frontier_key,
         page_size=_STRATEGY_ATTEMPT_LIMIT + 1,
     )
+    prefix_page = _closed_strategy_prefix_page(
+        frontier_key=frontier_key,
+        cursor_key=prefix_cursor,
+        page_size=_STRATEGY_ATTEMPT_LIMIT + 1,
+    )
+    if prefix_cursor is not None and not prefix_page:
+        round_robin.reset_prefix_key()
+    prefix_rows = prefix_page[:_STRATEGY_ATTEMPT_LIMIT]
+    prefix_keys = {row["strategy_key"] for row in prefix_rows}
+    forward_rows = [
+        row
+        for row in strategy_page[:_STRATEGY_ATTEMPT_LIMIT]
+        if row["strategy_key"] not in prefix_keys
+    ]
+    strategy_attempts: list[tuple[dict, bool]] = []
+    for index in range(max(len(prefix_rows), len(forward_rows))):
+        if len(strategy_attempts) >= _STRATEGY_ATTEMPT_LIMIT:
+            break
+        if index < len(prefix_rows):
+            strategy_attempts.append((prefix_rows[index], True))
+        if len(strategy_attempts) >= _STRATEGY_ATTEMPT_LIMIT:
+            break
+        if index < len(forward_rows):
+            strategy_attempts.append((forward_rows[index], False))
+    prefix_scan_exhausted = len(prefix_page) <= _STRATEGY_ATTEMPT_LIMIT
     log_tool(run_id, "get_positions", "observe", True, duration_ms=elapsed_ms(started_at))
+
     eligible_window_seen = False
     eligibility_read_failed = False
+    # Each page includes a one-row successor sentinel. Forward and prefix
+    # cursors advance independently, so a growing suffix cannot starve retries.
+    # The forward sentinel preserves the next bounded cycle without enumerating
+    # the complete strategy population.
+    for strategy_row, prefix_owned in strategy_attempts:
 
-    # The final row is only a successor sentinel. It lets advance_after persist
-    # exactly where the next bounded cycle must resume without enumerating the
-    # complete strategy population.
-    for strategy_row in strategy_page[:_STRATEGY_ATTEMPT_LIMIT]:
         strategy_id = strategy_row["strategy_id"]
         strategy_key = strategy_row["strategy_key"]
         completed_attempt = False
@@ -383,14 +478,28 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
         finally:
             # asyncio cancellation does not enter the Exception handler, so an
             # interrupted in-flight strategy is retried. Completed skips and
-            # failures advance, preventing one bad identity from blocking later
-            # strategies forever.
+            # failures advance the appropriate cursor, preventing one bad
+            # identity from blocking later strategies forever.
             if completed_attempt:
-                round_robin.advance_after(
-                    strategy_page,
-                    completed_key=strategy_key,
-                    key=lambda row: row["strategy_key"],
-                )
+                if prefix_owned:
+                    is_last_prefix_row = bool(
+                        prefix_rows
+                        and strategy_key == prefix_rows[-1]["strategy_key"]
+                    )
+                    if prefix_scan_exhausted and is_last_prefix_row:
+                        round_robin.reset_prefix_key()
+                    else:
+                        round_robin.advance_prefix_after(
+                            prefix_page,
+                            completed_key=strategy_key,
+                            key=lambda row: row["strategy_key"],
+                        )
+                else:
+                    round_robin.advance_after(
+                        strategy_page,
+                        completed_key=strategy_key,
+                        key=lambda row: row["strategy_key"],
+                    )
 
     if not eligible_window_seen and not eligibility_read_failed:
         if len(strategy_page) <= _STRATEGY_ATTEMPT_LIMIT:

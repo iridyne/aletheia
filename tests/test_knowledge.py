@@ -186,6 +186,80 @@ async def test_post_trade_review_links_strategy_from_order_chain(tmp_path, monke
     assert "position:position-knowledge-review" in review_items[0]["tags"]
     reset_db()
 
+@pytest.mark.anyio
+async def test_post_trade_reviewer_scans_prefix_while_forward_page_stays_nonempty(
+    tmp_path, monkeypatch
+):
+    """A growing suffix cannot permanently hide older strategy identities."""
+    setup_test_env(tmp_path, monkeypatch)
+
+    from aletheia.agents import post_trade_reviewer
+    from aletheia.agents.round_robin import DurableRoundRobin
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for strategy_id in (
+        [f"a-{index:02d}" for index in range(21)]
+        + [f"z-{index:02d}" for index in range(21)]
+    ):
+        db.execute(
+            "INSERT INTO positions (id, symbol, market_type, direction, quantity, "
+            "entry_price, execution_mode, strategy_id, status, outcome_eligible, "
+            "outcome_exclusion_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                f"position-{strategy_id}",
+                "BTC/USDT",
+                "spot",
+                "long",
+                1.0,
+                100.0,
+                "paper_internal",
+                strategy_id,
+                "closed",
+                1,
+                "eligible",
+            ),
+        )
+
+    state_key = "agents.post_trade_reviewer.strategy_round_robin.v1"
+    DurableRoundRobin(state_key).advance_after(
+        [{"strategy_key": "1:y-99"}, {"strategy_key": "1:z-00"}],
+        completed_key="1:y-99",
+        key=lambda row: row["strategy_key"],
+    )
+
+    calls: list[str] = []
+
+    def no_outcomes(*, strategy_id, limit):
+        calls.append(strategy_id)
+        return []
+
+    monkeypatch.setattr(post_trade_reviewer, "is_tool_permitted", lambda *args, **kwargs: True)
+    monkeypatch.setattr(post_trade_reviewer, "eligible_strategy_outcomes", no_outcomes)
+    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda run_id: ([], []))
+
+    result = await post_trade_reviewer.run_post_trade_reviewer(permission_mode="Observe")
+    assert result["errors"] == []
+    assert calls == [
+        value
+        for index in range(10)
+        for value in (f"a-{index:02d}", f"z-{index:02d}")
+    ]
+
+    restarted = DurableRoundRobin(state_key)
+    assert restarted.next_key() == "1:z-10"
+    assert restarted.prefix_key() == "1:a-10"
+
+    calls.clear()
+    await post_trade_reviewer.run_post_trade_reviewer(permission_mode="Observe")
+    assert calls == [
+        value
+        for index in range(10)
+        for value in (f"a-{index + 10:02d}", f"z-{index + 10:02d}")
+    ]
+    assert DurableRoundRobin(state_key).prefix_key() == "1:a-20"
+    reset_db()
+
 
 def test_strategy_memory_creation(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
