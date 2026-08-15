@@ -492,27 +492,27 @@
     }
   },
   "latest_read_only_sanity_snapshot": {
-    "captured_at": "2026-08-15T17:57:56.083306+00:00",
+    "captured_at": "2026-08-15T18:01:05.480018+00:00",
     "snapshot": "explicit read-only SQLite BEGIN",
     "database": {
-      "database_bytes": 1597657088,
+      "database_bytes": 1597739008,
       "wal_bytes": 38402552,
-      "database_plus_wal_bytes": 1636059640
+      "database_plus_wal_bytes": 1636141560
     },
     "position_path": {
-      "total_rows": 5965,
+      "total_rows": 5975,
       "position_count": 87,
-      "table_bytes": 1896448,
+      "table_bytes": 1900544,
       "index_bytes": 188416,
-      "table_index_bytes": 2084864,
-      "table_payload_bytes": 1814630,
-      "index_payload_bytes": 143032,
-      "table_unused_bytes": 38768,
-      "index_unused_bytes": 26941,
+      "table_index_bytes": 2088960,
+      "table_payload_bytes": 1817806,
+      "index_payload_bytes": 143272,
+      "table_unused_bytes": 39612,
+      "index_unused_bytes": 26671,
       "deferred_rows": 261,
       "deferred_table_index_bytes": 65536,
-      "hot_table_index_bytes_including_deferred": 2150400,
-      "percentage_of_app_db": 0.134597,
+      "hot_table_index_bytes_including_deferred": 2154496,
+      "percentage_of_app_db": 0.134847,
       "archive_table": {
         "available": false,
         "rows": 0

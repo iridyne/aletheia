@@ -140,11 +140,11 @@ were discovered within 72 hours. This is a live-source sanity snapshot, not a
 replacement for the versioned full dbstat capture. It is recorded under
 `latest_read_only_sanity_snapshot` in the JSON artifact.
 
-The newest explicit read-only physical snapshot at `2026-08-15T17:57:56Z`
-measured 5,965 observation rows across 87 Positions and 261 deferred rows.
-The observation table plus primary-key/index allocations was 2,084,864 bytes;
-including deferred-table and index allocations the hot footprint was 2,150,400
-bytes, or `0.134597%` of `app.db` (database 1,597,657,088 bytes; WAL
+The newest explicit read-only physical snapshot at `2026-08-15T18:01:05Z`
+measured 5,975 observation rows across 87 Positions and 261 deferred rows.
+The observation table plus primary-key/index allocations was 2,088,960 bytes;
+including deferred-table and index allocations the hot footprint was 2,154,496
+bytes, or `0.134847%` of `app.db` (database 1,597,739,008 bytes; WAL
 38,402,552 bytes). The archive table remained absent. The underlying recovery
 split remained 13 buckets at `<=72h` and 248 at `>72h`, with oldest hot/cold
 bucket timestamps unchanged at `2026-08-12T18:35:00Z` /
@@ -268,11 +268,11 @@ unavailable and quantity-variation/scale-in evidence, and remains
 sanity result is under `latest_read_only_stream_sanity` in
 `POSITION_PATH_ARCHIVE_FEDORA_SHADOW.json`.
 
-The newest read-only stream sanity run at `2026-08-15T17:57:33Z` verified 5,598
-eligible rows across 77 segments from 5,965 source rows and 76 eligible
+The newest read-only stream sanity run at `2026-08-15T18:01:19Z` verified 5,598
+eligible rows across 77 segments from 5,975 source rows and 76 eligible
 Positions. It used 426,869 raw bytes and 183,434 payload bytes (42.97%
 payload ratio), with deterministic byte identity and median `as_of` parity.
-Encode/decode p95 were `10.99 ms` / `5.48 ms`. The stream still lacks
+Encode/decode p95 were `11.02 ms` / `5.46 ms`. The stream still lacks
 unavailable and quantity-variation/scale-in evidence, and remains
 `archive_persisted=false` with `read_model_parity=not_run`.
 
@@ -324,7 +324,7 @@ gates.
 | 2048-bucket decode p95 below 100 ms on Fedora | No real Fedora 2048-bucket path; local synthetic sample only | Open |
 | Observer write latency unchanged | Disposable local SQLite clones only: p95 0.266 ms with schema vs 0.285 ms without | Open for Fedora observer |
 | Real Fedora persisted archive/read-model parity | Disposable Fedora-data copy: source unchanged, all shadow parity projections true; deployed Fedora still has no archive table | Copy pass; deployed gate open |
-| Materiality of the optimization | Detailed Fedora dbstat artifact: 0.126499%; latest read-only sanity snapshot: 0.134597% including deferred allocations | Fails materiality case; do not enable production compaction |
+| Materiality of the optimization | Detailed Fedora dbstat artifact: 0.126499%; latest read-only sanity snapshot: 0.134847% including deferred allocations | Fails materiality case; do not enable production compaction |
 
 The branch therefore stops at additive validation. It does not claim deployed
 archive storage, does not delete source rows, and does not open a recovery issue

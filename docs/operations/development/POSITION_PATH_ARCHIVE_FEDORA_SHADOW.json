@@ -219,7 +219,7 @@
     "snapshot": "explicit read-only SQLite BEGIN"
   },
   "latest_read_only_stream_sanity": {
-    "captured_at": "2026-08-15T17:57:33.158674+00:00",
+    "captured_at": "2026-08-15T18:01:19.685918+00:00",
     "source": "fedora_read_only_row_stream",
     "source_rows": 5965,
     "positions_total": 347,
@@ -235,10 +235,10 @@
     "deterministic_byte_identity": true,
     "as_of_parity": true,
     "production_codec_timing_ms": {
-      "encode_p50": 1.781709,
-      "encode_p95": 10.986708,
-      "decode_p50": 0.886666,
-      "decode_p95": 5.475625
+      "encode_p50": 1.920291,
+      "encode_p95": 11.021208,
+      "decode_p50": 0.921959,
+      "decode_p95": 5.456042
     },
     "sample_coverage": {
       "short_1_to_10_buckets": true,
