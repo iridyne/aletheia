@@ -417,6 +417,36 @@
         "available_rows": 5877,
         "percentage": 0.0
       },
+      "constant_repeated_field_cardinality": {
+        "bar_close": {"distinct_non_null": 3903, "null_count": 0, "repeated_non_null": 1974, "repeated_percentage": 33.588566},
+        "bar_high": {"distinct_non_null": 3837, "null_count": 0, "repeated_non_null": 2040, "repeated_percentage": 34.711588},
+        "bar_low": {"distinct_non_null": 3843, "null_count": 0, "repeated_non_null": 2034, "repeated_percentage": 34.609495},
+        "bar_open": {"distinct_non_null": 3877, "null_count": 0, "repeated_non_null": 2000, "repeated_percentage": 34.030968},
+        "bar_provider": {"distinct_non_null": 1, "null_count": 0, "repeated_non_null": 5876, "repeated_percentage": 99.982985},
+        "bar_volume": {"distinct_non_null": 5845, "null_count": 0, "repeated_non_null": 32, "repeated_percentage": 0.544495},
+        "bucket_open_ms": {"distinct_non_null": 682, "null_count": 0, "repeated_non_null": 5195, "repeated_percentage": 88.39544},
+        "capture_mode": {"distinct_non_null": 2, "null_count": 0, "repeated_non_null": 5875, "repeated_percentage": 99.965969},
+        "direction": {"distinct_non_null": 2, "null_count": 0, "repeated_non_null": 5875, "repeated_percentage": 99.965969},
+        "entry_fee": {"distinct_non_null": 83, "null_count": 0, "repeated_non_null": 5794, "repeated_percentage": 98.587715},
+        "entry_price": {"distinct_non_null": 85, "null_count": 0, "repeated_non_null": 5792, "repeated_percentage": 98.553684},
+        "evidence_reason": {"distinct_non_null": 1, "null_count": 0, "repeated_non_null": 5876, "repeated_percentage": 99.982985},
+        "evidence_status": {"distinct_non_null": 1, "null_count": 0, "repeated_non_null": 5876, "repeated_percentage": 99.982985},
+        "exit_plan_version": {"distinct_non_null": 7, "null_count": 0, "repeated_non_null": 5870, "repeated_percentage": 99.880892},
+        "funding_cost": {"distinct_non_null": 4, "null_count": 5872, "repeated_non_null": 1, "repeated_percentage": 0.017015},
+        "funding_source": {"distinct_non_null": 2, "null_count": 0, "repeated_non_null": 5875, "repeated_percentage": 99.965969},
+        "mark_price": {"distinct_non_null": 3904, "null_count": 0, "repeated_non_null": 1973, "repeated_percentage": 33.57155},
+        "market_type": {"distinct_non_null": 2, "null_count": 0, "repeated_non_null": 5875, "repeated_percentage": 99.965969},
+        "observed_at": {"distinct_non_null": 500, "null_count": 0, "repeated_non_null": 5377, "repeated_percentage": 91.492258},
+        "position_id": {"distinct_non_null": 85, "null_count": 0, "repeated_non_null": 5792, "repeated_percentage": 98.553684},
+        "producer_commit": {"distinct_non_null": 8, "null_count": 41, "repeated_non_null": 5828, "repeated_percentage": 99.166241},
+        "quantity": {"distinct_non_null": 85, "null_count": 0, "repeated_non_null": 5792, "repeated_percentage": 98.553684},
+        "runtime_session_id": {"distinct_non_null": 10, "null_count": 41, "repeated_non_null": 5826, "repeated_percentage": 99.13221},
+        "stop_price": {"distinct_non_null": 46, "null_count": 4856, "repeated_non_null": 975, "repeated_percentage": 16.590097},
+        "symbol": {"distinct_non_null": 55, "null_count": 0, "repeated_non_null": 5822, "repeated_percentage": 99.064148},
+        "take_profit_price": {"distinct_non_null": 35, "null_count": 4856, "repeated_non_null": 986, "repeated_percentage": 16.777267},
+        "unrealized_pnl": {"distinct_non_null": 3975, "null_count": 0, "repeated_non_null": 1902, "repeated_percentage": 32.363451},
+        "venue": {"distinct_non_null": 1, "null_count": 0, "repeated_non_null": 5876, "repeated_percentage": 99.982985}
+      },
       "deferred_bucket_rows": 263,
       "deferred_positions": 263,
       "deferred_table": {
@@ -443,6 +473,13 @@
         "queue_age_lte_72h": 263,
         "queue_age_gt_72h": 0
       },
+      "dbstat_objects": [
+        {"name": "position_path_observations", "bytes": 1867776, "payload_bytes": 1786709, "unused_bytes": 38657, "cells": 6331, "pages": 456},
+        {"name": "sqlite_autoindex_position_path_observations_1", "bytes": 188416, "payload_bytes": 140920, "unused_bytes": 29317, "cells": 5877, "pages": 46},
+        {"name": "idx_position_path_deferred_bucket", "bytes": 16384, "payload_bytes": 6184, "unused_bytes": 9367, "cells": 263, "pages": 4},
+        {"name": "position_path_observation_deferred_buckets", "bytes": 32768, "payload_bytes": 25774, "unused_bytes": 5693, "cells": 269, "pages": 8},
+        {"name": "sqlite_autoindex_position_path_observation_deferred_buckets_1", "bytes": 16384, "payload_bytes": 6184, "unused_bytes": 9367, "cells": 263, "pages": 4}
+      ],
       "archive_table": {
         "available": false,
         "bytes": 0,
