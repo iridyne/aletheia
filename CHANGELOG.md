@@ -4,6 +4,31 @@ All notable product changes are recorded here. Aletheia uses Semantic Versioning
 for the product release, while build identities and data/behavior contracts keep
 their own independent versions.
 
+## [0.8.0](https://github.com/iridite/aletheia/compare/v0.7.9...v0.8.0) (2026-08-15)
+
+
+### Features
+
+* add profit-loop replay and gradient evidence ([#965](https://github.com/iridite/aletheia/issues/965)) ([87ed013](https://github.com/iridite/aletheia/commit/87ed013cc8aa004c283748ea74b457a3e9770752))
+* **analytics:** compile profit-gradient evidence artifacts ([#993](https://github.com/iridite/aletheia/issues/993)) ([9ffe8e7](https://github.com/iridite/aletheia/commit/9ffe8e77eece75c342d86828dbf3a3aaa754d7b4))
+* **analytics:** expose complete Opportunity lifecycle evidence ([#980](https://github.com/iridite/aletheia/issues/980)) ([dd20f49](https://github.com/iridite/aletheia/commit/dd20f49e8a8b1375dfa5d55dae8918c6efe8089d))
+* **analytics:** preserve position paths for loss attribution ([#963](https://github.com/iridite/aletheia/issues/963)) ([d7ca7f2](https://github.com/iridite/aletheia/commit/d7ca7f2a333b2966de7ca6d68e510a0d095fb0e8))
+* **governance:** add observe-only Trading Mandate evidence ([#994](https://github.com/iridite/aletheia/issues/994)) ([6fbdf0e](https://github.com/iridite/aletheia/commit/6fbdf0e9503502698251f27c0949fb0d990f8859))
+* **ui:** charts indicator panes, universe reasons, settings overflow fix ([#979](https://github.com/iridite/aletheia/issues/979)) ([69d5c42](https://github.com/iridite/aletheia/commit/69d5c42a24d6164057c1bb83caff520482ff4cfa))
+
+
+### Bug Fixes
+
+* **analytics:** bind profit-loop evidence to runtime epoch ([#975](https://github.com/iridite/aletheia/issues/975)) ([4be1bfb](https://github.com/iridite/aletheia/commit/4be1bfbe3c2c2eaa554af0ed86f68eb823f1f127))
+* **analytics:** declare first-hour counterfactual scope ([#990](https://github.com/iridite/aletheia/issues/990)) ([3c57030](https://github.com/iridite/aletheia/commit/3c57030655a03af41634be0d5284c68c904987eb))
+* **analytics:** expose periodic Position path in lifecycle story ([#1009](https://github.com/iridite/aletheia/issues/1009)) ([d515e1d](https://github.com/iridite/aletheia/commit/d515e1d4c2964fe467d1b2ba3f67436f64141c06))
+* **analytics:** make profit-gradient gates comparison-aware ([#989](https://github.com/iridite/aletheia/issues/989)) ([71bef5e](https://github.com/iridite/aletheia/commit/71bef5ebb6839a38e279db4b218e756f1e9de97e))
+* **analytics:** reject malformed epoch timestamps ([#978](https://github.com/iridite/aletheia/issues/978)) ([fa6dc1b](https://github.com/iridite/aletheia/commit/fa6dc1b3aa6f3e64223da1a3619d6ea213e44189))
+* **observer:** recover missed Position Path buckets ([#992](https://github.com/iridite/aletheia/issues/992)) ([6c9304d](https://github.com/iridite/aletheia/commit/6c9304d5dafc5e3dcfed9a90cb5f6f93127f3fc6))
+* **operator:** disambiguate outcome and funding signs ([#961](https://github.com/iridite/aletheia/issues/961)) ([8985ccf](https://github.com/iridite/aletheia/commit/8985ccf74bc8ed96bec1f4ea181efc55638e64f6))
+* **operator:** retire unauthorized producer carriers ([#960](https://github.com/iridite/aletheia/issues/960)) ([4954ff1](https://github.com/iridite/aletheia/commit/4954ff11a43d11dd52d4f174441307285b5c5376))
+* **runtime:** refresh exact pending candidate market facts ([#1005](https://github.com/iridite/aletheia/issues/1005)) ([b0db1e8](https://github.com/iridite/aletheia/commit/b0db1e8b01e86f20217075e5c668994cf1b3495d))
+
 ## [0.7.9](https://github.com/iridite/aletheia/compare/v0.7.8...v0.7.9) (2026-08-12)
 
 
