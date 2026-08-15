@@ -897,6 +897,21 @@ def _authorized_ranker_delta(
         if path_id == "ranker_case_score" and measure_candidate
         else None
     )
+    if (
+        path_id == "ranker_case_score"
+        and ranker_t0 is not None
+    ):
+        # Persist the ranker-specific T0 before the exposure ledger row so
+        # cohort validation can prove prospective ordering.
+        _register_ranker_case_outcome(
+            candidate_key=ranker_candidate_key,
+            opp=opp,
+            direction=direction,
+            entry_price_usd=entry_price_usd,
+            entry_spread_bps=entry_spread_bps,
+            funding_rate_at_entry=funding_rate_at_entry,
+            entry_ts=ranker_t0,
+        )
     if abs(float(proposed_delta)) < 1e-9 and not measure_candidate:
         decision = InfluenceDecision(0.0, False, "baseline", "no_proposed_delta")
     else:
@@ -928,20 +943,6 @@ def _authorized_ranker_delta(
         except Exception as exc:
             logger.warning("Ranker Learning adapter failed closed for %s: %s", path_id, exc)
             decision = InfluenceDecision(0.0, False, "unavailable", "adapter_error")
-    if (
-        path_id == "ranker_case_score"
-        and decision.exposure_id
-        and ranker_t0 is not None
-    ):
-        _register_ranker_case_outcome(
-            candidate_key=ranker_candidate_key,
-            opp=opp,
-            direction=direction,
-            entry_price_usd=entry_price_usd,
-            entry_spread_bps=entry_spread_bps,
-            funding_rate_at_entry=funding_rate_at_entry,
-            entry_ts=ranker_t0,
-        )
     if path_id == "ranker_case_score" and decision.value != 0.0:
         logger.error(
             "Ranker Case Shadow attempted a non-zero delta; forcing baseline "

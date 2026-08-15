@@ -442,6 +442,46 @@ def test_ranker_case_valid_candidate_persists_one_shadow_exposure(monkeypatch):
         ("ranker_case_score", ranker_key),
     ).fetchone()[0] == 1
 
+def test_ranker_case_registers_outcome_before_exposure(monkeypatch):
+    import aletheia.agents.paper_trader_ranker as ranker
+    from aletheia.learning.experiments import InfluenceDecision
+
+    events = []
+
+    def record_outcome(**kwargs):
+        events.append(("outcome", kwargs["entry_ts"]))
+
+    def record_exposure(**kwargs):
+        events.append(("exposure", kwargs["manifest"]["prospective_t0"]))
+        return InfluenceDecision(
+            0.0, False, "control", "baseline", "hypothesis", "experiment", "exposure"
+        )
+
+    monkeypatch.setattr(ranker, "_register_ranker_case_outcome", record_outcome)
+    monkeypatch.setattr(
+        "aletheia.learning.experiments.apply_numeric_treatment",
+        record_exposure,
+    )
+    ranker._authorized_ranker_delta(
+        path_id="ranker_case_score",
+        proposed_delta=0.0,
+        opp={
+            "id": "opportunity-order",
+            "symbol": "BTC/USDT",
+            "market": "spot",
+            "universe_snapshot_id": "snapshot-1",
+            "universe_member_id": "member-order",
+        },
+        direction="long",
+        scope={"symbol": "BTC/USDT", "direction": "long"},
+        source_cohort="trade_case_study:v1",
+        learning_trace=[],
+        entry_price_usd=100.0,
+    )
+
+    assert [event[0] for event in events] == ["outcome", "exposure"]
+    assert events[0][1] == events[1][1]
+
 
 def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanner: str,
                             complete: bool = True) -> None:
