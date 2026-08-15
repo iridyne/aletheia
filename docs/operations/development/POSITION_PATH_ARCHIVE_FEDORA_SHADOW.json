@@ -218,6 +218,58 @@
     "unavailable_count": 0,
     "snapshot": "explicit read-only SQLite BEGIN"
   },
+  "latest_read_only_stream_sanity": {
+    "captured_at": "2026-08-15T17:42:07.012091+00:00",
+    "source": "fedora_read_only_row_stream",
+    "source_rows": 5931,
+    "positions_total": 347,
+    "eligible_positions": 74,
+    "eligible_rows": 5264,
+    "rows_verified": 5264,
+    "segments": 75,
+    "raw_bytes": 401572,
+    "payload_bytes": 174148,
+    "payload_ratio": 0.4336656938232745,
+    "available_count": 5264,
+    "unavailable_count": 0,
+    "deterministic_byte_identity": true,
+    "as_of_parity": true,
+    "production_codec_timing_ms": {
+      "encode_p50": 1.748125,
+      "encode_p95": 10.17475,
+      "decode_p50": 0.86475,
+      "decode_p95": 4.955125
+    },
+    "sample_coverage": {
+      "short_1_to_10_buckets": true,
+      "acceptance_142_buckets": true,
+      "medium_or_long_path": true,
+      "unavailable_observations": false,
+      "multiple_runtime_sessions": true,
+      "multiple_producer_commits": true,
+      "exit_plan_revisions": true,
+      "quantity_variation_scale_in_or_partial_signal": false,
+      "late_recovered_observations": true,
+      "path_count": 87
+    },
+    "skips": {
+      "deferred_buckets_remain": 260,
+      "incomplete_or_unexpected_buckets": 7,
+      "invalid_position_time_bounds": 5,
+      "position_not_closed": 1
+    },
+    "archive_persisted": false,
+    "read_model_parity": "not_run",
+    "acceptance": {
+      "status": "incomplete",
+      "reasons": [
+        "deployed_fedora_archive_read_model_shadow_pending",
+        "observer_write_latency_unmeasured",
+        "2048_bucket_decode_sample_unavailable",
+        "representative_input_incomplete"
+      ]
+    }
+  },
   "persisted_copy": {
     "captured_at": "2026-08-15T16:24:22.948872+00:00",
     "status": "partial",

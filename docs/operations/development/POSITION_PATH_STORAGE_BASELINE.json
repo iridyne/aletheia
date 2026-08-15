@@ -491,6 +491,42 @@
       }
     }
   },
+  "latest_read_only_sanity_snapshot": {
+    "captured_at": "2026-08-15T17:42:50.698649+00:00",
+    "snapshot": "explicit read-only SQLite BEGIN",
+    "database": {
+      "database_bytes": 1596108800,
+      "wal_bytes": 38402552,
+      "database_plus_wal_bytes": 1634511352
+    },
+    "position_path": {
+      "total_rows": 5931,
+      "position_count": 87,
+      "table_bytes": 1888256,
+      "index_bytes": 188416,
+      "table_index_bytes": 2076672,
+      "table_payload_bytes": 1803833,
+      "index_payload_bytes": 142216,
+      "table_unused_bytes": 41609,
+      "index_unused_bytes": 27859,
+      "deferred_rows": 261,
+      "deferred_table_index_bytes": 65536,
+      "hot_table_index_bytes_including_deferred": 2142208,
+      "percentage_of_app_db": 0.134214,
+      "archive_table": {
+        "available": false,
+        "rows": 0
+      },
+      "recovery_backlog": {
+        "hot_bucket_age_lte_72h": 13,
+        "cold_bucket_age_gt_72h": 248,
+        "oldest_hot_bucket_open_at": "2026-08-12T18:35:00+00:00",
+        "oldest_cold_bucket_open_at": "2026-08-08T12:45:00+00:00",
+        "queue_age_lte_72h": 261,
+        "queue_age_gt_72h": 0
+      }
+    }
+  },
   "notes": [
     "Per-bucket percentiles are weighted dbstat page-cell allocation; dbstat does not expose row-level page ownership.",
     "Archive bytes are reported separately and are not counted as the current hot baseline.",

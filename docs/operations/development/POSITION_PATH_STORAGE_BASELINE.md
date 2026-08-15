@@ -128,6 +128,18 @@ at `>72h`, with oldest hot bucket `2026-08-12T18:35:00Z` and oldest cold bucket
 `latest_read_only_snapshot` in `POSITION_PATH_STORAGE_BASELINE.json`; the
 original complete dbstat capture remains unchanged for reproducibility.
 
+The latest read-only sanity snapshot at `2026-08-15T17:42:50Z` measured 5,931
+observation rows across 87 Positions and 261 deferred rows. The observation
+table plus its primary-key/index allocations was 2,076,672 bytes; including
+the deferred table and indexes the hot footprint was 2,142,208 bytes, or
+`0.134214%` of `app.db` (database 1,596,108,800 bytes; WAL 38,402,552 bytes).
+The archive table remained absent. The underlying recovery split was 13
+buckets at `<=72h` and 248 at `>72h`, with oldest hot/cold bucket timestamps
+`2026-08-12T18:35:00Z` / `2026-08-08T12:45:00Z`; all 261 deferred queue rows
+were discovered within 72 hours. This is a live-source sanity snapshot, not a
+replacement for the versioned full dbstat capture. It is recorded under
+`latest_read_only_sanity_snapshot` in the JSON artifact.
+
 ## Fixture benchmark (not an acceptance result)
 
 The reproducible benchmark was also run against a local migrated fixture with
@@ -234,6 +246,16 @@ multiple sessions/commits, ExitPlan revisions, and late recovery; it does not
 contain unavailable observations or quantity-variation/scale-in evidence, so
 `representative_input_complete=false`. The stream remains read-only source
 evidence: `archive_persisted=false` and `read_model_parity=not_run`.
+
+The latest read-only stream sanity run at `2026-08-15T17:42:07Z` verified 5,264
+eligible rows across 75 segments from 5,931 source rows and 74 eligible
+Positions. It used 401,572 raw bytes and 174,148 payload bytes (43.37%
+payload ratio), with deterministic byte identity and median `as_of` parity.
+Encode/decode p95 were `10.17 ms` / `4.96 ms`. The stream still lacks
+unavailable and quantity-variation/scale-in evidence, and remains
+`archive_persisted=false` with `read_model_parity=not_run`; the structured
+sanity result is under `latest_read_only_stream_sanity` in
+`POSITION_PATH_ARCHIVE_FEDORA_SHADOW.json`.
 
 A second read-only check at `2026-08-15T16:24:22Z` streamed the current Fedora
 source population into a disposable SQLite copy, applied the current
