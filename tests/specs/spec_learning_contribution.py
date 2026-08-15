@@ -504,6 +504,7 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
         "ranker_case_candidate_net_utility_v1"
     )
     assert evaluation.harm_metrics["statistical_unit"] == "ranker_candidate"
+    assert "trial_integrity_readiness" not in evaluation.harm_metrics
     assert evaluation.harm_metrics["allocation_selection_source_member_counts"] == {
         "ranker_candidate_identity": 2,
     }
