@@ -365,21 +365,17 @@ jobs:
     name: Python unit
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 20
-
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.0"
           python-version: "3.12"
           enable-cache: false
-
       - name: Synchronize locked dependencies
         run: uv sync --locked --all-groups
-
       - name: Run unit regression tier
         env:
           ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-tier_unit
@@ -396,72 +392,25 @@ jobs:
           -q --tb=short
           --timeout=120
 
-  tests:
-    name: Python ${{ matrix.name }}
-    needs: [review, unit]
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: specifications
-            marker: tier_spec
-          - name: integration
-            marker: tier_integration
-          - name: end-to-end
-            marker: tier_e2e
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Install uv and Python 3.12
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
-        with:
-          version: "0.12.0"
-          python-version: "3.12"
-          enable-cache: false
-
-      - name: Synchronize locked dependencies
-        run: uv sync --locked --all-groups
-
-      - name: Run ${{ matrix.name }} regression tier
-        env:
-          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.marker }}
-        run: >-
-          uv run pytest tests/
-          --ignore=tests/simulation
-          --ignore=tests/test_auto_resume.py
-          --ignore=tests/test_connectivity.py
-          --ignore=tests/test_operator_cli.py
-          --ignore=tests/test_pause_ownership.py
-          -m "${{ matrix.marker }}"
-          -n 4
-          --dist loadfile
-          -q --tb=short
-          --timeout=120
-
+  # Lane A head: Runtime State is the short, high-value prerequisite. Specs are
+  # intentionally ineligible until this job finishes, so they can never steal a
+  # runner ahead of Runtime while still running even when Runtime itself fails.
   runtime-state-tests:
     name: Python runtime state
     needs: [review, unit]
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 15
-
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
       - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.0"
           python-version: "3.12"
           enable-cache: false
-
       - name: Synchronize locked dependencies
         run: uv sync --locked --all-groups
-
       - name: Ensure archive extraction tool is available
         shell: bash
         run: |
@@ -485,7 +434,6 @@ jobs:
           SH
           chmod +x "$install_dir/unzip"
           echo "$install_dir" >> "$GITHUB_PATH"
-
       - name: Run runtime-state regression
         shell: bash
         run: |
@@ -500,9 +448,112 @@ jobs:
             uv run pytest tests/test_connectivity.py \
               -n 1 -q --tb=short --timeout=120
 
+  # Lane B head. Only Runtime State and Integration are eligible when Stage 2
+  # opens, giving the two Fedora runners deterministic lane ownership.
+  integration:
+    name: Python integration
+    needs: [review, unit]
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.0"
+          python-version: "3.12"
+          enable-cache: false
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Run integration regression tier
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-tier_integration
+        run: >-
+          uv run pytest tests/
+          --ignore=tests/simulation
+          --ignore=tests/test_auto_resume.py
+          --ignore=tests/test_connectivity.py
+          --ignore=tests/test_operator_cli.py
+          --ignore=tests/test_pause_ownership.py
+          -m "tier_integration"
+          -n 4
+          --dist loadfile
+          -q --tb=short
+          --timeout=120
+
+  specifications:
+    name: Python specifications
+    needs: [review, unit, runtime-state-tests]
+    # The lane predecessor is ordering only. A Runtime failure is itself useful
+    # evidence and must not hide the independent Specifications regression.
+    if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.0"
+          python-version: "3.12"
+          enable-cache: false
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Run specifications regression tier
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-tier_spec
+        run: >-
+          uv run pytest tests/
+          --ignore=tests/simulation
+          --ignore=tests/test_auto_resume.py
+          --ignore=tests/test_connectivity.py
+          --ignore=tests/test_operator_cli.py
+          --ignore=tests/test_pause_ownership.py
+          -m "tier_spec"
+          -n 4
+          --dist loadfile
+          -q --tb=short
+          --timeout=120
+
+  end-to-end:
+    name: Python end-to-end
+    needs: [review, unit, integration]
+    # Integration orders this lane but does not suppress E2E failure evidence.
+    if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.0"
+          python-version: "3.12"
+          enable-cache: false
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Run end-to-end regression tier
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-tier_e2e
+        run: >-
+          uv run pytest tests/
+          --ignore=tests/simulation
+          --ignore=tests/test_auto_resume.py
+          --ignore=tests/test_connectivity.py
+          --ignore=tests/test_operator_cli.py
+          --ignore=tests/test_pause_ownership.py
+          -m "tier_e2e"
+          -n 4
+          --dist loadfile
+          -q --tb=short
+          --timeout=120
+
   release-candidate:
     name: Hand off verified release candidate
-    needs: [review, unit, tests, runtime-state-tests]
+    needs: [review, unit, runtime-state-tests, specifications, integration, end-to-end]
     if: >-
       github.event_name == 'workflow_dispatch' &&
       startsWith(github.ref_name, 'release-please--branches--master')
@@ -526,7 +577,7 @@ jobs:
 
   release-pr-ci:
     name: Hand off verified release pull request
-    needs: [review, unit, tests, runtime-state-tests]
+    needs: [review, unit, runtime-state-tests, specifications, integration, end-to-end]
     if: >-
       github.event_name == 'pull_request' &&
       startsWith(github.head_ref, 'release-please--branches--master')
