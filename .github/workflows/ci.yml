@@ -356,20 +356,26 @@ jobs:
         run: uv sync --locked --all-groups
 
       - name: Run ${{ matrix.name }} regression tier
+        shell: bash
         env:
           ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.marker }}
-        run: >-
-          uv run pytest tests/
-          --ignore=tests/simulation
-          --ignore=tests/test_auto_resume.py
-          --ignore=tests/test_connectivity.py
-          --ignore=tests/test_operator_cli.py
-          --ignore=tests/test_pause_ownership.py
-          -m "${{ matrix.marker }}"
-          -n 4
-          --dist loadfile
-          -q --tb=short
-          --timeout=120
+        run: |
+          set -euo pipefail
+          dist_args=(--dist loadfile)
+          if [ "${{ matrix.marker }}" = "tier_spec" ]; then
+            dist_args=(--dist worksteal)
+          fi
+          uv run pytest tests/ \
+            --ignore=tests/simulation \
+            --ignore=tests/test_auto_resume.py \
+            --ignore=tests/test_connectivity.py \
+            --ignore=tests/test_operator_cli.py \
+            --ignore=tests/test_pause_ownership.py \
+            -m "${{ matrix.marker }}" \
+            -n 4 \
+            "${dist_args[@]}" \
+            -q --tb=short \
+            --timeout=120
 
   runtime-state-tests:
     name: Python runtime state
