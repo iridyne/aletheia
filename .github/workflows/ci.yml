@@ -50,10 +50,17 @@ jobs:
 
           # Coverage is expensive (~60s in a recent Review job), so ordinary
           # PRs pay for it only when a measured trust boundary, its direct test
-          # surface, or coverage tooling/configuration changes.
+          # surface, or coverage/pytest tooling and configuration changes.
           if git diff --quiet "$base"...HEAD -- \
             .coveragerc \
             pyproject.toml \
+            pytest.toml \
+            .pytest.toml \
+            pytest.ini \
+            .pytest.ini \
+            tox.ini \
+            setup.cfg \
+            conftest.py \
             uv.lock \
             scripts/coverage_floors.py \
             tests/conftest.py \
@@ -99,7 +106,13 @@ jobs:
           else
             echo 'operator=true' >> "$GITHUB_OUTPUT"
           fi
-          if git diff --quiet "$base"...HEAD -- native/; then
+          if git diff --quiet "$base"...HEAD -- \
+            native/ \
+            .cargo/ \
+            Cargo.toml \
+            Cargo.lock \
+            rust-toolchain \
+            rust-toolchain.toml; then
             echo 'native=false' >> "$GITHUB_OUTPUT"
           else
             echo 'native=true' >> "$GITHUB_OUTPUT"
