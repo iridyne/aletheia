@@ -110,6 +110,19 @@ bucket `2026-08-12T18:35:00Z` and oldest cold bucket `2026-08-08T11:05:00Z`.
 This is a separate live-source sanity snapshot; the versioned detailed dbstat
 artifact remains the earlier complete capture.
 
+The newest explicit read-only physical snapshot at
+`2026-08-15T17:23:42Z` measured 5,877 rows across 85 Positions with rows, 73
+eligible closed Positions, and 263 deferred rows. The observation table plus
+its primary-key/index allocations was 2,056,192 bytes; including the deferred
+table and indexes the hot footprint was 2,121,728 bytes, or `0.133096%` of
+`app.db` (database 1,594,134,528 bytes; WAL 38,402,552 bytes). Rows per
+Position were p50=38, p95=236.6, max=340; exact duplicate market-bar groups
+remained 0. The underlying recovery split was 13 buckets at `<=72h` and 250
+at `>72h`, with oldest hot bucket `2026-08-12T18:35:00Z` and oldest cold bucket
+`2026-08-08T11:20:00Z`. The machine-readable latest summary is stored under
+`latest_read_only_snapshot` in `POSITION_PATH_STORAGE_BASELINE.json`; the
+original complete dbstat capture remains unchanged for reproducibility.
+
 ## Fixture benchmark (not an acceptance result)
 
 The reproducible benchmark was also run against a local migrated fixture with
@@ -206,6 +219,17 @@ five invalid-time, and one open. Production codec timing was encode p95 6.60 ms
 and decode p95 3.28 ms on this stream. It remains source-stream evidence only:
 `archive_persisted=false` and `read_model_parity=not_run`.
 
+The latest explicit read-only stream at `2026-08-15T17:24:58Z` verified 5,251
+eligible rows across 74 fixed segments from 5,877 source rows and 73 eligible
+Positions. It used 400,181 raw bytes and 173,161 payload bytes (43.27% payload
+ratio), with deterministic byte identity and median `as_of` parity true. The
+production codec timing was encode p95 10.39 ms and decode p95 5.02 ms. Source
+coverage includes short paths, the 142-bucket acceptance path, long paths,
+multiple sessions/commits, ExitPlan revisions, and late recovery; it does not
+contain unavailable observations or quantity-variation/scale-in evidence, so
+`representative_input_complete=false`. The stream remains read-only source
+evidence: `archive_persisted=false` and `read_model_parity=not_run`.
+
 A second read-only check at `2026-08-15T16:24:22Z` streamed the current Fedora
 source population into a disposable SQLite copy, applied the current
 migration, and persisted archive segments there. It covered 5,563 source rows,
@@ -254,7 +278,7 @@ gates.
 | 2048-bucket decode p95 below 100 ms on Fedora | No real Fedora 2048-bucket path; local synthetic sample only | Open |
 | Observer write latency unchanged | Disposable local SQLite clones only: p95 0.266 ms with schema vs 0.285 ms without | Open for Fedora observer |
 | Real Fedora persisted archive/read-model parity | Disposable Fedora-data copy: source unchanged, all shadow parity projections true; deployed Fedora still has no archive table | Copy pass; deployed gate open |
-| Materiality of the optimization | Detailed Fedora dbstat artifact: 0.126499%; latest read-only sanity capture: 0.132272% including deferred allocations | Fails materiality case; do not enable production compaction |
+| Materiality of the optimization | Detailed Fedora dbstat artifact: 0.126499%; latest read-only snapshot: 0.133096% including deferred allocations | Fails materiality case; do not enable production compaction |
 
 The branch therefore stops at additive validation. It does not claim deployed
 archive storage, does not delete source rows, and does not open a recovery issue

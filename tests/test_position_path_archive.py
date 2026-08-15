@@ -964,6 +964,9 @@ def test_read_only_fedora_stream_shadow_roundtrips_without_database_writes():
     assert report["candidate_benchmark"]["status"] == "available"
     assert "position_path_segment/v1" in report["candidate_benchmark"]["candidates"]
     assert report["production_codec_timing_ms"]["decode_p95"] is not None
+    assert "sample_coverage" in report
+    assert report["sample_coverage"]["short_1_to_10_buckets"] is True
+    assert report["representative_input_complete"] is False
     assert shadow_stream({"positions": [], "deferred": [], "rows": []})["status"] == "insufficient_data"
 
 

@@ -373,6 +373,83 @@
       "table_unused_bytes": 0
     }
   },
+  "latest_read_only_snapshot": {
+    "captured_at": "2026-08-15T17:23:42.627512+00:00",
+    "snapshot": "explicit read-only SQLite BEGIN",
+    "database": {
+      "database_bytes": 1594134528,
+      "wal_bytes": 38402552,
+      "database_plus_wal_bytes": 1632537080,
+      "shm_bytes": 98304
+    },
+    "sqlite": {
+      "page_size": 4096,
+      "page_count": 389197,
+      "allocated_bytes": 1594150912,
+      "freelist_count": 0,
+      "free_bytes": 0
+    },
+    "position_path": {
+      "total_rows": 5877,
+      "eligible_positions": 73,
+      "rows_per_position": {
+        "count": 85,
+        "p50": 38.0,
+        "p95": 236.6,
+        "max": 340
+      },
+      "table_bytes": 1867776,
+      "index_bytes": 188416,
+      "table_index_bytes": 2056192,
+      "payload_bytes": 1786709,
+      "unused_bytes": 38657,
+      "hot_table_index_bytes_including_deferred": 2121728,
+      "percentage_of_app_db": 0.133096,
+      "bytes_per_bucket": {
+        "method": "dbstat_page_cell_allocation",
+        "p50": 295.020692,
+        "p95": 295.020692,
+        "max": 295.020692
+      },
+      "duplicate_exact_market_bars": {
+        "groups": 0,
+        "rows": 0,
+        "available_rows": 5877,
+        "percentage": 0.0
+      },
+      "deferred_bucket_rows": 263,
+      "deferred_positions": 263,
+      "deferred_table": {
+        "bytes": 65536,
+        "table_bytes": 32768,
+        "index_bytes": 32768,
+        "table_payload_bytes": 25774,
+        "index_payload_bytes": 12368,
+        "table_unused_bytes": 5693,
+        "index_unused_bytes": 18734
+      },
+      "recovery_backlog": {
+        "hot_bucket_age_lte_72h": 13,
+        "cold_bucket_age_gt_72h": 250,
+        "oldest_hot_bucket_open_at": "2026-08-12T18:35:00+00:00",
+        "oldest_cold_bucket_open_at": "2026-08-08T11:20:00+00:00",
+        "bucket_age_buckets": {
+          "<1h": 0,
+          "1-6h": 2,
+          "6-24h": 5,
+          "1-3d": 6,
+          ">3d": 250
+        },
+        "queue_age_lte_72h": 263,
+        "queue_age_gt_72h": 0
+      },
+      "archive_table": {
+        "available": false,
+        "bytes": 0,
+        "rows": 0
+      }
+    }
+  },
   "notes": [
     "Per-bucket percentiles are weighted dbstat page-cell allocation; dbstat does not expose row-level page ownership.",
     "Archive bytes are reported separately and are not counted as the current hot baseline.",

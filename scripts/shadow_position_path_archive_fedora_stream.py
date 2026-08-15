@@ -19,6 +19,7 @@ from scripts.benchmark_position_path_archive import (
     _candidate_payloads,
     _candidate_report,
     _percentile,
+    _sample_coverage,
 )
 from aletheia.storage.position_path_archive import (
     BUCKET_MS,
@@ -108,6 +109,21 @@ def shadow_stream(payload: Mapping[str, Any], *, as_of: str | None = None) -> di
     available_count = 0
     unavailable_count = 0
     candidate_stats: dict[str, dict[str, Any]] = {}
+    sample_coverage = _sample_coverage(rows_by_position)
+    required_coverage = (
+        "short_1_to_10_buckets",
+        "acceptance_142_buckets",
+        "medium_or_long_path",
+        "unavailable_observations",
+        "multiple_runtime_sessions",
+        "multiple_producer_commits",
+        "exit_plan_revisions",
+        "quantity_variation_scale_in_or_partial_signal",
+        "late_recovered_observations",
+    )
+    representative_input_complete = all(
+        bool(sample_coverage[key]) for key in required_coverage
+    )
     production_encode_ms: list[float] = []
     production_decode_ms: list[float] = []
     for (position_id, segment_start), rows in sorted(groups.items()):
@@ -222,6 +238,8 @@ def shadow_stream(payload: Mapping[str, Any], *, as_of: str | None = None) -> di
             "source": "same_fedora_read_only_stream",
             "candidates": _candidate_report(candidate_stats),
         },
+        "sample_coverage": sample_coverage,
+        "representative_input_complete": representative_input_complete,
         "skips": dict(sorted(skips.items())),
     }
 
