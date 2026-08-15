@@ -155,10 +155,12 @@ Aletheia 是**镜像的另一半**：
 
 - ✅ **结果与复盘链已闭合**：符合 Outcome Integrity 的平仓会结算净结果、创建 durable Outcome hook，
   并可生成 case、review、lesson 与 Learning exposure。材料存在只证明经验可被观察，不等于已经改善决策。
-- ✅ **唯一 measurement-supported 行为路径是 `universe_family_calibration`**：它通过 prospective
-  treatment/control、贡献 verdict 和统一 authority gate，才可能获得有界 paper score multiplier 权限。
-- ⚠️ **其余 consumer-wired 路径当前都是零影响或 advisory fallback**：`ranker_case_score`、
-  `ranker_memo_score`、`ranker_factor_filter`、`ranker_learned_guard`、`operator_learning_bundle`、
+- ✅ **目前已有两条 measurement-supported 观测路径**：`universe_family_calibration` 与
+  `ranker_case_score` 都有 prospective treatment/control、贡献 verdict 和持久 identity。
+  其中 UFC 具备统一 authority gate 并可在 owner admission 后进入有界 Paper score multiplier；
+  Ranker Case 明确保持 Shadow-only，实际 Ranker delta 必须为 0。
+- ⚠️ **其余 consumer-wired 路径当前都是零影响或 advisory fallback**：`ranker_memo_score`、
+  `ranker_factor_filter`、`ranker_learned_guard`、`operator_learning_bundle`、
   `risk_lesson_constraint`、`persona_sizing` 均未具备 measurement authority；代码存在消费者不代表
   treatment 已生效。
 - ⚠️ **不能从“循环在运行”推导“产生正向效应”**：正贡献必须来自成本完整、身份一致、实际施加过

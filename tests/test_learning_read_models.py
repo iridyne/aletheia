@@ -609,6 +609,9 @@ def test_lco_projection_keeps_one_current_item_per_measurable_path(
         item["path_id"]: item
         for item in reversed(result["items"])
     }
+    latest_universe_id = latest_by_path["universe_family_calibration"][
+        "experiment_id"
+    ]
     for path_id, state in states_by_path.items():
         if path_id not in latest_by_path:
             assert state["state"] == "empty"

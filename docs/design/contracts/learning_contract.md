@@ -90,7 +90,8 @@ outcome adapter, can be measured, or can receive authority. Current measured mat
 | `universe_family_calibration` | wired | full-arm canonical outcomes plus mirror/fallback | supported; owner-gated paper lifecycle | code-level causal loop complete; a qualified natural contribution verdict is empirical runtime evidence, not a contract guarantee |
 | `operator_learning_bundle` | wired | current Opportunity outcome is not causal to the later prompt treatment | unsupported | static no-Learning prompt baseline; no new formal exposure or authority |
 | `observer_advisory_bundle` | wired | unsupported | unsupported | static observer context; no experimental bundle or exposure |
-| `ranker_case_score`, `ranker_memo_score`, `ranker_factor_filter` | wired | unsupported | unsupported | static score/filter baseline |
+| `ranker_case_score` | wired | exact candidate-level 4h `filter_candidate_outcomes` | supported for Shadow measurement; Paper authority unsupported | candidate-level Shadow measurement; actual Ranker delta remains `0` |
+| `ranker_memo_score`, `ranker_factor_filter` | wired | unsupported | unsupported | static score/filter baseline |
 | `ranker_learned_guard` | wired | unsupported | unsupported | learned guards observe only; seed/manual guards are a separate static safety class |
 | `risk_lesson_constraint` | wired | unsupported | unsupported | automatic lessons advisory-only; manual/owner lessons are non-experimental static constraints |
 | `persona_sizing` | wired | unsupported | unsupported | learned proposal may be displayed; applied notional remains static |
@@ -99,17 +100,22 @@ outcome adapter, can be measured, or can receive authority. Current measured mat
 | `filter_parameter_tune` | unwired skeleton | unsupported | unsupported | deferred design; no override table, producer or authority |
 | `lco-v1` owner projection | read-only consumer | reads existing ledger | no mutation authority | summary, registry-backed measured-path UI and current-route performance contract implemented; drill-down/full workbench incomplete |
 
-Only `universe_family_calibration` is currently `measurement_supported`. Adding another path requires its own causal unit, outcome adapter,
-behavior contract, failure semantics, focused tests and a new from-zero observation window; changing
-only a registry flag is forbidden.
+Both `universe_family_calibration` and `ranker_case_score` are currently
+`measurement_supported`. UFC remains the only Paper-authority-capable path;
+`ranker_case_score` is explicitly Shadow-only (`paper_authority_supported=False`)
+and its Ranker delta remains zero. Any further path requires its own causal unit,
+outcome adapter, behavior contract, failure semantics, focused tests and a new
+from-zero observation window; changing only a registry flag is forbidden.
 
 ### 1.3 Current-path caveats
 
 Existing tests prove individual behaviors and safety tripwires; they do not prove that the full
 loop contributes positively. Current behavior has these contract-relevant limitations:
 
-- factor, ranker, learned-guard, automatic Risk-lesson, Observer-bundle and persona hooks remain
-  behaviorally static because they are measurement-unsupported; they create no formal exposure;
+- factor, ranker memo, learned-guard, automatic Risk-lesson, Observer-bundle and persona hooks remain
+  behaviorally static because they are measurement-unsupported; `ranker_case_score` has an exact
+  Shadow measurement contract but no Paper authority and no Ranker delta, and unsupported paths
+  create no formal exposure;
 - continuous Universe curves, pessimistic missing-data scoring, and factor-level
   suppression remain accepted future design only; the step scorer and static
   factor fallback remain authoritative until the separate safeguards in
