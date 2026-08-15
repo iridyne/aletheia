@@ -317,6 +317,7 @@ jobs:
           --ignore=tests/test_pause_ownership.py
           -m "tier_unit"
           -n auto
+          --maxprocesses=8
           --dist loadfile
           -q --tb=short
           --timeout=120
@@ -367,6 +368,7 @@ jobs:
           --ignore=tests/test_pause_ownership.py
           -m "${{ matrix.marker }}"
           -n auto
+          --maxprocesses=8
           --dist loadfile
           -q --tb=short
           --timeout=120
