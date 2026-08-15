@@ -1561,11 +1561,12 @@ def _observer_audit(
     first = ((int(entry_at.timestamp() * 1000) + _BUCKET_MS - 1) // _BUCKET_MS) * _BUCKET_MS
     last = (int(boundary.timestamp() * 1000) // _BUCKET_MS) * _BUCKET_MS
     expected = max(0, (last - first) // _BUCKET_MS)
-    observations = _rows(
-        db,
-        "SELECT * FROM position_path_observations WHERE position_id=? "
-        "AND bucket_open_ms>=? AND bucket_open_ms<? ORDER BY bucket_open_ms",
-        (position_id, first, last),
+    observations = repo.list_position_path_observations_unified(
+        position_id,
+        start_ms=first,
+        end_ms=last,
+        as_of=cutoff,
+        db=db,
     )
     visible_observations: list[dict[str, Any]] = []
     for row in observations:
@@ -1613,12 +1614,12 @@ def _visible_position_path_observations(
     last = (int(boundary.timestamp() * 1000) // _BUCKET_MS) * _BUCKET_MS
     if last <= first:
         return []
-    rows = _rows(
-        db,
-        "SELECT * FROM position_path_observations "
-        "WHERE position_id=? AND bucket_open_ms>=? AND bucket_open_ms<? "
-        "ORDER BY bucket_open_ms ASC",
-        (position_id, first, last),
+    rows = repo.list_position_path_observations_unified(
+        position_id,
+        start_ms=first,
+        end_ms=last,
+        as_of=cutoff,
+        db=db,
     )
     return [
         row

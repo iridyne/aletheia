@@ -1,0 +1,230 @@
+{
+  "contract_version": "position_path_archive_fedora_shadow/v1",
+  "stream": {
+    "archive_persisted": false,
+    "as_of_cutoff": null,
+    "as_of_mode": "median_per_segment",
+    "as_of_parity": true,
+    "available_count": 3919,
+    "candidate_benchmark": {
+      "candidates": {
+        "json+zstd:l3": {
+          "bytes_per_bucket_max": 286.5,
+          "bytes_per_bucket_p50": 50,
+          "bytes_per_bucket_p95": 161.75,
+          "compressed_ratio": 0.11354329455099138,
+          "compressed_ratio_p50": 0.13455,
+          "compressed_ratio_p95": 0.337331,
+          "encode_ms": {
+            "p50": 0.017542,
+            "p95": 0.055708
+          },
+          "payload_bytes": 166889,
+          "raw_bytes": 1469827
+        },
+        "json+zstd:l6": {
+          "bytes_per_bucket_max": 284.5,
+          "bytes_per_bucket_p50": 47.764706,
+          "bytes_per_bucket_p95": 158.5,
+          "compressed_ratio": 0.10886247156978339,
+          "compressed_ratio_p50": 0.125636,
+          "compressed_ratio_p95": 0.330553,
+          "encode_ms": {
+            "p50": 0.060959,
+            "p95": 0.197583
+          },
+          "payload_bytes": 160009,
+          "raw_bytes": 1469827
+        },
+        "json+zstd:l9": {
+          "bytes_per_bucket_max": 284.5,
+          "bytes_per_bucket_p50": 47.588235,
+          "bytes_per_bucket_p95": 158.5,
+          "compressed_ratio": 0.10509740261949195,
+          "compressed_ratio_p50": 0.12517,
+          "compressed_ratio_p95": 0.330553,
+          "encode_ms": {
+            "p50": 0.121334,
+            "p95": 0.319
+          },
+          "payload_bytes": 154475,
+          "raw_bytes": 1469827
+        },
+        "msgpack_columns+zstd:l3": {
+          "bytes_per_bucket_max": 340,
+          "bytes_per_bucket_p50": 59,
+          "bytes_per_bucket_p95": 193,
+          "compressed_ratio": 0.1508238102975885,
+          "compressed_ratio_p50": 0.184515,
+          "compressed_ratio_p95": 0.475369,
+          "encode_ms": {
+            "p50": 0.015333,
+            "p95": 0.035125
+          },
+          "payload_bytes": 187493,
+          "raw_bytes": 1243126
+        },
+        "msgpack_columns+zstd:l6": {
+          "bytes_per_bucket_max": 338.5,
+          "bytes_per_bucket_p50": 57.851852,
+          "bytes_per_bucket_p95": 191.75,
+          "compressed_ratio": 0.14701245086982334,
+          "compressed_ratio_p50": 0.179841,
+          "compressed_ratio_p95": 0.472291,
+          "encode_ms": {
+            "p50": 0.035292,
+            "p95": 0.100166
+          },
+          "payload_bytes": 182755,
+          "raw_bytes": 1243126
+        },
+        "msgpack_columns+zstd:l9": {
+          "bytes_per_bucket_max": 338.5,
+          "bytes_per_bucket_p50": 57.703704,
+          "bytes_per_bucket_p95": 191.75,
+          "compressed_ratio": 0.14642602600219126,
+          "compressed_ratio_p50": 0.179841,
+          "compressed_ratio_p95": 0.472291,
+          "encode_ms": {
+            "p50": 0.048,
+            "p95": 0.152667
+          },
+          "payload_bytes": 182026,
+          "raw_bytes": 1243126
+        },
+        "msgpack_columns:raw": {
+          "bytes_per_bucket_max": 506,
+          "bytes_per_bucket_p50": 321.216216,
+          "bytes_per_bucket_p95": 406,
+          "compressed_ratio": 1,
+          "compressed_ratio_p50": 1,
+          "compressed_ratio_p95": 1,
+          "encode_ms": {
+            "p50": 0,
+            "p95": 0
+          },
+          "payload_bytes": 1243126,
+          "raw_bytes": 1243126
+        },
+        "msgpack_rows+zstd:l3": {
+          "bytes_per_bucket_max": 316.5,
+          "bytes_per_bucket_p50": 62.716981,
+          "bytes_per_bucket_p95": 185.75,
+          "compressed_ratio": 0.16748153250782663,
+          "compressed_ratio_p50": 0.19519,
+          "compressed_ratio_p95": 0.463217,
+          "encode_ms": {
+            "p50": 0.016584,
+            "p95": 0.039625
+          },
+          "payload_bytes": 209335,
+          "raw_bytes": 1249899
+        },
+        "msgpack_rows+zstd:l6": {
+          "bytes_per_bucket_max": 315,
+          "bytes_per_bucket_p50": 62.037037,
+          "bytes_per_bucket_p95": 183.25,
+          "compressed_ratio": 0.16373162951566486,
+          "compressed_ratio_p50": 0.194609,
+          "compressed_ratio_p95": 0.456983,
+          "encode_ms": {
+            "p50": 0.044375,
+            "p95": 0.150542
+          },
+          "payload_bytes": 204648,
+          "raw_bytes": 1249899
+        },
+        "msgpack_rows+zstd:l9": {
+          "bytes_per_bucket_max": 315,
+          "bytes_per_bucket_p50": 62,
+          "bytes_per_bucket_p95": 183.25,
+          "compressed_ratio": 0.16338440145963795,
+          "compressed_ratio_p50": 0.194493,
+          "compressed_ratio_p95": 0.456983,
+          "encode_ms": {
+            "p50": 0.07775,
+            "p95": 0.23525
+          },
+          "payload_bytes": 204214,
+          "raw_bytes": 1249899
+        },
+        "position_path_segment/v1": {
+          "bytes_per_bucket_max": 231,
+          "bytes_per_bucket_p50": 44.252525,
+          "bytes_per_bucket_p95": 134.75,
+          "compressed_ratio": 0.4779453171064574,
+          "compressed_ratio_p50": 0.584862,
+          "compressed_ratio_p95": 0.854489,
+          "encode_ms": {
+            "p50": 1.703708,
+            "p95": 6.666916
+          },
+          "payload_bytes": 144285,
+          "raw_bytes": 301886
+        }
+      },
+      "source": "same_fedora_read_only_stream",
+      "status": "available"
+    },
+    "captured_at": "2026-08-15T17:17:42.465274+00:00",
+    "contract_version": "position_path_archive_fedora_stream/v1",
+    "deterministic_byte_identity": true,
+    "eligible_positions": 67,
+    "eligible_rows": 3919,
+    "payload_bytes": 144285,
+    "payload_ratio": 0.4779453171064574,
+    "positions_total": 347,
+    "production_codec_timing_ms": {
+      "decode_p50": 0.842666,
+      "decode_p95": 3.276916,
+      "encode_p50": 1.678833,
+      "encode_p95": 6.599083
+    },
+    "raw_bytes": 301886,
+    "read_model_parity": "not_run",
+    "rows_verified": 3919,
+    "segments": 68,
+    "skips": {
+      "deferred_buckets_remain": 262,
+      "incomplete_or_unexpected_buckets": 12,
+      "invalid_position_time_bounds": 5,
+      "position_not_closed": 1
+    },
+    "source": "fedora_read_only_row_stream",
+    "source_rows": 5856,
+    "status": "passed",
+    "unavailable_count": 0,
+    "snapshot": "explicit read-only SQLite BEGIN"
+  },
+  "persisted_copy": {
+    "captured_at": "2026-08-15T16:24:22.948872+00:00",
+    "status": "partial",
+    "source_rows": 5563,
+    "segments": 62,
+    "rows_verified": 3619,
+    "raw_bytes": 278189,
+    "payload_bytes": 134181,
+    "source_unchanged": true,
+    "archive_parity": true,
+    "unified_parity": true,
+    "position_path_report_parity": true,
+    "position_lifecycle_story_parity": true,
+    "read_model_parity": true,
+    "parity_checks": {
+      "observations": true,
+      "coverage_expected_available_unavailable_missing": true,
+      "mfe_mae_giveback": true,
+      "story_events": true,
+      "as_of": true,
+      "provenance_and_evidence_gaps": true
+    },
+    "skip_reasons": {
+      "deferred_buckets_remain": 6,
+      "missing_expected_buckets": 15
+    },
+    "archive_table_index_bytes": 233472,
+    "hot_table_index_bytes": 1945600,
+    "archive_to_hot_percentage": 12.0,
+    "deployed": false
+  }
+}

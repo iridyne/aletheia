@@ -317,7 +317,9 @@ def build_position_path_report(position_id: str, *, limit: int = 10_000) -> dict
             "reason": "position_not_found",
             "observations": [],
         }
-    observations = repo.list_position_path_observations(position_id, limit=limit)
+    observations = repo.list_position_path_observations_unified(
+        position_id, limit=limit
+    )
     available = [
         row for row in observations if row.get("evidence_status") == "available"
     ]

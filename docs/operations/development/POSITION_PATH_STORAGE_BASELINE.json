@@ -1,0 +1,381 @@
+{
+  "contract_version": "position_path_storage_baseline/v3",
+  "captured_at": "2026-08-15T16:20:53.019845+00:00",
+  "read_only": true,
+  "physical_measurement": "sqlite_dbstat",
+  "database": {
+    "database_bytes": 1586610176,
+    "database_path": "/home/admin/.aletheia/app.db",
+    "database_plus_wal_bytes": 1621782648,
+    "shm_bytes": 98304,
+    "wal_bytes": 35172472
+  },
+  "sqlite": {
+    "allocated_bytes": 1586655232,
+    "free_bytes": 0,
+    "freelist_count": 0,
+    "page_count": 387367,
+    "page_size": 4096
+  },
+  "position_path": {
+    "total_rows": 5563,
+    "eligible_positions": 61,
+    "rows_per_position": {
+      "count": 82,
+      "distribution": {
+        "2": 1,
+        "3": 1,
+        "4": 2,
+        "6": 4,
+        "7": 1,
+        "8": 1,
+        "9": 2,
+        "10": 1,
+        "11": 1,
+        "13": 2,
+        "14": 1,
+        "15": 1,
+        "16": 1,
+        "17": 2,
+        "18": 1,
+        "20": 1,
+        "30": 2,
+        "32": 2,
+        "34": 4,
+        "35": 4,
+        "37": 4,
+        "38": 3,
+        "40": 1,
+        "45": 1,
+        "47": 2,
+        "48": 2,
+        "49": 1,
+        "52": 1,
+        "53": 1,
+        "54": 1,
+        "55": 2,
+        "58": 1,
+        "65": 1,
+        "70": 1,
+        "71": 1,
+        "90": 1,
+        "93": 1,
+        "96": 1,
+        "99": 1,
+        "100": 1,
+        "101": 1,
+        "121": 1,
+        "126": 1,
+        "135": 1,
+        "141": 1,
+        "142": 1,
+        "143": 4,
+        "160": 1,
+        "161": 1,
+        "173": 1,
+        "215": 1,
+        "219": 1,
+        "245": 1,
+        "250": 1,
+        "255": 1,
+        "316": 1
+      },
+      "max": 316,
+      "p50": 38,
+      "p95": 218.8
+    },
+    "table_bytes": 1761280,
+    "index_bytes": 180224,
+    "table_index_bytes": 1941504,
+    "payload_bytes": 1687953,
+    "unused_bytes": 33217,
+    "table_index_payload_bytes": 1821337,
+    "table_index_unused_bytes": 62844,
+    "percentage_of_app_db": 0.126499,
+    "bytes_per_bucket": {
+      "max": 293.987648,
+      "method": "dbstat_page_cell_allocation",
+      "p50": 293.987648,
+      "p95": 293.987648,
+      "row_count": 5563,
+      "status": "available"
+    },
+    "duplicate_exact_market_bars": {
+      "available_rows": 5563,
+      "groups": 0,
+      "percentage": 0,
+      "rows": 0
+    },
+    "constant_repeated_field_cardinality": {
+      "bar_close": {
+        "distinct_non_null": 3743,
+        "null_count": 0,
+        "repeated_non_null": 1820,
+        "repeated_percentage": 32.71616
+      },
+      "bar_high": {
+        "distinct_non_null": 3670,
+        "null_count": 0,
+        "repeated_non_null": 1893,
+        "repeated_percentage": 34.028402
+      },
+      "bar_low": {
+        "distinct_non_null": 3686,
+        "null_count": 0,
+        "repeated_non_null": 1877,
+        "repeated_percentage": 33.740787
+      },
+      "bar_open": {
+        "distinct_non_null": 3720,
+        "null_count": 0,
+        "repeated_non_null": 1843,
+        "repeated_percentage": 33.129606
+      },
+      "bar_provider": {
+        "distinct_non_null": 1,
+        "null_count": 0,
+        "repeated_non_null": 5562,
+        "repeated_percentage": 99.982024
+      },
+      "bar_volume": {
+        "distinct_non_null": 5536,
+        "null_count": 0,
+        "repeated_non_null": 27,
+        "repeated_percentage": 0.48535
+      },
+      "bucket_open_ms": {
+        "distinct_non_null": 658,
+        "null_count": 0,
+        "repeated_non_null": 4905,
+        "repeated_percentage": 88.17185
+      },
+      "capture_mode": {
+        "distinct_non_null": 2,
+        "null_count": 0,
+        "repeated_non_null": 5561,
+        "repeated_percentage": 99.964048
+      },
+      "direction": {
+        "distinct_non_null": 2,
+        "null_count": 0,
+        "repeated_non_null": 5561,
+        "repeated_percentage": 99.964048
+      },
+      "entry_fee": {
+        "distinct_non_null": 80,
+        "null_count": 0,
+        "repeated_non_null": 5483,
+        "repeated_percentage": 98.561927
+      },
+      "entry_price": {
+        "distinct_non_null": 82,
+        "null_count": 0,
+        "repeated_non_null": 5481,
+        "repeated_percentage": 98.525975
+      },
+      "evidence_reason": {
+        "distinct_non_null": 1,
+        "null_count": 0,
+        "repeated_non_null": 5562,
+        "repeated_percentage": 99.982024
+      },
+      "evidence_status": {
+        "distinct_non_null": 1,
+        "null_count": 0,
+        "repeated_non_null": 5562,
+        "repeated_percentage": 99.982024
+      },
+      "exit_plan_version": {
+        "distinct_non_null": 7,
+        "null_count": 0,
+        "repeated_non_null": 5556,
+        "repeated_percentage": 99.874169
+      },
+      "funding_cost": {
+        "distinct_non_null": 4,
+        "null_count": 5558,
+        "repeated_non_null": 1,
+        "repeated_percentage": 0.017976
+      },
+      "funding_source": {
+        "distinct_non_null": 2,
+        "null_count": 0,
+        "repeated_non_null": 5561,
+        "repeated_percentage": 99.964048
+      },
+      "mark_price": {
+        "distinct_non_null": 3744,
+        "null_count": 0,
+        "repeated_non_null": 1819,
+        "repeated_percentage": 32.698184
+      },
+      "market_type": {
+        "distinct_non_null": 2,
+        "null_count": 0,
+        "repeated_non_null": 5561,
+        "repeated_percentage": 99.964048
+      },
+      "observed_at": {
+        "distinct_non_null": 488,
+        "null_count": 0,
+        "repeated_non_null": 5075,
+        "repeated_percentage": 91.227755
+      },
+      "position_id": {
+        "distinct_non_null": 82,
+        "null_count": 0,
+        "repeated_non_null": 5481,
+        "repeated_percentage": 98.525975
+      },
+      "producer_commit": {
+        "distinct_non_null": 8,
+        "null_count": 41,
+        "repeated_non_null": 5514,
+        "repeated_percentage": 99.11918
+      },
+      "quantity": {
+        "distinct_non_null": 82,
+        "null_count": 0,
+        "repeated_non_null": 5481,
+        "repeated_percentage": 98.525975
+      },
+      "runtime_session_id": {
+        "distinct_non_null": 10,
+        "null_count": 41,
+        "repeated_non_null": 5512,
+        "repeated_percentage": 99.083228
+      },
+      "stop_price": {
+        "distinct_non_null": 31,
+        "null_count": 4790,
+        "repeated_non_null": 742,
+        "repeated_percentage": 13.338127
+      },
+      "symbol": {
+        "distinct_non_null": 54,
+        "null_count": 0,
+        "repeated_non_null": 5509,
+        "repeated_percentage": 99.029301
+      },
+      "take_profit_price": {
+        "distinct_non_null": 21,
+        "null_count": 4790,
+        "repeated_non_null": 752,
+        "repeated_percentage": 13.517886
+      },
+      "unrealized_pnl": {
+        "distinct_non_null": 3812,
+        "null_count": 0,
+        "repeated_non_null": 1751,
+        "repeated_percentage": 31.475822
+      },
+      "venue": {
+        "distinct_non_null": 1,
+        "null_count": 0,
+        "repeated_non_null": 5562,
+        "repeated_percentage": 99.982024
+      }
+    },
+    "deferred_bucket_rows": 266,
+    "deferred_positions": 266,
+    "deferred_age_buckets": {
+      "1-3d": 0,
+      "1-6h": 2,
+      "6-24h": 264,
+      "<1h": 0,
+      ">3d": 0
+    },
+    "deferred_reason_counts": {
+      "scheduled": 266
+    },
+    "recovery_backlog": {
+      "bucket_age_buckets": {
+        "1-3d": 6,
+        "1-6h": 2,
+        "6-24h": 5,
+        "<1h": 0,
+        ">3d": 253
+      },
+      "cold_bucket_age_gt_72h": 253,
+      "hot_bucket_age_lte_72h": 13,
+      "invalid_bucket_timestamps": 0,
+      "oldest_cold_bucket_open_at": "2026-08-08T09:55:00+00:00",
+      "oldest_hot_bucket_open_at": "2026-08-12T18:35:00+00:00",
+      "oldest_queue_cold_deferred_at": null,
+      "oldest_queue_hot_deferred_at": "2026-08-15T02:33:20.765911+00:00",
+      "queue_age_gt_72h": 0,
+      "queue_age_lte_72h": 266
+    },
+    "hot_table_index_bytes_including_deferred": 2007040,
+    "dbstat_objects": [
+      {
+        "bytes": 1761280,
+        "cells": 5991,
+        "name": "position_path_observations",
+        "pages": 430,
+        "payload_bytes": 1687953,
+        "unused_bytes": 33217
+      },
+      {
+        "bytes": 180224,
+        "cells": 5563,
+        "name": "sqlite_autoindex_position_path_observations_1",
+        "pages": 44,
+        "payload_bytes": 133384,
+        "unused_bytes": 29627
+      },
+      {
+        "bytes": 16384,
+        "cells": 266,
+        "name": "idx_position_path_deferred_bucket",
+        "pages": 4,
+        "payload_bytes": 6256,
+        "unused_bytes": 9286
+      },
+      {
+        "bytes": 32768,
+        "cells": 272,
+        "name": "position_path_observation_deferred_buckets",
+        "pages": 8,
+        "payload_bytes": 26068,
+        "unused_bytes": 5384
+      },
+      {
+        "bytes": 16384,
+        "cells": 266,
+        "name": "sqlite_autoindex_position_path_observation_deferred_buckets_1",
+        "pages": 4,
+        "payload_bytes": 6256,
+        "unused_bytes": 9286
+      }
+    ],
+    "deferred_table": {
+      "available": true,
+      "rows": 266,
+      "bytes": 65536,
+      "table_bytes": 32768,
+      "index_bytes": 32768,
+      "table_payload_bytes": 26068,
+      "index_payload_bytes": 12512,
+      "table_unused_bytes": 5384,
+      "index_unused_bytes": 18572
+    },
+    "archive_table": {
+      "available": false,
+      "bytes": 0,
+      "index_bytes": 0,
+      "index_payload_bytes": 0,
+      "index_unused_bytes": 0,
+      "objects": [],
+      "rows": 0,
+      "table_bytes": 0,
+      "table_payload_bytes": 0,
+      "table_unused_bytes": 0
+    }
+  },
+  "notes": [
+    "Per-bucket percentiles are weighted dbstat page-cell allocation; dbstat does not expose row-level page ownership.",
+    "Archive bytes are reported separately and are not counted as the current hot baseline.",
+    "Compression does not terminalize or clear deferred historical recovery work."
+  ]
+}

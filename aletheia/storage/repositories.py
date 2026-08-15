@@ -1,6 +1,6 @@
 """Thin repository functions for SQLite CRUD."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone, timedelta
 import hashlib
 import json
@@ -52,6 +52,21 @@ from aletheia.storage.models import (
 )
 from aletheia.data.symbols import to_canonical
 from pydantic import BaseModel
+from aletheia.storage.position_path_archive import (
+    CODEC,
+    CODEC_VERSION,
+    CODEC_LEVEL,
+    ENCODER_PROVENANCE,
+    RAW_CODEC,
+    RAW_CODEC_VERSION,
+    RAW_CODEC_LEVEL,
+    SCHEMA_VERSION,
+    SUPPORTED_CODECS,
+    canonical_row,
+    decode_segment,
+    encode_segment,
+    segment_start_for_bucket,
+)
 
 _PROVENANCE_FIELDS = ("runtime_session_id", "producer_commit", "behavior_fingerprint")
 _sqlite_logger = logging.getLogger("aletheia.storage.sqlite")
@@ -65,6 +80,16 @@ _PHYSICAL_PROTECTION_MARKETS = {
 }
 
 POSITION_PATH_MAX_RETRY_ATTEMPTS = 3
+
+
+def _sqlite_table_exists(db: sqlite3.Connection, table_name: str) -> bool:
+    return (
+        db.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?",
+            (table_name,),
+        ).fetchone()
+        is not None
+    )
 
 
 class PositionProtectionConflict(RuntimeError):
@@ -2858,16 +2883,37 @@ def get_observed_position_ids_for_bucket(
 ) -> set[str]:
     """Return candidate Position IDs already observed for one bucket."""
 
+    db = get_db()
     observed: set[str] = set()
     for offset in range(0, len(position_ids), 400):
         chunk = position_ids[offset : offset + 400]
         placeholders = ",".join("?" for _ in chunk)
-        rows = get_db().execute(
+        rows = db.execute(
             "SELECT position_id FROM position_path_observations "
             f"WHERE bucket_open_ms=? AND position_id IN ({placeholders})",
             (bucket_open_ms, *chunk),
         ).fetchall()
         observed.update(str(row["position_id"]) for row in rows)
+    if _sqlite_table_exists(db, "position_path_archive_segments"):
+        for offset in range(0, len(position_ids), 400):
+            chunk = position_ids[offset : offset + 400]
+            placeholders = ",".join("?" for _ in chunk)
+            candidates = db.execute(
+                "SELECT DISTINCT position_id FROM position_path_archive_segments "
+                f"WHERE first_bucket_open_ms<=? AND last_bucket_open_ms>=? "
+                f"AND position_id IN ({placeholders})",
+                (int(bucket_open_ms), int(bucket_open_ms), *chunk),
+            ).fetchall()
+            for row in candidates:
+                position_id = str(row["position_id"])
+                exact = list_archived_position_path_observations(
+                    position_id,
+                    start_ms=int(bucket_open_ms),
+                    end_ms=int(bucket_open_ms) + 300_000,
+                    db=db,
+                )
+                if exact:
+                    observed.add(position_id)
     return observed
 
 
@@ -2889,6 +2935,8 @@ def get_position_path_bucket_state(
             ("position_path_observations", "observed"),
             ("position_path_observation_deferred_buckets", "deferred"),
         ):
+            if not _sqlite_table_exists(get_db(), table):
+                continue
             rows = get_db().execute(
                 f"SELECT position_id,bucket_open_ms FROM {table} "
                 f"WHERE position_id IN ({placeholders})",
@@ -2898,6 +2946,14 @@ def get_position_path_bucket_state(
                 position_state = state.get(str(row["position_id"]))
                 if position_state is not None:
                     position_state[key].add(int(row["bucket_open_ms"]))
+        if _sqlite_table_exists(get_db(), "position_path_archive_segments"):
+            for position_id in chunk:
+                for row in list_archived_position_path_observations(
+                    str(position_id), db=get_db()
+                ):
+                    position_state = state.get(str(position_id))
+                    if position_state is not None:
+                        position_state["observed"].add(int(row["bucket_open_ms"]))
     return state
 
 def defer_position_path_observation_bucket(
@@ -2984,20 +3040,36 @@ def count_deferred_position_path_observation_buckets() -> int:
 
 
 def count_position_path_observations_since(since_bucket_open_ms: int) -> dict[str, int]:
-    """Count immutable facts whose bucket starts in the trailing window."""
+    """Count immutable hot or archived facts whose bucket starts in the window."""
+    db = get_db()
 
-    rows = get_db().execute(
-        "SELECT evidence_status, COUNT(*) AS count "
-        "FROM position_path_observations "
-        "WHERE bucket_open_ms >= ? "
-        "GROUP BY evidence_status",
-        (int(since_bucket_open_ms),),
-    ).fetchall()
+    try:
+        position_ids = db.execute(
+            "SELECT DISTINCT position_id FROM position_path_observations "
+            "WHERE bucket_open_ms>=? "
+            "UNION SELECT DISTINCT position_id FROM position_path_archive_segments "
+            "WHERE last_bucket_open_ms>=?",
+            (int(since_bucket_open_ms), int(since_bucket_open_ms)),
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table: position_path_archive_segments" not in str(exc).lower():
+            raise
+        position_ids = db.execute(
+            "SELECT DISTINCT position_id FROM position_path_observations "
+            "WHERE bucket_open_ms>=?",
+            (int(since_bucket_open_ms),),
+        ).fetchall()
     counts = {"available": 0, "unavailable": 0}
-    for row in rows:
-        status = str(row["evidence_status"])
-        if status in counts:
-            counts[status] = int(row["count"])
+    for row in position_ids:
+        observations = list_position_path_observations_unified(
+            str(row["position_id"]),
+            start_ms=int(since_bucket_open_ms),
+            db=db,
+        )
+        for observation in observations:
+            status = str(observation.get("evidence_status") or "")
+            if status in counts:
+                counts[status] += 1
     return counts
 
 
@@ -3074,7 +3146,7 @@ def list_position_path_observations(
     *,
     limit: int = 10_000,
 ) -> list[dict]:
-    """Return one Position's immutable observations oldest-first."""
+    """Inspect hot source rows; business readers must use the unified reader."""
 
     bounded_limit = max(1, min(int(limit), 10_000))
     rows = get_db().execute(
@@ -3083,6 +3155,545 @@ def list_position_path_observations(
         (position_id, bounded_limit),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _archive_position_bounds(position: Mapping[str, object]) -> tuple[int | None, int | None]:
+    if str(position.get("status") or "").lower() != "closed":
+        return None, None
+    first = _first_full_position_path_bucket_open_ms(position.get("opened_at"))
+    try:
+        raw_closed_at = str(position.get("closed_at") or "").strip()
+        closed_at = datetime.fromisoformat(raw_closed_at.replace("Z", "+00:00"))
+        if closed_at.tzinfo is None:
+            closed_at = closed_at.replace(tzinfo=timezone.utc)
+        closed_at_ms = int(closed_at.astimezone(timezone.utc).timestamp() * 1000)
+    except (TypeError, ValueError, OSError, OverflowError):
+        return first, None
+    last = (closed_at_ms // 300_000 - 1) * 300_000
+    return first, last
+
+
+def _archive_skip_reason(
+    position: Mapping[str, object],
+    rows: Sequence[Mapping[str, object]],
+    *,
+    db: sqlite3.Connection,
+) -> str | None:
+    if str(position.get("status") or "").lower() != "closed":
+        return "position_not_closed"
+    if _sqlite_table_exists(db, "position_path_observation_deferred_buckets"):
+        deferred = db.execute(
+            "SELECT COUNT(*) FROM position_path_observation_deferred_buckets "
+            "WHERE position_id=?",
+            (str(position["id"]),),
+        ).fetchone()
+        if deferred and int(deferred[0]) > 0:
+            return "deferred_buckets_remain"
+    first, last = _archive_position_bounds(position)
+    if first is None or last is None or last < first:
+        return "invalid_position_time_bounds"
+    expected = set(range(first, last + 300_000, 300_000))
+    by_bucket = {int(row["bucket_open_ms"]): row for row in rows}
+    if expected - set(by_bucket):
+        return "missing_expected_buckets"
+    if set(by_bucket) - expected:
+        return "unexpected_buckets"
+    if any(
+        row.get("evidence_status") not in {"available", "unavailable"}
+        for row in by_bucket.values()
+        if int(row["bucket_open_ms"]) in expected
+    ):
+        return "nonterminal_evidence"
+    return None
+
+
+def archive_position_path_segments(
+    position_id: str | None = None,
+    *,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
+    dry_run: bool = False,
+    limit: int | None = None,
+) -> dict[str, object]:
+    """Seal complete closed Position paths into fixed immutable segments."""
+
+    if start_ms is not None and end_ms is not None and int(end_ms) <= int(start_ms):
+        raise ValueError("end_ms must be greater than start_ms")
+    if limit is not None and int(limit) <= 0:
+        raise ValueError("limit must be greater than zero")
+    db = get_db()
+    with (nullcontext() if dry_run else transaction(immediate=True)):
+        candidate_clauses = []
+        candidate_params: list[object] = []
+        if position_id is not None:
+            candidate_clauses.append("position_id=?")
+            candidate_params.append(str(position_id))
+        if start_ms is not None:
+            candidate_clauses.append("bucket_open_ms>=?")
+            candidate_params.append(int(start_ms))
+        if end_ms is not None:
+            candidate_clauses.append("bucket_open_ms<?")
+            candidate_params.append(int(end_ms))
+        candidate_where = (
+            f" WHERE {' AND '.join(candidate_clauses)}"
+            if candidate_clauses
+            else ""
+        )
+        candidate_ids = sorted(
+            {
+                str(row["position_id"])
+                for row in db.execute(
+                    "SELECT DISTINCT position_id FROM position_path_observations"
+                    + candidate_where,
+                    tuple(candidate_params),
+                ).fetchall()
+            }
+        )
+        if limit is not None:
+            candidate_ids = candidate_ids[: int(limit)]
+        rows: list[dict] = []
+        for candidate_id in candidate_ids:
+            rows.extend(
+                dict(row)
+                for row in db.execute(
+                    "SELECT * FROM position_path_observations "
+                    "WHERE position_id=? ORDER BY bucket_open_ms",
+                    (candidate_id,),
+                ).fetchall()
+            )
+        grouped_rows: dict[str, list[dict]] = {}
+        for row in rows:
+            grouped_rows.setdefault(str(row["position_id"]), []).append(row)
+        skipped: dict[str, int] = {}
+        eligible: list[dict] = []
+        for current_position_id, position_rows in grouped_rows.items():
+            position = get_position(current_position_id)
+            reason = (
+                "position_not_found"
+                if position is None
+                else _archive_skip_reason(position, position_rows, db=db)
+            )
+            if reason is not None:
+                skipped[reason] = skipped.get(reason, 0) + 1
+                continue
+            eligible.extend(position_rows)
+
+        grouped: dict[tuple[str, int], list[dict]] = {}
+        for row in eligible:
+            key = (
+                str(row["position_id"]),
+                segment_start_for_bucket(int(row["bucket_open_ms"])),
+            )
+            grouped.setdefault(key, []).append(row)
+        encoded = [
+            encode_segment(
+                items,
+                position_id=key[0],
+                segment_start_ms=key[1],
+            )
+            for key, items in sorted(grouped.items())
+        ]
+        if not encoded:
+            return {
+                "source_rows": len(rows),
+                "segments_created": 0,
+                "segments_existing": 0,
+                "rows_archived": 0,
+                "raw_bytes": 0,
+                "payload_bytes": 0,
+                "segment_keys": [],
+                "positions_skipped": sum(skipped.values()),
+                "skip_reasons": skipped,
+                "segments_planned": 0,
+                "hot_rows_covered": 0,
+                "dry_run": dry_run,
+                "compression_ratio": None,
+            }
+
+        raw_bytes = sum(segment.raw_bytes for segment in encoded)
+        payload_bytes = sum(segment.payload_bytes for segment in encoded)
+        if dry_run:
+            return {
+                "source_rows": len(rows),
+                "segments_created": 0,
+                "segments_existing": 0,
+                "segments_planned": len(encoded),
+                "rows_archived": sum(segment.row_count for segment in encoded),
+                "hot_rows_covered": sum(segment.row_count for segment in encoded),
+                "raw_bytes": raw_bytes,
+                "payload_bytes": payload_bytes,
+                "compression_ratio": payload_bytes / raw_bytes if raw_bytes else None,
+                "segment_keys": [
+                    f"{segment.position_id}:{segment.segment_start_ms}"
+                    for segment in encoded
+                ],
+                "positions_skipped": sum(skipped.values()),
+                "skip_reasons": skipped,
+                "dry_run": True,
+            }
+
+        sealed_at = datetime.now(timezone.utc).isoformat()
+        values = [
+            (
+                segment.position_id,
+                segment.segment_number,
+                segment.segment_start_ms,
+                segment.segment_end_ms,
+                segment.first_bucket_open_ms,
+                segment.last_bucket_open_ms,
+                segment.row_count,
+                segment.available_count,
+                segment.unavailable_count,
+                segment.min_observed_at,
+                segment.max_observed_at,
+                segment.raw_bytes,
+                segment.payload_bytes,
+                segment.codec,
+                segment.codec_version,
+                segment.codec_level,
+                segment.dictionary_id,
+                SCHEMA_VERSION,
+                ENCODER_PROVENANCE,
+                segment.content_hash,
+                segment.payload_hash,
+                segment.payload,
+                sealed_at,
+            )
+            for segment in encoded
+        ]
+        position_ids = sorted({segment.position_id for segment in encoded})
+        before = {
+            (str(row["position_id"]), int(row["segment_start_ms"]))
+            for row in db.execute(
+                "SELECT position_id, segment_start_ms "
+                "FROM position_path_archive_segments "
+                "WHERE position_id IN ("
+                + ",".join("?" for _ in position_ids)
+                + ")",
+                tuple(position_ids),
+            ).fetchall()
+        }
+        execute_many_write(
+            "INSERT INTO position_path_archive_segments "
+            "(position_id, segment_number, segment_start_ms, segment_end_ms, "
+            "first_bucket_open_ms, last_bucket_open_ms, row_count, available_count, "
+            "unavailable_count, min_observed_at, "
+            "max_observed_at, raw_bytes, payload_bytes, codec, codec_version, codec_level, "
+            "dictionary_id, schema_version, encoder_provenance, content_hash, "
+            "payload_hash, payload, sealed_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(position_id, segment_start_ms) DO NOTHING",
+            values,
+            immediate=True,
+        )
+        expected = {
+            (segment.position_id, segment.segment_start_ms): segment
+            for segment in encoded
+        }
+        persisted = db.execute(
+            "SELECT position_id, segment_number, segment_start_ms, segment_end_ms, "
+            "first_bucket_open_ms, last_bucket_open_ms, row_count, available_count, "
+            "unavailable_count, min_observed_at, "
+            "max_observed_at, raw_bytes, payload_bytes, codec, codec_version, codec_level, "
+            "dictionary_id, schema_version, encoder_provenance, content_hash, "
+            "payload_hash, payload "
+            "FROM position_path_archive_segments "
+            "WHERE position_id IN ("
+            + ",".join("?" for _ in position_ids)
+            + ")",
+            tuple(position_ids),
+        ).fetchall()
+        for row in persisted:
+            key = (str(row["position_id"]), int(row["segment_start_ms"]))
+            expected_segment = expected.get(key)
+            if expected_segment is None:
+                continue
+            persisted_codec = str(row["codec"])
+            persisted_codec_version = str(row["codec_version"])
+            persisted_codec_level = int(row["codec_level"])
+            decoded = decode_segment(
+                row["payload"],
+                codec=persisted_codec,
+                codec_version=persisted_codec_version,
+                codec_level=persisted_codec_level,
+            )
+            if (
+                decoded["position_id"] != str(row["position_id"])
+                or decoded["segment_number"] != int(row["segment_number"])
+                or decoded["segment_start_ms"] != int(row["segment_start_ms"])
+                or decoded["segment_end_ms"] != int(row["segment_end_ms"])
+                or decoded["first_bucket_open_ms"] != row["first_bucket_open_ms"]
+                or decoded["last_bucket_open_ms"] != row["last_bucket_open_ms"]
+                or decoded["row_count"] != int(row["row_count"])
+                or decoded["available_count"] != int(row["available_count"])
+                or decoded["unavailable_count"] != int(row["unavailable_count"])
+                or decoded["min_observed_at"] != row["min_observed_at"]
+                or decoded["max_observed_at"] != row["max_observed_at"]
+                or decoded["raw_bytes"] != int(row["raw_bytes"])
+                or decoded["payload_bytes"] != int(row["payload_bytes"])
+                or decoded["codec"] != persisted_codec
+                or decoded["codec_version"] != persisted_codec_version
+                or decoded["codec_level"] != persisted_codec_level
+                or persisted_codec != expected_segment.codec
+                or persisted_codec_version != expected_segment.codec_version
+                or persisted_codec not in SUPPORTED_CODECS
+                or persisted_codec_level != expected_segment.codec_level
+                or row["dictionary_id"] is not None
+                or row["schema_version"] != SCHEMA_VERSION
+                or row["encoder_provenance"] != ENCODER_PROVENANCE
+                or decoded["content_hash"] != row["content_hash"]
+                or decoded["payload_hash"] != row["payload_hash"]
+                or bytes(row["payload"]) != expected_segment.payload
+            ):
+                raise ValueError(f"archive segment identity mismatch for {key[0]}:{key[1]}")
+        persisted_keys = {
+            (str(row["position_id"]), int(row["segment_start_ms"]))
+            for row in persisted
+            if (str(row["position_id"]), int(row["segment_start_ms"])) in expected
+        }
+        if persisted_keys != set(expected):
+            raise ValueError("archive segment write was incomplete")
+        created = [key for key in expected if key not in before]
+        for position_key, segment_start in created:
+            segment = expected[(position_key, segment_start)]
+            insert_audit_event(
+                AuditEvent(
+                    actor="system",
+                    source="position_path_archive_shadow",
+                    event_type="position_path_archive_sealed",
+                    entity_type="position_path_archive_segment",
+                    entity_id=f"{position_key}:{segment_start}",
+                    message=json.dumps(
+                        {
+                            "position_id": position_key,
+                            "segment_start_ms": segment_start,
+                            "segment_end_ms": segment.segment_end_ms,
+                            "row_count": segment.row_count,
+                            "available_count": segment.available_count,
+                            "unavailable_count": segment.unavailable_count,
+                            "raw_bytes": segment.raw_bytes,
+                            "payload_bytes": segment.payload_bytes,
+                            "content_hash": segment.content_hash,
+                            "payload_hash": segment.payload_hash,
+                            "codec": segment.codec,
+                            "codec_version": segment.codec_version,
+                            "codec_level": segment.codec_level,
+                            "schema_version": SCHEMA_VERSION,
+                            "encoder_provenance": ENCODER_PROVENANCE,
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                )
+            )
+        return {
+            "source_rows": len(rows),
+            "segments_created": len(created),
+            "segments_existing": len(encoded) - len(created),
+            "segments_planned": len(encoded),
+            "rows_archived": sum(segment.row_count for segment in encoded),
+            "hot_rows_covered": sum(segment.row_count for segment in encoded),
+            "raw_bytes": raw_bytes,
+            "payload_bytes": payload_bytes,
+            "compression_ratio": payload_bytes / raw_bytes if raw_bytes else None,
+            "segment_keys": [
+                f"{position}:{start}" for position, start in sorted(expected)
+            ],
+            "positions_skipped": sum(skipped.values()),
+            "skip_reasons": skipped,
+            "dry_run": False,
+        }
+
+
+def _archive_timestamp(value: object) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def list_archived_position_path_observations(
+    position_id: str,
+    *,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
+    as_of: datetime | str | None = None,
+    db: sqlite3.Connection | None = None,
+) -> list[dict]:
+    """Read and integrity-check archived observations for one Position."""
+
+    source = db or get_db()
+    lower = 0 if start_ms is None else int(start_ms)
+    upper = 9_223_372_036_854_775_807 if end_ms is None else int(end_ms)
+    cutoff = _archive_timestamp(as_of) if as_of is not None else None
+    if as_of is not None and cutoff is None:
+        raise ValueError("as_of must be an ISO timestamp")
+    if upper <= lower:
+        return []
+    try:
+        rows = source.execute(
+            "SELECT * FROM position_path_archive_segments "
+            "WHERE position_id=? AND segment_end_ms>? AND segment_start_ms<? "
+            "ORDER BY segment_start_ms",
+            (str(position_id), lower, upper),
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table: position_path_archive_segments" not in str(exc).lower():
+            raise
+        rows = []
+    result: list[dict] = []
+    for segment in rows:
+        try:
+            payload = bytes(segment["payload"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"archive integrity mismatch for {position_id}:{segment['segment_start_ms']}"
+            ) from exc
+        codec = str(segment["codec"])
+        codec_version = str(segment["codec_version"])
+        codec_level = int(segment["codec_level"])
+        if (
+            len(payload) != int(segment["payload_bytes"])
+            or hashlib.sha256(payload).hexdigest() != str(segment["payload_hash"])
+            or codec not in SUPPORTED_CODECS
+            or (
+                codec == CODEC and codec_version != CODEC_VERSION
+            )
+            or (
+                codec == RAW_CODEC and codec_version != RAW_CODEC_VERSION
+            )
+            or (codec == CODEC and codec_level != CODEC_LEVEL)
+            or (codec == RAW_CODEC and codec_level != RAW_CODEC_LEVEL)
+            or segment["dictionary_id"] is not None
+            or segment["schema_version"] != SCHEMA_VERSION
+            or segment["encoder_provenance"] != ENCODER_PROVENANCE
+        ):
+            raise ValueError(
+                f"archive integrity mismatch for {position_id}:{segment['segment_start_ms']}"
+            )
+        decoded = decode_segment(
+            payload,
+            codec=codec,
+            codec_version=codec_version,
+            codec_level=codec_level,
+        )
+        if (
+            decoded["position_id"] != str(position_id)
+            or decoded["segment_number"] != int(segment["segment_number"])
+            or decoded["segment_start_ms"] != int(segment["segment_start_ms"])
+            or decoded["segment_end_ms"] != int(segment["segment_end_ms"])
+            or decoded["first_bucket_open_ms"] != segment["first_bucket_open_ms"]
+            or decoded["last_bucket_open_ms"] != segment["last_bucket_open_ms"]
+            or decoded["row_count"] != int(segment["row_count"])
+            or decoded["available_count"] != int(segment["available_count"])
+            or decoded["unavailable_count"] != int(segment["unavailable_count"])
+            or decoded["min_observed_at"] != segment["min_observed_at"]
+            or decoded["max_observed_at"] != segment["max_observed_at"]
+            or decoded["raw_bytes"] != int(segment["raw_bytes"])
+            or decoded["payload_bytes"] != int(segment["payload_bytes"])
+            or decoded["codec"] != codec
+            or decoded["codec_version"] != codec_version
+            or decoded["codec_level"] != codec_level
+            or len(segment["payload"]) != int(segment["payload_bytes"])
+            or codec not in SUPPORTED_CODECS
+            or (codec == CODEC and codec_level != CODEC_LEVEL)
+            or (codec == RAW_CODEC and codec_level != RAW_CODEC_LEVEL)
+            or segment["dictionary_id"] is not None
+            or segment["schema_version"] != SCHEMA_VERSION
+            or segment["encoder_provenance"] != ENCODER_PROVENANCE
+            or decoded["content_hash"] != str(segment["content_hash"])
+            or decoded["payload_hash"] != str(segment["payload_hash"])
+        ):
+            raise ValueError(
+                f"archive integrity mismatch for {position_id}:{segment['segment_start_ms']}"
+            )
+        if cutoff is not None:
+            min_seen = _archive_timestamp(segment["min_observed_at"])
+            if min_seen is not None and min_seen > cutoff:
+                continue
+            max_seen = _archive_timestamp(segment["max_observed_at"])
+            if max_seen is None or max_seen > cutoff:
+                result.extend(
+                    row
+                    for row in decoded["rows"]
+                    if _archive_timestamp(row.get("observed_at")) is not None
+                    and _archive_timestamp(row.get("observed_at")) <= cutoff
+                    and lower <= int(row["bucket_open_ms"]) < upper
+                )
+                continue
+        result.extend(
+            row
+            for row in decoded["rows"]
+            if lower <= int(row["bucket_open_ms"]) < upper
+        )
+    return result
+
+
+def list_position_path_observations_unified(
+    position_id: str,
+    *,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
+    as_of: datetime | str | None = None,
+    limit: int | None = None,
+    db: sqlite3.Connection | None = None,
+) -> list[dict]:
+    """Read hot and archived ranges as one deterministic observation stream."""
+
+    source = db or get_db()
+    lower = 0 if start_ms is None else int(start_ms)
+    upper = 9_223_372_036_854_775_807 if end_ms is None else int(end_ms)
+    cutoff = _archive_timestamp(as_of) if as_of is not None else None
+    if as_of is not None and cutoff is None:
+        raise ValueError("as_of must be an ISO timestamp")
+    if upper <= lower:
+        return []
+    archived = list_archived_position_path_observations(
+        position_id,
+        start_ms=lower,
+        end_ms=upper,
+        as_of=cutoff,
+        db=source,
+    )
+    try:
+        hot_rows = source.execute(
+            "SELECT * FROM position_path_observations "
+            "WHERE position_id=? AND bucket_open_ms>=? AND bucket_open_ms<? "
+            "ORDER BY bucket_open_ms",
+            (str(position_id), lower, upper),
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table: position_path_observations" not in str(exc).lower():
+            raise
+        hot_rows = []
+    hot: list[dict] = []
+    for row in hot_rows:
+        item = dict(row)
+        if cutoff is None:
+            hot.append(item)
+            continue
+        observed_at = _archive_timestamp(item["observed_at"])
+        if observed_at is None:
+            raise ValueError(
+                f"invalid hot observation timestamp for {position_id}:{item['bucket_open_ms']}"
+            )
+        if observed_at <= cutoff:
+            hot.append(item)
+    by_bucket = {int(row["bucket_open_ms"]): row for row in archived}
+    for row in hot:
+        bucket = int(row["bucket_open_ms"])
+        archived_row = by_bucket.get(bucket)
+        if archived_row is not None and canonical_row(archived_row) != canonical_row(row):
+            raise ValueError(f"hot/archive mismatch for {position_id}:{bucket}")
+        by_bucket[bucket] = row
+    ordered = sorted(by_bucket)
+    if limit is not None:
+        bounded_limit = max(1, min(int(limit), 10_000))
+        ordered = ordered[:bounded_limit]
+    return [by_bucket[bucket] for bucket in ordered]
 
 
 def _optional_plan_price_equal(left: object, right: object) -> bool:

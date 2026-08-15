@@ -68,8 +68,8 @@ def _report(monkeypatch, position: dict, rows: list[dict]) -> dict:
     monkeypatch.setattr(analysis.repo, "get_position", lambda _position_id: position)
     monkeypatch.setattr(
         analysis.repo,
-        "list_position_path_observations",
-        lambda _position_id, *, limit: rows,
+        "list_position_path_observations_unified",
+        lambda _position_id, **_kwargs: rows,
     )
     return analysis.build_position_path_report(position["id"])
 
