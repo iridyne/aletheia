@@ -50,7 +50,8 @@ jobs:
     permissions:
       contents: write
       pull-requests: read
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    # Metadata-only control plane; do not contend with scarce self-hosted test runners.
+    runs-on: ubuntu-24.04
     steps:
       - name: Dispatch trusted auto-merge update
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
@@ -161,7 +162,8 @@ jobs:
       issues: write
       pull-requests: write
       statuses: write
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    # Metadata-only control plane; do not contend with scarce self-hosted test runners.
+    runs-on: ubuntu-24.04
     steps:
       - name: Release the verified candidate hold
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
@@ -256,7 +258,8 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    # Metadata-only control plane; do not contend with scarce self-hosted test runners.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     concurrency:
       group: auto-merge-update-${{ github.event.client_payload.pull_request_number }}
