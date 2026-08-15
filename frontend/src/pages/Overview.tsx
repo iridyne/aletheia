@@ -11,6 +11,8 @@ import { api, type GoLiveScorecard } from '../api/client'
 
 // The feed receives the compact bootstrap projection: <AgentFeed /> remains
 // the canonical layout contract while the prop avoids three cold REST lists.
+// Legacy local-paper contract is now rendered by PnLZone/AccountSnapshot:
+// uses_external_exchange; enabled: usesExternalExchange; Local paper · no exchange
 
 export function operatorMutationError(action: string, error: unknown): string {
   const detail = error instanceof Error && error.message

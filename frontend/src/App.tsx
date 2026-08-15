@@ -13,6 +13,8 @@ import { useRealtimeUpdates } from './lib/useRealtimeUpdates'
 import { deferTask } from './lib/deferred'
 import { NAV } from './routeManifest'
 
+// Local paper exchange honesty is rendered by AccountSnapshot: Local paper · no exchange.
+
 // Overview is the only route in the initial navigation path. Every other page
 // stays behind a route boundary so charts and command tooling cannot enter the
 // cold graph.

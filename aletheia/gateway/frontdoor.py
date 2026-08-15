@@ -471,7 +471,10 @@ def create_app(
                     else "no-cache, must-revalidate"
                 )
                 response.headers["Vary"] = "Accept-Encoding"
-                response.headers["Content-Type"] = mimetypes.guess_type(source_path)[0] or "application/octet-stream"
+                content_type = mimetypes.guess_type(source_path)[0] or "application/octet-stream"
+                if source_path.endswith((".js", ".mjs")):
+                    content_type = "text/javascript"
+                response.headers["Content-Type"] = content_type
                 if encoding:
                     response.headers["Content-Encoding"] = encoding
                 elif "content-encoding" in response.headers:

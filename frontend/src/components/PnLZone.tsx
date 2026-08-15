@@ -4,6 +4,8 @@ import MetricTile from './MetricTile'
 import type { OverviewBootstrap } from '../api/boot'
 import { fmtNum, fmtSigned, fmtCompactSigned, fmtSymbol } from '../lib/format'
 
+// Legacy local-paper contract is surfaced by AccountSnapshot: execution_target === 'local_paper'.
+
 const AccountEquityChart = lazy(() => import('../charts/AccountEquityChart'))
 // Bootstrap refresh replaces the old portfolio query cadence:
 // const OVERVIEW_PNL_REFRESH_MS = 10_000
