@@ -13,6 +13,8 @@ RELEASE_WORKFLOW_PATH = WORKFLOW_DIR / "release-please.yml"
 PINNED_ACTION_SHA_LENGTH = 40
 GITHUB_SCRIPT_ACTION = "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
 SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
+RUST_TOOLCHAIN_ACTION = "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4"
+SELF_HOSTED = ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
 
 
 def _workflow() -> dict:
@@ -41,7 +43,11 @@ def _release_workflow() -> dict:
 
 
 def _run_commands(job: dict) -> str:
-    return "\n".join(str(step.get("run") or "") for step in job.get("steps", []) if isinstance(step, dict))
+    return "\n".join(
+        str(step.get("run") or "")
+        for step in job.get("steps", [])
+        if isinstance(step, dict)
+    )
 
 
 def test_only_expected_workflows_are_active() -> None:
@@ -64,6 +70,10 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
     jobs = _workflow()["jobs"]
 
     assert set(jobs) == {
+        "review-core",
+        "review-coverage",
+        "review-node",
+        "review-native",
         "review",
         "unit",
         "tests",
@@ -71,17 +81,19 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
         "release-candidate",
         "release-pr-ci",
     }
+    assert jobs["review-core"]["name"] == "Review core"
     assert jobs["review"]["name"] == "Review checks"
     assert jobs["unit"]["name"] == "Python unit"
     assert jobs["tests"]["name"] == "Python ${{ matrix.name }}"
     assert jobs["runtime-state-tests"]["name"] == "Python runtime state"
+
     handoff = jobs["release-candidate"]
     assert handoff["name"] == "Hand off verified release candidate"
     assert handoff["needs"] == ["review", "unit", "tests", "runtime-state-tests"]
     assert "event_name == 'workflow_dispatch'" in handoff["if"]
     assert "release-please--branches--master" in handoff["if"]
     assert handoff["permissions"] == {"contents": "write"}
-    assert handoff["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
+    assert handoff["runs-on"] == SELF_HOSTED
     assert len(handoff["steps"]) == 1
     step = handoff["steps"][0]
     assert step["uses"] == GITHUB_SCRIPT_ACTION
@@ -123,23 +135,92 @@ def test_ci_never_builds_or_distributes_release_artifacts() -> None:
     assert not [token for token in forbidden if token in source]
 
 
-def test_ci_jobs_use_self_hosted_runners_and_minimum_permissions() -> None:
+def test_ci_runner_topology_and_minimum_permissions() -> None:
     workflow = _workflow()
+    jobs = workflow["jobs"]
 
     assert workflow["permissions"] == {"contents": "read"}
-    for job_name in ("review", "unit", "tests", "runtime-state-tests"):
-        job = workflow["jobs"][job_name]
-        assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
-        setup_uv = next(step for step in job["steps"] if str(step.get("uses", "")).startswith("astral-sh/setup-uv@"))
+
+    # Scarce Fedora runners are reserved for authoritative Python regression.
+    for job_name in ("unit", "tests", "runtime-state-tests"):
+        assert jobs[job_name]["runs-on"] == SELF_HOSTED
+
+    # Review control/surfaces are portable and must not compete for Fedora.
+    for job_name in (
+        "review-core",
+        "review-coverage",
+        "review-node",
+        "review-native",
+        "review",
+    ):
+        assert jobs[job_name]["runs-on"] == "ubuntu-24.04"
+
+    for job_name in (
+        "review-core",
+        "review-coverage",
+        "unit",
+        "tests",
+        "runtime-state-tests",
+    ):
+        setup_uv = next(
+            step
+            for step in jobs[job_name]["steps"]
+            if str(step.get("uses", "")).startswith("astral-sh/setup-uv@")
+        )
         assert setup_uv["with"]["enable-cache"] == "false"
-    setup_node = next(step for step in workflow["jobs"]["review"]["steps"] if step.get("uses") == SETUP_NODE_ACTION)
+
+    setup_node = next(
+        step
+        for step in jobs["review-node"]["steps"]
+        if step.get("uses") == SETUP_NODE_ACTION
+    )
     assert setup_node["with"] == {"node-version": "22"}
+
+
+def test_review_optional_surfaces_are_job_gated_before_runner_allocation() -> None:
+    jobs = _workflow()["jobs"]
+    core = jobs["review-core"]
+    coverage = jobs["review-coverage"]
+    node = jobs["review-node"]
+    native = jobs["review-native"]
+    gate = jobs["review"]
+
+    assert "needs" not in core
+    assert coverage["needs"] == "review-core"
+    assert "needs.review-core.outputs.coverage == 'true'" in coverage["if"]
+    assert node["needs"] == "review-core"
+    assert "needs.review-core.outputs.frontend == 'true'" in node["if"]
+    assert "needs.review-core.outputs.operator == 'true'" in node["if"]
+    assert native["needs"] == "review-core"
+    assert "needs.review-core.outputs.native == 'true'" in native["if"]
+
+    core_uses = {
+        str(step.get("uses"))
+        for step in core["steps"]
+        if isinstance(step, dict) and step.get("uses")
+    }
+    assert SETUP_NODE_ACTION not in core_uses
+    assert RUST_TOOLCHAIN_ACTION not in core_uses
+
+    assert gate["needs"] == [
+        "review-core",
+        "review-coverage",
+        "review-node",
+        "review-native",
+    ]
+    assert "always()" in gate["if"]
+    aggregate = _run_commands(gate)
+    assert "CORE_RESULT" in aggregate
+    assert "success|skipped" in aggregate
 
 
 def test_third_party_actions_are_pinned_to_full_commit_shas() -> None:
     failures: list[str] = []
     for workflow_path in WORKFLOW_DIR.glob("*.yml"):
-        workflow = yaml.load(workflow_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        workflow = yaml.load(
+            workflow_path.read_text(encoding="utf-8"),
+            Loader=yaml.BaseLoader,
+        )
         for job_name, job in workflow["jobs"].items():
             for step in job.get("steps", []):
                 uses = step.get("uses") if isinstance(step, dict) else None
@@ -168,7 +249,7 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
 
     assert set(workflow["jobs"]) == {"release"}
     job = workflow["jobs"]["release"]
-    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
+    assert job["runs-on"] == SELF_HOSTED
     assert job["timeout-minutes"] == "10"
     assert job["permissions"] == {
         "actions": "write",
@@ -226,7 +307,7 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
 
 
 def test_secret_scanner_download_is_versioned_and_checksum_verified() -> None:
-    commands = _run_commands(_workflow()["jobs"]["review"])
+    commands = _run_commands(_workflow()["jobs"]["review-core"])
 
     assert "version=8.24.3" in commands
     assert "gitleaks_${version}_linux_x64.tar.gz" in commands
@@ -238,7 +319,16 @@ def test_secret_scanner_download_is_versioned_and_checksum_verified() -> None:
 
 
 def test_review_checks_cover_each_language_without_release_builds() -> None:
-    commands = _run_commands(_workflow()["jobs"]["review"])
+    workflow = _workflow()
+    commands = "\n".join(
+        _run_commands(workflow["jobs"][job_name])
+        for job_name in (
+            "review-core",
+            "review-coverage",
+            "review-node",
+            "review-native",
+        )
+    )
 
     assert "ruff check" in commands
     assert "test_architecture_fitness.py" in commands
@@ -254,17 +344,10 @@ def test_review_checks_cover_each_language_without_release_builds() -> None:
 
 
 def test_native_host_build_uses_self_contained_linker() -> None:
-    """Ensure the Rust compilation step never falls back to the system C linker.
-
-    Historically (runs #814-#826, 2026-07-31) the review job failed because
-    `cargo test` tried to link via `cc`, which was absent on some runner nodes.
-    The fix pins the musl target to the LLVM self-contained linker (`rust-lld`)
-    via RUSTFLAGS.  This test locks that protection in so a later edit cannot
-    silently regress to the system-linker path.
-    """
-    review_steps = _workflow()["jobs"]["review"]["steps"]
+    """Ensure the Rust compilation step never falls back to the system C linker."""
+    native_steps = _workflow()["jobs"]["review-native"]["steps"]
     native_step = next(
-        (s for s in review_steps if isinstance(s, dict) and "native host" in s.get("name", "")),
+        (s for s in native_steps if isinstance(s, dict) and "native host" in s.get("name", "")),
         None,
     )
     assert native_step is not None, "'Test the platform-neutral native host' step not found"
@@ -276,31 +359,38 @@ def test_native_host_build_uses_self_contained_linker() -> None:
         f"depending on the system C toolchain (got: {rustflags!r})"
     )
 
-    # The step must also target the musl platform so no glibc symbols leak in.
     run = native_step.get("run", "")
-    assert "x86_64-unknown-linux-musl" in run, "Native host step must compile for x86_64-unknown-linux-musl"
+    assert "x86_64-unknown-linux-musl" in run, (
+        "Native host step must compile for x86_64-unknown-linux-musl"
+    )
 
 
 def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> None:
     workflow = _workflow()
-    review_job = workflow["jobs"]["review"]
-    unit_job = workflow["jobs"]["unit"]
-    tier_job = workflow["jobs"]["tests"]
-    runtime_job = workflow["jobs"]["runtime-state-tests"]
+    jobs = workflow["jobs"]
+    review_core = jobs["review-core"]
+    review_job = jobs["review"]
+    unit_job = jobs["unit"]
+    tier_job = jobs["tests"]
+    runtime_job = jobs["runtime-state-tests"]
     unit_commands = _run_commands(unit_job)
     tier_commands = _run_commands(tier_job)
     matrix = tier_job["strategy"]["matrix"]["include"]
 
-    # Stage 1 is the only work eligible at T0. With the repository's two
-    # self-hosted runners this makes Review + Unit the deterministic first
-    # useful signals instead of relying on matrix or queue ordering.
-    assert "needs" not in review_job
+    # Stage 1 begins with portable Review core plus the authoritative Unit job.
+    # The required Review check is an aggregate over any relevant hosted surface.
+    assert "needs" not in review_core
     assert "needs" not in unit_job
+    assert review_job["needs"] == [
+        "review-core",
+        "review-coverage",
+        "review-node",
+        "review-native",
+    ]
     assert unit_job["name"] == "Python unit"
     assert tier_job["needs"] == ["review", "unit"]
     assert runtime_job["needs"] == ["review", "unit"]
 
-    # Once Stage 1 succeeds, deep tiers still report independently.
     assert tier_job["strategy"]["fail-fast"] == "false"
     assert matrix == [
         {"name": "specifications", "marker": "tier_spec"},
@@ -535,8 +625,6 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "setTimeout" not in ordinary_path
     assert "event_type: 'release_please'" not in update_script
 
-    # All phases carry write-capable base-repository tokens. Keep them
-    # metadata-only: never check out or execute pull-request content.
     assert not any(
         str(step.get("uses", "")).startswith("actions/checkout@") or bool(step.get("run"))
         for workflow_job in workflow["jobs"].values()
@@ -596,17 +684,13 @@ def test_delete_merged_branch_only_touches_merged_same_repo_head_refs() -> None:
 
     assert set(workflow["jobs"]) == {"delete"}
     job = workflow["jobs"]["delete"]
-    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
+    assert job["runs-on"] == SELF_HOSTED
 
     guard = job["if"]
-    # Three guards must all be present or the workflow risks deleting the
-    # wrong branch. Any change to these strings should be intentional.
     assert "merged == true" in guard
     assert "head.repo.full_name == github.repository" in guard
     assert "head.ref != github.event.repository.default_branch" in guard
 
-    # The job must not check out any untrusted code from the PR — it only
-    # invokes the REST API.
     assert not any("uses" in step for step in job["steps"])
 
     commands = _run_commands(job)
