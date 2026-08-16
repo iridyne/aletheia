@@ -3,7 +3,7 @@ name: Codex PR shepherd
 on:
   pull_request_target:
     branches: [master]
-    types: [opened, reopened, ready_for_review, synchronize, unlabeled]
+    types: [opened, reopened, ready_for_review, edited, synchronize, unlabeled]
   pull_request_review:
     branches: [master]
     types: [submitted]
@@ -45,6 +45,7 @@ jobs:
               'opened',
               'reopened',
               'ready_for_review',
+              'edited',
               'synchronize',
               'unlabeled',
             ]);
