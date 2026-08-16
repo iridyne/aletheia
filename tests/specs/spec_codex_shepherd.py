@@ -39,11 +39,11 @@ def _auto_merge_source() -> str:
         "agent_contracts",
         "§PR/CI control plane",
         "L2a",
-        "Codex PR Shepherd is event-driven and splits trigger-facing dispatch authority from PR-side mutation authority without obtaining merge authority.",
+        "Codex PR Shepherd separates trigger-facing workflow dispatch from PR-side metadata mutation without obtaining repository-content or merge authority.",
         status="implemented",
     )
 )
-def test_codex_shepherd_is_event_driven_and_separates_mutation_authority() -> None:
+def test_codex_shepherd_uses_actions_dispatch_without_contents_write() -> None:
     workflow = _workflow()
     triggers = workflow["on"]
     assert triggers["pull_request_target"]["types"] == [
@@ -58,19 +58,29 @@ def test_codex_shepherd_is_event_driven_and_separates_mutation_authority() -> No
     assert triggers["issue_comment"]["types"] == ["created"]
     assert triggers["workflow_run"]["workflows"] == ["Aletheia CI"]
     assert triggers["workflow_run"]["types"] == ["completed"]
-    assert triggers["repository_dispatch"]["types"] == ["codex_shepherd_update"]
+    assert set(triggers["workflow_dispatch"]["inputs"]) == {
+        "pull_request_number",
+        "expected_head_sha",
+        "source_event",
+        "source_action",
+    }
+    for required in ("pull_request_number", "expected_head_sha", "source_event"):
+        assert triggers["workflow_dispatch"]["inputs"][required]["required"] == "true"
     assert workflow["permissions"] == {"contents": "read"}
+    assert "contents: write" not in WORKFLOW_PATH.read_text(encoding="utf-8")
 
     schedule = workflow["jobs"]["schedule"]
     assert schedule["permissions"] == {
-        "contents": "write",
+        "actions": "write",
         "pull-requests": "read",
     }
     assert schedule["runs-on"] == "ubuntu-24.04"
     assert "actions/checkout" not in str(schedule)
     schedule_script = _schedule_script()
-    assert "github.rest.repos.createDispatchEvent" in schedule_script
-    assert "event_type: 'codex_shepherd_update'" in schedule_script
+    assert "github.rest.actions.createWorkflowDispatch" in schedule_script
+    assert "workflow_id: 'codex-shepherd.yml'" in schedule_script
+    assert "ref: 'master'" in schedule_script
+    assert "github.rest.repos.createDispatchEvent" not in schedule_script
     assert "github.rest.issues.createComment" not in schedule_script
     assert "github.rest.issues.addLabels" not in schedule_script
     assert "github.rest.pulls.merge" not in schedule_script
@@ -78,6 +88,7 @@ def test_codex_shepherd_is_event_driven_and_separates_mutation_authority() -> No
     assert "github.rest.git.updateRef" not in schedule_script
 
     apply = workflow["jobs"]["apply"]
+    assert apply["if"] == "github.event_name == 'workflow_dispatch'"
     assert apply["permissions"] == {
         "actions": "read",
         "contents": "read",
@@ -86,8 +97,7 @@ def test_codex_shepherd_is_event_driven_and_separates_mutation_authority() -> No
     }
     assert apply["runs-on"] == "ubuntu-24.04"
     assert apply["concurrency"]["cancel-in-progress"] == "true"
-    assert "event.sender.login == 'github-actions[bot]'" in apply["if"]
-    assert "event.action == 'codex_shepherd_update'" in apply["if"]
+    assert "github.event.inputs.pull_request_number" in apply["concurrency"]["group"]
     assert "actions/checkout" not in str(apply)
     apply_script = _apply_script()
     assert "github.rest.issues.createComment" in apply_script
@@ -95,10 +105,9 @@ def test_codex_shepherd_is_event_driven_and_separates_mutation_authority() -> No
     assert "github.rest.pulls.merge" not in apply_script
     assert "createOrUpdateFileContents" not in apply_script
     assert "github.rest.git.updateRef" not in apply_script
-    assert "contents: write" not in str(apply)
 
 
-def test_shepherd_dispatch_is_trusted_and_exact_head_bound() -> None:
+def test_shepherd_workflow_dispatch_is_exact_head_bound() -> None:
     schedule_script = _schedule_script()
     apply_script = _apply_script()
 
@@ -109,8 +118,9 @@ def test_shepherd_dispatch_is_trusted_and_exact_head_bound() -> None:
     assert "pullRequest.head.repo?.full_name" in schedule_script
     assert "expected_head_sha: pullRequest.head.sha" in schedule_script
     assert "source_event: context.eventName" in schedule_script
+    assert "pull_request_number: String(pullRequest.number)" in schedule_script
 
-    assert "const request = context.payload.client_payload || {}" in apply_script
+    assert "const request = context.payload.inputs || {}" in apply_script
     assert "expected head SHA must be a 40-character lowercase Git object ID" in apply_script
     assert "unsupported Shepherd source event" in apply_script
     assert "pullRequest.head.sha !== expectedHeadSha" in apply_script
@@ -230,7 +240,7 @@ def test_auto_merge_atomically_protects_shepherd_authority() -> None:
     ]
 
 
-def test_codex_shepherd_requests_every_ready_or_resumed_exact_head_but_does_not_claim_repair() -> None:
+def test_codex_shepherd_requests_retargeted_and_resumed_exact_heads_without_repair_claim() -> None:
     workflow = _workflow()
     triggers = workflow["on"]["pull_request_target"]["types"]
     for action in (
@@ -262,12 +272,12 @@ def test_codex_shepherd_callbacks_converge_from_current_finding_state() -> None:
     clean_scan = script.index("let connectorCleanExactHead", finding_hold)
     review_request = script.index("!exactHeadReviewRequest && !connectorCleanExactHead", clean_scan)
     assert finding_gate < finding_hold < clean_scan < review_request
-    assert "Every dispatched callback converges from the current exact-head review" in script
 
-    # A newer request for the same PR cancels an older apply run; stale SHA checks and
-    # current-state convergence make this replacement safe.
+    # Newer workflow_dispatch input for the same PR cancels an older apply run;
+    # exact-head revalidation makes that replacement fail closed for stale work.
     apply = _workflow()["jobs"]["apply"]
     assert apply["concurrency"]["cancel-in-progress"] == "true"
+    assert "pullRequest.head.sha !== expectedHeadSha" in script
 
 
 def test_codex_shepherd_only_holds_current_actionable_ci_failure() -> None:
