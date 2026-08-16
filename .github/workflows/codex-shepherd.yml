@@ -3,7 +3,7 @@ name: Codex PR shepherd
 on:
   pull_request_target:
     branches: [master]
-    types: [synchronize]
+    types: [opened, reopened, ready_for_review, synchronize, unlabeled]
   pull_request_review:
     branches: [master]
     types: [submitted]
@@ -38,6 +38,7 @@ jobs:
           script: |
             const connectorLogin = 'chatgpt-codex-connector';
             const shepherdLogin = 'github-actions[bot]';
+            const shepherdPath = '.github/workflows/codex-shepherd.yml';
             const normalizeLogin = (login) => String(login || '').replace(/\[bot\]$/, '');
             const isConnectorLogin = (login) => normalizeLogin(login) === connectorLogin;
             const reviewMarkerPattern =
@@ -103,8 +104,7 @@ jobs:
               pullRequest.base.ref !== 'master' ||
               pullRequest.draft ||
               pullRequest.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
-              pullRequest.head.ref.startsWith('release-please--branches--master') ||
-              pullRequest.labels.some(({name}) => name === 'do-not-auto-merge')
+              pullRequest.head.ref.startsWith('release-please--branches--master')
             ) {
               core.info('pull request is outside the autonomous Shepherd boundary');
               return;
@@ -132,7 +132,12 @@ jobs:
               }
             }
 
-            const [issueComments, allReviews] = await Promise.all([
+            const [changedFiles, issueComments, allReviews] = await Promise.all([
+              github.paginate(github.rest.pulls.listFiles, {
+                ...context.repo,
+                pull_number: pullRequest.number,
+                per_page: 100,
+              }),
               github.paginate(github.rest.issues.listComments, {
                 ...context.repo,
                 issue_number: pullRequest.number,
@@ -175,21 +180,6 @@ jobs:
               ({type, head}) => type === 'halt' && head === expectedHeadSha
             );
 
-            let connectorCleanExactHead = false;
-            for (const comment of issueComments) {
-              if (
-                !isConnectorLogin(comment.user?.login) ||
-                !/Didn't find any major issues\./i.test(String(comment.body || ''))
-              ) {
-                continue;
-              }
-              const reviewedCommitSha = await resolveReviewedCommitSha(comment.body);
-              if (reviewedCommitSha === expectedHeadSha) {
-                connectorCleanExactHead = true;
-                break;
-              }
-            }
-
             const postComment = async (body) => {
               await github.rest.issues.createComment({
                 ...context.repo,
@@ -212,6 +202,52 @@ jobs:
                 `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} reason=${reason} -->`
               );
             };
+
+            // This workflow is itself a PR control authority. pull_request_target executes
+            // the trusted base/master copy, so a PR cannot remove this self-change guard by
+            // editing its own candidate workflow. Re-apply the hold on `unlabeled` events.
+            const changesShepherdAuthority = changedFiles.some(({filename, previous_filename}) =>
+              [filename, previous_filename].includes(shepherdPath)
+            );
+            if (changesShepherdAuthority) {
+              const alreadyHeld = pullRequest.labels.some(({name}) => name === 'do-not-auto-merge');
+              if (!alreadyHeld) {
+                await github.rest.issues.addLabels({
+                  ...context.repo,
+                  issue_number: pullRequest.number,
+                  labels: ['do-not-auto-merge'],
+                });
+              }
+              if (!exactHeadHalt) {
+                await postComment(
+                  `Codex Shepherd authority changed on exact head \`${expectedHeadSha}\`. ` +
+                  `This control-plane change requires explicit owner merge and cannot resume ` +
+                  `through ordinary auto-merge.\n\n` +
+                  `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} reason=shepherd-self-change -->`
+                );
+              }
+              return;
+            }
+
+            if (pullRequest.labels.some(({name}) => name === 'do-not-auto-merge')) {
+              core.info('do-not-auto-merge holds this pull request');
+              return;
+            }
+
+            let connectorCleanExactHead = false;
+            for (const comment of issueComments) {
+              if (
+                !isConnectorLogin(comment.user?.login) ||
+                !/Didn't find any major issues\./i.test(String(comment.body || ''))
+              ) {
+                continue;
+              }
+              const reviewedCommitSha = await resolveReviewedCommitSha(comment.body);
+              if (reviewedCommitSha === expectedHeadSha) {
+                connectorCleanExactHead = true;
+                break;
+              }
+            }
 
             if (context.eventName === 'pull_request_target') {
               if (
