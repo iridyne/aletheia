@@ -4,6 +4,22 @@ All notable product changes are recorded here. Aletheia uses Semantic Versioning
 for the product release, while build identities and data/behavior contracts keep
 their own independent versions.
 
+## [0.8.1](https://github.com/iridite/aletheia/compare/v0.8.0...v0.8.1) (2026-08-16)
+
+
+### Features
+
+* **learning:** add ranker case shadow measurement ([#1018](https://github.com/iridite/aletheia/issues/1018)) ([23515c2](https://github.com/iridite/aletheia/commit/23515c2bd5309257e950846d403adf421bb6f4e0))
+* **learning:** converge Packet 0 runtime handoff ([#1015](https://github.com/iridite/aletheia/issues/1015)) ([3e3e4b3](https://github.com/iridite/aletheia/commit/3e3e4b3f39a3ac8c2dcd813975e61cdb187a86c1))
+
+
+### Bug Fixes
+
+* **observer:** batch deferred buckets per position ([#1022](https://github.com/iridite/aletheia/issues/1022)) ([c19ef42](https://github.com/iridite/aletheia/commit/c19ef42599ff90a14463f1d4b50744a9d318461a))
+* prevent dashboard runtime stalls outside [#1025](https://github.com/iridite/aletheia/issues/1025) ([#1033](https://github.com/iridite/aletheia/issues/1033)) ([46f111b](https://github.com/iridite/aletheia/commit/46f111b0cdf0b1a2430c2e8950e8f0b6cabbed83))
+* **release:** keep pre-1.0 features on patch versions ([#1036](https://github.com/iridite/aletheia/issues/1036)) ([2fc50e8](https://github.com/iridite/aletheia/commit/2fc50e8ccbdeca1cddd62f29b8e39146811362bc))
+* **risk:** size operator entries from account equity ([#1028](https://github.com/iridite/aletheia/issues/1028)) ([bbe1046](https://github.com/iridite/aletheia/commit/bbe10465d413c72bb242117979fb611cc4c18d92))
+
 ## [0.8.0](https://github.com/iridite/aletheia/compare/v0.7.9...v0.8.0) (2026-08-15)
 
 
