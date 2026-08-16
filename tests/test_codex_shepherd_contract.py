@@ -101,11 +101,17 @@ def test_codex_shepherd_self_change_and_incomplete_file_listing_fail_closed() ->
     assert incomplete < self_change < ordinary_hold < review_request
 
 
-def test_codex_shepherd_requests_every_ready_exact_head_but_does_not_claim_repair() -> None:
+def test_codex_shepherd_requests_every_ready_or_resumed_exact_head_but_does_not_claim_repair() -> None:
     script = _script()
 
     assert "const reviewTriggerActions = new Set" in script
-    for action in ("'opened'", "'reopened'", "'ready_for_review'", "'synchronize'"):
+    for action in (
+        "'opened'",
+        "'reopened'",
+        "'ready_for_review'",
+        "'synchronize'",
+        "'unlabeled'",
+    ):
         assert action in script
     assert "reviewTriggerActions.has(context.payload.action)" in script
     assert "@codex review" in script
