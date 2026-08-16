@@ -69,14 +69,6 @@ Conventional Commit history and `release-please-config.json` determine the next
 SemVer. In the current pre-1.0 policy, a `feat` produces the next minor version;
 a batch containing only `fix`/`perf` release notes produces the next patch.
 
-An authorized maintainer still owns exact-head Connector triage. Use the full
-40-character candidate head SHA and put one of these commands on the first line
-of a PR comment, followed by a non-empty explanation:
-
-- `/codex-triage <candidate-head-sha> clean` when no Connector review exists;
-- `/codex-triage <candidate-head-sha> complete` after a Connector review, with
-  every finding recorded as confirmed and fixed, false positive, or deferred.
-
 The release is complete only after the generated `autorelease: pending` PR is
 observed as merged, its matching immutable `vX.Y.Z` tag exists, and the GitHub
 Release exists. A queued or green CI run, an open or mergeable PR, or enabled
