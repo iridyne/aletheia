@@ -20,6 +20,9 @@ on:
       expected_head_sha:
         required: true
         type: string
+      expected_base_sha:
+        required: true
+        type: string
       source_event:
         required: true
         type: string
@@ -34,7 +37,7 @@ jobs:
   # PR-facing events run with a repository policy that rejects comment/label writes
   # from their GITHUB_TOKEN. Keep this job mutation-free: it only starts the trusted
   # default-branch workflow with Actions: write, which does not grant merge/content
-  # authority. The workflow_dispatch run performs PR-side mutations after exact-head
+  # authority. The workflow_dispatch run performs PR-side mutations after exact-diff
   # revalidation.
   schedule:
     name: Schedule Codex shepherd update
@@ -113,6 +116,14 @@ jobs:
               ) {
                 continue;
               }
+              const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({
+                ...context.repo,
+                basehead: `${pullRequest.base.sha}...${pullRequest.head.sha}`,
+              });
+              const expectedBaseSha = comparison.merge_base_commit.sha;
+              if (!/^[0-9a-f]{40}$/.test(expectedBaseSha || '')) {
+                throw new Error('pull request merge-base SHA is unavailable');
+              }
               await github.rest.actions.createWorkflowDispatch({
                 ...context.repo,
                 workflow_id: 'codex-shepherd.yml',
@@ -120,6 +131,7 @@ jobs:
                 inputs: {
                   pull_request_number: String(pullRequest.number),
                   expected_head_sha: pullRequest.head.sha,
+                  expected_base_sha: expectedBaseSha,
                   source_event: context.eventName,
                   source_action: String(payload.action || payload.workflow_run?.conclusion || ''),
                 },
@@ -137,10 +149,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
-      group: codex-shepherd-update-${{ github.event.inputs.pull_request_number }}
+      group: codex-shepherd-update-${{ github.event.inputs.pull_request_number }}-${{ github.event.inputs.expected_head_sha }}-${{ github.event.inputs.expected_base_sha }}
       cancel-in-progress: true
     steps:
-      - name: Drive exact-head Codex review state
+      - name: Drive exact-diff Codex review state
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
         with:
           retries: 3
@@ -152,13 +164,14 @@ jobs:
             const isConnectorLogin = (login) => normalizeLogin(login) === connectorLogin;
             const reviewedCommitPattern = /Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i;
             const reviewMarkerPattern =
-              /<!-- aletheia-codex-shepherd head=([0-9a-f]{40}) kind=review -->/g;
+              /<!-- aletheia-codex-shepherd head=([0-9a-f]{40}) base=([0-9a-f]{40}) kind=review -->/g;
             const haltMarkerPattern =
-              /<!-- aletheia-codex-shepherd halt head=([0-9a-f]{40}) reason=([a-z-]+) -->/g;
+              /<!-- aletheia-codex-shepherd halt head=([0-9a-f]{40}) base=([0-9a-f]{40}) reason=([a-z-]+) -->/g;
             const repairableCiConclusions = new Set(['failure', 'timed_out']);
             const request = context.payload.inputs || {};
             const pullRequestNumber = Number.parseInt(String(request.pull_request_number || ''), 10);
             const expectedHeadSha = String(request.expected_head_sha || '');
+            const expectedBaseSha = String(request.expected_base_sha || '');
             const sourceEvent = String(request.source_event || '');
 
             if (!Number.isInteger(pullRequestNumber) || pullRequestNumber <= 0) {
@@ -166,6 +179,9 @@ jobs:
             }
             if (!/^[0-9a-f]{40}$/.test(expectedHeadSha)) {
               throw new Error('expected head SHA must be a 40-character lowercase Git object ID');
+            }
+            if (!/^[0-9a-f]{40}$/.test(expectedBaseSha)) {
+              throw new Error('expected merge-base SHA must be a 40-character lowercase Git object ID');
             }
             if (!new Set([
               'pull_request_target',
@@ -205,9 +221,18 @@ jobs:
               core.info('pull request is outside the autonomous Shepherd boundary');
               return;
             }
-            if (pullRequest.head.sha !== expectedHeadSha) {
+            const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({
+              ...context.repo,
+              basehead: `${pullRequest.base.sha}...${pullRequest.head.sha}`,
+            });
+            const currentBaseSha = comparison.merge_base_commit.sha;
+            if (
+              pullRequest.head.sha !== expectedHeadSha ||
+              currentBaseSha !== expectedBaseSha
+            ) {
               core.info(
-                `Shepherd request for ${expectedHeadSha} is stale; current head is ${pullRequest.head.sha}`,
+                `Shepherd request for ${expectedHeadSha}@${expectedBaseSha} is stale; ` +
+                `current review identity is ${pullRequest.head.sha}@${currentBaseSha}`,
               );
               return;
             }
@@ -230,12 +255,6 @@ jobs:
               }),
             ]);
 
-            const exactHeadReviews = allReviews.filter((review) =>
-              isConnectorLogin(review.user?.login) &&
-              review.commit_id === expectedHeadSha &&
-              review.submitted_at &&
-              review.state !== 'DISMISSED'
-            );
             const shepherdComments = issueComments.filter(
               (comment) => comment.user?.login === shepherdLogin
             );
@@ -243,18 +262,44 @@ jobs:
               const body = String(comment.body || '');
               const found = [];
               for (const match of body.matchAll(reviewMarkerPattern)) {
-                found.push({type: 'review', head: match[1]});
+                found.push({
+                  type: 'review',
+                  head: match[1],
+                  base: match[2],
+                  createdAt: comment.created_at,
+                });
               }
               for (const match of body.matchAll(haltMarkerPattern)) {
-                found.push({type: 'halt', head: match[1], reason: match[2]});
+                found.push({
+                  type: 'halt',
+                  head: match[1],
+                  base: match[2],
+                  reason: match[3],
+                  createdAt: comment.created_at,
+                });
               }
               return found;
             });
-            const exactHeadReviewRequest = markers.some(
-              ({type, head}) => type === 'review' && head === expectedHeadSha
+            const currentReviewRequests = markers.filter(
+              ({type, head, base}) =>
+                type === 'review' && head === expectedHeadSha && base === expectedBaseSha
             );
+            const latestReviewRequestAt = currentReviewRequests
+              .map(({createdAt}) => createdAt)
+              .filter(Boolean)
+              .sort()
+              .at(-1) || null;
+            const exactHeadReviewRequest = latestReviewRequestAt !== null;
             const exactHeadHalt = markers.some(
-              ({type, head}) => type === 'halt' && head === expectedHeadSha
+              ({type, head, base}) =>
+                type === 'halt' && head === expectedHeadSha && base === expectedBaseSha
+            );
+            const exactHeadReviews = latestReviewRequestAt === null ? [] : allReviews.filter((review) =>
+              isConnectorLogin(review.user?.login) &&
+              review.commit_id === expectedHeadSha &&
+              review.submitted_at &&
+              review.submitted_at >= latestReviewRequestAt &&
+              review.state !== 'DISMISSED'
             );
 
             const postComment = async (body) => {
@@ -282,18 +327,12 @@ jobs:
                   `${message}\n\n` +
                   `Codex Cloud repair is not authorized to push back to this repository yet, so ` +
                   `the Shepherd fails closed instead of claiming an autonomous repair.\n\n` +
-                  `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} reason=${reason} -->`
+                  `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} base=${expectedBaseSha} reason=${reason} -->`
                 );
               }
-              // Persist the exact-head halt marker before the label. If this run is
-              // canceled between mutations, any successor restores the label from the
-              // marker before source-specific returns.
               await ensureHoldLabel();
             };
 
-            // Halt markers are durable control state. Repair a marker-only partial
-            // write before any event-specific early return, regardless of which source
-            // event caused this successor run.
             if (exactHeadHalt) {
               await ensureHoldLabel();
             }
@@ -302,7 +341,8 @@ jobs:
               await holdForOwner(
                 'file-list-incomplete',
                 `GitHub returned ${changedFiles.length} of ${pullRequest.changed_files} changed files ` +
-                `for exact head \`${expectedHeadSha}\`; Shepherd cannot prove the authority boundary.`
+                `for exact review identity \`${expectedHeadSha}@${expectedBaseSha}\`; ` +
+                `Shepherd cannot prove the authority boundary.`
               );
               return;
             }
@@ -313,10 +353,10 @@ jobs:
             if (changesShepherdAuthority) {
               if (!exactHeadHalt) {
                 await postComment(
-                  `Codex Shepherd authority changed on exact head \`${expectedHeadSha}\`. ` +
-                  `This control-plane change requires explicit owner merge and cannot resume ` +
-                  `through ordinary auto-merge.\n\n` +
-                  `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} reason=shepherd-self-change -->`
+                  `Codex Shepherd authority changed on exact review identity ` +
+                  `\`${expectedHeadSha}@${expectedBaseSha}\`. This control-plane change requires ` +
+                  `explicit owner merge and cannot resume through ordinary auto-merge.\n\n` +
+                  `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} base=${expectedBaseSha} reason=shepherd-self-change -->`
                 );
               }
               await ensureHoldLabel();
@@ -331,39 +371,43 @@ jobs:
             if (exactHeadReviews.length !== 0) {
               await holdForOwner(
                 'review-finding',
-                `Codex reported exact-head review findings on \`${expectedHeadSha}\`. ` +
-                `Owner disposition or a write-capable repair executor is required.`
+                `Codex reported findings on exact review identity ` +
+                `\`${expectedHeadSha}@${expectedBaseSha}\`. Owner disposition or a ` +
+                `write-capable repair executor is required.`
               );
               return;
             }
 
             let connectorCleanExactHead = false;
-            for (const comment of issueComments) {
-              if (
-                !isConnectorLogin(comment.user?.login) ||
-                !/Didn't find any major issues\./i.test(String(comment.body || ''))
-              ) {
-                continue;
-              }
-              const reviewedCommitSha = await resolveReviewedCommitSha(comment.body);
-              if (reviewedCommitSha === expectedHeadSha) {
-                connectorCleanExactHead = true;
-                break;
+            if (latestReviewRequestAt !== null) {
+              for (const comment of issueComments) {
+                if (
+                  !isConnectorLogin(comment.user?.login) ||
+                  !comment.created_at ||
+                  comment.created_at < latestReviewRequestAt ||
+                  !/Didn't find any major issues\./i.test(String(comment.body || ''))
+                ) {
+                  continue;
+                }
+                const reviewedCommitSha = await resolveReviewedCommitSha(comment.body);
+                if (reviewedCommitSha === expectedHeadSha) {
+                  connectorCleanExactHead = true;
+                  break;
+                }
               }
             }
 
             if (!exactHeadReviewRequest && !connectorCleanExactHead) {
               await postComment(
                 `@codex review\n\n` +
-                `Please review exact head \`${expectedHeadSha}\`. Follow the repository AGENTS.md ` +
-                `review rules and report only consequential findings. CI remains the authority for ` +
-                `deterministic checks.\n\n` +
-                `<!-- aletheia-codex-shepherd head=${expectedHeadSha} kind=review -->`
+                `Please review exact head \`${expectedHeadSha}\` against merge base ` +
+                `\`${expectedBaseSha}\`. Follow the repository AGENTS.md review rules and ` +
+                `report only consequential findings. CI remains the authority for deterministic ` +
+                `checks.\n\n` +
+                `<!-- aletheia-codex-shepherd head=${expectedHeadSha} base=${expectedBaseSha} kind=review -->`
               );
               return;
             }
-
-            if (sourceEvent === 'pull_request_target') return;
 
             const latestCiRun = async () => {
               const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
@@ -377,20 +421,24 @@ jobs:
                 .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0] || null;
             };
 
-            if (sourceEvent === 'issue_comment' || sourceEvent === 'workflow_run') {
-              if (!connectorCleanExactHead) return;
+            // Every surviving callback converges actionable CI failure state before
+            // it is allowed to exit based on its source event. This repairs partial
+            // terminal writes even when the successor callback has a different type.
+            if (connectorCleanExactHead) {
               const run = await latestCiRun();
               if (
-                !run ||
-                run.status !== 'completed' ||
-                !repairableCiConclusions.has(run.conclusion)
+                run &&
+                run.status === 'completed' &&
+                repairableCiConclusions.has(run.conclusion)
               ) {
+                await holdForOwner(
+                  'ci-failure',
+                  `Aletheia CI run ${run.id} concluded \`${run.conclusion}\` on exact head ` +
+                  `\`${expectedHeadSha}\` after the current diff received a clean Codex review. ` +
+                  `A write-capable repair executor is required.`
+                );
                 return;
               }
-              await holdForOwner(
-                'ci-failure',
-                `Aletheia CI run ${run.id} concluded \`${run.conclusion}\` on exact head ` +
-                `\`${expectedHeadSha}\` after a clean Codex review. A write-capable repair executor ` +
-                `is required.`
-              );
             }
+
+            core.info(`Shepherd state converged from ${sourceEvent}; no further mutation is required`);
