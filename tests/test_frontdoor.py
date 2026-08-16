@@ -41,6 +41,7 @@ async def test_frontdoor_negotiates_gzip_and_keeps_hashed_asset_cache_contract(t
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
         response = await client.get("/assets/index-test.js", headers={"Accept-Encoding": "gzip"})
         head = await client.head("/assets/index-test.js", headers={"Accept-Encoding": "gzip"})
+        root = await client.get("/", headers={"Accept-Encoding": "gzip"})
         conditional = await client.get(
             "/assets/index-test.js",
             headers={"Accept-Encoding": "gzip", "If-None-Match": response.headers["etag"]},
@@ -57,6 +58,9 @@ async def test_frontdoor_negotiates_gzip_and_keeps_hashed_asset_cache_contract(t
     assert head.status_code == 200
     assert head.headers["content-encoding"] == "gzip"
     assert head.headers["etag"] == response.headers["etag"]
+    assert root.status_code == 200
+    assert root.headers["content-encoding"] == "gzip"
+    assert root.headers["content-type"].startswith("text/html")
     assert conditional.status_code == 304
     assert missing_asset.status_code == 404
     assert sidecar.status_code == 404
@@ -72,6 +76,7 @@ async def test_frontdoor_serves_static_without_backend(tmp_path):
 
     assert resp.status_code == 200
     assert "root" in resp.text
+    assert resp.headers["content-type"].startswith("text/html")
 
 
 @pytest.mark.anyio

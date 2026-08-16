@@ -483,19 +483,23 @@ def create_app(
 
             async def _serve(self, path: str, scope, *, url_path: str | None = None):
                 url_path = url_path or scope.get("path", "")
+                # Starlette passes an empty path for the root directory. Resolve
+                # it to the actual document before content negotiation and MIME
+                # detection; otherwise `/` is served as application/octet-stream.
+                logical_path = "index.html" if path in ("", ".") else path
                 encoding = None
-                selected = path
+                selected = logical_path
                 # Sidecars are an implementation detail; only the logical URL is
                 # resolved through content negotiation.
                 for candidate_encoding in self._accepted_encodings(scope):
-                    candidate = f"{path}{'.br' if candidate_encoding == 'br' else '.gz'}"
+                    candidate = f"{logical_path}{'.br' if candidate_encoding == 'br' else '.gz'}"
                     _, candidate_stat = self.lookup_path(candidate)
                     if candidate_stat is not None:
                         selected = candidate
                         encoding = candidate_encoding
                         break
                 result = await super().get_response(selected, scope)
-                return self._headers_for(result, url_path=url_path, encoding=encoding, source_path=path)
+                return self._headers_for(result, url_path=url_path, encoding=encoding, source_path=logical_path)
 
             async def get_response(self, path: str, scope):
                 url_path = scope.get("path", "")
