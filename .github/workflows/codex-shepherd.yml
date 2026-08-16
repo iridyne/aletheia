@@ -46,6 +46,7 @@ jobs:
               'reopened',
               'ready_for_review',
               'synchronize',
+              'unlabeled',
             ]);
             const reviewMarkerPattern =
               /<!-- aletheia-codex-shepherd head=([0-9a-f]{40}) kind=review -->/g;
