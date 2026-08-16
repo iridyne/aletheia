@@ -264,13 +264,17 @@ jobs:
                 body,
               });
             };
+            let holdLabelPresent = pullRequest.labels.some(
+              ({name}) => name === 'do-not-auto-merge'
+            );
             const ensureHoldLabel = async () => {
-              if (pullRequest.labels.some(({name}) => name === 'do-not-auto-merge')) return;
+              if (holdLabelPresent) return;
               await github.rest.issues.addLabels({
                 ...context.repo,
                 issue_number: pullRequest.number,
                 labels: ['do-not-auto-merge'],
               });
+              holdLabelPresent = true;
             };
             const holdForOwner = async (reason, message) => {
               if (!exactHeadHalt) {
@@ -282,10 +286,17 @@ jobs:
                 );
               }
               // Persist the exact-head halt marker before the label. If this run is
-              // canceled between mutations, the successor sees the marker and repairs
-              // the missing label instead of leaving an unexplained durable hold.
+              // canceled between mutations, any successor restores the label from the
+              // marker before source-specific returns.
               await ensureHoldLabel();
             };
+
+            // Halt markers are durable control state. Repair a marker-only partial
+            // write before any event-specific early return, regardless of which source
+            // event caused this successor run.
+            if (exactHeadHalt) {
+              await ensureHoldLabel();
+            }
 
             if (changedFiles.length !== pullRequest.changed_files) {
               await holdForOwner(
@@ -312,7 +323,7 @@ jobs:
               return;
             }
 
-            if (pullRequest.labels.some(({name}) => name === 'do-not-auto-merge')) {
+            if (holdLabelPresent) {
               core.info('do-not-auto-merge holds this pull request');
               return;
             }
