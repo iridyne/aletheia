@@ -273,14 +273,18 @@ jobs:
               });
             };
             const holdForOwner = async (reason, message) => {
+              if (!exactHeadHalt) {
+                await postComment(
+                  `${message}\n\n` +
+                  `Codex Cloud repair is not authorized to push back to this repository yet, so ` +
+                  `the Shepherd fails closed instead of claiming an autonomous repair.\n\n` +
+                  `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} reason=${reason} -->`
+                );
+              }
+              // Persist the exact-head halt marker before the label. If this run is
+              // canceled between mutations, the successor sees the marker and repairs
+              // the missing label instead of leaving an unexplained durable hold.
               await ensureHoldLabel();
-              if (exactHeadHalt) return;
-              await postComment(
-                `${message}\n\n` +
-                `Codex Cloud repair is not authorized to push back to this repository yet, so ` +
-                `the Shepherd fails closed instead of claiming an autonomous repair.\n\n` +
-                `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} reason=${reason} -->`
-              );
             };
 
             if (changedFiles.length !== pullRequest.changed_files) {
@@ -296,7 +300,6 @@ jobs:
               [filename, previous_filename].includes(shepherdPath)
             );
             if (changesShepherdAuthority) {
-              await ensureHoldLabel();
               if (!exactHeadHalt) {
                 await postComment(
                   `Codex Shepherd authority changed on exact head \`${expectedHeadSha}\`. ` +
@@ -305,6 +308,7 @@ jobs:
                   `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} reason=shepherd-self-change -->`
                 );
               }
+              await ensureHoldLabel();
               return;
             }
 
