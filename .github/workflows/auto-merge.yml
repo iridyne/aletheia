@@ -68,6 +68,20 @@ jobs:
             const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
             const triagePattern = /^\/codex-triage ([0-9a-f]{40}) (clean|complete)$/;
             const reviewedCommitPattern = /Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i;
+            const resolveReviewedCommitSha = async (body) => {
+              const match = String(body || '').match(reviewedCommitPattern);
+              if (!match) return null;
+              try {
+                const {data: commit} = await github.rest.repos.getCommit({
+                  ...context.repo,
+                  ref: match[1],
+                });
+                return commit.sha;
+              } catch (error) {
+                core.info(`could not resolve Connector reviewed commit ${match[1]}: ${error}`);
+                return null;
+              }
+            };
             const eventName = context.eventName;
             const payload = context.payload;
             let pullRequestNumbers = [];
@@ -130,8 +144,8 @@ jobs:
               }
               if (eventName === 'issue_comment') {
                 if (isConnectorLogin(payload.comment.user?.login)) {
-                  const reviewedCommit = String(payload.comment.body || '').match(reviewedCommitPattern);
-                  if (!reviewedCommit || !pullRequest.head.sha.startsWith(reviewedCommit[1])) {
+                  const reviewedCommitSha = await resolveReviewedCommitSha(payload.comment.body);
+                  if (reviewedCommitSha !== pullRequest.head.sha) {
                     core.info('ignoring Connector completion for a superseded or unbound head');
                     continue;
                   }
@@ -432,6 +446,20 @@ jobs:
               const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
               const triagePattern = /^\/codex-triage ([0-9a-f]{40}) (clean|complete)$/;
               const reviewedCommitPattern = /Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i;
+              const resolveReviewedCommitSha = async (body) => {
+                const match = String(body || '').match(reviewedCommitPattern);
+                if (!match) return null;
+                try {
+                  const {data: commit} = await github.rest.repos.getCommit({
+                    ...context.repo,
+                    ref: match[1],
+                  });
+                  return commit.sha;
+                } catch (error) {
+                  core.info(`could not resolve Connector reviewed commit ${match[1]}: ${error}`);
+                  return null;
+                }
+              };
               const exactHeadReviews = pullRequest.reviews.nodes.filter((review) =>
                 isConnectorLogin(review.author?.login) &&
                 review.commit?.oid === expectedHeadSha &&
@@ -451,42 +479,46 @@ jobs:
                   createdAt: comment.createdAt,
                 }];
               });
-              const connectorCleanComments = pullRequest.comments.nodes.filter((comment) => {
-                if (!isConnectorLogin(comment.author?.login)) return false;
-                const reviewedCommit = String(comment.body || '').match(reviewedCommitPattern);
-                if (!reviewedCommit || !expectedHeadSha.startsWith(reviewedCommit[1])) return false;
-                return /Didn't find any major issues\./i.test(String(comment.body || ''));
-              });
-              const latestReviewAt = exactHeadReviews
-                .map(({submittedAt}) => submittedAt)
-                .sort()
-                .at(-1);
-              const connectorCleanAfterReview = connectorCleanComments.some(
-                (comment) => !latestReviewAt || comment.createdAt >= latestReviewAt,
+              const connectorCleanCandidates = pullRequest.comments.nodes.filter((comment) =>
+                isConnectorLogin(comment.author?.login) &&
+                /Didn't find any major issues\./i.test(String(comment.body || ''))
               );
+              let connectorCleanExactHead = false;
+              for (const comment of connectorCleanCandidates) {
+                const reviewedCommitSha = await resolveReviewedCommitSha(comment.body);
+                if (reviewedCommitSha === expectedHeadSha) {
+                  connectorCleanExactHead = true;
+                  break;
+                }
+              }
 
-              if (!connectorCleanAfterReview) {
-                if (exactHeadReviews.length === 0) {
-                  if (!acknowledgements.some(({disposition}) => disposition === 'clean')) {
-                    core.info(
-                      `waiting for exact-head Connector completion on ${expectedHeadSha}; ` +
-                      'a clean Connector result will resume this PR automatically',
-                    );
-                    return;
-                  }
-                } else {
-                  const triageComplete = acknowledgements.some((acknowledgement) =>
-                    acknowledgement.disposition === 'complete' &&
-                    acknowledgement.createdAt >= latestReviewAt
+              if (exactHeadReviews.length === 0) {
+                if (
+                  !connectorCleanExactHead &&
+                  !acknowledgements.some(({disposition}) => disposition === 'clean')
+                ) {
+                  core.info(
+                    `waiting for exact-head Connector completion on ${expectedHeadSha}; ` +
+                    'a clean Connector result will resume this PR automatically',
                   );
-                  if (!triageComplete) {
-                    core.info(
-                      `waiting for P1/P2 triage on ${expectedHeadSha}; an authorized maintainer ` +
-                      `must comment "/codex-triage ${expectedHeadSha} complete" after the exact-head ` +
-                      `review and document every confirmed, false-positive, or deferred finding`,
-                    );
-                    return;
-                  }
+                  return;
+                }
+              } else {
+                const latestReviewAt = exactHeadReviews
+                  .map(({submittedAt}) => submittedAt)
+                  .sort()
+                  .at(-1);
+                const triageComplete = acknowledgements.some((acknowledgement) =>
+                  acknowledgement.disposition === 'complete' &&
+                  acknowledgement.createdAt >= latestReviewAt
+                );
+                if (!triageComplete) {
+                  core.info(
+                    `waiting for P1/P2 triage on ${expectedHeadSha}; an authorized maintainer ` +
+                    `must comment "/codex-triage ${expectedHeadSha} complete" after the exact-head ` +
+                    `review and document every confirmed, false-positive, or deferred finding`,
+                  );
+                  return;
                 }
               }
 
