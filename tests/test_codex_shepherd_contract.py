@@ -15,6 +15,10 @@ def _workflow() -> dict:
     return yaml.load(WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
 
+def _script() -> str:
+    return _workflow()["jobs"]["shepherd"]["steps"][0]["with"]["script"]
+
+
 def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
     workflow = _workflow()
     triggers = workflow["on"]
@@ -45,8 +49,8 @@ def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
     assert "actions: write" not in str(job)
 
 
-def test_codex_shepherd_binds_every_callback_to_the_exact_current_head() -> None:
-    script = _workflow()["jobs"]["shepherd"]["steps"][0]["with"]["script"]
+def test_codex_shepherd_binds_callbacks_and_control_markers_to_trusted_identity() -> None:
+    script = _script()
 
     assert "const expectedHeadSha = pullRequest.head.sha" in script
     assert "context.payload.review.commit_id !== expectedHeadSha" in script
@@ -59,68 +63,68 @@ def test_codex_shepherd_binds_every_callback_to_the_exact_current_head() -> None
 
     assert "github.paginate(github.rest.pulls.listReviews" in script
     assert "github.paginate(github.rest.issues.listComments" in script
-    assert "github.paginate(github.rest.pulls.listFiles" in script
     assert "per_page: 100" in script
 
+    assert "const shepherdLogin = 'github-actions[bot]'" in script
+    assert "comment.user?.login === shepherdLogin" in script
+    assert "const shepherdComments" in script
+    assert "shepherdComments.flatMap" in script
 
-def test_codex_shepherd_repair_loop_is_idempotent_bounded_and_new_head_driven() -> None:
-    script = _workflow()["jobs"]["shepherd"]["steps"][0]["with"]["script"]
 
-    assert "const maxRepairAttempts = 3" in script
-    assert "kind=(finding|ci) attempt=(\\d+)" in script
-    assert "const exactHeadRepair" in script
-    assert "repairMarkers.length >= maxRepairAttempts" in script
-    assert "labels: ['do-not-auto-merge']" in script
-    assert "reason=repair-budget" in script
-    assert "a new head SHA is the only repair-success signal" in script
+def test_codex_shepherd_requests_exact_head_review_but_does_not_claim_repair() -> None:
+    script = _script()
 
     assert "@codex review" in script
-    assert "@codex fix all review findings" in script
-    assert "@codex fix the CI failures" in script
     assert "kind=review" in script
-    assert "kind=${kind} attempt=${attempt}" in script
+    assert "const exactHeadReviewRequest" in script
+    assert "!exactHeadReviewRequest" in script
+    assert "!connectorCleanExactHead" in script
+
+    # Runtime evidence showed the current Codex Cloud task can create a local
+    # repair commit but cannot push it back to this repository. Until that
+    # permission/executor exists, Shepherd must hold rather than fake autonomy.
+    assert "@codex fix" not in script
+    assert "const holdForOwner" in script
+    assert "labels: ['do-not-auto-merge']" in script
+    assert "Codex Cloud repair is not authorized to push back" in script
+    assert "reason=${reason}" in script
+    assert "review-finding" in script
+    assert "ci-failure" in script
 
 
-def test_codex_shepherd_serializes_review_findings_before_ci_repair() -> None:
-    script = _workflow()["jobs"]["shepherd"]["steps"][0]["with"]["script"]
+def test_codex_shepherd_serializes_findings_before_ci_failure_handoff() -> None:
+    script = _script()
 
     review_handler = script.index("if (context.eventName === 'pull_request_review')")
-    finding_repair = script.index("'finding'", review_handler)
-    issue_handler = script.index("if (context.eventName === 'issue_comment')", finding_repair)
+    review_hold = script.index("'review-finding'", review_handler)
+    issue_handler = script.index("if (context.eventName === 'issue_comment')", review_hold)
     issue_requires_clean = script.index("!connectorCleanExactHead", issue_handler)
     workflow_handler = script.index("if (context.eventName === 'workflow_run')", issue_requires_clean)
     finding_precedence = script.index("if (exactHeadReviews.length !== 0)", workflow_handler)
     wait_for_completion = script.index("if (!connectorCleanExactHead)", finding_precedence)
-    ci_repair = script.index("'ci'", wait_for_completion)
+    ci_hold = script.index("'ci-failure'", wait_for_completion)
 
-    assert review_handler < finding_repair < issue_handler < issue_requires_clean
-    assert issue_requires_clean < workflow_handler < finding_precedence < wait_for_completion < ci_repair
+    assert review_handler < review_hold < issue_handler < issue_requires_clean
+    assert issue_requires_clean < workflow_handler < finding_precedence < wait_for_completion < ci_hold
+    assert "review repair takes precedence over CI repair" in script
     assert "CI failed before exact-head Codex completion; wait for the Connector callback" in script
-    assert "exact-head review findings exist; review repair path owns this head" in script
 
 
-def test_codex_shepherd_fails_closed_on_repository_and_trading_trust_boundaries() -> None:
-    script = _workflow()["jobs"]["shepherd"]["steps"][0]["with"]["script"]
+def test_codex_shepherd_only_holds_actionable_current_ci_failures() -> None:
+    script = _script()
+
+    assert "const repairableCiConclusions = new Set(['failure', 'timed_out'])" in script
+    assert "run.status !== 'completed'" in script
+    assert "!repairableCiConclusions.has(run.conclusion)" in script
+
+    # Select the newest Aletheia CI run first. Filtering to completed runs before
+    # sorting would let an older failure win while a newer exact-head run is active.
+    latest_ci = script[script.index("const latestCiRun") : script.index("if (context.eventName === 'issue_comment')")]
+    assert ".filter((run) => run.name === 'Aletheia CI')" in latest_ci
+    assert "run.status === 'completed'" not in latest_ci
 
     assert "pullRequest.base.ref !== 'master'" in script
     assert "pullRequest.draft" in script
     assert "pullRequest.head.repo?.full_name" in script
     assert "release-please--branches--master" in script
     assert "do-not-auto-merge" in script
-
-    for controlled_path in (
-        "aletheia/risk/",
-        "aletheia/execution/",
-        "aletheia/exchanges/bitget/auth.py",
-        "aletheia/exchanges/bitget/client.py",
-        "aletheia/config/secrets.py",
-        "aletheia/agent_runtime/permissions.py",
-        "aletheia/agent_runtime/tool_registry.py",
-        "aletheia/agent_shell/registry.py",
-        "aletheia/files/jsonl.py",
-        "aletheia/server/routes/live.py",
-    ):
-        assert controlled_path in script
-
-    assert "if (touchesControlledPath)" in script
-    assert "controlled trading/trust path requires owner-scoped repair" in script
