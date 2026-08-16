@@ -163,11 +163,20 @@ jobs:
                 pull_number: pullRequest.number,
                 per_page: 100,
               });
-              const changesMergeAuthority = changedFiles.some(({filename, previous_filename}) =>
-                [filename, previous_filename].includes('.github/workflows/auto-merge.yml') ||
-                [filename, previous_filename].includes('.github/workflows/codex-shepherd.yml'),
+              const changedFilesComplete = changedFiles.length === pullRequest.changed_files;
+              if (!changedFilesComplete) {
+                core.info(
+                  `changed-file listing is incomplete (${changedFiles.length}/${pullRequest.changed_files}); ` +
+                  'auto-merge remains disabled',
+                );
+              }
+              const changesMergeAuthority = changedFilesComplete && changedFiles.some(
+                ({filename, previous_filename}) =>
+                  [filename, previous_filename].includes('.github/workflows/auto-merge.yml') ||
+                  [filename, previous_filename].includes('.github/workflows/codex-shepherd.yml'),
               );
               const operation = (
+                !changedFilesComplete ||
                 changesMergeAuthority ||
                 pullRequest.labels.some(({name}) => name === 'do-not-auto-merge')
               ) ? 'disable' : 'enable';
@@ -240,6 +249,13 @@ jobs:
               pull_number: pullRequest.number,
               per_page: 100,
             });
+            if (changedFiles.length !== pullRequest.changed_files) {
+              core.info(
+                `release candidate changed-file listing is incomplete ` +
+                `(${changedFiles.length}/${pullRequest.changed_files}); owner hold remains`,
+              );
+              return;
+            }
             if (changedFiles.some(({filename, previous_filename}) =>
               [filename, previous_filename].some((path) =>
                 [
@@ -417,11 +433,30 @@ jobs:
                 );
                 return;
               }
+              const {data: pullRequestMetadata} = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: pullRequest.number,
+              });
+              if (
+                pullRequestMetadata.state !== 'open' ||
+                pullRequestMetadata.head.sha !== expectedHeadSha
+              ) {
+                core.info('pull request metadata changed while checking merge authority');
+                return;
+              }
               const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
                 ...context.repo,
                 pull_number: pullRequest.number,
                 per_page: 100,
               });
+              if (changedFiles.length !== pullRequestMetadata.changed_files) {
+                core.info(
+                  `changed-file listing is incomplete ` +
+                  `(${changedFiles.length}/${pullRequestMetadata.changed_files}); ` +
+                  'exact-head merge remains disabled',
+                );
+                return;
+              }
               if (changedFiles.some(({filename, previous_filename}) =>
                 [filename, previous_filename].some((path) =>
                   [
