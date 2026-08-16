@@ -10,7 +10,9 @@ import yaml
 
 pytestmark = pytest.mark.tier_spec
 
-WORKFLOW_PATH = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "codex-shepherd.yml"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "codex-shepherd.yml"
+AUTO_MERGE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "auto-merge.yml"
 
 
 def _workflow() -> dict:
@@ -19,6 +21,10 @@ def _workflow() -> dict:
 
 def _script() -> str:
     return _workflow()["jobs"]["shepherd"]["steps"][0]["with"]["script"]
+
+
+def _auto_merge_source() -> str:
+    return AUTO_MERGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
 
 def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
@@ -103,6 +109,24 @@ def test_codex_shepherd_self_change_and_incomplete_file_listing_fail_closed() ->
     assert incomplete < self_change < ordinary_hold < review_request
 
 
+def test_auto_merge_atomically_protects_shepherd_authority() -> None:
+    source = _auto_merge_source()
+
+    # The merge controller must recognize Shepherd as merge authority everywhere
+    # it makes an authority decision. This removes an unlabeled-event race between
+    # two independent workflows.
+    assert source.count("'.github/workflows/codex-shepherd.yml'") == 3
+    assert source.count("'.github/workflows/auto-merge.yml'") >= 3
+    assert source.count("merge-authority workflow changes require an explicit manual merge") == 2
+
+    schedule = source.index("const changesMergeAuthority")
+    release = source.index("merge-authority workflow changes require an explicit manual merge")
+    ordinary = source.rindex("merge-authority workflow changes require an explicit manual merge")
+    assert source.index("'.github/workflows/codex-shepherd.yml'", schedule) < release
+    assert source.index("'.github/workflows/codex-shepherd.yml'", release) < ordinary
+    assert source.index("'.github/workflows/codex-shepherd.yml'", ordinary) > ordinary
+
+
 def test_codex_shepherd_requests_every_ready_or_resumed_exact_head_but_does_not_claim_repair() -> None:
     script = _script()
 
@@ -121,6 +145,15 @@ def test_codex_shepherd_requests_every_ready_or_resumed_exact_head_but_does_not_
     assert "const exactHeadReviewRequest" in script
     assert "!exactHeadReviewRequest" in script
     assert "!connectorCleanExactHead" in script
+
+    # Missing review creation is a convergence gate shared by every surviving
+    # callback; it must run before event-specific CI/comment handling.
+    request_gate = script.index("!exactHeadReviewRequest")
+    pull_request_return = script.index("if (context.eventName === 'pull_request_target') return", request_gate)
+    issue_handler = script.index("if (context.eventName === 'issue_comment')", pull_request_return)
+    workflow_handler = script.index("if (context.eventName === 'workflow_run')", issue_handler)
+    assert request_gate < pull_request_return < issue_handler < workflow_handler
+    assert "Any\n            // surviving trusted callback" in script
 
     # Runtime evidence showed the current Codex Cloud task can create a local
     # repair commit but cannot push it back to this repository. Until that
@@ -141,8 +174,8 @@ def test_codex_shepherd_callbacks_converge_from_current_finding_state() -> None:
     finding_gate = script.index("if (exactHeadReviews.length !== 0)")
     finding_hold = script.index("'review-finding'", finding_gate)
     clean_scan = script.index("let connectorCleanExactHead", finding_hold)
-    event_handler = script.index("if (context.eventName === 'pull_request_target')", clean_scan)
-    assert finding_gate < finding_hold < clean_scan < event_handler
+    review_request = script.index("!exactHeadReviewRequest", clean_scan)
+    assert finding_gate < finding_hold < clean_scan < review_request
     assert "Event delivery is not a queue" in script
     assert "if (context.eventName === 'pull_request_review')" not in script[finding_gate:]
 
