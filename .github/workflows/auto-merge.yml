@@ -164,12 +164,8 @@ jobs:
                 per_page: 100,
               });
               const changesMergeAuthority = changedFiles.some(({filename, previous_filename}) =>
-                [filename, previous_filename].some((path) =>
-                  [
-                    '.github/workflows/auto-merge.yml',
-                    '.github/workflows/codex-shepherd.yml',
-                  ].includes(path)
-                ),
+                [filename, previous_filename].includes('.github/workflows/auto-merge.yml') ||
+                [filename, previous_filename].includes('.github/workflows/codex-shepherd.yml'),
               );
               const operation = (
                 changesMergeAuthority ||
