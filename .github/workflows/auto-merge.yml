@@ -231,7 +231,23 @@ jobs:
             if (candidates.length !== 1) {
               throw new Error(`expected one release candidate, found ${candidates.length}`);
             }
-            const [pullRequest] = candidates;
+            const [pullRequestSummary] = candidates;
+            const {data: pullRequest} = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: pullRequestSummary.number,
+            });
+            if (
+              pullRequest.state !== 'open' ||
+              pullRequest.base.ref !== 'master' ||
+              pullRequest.head.repo?.full_name !== context.repo.owner + '/' + context.repo.repo ||
+              pullRequest.head.ref !== run.head_branch ||
+              pullRequest.head.sha !== run.head_sha ||
+              !pullRequest.labels.some(({name}) => name === 'autorelease: pending') ||
+              !pullRequest.labels.some(({name}) => name === 'do-not-auto-merge')
+            ) {
+              core.info('release candidate changed after discovery; owner hold remains');
+              return;
+            }
             const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({
               ...context.repo,
               basehead: `${pullRequest.base.sha}...${pullRequest.head.sha}`,
