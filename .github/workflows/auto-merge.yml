@@ -40,7 +40,11 @@ jobs:
       (
         github.event_name == 'issue_comment' &&
         github.event.issue.pull_request &&
-        startsWith(github.event.comment.body, '/codex-triage ')
+        (
+          startsWith(github.event.comment.body, '/codex-triage ') ||
+          github.event.comment.user.login == 'chatgpt-codex-connector' ||
+          github.event.comment.user.login == 'chatgpt-codex-connector[bot]'
+        )
       ) ||
       (
         github.event_name == 'workflow_run' &&
@@ -63,6 +67,7 @@ jobs:
             const isConnectorLogin = (login) => normalizeLogin(login) === connectorLogin;
             const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
             const triagePattern = /^\/codex-triage ([0-9a-f]{40}) (clean|complete)$/;
+            const reviewedCommitPattern = /Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i;
             const eventName = context.eventName;
             const payload = context.payload;
             let pullRequestNumbers = [];
@@ -73,21 +78,25 @@ jobs:
               if (payload.action !== 'dismissed' && !isConnectorLogin(payload.review.user?.login)) return;
               pullRequestNumbers = [payload.pull_request.number];
             } else if (eventName === 'issue_comment') {
-              if (!trustedAssociations.has(payload.comment.author_association)) {
-                core.info('ignoring Codex triage acknowledgement from an untrusted author');
-                return;
+              if (isConnectorLogin(payload.comment.user?.login)) {
+                pullRequestNumbers = [payload.issue.number];
+              } else {
+                if (!trustedAssociations.has(payload.comment.author_association)) {
+                  core.info('ignoring Codex triage acknowledgement from an untrusted author');
+                  return;
+                }
+                const {data: commenterPermission} = await github.rest.repos.getCollaboratorPermissionLevel({
+                  ...context.repo,
+                  username: payload.comment.user?.login,
+                });
+                if (!new Set(['admin', 'maintain', 'write']).has(commenterPermission.permission)) {
+                  core.info('ignoring Codex triage acknowledgement without write permission');
+                  return;
+                }
+                const [command] = String(payload.comment.body || '').replace(/\r/g, '').split('\n');
+                if (!triagePattern.test(command.trim())) return;
+                pullRequestNumbers = [payload.issue.number];
               }
-              const {data: commenterPermission} = await github.rest.repos.getCollaboratorPermissionLevel({
-                ...context.repo,
-                username: payload.comment.user?.login,
-              });
-              if (!new Set(['admin', 'maintain', 'write']).has(commenterPermission.permission)) {
-                core.info('ignoring Codex triage acknowledgement without write permission');
-                return;
-              }
-              const [command] = String(payload.comment.body || '').replace(/\r/g, '').split('\n');
-              if (!triagePattern.test(command.trim())) return;
-              pullRequestNumbers = [payload.issue.number];
             } else if (eventName === 'workflow_run') {
               pullRequestNumbers = payload.workflow_run.pull_requests.map(({number}) => number);
             }
@@ -120,11 +129,19 @@ jobs:
                 continue;
               }
               if (eventName === 'issue_comment') {
-                const [command] = String(payload.comment.body || '').replace(/\r/g, '').split('\n');
-                const acknowledgement = command.trim().match(triagePattern);
-                if (!acknowledgement || acknowledgement[1] !== pullRequest.head.sha) {
-                  core.info('ignoring Codex triage acknowledgement for a superseded head');
-                  continue;
+                if (isConnectorLogin(payload.comment.user?.login)) {
+                  const reviewedCommit = String(payload.comment.body || '').match(reviewedCommitPattern);
+                  if (!reviewedCommit || !pullRequest.head.sha.startsWith(reviewedCommit[1])) {
+                    core.info('ignoring Connector completion for a superseded or unbound head');
+                    continue;
+                  }
+                } else {
+                  const [command] = String(payload.comment.body || '').replace(/\r/g, '').split('\n');
+                  const acknowledgement = command.trim().match(triagePattern);
+                  if (!acknowledgement || acknowledgement[1] !== pullRequest.head.sha) {
+                    core.info('ignoring Codex triage acknowledgement for a superseded head');
+                    continue;
+                  }
                 }
               }
               const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
@@ -316,6 +333,7 @@ jobs:
                   }
                   comments(last: 100) {
                     nodes {
+                      author { login }
                       authorAssociation
                       body
                       createdAt
@@ -413,6 +431,7 @@ jobs:
               const isConnectorLogin = (login) => normalizeLogin(login) === connectorLogin;
               const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
               const triagePattern = /^\/codex-triage ([0-9a-f]{40}) (clean|complete)$/;
+              const reviewedCommitPattern = /Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i;
               const exactHeadReviews = pullRequest.reviews.nodes.filter((review) =>
                 isConnectorLogin(review.author?.login) &&
                 review.commit?.oid === expectedHeadSha &&
@@ -432,32 +451,42 @@ jobs:
                   createdAt: comment.createdAt,
                 }];
               });
+              const connectorCleanComments = pullRequest.comments.nodes.filter((comment) => {
+                if (!isConnectorLogin(comment.author?.login)) return false;
+                const reviewedCommit = String(comment.body || '').match(reviewedCommitPattern);
+                if (!reviewedCommit || !expectedHeadSha.startsWith(reviewedCommit[1])) return false;
+                return /Didn't find any major issues\./i.test(String(comment.body || ''));
+              });
+              const latestReviewAt = exactHeadReviews
+                .map(({submittedAt}) => submittedAt)
+                .sort()
+                .at(-1);
+              const connectorCleanAfterReview = connectorCleanComments.some(
+                (comment) => !latestReviewAt || comment.createdAt >= latestReviewAt,
+              );
 
-              if (exactHeadReviews.length === 0) {
-                if (!acknowledgements.some(({disposition}) => disposition === 'clean')) {
-                  core.info(
-                    `waiting for Connector completion on ${expectedHeadSha}; after a clean ` +
-                    `Connector result, an authorized maintainer must comment ` +
-                    `"/codex-triage ${expectedHeadSha} clean" followed by the review evidence`,
+              if (!connectorCleanAfterReview) {
+                if (exactHeadReviews.length === 0) {
+                  if (!acknowledgements.some(({disposition}) => disposition === 'clean')) {
+                    core.info(
+                      `waiting for exact-head Connector completion on ${expectedHeadSha}; ` +
+                      'a clean Connector result will resume this PR automatically',
+                    );
+                    return;
+                  }
+                } else {
+                  const triageComplete = acknowledgements.some((acknowledgement) =>
+                    acknowledgement.disposition === 'complete' &&
+                    acknowledgement.createdAt >= latestReviewAt
                   );
-                  return;
-                }
-              } else {
-                const latestReviewAt = exactHeadReviews
-                  .map(({submittedAt}) => submittedAt)
-                  .sort()
-                  .at(-1);
-                const triageComplete = acknowledgements.some((acknowledgement) =>
-                  acknowledgement.disposition === 'complete' &&
-                  acknowledgement.createdAt >= latestReviewAt
-                );
-                if (!triageComplete) {
-                  core.info(
-                    `waiting for P1/P2 triage on ${expectedHeadSha}; an authorized maintainer ` +
-                    `must comment "/codex-triage ${expectedHeadSha} complete" after the exact-head ` +
-                    `review and document every confirmed, false-positive, or deferred finding`,
-                  );
-                  return;
+                  if (!triageComplete) {
+                    core.info(
+                      `waiting for P1/P2 triage on ${expectedHeadSha}; an authorized maintainer ` +
+                      `must comment "/codex-triage ${expectedHeadSha} complete" after the exact-head ` +
+                      `review and document every confirmed, false-positive, or deferred finding`,
+                    );
+                    return;
+                  }
                 }
               }
 
