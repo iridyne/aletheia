@@ -56,8 +56,8 @@ third-party Action.
 ## Operator release SOP
 
 Run this only when the accumulated changes justify a Runtime update or a new
-behavior/evidence epoch. The operator performs one action; Release Please owns
-the version, changelog, candidate PR, CI handoff, merge, tag, and GitHub Release:
+behavior/evidence epoch. Generating the candidate is one operator action;
+Release Please owns the version, changelog, candidate PR, and CI handoff:
 
 ```sh
 gh workflow run release-please.yml --repo iridite/aletheia --ref master
@@ -69,12 +69,28 @@ Conventional Commit history and `release-please-config.json` determine the next
 SemVer. In the current pre-1.0 policy, a `feat` produces the next minor version;
 a batch containing only `fix`/`perf` release notes produces the next patch.
 
+An authorized maintainer still owns exact-head Connector triage. Use the full
+40-character candidate head SHA and put one of these commands on the first line
+of a PR comment, followed by a non-empty explanation:
+
+- `/codex-triage <candidate-head-sha> clean` when no Connector review exists;
+- `/codex-triage <candidate-head-sha> complete` after a Connector review, with
+  every finding recorded as confirmed and fixed, false positive, or deferred.
+
 The release is complete only after the generated `autorelease: pending` PR is
 observed as merged, its matching immutable `vX.Y.Z` tag exists, and the GitHub
 Release exists. A queued or green CI run, an open or mergeable PR, or enabled
-auto-merge is not completion. If `master` advances or the workflow fails, rerun
-the same command so the candidate is refreshed and reverified; never bypass the
-candidate hold, exact-SHA CI, or tag the commit manually. Fedora deployment and
+auto-merge is not completion. Before the candidate merges, rerun the initial
+command if `master` advances or candidate preparation fails. After it merges,
+recover a failed tag/GitHub Release follow-up by rerunning that failed
+`repository_dispatch` workflow run in the Actions UI or with:
+
+```sh
+gh run rerun <run-id> --repo iridite/aletheia
+```
+
+Do not use the initial dispatch for post-merge recovery, bypass the candidate
+hold or exact-SHA CI, or tag the commit manually. Fedora deployment and
 Observation-window admission remain separate downstream gates.
 
 The bootstrap manifest remains at the last released product version (`0.5.0`).
