@@ -39,7 +39,7 @@ def _auto_merge_source() -> str:
         "agent_contracts",
         "§PR/CI control plane",
         "L2a",
-        "Codex PR Shepherd separates trigger-facing workflow dispatch from PR-side metadata mutation without obtaining repository-content or merge authority.",
+        "Codex PR Shepherd separates trigger-facing workflow dispatch from PR-side metadata mutation, binds review state to the exact head/merge-base diff, and does not obtain repository-content or merge authority.",
         status="implemented",
     )
 )
@@ -61,10 +61,16 @@ def test_codex_shepherd_uses_actions_dispatch_without_contents_write() -> None:
     assert set(triggers["workflow_dispatch"]["inputs"]) == {
         "pull_request_number",
         "expected_head_sha",
+        "expected_base_sha",
         "source_event",
         "source_action",
     }
-    for required in ("pull_request_number", "expected_head_sha", "source_event"):
+    for required in (
+        "pull_request_number",
+        "expected_head_sha",
+        "expected_base_sha",
+        "source_event",
+    ):
         assert triggers["workflow_dispatch"]["inputs"][required]["required"] == "true"
     assert workflow["permissions"] == {"contents": "read"}
     assert "contents: write" not in WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -77,15 +83,16 @@ def test_codex_shepherd_uses_actions_dispatch_without_contents_write() -> None:
     assert schedule["runs-on"] == "ubuntu-24.04"
     assert "actions/checkout" not in str(schedule)
     schedule_script = _schedule_script()
+    assert "github.rest.repos.compareCommitsWithBasehead" in schedule_script
+    assert "const expectedBaseSha = comparison.merge_base_commit.sha" in schedule_script
     assert "github.rest.actions.createWorkflowDispatch" in schedule_script
     assert "workflow_id: 'codex-shepherd.yml'" in schedule_script
     assert "ref: 'master'" in schedule_script
+    assert "expected_base_sha: expectedBaseSha" in schedule_script
     assert "github.rest.repos.createDispatchEvent" not in schedule_script
     assert "github.rest.issues.createComment" not in schedule_script
     assert "github.rest.issues.addLabels" not in schedule_script
     assert "github.rest.pulls.merge" not in schedule_script
-    assert "createOrUpdateFileContents" not in schedule_script
-    assert "github.rest.git.updateRef" not in schedule_script
 
     apply = workflow["jobs"]["apply"]
     assert apply["if"] == "github.event_name == 'workflow_dispatch'"
@@ -97,7 +104,10 @@ def test_codex_shepherd_uses_actions_dispatch_without_contents_write() -> None:
     }
     assert apply["runs-on"] == "ubuntu-24.04"
     assert apply["concurrency"]["cancel-in-progress"] == "true"
-    assert "github.event.inputs.pull_request_number" in apply["concurrency"]["group"]
+    concurrency_group = apply["concurrency"]["group"]
+    assert "github.event.inputs.pull_request_number" in concurrency_group
+    assert "github.event.inputs.expected_head_sha" in concurrency_group
+    assert "github.event.inputs.expected_base_sha" in concurrency_group
     assert "actions/checkout" not in str(apply)
     apply_script = _apply_script()
     assert "github.rest.issues.createComment" in apply_script
@@ -107,7 +117,7 @@ def test_codex_shepherd_uses_actions_dispatch_without_contents_write() -> None:
     assert "github.rest.git.updateRef" not in apply_script
 
 
-def test_shepherd_workflow_dispatch_is_exact_head_bound() -> None:
+def test_shepherd_workflow_dispatch_is_exact_diff_bound() -> None:
     schedule_script = _schedule_script()
     apply_script = _apply_script()
 
@@ -117,37 +127,46 @@ def test_shepherd_workflow_dispatch_is_exact_head_bound() -> None:
     assert "run?.event !== 'pull_request'" in schedule_script
     assert "pullRequest.head.repo?.full_name" in schedule_script
     assert "expected_head_sha: pullRequest.head.sha" in schedule_script
+    assert "expected_base_sha: expectedBaseSha" in schedule_script
     assert "source_event: context.eventName" in schedule_script
     assert "pull_request_number: String(pullRequest.number)" in schedule_script
 
     assert "const request = context.payload.inputs || {}" in apply_script
+    assert "const expectedBaseSha = String(request.expected_base_sha || '')" in apply_script
     assert "expected head SHA must be a 40-character lowercase Git object ID" in apply_script
+    assert "expected merge-base SHA must be a 40-character lowercase Git object ID" in apply_script
     assert "unsupported Shepherd source event" in apply_script
-    assert "pullRequest.head.sha !== expectedHeadSha" in apply_script
-    assert "Shepherd request for ${expectedHeadSha} is stale" in apply_script
+    assert "github.rest.repos.compareCommitsWithBasehead" in apply_script
+    assert "const currentBaseSha = comparison.merge_base_commit.sha" in apply_script
+    assert "pullRequest.head.sha !== expectedHeadSha ||" in apply_script
+    assert "currentBaseSha !== expectedBaseSha" in apply_script
+    assert "Shepherd request for ${expectedHeadSha}@${expectedBaseSha} is stale" in apply_script
     assert "pullRequest.base.ref !== 'master'" in apply_script
     assert "pullRequest.draft" in apply_script
     assert "pullRequest.head.repo?.full_name" in apply_script
     assert "release-please--branches--master" in apply_script
 
 
-def test_codex_shepherd_binds_reviews_comments_and_markers_to_exact_head() -> None:
+def test_codex_shepherd_binds_reviews_comments_and_markers_to_exact_diff() -> None:
     script = _apply_script()
 
     assert "const reviewedCommitPattern" in script
     assert "github.rest.repos.getCommit" in script
-    assert "review.commit_id === expectedHeadSha" in script
-    assert "review.state !== 'DISMISSED'" in script
     assert "github.paginate(github.rest.pulls.listFiles" in script
     assert "github.paginate(github.rest.pulls.listReviews" in script
     assert "github.paginate(github.rest.issues.listComments" in script
     assert "per_page: 100" in script
 
-    assert "const shepherdLogin = 'github-actions[bot]'" in script
-    assert "comment.user?.login === shepherdLogin" in script
-    assert "const shepherdComments" in script
-    assert "shepherdComments.flatMap" in script
+    assert "head=([0-9a-f]{40}) base=([0-9a-f]{40}) kind=review" in script
+    assert "halt head=([0-9a-f]{40}) base=([0-9a-f]{40}) reason=" in script
+    assert "head === expectedHeadSha && base === expectedBaseSha" in script
+    assert "const latestReviewRequestAt" in script
+    assert "review.commit_id === expectedHeadSha" in script
+    assert "review.submitted_at >= latestReviewRequestAt" in script
+    assert "review.state !== 'DISMISSED'" in script
+    assert "comment.created_at < latestReviewRequestAt" in script
     assert "reviewedCommitSha === expectedHeadSha" in script
+    assert "base=${expectedBaseSha} kind=review" in script
 
 
 def test_codex_shepherd_terminal_holds_are_recoverable_and_fail_closed() -> None:
@@ -159,34 +178,26 @@ def test_codex_shepherd_terminal_holds_are_recoverable_and_fail_closed() -> None
     assert "const shepherdPath = '.github/workflows/codex-shepherd.yml'" in script
     assert "const changesShepherdAuthority" in script
     assert "[filename, previous_filename].includes(shepherdPath)" in script
-    assert "if (changesShepherdAuthority)" in script
     assert "labels: ['do-not-auto-merge']" in script
     assert "reason=shepherd-self-change" in script
     assert "requires explicit owner merge" in script
 
-    # Marker-first write order makes a partial terminal hold reconstructible.
+    # Terminal state is persisted marker-first, then projected to the safety label.
     hold_start = script.index("const holdForOwner")
     hold_comment = script.index("await postComment(", hold_start)
-    hold_label = script.index("await ensureHoldLabel()", hold_comment)
+    hold_label = script.index("await ensureHoldLabel();", hold_comment)
     assert hold_start < hold_comment < hold_label
-    assert "Persist the exact-head halt marker before the label" in script[
-        hold_comment : hold_label + 300
-    ]
 
-    # Any exact-head halt marker is durable control state. Every successor restores
-    # the label before file/self-change/source-specific early returns.
-    label_state = script.index("let holdLabelPresent")
+    # Any exact-diff halt marker restores the label before downstream authority gates.
     recovery_gate = script.index("if (exactHeadHalt) {", hold_label)
     recovery_label = script.index("await ensureHoldLabel();", recovery_gate)
     file_gate = script.index("if (changedFiles.length !== pullRequest.changed_files)", recovery_label)
     self_change = script.index("if (changesShepherdAuthority)", file_gate)
     generic_hold = script.index("if (holdLabelPresent)", self_change)
-    assert label_state < hold_start < recovery_gate < recovery_label < file_gate
-    assert file_gate < self_change < generic_hold
+    assert recovery_gate < recovery_label < file_gate < self_change < generic_hold
 
-    # Self-change uses the same marker-first ordering.
     self_change_comment = script.index("await postComment(", self_change)
-    self_change_label = script.index("await ensureHoldLabel()", self_change_comment)
+    self_change_label = script.index("await ensureHoldLabel();", self_change_comment)
     assert self_change < self_change_comment < self_change_label < generic_hold
 
 
@@ -248,16 +259,19 @@ def test_auto_merge_atomically_protects_shepherd_authority() -> None:
     ]
 
     ordinary_metadata = source.index("const {data: pullRequestMetadata} = await github.rest.pulls.get")
+    ordinary_base = source.index("const currentBaseSha = comparison.merge_base_commit.sha", ordinary_metadata)
     ordinary_complete = source.index(
-        "if (changedFiles.length !== pullRequestMetadata.changed_files)", ordinary_metadata
+        "if (changedFiles.length !== pullRequestMetadata.changed_files)", ordinary_base
     )
-    assert ordinary_metadata < ordinary_complete < shepherd_positions[2] < message_positions[1]
+    assert ordinary_metadata < ordinary_base < ordinary_complete < shepherd_positions[2]
+    assert shepherd_positions[2] < message_positions[1]
     assert "pullRequestMetadata.head.sha !== expectedHeadSha" in source[
-        ordinary_metadata:ordinary_complete
+        ordinary_metadata:ordinary_base
     ]
+    assert "currentBaseSha !== expectedBaseSha" in source[ordinary_base:ordinary_complete]
 
 
-def test_codex_shepherd_requests_retargeted_and_resumed_exact_heads_without_repair_claim() -> None:
+def test_codex_shepherd_requests_retargeted_and_resumed_exact_diffs_without_repair_claim() -> None:
     workflow = _workflow()
     triggers = workflow["on"]["pull_request_target"]["types"]
     for action in (
@@ -272,6 +286,7 @@ def test_codex_shepherd_requests_retargeted_and_resumed_exact_heads_without_repa
 
     script = _apply_script()
     assert "@codex review" in script
+    assert "against merge base" in script
     assert "kind=review" in script
     assert "const exactHeadReviewRequest" in script
     assert "!exactHeadReviewRequest && !connectorCleanExactHead" in script
@@ -281,8 +296,9 @@ def test_codex_shepherd_requests_retargeted_and_resumed_exact_heads_without_repa
     assert "ci-failure" in script
 
 
-def test_codex_shepherd_callbacks_converge_from_current_finding_state() -> None:
+def test_codex_shepherd_callbacks_converge_without_cross_diff_cancellation() -> None:
     script = _apply_script()
+    apply = _workflow()["jobs"]["apply"]
 
     finding_gate = script.index("if (exactHeadReviews.length !== 0)")
     finding_hold = script.index("'review-finding'", finding_gate)
@@ -290,25 +306,28 @@ def test_codex_shepherd_callbacks_converge_from_current_finding_state() -> None:
     review_request = script.index("!exactHeadReviewRequest && !connectorCleanExactHead", clean_scan)
     assert finding_gate < finding_hold < clean_scan < review_request
 
-    apply = _workflow()["jobs"]["apply"]
+    concurrency_group = apply["concurrency"]["group"]
     assert apply["concurrency"]["cancel-in-progress"] == "true"
-    assert "pullRequest.head.sha !== expectedHeadSha" in script
+    assert "expected_head_sha" in concurrency_group
+    assert "expected_base_sha" in concurrency_group
+    assert "pullRequest.head.sha !== expectedHeadSha ||" in script
+    assert "currentBaseSha !== expectedBaseSha" in script
 
 
-def test_codex_shepherd_only_holds_current_actionable_ci_failure() -> None:
+def test_codex_shepherd_reconciles_current_actionable_ci_before_completion() -> None:
     script = _apply_script()
 
     assert "const repairableCiConclusions = new Set(['failure', 'timed_out'])" in script
     latest_ci_start = script.index("const latestCiRun")
-    latest_ci_end = script.index("if (sourceEvent === 'issue_comment'", latest_ci_start)
-    latest_ci = script[latest_ci_start:latest_ci_end]
-    assert ".filter((run) => run.name === 'Aletheia CI')" in latest_ci
-    assert ".sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))" in latest_ci
-    assert "run.status === 'completed'" not in latest_ci
-
-    handler = script[latest_ci_end:]
-    assert "sourceEvent === 'issue_comment' || sourceEvent === 'workflow_run'" in handler
-    assert "!connectorCleanExactHead" in handler
-    assert "run.status !== 'completed'" in handler
-    assert "!repairableCiConclusions.has(run.conclusion)" in handler
-    assert "do-not-auto-merge" in script
+    ci_gate = script.index("if (connectorCleanExactHead)", latest_ci_start)
+    ci_status = script.index("run.status === 'completed'", ci_gate)
+    ci_conclusion = script.index("repairableCiConclusions.has(run.conclusion)", ci_status)
+    ci_hold = script.index("'ci-failure'", ci_conclusion)
+    completion = script.index("Shepherd state converged from ${sourceEvent}", ci_hold)
+    assert latest_ci_start < ci_gate < ci_status < ci_conclusion < ci_hold < completion
+    assert ".filter((run) => run.name === 'Aletheia CI')" in script[latest_ci_start:ci_gate]
+    assert ".sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))" in script[
+        latest_ci_start:ci_gate
+    ]
+    assert "sourceEvent === 'issue_comment'" not in script[latest_ci_start:]
+    assert "sourceEvent === 'workflow_run'" not in script[latest_ci_start:]
