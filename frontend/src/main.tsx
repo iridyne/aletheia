@@ -14,7 +14,11 @@ window.addEventListener('vite:preloadError', (e) => {
   window.location.reload()
 })
 
-if (!import.meta.env.DEV) initDevReload()
+// Dev-reload discovery is optional and never gates the dashboard.  Wait until
+// the first document load so it cannot occupy a connection during cold boot.
+if (!import.meta.env.DEV) {
+  window.addEventListener('load', () => window.setTimeout(initDevReload, 1000), { once: true })
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {

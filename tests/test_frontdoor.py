@@ -30,7 +30,25 @@ async def test_frontdoor_serves_static_without_backend(tmp_path):
         resp = await client.get("/")
 
     assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "no-cache"
     assert "root" in resp.text
+
+
+@pytest.mark.anyio
+async def test_frontdoor_compresses_large_static_assets(tmp_path):
+    from aletheia.gateway.frontdoor import create_app
+
+    static_dir = _static_fixture(tmp_path)
+    asset = "const payload = '" + ("x" * 1000) + "'"
+    (static_dir / "assets" / "large.js").write_text(asset, encoding="utf-8")
+    app = create_app(static_dir=static_dir, backend_url="http://127.0.0.1:9")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        resp = await client.get("/assets/large.js", headers={"Accept-Encoding": "gzip"})
+
+    assert resp.status_code == 200
+    assert resp.headers["content-encoding"] == "gzip"
+    assert resp.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert resp.content.decode() == asset
 
 
 @pytest.mark.anyio

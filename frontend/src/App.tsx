@@ -7,8 +7,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-react'
-import { api } from './api/client'
-import CommandPalette from './components/CommandPalette'
+import { bootApi as api } from './api/boot'
 import MarketTicker from './components/MarketTicker'
 import BackendConnectionGuard from './components/BackendConnectionGuard'
 import FetchProgress from './components/FetchProgress'
@@ -34,6 +33,7 @@ const SerenityLens = lazy(() => import('./pages/SerenityLens'))
 const PredictionLens = lazy(() => import('./pages/PredictionLens'))
 const Universe = lazy(() => import('./pages/Universe'))
 const Usage = lazy(() => import('./pages/Usage'))
+const CommandPalette = lazy(() => import('./components/CommandPalette'))
 
 const RAIL_STORAGE_KEY = 'sidebar:collapsed'
 
@@ -45,6 +45,18 @@ function NotFound() {
       <p className="text-muted">This route is not part of the current trading desk.</p>
       <Link className="btn btn-secondary" to="/">Return to Overview</Link>
     </section>
+  )
+}
+
+function RouteLoading() {
+  return (
+    <div className="route-state" role="status" aria-label="Loading page">
+      <div className="skeleton" aria-hidden="true">
+        <div className="skeleton-bar" />
+        <div className="skeleton-bar" />
+        <div className="skeleton-bar" />
+      </div>
+    </div>
   )
 }
 
@@ -113,6 +125,7 @@ function fmtEventTime(iso: string): string {
 function StatusBar({ realtime }: { realtime: RealtimeStatus }) {
   const qc = useQueryClient()
   const [restarting, setRestarting] = useState(false)
+  const [statusDetailsRequested, setStatusDetailsRequested] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { data } = useQuery({
@@ -133,6 +146,7 @@ function StatusBar({ realtime }: { realtime: RealtimeStatus }) {
   const { data: runs = [] } = useQuery({
     queryKey: ['agent-runs'],
     queryFn: api.getAgentRuns,
+    enabled: statusDetailsRequested,
     refetchInterval: () => adaptiveStatusPollMs(restarting),
   })
   const { data: health } = useQuery({
@@ -143,11 +157,13 @@ function StatusBar({ realtime }: { realtime: RealtimeStatus }) {
   const { data: infraEvents } = useQuery({
     queryKey: ['infra-events'],
     queryFn: api.getInfraEvents,
+    enabled: statusDetailsRequested,
     refetchInterval: () => adaptiveStatusPollMs(restarting),
   })
   const { data: collectorHealth } = useQuery({
     queryKey: ['collector-health'],
     queryFn: api.getCollectorHealth,
+    enabled: statusDetailsRequested,
     refetchInterval: () => adaptiveStatusPollMs(restarting),
   })
   // #174 fix: /status doesn't carry risk_status — the topbar used to read
@@ -325,7 +341,13 @@ function StatusBar({ realtime }: { realtime: RealtimeStatus }) {
   return (
     <div className="topbar-status">
       {/* Block 1 — Status cluster (lights + heartbeat + state word). Hover → popover. */}
-      <div className="status-cluster" tabIndex={0} aria-label="System status">
+      <div
+        className="status-cluster"
+        tabIndex={0}
+        aria-label="System status"
+        onMouseEnter={() => setStatusDetailsRequested(true)}
+        onFocus={() => setStatusDetailsRequested(true)}
+      >
         <span className="status-cluster-lights" aria-hidden="true">
           <span className={`dot dot-${gwLight}`} />
           <span className={`dot dot-${connectivityLight}`} />
@@ -552,6 +574,7 @@ export default function App() {
   const location = useLocation()
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
   const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
     try { return localStorage.getItem(RAIL_STORAGE_KEY) === 'true' } catch { return false }
   })
@@ -559,6 +582,17 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem(RAIL_STORAGE_KEY, String(railCollapsed)) } catch { /* ignore */ }
   }, [railCollapsed])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setCommandPaletteOpen(open => !open)
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [])
 
   const toggle = (g: string) => setCollapsed(c => ({ ...c, [g]: !c[g] }))
   const previewLabel = devPreviewLabel()
@@ -568,7 +602,11 @@ export default function App() {
   return (
     <div className={`layout${railCollapsed ? ' rail' : ''}`}>
       <FetchProgress />
-      <CommandPalette />
+      {commandPaletteOpen && (
+        <Suspense fallback={null}>
+          <CommandPalette onClose={() => setCommandPaletteOpen(false)} />
+        </Suspense>
+      )}
       {sidebarOpen && (
         <div
           className="sidebar-backdrop"
@@ -636,7 +674,7 @@ export default function App() {
         <main className="main">
           <BackendConnectionGuard />
           <RouteErrorBoundary key={location.pathname} destination={location.pathname}>
-            <Suspense fallback={<div className="route-state" role="status">Loading page…</div>}>
+            <Suspense fallback={<RouteLoading />}>
               <Routes>
               <Route path="/" element={<Overview />} />
               <Route path="/agent-activity" element={<AgentActivity />} />

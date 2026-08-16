@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { bootApi as api } from '../api/boot'
 
 const POLL_MS = 10000
 const FAILURES_BEFORE_ALERT = 3
@@ -22,10 +22,17 @@ export default function BackendConnectionGuard() {
   const lastNotified = useRef('')
   const wasOffline = useRef(false)
   const [failureCount, setFailureCount] = useState(0)
+  const [probeEnabled, setProbeEnabled] = useState(false)
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setProbeEnabled(true), 1000)
+    return () => window.clearTimeout(timer)
+  }, [])
 
   const { data, dataUpdatedAt, errorUpdatedAt } = useQuery({
     queryKey: ['backend-ready'],
     queryFn: api.getReady,
+    enabled: probeEnabled,
     refetchInterval: POLL_MS,
     retry: 1,
     staleTime: 0,

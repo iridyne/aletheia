@@ -1,10 +1,30 @@
-import { useLayoutEffect, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import MetricTile from './MetricTile'
-import AccountEquityChart from '../charts/AccountEquityChart'
 import { fmtNum, fmtSigned, fmtCompactSigned, fmtSymbol } from '../lib/format'
+
+const AccountEquityChart = lazy(() => import('../charts/AccountEquityChart'))
+
+function DeferredAccountEquityChart({ days }: { days?: number }) {
+  const queryClient = useQueryClient()
+  const [ready, setReady] = useState(() => queryClient.getQueryData(['account-equity-history', days]) !== undefined)
+
+  useEffect(() => {
+    if (ready) return
+    const timer = window.setTimeout(() => setReady(true), 500)
+    return () => window.clearTimeout(timer)
+  }, [ready])
+
+  const fallback = <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.5 }}>Loading account equity...</div>
+  if (!ready) return fallback
+  return (
+    <Suspense fallback={fallback}>
+      <AccountEquityChart days={days} />
+    </Suspense>
+  )
+}
 
 // Palette for pie slices — cycles if more than 6 coins (rare)
 const SLICE_COLORS = ['#00e5ff', '#7c3aed', '#f59e0b', '#10b981', '#f43f5e', '#3b82f6']
@@ -369,7 +389,7 @@ export default function PnLZone() {
             ))}
           </div>
         </div>
-        <AccountEquityChart days={rangeDays} />
+        <DeferredAccountEquityChart days={rangeDays} />
       </div>
     </div>
   )

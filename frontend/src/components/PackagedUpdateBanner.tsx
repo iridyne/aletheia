@@ -130,9 +130,12 @@ export default function PackagedUpdateBanner() {
       }
     }
 
-    void poll()
+    // Update progress is non-critical for the first paint. Leave the initial
+    // connection slot for dashboard data, then keep the existing poll cadence.
+    const initialTimer = window.setTimeout(() => { void poll() }, 1000)
     return () => {
       cancelled = true
+      window.clearTimeout(initialTimer)
       if (timer) clearTimeout(timer)
     }
   }, [])

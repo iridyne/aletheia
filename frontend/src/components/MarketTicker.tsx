@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQueries } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { bootApi as api } from '../api/boot'
 import { fmtNum, fmtSigned, fmtTimestamp, isoToEpochSeconds } from '../lib/format'
 
 /**

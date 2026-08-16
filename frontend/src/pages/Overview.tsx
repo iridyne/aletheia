@@ -34,6 +34,7 @@ export default function Overview() {
   const [collectorsExpanded, setCollectorsExpanded] = useState(false)
   const [coverageExpanded, setCoverageExpanded] = useState(false)
   const [modeExpanded, setModeExpanded] = useState(false)
+  const [diagnosticsReady, setDiagnosticsReady] = useState(false)
   const [gatewayCommandError, setGatewayCommandError] = useState('')
   const chdRef = useRef<HTMLDivElement>(null)
   const coverageRef = useRef<HTMLDivElement>(null)
@@ -47,20 +48,34 @@ export default function Overview() {
   useEffect(() => {
     if (modeExpanded) requestAnimationFrame(() => modeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
   }, [modeExpanded])
+  useEffect(() => {
+    // The right-rail diagnostics are useful after first paint, but do not
+    // gate the account/risk view. Leave the initial connection slots clear.
+    const timer = window.setTimeout(() => setDiagnosticsReady(true), 600)
+    return () => window.clearTimeout(timer)
+  }, [])
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus, staleTime: 8000 })
   const { data: killSwitch } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch, staleTime: 30000, refetchInterval: 30000 })
   const { data: riskStatus } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000, staleTime: 14000 })
   const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig, staleTime: 60000, refetchInterval: 60000 })
-  const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 30000, staleTime: 28000 })
+  const { data: modelHealth = [] } = useQuery({
+    queryKey: ['model-health'],
+    queryFn: api.getModelHealth,
+    enabled: diagnosticsReady,
+    refetchInterval: 30000,
+    staleTime: 28000,
+  })
   const { data: collectorHealth } = useQuery({
     queryKey: ['collector-health'],
     queryFn: api.getCollectorHealth,
+    enabled: diagnosticsReady,
     refetchInterval: 30000,
     staleTime: 28000,
   })
   const { data: dataCoverage } = useQuery({
     queryKey: ['market-data-coverage'],
     queryFn: api.getDataCoverage,
+    enabled: diagnosticsReady,
     refetchInterval: 30000,
     staleTime: 28000,
   })
@@ -326,7 +341,7 @@ export default function Overview() {
           </Card>
 
           {/* Go-Live Scorecard */}
-          <GoLiveScoreCard />
+          <GoLiveScoreCard enabled={diagnosticsReady} />
         </div>
       </div>
     </div>
@@ -429,11 +444,12 @@ function BlotterSummaryStrip() {
 }
 
 // ── Go-Live Scorecard Card ───────────────────────────────────────────────────
-function GoLiveScoreCard() {
+function GoLiveScoreCard({ enabled }: { enabled: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const { data } = useQuery<GoLiveScorecard>({
     queryKey: ['go-live-scorecard'],
     queryFn: api.getGoLiveScorecard,
+    enabled,
     staleTime: 60_000,
   })
   if (!data) return null

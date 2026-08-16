@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { Command } from 'cmdk'
-import { api } from '../api/client'
+import { bootApi as api } from '../api/boot'
 
 interface CmdAction {
   id: string
@@ -32,24 +32,12 @@ export async function runCommandAction(
   }
 }
 
-export default function CommandPalette() {
-  const [open, setOpen] = useState(false)
+export default function CommandPalette({ onClose }: { onClose: () => void }) {
   const [commandError, setCommandError] = useState('')
   const [executingCommand, setExecutingCommand] = useState<string | null>(null)
   const executingRef = useRef(false)
   const navigate = useNavigate()
   const qc = useQueryClient()
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault()
-        if (!executingRef.current) setOpen(prev => !prev)
-      }
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [])
 
   const exec = useCallback(async (command: CmdAction) => {
     if (executingRef.current) return
@@ -59,14 +47,14 @@ export default function CommandPalette() {
 
     const result = await runCommandAction(command.action)
     if (result.ok) {
-      setOpen(false)
+      onClose()
     } else {
       setCommandError(`${command.label}: ${result.error}`)
     }
 
     executingRef.current = false
     setExecutingCommand(null)
-  }, [])
+  }, [onClose])
 
   const setKillSwitch = async (active: boolean) => {
     const confirmedState = await api.setKillSwitch(active, 'cmd_palette', !active)
@@ -118,10 +106,8 @@ export default function CommandPalette() {
 
   const groups = [...new Set(commands.map(c => c.group))]
 
-  if (!open) return null
-
   return (
-    <div className="cmd-backdrop" onClick={() => { if (!executingRef.current) setOpen(false) }}>
+    <div className="cmd-backdrop" onClick={() => { if (!executingRef.current) onClose() }}>
       <div className="cmd-dialog" onClick={e => e.stopPropagation()}>
         <Command
           onKeyDown={(e) => {
@@ -137,7 +123,7 @@ export default function CommandPalette() {
               const input = (e.target as HTMLInputElement)?.value?.trim() || ''
               if (input.length >= 20) {
                 e.preventDefault()
-                setOpen(false)
+                onClose()
                 navigate(`/command-center?draft=${encodeURIComponent(input)}`)
               }
             }

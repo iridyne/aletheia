@@ -27,6 +27,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.gzip import GZipMiddleware
 
 from aletheia import __version__
 from aletheia.gateway.frontdoor_route import read_frontdoor_route, resolve_backend_base_url
@@ -246,6 +247,10 @@ def create_app(
     route_path: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Aletheia Local Front Door", version=__version__)
+    # Compress the large immutable UI bundles and read-only JSON responses before
+    # they cross the remote-control link.  Keep tiny bootstrap responses
+    # unbuffered so the static first-paint shell can arrive immediately.
+    app.add_middleware(GZipMiddleware, minimum_size=500)
     effective_static_dir = static_dir or dashboard_static_dir()
     configured_backend_url = backend_url.rstrip("/") if backend_url else None
     use_route_file = route_path is not None or configured_backend_url is None
@@ -426,7 +431,28 @@ def create_app(
                     if scope["type"] == "websocket":
                         await send({"type": "websocket.close", "code": 1001})
                     return
-                await super().__call__(scope, receive, send)
+
+                request_path = scope.get("path", "")
+
+                async def send_with_cache(message):
+                    if message["type"] == "http.response.start":
+                        if request_path.startswith("/assets/"):
+                            cache_control = "public, max-age=31536000, immutable"
+                        else:
+                            cache_control = "no-cache"
+                        if cache_control and not any(
+                            key.lower() == b"cache-control" for key, _ in message.get("headers", [])
+                        ):
+                            message = {
+                                **message,
+                                "headers": [
+                                    *message.get("headers", []),
+                                    (b"cache-control", cache_control.encode("latin-1")),
+                                ],
+                            }
+                    await send(message)
+
+                await super().__call__(scope, receive, send_with_cache)
 
             async def get_response(self, path: str, scope):
                 try:

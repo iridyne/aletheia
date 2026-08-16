@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
@@ -12,10 +13,16 @@ import { api } from '../api/client'
  * Not a blocking wizard — just a dismissible-by-completion banner.
  */
 export default function SetupBanner() {
-  const { data: model } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
-  const { data: bitget } = useQuery({ queryKey: ['bitgetCreds'], queryFn: api.getBitgetCredStatus })
-  const { data: okx } = useQuery({ queryKey: ['okxCreds'], queryFn: api.getOkxCredStatus })
-  const { data: binance } = useQuery({ queryKey: ['binanceCreds'], queryFn: api.getBinanceCredStatus })
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    const timer = window.setTimeout(() => setReady(true), 800)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  const { data: model } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig, enabled: ready })
+  const { data: bitget } = useQuery({ queryKey: ['bitgetCreds'], queryFn: api.getBitgetCredStatus, enabled: ready })
+  const { data: okx } = useQuery({ queryKey: ['okxCreds'], queryFn: api.getOkxCredStatus, enabled: ready })
+  const { data: binance } = useQuery({ queryKey: ['binanceCreds'], queryFn: api.getBinanceCredStatus, enabled: ready })
 
   if (!model || !bitget || !okx || !binance) return null
 
