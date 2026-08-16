@@ -728,7 +728,7 @@ def test_delete_merged_branch_only_touches_merged_same_repo_head_refs() -> None:
 
     assert set(workflow["jobs"]) == {"delete"}
     job = workflow["jobs"]["delete"]
-    assert job["runs-on"] == SELF_HOSTED
+    assert job["runs-on"] == "ubuntu-24.04"
 
     guard = job["if"]
     assert "merged == true" in guard
