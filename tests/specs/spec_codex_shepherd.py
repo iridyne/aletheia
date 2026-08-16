@@ -46,6 +46,7 @@ def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
         "opened",
         "reopened",
         "ready_for_review",
+        "edited",
         "synchronize",
         "unlabeled",
     ]
@@ -213,6 +214,7 @@ def test_codex_shepherd_requests_every_ready_or_resumed_exact_head_but_does_not_
         "'opened'",
         "'reopened'",
         "'ready_for_review'",
+        "'edited'",
         "'synchronize'",
         "'unlabeled'",
     ):
