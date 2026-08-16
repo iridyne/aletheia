@@ -22,7 +22,13 @@ def _script() -> str:
 def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
     workflow = _workflow()
     triggers = workflow["on"]
-    assert triggers["pull_request_target"]["types"] == ["synchronize"]
+    assert triggers["pull_request_target"]["types"] == [
+        "opened",
+        "reopened",
+        "ready_for_review",
+        "synchronize",
+        "unlabeled",
+    ]
     assert triggers["pull_request_review"]["types"] == ["submitted"]
     assert triggers["issue_comment"]["types"] == ["created"]
     assert triggers["workflow_run"]["workflows"] == ["Aletheia CI"]
@@ -61,6 +67,7 @@ def test_codex_shepherd_binds_callbacks_and_control_markers_to_trusted_identity(
     assert "review.commit_id === expectedHeadSha" in script
     assert "review.state !== 'DISMISSED'" in script
 
+    assert "github.paginate(github.rest.pulls.listFiles" in script
     assert "github.paginate(github.rest.pulls.listReviews" in script
     assert "github.paginate(github.rest.issues.listComments" in script
     assert "per_page: 100" in script
@@ -69,6 +76,24 @@ def test_codex_shepherd_binds_callbacks_and_control_markers_to_trusted_identity(
     assert "comment.user?.login === shepherdLogin" in script
     assert "const shepherdComments" in script
     assert "shepherdComments.flatMap" in script
+
+
+def test_codex_shepherd_self_change_is_fail_closed_from_trusted_base_workflow() -> None:
+    script = _script()
+
+    assert "const shepherdPath = '.github/workflows/codex-shepherd.yml'" in script
+    assert "const changesShepherdAuthority" in script
+    assert "[filename, previous_filename].includes(shepherdPath)" in script
+    assert "if (changesShepherdAuthority)" in script
+    assert "labels: ['do-not-auto-merge']" in script
+    assert "reason=shepherd-self-change" in script
+    assert "requires explicit owner merge" in script
+    assert "Re-apply the hold on `unlabeled` events" in script
+
+    self_change = script.index("if (changesShepherdAuthority)")
+    ordinary_hold = script.index("do-not-auto-merge holds this pull request", self_change)
+    review_request = script.index("@codex review", ordinary_hold)
+    assert self_change < ordinary_hold < review_request
 
 
 def test_codex_shepherd_requests_exact_head_review_but_does_not_claim_repair() -> None:
