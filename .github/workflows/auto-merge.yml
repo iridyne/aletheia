@@ -158,6 +158,14 @@ jobs:
                   }
                 }
               }
+              const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({
+                ...context.repo,
+                basehead: `${pullRequest.base.sha}...${pullRequest.head.sha}`,
+              });
+              const expectedBaseSha = comparison.merge_base_commit.sha;
+              if (!/^[0-9a-f]{40}$/.test(expectedBaseSha || '')) {
+                throw new Error('pull request merge-base SHA is unavailable');
+              }
               const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
                 ...context.repo,
                 pull_number: pullRequest.number,
@@ -187,6 +195,7 @@ jobs:
                   operation,
                   pull_request_number: pullRequest.number,
                   expected_head_sha: pullRequest.head.sha,
+                  expected_base_sha: expectedBaseSha,
                 },
               });
             }
@@ -331,7 +340,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     concurrency:
-      group: auto-merge-update-${{ github.event.client_payload.pull_request_number }}
+      group: auto-merge-update-${{ github.event.client_payload.pull_request_number }}-${{ github.event.client_payload.expected_head_sha }}-${{ github.event.client_payload.expected_base_sha || 'none' }}
       cancel-in-progress: true
     env:
       OPERATION: ${{ github.event.client_payload.operation }}
@@ -359,8 +368,8 @@ jobs:
             if (!/^[0-9a-f]{40}$/.test(expectedHeadSha)) {
               throw new Error('expected head SHA must be a 40-character lowercase Git object ID');
             }
-            if (releaseAfterMerge && !/^[0-9a-f]{40}$/.test(expectedBaseSha)) {
-              throw new Error('expected release base SHA must be a 40-character lowercase Git object ID');
+            if (operation === 'enable' && !/^[0-9a-f]{40}$/.test(expectedBaseSha)) {
+              throw new Error('expected merge-base SHA must be a 40-character lowercase Git object ID');
             }
 
             const pullRequestQuery = `query($owner: String!, $repo: String!, $number: Int!) {
@@ -375,14 +384,6 @@ jobs:
                   mergeStateStatus
                   autoMergeRequest { enabledAt }
                   labels(first: 20) { nodes { name } }
-                  comments(last: 100) {
-                    nodes {
-                      author { login }
-                      authorAssociation
-                      body
-                      createdAt
-                    }
-                  }
                   mergeCommit { oid }
                   mergedBy { login }
                 }
@@ -460,6 +461,18 @@ jobs:
                 core.info('pull request metadata changed while checking merge authority');
                 return;
               }
+              const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({
+                ...context.repo,
+                basehead: `${pullRequestMetadata.base.sha}...${pullRequestMetadata.head.sha}`,
+              });
+              const currentBaseSha = comparison.merge_base_commit.sha;
+              if (currentBaseSha !== expectedBaseSha) {
+                core.info(
+                  `pull request merge base changed from ${expectedBaseSha} to ${currentBaseSha}; ` +
+                  'a newer exact-diff event must authorize the merge',
+                );
+                return;
+              }
               const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
                 ...context.repo,
                 pull_number: pullRequest.number,
@@ -469,7 +482,7 @@ jobs:
                 core.info(
                   `changed-file listing is incomplete ` +
                   `(${changedFiles.length}/${pullRequestMetadata.changed_files}); ` +
-                  'exact-head merge remains disabled',
+                  'exact-diff merge remains disabled',
                 );
                 return;
               }
@@ -487,7 +500,7 @@ jobs:
 
               // Native auto-merge survives synchronize events and could merge a new
               // head before the Connector responds. Ordinary pull requests therefore
-              // use only this exact-SHA, event-driven merge path.
+              // use only this exact-diff, event-driven merge path.
               await disableAutoMerge(pullRequest);
               if (pullRequest.labels.nodes.some(({name}) => name === 'do-not-auto-merge')) {
                 core.info('do-not-auto-merge holds this pull request');
@@ -495,11 +508,14 @@ jobs:
               }
 
               const connectorLogin = 'chatgpt-codex-connector';
+              const shepherdLogin = 'github-actions[bot]';
               const normalizeLogin = (login) => String(login || '').replace(/\[bot\]$/, '');
               const isConnectorLogin = (login) => normalizeLogin(login) === connectorLogin;
               const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
               const triagePattern = /^\/codex-triage ([0-9a-f]{40}) (clean|complete)$/;
               const reviewedCommitPattern = /Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i;
+              const shepherdReviewMarkerPattern =
+                /<!-- aletheia-codex-shepherd head=([0-9a-f]{40}) base=([0-9a-f]{40}) kind=review -->/;
               const resolveReviewedCommitSha = async (body) => {
                 const match = String(body || '').match(reviewedCommitPattern);
                 if (!match) return null;
@@ -514,21 +530,58 @@ jobs:
                   return null;
                 }
               };
-              const allReviews = await github.paginate(github.rest.pulls.listReviews, {
-                ...context.repo,
-                pull_number: pullRequest.number,
-                per_page: 100,
+              const [allReviews, allComments] = await Promise.all([
+                github.paginate(github.rest.pulls.listReviews, {
+                  ...context.repo,
+                  pull_number: pullRequest.number,
+                  per_page: 100,
+                }),
+                github.paginate(github.rest.issues.listComments, {
+                  ...context.repo,
+                  issue_number: pullRequest.number,
+                  per_page: 100,
+                }),
+              ]);
+              const currentReviewRequests = allComments.flatMap((comment) => {
+                if (comment.user?.login !== shepherdLogin || !comment.created_at) return [];
+                const marker = String(comment.body || '').match(shepherdReviewMarkerPattern);
+                if (
+                  !marker ||
+                  marker[1] !== expectedHeadSha ||
+                  marker[2] !== expectedBaseSha
+                ) {
+                  return [];
+                }
+                return [{createdAt: comment.created_at}];
               });
+              const latestReviewRequestAt = currentReviewRequests
+                .map(({createdAt}) => createdAt)
+                .sort()
+                .at(-1);
+              if (!latestReviewRequestAt) {
+                core.info(
+                  `waiting for current Shepherd review request on ` +
+                  `${expectedHeadSha}@${expectedBaseSha}`,
+                );
+                return;
+              }
               const exactHeadReviews = allReviews
                 .filter((review) =>
                   isConnectorLogin(review.user?.login) &&
                   review.commit_id === expectedHeadSha &&
                   review.submitted_at &&
+                  review.submitted_at >= latestReviewRequestAt &&
                   review.state !== 'DISMISSED'
                 )
                 .map((review) => ({submittedAt: review.submitted_at}));
-              const acknowledgements = pullRequest.comments.nodes.flatMap((comment) => {
-                if (!trustedAssociations.has(comment.authorAssociation)) return [];
+              const acknowledgements = allComments.flatMap((comment) => {
+                if (
+                  !trustedAssociations.has(comment.author_association) ||
+                  !comment.created_at ||
+                  comment.created_at < latestReviewRequestAt
+                ) {
+                  return [];
+                }
                 const [command, ...detailLines] = String(comment.body || '')
                   .replace(/\r/g, '')
                   .split('\n');
@@ -537,11 +590,13 @@ jobs:
                 if (!match || match[1] !== expectedHeadSha || !details) return [];
                 return [{
                   disposition: match[2],
-                  createdAt: comment.createdAt,
+                  createdAt: comment.created_at,
                 }];
               });
-              const connectorCleanCandidates = pullRequest.comments.nodes.filter((comment) =>
-                isConnectorLogin(comment.author?.login) &&
+              const connectorCleanCandidates = allComments.filter((comment) =>
+                isConnectorLogin(comment.user?.login) &&
+                comment.created_at &&
+                comment.created_at >= latestReviewRequestAt &&
                 /Didn't find any major issues\./i.test(String(comment.body || ''))
               );
               let connectorCleanExactHead = false;
@@ -559,8 +614,9 @@ jobs:
                   !acknowledgements.some(({disposition}) => disposition === 'clean')
                 ) {
                   core.info(
-                    `waiting for exact-head Connector completion on ${expectedHeadSha}; ` +
-                    'a clean Connector result will resume this PR automatically',
+                    `waiting for exact-diff Connector completion on ` +
+                    `${expectedHeadSha}@${expectedBaseSha}; a clean Connector result will ` +
+                    'resume this PR automatically',
                   );
                   return;
                 }
@@ -575,9 +631,10 @@ jobs:
                 );
                 if (!triageComplete) {
                   core.info(
-                    `waiting for P1/P2 triage on ${expectedHeadSha}; an authorized maintainer ` +
-                    `must comment "/codex-triage ${expectedHeadSha} complete" after the exact-head ` +
-                    `review and document every confirmed, false-positive, or deferred finding`,
+                    `waiting for P1/P2 triage on ${expectedHeadSha}@${expectedBaseSha}; ` +
+                    `an authorized maintainer must comment "/codex-triage ${expectedHeadSha} ` +
+                    `complete" after the current exact-diff review and document every ` +
+                    `confirmed, false-positive, or deferred finding`,
                   );
                   return;
                 }
@@ -585,7 +642,7 @@ jobs:
 
               if (pullRequest.mergeStateStatus !== 'CLEAN') {
                 core.info(
-                  `exact-head Connector gate passed; waiting for an event after pull request ` +
+                  `exact-diff Connector gate passed; waiting for an event after pull request ` +
                   `status ${pullRequest.mergeStateStatus}`,
                 );
                 return;
