@@ -17,7 +17,9 @@ from aletheia.storage.repositories import list_agent_runs
 
 logger = logging.getLogger("aletheia.health")
 
-_FAILED_STATUSES = {"failed", "error", "completed_with_errors", "timed_out"}
+_FAILED_STATUSES = {"failed", "error", "completed_with_errors", "timed_out", "stale"}
+_IN_PROGRESS_STATUSES = {"queued", "running"}
+_OBSERVER_MAX_STALENESS_MIN = 45.0
 
 # In-process de-dupe of consecutive unhealthy alerts.
 _last_alerted_unhealthy = False
@@ -120,36 +122,21 @@ def _mo_ran_in_current_session() -> bool:
             return True
         run_row = db.execute(
             "SELECT id FROM agent_runs WHERE agent_name='market_observer'"
-            " AND started_at >= ? LIMIT 1",
-            (session_row[0],),
+            " AND started_at >= ? AND status NOT IN (?, ?) LIMIT 1",
+            (session_row[0], "queued", "running"),
         ).fetchone()
         return run_row is not None
     except Exception:
         return True
 
 
-def _observer_stale_minutes() -> float | None:
-    """Minutes since the last opportunity was created. None if no data."""
-    try:
-        from datetime import datetime, timezone
-        from aletheia.storage.sqlite import get_db
-        row = get_db().execute("SELECT MAX(created_at) as t FROM opportunities").fetchone()
-        if not row or not row["t"]:
-            return None
-        dt = datetime.fromisoformat(row["t"].replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
-    except Exception:
-        return None
-
 def _observer_latest_session_run_info() -> dict | None:
     """Info about the latest market_observer run in the current runtime session.
 
     Returns a dict with:
       - status: run status string (completed/failed/running/…)
-      - latest_opp_age_min: minutes since the newest session opportunity, or
-        None if no opportunity was created in this session.
+      - latest_run_age_min: minutes since the run ended (or started when it is
+        still in progress).
 
     Returns None when no MO run exists in the current session, or on any DB
     error (caller should treat this as unknown/initializing, not healthy).
@@ -166,24 +153,22 @@ def _observer_latest_session_run_info() -> dict | None:
             return None
         session_start = session_row[0]
         run_row = db.execute(
-            "SELECT status FROM agent_runs"
+            "SELECT status, started_at, ended_at FROM agent_runs"
             " WHERE agent_name='market_observer' AND started_at >= ?"
-            " ORDER BY rowid DESC LIMIT 1",
+            " ORDER BY started_at DESC, rowid DESC LIMIT 1",
             (session_start,),
         ).fetchone()
         if not run_row:
             return None
-        opp_row = db.execute(
-            "SELECT MAX(created_at) AS t FROM opportunities WHERE created_at >= ?",
-            (session_start,),
-        ).fetchone()
-        latest_opp_age_min: float | None = None
-        if opp_row and opp_row["t"]:
-            dt = datetime.fromisoformat(opp_row["t"].replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            latest_opp_age_min = (datetime.now(timezone.utc) - dt).total_seconds() / 60.0
-        return {"status": run_row["status"], "latest_opp_age_min": latest_opp_age_min}
+        run_at = run_row["ended_at"] or run_row["started_at"]
+        run_dt = datetime.fromisoformat(str(run_at).replace("Z", "+00:00"))
+        if run_dt.tzinfo is None:
+            run_dt = run_dt.replace(tzinfo=timezone.utc)
+        run_age_min = max(
+            0.0,
+            (datetime.now(timezone.utc) - run_dt).total_seconds() / 60.0,
+        )
+        return {"status": run_row["status"], "latest_run_age_min": run_age_min}
     except Exception:
         return None
 
@@ -291,9 +276,10 @@ def compute_health() -> dict:
     if _llm_consecutive_failures >= cfg.health.llm_unavailable_alert_after:
         issues.append(f"llm_unavailable:{_llm_consecutive_failures}")
 
-    # Observer freshness: check the latest Market Observer run's outcome and
-    # session-scoped opportunity staleness instead of a global MAX(created_at)
-    # that could be satisfied by prior-session data.
+    # Observer freshness: Market Observer is an advisory consumer of
+    # emitter-created Opportunities. Its run completion is the heartbeat; using
+    # opportunities.created_at here falsely reports a healthy zero-output run as
+    # stale whenever the upstream emitter has not created a new candidate.
     if not cfg.runtime.paused and cfg.runtime.scheduler_enabled:
         if not _mo_ran_in_current_session():
             # Scheduler has not yet completed the first MO run — still warming up.
@@ -305,15 +291,12 @@ def compute_health() -> dict:
                 initializing.append("observer_run_unknown")
             elif run_info["status"] in _FAILED_STATUSES:
                 issues.append("observer_run_failed")
-            elif run_info["status"] == "running":
+            elif run_info["status"] in _IN_PROGRESS_STATUSES:
                 pass  # still in progress; evaluate after completion
             else:
-                # Run completed. Check session opportunity age.
-                age = run_info["latest_opp_age_min"]
-                if age is not None and age > 45:
+                age = run_info["latest_run_age_min"]
+                if age > _OBSERVER_MAX_STALENESS_MIN:
                     issues.append(f"observer_stale:{age:.0f}min")
-                # age is None → no opportunities this session; that is a valid
-                # zero-eligible result when the run completed cleanly.
 
     # Local paper fills never call an exchange, so connectivity is not applicable.
     # External paper/demo/live modes still require a confirmed cached probe.
