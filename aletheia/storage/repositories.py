@@ -2868,6 +2868,14 @@ def get_observed_position_ids_for_bucket(
             (bucket_open_ms, *chunk),
         ).fetchall()
         observed.update(str(row["position_id"]) for row in rows)
+        if _position_path_segments_table_exists(get_db()):
+            rows = get_db().execute(
+                "SELECT DISTINCT position_id FROM position_path_segments "
+                f"WHERE first_bucket_open_ms<=? AND last_bucket_open_ms>=? "
+                f"AND position_id IN ({placeholders})",
+                (bucket_open_ms, bucket_open_ms, *chunk),
+            ).fetchall()
+            observed.update(str(row["position_id"]) for row in rows)
     return observed
 
 
@@ -2898,6 +2906,23 @@ def get_position_path_bucket_state(
                 position_state = state.get(str(row["position_id"]))
                 if position_state is not None:
                     position_state[key].add(int(row["bucket_open_ms"]))
+        if _position_path_segments_table_exists(get_db()):
+            rows = get_db().execute(
+                "SELECT position_id,first_bucket_open_ms,last_bucket_open_ms "
+                f"FROM position_path_segments WHERE position_id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                position_state = state.get(str(row["position_id"]))
+                if position_state is None:
+                    continue
+                position_state["observed"].update(
+                    range(
+                        int(row["first_bucket_open_ms"]),
+                        int(row["last_bucket_open_ms"]) + 300_000,
+                        300_000,
+                    )
+                )
     return state
 
 def defer_position_path_observation_bucket(
@@ -3073,16 +3098,271 @@ def list_position_path_observations(
     position_id: str,
     *,
     limit: int = 10_000,
+    as_of_at: str | datetime | None = None,
+    db: sqlite3.Connection | None = None,
 ) -> list[dict]:
-    """Return one Position's immutable observations oldest-first."""
+    """Return one Position's hot rows merged with verified cold segments.
+
+    ``as_of_at`` is enforced at the segment boundary first and per row only for
+    segments that straddle the cutoff.  Hot rows covered by a decoded segment
+    are suppressed so shadow storage never duplicates a logical observation.
+    """
 
     bounded_limit = max(1, min(int(limit), 10_000))
-    rows = get_db().execute(
+    source = db or get_db()
+    cutoff = _position_path_cutoff(as_of_at)
+    hot_rows = [dict(row) for row in source.execute(
         "SELECT * FROM position_path_observations WHERE position_id=? "
         "ORDER BY bucket_open_ms ASC LIMIT ?",
         (position_id, bounded_limit),
-    ).fetchall()
-    return [dict(row) for row in rows]
+    ).fetchall()]
+    if cutoff is not None:
+        hot_rows = [
+            row for row in hot_rows
+            if _position_path_timestamp_at_or_before(row.get("observed_at"), cutoff)
+        ]
+    if not _position_path_segments_table_exists(source):
+        return hot_rows[:bounded_limit]
+
+    segments = [
+        dict(row)
+        for row in source.execute(
+            "SELECT * FROM position_path_segments WHERE position_id=? "
+            "ORDER BY segment_number ASC",
+            (position_id,),
+        ).fetchall()
+    ]
+    cold_rows: list[dict] = []
+    covered_buckets: set[int] = set()
+    for segment in segments:
+        minimum = _position_path_parse_timestamp(segment.get("min_observed_at"))
+        maximum = _position_path_parse_timestamp(segment.get("max_observed_at"))
+        if cutoff is not None and minimum is not None and minimum > cutoff:
+            continue
+        decoded = _decode_position_path_segment(segment, expected_position_id=position_id)
+        if cutoff is not None and (maximum is None or maximum > cutoff):
+            decoded = [
+                row for row in decoded
+                if _position_path_timestamp_at_or_before(row.get("observed_at"), cutoff)
+            ]
+        cold_rows.extend(decoded)
+        covered_buckets.update(
+            range(
+                int(segment["first_bucket_open_ms"]),
+                int(segment["last_bucket_open_ms"]) + 300_000,
+                300_000,
+            )
+        )
+    merged = [
+        row for row in hot_rows
+        if int(row.get("bucket_open_ms") or -1) not in covered_buckets
+    ] + cold_rows
+    merged.sort(key=lambda row: int(row.get("bucket_open_ms") or 0))
+    return merged[:bounded_limit]
+
+
+def _position_path_segments_table_exists(db: sqlite3.Connection) -> bool:
+    return db.execute(
+        "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='position_path_segments'"
+    ).fetchone() is not None
+
+
+def _position_path_parse_timestamp(value: object) -> datetime | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _position_path_cutoff(value: str | datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    parsed = _position_path_parse_timestamp(value)
+    if parsed is None:
+        raise ValueError("invalid as_of_at")
+    return parsed
+
+
+def _position_path_timestamp_at_or_before(value: object, cutoff: datetime) -> bool:
+    parsed = _position_path_parse_timestamp(value)
+    return parsed is None or parsed <= cutoff
+
+
+def _decode_position_path_segment(
+    segment: Mapping[str, object], *, expected_position_id: str
+) -> list[dict[str, object]]:
+    from aletheia.storage.position_path_segments import decode_segment
+
+    return decode_segment(segment, expected_position_id=expected_position_id)
+
+
+def list_position_path_segments(position_id: str, *, db: sqlite3.Connection | None = None) -> list[dict]:
+    """Return immutable archive metadata for one Position."""
+
+    source = db or get_db()
+    if not _position_path_segments_table_exists(source):
+        return []
+    return [
+        dict(row)
+        for row in source.execute(
+            "SELECT * FROM position_path_segments WHERE position_id=? ORDER BY segment_number",
+            (position_id,),
+        ).fetchall()
+    ]
+
+
+def shadow_archive_position_path(
+    position_id: str,
+    *,
+    sealed_at: str | None = None,
+    encoder_provenance: str = "position_path_segment_encoder/v1",
+    codec_level: int = 6,
+) -> dict[str, object]:
+    """Verify and immutably shadow-archive one closed, fully terminalized path.
+
+    This function never deletes or rewrites source observations and is not
+    called by the observer scheduler.  It is intentionally explicit until a
+    later compaction change has real Fedora parity evidence.
+    """
+
+    from aletheia.storage.position_path_segments import (
+        PositionPathSegmentError,
+        encode_segments,
+        semantically_equal,
+    )
+    from aletheia.portfolio.position_path_observer import expected_position_path_bucket_bounds
+
+    db = get_db()
+    position_row = db.execute("SELECT * FROM positions WHERE id=?", (position_id,)).fetchone()
+    if position_row is None:
+        return {"position_id": position_id, "archived": False, "reason": "position_not_found"}
+    position = dict(position_row)
+    if str(position.get("status") or "").lower() != "closed":
+        return {"position_id": position_id, "archived": False, "reason": "position_not_closed"}
+    first, last = expected_position_path_bucket_bounds(position)
+    if first is None or last is None or last < first:
+        return {"position_id": position_id, "archived": False, "reason": "no_complete_expected_path"}
+    if _position_path_segments_table_exists(db) is False:
+        return {"position_id": position_id, "archived": False, "reason": "archive_schema_unavailable"}
+    if db.execute(
+        "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='position_path_observation_deferred_buckets'"
+    ).fetchone() is not None and db.execute(
+        "SELECT 1 FROM position_path_observation_deferred_buckets WHERE position_id=? LIMIT 1",
+        (position_id,),
+    ).fetchone() is not None:
+        return {"position_id": position_id, "archived": False, "reason": "deferred_buckets_remain"}
+    rows = [
+        dict(row)
+        for row in db.execute(
+            "SELECT * FROM position_path_observations WHERE position_id=? ORDER BY bucket_open_ms",
+            (position_id,),
+        ).fetchall()
+    ]
+    expected = list(range(int(first), int(last) + 300_000, 300_000))
+    by_bucket = {int(row["bucket_open_ms"]): row for row in rows}
+    if set(by_bucket) != set(expected):
+        return {
+            "position_id": position_id,
+            "archived": False,
+            "reason": "source_path_not_complete",
+            "expected_bucket_count": len(expected),
+            "source_bucket_count": len(rows),
+            "missing_bucket_count": len(set(expected) - set(by_bucket)),
+        }
+    try:
+        encoded = encode_segments(
+            [by_bucket[bucket] for bucket in expected],
+            position_id=position_id,
+            codec_level=codec_level,
+        )
+        for segment in encoded:
+            decoded = _decode_position_path_segment(
+                {
+                    **segment.__dict__,
+                    "payload": segment.payload,
+                    "archive_verified": 1,
+                },
+                expected_position_id=position_id,
+            )
+            source_chunk = [
+                by_bucket[bucket]
+                for bucket in expected
+                if segment.first_bucket_open_ms <= bucket <= segment.last_bucket_open_ms
+            ]
+            if not semantically_equal(source_chunk, decoded):
+                raise PositionPathSegmentError("shadow archive parity mismatch")
+    except PositionPathSegmentError as exc:
+        return {"position_id": position_id, "archived": False, "reason": str(exc)}
+
+    sealed = sealed_at or datetime.now(timezone.utc).isoformat()
+    inserted = 0
+    with transaction(immediate=True):
+        for segment in encoded:
+            existing = db.execute(
+                "SELECT * FROM position_path_segments WHERE position_id=? AND segment_number=?",
+                (position_id, segment.segment_number),
+            ).fetchone()
+            if existing is not None:
+                current = dict(existing)
+                comparable = (
+                    "first_bucket_open_ms", "last_bucket_open_ms", "bucket_count",
+                    "available_count", "unavailable_count", "min_observed_at", "max_observed_at",
+                    "format_version", "codec", "codec_level", "dictionary_id", "uncompressed_bytes",
+                    "compressed_bytes", "semantic_sha256", "payload_sha256", "payload",
+                )
+                expected_values = {key: getattr(segment, key) for key in comparable}
+                if any(current.get(key) != value for key, value in expected_values.items()):
+                    raise PositionPathSegmentError("existing archive segment conflicts with source")
+                continue
+            db.execute(
+                "INSERT INTO position_path_segments ("
+                "position_id,segment_number,first_bucket_open_ms,last_bucket_open_ms,bucket_count,"
+                "available_count,unavailable_count,min_observed_at,max_observed_at,format_version,codec,"
+                "codec_level,dictionary_id,uncompressed_bytes,compressed_bytes,semantic_sha256,"
+                "payload_sha256,sealed_at,encoder_provenance,payload) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                segment.as_sql_values(sealed_at=sealed, encoder_provenance=encoder_provenance),
+            )
+            inserted += 1
+            if db.execute(
+                "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='audit_events'"
+            ).fetchone() is not None:
+                db.execute(
+                    "INSERT INTO audit_events "
+                    "(id,timestamp,actor,source,event_type,entity_type,entity_id,before_state,after_state,message) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        str(uuid.uuid4()), sealed, "system", "position_path_storage",
+                        "position_path_segment_sealed", "position_path_segment",
+                        f"{position_id}:{segment.segment_number}", None,
+                        json.dumps({"semantic_sha256": segment.semantic_sha256, "bucket_count": segment.bucket_count}, sort_keys=True),
+                        "verified immutable shadow archive segment sealed",
+                    ),
+                )
+    return {
+        "position_id": position_id,
+        "archived": True,
+        "inserted_segments": inserted,
+        "segment_count": len(encoded),
+        "bucket_count": len(expected),
+        "raw_bytes": sum(segment.uncompressed_bytes for segment in encoded),
+        "archived_bytes": sum(segment.compressed_bytes for segment in encoded),
+        "compression_ratio": round(
+            sum(segment.compressed_bytes for segment in encoded)
+            / max(1, sum(segment.uncompressed_bytes for segment in encoded)),
+            6,
+        ),
+    }
+
+
+def seal_position_path_segments(position_id: str, **kwargs) -> dict[str, object]:
+    """Compatibility name for the explicit shadow archive operation."""
+
+    return shadow_archive_position_path(position_id, **kwargs)
 
 
 def _optional_plan_price_equal(left: object, right: object) -> bool:

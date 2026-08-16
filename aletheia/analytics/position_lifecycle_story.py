@@ -1529,18 +1529,15 @@ def _observer_audit(
     first = ((int(entry_at.timestamp() * 1000) + _BUCKET_MS - 1) // _BUCKET_MS) * _BUCKET_MS
     last = (int(boundary.timestamp() * 1000) // _BUCKET_MS) * _BUCKET_MS
     expected = max(0, (last - first) // _BUCKET_MS)
-    observations = _rows(
-        db,
-        "SELECT * FROM position_path_observations WHERE position_id=? "
-        "AND bucket_open_ms>=? AND bucket_open_ms<? ORDER BY bucket_open_ms",
-        (position_id, first, last),
+    observations = repo.list_position_path_observations(
+        position_id,
+        as_of_at=cutoff,
+        db=db,
     )
-    visible_observations: list[dict[str, Any]] = []
-    for row in observations:
-        observed_at = _utc(row.get("observed_at"))
-        if observed_at is None or observed_at <= cutoff:
-            visible_observations.append(row)
-    observations = visible_observations
+    observations = [
+        row for row in observations
+        if first <= int(row.get("bucket_open_ms") or -1) < last
+    ]
     expected_buckets = set(range(first, last, _BUCKET_MS))
     by_bucket = {int(row["bucket_open_ms"]): row for row in observations if row.get("bucket_open_ms") is not None}
     missing = sorted(expected_buckets - set(by_bucket))

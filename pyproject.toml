@@ -24,6 +24,8 @@ dependencies = [
     "feedparser>=6.0",
     "numpy>=2.4.6",
     "psutil>=7.2.2",
+    "msgpack>=1.1.1,<2",
+    "zstandard>=0.23,<1",
 ]
 
 [project.scripts]

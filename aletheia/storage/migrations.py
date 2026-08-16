@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v28"
+SCHEMA_VERSION = "aletheia-sqlite-v29"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3623,6 +3623,75 @@ _POSITION_PATH_OBSERVER_CURSOR_CHECKSUM = hashlib.sha256(
     (
         _POSITION_PATH_OBSERVER_CURSOR_SQL
         + "\ndurable_position_path_observer_cursor_v1\nPRAGMA optimize"
+    ).encode("utf-8")
+).hexdigest()
+
+_POSITION_PATH_SEGMENTS_SQL = """
+CREATE TABLE IF NOT EXISTS position_path_segments (
+    position_id TEXT NOT NULL REFERENCES positions(id),
+    segment_number INTEGER NOT NULL CHECK(segment_number >= 0),
+    first_bucket_open_ms INTEGER NOT NULL CHECK(
+        first_bucket_open_ms >= 0 AND first_bucket_open_ms % 300000 = 0
+    ),
+    last_bucket_open_ms INTEGER NOT NULL CHECK(
+        last_bucket_open_ms >= first_bucket_open_ms
+        AND last_bucket_open_ms % 300000 = 0
+    ),
+    bucket_count INTEGER NOT NULL CHECK(bucket_count > 0 AND bucket_count <= 2048),
+    available_count INTEGER NOT NULL CHECK(available_count >= 0),
+    unavailable_count INTEGER NOT NULL CHECK(unavailable_count >= 0),
+    min_observed_at TEXT NOT NULL CHECK(julianday(min_observed_at) IS NOT NULL),
+    max_observed_at TEXT NOT NULL CHECK(julianday(max_observed_at) IS NOT NULL),
+    format_version TEXT NOT NULL CHECK(format_version = 'position_path_segment/v1'),
+    codec TEXT NOT NULL CHECK(codec IN ('zstd', 'raw')),
+    codec_level INTEGER,
+    dictionary_id TEXT,
+    uncompressed_bytes INTEGER NOT NULL CHECK(uncompressed_bytes > 0),
+    compressed_bytes INTEGER NOT NULL CHECK(compressed_bytes > 0),
+    semantic_sha256 TEXT NOT NULL CHECK(length(semantic_sha256) = 64),
+    payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64),
+    sealed_at TEXT NOT NULL CHECK(julianday(sealed_at) IS NOT NULL),
+    encoder_provenance TEXT NOT NULL,
+    archive_verified INTEGER NOT NULL DEFAULT 1 CHECK(archive_verified = 1),
+    payload BLOB NOT NULL,
+    PRIMARY KEY(position_id, segment_number),
+    UNIQUE(position_id, first_bucket_open_ms, last_bucket_open_ms),
+    CHECK(last_bucket_open_ms = first_bucket_open_ms + (bucket_count - 1) * 300000),
+    CHECK(available_count + unavailable_count = bucket_count),
+    CHECK((codec = 'zstd' AND codec_level IS NOT NULL) OR (codec = 'raw' AND codec_level IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_position_path_segments_lookup
+ON position_path_segments(position_id, first_bucket_open_ms, last_bucket_open_ms);
+CREATE INDEX IF NOT EXISTS idx_position_path_segments_observed_at
+ON position_path_segments(position_id, min_observed_at, max_observed_at);
+CREATE TRIGGER IF NOT EXISTS trg_position_path_segments_no_update
+BEFORE UPDATE ON position_path_segments
+BEGIN
+    SELECT RAISE(ABORT, 'Position path segments are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_position_path_segments_no_delete
+BEFORE DELETE ON position_path_segments
+BEGIN
+    SELECT RAISE(ABORT, 'Position path segments are immutable');
+END;
+DROP TRIGGER IF EXISTS trg_position_path_observations_no_delete;
+CREATE TRIGGER IF NOT EXISTS trg_position_path_observations_no_delete
+BEFORE DELETE ON position_path_observations
+WHEN NOT EXISTS (
+    SELECT 1 FROM position_path_segments AS segment
+    WHERE segment.position_id = OLD.position_id
+      AND segment.archive_verified = 1
+      AND OLD.bucket_open_ms BETWEEN segment.first_bucket_open_ms AND segment.last_bucket_open_ms
+      AND (OLD.bucket_open_ms - segment.first_bucket_open_ms) % 300000 = 0
+)
+BEGIN
+    SELECT RAISE(ABORT, 'Position path observation has no verified immutable archive replacement');
+END;
+"""
+_POSITION_PATH_SEGMENTS_CHECKSUM = hashlib.sha256(
+    (
+        _POSITION_PATH_SEGMENTS_SQL
+        + "\nimmutable_position_path_segments_v1\nPRAGMA optimize"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -4994,6 +5063,13 @@ def _apply_position_path_observer_cursor_v28(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+def _apply_position_path_segments_v29(db: sqlite3.Connection) -> None:
+    """Add the verified, immutable shadow archive without changing observation writes."""
+
+    db.executescript(_POSITION_PATH_SEGMENTS_SQL)
+    db.execute("PRAGMA optimize")
+
+
 
 
 def _apply_market_signal_identity_v7(db: sqlite3.Connection) -> None:
@@ -5397,8 +5473,14 @@ _MIGRATIONS = (
     MigrationStep(
         migration_id="20260814_0027_position_path_observer_cursor_v28",
         checksum=_POSITION_PATH_OBSERVER_CURSOR_CHECKSUM,
-        schema_version=SCHEMA_VERSION,
+        schema_version="aletheia-sqlite-v28",
         apply=_apply_position_path_observer_cursor_v28,
+    ),
+    MigrationStep(
+        migration_id="20260815_0028_position_path_segments_v29",
+        checksum=_POSITION_PATH_SEGMENTS_CHECKSUM,
+        schema_version=SCHEMA_VERSION,
+        apply=_apply_position_path_segments_v29,
     ),
 )
 
