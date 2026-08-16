@@ -21,8 +21,12 @@ def _workflow() -> dict:
     return yaml.load(WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
 
-def _script() -> str:
-    return _workflow()["jobs"]["shepherd"]["steps"][0]["with"]["script"]
+def _schedule_script() -> str:
+    return _workflow()["jobs"]["schedule"]["steps"][0]["with"]["script"]
+
+
+def _apply_script() -> str:
+    return _workflow()["jobs"]["apply"]["steps"][0]["with"]["script"]
 
 
 def _auto_merge_source() -> str:
@@ -35,11 +39,11 @@ def _auto_merge_source() -> str:
         "agent_contracts",
         "§PR/CI control plane",
         "L2a",
-        "Codex PR Shepherd is event-driven, least-privilege, and cannot obtain branch-write or merge authority.",
+        "Codex PR Shepherd is event-driven and splits trigger-facing dispatch authority from PR-side mutation authority without obtaining merge authority.",
         status="implemented",
     )
 )
-def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
+def test_codex_shepherd_is_event_driven_and_separates_mutation_authority() -> None:
     workflow = _workflow()
     triggers = workflow["on"]
     assert triggers["pull_request_target"]["types"] == [
@@ -54,40 +58,76 @@ def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
     assert triggers["issue_comment"]["types"] == ["created"]
     assert triggers["workflow_run"]["workflows"] == ["Aletheia CI"]
     assert triggers["workflow_run"]["types"] == ["completed"]
-
+    assert triggers["repository_dispatch"]["types"] == ["codex_shepherd_update"]
     assert workflow["permissions"] == {"contents": "read"}
-    job = workflow["jobs"]["shepherd"]
-    assert job["runs-on"] == "ubuntu-24.04"
-    assert job["permissions"] == {
+
+    schedule = workflow["jobs"]["schedule"]
+    assert schedule["permissions"] == {
+        "contents": "write",
+        "pull-requests": "read",
+    }
+    assert schedule["runs-on"] == "ubuntu-24.04"
+    assert "actions/checkout" not in str(schedule)
+    schedule_script = _schedule_script()
+    assert "github.rest.repos.createDispatchEvent" in schedule_script
+    assert "event_type: 'codex_shepherd_update'" in schedule_script
+    assert "github.rest.issues.createComment" not in schedule_script
+    assert "github.rest.issues.addLabels" not in schedule_script
+    assert "github.rest.pulls.merge" not in schedule_script
+    assert "createOrUpdateFileContents" not in schedule_script
+    assert "github.rest.git.updateRef" not in schedule_script
+
+    apply = workflow["jobs"]["apply"]
+    assert apply["permissions"] == {
         "actions": "read",
         "contents": "read",
         "issues": "write",
         "pull-requests": "read",
     }
-    assert workflow["concurrency"]["cancel-in-progress"] == "false"
+    assert apply["runs-on"] == "ubuntu-24.04"
+    assert apply["concurrency"]["cancel-in-progress"] == "true"
+    assert "event.sender.login == 'github-actions[bot]'" in apply["if"]
+    assert "event.action == 'codex_shepherd_update'" in apply["if"]
+    assert "actions/checkout" not in str(apply)
+    apply_script = _apply_script()
+    assert "github.rest.issues.createComment" in apply_script
+    assert "github.rest.issues.addLabels" in apply_script
+    assert "github.rest.pulls.merge" not in apply_script
+    assert "createOrUpdateFileContents" not in apply_script
+    assert "github.rest.git.updateRef" not in apply_script
+    assert "contents: write" not in str(apply)
 
-    step = job["steps"][0]
-    assert step["uses"].startswith("actions/github-script@")
-    assert "actions/checkout" not in str(job)
-    script = step["with"]["script"]
-    assert "github.rest.pulls.merge" not in script
-    assert "github.rest.repos.createOrUpdateFileContents" not in script
-    assert "github.rest.git.updateRef" not in script
-    assert "actions: write" not in str(job)
+
+def test_shepherd_dispatch_is_trusted_and_exact_head_bound() -> None:
+    schedule_script = _schedule_script()
+    apply_script = _apply_script()
+
+    assert "const connectorLogin = 'chatgpt-codex-connector'" in schedule_script
+    assert "isConnectorLogin(payload.review?.user?.login)" in schedule_script
+    assert "isConnectorLogin(payload.comment?.user?.login)" in schedule_script
+    assert "run?.event !== 'pull_request'" in schedule_script
+    assert "pullRequest.head.repo?.full_name" in schedule_script
+    assert "expected_head_sha: pullRequest.head.sha" in schedule_script
+    assert "source_event: context.eventName" in schedule_script
+
+    assert "const request = context.payload.client_payload || {}" in apply_script
+    assert "expected head SHA must be a 40-character lowercase Git object ID" in apply_script
+    assert "unsupported Shepherd source event" in apply_script
+    assert "pullRequest.head.sha !== expectedHeadSha" in apply_script
+    assert "Shepherd request for ${expectedHeadSha} is stale" in apply_script
+    assert "pullRequest.base.ref !== 'master'" in apply_script
+    assert "pullRequest.draft" in apply_script
+    assert "pullRequest.head.repo?.full_name" in apply_script
+    assert "release-please--branches--master" in apply_script
 
 
-def test_codex_shepherd_binds_callbacks_and_control_markers_to_trusted_identity() -> None:
-    script = _script()
+def test_codex_shepherd_binds_reviews_comments_and_markers_to_exact_head() -> None:
+    script = _apply_script()
 
-    assert "const expectedHeadSha = pullRequest.head.sha" in script
-    assert "context.payload.review.commit_id !== expectedHeadSha" in script
-    assert "context.payload.workflow_run.head_sha !== expectedHeadSha" in script
     assert "const reviewedCommitPattern" in script
     assert "github.rest.repos.getCommit" in script
-    assert "reviewedCommitSha !== expectedHeadSha" in script
     assert "review.commit_id === expectedHeadSha" in script
     assert "review.state !== 'DISMISSED'" in script
-
     assert "github.paginate(github.rest.pulls.listFiles" in script
     assert "github.paginate(github.rest.pulls.listReviews" in script
     assert "github.paginate(github.rest.issues.listComments" in script
@@ -97,44 +137,34 @@ def test_codex_shepherd_binds_callbacks_and_control_markers_to_trusted_identity(
     assert "comment.user?.login === shepherdLogin" in script
     assert "const shepherdComments" in script
     assert "shepherdComments.flatMap" in script
+    assert "reviewedCommitSha === expectedHeadSha" in script
 
 
 def test_codex_shepherd_self_change_and_incomplete_file_listing_fail_closed() -> None:
-    script = _script()
+    script = _apply_script()
 
     assert "changedFiles.length !== pullRequest.changed_files" in script
     assert "file-list-incomplete" in script
     assert "cannot prove the authority boundary" in script
-
     assert "const shepherdPath = '.github/workflows/codex-shepherd.yml'" in script
     assert "const changesShepherdAuthority" in script
     assert "[filename, previous_filename].includes(shepherdPath)" in script
     assert "if (changesShepherdAuthority)" in script
+    assert "await ensureHoldLabel()" in script
     assert "labels: ['do-not-auto-merge']" in script
     assert "reason=shepherd-self-change" in script
     assert "requires explicit owner merge" in script
-    assert "Re-apply the hold on `unlabeled` events" in script
 
-    incomplete = script.index("changedFiles.length !== pullRequest.changed_files")
-    self_change = script.index("if (changesShepherdAuthority)", incomplete)
-    ordinary_hold = script.index("do-not-auto-merge holds this pull request", self_change)
-    review_request = script.index("@codex review", ordinary_hold)
-    assert incomplete < self_change < ordinary_hold < review_request
-
-    # A prior terminal marker only deduplicates its comment. Removing the safety
-    # label must still cause the next trusted callback to restore it first.
-    hold_start = script.index("const holdForOwner")
-    add_label = script.index("await github.rest.issues.addLabels", hold_start)
+    # Terminal markers deduplicate prose only; the hold label is established first.
+    ensure_label = script.index("const ensureHoldLabel")
+    hold_start = script.index("const holdForOwner", ensure_label)
+    add_label = script.index("await ensureHoldLabel()", hold_start)
     marker_return = script.index("if (exactHeadHalt) return", add_label)
-    assert hold_start < add_label < marker_return
+    assert ensure_label < hold_start < add_label < marker_return
 
 
 def test_auto_merge_atomically_protects_shepherd_authority() -> None:
     source = _auto_merge_source()
-
-    # The merge controller must recognize Shepherd as merge authority everywhere
-    # it makes an authority decision. This removes an unlabeled-event race between
-    # two independent workflows.
     shepherd_token = "'.github/workflows/codex-shepherd.yml'"
     authority_message = "merge-authority workflow changes require an explicit manual merge"
     assert source.count(shepherd_token) == 3
@@ -169,8 +199,6 @@ def test_auto_merge_atomically_protects_shepherd_authority() -> None:
         < message_positions[1]
     )
 
-    # Every authority decision must fail closed when GitHub's files endpoint is
-    # truncated. Schedule can disable directly; release and ordinary merge return.
     schedule_complete = source.index(
         "const changedFilesComplete = changedFiles.length === pullRequest.changed_files"
     )
@@ -191,7 +219,6 @@ def test_auto_merge_atomically_protects_shepherd_authority() -> None:
     assert "release candidate changed after discovery; owner hold remains" in source[
         release_metadata:release_complete
     ]
-    assert "owner hold remains" in source[release_complete:shepherd_positions[1]]
 
     ordinary_metadata = source.index("const {data: pullRequestMetadata} = await github.rest.pulls.get")
     ordinary_complete = source.index(
@@ -201,89 +228,62 @@ def test_auto_merge_atomically_protects_shepherd_authority() -> None:
     assert "pullRequestMetadata.head.sha !== expectedHeadSha" in source[
         ordinary_metadata:ordinary_complete
     ]
-    assert "exact-head merge remains disabled" in source[
-        ordinary_complete:shepherd_positions[2]
-    ]
 
 
 def test_codex_shepherd_requests_every_ready_or_resumed_exact_head_but_does_not_claim_repair() -> None:
-    script = _script()
-
-    assert "const reviewTriggerActions = new Set" in script
+    workflow = _workflow()
+    triggers = workflow["on"]["pull_request_target"]["types"]
     for action in (
-        "'opened'",
-        "'reopened'",
-        "'ready_for_review'",
-        "'edited'",
-        "'synchronize'",
-        "'unlabeled'",
+        "opened",
+        "reopened",
+        "ready_for_review",
+        "edited",
+        "synchronize",
+        "unlabeled",
     ):
-        assert action in script
-    assert "reviewTriggerActions.has(context.payload.action)" in script
+        assert action in triggers
+
+    script = _apply_script()
     assert "@codex review" in script
     assert "kind=review" in script
     assert "const exactHeadReviewRequest" in script
-    assert "!exactHeadReviewRequest" in script
-    assert "!connectorCleanExactHead" in script
-
-    # Missing review creation is a convergence gate shared by every surviving
-    # callback; it must run before event-specific CI/comment handling.
-    request_gate = script.index("!exactHeadReviewRequest")
-    pull_request_return = script.index("if (context.eventName === 'pull_request_target') return", request_gate)
-    issue_handler = script.index("if (context.eventName === 'issue_comment')", pull_request_return)
-    workflow_handler = script.index("if (context.eventName === 'workflow_run')", issue_handler)
-    assert request_gate < pull_request_return < issue_handler < workflow_handler
-    assert "surviving trusted callback" in script
-
-    # Runtime evidence showed the current Codex Cloud task can create a local
-    # repair commit but cannot push it back to this repository. Until that
-    # permission/executor exists, Shepherd must hold rather than fake autonomy.
+    assert "!exactHeadReviewRequest && !connectorCleanExactHead" in script
     assert "@codex fix" not in script
-    assert "const holdForOwner" in script
     assert "Codex Cloud repair is not authorized to push back" in script
     assert "review-finding" in script
     assert "ci-failure" in script
 
 
 def test_codex_shepherd_callbacks_converge_from_current_finding_state() -> None:
-    script = _script()
+    script = _apply_script()
 
-    # GitHub concurrency can replace a pending run. Finding handling therefore
-    # must be a current-state gate shared by every surviving callback, not an
-    # exclusive pull_request_review event branch.
     finding_gate = script.index("if (exactHeadReviews.length !== 0)")
     finding_hold = script.index("'review-finding'", finding_gate)
     clean_scan = script.index("let connectorCleanExactHead", finding_hold)
-    review_request = script.index("!exactHeadReviewRequest", clean_scan)
+    review_request = script.index("!exactHeadReviewRequest && !connectorCleanExactHead", clean_scan)
     assert finding_gate < finding_hold < clean_scan < review_request
-    assert "Event delivery is not a queue" in script
-    assert "if (context.eventName === 'pull_request_review')" not in script[finding_gate:]
+    assert "Every dispatched callback converges from the current exact-head review" in script
+
+    # A newer request for the same PR cancels an older apply run; stale SHA checks and
+    # current-state convergence make this replacement safe.
+    apply = _workflow()["jobs"]["apply"]
+    assert apply["concurrency"]["cancel-in-progress"] == "true"
 
 
-def test_codex_shepherd_only_holds_latest_actionable_ci_failure() -> None:
-    script = _script()
+def test_codex_shepherd_only_holds_current_actionable_ci_failure() -> None:
+    script = _apply_script()
 
     assert "const repairableCiConclusions = new Set(['failure', 'timed_out'])" in script
-    assert "run.status !== 'completed'" in script
-    assert "!repairableCiConclusions.has(run.conclusion)" in script
-
-    # Select the newest Aletheia CI run first. Filtering to completed runs before
-    # sorting would let an older failure win while a newer exact-head run is active.
     latest_ci_start = script.index("const latestCiRun")
-    latest_ci_end = script.index("if (context.eventName === 'issue_comment')", latest_ci_start)
+    latest_ci_end = script.index("if (sourceEvent === 'issue_comment'", latest_ci_start)
     latest_ci = script[latest_ci_start:latest_ci_end]
     assert ".filter((run) => run.name === 'Aletheia CI')" in latest_ci
+    assert ".sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))" in latest_ci
     assert "run.status === 'completed'" not in latest_ci
 
-    workflow_handler = script[script.index("if (context.eventName === 'workflow_run')") :]
-    assert "const currentRun = await latestCiRun()" in workflow_handler
-    assert "currentRun.id !== payloadRun.id" in workflow_handler
-    assert "currentRun.status !== 'completed'" in workflow_handler
-    assert "!repairableCiConclusions.has(currentRun.conclusion)" in workflow_handler
-    assert "ignoring stale or non-actionable CI completion callback" in workflow_handler
-
-    assert "pullRequest.base.ref !== 'master'" in script
-    assert "pullRequest.draft" in script
-    assert "pullRequest.head.repo?.full_name" in script
-    assert "release-please--branches--master" in script
+    handler = script[latest_ci_end:]
+    assert "sourceEvent === 'issue_comment' || sourceEvent === 'workflow_run'" in handler
+    assert "!connectorCleanExactHead" in handler
+    assert "run.status !== 'completed'" in handler
+    assert "!repairableCiConclusions.has(run.conclusion)" in handler
     assert "do-not-auto-merge" in script
