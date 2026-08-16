@@ -127,15 +127,17 @@ automatic close or stop change.
 | `learning_job_health` | Durable expected-run/backlog health; current error may clear on recovery while last failure identity persists | schedule, watermarks, consecutive_failures, status, last_error, last_failed_at, last_failure_reason |
 | `learning_policy_epochs` | Non-sensitive effective-policy attribution boundary | effective-values hash/JSON, affected paths, safety flag, interval |
 
-These tables were additive/observational in Phase 1. Only
-`universe_family_calibration` currently writes measurement-supported exposures with a
-path-specific causal outcome. Operator, factor, ranker,
-learned-guard, automatic Risk-lesson, Observer-bundle and persona-sizing hooks
-are consumer-wired but measurement-unsupported: they return static fallback and
-write no formal exposure. Only an active, stage-isolated paper experiment with
-enough linked cost-aware outcomes and separately validated owner/lifecycle
-authority may apply a supported treatment. The ledger grants no risk,
-execution, credential, or live authority.
+These tables were additive/observational in Phase 1. The currently
+measurement-supported paths are `universe_family_calibration` and
+`ranker_case_score`, each with a path-specific causal outcome contract.
+`ranker_case_score` is Shadow-only and cannot apply a Ranker delta or Paper
+authority. Operator, factor, ranker-memo, learned-guard, automatic Risk-lesson,
+Observer-bundle and persona-sizing hooks are consumer-wired but
+measurement-unsupported: they return static fallback and write no formal
+exposure. Only an active, stage-isolated paper experiment with enough linked
+cost-aware outcomes and separately validated owner/lifecycle authority may
+apply a supported treatment. The ledger grants no risk, execution, credential,
+or live authority.
 
 For current universe contribution measurement, `filter_candidate_outcomes` is the canonical
 full-arm source. `universe_forward_outcomes` is a selected-member legacy mirror/fallback; matching

@@ -88,29 +88,36 @@ async def settle_due_filter_outcomes(
     # stayed quiet.
     from aletheia.learning.behavior_contracts import current_behavior_contract_hash
     from aletheia.learning.experiments import current_policy_epoch
-    from aletheia.learning.verdicts import METRIC_VERSION
+    from aletheia.learning.registry import (
+        metric_version_for_path,
+        outcome_contract_version_for_path,
+    )
 
     prologue_started = time.monotonic()
     prologue_deadline = min(
         deadline,
         prologue_started + max(0.0, time_budget_sec) * _PROLOGUE_BUDGET_FRACTION,
     )
-    policy_epoch = current_policy_epoch("universe_family_calibration")
-    current_behavior_contract_hash = (
-        current_behavior_contract_hash(
-            path_id="universe_family_calibration",
-            policy_epoch=policy_epoch,
-            target_horizon="4h",
-            outcome_contract_version="v1",
-            metric_version=METRIC_VERSION,
+    learning_path_ids = ("universe_family_calibration", "ranker_case_score")
+    current_behavior_keys: set[str] = set()
+    for path_id in learning_path_ids:
+        policy_epoch = current_policy_epoch(path_id)
+        behavior_hash = (
+            current_behavior_contract_hash(
+                path_id=path_id,
+                policy_epoch=policy_epoch,
+                target_horizon="4h",
+                outcome_contract_version=outcome_contract_version_for_path(path_id),
+                metric_version=metric_version_for_path(path_id),
+            )
+            if policy_epoch
+            else None
         )
-        if policy_epoch
-        else None
-    )
-    current_behavior_keys = repo.list_open_learning_outcome_candidate_keys(
-        ("universe_family_calibration",),
-        behavior_contract_hash=current_behavior_contract_hash,
-    ) if current_behavior_contract_hash else set()
+        if behavior_hash:
+            current_behavior_keys |= repo.list_open_learning_outcome_candidate_keys(
+                (path_id,),
+                behavior_contract_hash=behavior_hash,
+            )
     # The prospective continuous-score comparison is not a Learning treatment,
     # but its exact 4h rows must not starve behind the historical canonical
     # backlog. This changes queue order only; it does not change settlement
@@ -124,7 +131,7 @@ async def settle_due_filter_outcomes(
         deadline=prologue_deadline,
     )
     all_priority_keys = repo.list_open_learning_outcome_candidate_keys(
-        ("universe_family_calibration",),
+        learning_path_ids,
     ) | twin_shadow_keys
     older_behavior_keys = all_priority_keys - current_behavior_keys
     remaining_priority_rows = max(0, max_rows - len(priority_pending))

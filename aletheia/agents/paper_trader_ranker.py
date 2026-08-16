@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -735,6 +736,10 @@ def _compute_trade_score(
         },
         source_cohort="trade_case_study:v1",
         learning_trace=learning_trace,
+        entry_spread_bps=(
+            universe_member.get("spread_bps") if universe_member else None
+        ),
+        funding_rate_at_entry=opp.get("funding_rate"),
     )
 
     # Risk flag penalties
@@ -777,6 +782,99 @@ def _compute_trade_score(
     return round(score, 2)
 
 
+def _ranker_candidate_key(opp: dict) -> str | None:
+    """Derive ranker identity without borrowing the Universe treatment key."""
+    market_type = (
+        str(opp.get("market") or opp.get("market_type") or "spot").strip().lower()
+        or "spot"
+    )
+    member_id = str(opp.get("universe_member_id") or "").strip()
+    if member_id:
+        snapshot_id = str(opp.get("universe_snapshot_id") or "").strip()
+        if not snapshot_id:
+            return None
+        return f"ranker_member:{snapshot_id}:{member_id}:{market_type}"
+    opportunity_id = str(opp.get("id") or "").strip()
+    return f"ranker_opportunity:{opportunity_id}" if opportunity_id else None
+
+
+def _ranker_entry_mark(opp: dict) -> dict | None:
+    """Return the fresh exact-instrument mark used as ranker T0."""
+    symbol = str(opp.get("symbol") or "").strip()
+    market_type = str(opp.get("market") or opp.get("market_type") or "spot")
+    if not symbol:
+        return None
+    try:
+        cfg = load_config()
+        venue = str(getattr(cfg.market_data, "ccxt_exchange", "") or "").strip()
+        if not venue:
+            return None
+        from aletheia.data.price_feed import get_fresh_mark_for_protective_close
+
+        mark = get_fresh_mark_for_protective_close(
+            symbol,
+            market_type,
+            venue=venue,
+        )
+        if not mark:
+            return None
+        price = float(mark.get("price"))
+        observed_at = str(mark.get("observed_at") or "")
+        if not math.isfinite(price) or price <= 0 or not observed_at:
+            return None
+        return {
+            "price": price,
+            "observed_at": observed_at,
+            "venue": str(mark.get("venue") or venue),
+        }
+    except Exception:
+        logger.debug("ranker entry mark unavailable for %s", symbol, exc_info=True)
+        return None
+
+
+def _register_ranker_case_outcome(
+    *,
+    candidate_key: str | None,
+    opp: dict,
+    direction: str | None,
+    entry_price_usd: float | None,
+    entry_spread_bps: float | None,
+    funding_rate_at_entry: float | None,
+    entry_ts: str,
+    venue: str | None = None,
+) -> int:
+    """Register the ranker-specific prospective 4h outcome T0."""
+    if not candidate_key or direction not in {"long", "short"} or not opp.get("symbol"):
+        return 0
+    entry_price = float(entry_price_usd or 0.0)
+    if not math.isfinite(entry_price) or entry_price <= 0:
+        raise ValueError("ranker entry price unavailable")
+    from aletheia.analytics.filter_evidence import build_candidate_outcomes
+    from aletheia.storage.repositories import insert_filter_candidate_outcomes_batch
+
+    if not venue:
+        cfg = load_config()
+        venue = getattr(getattr(cfg, "market_data", None), "ccxt_exchange", None)
+    outcomes = build_candidate_outcomes(
+        outcome_candidate_key=candidate_key,
+        venue=str(venue or "bitget"),
+        symbol=str(opp["symbol"]),
+        market_type=str(opp.get("market") or opp.get("market_type") or "spot"),
+        direction=direction,
+        scanner_family=opp.get("scanner_family"),
+        regime_tag=opp.get("regime_tag"),
+        entry_price_usd=entry_price,
+        entry_spread_bps=entry_spread_bps,
+        funding_rate_at_entry=funding_rate_at_entry,
+        entry_ts=entry_ts,
+        allocation_selected=None,
+        horizons=("4h",),
+    )
+    if not outcomes:
+        raise ValueError("ranker outcome identity unavailable")
+    return insert_filter_candidate_outcomes_batch(outcomes)
+
+
 def _authorized_ranker_delta(
     *,
     path_id: str,
@@ -786,53 +884,138 @@ def _authorized_ranker_delta(
     scope: dict,
     source_cohort: str,
     learning_trace: list[dict] | None,
+    entry_price_usd: float | None = None,
+    entry_spread_bps: float | None = None,
+    funding_rate_at_entry: float | None = None,
 ) -> float:
-    """Return a prospective-authorized score delta, otherwise the static zero.
+    """Return an authorized score delta and persist ranker Shadow evidence.
 
-    A fixed-horizon key is mandatory for a writable/creditable exposure. Legacy or
-    non-Universe opportunities therefore fail closed instead of creating an
-    unresolvable experiment row.
+    ``ranker_case_score`` uses an identity derived from the ranker candidate
+    itself. Carrier Opportunity ids must not split a Universe member's ranker
+    evidence, and the Universe calibration key must not be required to start
+    this path.
     """
     try:
         meta = _json.loads(opp.get("metadata") or "{}")
     except (TypeError, ValueError):
         meta = {}
-    learning_key = meta.get("learning_candidate_key")
-    opportunity_id = opp.get("id")
-    candidate_key = (
-        f"opportunity:{opportunity_id}"
-        if opportunity_id and learning_key else None
+    learning_candidate_key = meta.get("learning_candidate_key")
+    ranker_candidate_key = (
+        _ranker_candidate_key(opp) if path_id == "ranker_case_score" else None
     )
-    outcome_key = f"{learning_key}:4h" if learning_key else None
+    opportunity_id = opp.get("id")
+    if path_id == "ranker_case_score":
+        candidate_key = ranker_candidate_key
+        assignment_key = ranker_candidate_key
+    else:
+        candidate_key = (
+            f"opportunity:{opportunity_id}"
+            if opportunity_id and learning_candidate_key else None
+        )
+        assignment_key = None
+    outcome_identity = (
+        ranker_candidate_key if path_id == "ranker_case_score"
+        else learning_candidate_key
+    )
+    outcome_key = f"{outcome_identity}:4h" if outcome_identity else None
 
     from aletheia.learning.experiments import InfluenceDecision, apply_numeric_treatment
 
-    if abs(float(proposed_delta)) < 1e-9:
+    # Ranker Case measures every valid candidate, including candidates whose
+    # proposed case delta is zero. Otherwise the control arm would never be
+    # exposed and the path could not form a causal cohort.
+    ranker_identity_missing = path_id == "ranker_case_score" and candidate_key is None
+    measure_candidate = path_id == "ranker_case_score" and not ranker_identity_missing
+    ranker_mark = _ranker_entry_mark(opp) if measure_candidate else None
+    ranker_t0 = ranker_mark["observed_at"] if ranker_mark else None
+    if ranker_identity_missing:
+        decision = InfluenceDecision(
+            0.0, False, "unassigned", "ranker_candidate_identity_unavailable",
+        )
+    elif measure_candidate and ranker_mark is None:
+        decision = InfluenceDecision(
+            0.0, False, "unassigned", "ranker_entry_mark_unavailable",
+        )
+    elif (
+        path_id != "ranker_case_score"
+        and abs(float(proposed_delta)) < 1e-9
+        and not measure_candidate
+    ):
         decision = InfluenceDecision(0.0, False, "baseline", "no_proposed_delta")
     else:
         try:
-            decision = apply_numeric_treatment(
-                path_id=path_id,
-                scope={k: v for k, v in scope.items() if v is not None},
-                action={"score_component": path_id, "method": "bounded_soft_delta"},
-                source_cohort=source_cohort,
-                target_horizon="4h",
-                candidate_key=candidate_key,
-                baseline=0.0,
-                treatment=float(proposed_delta),
-                consumer="paper_trader_ranker",
-                consumer_stage="score",
-                outcome_candidate_key=outcome_key,
-                opportunity_id=opportunity_id,
-                manifest={
+            treatment_kwargs = {
+                "path_id": path_id,
+                "scope": {k: v for k, v in scope.items() if v is not None},
+                "action": {"score_component": path_id, "method": "bounded_soft_delta"},
+                "source_cohort": source_cohort,
+                "target_horizon": "4h",
+                "candidate_key": candidate_key,
+                "assignment_key": assignment_key,
+                "baseline": 0.0,
+                "treatment": float(proposed_delta),
+                "consumer": "paper_trader_ranker",
+                "consumer_stage": "score",
+                "outcome_candidate_key": outcome_key,
+                "opportunity_id": opportunity_id,
+                "manifest": {
                     "proposed_delta": float(proposed_delta),
                     "symbol": opp.get("symbol"),
                     "direction": direction,
+                    "candidate_identity": ranker_candidate_key,
+                    "assignment_unit_key": assignment_key,
+                    "outcome_candidate_key": outcome_key,
+                    "prospective_t0": ranker_t0,
                 },
-            )
+            }
+            if path_id == "ranker_case_score":
+                # The exposure and its exact 4h seed are one durable pair. A
+                # failed seed write rolls back the exposure rather than leaving
+                # an invalid cohort row behind.
+                from aletheia.storage.repositories import transaction
+
+                with transaction(immediate=True):
+                    decision = apply_numeric_treatment(
+                        **treatment_kwargs,
+                        exposed_at=ranker_t0,
+                    )
+                    if decision.exposure_id:
+                        seeded = _register_ranker_case_outcome(
+                            candidate_key=ranker_candidate_key,
+                            opp=opp,
+                            direction=direction,
+                            entry_price_usd=ranker_mark["price"],
+                            entry_spread_bps=entry_spread_bps,
+                            funding_rate_at_entry=funding_rate_at_entry,
+                            entry_ts=ranker_t0,
+                            venue=ranker_mark["venue"],
+                        )
+                        if seeded <= 0:
+                            raise RuntimeError("ranker outcome seed unavailable")
+            else:
+                decision = apply_numeric_treatment(**treatment_kwargs)
         except Exception as exc:
             logger.warning("Ranker Learning adapter failed closed for %s: %s", path_id, exc)
-            decision = InfluenceDecision(0.0, False, "unavailable", "adapter_error")
+            decision = InfluenceDecision(
+                0.0, False, "unavailable",
+                "ranker_evidence_pair_unavailable"
+                if path_id == "ranker_case_score" else "adapter_error",
+            )
+    if path_id == "ranker_case_score" and decision.value != 0.0:
+        logger.error(
+            "Ranker Case Shadow attempted a non-zero delta; forcing baseline "
+            "for candidate %s",
+            ranker_candidate_key,
+        )
+        decision = InfluenceDecision(
+            0.0,
+            False,
+            decision.assignment,
+            "shadow_zero_delta_enforced",
+            decision.hypothesis_id,
+            decision.experiment_id,
+            decision.exposure_id,
+        )
     if learning_trace is not None:
         learning_trace.append({
             "path_id": path_id,
@@ -845,6 +1028,9 @@ def _authorized_ranker_delta(
             "hypothesis_id": decision.hypothesis_id,
             "experiment_id": decision.experiment_id,
             "exposure_id": decision.exposure_id,
+            "candidate_key": candidate_key,
+            "assignment_unit_key": assignment_key,
+            "outcome_candidate_key": outcome_key,
         })
     return float(decision.value)
 

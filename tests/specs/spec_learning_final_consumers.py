@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
+
+
+def _fresh_ranker_mark(_opp: dict) -> dict:
+    return {
+        "price": 100.0,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "venue": "bitget",
+    }
 
 
 def _operator_prompt_context() -> dict:
@@ -255,6 +264,7 @@ def test_ranker_learning_deltas_are_refrozen_behind_separate_authority(monkeypat
     from aletheia.regime.detector import MarketRegime
 
     monkeypatch.setattr(ranker, "get_current_regime", lambda: MarketRegime(state="bull", confidence=0.8))
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
     monkeypatch.setattr(ranker, "_lesson_penalty", lambda *_: -12.0)
     monkeypatch.setattr(ranker, "_memo_scoring", lambda *_: 8.0)
 
@@ -271,8 +281,9 @@ def test_ranker_learning_deltas_are_refrozen_behind_separate_authority(monkeypat
     monkeypatch.setattr("aletheia.learning.experiments.apply_numeric_treatment", refrozen)
     opp = {
         "id": "opp-ranker", "symbol": "BTC/USDT", "confidence_score": 50,
-        "scanner_family": "momentum",
-        "metadata": json.dumps({"learning_candidate_key": "member-1"}),
+        "scanner_family": "momentum", "market": "spot",
+        "universe_snapshot_id": "snapshot-1", "universe_member_id": "member-1",
+        "metadata": json.dumps({"learning_candidate_key": "unrelated-universe-key"}),
     }
     trace = []
     refrozen_score = ranker._compute_trade_score(
@@ -287,7 +298,12 @@ def test_ranker_learning_deltas_are_refrozen_behind_separate_authority(monkeypat
     )
     assert refrozen_score == static_score
     assert {c["path_id"] for c in calls} == {"ranker_case_score", "ranker_memo_score"}
-    assert all(c["outcome_candidate_key"] == "member-1:4h" for c in calls)
+    assert {
+        (c["path_id"], c["outcome_candidate_key"]) for c in calls
+    } == {
+        ("ranker_case_score", "ranker_member:snapshot-1:member-1:spot:4h"),
+        ("ranker_memo_score", "unrelated-universe-key:4h"),
+    }
     assert {row["path_id"] for row in trace} == {"ranker_case_score", "ranker_memo_score"}
 
     from aletheia.learning.registry import get_learning_path
@@ -296,6 +312,286 @@ def test_ranker_learning_deltas_are_refrozen_behind_separate_authority(monkeypat
         get_learning_path("ranker_case_score").overlap_group,
         get_learning_path("operator_learning_bundle").overlap_group,
     }) == 3
+
+
+def test_ranker_case_shadow_uses_exact_candidate_identity_for_assignment(monkeypatch):
+    import aletheia.agents.paper_trader_ranker as ranker
+    from aletheia.learning.experiments import InfluenceDecision
+
+    calls = []
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
+
+    def capture(**kwargs):
+        calls.append(kwargs)
+        return InfluenceDecision(
+            value=kwargs["baseline"],
+            applied=False,
+            assignment="control",
+            reason="baseline:control_assignment",
+            hypothesis_id="hypothesis",
+            experiment_id="experiment",
+            exposure_id=f"exposure-{len(calls)}",
+        )
+
+    monkeypatch.setattr(
+        "aletheia.learning.experiments.apply_numeric_treatment",
+        capture,
+    )
+    trace = []
+    for opportunity_id in ("opportunity-a", "opportunity-b"):
+        value = ranker._authorized_ranker_delta(
+            path_id="ranker_case_score",
+            proposed_delta=0.0,
+            opp={
+                "id": opportunity_id,
+                "symbol": "BTC/USDT",
+                "market": "spot",
+                "universe_snapshot_id": "snapshot-1",
+                "universe_member_id": "member-1",
+                "metadata": json.dumps({"learning_candidate_key": "unrelated-universe-key"}),
+            },
+            direction="long",
+            scope={"symbol": "BTC/USDT", "direction": "long"},
+            source_cohort="trade_case_study:v1",
+            learning_trace=trace,
+        )
+        assert value == 0.0
+
+    assert len(calls) == 2
+    assert {(call["candidate_key"], call["assignment_key"]) for call in calls} == {
+        (
+            "ranker_member:snapshot-1:member-1:spot",
+            "ranker_member:snapshot-1:member-1:spot",
+        ),
+    }
+    assert {call["outcome_candidate_key"] for call in calls} == {
+        "ranker_member:snapshot-1:member-1:spot:4h",
+    }
+    assert {row["assignment_unit_key"] for row in trace} == {
+        "ranker_member:snapshot-1:member-1:spot",
+    }
+
+
+def test_ranker_case_without_exact_entry_mark_fails_closed(monkeypatch):
+    import aletheia.agents.paper_trader_ranker as ranker
+
+    calls = []
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", lambda _opp: None)
+    monkeypatch.setattr(
+        "aletheia.learning.experiments.apply_numeric_treatment",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    trace = []
+
+    value = ranker._authorized_ranker_delta(
+        path_id="ranker_case_score",
+        proposed_delta=-7.0,
+        opp={"id": "opportunity-no-mark", "symbol": "BTC/USDT"},
+        direction="long",
+        scope={"symbol": "BTC/USDT", "direction": "long"},
+        source_cohort="trade_case_study:v1",
+        learning_trace=trace,
+    )
+
+    assert value == 0.0
+    assert calls == []
+    assert trace[0]["reason"] == "ranker_entry_mark_unavailable"
+
+
+def test_ranker_case_member_without_snapshot_fails_closed(monkeypatch):
+    import aletheia.agents.paper_trader_ranker as ranker
+
+    calls = []
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
+    monkeypatch.setattr(
+        "aletheia.learning.experiments.apply_numeric_treatment",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    trace = []
+
+    value = ranker._authorized_ranker_delta(
+        path_id="ranker_case_score",
+        proposed_delta=-7.0,
+        opp={
+            "id": "opportunity-missing-snapshot",
+            "symbol": "BTC/USDT",
+            "market": "spot",
+            "universe_member_id": "member-without-snapshot",
+        },
+        direction="long",
+        scope={"symbol": "BTC/USDT", "direction": "long"},
+        source_cohort="trade_case_study:v1",
+        learning_trace=trace,
+    )
+
+    assert value == 0.0
+    assert calls == []
+    assert trace[0]["reason"] == "ranker_candidate_identity_unavailable"
+
+
+def test_ranker_case_shadow_forces_nonzero_adapter_result_to_baseline(monkeypatch):
+    import aletheia.agents.paper_trader_ranker as ranker
+    from aletheia.learning.experiments import InfluenceDecision
+
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
+    monkeypatch.setattr(
+        "aletheia.learning.experiments.apply_numeric_treatment",
+        lambda **_: InfluenceDecision(
+            7.0,
+            True,
+            "treatment",
+            "unexpected_authorized_delta",
+            "hypothesis",
+            "experiment",
+            "exposure",
+        ),
+    )
+    trace = []
+    value = ranker._authorized_ranker_delta(
+        path_id="ranker_case_score",
+        proposed_delta=-7.0,
+        opp={
+            "id": "opportunity-shadow",
+            "symbol": "BTC/USDT",
+            "metadata": json.dumps({"learning_candidate_key": "member-2"}),
+        },
+        direction="long",
+        scope={"symbol": "BTC/USDT", "direction": "long"},
+        source_cohort="trade_case_study:v1",
+        learning_trace=trace,
+    )
+
+    assert value == 0.0
+    assert trace[0]["actual_delta"] == 0.0
+    assert trace[0]["reason"] == "shadow_zero_delta_enforced"
+
+
+def test_ranker_case_valid_candidate_persists_one_shadow_exposure(monkeypatch):
+    import aletheia.agents.paper_trader_ranker as ranker
+    from aletheia.learning import experiments
+    from aletheia.storage.sqlite import get_db
+    monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
+
+    opp = {
+        "id": "opportunity-carrier",
+        "symbol": "BTC/USDT",
+        "market": "spot",
+        "universe_snapshot_id": "snapshot-1",
+        "universe_member_id": "member-1",
+        "metadata": json.dumps({"learning_candidate_key": "unrelated-universe-key"}),
+    }
+    kwargs = dict(
+        path_id="ranker_case_score",
+        proposed_delta=0.0,
+        opp=opp,
+        direction="long",
+        scope={"symbol": "BTC/USDT", "direction": "long"},
+        source_cohort="trade_case_study:v1",
+        learning_trace=[],
+        entry_price_usd=100.0,
+    )
+    first = ranker._authorized_ranker_delta(**kwargs)
+    second = ranker._authorized_ranker_delta(**kwargs)
+
+    assert first == second == 0.0
+    assert second is not None
+    ranker_key = "ranker_member:snapshot-1:member-1:spot"
+    row = get_db().execute(
+        "SELECT * FROM learning_exposures WHERE path_id=? AND candidate_key=?",
+        ("ranker_case_score", ranker_key),
+    ).fetchone()
+    assert row["assignment_unit_key"] == ranker_key
+    assert row["outcome_candidate_key"] == f"{ranker_key}:4h"
+    assert row["experiment_stage"] == "shadow"
+    assert json.loads(row["before_json"])["value"] == 0.0
+    assert json.loads(row["after_json"])["value"] == 0.0
+    assert json.loads(row["manifest_json"])["authority_applied"] is False
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM learning_exposures WHERE path_id=? AND candidate_key=?",
+        ("ranker_case_score", ranker_key),
+    ).fetchone()[0] == 1
+
+def test_ranker_case_pairs_outcome_with_exposure(monkeypatch):
+    import aletheia.agents.paper_trader_ranker as ranker
+    from aletheia.learning.experiments import InfluenceDecision
+
+    events = []
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
+
+    def record_outcome(**kwargs):
+        events.append(("outcome", kwargs["entry_ts"]))
+        return 1
+
+    def record_exposure(**kwargs):
+        events.append(("exposure", kwargs["manifest"]["prospective_t0"]))
+        return InfluenceDecision(
+            0.0, False, "control", "baseline", "hypothesis", "experiment", "exposure"
+        )
+
+    monkeypatch.setattr(ranker, "_register_ranker_case_outcome", record_outcome)
+    monkeypatch.setattr(
+        "aletheia.learning.experiments.apply_numeric_treatment",
+        record_exposure,
+    )
+    ranker._authorized_ranker_delta(
+        path_id="ranker_case_score",
+        proposed_delta=0.0,
+        opp={
+            "id": "opportunity-order",
+            "symbol": "BTC/USDT",
+            "market": "spot",
+            "universe_snapshot_id": "snapshot-1",
+            "universe_member_id": "member-order",
+        },
+        direction="long",
+        scope={"symbol": "BTC/USDT", "direction": "long"},
+        source_cohort="trade_case_study:v1",
+        learning_trace=[],
+        entry_price_usd=100.0,
+    )
+
+    assert [event[0] for event in events] == ["exposure", "outcome"]
+    assert events[0][1] == events[1][1]
+
+
+def test_ranker_case_rolls_back_exposure_when_outcome_seed_fails(monkeypatch):
+    import aletheia.agents.paper_trader_ranker as ranker
+    from aletheia.learning import experiments
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+    monkeypatch.setattr(ranker, "_ranker_entry_mark", _fresh_ranker_mark)
+
+    def fail_seed(**_kwargs):
+        raise RuntimeError("seed failure")
+
+    monkeypatch.setattr(ranker, "_register_ranker_case_outcome", fail_seed)
+    trace = []
+
+    value = ranker._authorized_ranker_delta(
+        path_id="ranker_case_score",
+        proposed_delta=0.0,
+        opp={
+            "id": "opportunity-atomic",
+            "symbol": "BTC/USDT",
+            "market": "spot",
+            "universe_snapshot_id": "snapshot-atomic",
+            "universe_member_id": "member-atomic",
+        },
+        direction="long",
+        scope={"symbol": "BTC/USDT", "direction": "long"},
+        source_cohort="trade_case_study:v1",
+        learning_trace=trace,
+    )
+
+    assert value == 0.0
+    assert trace[0]["reason"] == "ranker_evidence_pair_unavailable"
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM learning_exposures "
+        "WHERE path_id='ranker_case_score' AND candidate_key=?",
+        ("ranker_member:snapshot-atomic:member-atomic:spot",),
+    ).fetchone()[0] == 0
 
 
 def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanner: str,

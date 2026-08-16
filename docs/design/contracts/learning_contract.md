@@ -71,7 +71,7 @@ results can influence a later trading judgment, even when it lives outside `alet
 | Operator Learning bundle | `learning/prompt_bundles.py`, `agent_shell/trading_decision.py` | consumer-wired but measurement-unsupported: the existing Opportunity 4h market return predates prompt exposure and does not measure the resulting trade/skip decision utility, so the static no-Learning prompt baseline remains active |
 | Learned guards | `knowledge/guards.py`, `analytics/guard_promotion.py` | seed/manual guards retain their static safety class. Learned guards remain observe-only because `ranker_learned_guard` is measurement-unsupported; retrospective matches alone cannot grant block/penalty authority. |
 | Trust guard chain | `trust/guard_chain.py` | pre-risk observability only; even a `block` verdict does not block execution |
-| Case/memo score | `agents/paper_trader_ranker.py`, `learning/experiments.py` | retrospective case/memo values are diagnostics only. Both ranker paths are measurement-unsupported, create no formal exposure, and return static zero deltas. |
+| Case/memo score | `agents/paper_trader_ranker.py`, `learning/experiments.py` | retrospective case/memo values remain diagnostics. `ranker_case_score` has candidate-level Shadow measurement with exact 4h outcomes and a static zero delta; `ranker_memo_score` remains measurement-unsupported, creates no formal exposure, and returns the static zero delta. |
 | Advisory retrieval | `knowledge/router.py`, `knowledge/retrieval.py` | ordinary advisory context remains available; the separate `observer_advisory_bundle` treatment hook is measurement-unsupported and injects no experimental bundle |
 | Persona learning | `trading/persona.py`, `persona_rollout.py`, `sizing_policy.py`, `trading/sizing.py` | clean realized history can calculate a bounded proposal, but `persona_sizing` is measurement-unsupported and actual notional remains the static baseline; downstream Risk caps remain unchanged |
 | Exit diagnostics | `analytics/trade_path.py`, `analytics/exit_policy_advisor.py`, `analytics/exit_breakeven_shadow.py` | exact-protected stop exits may prove favorable excursion before the materialized first stop trigger; retrospective advice can only recommend the prospective paired shadow, and neither path mutates an exit or grants Learning authority |
@@ -90,7 +90,8 @@ outcome adapter, can be measured, or can receive authority. Current measured mat
 | `universe_family_calibration` | wired | full-arm canonical outcomes plus mirror/fallback | supported; owner-gated paper lifecycle | code-level causal loop complete; a qualified natural contribution verdict is empirical runtime evidence, not a contract guarantee |
 | `operator_learning_bundle` | wired | current Opportunity outcome is not causal to the later prompt treatment | unsupported | static no-Learning prompt baseline; no new formal exposure or authority |
 | `observer_advisory_bundle` | wired | unsupported | unsupported | static observer context; no experimental bundle or exposure |
-| `ranker_case_score`, `ranker_memo_score`, `ranker_factor_filter` | wired | unsupported | unsupported | static score/filter baseline |
+| `ranker_case_score` | wired | exact candidate-level 4h `filter_candidate_outcomes` | supported for Shadow measurement; Paper authority unsupported | candidate-level Shadow measurement; actual Ranker delta remains `0` |
+| `ranker_memo_score`, `ranker_factor_filter` | wired | unsupported | unsupported | static score/filter baseline |
 | `ranker_learned_guard` | wired | unsupported | unsupported | learned guards observe only; seed/manual guards are a separate static safety class |
 | `risk_lesson_constraint` | wired | unsupported | unsupported | automatic lessons advisory-only; manual/owner lessons are non-experimental static constraints |
 | `persona_sizing` | wired | unsupported | unsupported | learned proposal may be displayed; applied notional remains static |
@@ -99,17 +100,22 @@ outcome adapter, can be measured, or can receive authority. Current measured mat
 | `filter_parameter_tune` | unwired skeleton | unsupported | unsupported | deferred design; no override table, producer or authority |
 | `lco-v1` owner projection | read-only consumer | reads existing ledger | no mutation authority | summary, registry-backed measured-path UI and current-route performance contract implemented; drill-down/full workbench incomplete |
 
-Only `universe_family_calibration` is currently `measurement_supported`. Adding another path requires its own causal unit, outcome adapter,
-behavior contract, failure semantics, focused tests and a new from-zero observation window; changing
-only a registry flag is forbidden.
+Both `universe_family_calibration` and `ranker_case_score` are currently
+`measurement_supported`. UFC remains the only Paper-authority-capable path;
+`ranker_case_score` is explicitly Shadow-only (`paper_authority_supported=False`)
+and its Ranker delta remains zero. Any further path requires its own causal unit,
+outcome adapter, behavior contract, failure semantics, focused tests and a new
+from-zero observation window; changing only a registry flag is forbidden.
 
 ### 1.3 Current-path caveats
 
 Existing tests prove individual behaviors and safety tripwires; they do not prove that the full
 loop contributes positively. Current behavior has these contract-relevant limitations:
 
-- factor, ranker, learned-guard, automatic Risk-lesson, Observer-bundle and persona hooks remain
-  behaviorally static because they are measurement-unsupported; they create no formal exposure;
+- factor, ranker memo, learned-guard, automatic Risk-lesson, Observer-bundle and persona hooks remain
+  behaviorally static because they are measurement-unsupported; `ranker_case_score` has an exact
+  Shadow measurement contract but no Paper authority and no Ranker delta, and unsupported paths
+  create no formal exposure;
 - continuous Universe curves, pessimistic missing-data scoring, and factor-level
   suppression remain accepted future design only; the step scorer and static
   factor fallback remain authoritative until the separate safeguards in
@@ -281,10 +287,11 @@ loop contributes positively. Current behavior has these contract-relevant limita
   artifact/funnel counts remain activity-oriented and cannot establish
   contribution.
 
-The shared measured lifecycle is current for Universe calibration; every other declared path uses
-its static fallback. Broader path expansion, overlap arbitration, artifact demotion and skill/filter evolution
-remain proposed in [`learning_evolution.md`](../proposals/learning_evolution.md); they are not
-normative current behavior.
+The shared measured lifecycle is current for Universe calibration. `ranker_case_score` has a separate
+candidate-level Shadow evaluator and exact outcome adapter, but remains Paper-authority-unwired and
+uses the static Ranker baseline. Every other declared path uses its static fallback. Broader path
+expansion, overlap arbitration, artifact demotion and skill/filter evolution remain proposed in
+[`learning_evolution.md`](../proposals/learning_evolution.md); they are not normative current behavior.
 
 ### 1.4 Phase 0 measurement-integrity baseline
 

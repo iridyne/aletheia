@@ -13,7 +13,8 @@ import json
 from typing import Any
 
 from aletheia.config.loader import load_config
-from aletheia.learning.cohorts import SUPPORTED_PATH_ID, SUPPORTED_PATH_IDS
+from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
+from aletheia.learning.registry import get_learning_path
 from aletheia.learning.control import global_learning_refreeze_reason
 from aletheia.learning.ledger import (
     get_latest_measurement_verdict,
@@ -52,6 +53,11 @@ TRIAL_ADMISSION_REASONS = frozenset({
     SHADOW_TRIAL_INTEGRITY_REASON,
 })
 _AUTHORITY_RETIRED_PATH_IDS = frozenset({"operator_learning_bundle"})
+
+def _non_negative_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 @dataclass(frozen=True)
@@ -130,6 +136,9 @@ def resolve_learning_authority(
         return blocked("measurement_unsupported")
     if path_id not in SUPPORTED_PATH_IDS:
         return _legacy_authority_adapter(experiment, current_policy_epoch, blocked)
+    path = get_learning_path(path_id)
+    if not path.paper_authority_supported:
+        return blocked("authority_unwired")
     expected_horizon = str(hypothesis.get("target_horizon") or "")
     if not expected_horizon:
         return blocked("hypothesis_horizon_missing")
@@ -138,8 +147,8 @@ def resolve_learning_authority(
             path_id=path_id,
             policy_epoch=current_policy_epoch,
             target_horizon=expected_horizon,
-            outcome_contract_version="v1",
-            metric_version=METRIC_VERSION,
+            outcome_contract_version=path.outcome_contract_version,
+            metric_version=path.metric_version,
         )
     except (KeyError, ValueError):
         return blocked("behavior_contract_unavailable")
@@ -150,8 +159,8 @@ def resolve_learning_authority(
             stage=experiment.stage,
             hypothesis_id=experiment.hypothesis_id,
             target_horizon=expected_horizon,
-            outcome_contract_version="v1",
-            metric_version=METRIC_VERSION,
+            outcome_contract_version=path.outcome_contract_version,
+            metric_version=path.metric_version,
             behavior_contract_hash=expected_behavior_contract_hash,
             inference_role="monitoring",
         )
@@ -164,6 +173,8 @@ def resolve_learning_authority(
                 expected_horizon=expected_horizon,
                 expected_behavior_contract_hash=expected_behavior_contract_hash,
                 expected_hypothesis_id=experiment.hypothesis_id,
+                expected_outcome_contract_version=path.outcome_contract_version,
+                expected_metric_version=path.metric_version,
             ) is None
             and str(measurement.get("verdict") or "") in {"negative", "invalid"}
         ):
@@ -183,8 +194,8 @@ def resolve_learning_authority(
         stage=experiment.stage,
         hypothesis_id=experiment.hypothesis_id,
         target_horizon=expected_horizon,
-        outcome_contract_version="v1",
-        metric_version=METRIC_VERSION,
+        outcome_contract_version=path.outcome_contract_version,
+        metric_version=path.metric_version,
         behavior_contract_hash=expected_behavior_contract_hash,
         inference_role="monitoring",
     )
@@ -202,6 +213,8 @@ def resolve_learning_authority(
             expected_horizon=expected_horizon,
             expected_behavior_contract_hash=expected_behavior_contract_hash,
             expected_hypothesis_id=experiment.hypothesis_id,
+            expected_outcome_contract_version=path.outcome_contract_version,
+            expected_metric_version=path.metric_version,
         )
         if identity_reason:
             return blocked(identity_reason, current)
@@ -292,6 +305,8 @@ def resolve_learning_authority(
             expected_horizon=expected_horizon,
             expected_behavior_contract_hash=expected_behavior_contract_hash,
             expected_hypothesis_id=experiment.hypothesis_id,
+            expected_outcome_contract_version=path.outcome_contract_version,
+            expected_metric_version=path.metric_version,
         ) or (
             None
             if activation_is_admitted_trial
@@ -309,6 +324,8 @@ def resolve_learning_authority(
         current, experiment.stage, current_policy_epoch, expected_horizon=expected_horizon,
         expected_behavior_contract_hash=expected_behavior_contract_hash,
         expected_hypothesis_id=experiment.hypothesis_id,
+        expected_outcome_contract_version=path.outcome_contract_version,
+        expected_metric_version=path.metric_version,
     )
     if identity_reason:
         return blocked(identity_reason, current)
@@ -463,14 +480,7 @@ def _underpowered_current_stage_authority_allowed(verdict: dict[str, Any]) -> bo
         isinstance(metrics, dict)
         and metrics.get("harm_state") == "indeterminate"
         and metrics.get("harm_indeterminate_reason") == "insufficient_samples"
-        and not bool(metrics.get("breached"))
     )
-
-
-def _non_negative_int(value: Any) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return None
-    return value
 
 
 def measurement_identity_reason(
@@ -481,11 +491,13 @@ def measurement_identity_reason(
     expected_horizon: str | None,
     expected_behavior_contract_hash: str | None = None,
     expected_hypothesis_id: str | None = None,
+    expected_outcome_contract_version: str = "v1",
+    expected_metric_version: str = METRIC_VERSION,
 ) -> str | None:
     """Return a reason when a verdict does not describe *this* experiment now.
 
     Identity only: stage, hypothesis, policy epoch, horizon, outcome contract,
-    metric version and behavior contract.  The harm gate lives in
+    metric version and behavior contract. The harm gate lives in
     ``measurement_harm_block_reason`` so that it cannot block a safety action.
     """
     try:
@@ -504,7 +516,8 @@ def measurement_identity_reason(
     policy_epoch = verdict.get("policy_epoch") or metrics.get("policy_epoch")
     target_horizon = verdict.get("target_horizon") or metrics.get("horizon")
     outcome_contract_version = (
-        verdict.get("outcome_contract_version") or metrics.get("outcome_contract_version")
+        verdict.get("outcome_contract_version")
+        or metrics.get("outcome_contract_version")
     )
     metric_version = verdict.get("metric_version") or metrics.get("metric_version")
     behavior_contract_hash = verdict.get("behavior_contract_hash")
@@ -522,9 +535,9 @@ def measurement_identity_reason(
         return "stale_policy_epoch"
     if expected_horizon is not None and str(target_horizon) != expected_horizon:
         return "horizon_mismatch"
-    if str(outcome_contract_version) != "v1":
+    if str(outcome_contract_version) != expected_outcome_contract_version:
         return "outcome_contract_mismatch"
-    if str(metric_version) != METRIC_VERSION:
+    if str(metric_version) != expected_metric_version:
         return "metric_version_mismatch"
     if str(behavior_contract_hash) != expected_behavior_contract_hash:
         return "behavior_contract_mismatch"

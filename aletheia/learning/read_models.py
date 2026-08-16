@@ -11,7 +11,7 @@ from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
 from aletheia.learning.behavior_contracts import current_behavior_contract_hash
 from aletheia.learning.experiments import current_policy_epoch
 from aletheia.learning.ledger import get_latest_measurement_verdict
-from aletheia.learning.registry import LEARNING_PATHS
+from aletheia.learning.registry import LEARNING_PATHS, get_learning_path
 from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.learning.fixed_look import (
     get_consumed_fixed_look_verdict,
@@ -312,6 +312,14 @@ def _project_experiment(
 ) -> dict[str, Any]:
     path_id = str(row.get("path_id") or "")
     try:
+        path = get_learning_path(path_id)
+    except KeyError:
+        path = None
+    outcome_contract_version = (
+        path.outcome_contract_version if path is not None else _OUTCOME_CONTRACT_VERSION
+    )
+    metric_version = path.metric_version if path is not None else METRIC_VERSION
+    try:
         policy_epoch = current_policy_epoch(
             path_id,
             persist_config_migrations=False,
@@ -331,8 +339,8 @@ def _project_experiment(
                 path_id=path_id,
                 policy_epoch=policy_epoch,
                 target_horizon=str(row.get("target_horizon") or ""),
-                outcome_contract_version=_OUTCOME_CONTRACT_VERSION,
-                metric_version=METRIC_VERSION,
+                outcome_contract_version=outcome_contract_version,
+                metric_version=metric_version,
             )
         except (KeyError, ValueError):
             behavior_reason = "behavior_contract_unavailable"
@@ -346,8 +354,8 @@ def _project_experiment(
             stage=str(row.get("stage") or ""),
             hypothesis_id=str(row.get("hypothesis_id") or ""),
             target_horizon=str(row.get("target_horizon") or ""),
-            outcome_contract_version=_OUTCOME_CONTRACT_VERSION,
-            metric_version=METRIC_VERSION,
+            outcome_contract_version=outcome_contract_version,
+            metric_version=metric_version,
             behavior_contract_hash=behavior_contract_hash,
             inference_role="monitoring",
         )
@@ -355,6 +363,8 @@ def _project_experiment(
         row,
         policy_epoch=policy_epoch,
         behavior_contract_hash=behavior_contract_hash,
+        expected_outcome_contract_version=outcome_contract_version,
+        expected_metric_version=metric_version,
     )
     current = current_verdict is not None
     mismatch = None if current else historical_mismatch
@@ -410,7 +420,16 @@ def _project_experiment(
         lifecycle_reason,
         stage=stage,
     )
-    inference_block_reason = None
+    authority_blocked_recommendation = (
+        path is not None
+        and not path.paper_authority_supported
+        and recommended in {"promote_stage", "admit_trial"}
+    )
+    if authority_blocked_recommendation:
+        recommended = "hold"
+    inference_block_reason = (
+        "authority_unwired" if authority_blocked_recommendation else None
+    )
     if recommended == "promote_stage" and lifecycle_verdict is not None:
         inference_block_reason = inference_authority_reason(lifecycle_verdict)
         if inference_block_reason is not None:
@@ -448,6 +467,8 @@ def _project_experiment(
                 expected_horizon=str(row.get("target_horizon") or ""),
                 expected_behavior_contract_hash=behavior_contract_hash,
                 expected_hypothesis_id=str(row.get("hypothesis_id") or ""),
+                expected_outcome_contract_version=outcome_contract_version,
+                expected_metric_version=metric_version,
             ) or trial_admission_measurement_block_reason(
                 current_verdict,
                 required_per_arm=_safe_int(row.get("min_samples_per_arm")) or 1,
@@ -522,8 +543,9 @@ def _project_experiment(
         "current_identity": {
             "policy_epoch": policy_epoch,
             "target_horizon": row.get("target_horizon"),
-            "outcome_contract_version": _OUTCOME_CONTRACT_VERSION,
-            "metric_version": METRIC_VERSION,
+            "outcome_contract_version": outcome_contract_version,
+            "metric_version": metric_version,
+            "statistical_unit": metrics.get("statistical_unit"),
             "behavior_contract_hash": behavior_contract_hash,
             "code_commit": boot_commit,
             "matches_running_cohort": current,
@@ -804,13 +826,19 @@ def _project_path(path: Any) -> dict[str, Any]:
         "path_id": path.path_id,
         "producer": path.producer,
         "consumer": path.consumer,
+        "supported": path.measurement_supported,
         "consumer_wired": bool(path.consumer_wired),
         "settings_supported": bool(path.settings_supported),
         "measurement_supported": bool(path.measurement_supported),
+        "paper_authority_supported": bool(path.paper_authority_supported),
         "authority": path.authority,
         "allowed_effects": list(path.allowed_effects),
         "fallback": path.fallback,
         "outcome_source": path.outcome_source,
+        "behavior_contract_version": path.behavior_contract_version,
+        "outcome_contract_version": path.outcome_contract_version,
+        "metric_version": path.metric_version,
+        "statistical_unit": path.statistical_unit,
     }
 
 
@@ -819,6 +847,8 @@ def _identity_mismatch(
     *,
     policy_epoch: str | None,
     behavior_contract_hash: str | None,
+    expected_outcome_contract_version: str = _OUTCOME_CONTRACT_VERSION,
+    expected_metric_version: str = METRIC_VERSION,
 ) -> str | None:
     if not row.get("verdict_id"):
         return "no_persisted_measurement"
@@ -832,9 +862,13 @@ def _identity_mismatch(
         (
             "outcome_contract_version_mismatch",
             row.get("verdict_outcome_contract_version"),
-            _OUTCOME_CONTRACT_VERSION,
+            expected_outcome_contract_version,
         ),
-        ("metric_version_mismatch", row.get("verdict_metric_version"), METRIC_VERSION),
+        (
+            "metric_version_mismatch",
+            row.get("verdict_metric_version"),
+            expected_metric_version,
+        ),
         (
             "behavior_contract_mismatch",
             row.get("verdict_behavior_contract_hash"),

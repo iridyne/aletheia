@@ -80,6 +80,15 @@ class TestKnowledgeRankerBoundary:
             "get_current_regime",
             lambda: MarketRegime(state="bull", confidence=0.8),
         )
+        monkeypatch.setattr(
+            ranker,
+            "_ranker_entry_mark",
+            lambda _opp: {
+                "price": 100.0,
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+                "venue": "bitget",
+            },
+        )
         monkeypatch.setattr(ranker, "_memo_scoring", lambda *_: 0.0)
 
         monkeypatch.setattr(ranker, "_lesson_penalty", lambda *_: -12.0)
@@ -101,7 +110,7 @@ class TestKnowledgeRankerBoundary:
         assert case_trace["proposed_delta"] == -12.0
         assert case_trace["actual_delta"] == 0.0
         assert case_trace["authority_applied"] is False
-        assert case_trace["reason"] == "measurement_unsupported"
+        assert case_trace["reason"] == "baseline:experiment_stage_not_paper"
 
 
 class TestFamilyScorecardAccumulates:

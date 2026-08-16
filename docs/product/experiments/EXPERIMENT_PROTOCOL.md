@@ -133,19 +133,26 @@ to its classification.
 
 ## 5. Current measured Learning protocol
 
-The registry is the executable path inventory. Only
-`universe_family_calibration` is currently measurement-supported.
+The registry is the executable path inventory. Both
+`universe_family_calibration` and `ranker_case_score` are currently
+measurement-supported; UFC is the only Paper-authority-capable path.
+
+`ranker_case_score` uses an exact candidate-level 4h
+`filter_candidate_outcomes` contract and remains Shadow-only. It does not
+emit UFC trial-integrity readiness or grant Paper authority.
 
 ### Shadow measurement
 
 - assignment is stable at the complete candidate cluster;
 - treatment and control both run the static baseline while stage=`shadow`;
-- first-trial integrity readiness requires 10 complete assignment units per arm
-  inside at least one continuous eligible UTC market day, persisted under
-  `ufc-shadow-trial-integrity/v1`;
-- the 50-per-arm and seven-consecutive-market-day contract is retained for each
-  Paper stage's economic promotion evidence, not spent waiting on two identical
-  Shadow baselines;
+- for UFC, first-trial integrity readiness requires 10 complete assignment units
+  per arm inside at least one continuous eligible UTC market day, persisted under
+  `ufc-shadow-trial-integrity/v1`; `ranker_case_score` deliberately emits no UFC
+  trial-readiness metadata because it has no Paper authority;
+- for UFC, the 50-per-arm and seven-consecutive-market-day contract is retained
+  for each Paper stage's economic promotion evidence, not spent waiting on two
+  identical Shadow baselines; ranker-case Shadow remains a separate candidate-
+  level measurement window;
 - canonical/fallback outcome disagreement invalidates evidence;
 - all measurement identities must match the current cohort;
 - underpowered harm is `indeterminate` and cannot authorize;

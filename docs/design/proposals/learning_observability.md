@@ -78,7 +78,7 @@ surface look shipped.
 | Capability | Current fact | LCO target |
 | --- | --- | --- |
 | Measured ledger | Eight permanent Learning tables exist | Read-only typed projection |
-| Measurable path | `universe_family_calibration` has a current causal cohort adapter; Operator remains consumer-wired but measurement-unsupported | Explicit `measurement_supported` per path |
+| Measurable path | `universe_family_calibration` and `ranker_case_score` have current causal cohort adapters; UFC is Paper-authority-capable and Ranker Case is Shadow-only | Explicit `measurement_supported` per path |
 | Current metric | `universe_family_calibration_cluster_allocation_utility_v10` | Current identity plus append-only metric history |
 | Cohort inspection | Internal aggregate inspection exists | Bounded aggregate plus selected cluster detail |
 | Lifecycle inspection | Internal read function returns progress, recommendation and job health | Public sanitized projection |

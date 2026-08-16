@@ -215,15 +215,18 @@ def semantic_truth_failures() -> list[str]:
             and measurement_supported.value is True
         ):
             measured_paths.append(str(node.args[0].value))
-    if measured_paths != ["universe_family_calibration"]:
+    if measured_paths != ["universe_family_calibration", "ranker_case_score"]:
         failures.append(
-            "aletheia/learning/registry.py: expected exactly one measurement-supported "
-            f"path (universe_family_calibration), found {measured_paths}"
+            "aletheia/learning/registry.py: expected exactly two "
+            "measurement-supported paths (universe_family_calibration and "
+            f"ranker_case_score), found {measured_paths}"
         )
 
     current_truth = {
         Path("docs/design/contracts/learning_contract.md"):
-            "Only `universe_family_calibration` is currently `measurement_supported`.",
+            "UFC remains the only Paper-authority-capable path;",
+        Path("docs/product/experiments/EXPERIMENT_PROTOCOL.md"):
+            "Both\n`universe_family_calibration` and `ranker_case_score` are currently",
         Path("docs/product/CAPABILITY_GROUND_TRUTH.md"):
             "LN-08 | Learned guard generation and observation",
         Path("docs/product/capability-integrity/CAPABILITY_INVENTORY.md"):

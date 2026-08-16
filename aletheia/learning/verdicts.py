@@ -13,7 +13,7 @@ from statistics import fmean
 from typing import Any
 
 from aletheia.learning.cohorts import ContributionCohort, CohortSample
-
+from aletheia.learning.registry import get_learning_path, metric_version_for_path
 
 METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v10"
 RANDOMIZATION_INFERENCE_VERSION = "conditional-randomization-itt/v1"
@@ -118,12 +118,10 @@ def evaluate_cohort(
 
     if cohort.invalid_reasons:
         return result("invalid", _reason("invalid evidence", cohort.invalid_reasons))
-    shadow_trial_required = min(SHADOW_TRIAL_MIN_SAMPLES_PER_ARM, required)
-    shadow_trial_days = min(
-        SHADOW_TRIAL_MIN_MARKET_DAYS,
-        max(0, int(cohort.experiment.min_market_days)),
-    )
     rejection_reasons = harm_metrics["treatment_authority_rejection_reasons"]
+    paper_authority_supported = get_learning_path(
+        cohort.hypothesis.path_id
+    ).paper_authority_supported
     full_measurement_ready = (
         len(assigned_treatment) >= required
         and len(raw_control) >= required
@@ -131,8 +129,14 @@ def evaluate_cohort(
         and len(qualified_assigned_treatment) >= required
         and len(control) >= required
     )
+    shadow_trial_required = min(SHADOW_TRIAL_MIN_SAMPLES_PER_ARM, required)
+    shadow_trial_days = min(
+        SHADOW_TRIAL_MIN_MARKET_DAYS,
+        max(0, int(cohort.experiment.min_market_days)),
+    )
     shadow_trial_integrity_ready = (
-        cohort.experiment.stage == "shadow"
+        paper_authority_supported
+        and cohort.experiment.stage == "shadow"
         and not full_measurement_ready
         and not authority_applied_treatment
         and not actual_treatment
@@ -142,25 +146,26 @@ def evaluate_cohort(
         and not bool(harm_metrics["breached"])
         and set(rejection_reasons) == {"experiment_stage_not_paper"}
     )
-    harm_metrics["trial_integrity_readiness"] = {
-        "contract_version": SHADOW_TRIAL_INTEGRITY_CONTRACT,
-        "required_per_arm": shadow_trial_required,
-        "required_market_days": shadow_trial_days,
-        "qualified_treatment_n": len(qualified_assigned_treatment),
-        "qualified_control_n": len(control),
-        "current_consecutive_market_days": int(
-            coverage["current_consecutive_market_days"]
-        ),
-        "status": (
-            "not_applicable"
-            if cohort.experiment.stage != "shadow"
-            else "mature"
-            if full_measurement_ready
-            else "ready"
-            if shadow_trial_integrity_ready
-            else "collecting"
-        ),
-    }
+    if paper_authority_supported:
+        harm_metrics["trial_integrity_readiness"] = {
+            "contract_version": SHADOW_TRIAL_INTEGRITY_CONTRACT,
+            "required_per_arm": shadow_trial_required,
+            "required_market_days": shadow_trial_days,
+            "qualified_treatment_n": len(qualified_assigned_treatment),
+            "qualified_control_n": len(control),
+            "current_consecutive_market_days": int(
+                coverage["current_consecutive_market_days"]
+            ),
+            "status": (
+                "not_applicable"
+                if cohort.experiment.stage != "shadow"
+                else "mature"
+                if full_measurement_ready
+                else "ready"
+                if shadow_trial_integrity_ready
+                else "collecting"
+            ),
+        }
     if shadow_trial_integrity_ready:
         # Shadow runs the static baseline in both arms, so waiting for the full
         # confirmatory window cannot estimate treatment contribution.  This
@@ -181,6 +186,10 @@ def evaluate_cohort(
             "insufficient unique prospective treatment/control samples in continuous window",
         )
     assert delta is not None
+    if not actual_treatment and not paper_authority_supported:
+        # A Shadow-only path has no behavior contrast. Its randomized arms are
+        # useful for identity/settlement checks, never for causal harm claims.
+        return result("insufficient_data", "no_actual_intervention")
     if harm_metrics["breached"]:
         return result("negative", _reason("harm gate breached", harm_metrics["breach_reasons"]))
     if not actual_treatment:
@@ -554,8 +563,15 @@ def _harm_metrics(
     control_selected_member_n = sum(
         sample.selected_member_count for sample in control
     )
+    try:
+        metric_version = metric_version_for_path(cohort.hypothesis.path_id)
+    except (AttributeError, KeyError):
+        metric_version = METRIC_VERSION
     return {
-        "metric_version": METRIC_VERSION,
+        "metric_version": metric_version,
+        "statistical_unit": get_learning_path(
+            cohort.hypothesis.path_id
+        ).statistical_unit,
         "stage": cohort.experiment.stage,
         "iid_bootstrap": "retired_overlapping_horizon_outcomes",
         "policy_epoch": cohort.key.policy_epoch,

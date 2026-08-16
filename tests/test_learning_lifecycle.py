@@ -1397,6 +1397,28 @@ def test_owner_admitted_trial_keeps_authority_while_current_stage_is_underpowere
     assert promoted["stage"] == "paper_25"
 
 
+def test_owner_admitted_trial_blocks_when_harm_measurement_is_unavailable(monkeypatch):
+    hypothesis, _parent, _activation, successor = _promoted_successor(monkeypatch)
+    current = _measurement(
+        hypothesis,
+        successor,
+        "insufficient_data",
+        reason="MAE unavailable for eligible outcomes",
+        assigned_treatment_n=10,
+        actual_intervention_treatment_n=10,
+        unique_control_n=10,
+        harm_state="indeterminate",
+        harm_indeterminate_reason="mae_unavailable",
+    )
+    from aletheia.learning.authority import resolve_learning_authority
+
+    decision = resolve_learning_authority(hypothesis.path_id, successor, "epoch-a")
+
+    assert decision.authorized is False
+    assert decision.reason == "harm_gate_indeterminate"
+    assert decision.current_verdict_id == current.verdict_id
+
+
 def test_owner_admitted_trial_still_withdraws_immediately_on_harm_breach(monkeypatch):
     hypothesis, _parent, _activation, successor = _promoted_successor(monkeypatch)
     current = _measurement(

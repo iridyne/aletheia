@@ -758,7 +758,18 @@ def test_policy_epoch_and_outcome_contract_isolate_cohorts():
     assert {(item["policy_epoch"], item["outcome_contract_version"]) for item in metrics} == {
         ("epoch-a", "v1"), ("epoch-b", "v1"), ("epoch-b", "v2"),
     }
-    assert {verdict.delta for verdict in verdicts} == {1.0, 2.0, 3.0}
+    verdict_by_identity = {
+        (verdict.policy_epoch, verdict.outcome_contract_version): verdict
+        for verdict in verdicts
+    }
+    assert verdict_by_identity[("epoch-a", "v1")].delta == 1.0
+    assert verdict_by_identity[("epoch-b", "v1")].delta == 2.0
+    mismatched = verdict_by_identity[("epoch-b", "v2")]
+    assert mismatched.verdict == "invalid"
+    assert mismatched.delta is None
+    assert json.loads(mismatched.harm_metrics_json)["invalid_reasons"] == {
+        "outcome_contract_version_mismatch": 2,
+    }
 
 
 def test_same_behavior_contract_pools_exposures_across_commits():
@@ -1234,6 +1245,47 @@ def test_underpowered_harm_is_indeterminate_and_does_not_claim_a_breach():
     assert metrics["harm_required_per_arm"] == 50
     assert metrics["breached"] is False
     assert metrics["breach_reasons"] == []
+
+
+def test_ranker_shadow_no_intervention_precedes_harm_breach(monkeypatch):
+    hypothesis, experiment = _experiment(
+        min_samples=1,
+        path_id="ranker_case_score",
+        stage="paper_10",
+    )
+    for index in range(1):
+        for assignment, net in (("treatment", -10.0), ("control", 10.0)):
+            candidate = f"ranker-shadow-{assignment}-{index}"
+            _exposure(
+                experiment,
+                hypothesis,
+                candidate=candidate,
+                assignment=assignment,
+                authority_applied=False,
+                authority_reason="experiment_stage_not_paper",
+                behavior_changed=False,
+                contract="ranker-case-filter-candidate/v1",
+            )
+            _filter_outcome(candidate, net=net, mae=-10.0)
+
+    from aletheia.learning import verdicts
+
+    monkeypatch.setattr(
+        verdicts,
+        "_harm_metrics",
+        lambda *_args, **_kwargs: {
+            "breached": True,
+            "breach_reasons": ["synthetic_harm_breach"],
+            "harm_state": "breached",
+        },
+    )
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert metrics["breached"] is True
+    assert verdict.verdict == "insufficient_data"
+    assert verdict.reason == "no_actual_intervention"
 
 
 def test_loss_rate_gate_is_reachable_after_fifty_samples_per_arm():
