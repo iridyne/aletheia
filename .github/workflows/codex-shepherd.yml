@@ -196,12 +196,17 @@ jobs:
             };
 
             const holdForOwner = async (reason, message) => {
+              const alreadyHeld = pullRequest.labels.some(({name}) => name === 'do-not-auto-merge');
+              if (!alreadyHeld) {
+                await github.rest.issues.addLabels({
+                  ...context.repo,
+                  issue_number: pullRequest.number,
+                  labels: ['do-not-auto-merge'],
+                });
+              }
+              // A terminal marker suppresses duplicate prose only. It must never
+              // suppress restoring the safety label after an `unlabeled` event.
               if (exactHeadHalt) return;
-              await github.rest.issues.addLabels({
-                ...context.repo,
-                issue_number: pullRequest.number,
-                labels: ['do-not-auto-merge'],
-              });
               await postComment(
                 `${message}\n\n` +
                 `Codex Cloud repair is not authorized to push back to this repository yet, so ` +
