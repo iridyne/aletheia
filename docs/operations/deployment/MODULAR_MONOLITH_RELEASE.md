@@ -53,6 +53,38 @@ GitHub-owned Node setup Action. This preserves the repository's restrictive
 Action allowlist; it does not require a PAT or an allowlist exception for a
 third-party Action.
 
+## Operator release SOP
+
+Run this only when the accumulated changes justify a Runtime update or a new
+behavior/evidence epoch. Generating the candidate is one operator action;
+Release Please owns the version, changelog, candidate PR, and CI handoff:
+
+```sh
+gh workflow run release-please.yml --repo iridite/aletheia --ref master
+```
+
+The equivalent UI action is **Actions -> Prepare and tag releases -> Run
+workflow**, with `master` selected. Do not hand-edit a target version: the
+Conventional Commit history and `release-please-config.json` determine the next
+SemVer. In the current pre-1.0 policy, a `feat` produces the next minor version;
+a batch containing only `fix`/`perf` release notes produces the next patch.
+
+The release is complete only after the generated `autorelease: pending` PR is
+observed as merged, its matching immutable `vX.Y.Z` tag exists, and the GitHub
+Release exists. A queued or green CI run, an open or mergeable PR, or enabled
+auto-merge is not completion. Before the candidate merges, rerun the initial
+command if `master` advances or candidate preparation fails. After it merges,
+recover a failed tag/GitHub Release follow-up by rerunning that failed
+`repository_dispatch` workflow run in the Actions UI or with:
+
+```sh
+gh run rerun <run-id> --repo iridite/aletheia
+```
+
+Do not use the initial dispatch for post-merge recovery, bypass the candidate
+hold or exact-SHA CI, or tag the commit manually. Fedora deployment and
+Observation-window admission remain separate downstream gates.
+
 The bootstrap manifest remains at the last released product version (`0.5.0`).
 The first generated release PR promotes the version, changelog, and manifest
 together to the reviewed `0.6.0` baseline; only its merge may create `v0.6.0`.
