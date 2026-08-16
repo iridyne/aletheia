@@ -154,7 +154,9 @@ def test_codex_shepherd_only_holds_latest_actionable_ci_failure() -> None:
 
     # Select the newest Aletheia CI run first. Filtering to completed runs before
     # sorting would let an older failure win while a newer exact-head run is active.
-    latest_ci = script[script.index("const latestCiRun") : script.index("if (context.eventName === 'issue_comment')")]
+    latest_ci_start = script.index("const latestCiRun")
+    latest_ci_end = script.index("if (context.eventName === 'issue_comment')", latest_ci_start)
+    latest_ci = script[latest_ci_start:latest_ci_end]
     assert ".filter((run) => run.name === 'Aletheia CI')" in latest_ci
     assert "run.status === 'completed'" not in latest_ci
 
