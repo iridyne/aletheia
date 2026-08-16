@@ -39,8 +39,10 @@ def test_exact_diff_clean_connector_comment_reenters_auto_merge_without_manual_t
     assert "expected_base_sha: expectedBaseSha" in schedule_script
 
     update_script = update["steps"][0]["with"]["script"]
-    assert "comments(last: 100)" not in update_script
+    # A bounded GraphQL comment view may remain for non-authority metadata, but all
+    # review authorization must use the exhaustive REST comment pagination below.
     assert "github.paginate(github.rest.issues.listComments" in update_script
+    assert "pullRequest.comments.nodes" not in update_script
     assert "github.paginate(github.rest.pulls.listReviews" in update_script
     assert "per_page: 100" in update_script
     assert "const resolveReviewedCommitSha" in update_script
@@ -57,16 +59,24 @@ def test_ordinary_auto_merge_authority_is_bound_to_current_head_and_merge_base()
     update = workflow["jobs"]["update"]
     update_script = update["steps"][0]["with"]["script"]
 
-    concurrency_group = update["concurrency"]["group"]
-    assert "github.event.client_payload.pull_request_number" in concurrency_group
-    assert "github.event.client_payload.expected_head_sha" in concurrency_group
-    assert "github.event.client_payload.expected_base_sha" in concurrency_group
+    # Keep one serialized mutation lane per PR. A stale callback must dispatch a
+    # replacement for the current exact diff before returning, so cancellation
+    # cannot strand the current head/base without a successor.
+    assert update["concurrency"] == {
+        "group": "auto-merge-update-${{ github.event.client_payload.pull_request_number }}",
+        "cancel-in-progress": "true",
+    }
+    assert "const dispatchCurrentUpdate" in update_script
+    assert update_script.count("await dispatchCurrentUpdate();") == 2
+    assert "currentMetadata.head.sha" in update_script
+    assert "expected_base_sha: currentMergeBaseSha" in update_script
+
     assert "operation === 'enable'" in update_script
     assert "expected merge-base SHA must be a 40-character lowercase Git object ID" in update_script
     assert "github.rest.repos.compareCommitsWithBasehead" in update_script
     assert "const currentBaseSha = comparison.merge_base_commit.sha" in update_script
     assert "currentBaseSha !== expectedBaseSha" in update_script
-    assert "a newer exact-diff event must authorize the merge" in update_script
+    assert "dispatching current exact-diff authorization" in update_script
     assert "pullRequest.headRefOid !== expectedHeadSha" in update_script
     assert "merge-authority workflow changes require an explicit manual merge" in update_script
     assert "sha: expectedHeadSha" in update_script
