@@ -361,7 +361,8 @@ def test_review_checks_cover_each_language_without_release_builds() -> None:
     assert "python scripts/check_docs.py" in commands
     assert "npm run lint" in commands
     assert "npm test" in commands
-    assert "npx tsc -b" in commands
+    assert "npm run build" in commands
+    assert "test_frontend_ci_build_contract.py" in commands
     assert "rustup target add" in commands
     assert "x86_64-unknown-linux-musl" in commands
     assert "sudo" not in commands
