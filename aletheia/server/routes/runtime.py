@@ -101,12 +101,12 @@ def _require_confirm(payload: RuntimeTransitionRequest, op: str) -> None:
 
 
 @router.get("")
-async def runtime_status():
+def runtime_status():
     return _service().status()
 
 
 @router.post("/candidate")
-async def runtime_candidate(payload: RuntimeCandidateRequest):
+def runtime_candidate(payload: RuntimeCandidateRequest):
     svc = _service()
     return _handle_transition(
         lambda: _with_status_fields(
@@ -129,7 +129,7 @@ async def runtime_candidate(payload: RuntimeCandidateRequest):
 
 
 @router.post("/shadow")
-async def runtime_shadow(payload: RuntimeTransitionRequest):
+def runtime_shadow(payload: RuntimeTransitionRequest):
     svc = _service()
     runtime_id = payload.runtime_id or (svc.status().get("candidate") or {}).get("runtime_id")
     if not runtime_id:
@@ -157,7 +157,7 @@ async def runtime_shadow(payload: RuntimeTransitionRequest):
 
 
 @router.post("/promote")
-async def runtime_promote(payload: RuntimeTransitionRequest):
+def runtime_promote(payload: RuntimeTransitionRequest):
     _require_confirm(payload, "promote")
     svc = _service()
     runtime_id = payload.runtime_id or (svc.status().get("candidate") or {}).get("runtime_id")
@@ -174,7 +174,7 @@ async def runtime_promote(payload: RuntimeTransitionRequest):
 
 
 @router.post("/drain")
-async def runtime_drain(payload: RuntimeTransitionRequest):
+def runtime_drain(payload: RuntimeTransitionRequest):
     if payload.force:
         _require_confirm(payload, "drain_force")
     svc = _service()
@@ -192,7 +192,7 @@ async def runtime_drain(payload: RuntimeTransitionRequest):
 
 
 @router.post("/rollback")
-async def runtime_rollback(payload: RuntimeTransitionRequest):
+def runtime_rollback(payload: RuntimeTransitionRequest):
     _require_confirm(payload, "rollback")
     svc = _service()
     return _handle_transition(
@@ -206,7 +206,7 @@ async def runtime_rollback(payload: RuntimeTransitionRequest):
 
 
 @router.get("/events")
-async def runtime_events(limit: int = 100):
+def runtime_events(limit: int = 100):
     return _service().list_events(limit=limit)
 
 
@@ -216,7 +216,9 @@ async def runtime_events_stream(limit: int = 100, once: bool = False):
         seen_ids: set[str] = set()
         idle_poll_secs = 1.0
         max_idle_poll_secs = 8.0
-        backlog = _service().list_events(limit=limit)
+        backlog = await asyncio.to_thread(
+            lambda: _service().list_events(limit=limit)
+        )
         for event in reversed(backlog):
             seen_ids.add(event["id"])
             yield _sse_block("runtime_event", event)
@@ -225,7 +227,9 @@ async def runtime_events_stream(limit: int = 100, once: bool = False):
 
         while True:
             await asyncio.sleep(idle_poll_secs)
-            latest = _service().list_events(limit=limit)
+            latest = await asyncio.to_thread(
+                lambda: _service().list_events(limit=limit)
+            )
             fresh = [event for event in reversed(latest) if event["id"] not in seen_ids]
             for event in fresh:
                 seen_ids.add(event["id"])

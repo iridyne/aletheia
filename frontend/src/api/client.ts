@@ -18,6 +18,17 @@ type RemoteControlTokenStorageResult =
 	| { ok: true }
 	| { ok: false; error: string };
 
+export interface SoftwareUpdateStatus {
+	ok: boolean;
+	reason?: string;
+	mode?: string;
+	has_update?: boolean;
+	behind_count?: number;
+	current_commit?: string;
+	remote_commit?: string;
+	branch?: string;
+}
+
 function setRemoteControlToken(token: string): RemoteControlTokenStorageResult {
 	try {
 		const normalized = token.trim();
@@ -2171,15 +2182,9 @@ export const api = {
 
 	// Self-upgrade (on-demand code update)
 	getUpdateStatus: () =>
-		fetchJson<{
-			ok: boolean;
-			reason?: string;
-			has_update?: boolean;
-			behind_count?: number;
-			current_commit?: string;
-			remote_commit?: string;
-			branch?: string;
-		}>("/update/status"),
+		fetchJson<SoftwareUpdateStatus>("/update/status"),
+	checkForUpdate: () =>
+		post<SoftwareUpdateStatus>("/update/check"),
 	applyUpdate: () =>
 		post<{
 			applied: boolean;

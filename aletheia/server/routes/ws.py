@@ -41,11 +41,13 @@ _REGULAR_QUERIES: dict[str, str] = {
     "opportunities":   "SELECT MAX(created_at) FROM opportunities",
     "proposals":       "SELECT MAX(created_at) FROM trade_proposals",
     "pi_decisions":    "SELECT MAX(created_at) FROM pi_decisions",
-    "positions":       "SELECT MAX(COALESCE(updated_at, created_at)) FROM positions",
+    "positions":       (
+        "SELECT revision FROM position_realtime_revision WHERE singleton=1"
+    ),
     "fills":           "SELECT MAX(filled_at) FROM fills",
     "risk_decisions":  "SELECT MAX(created_at) FROM risk_decisions",
     # Market data
-    "market_snapshots": "SELECT MAX(timestamp) FROM market_snapshots",
+    "market_snapshots": "SELECT MAX(snapshot_at) FROM market_snapshots",
     "collector_health": "SELECT MAX(COALESCE(last_finished_at, last_attempt_at)) FROM collector_health_state",
     "macro_snaps":      "SELECT MAX(observed_at) FROM macro_snapshots",
     # Portfolio

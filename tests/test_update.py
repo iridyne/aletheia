@@ -6,7 +6,9 @@ state persistence, dirty-worktree refusal, conditional dependency reinstall,
 graceful failure, CLI/API smoke, and the agent-isolation guard.
 """
 
+import asyncio
 import sqlite3
+import threading
 
 import pytest
 
@@ -343,19 +345,63 @@ def test_cli_update_check_smoke(tmp_path, monkeypatch):
     assert "[deprecated]" not in result.stderr
 
 
-async def test_api_update_status_smoke(tmp_path, monkeypatch):
+async def test_api_update_status_is_local_until_explicit_check(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import applier
-    monkeypatch.setattr(applier, "check_for_update",
-                        lambda: {"ok": True, "has_update": True, "behind_count": 1,
-                                 "current_commit": "abc", "remote_commit": "def"})
+    checks = 0
+
+    def check_for_update():
+        nonlocal checks
+        checks += 1
+        return {"ok": True, "has_update": True, "behind_count": 1,
+                "current_commit": "abc", "remote_commit": "def"}
+
+    monkeypatch.setattr(applier, "check_for_update", check_for_update)
+    monkeypatch.setattr(
+        applier,
+        "update_progress",
+        lambda: {"mode": "development", "status": "idle"},
+    )
     from httpx import AsyncClient, ASGITransport
     from aletheia.server.app import app
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        resp = await c.get("/api/update/status")
-    assert resp.status_code == 200
-    assert resp.json()["behind_count"] == 1
+        status = await c.get("/api/update/status")
+        checked = await c.post("/api/update/check")
+
+    assert status.status_code == 200
+    assert status.json()["reason"] == "update_check_required"
+    assert checked.status_code == 200
+    assert checked.json()["behind_count"] == 1
+    assert checks == 1
+
+
+async def test_api_update_check_does_not_block_the_event_loop(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.update import applier
+
+    check_started = threading.Event()
+    release_check = threading.Event()
+    released_by_loop: list[bool] = []
+
+    def blocking_check():
+        check_started.set()
+        released_by_loop.append(release_check.wait(timeout=0.5))
+        return {"ok": True, "has_update": False, "behind_count": 0}
+
+    monkeypatch.setattr(applier, "check_for_update", blocking_check)
+    from httpx import ASGITransport, AsyncClient
+    from aletheia.server.app import app
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        request = asyncio.create_task(client.post("/api/update/check"))
+        assert await asyncio.wait_for(asyncio.to_thread(check_started.wait), timeout=1.0)
+        release_check.set()
+        response = await request
+
+    assert response.status_code == 200
+    assert released_by_loop == [True]
 
 
 def test_update_not_agent_callable(tmp_path, monkeypatch):

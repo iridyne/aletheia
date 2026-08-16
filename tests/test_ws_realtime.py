@@ -5,6 +5,42 @@ import asyncio
 import pytest
 
 
+def test_fingerprint_queries_match_the_migrated_schema():
+    from aletheia.server.routes import ws as ws_routes
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    queries = (
+        *ws_routes._REGULAR_QUERIES.values(),
+        *ws_routes._ALERT_DB_QUERIES.values(),
+    )
+    for query in queries:
+        db.execute(query).fetchone()
+
+
+def test_position_fingerprint_changes_on_insert_and_update():
+    from aletheia.server.routes import ws as ws_routes
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    query = {"positions": ws_routes._REGULAR_QUERIES["positions"]}
+    empty = ws_routes._run_fingerprints(query)["positions"]
+    db.execute(
+        "INSERT INTO positions "
+        "(id,symbol,market_type,direction,quantity,entry_price,execution_mode) "
+        "VALUES ('position-ws','BTC/USDT','spot','long',1,100,'paper_internal')"
+    )
+    inserted = ws_routes._run_fingerprints(query)["positions"]
+    db.execute(
+        "UPDATE positions SET current_price=101 WHERE id='position-ws'"
+    )
+    updated = ws_routes._run_fingerprints(query)["positions"]
+
+    assert empty == "0"
+    assert inserted != empty
+    assert updated != inserted
+
+
 @pytest.mark.asyncio
 async def test_realtime_hub_shares_one_sampler_pair_across_clients(monkeypatch):
     from aletheia.server.routes import ws as ws_routes

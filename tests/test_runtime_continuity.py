@@ -1,8 +1,24 @@
 import sqlite3
+import inspect
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from typer.testing import CliRunner
+
+
+def test_runtime_sync_io_handlers_are_threadpool_eligible():
+    from aletheia.server.routes import runtime
+
+    handlers = (
+        runtime.runtime_status,
+        runtime.runtime_candidate,
+        runtime.runtime_shadow,
+        runtime.runtime_promote,
+        runtime.runtime_drain,
+        runtime.runtime_rollback,
+        runtime.runtime_events,
+    )
+    assert all(not inspect.iscoroutinefunction(handler) for handler in handlers)
 
 
 def test_current_runtime_record_is_read_only_and_does_not_migrate(tmp_path, monkeypatch):

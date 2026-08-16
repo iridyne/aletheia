@@ -302,7 +302,7 @@ async def _pi_daemon_loop(
     # A process restart clears in-memory producer notifications.  Re-arm one
     # ordinary wake only when durable queued work exists, so a restart cannot
     # strand candidates until the next producer happens to emit a signal.
-    if _has_pending_signal_work():
+    if await asyncio.to_thread(_has_pending_signal_work):
         _generic_wake_pending = True
         _signal_event.set()
         logger.info("pi_daemon: rearmed durable pending queue at startup")
@@ -314,7 +314,7 @@ async def _pi_daemon_loop(
         # or forget the promised re-evaluation time.
         loop = asyncio.get_running_loop()
         retry_delay = _next_retry_delay(loop.time())
-        defer_delay = _next_pending_signal_defer_delay()
+        defer_delay = await asyncio.to_thread(_next_pending_signal_defer_delay)
         if retry_delay is not None and retry_delay <= 0:
             triggered_by = "retry"
         elif defer_delay is not None and defer_delay <= 0:
@@ -597,7 +597,7 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
         action = result.get("action", "unknown") if isinstance(result, dict) else "unknown"
         remaining = result.get("pending_queue_remaining") if isinstance(result, dict) else None
         if remaining is None:
-            remaining = 1 if _has_pending_signal_work() else 0
+            remaining = 1 if await asyncio.to_thread(_has_pending_signal_work) else 0
         logger.info("pi_daemon: evaluation done (trigger=%s, action=%s)", triggered_by, action)
         is_portfolio_review = bool(evaluation_params.get("wake_batches"))
         review_completed = (

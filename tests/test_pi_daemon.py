@@ -1,6 +1,7 @@
 """Tests for the System Operator event-driven daemon (pi_daemon.py)."""
 
 import asyncio
+import threading
 from unittest.mock import patch
 
 import pytest
@@ -455,6 +456,46 @@ async def test_defer_deadline_wakes_before_heartbeat_without_early_evaluation():
     assert len(triggers) == 1
     assert triggers[0][0] == "defer_deadline"
     assert triggers[0][1] >= due_at
+
+
+async def test_durable_defer_probe_does_not_block_the_event_loop():
+    """A slow production-size SQLite read must not stall unrelated requests."""
+    probe_started = threading.Event()
+    release_probe = threading.Event()
+    released_by_loop: list[bool] = []
+
+    def blocking_defer_probe():
+        probe_started.set()
+        released_by_loop.append(release_probe.wait(timeout=0.5))
+        return None
+
+    with patch.object(pd, "_has_pending_signal_work", return_value=False), patch.object(
+        pd, "_next_pending_signal_defer_delay", side_effect=blocking_defer_probe
+    ):
+        task = start_pi_daemon(
+            loop=asyncio.get_running_loop(),
+            debounce_sec=0.0,
+            cooldown_sec=0.0,
+            heartbeat_sec=999.0,
+        )
+
+        async def release_after_probe_starts():
+            while not probe_started.is_set():
+                await asyncio.sleep(0)
+            release_probe.set()
+            while not released_by_loop:
+                await asyncio.sleep(0)
+
+        try:
+            await asyncio.wait_for(release_after_probe_starts(), timeout=1.0)
+            assert released_by_loop == [True]
+        finally:
+            release_probe.set()
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 async def test_overdue_defer_does_not_spin_while_runtime_is_paused():

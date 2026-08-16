@@ -50,12 +50,23 @@ def _same_origin_dashboard_confirmation(request: Request) -> bool:
 
 
 @router.get("/status")
-async def update_status():
+def update_status():
+    """Return local state only; network checks require an explicit human action."""
+
+    return {
+        **applier.update_progress(),
+        "ok": False,
+        "reason": "update_check_required",
+    }
+
+
+@router.post("/check")
+def update_check():
     return applier.check_for_update()
 
 
 @router.get("/progress")
-async def update_progress():
+def update_progress():
     """Read durable local update progress without repeating a network check."""
 
     return applier.update_progress()
@@ -71,7 +82,7 @@ class ContinuityBody(BaseModel):
 
 
 @router.post("/apply")
-async def update_apply(request: Request, body: ApplyBody = ApplyBody()):
+def update_apply(request: Request, body: ApplyBody = ApplyBody()):
     _reject_preview_update()
     if not body.confirm and not _same_origin_dashboard_confirmation(request):
         return {
@@ -97,7 +108,7 @@ async def update_apply(request: Request, body: ApplyBody = ApplyBody()):
 
 
 @router.post("/rollback")
-async def update_rollback(request: Request, body: ApplyBody = ApplyBody()):
+def update_rollback(request: Request, body: ApplyBody = ApplyBody()):
     _reject_preview_update()
     if not body.confirm and not _same_origin_dashboard_confirmation(request):
         return {
@@ -119,7 +130,7 @@ async def update_rollback(request: Request, body: ApplyBody = ApplyBody()):
 
 
 @router.post("/continuity")
-async def update_continuity(body: ContinuityBody = ContinuityBody()):
+def update_continuity(body: ContinuityBody = ContinuityBody()):
     """Legacy development-checkout candidate materialisation.
 
     Installed packaged updates do not create Git worktrees. They stage signed payloads and

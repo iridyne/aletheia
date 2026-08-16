@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 30)
+        f"aletheia-sqlite-v{version}" for version in range(2, 31)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v29"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v30"
     connection.close()
 
 
@@ -310,6 +310,38 @@ def test_position_protection_v9_migration_is_additive_and_idempotent():
         "trg_position_protection_triggers_no_update",
         "trg_position_protection_triggers_no_delete",
     } <= triggers
+    connection.close()
+
+
+def test_position_realtime_revision_v30_tracks_every_change():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        "CREATE TABLE positions (id TEXT PRIMARY KEY, current_price REAL)"
+    )
+
+    migrations._apply_position_realtime_revision_v30(connection)
+    migrations._apply_position_realtime_revision_v30(connection)
+    connection.execute("INSERT INTO positions (id,current_price) VALUES ('p1',100)")
+    connection.execute("UPDATE positions SET current_price=101 WHERE id='p1'")
+    connection.execute("DELETE FROM positions WHERE id='p1'")
+
+    assert connection.execute(
+        "SELECT revision FROM position_realtime_revision WHERE singleton=1"
+    ).fetchone()[0] == 3
+    triggers = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='trigger' AND name LIKE 'trg_positions_realtime_revision_%'"
+        )
+    }
+    assert triggers == {
+        "trg_positions_realtime_revision_insert",
+        "trg_positions_realtime_revision_update",
+        "trg_positions_realtime_revision_delete",
+    }
     connection.close()
 
 
@@ -575,7 +607,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         "VALUES (?, ?, ?, '2026-08-08T00:00:00+00:00', 0)",
         [
             (step.migration_id, step.checksum, step.schema_version)
-            for step in migrations._MIGRATIONS[:-6]
+            for step in migrations._MIGRATIONS[:-7]
         ],
     )
     connection.commit()
@@ -593,8 +625,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260815_0028_learning_dreaming_backlog_v29",
-        "aletheia-sqlite-v29",
+        "20260816_0029_position_realtime_revision_v30",
+        "aletheia-sqlite-v30",
     )
     health_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(learning_job_health)")

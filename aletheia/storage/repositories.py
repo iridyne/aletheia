@@ -1281,22 +1281,25 @@ def next_pending_signal_defer_deadline(now_iso: str | None = None) -> str | None
     if now_iso is None:
         now_iso = datetime.now(timezone.utc).isoformat()
     row = get_db().execute(
+        "WITH ranked_operator_events AS ("
+        " SELECT rowid AS event_rowid,event_kind,queue_snapshot_json,created_at,"
+        "  json_extract(queue_snapshot_json,'$.opportunity_id') AS opportunity_id,"
+        "  ROW_NUMBER() OVER ("
+        "   PARTITION BY json_extract(queue_snapshot_json,'$.opportunity_id')"
+        "   ORDER BY julianday(created_at) DESC,rowid DESC"
+        "  ) AS recency"
+        " FROM operator_evaluation_events"
+        " WHERE json_extract(queue_snapshot_json,'$.opportunity_id') IS NOT NULL"
+        ") "
         "SELECT json_extract(defer.queue_snapshot_json,'$.defer_until') AS deadline "
-        "FROM operator_evaluation_events defer "
+        "FROM ranked_operator_events defer "
         "JOIN opportunities source ON source.id="
-        " json_extract(defer.queue_snapshot_json,'$.opportunity_id') "
-        "WHERE defer.event_kind LIKE 'operator_decision_deferred_%' "
+        " defer.opportunity_id "
+        "WHERE defer.recency=1 "
+        "AND defer.event_kind LIKE 'operator_decision_deferred_%' "
         "AND datetime(json_extract(defer.queue_snapshot_json,'$.defer_until')) IS NOT NULL "
         "AND source.status IN ('queued','reviewed') "
         "AND datetime(source.valid_until)>datetime(?) "
-        "AND NOT EXISTS ("
-        " SELECT 1 FROM operator_evaluation_events newer "
-        " WHERE json_extract(newer.queue_snapshot_json,'$.opportunity_id')="
-        "       json_extract(defer.queue_snapshot_json,'$.opportunity_id') "
-        " AND (julianday(newer.created_at)>julianday(defer.created_at) "
-        "      OR (julianday(newer.created_at)=julianday(defer.created_at) "
-        "          AND newer.rowid>defer.rowid))"
-        ") "
         "AND EXISTS ("
         " SELECT 1 FROM pi_decisions pending "
         " WHERE pending.opportunity_id=source.id "
@@ -1317,7 +1320,7 @@ def next_pending_signal_defer_deadline(now_iso: str | None = None) -> str | None
         "           AND final.rowid>pending.rowid))"
         " )"
         ") "
-        "ORDER BY datetime(deadline) ASC, defer.rowid ASC LIMIT 1",
+        "ORDER BY datetime(deadline) ASC, defer.event_rowid ASC LIMIT 1",
         (now_iso,),
     ).fetchone()
     return str(row["deadline"]) if row is not None and row["deadline"] else None
