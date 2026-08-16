@@ -31,34 +31,21 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - name: Drive exact-head Codex review and repair
+      - name: Drive exact-head Codex review state
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
         with:
           retries: 3
           script: |
             const connectorLogin = 'chatgpt-codex-connector';
+            const shepherdLogin = 'github-actions[bot]';
             const normalizeLogin = (login) => String(login || '').replace(/\[bot\]$/, '');
             const isConnectorLogin = (login) => normalizeLogin(login) === connectorLogin;
-            const maxRepairAttempts = 3;
-            const repairMarkerPattern =
-              /<!-- aletheia-codex-shepherd head=([0-9a-f]{40}) kind=(finding|ci) attempt=(\d+) -->/g;
             const reviewMarkerPattern =
               /<!-- aletheia-codex-shepherd head=([0-9a-f]{40}) kind=review -->/g;
             const haltMarkerPattern =
               /<!-- aletheia-codex-shepherd halt head=([0-9a-f]{40}) reason=([a-z-]+) -->/g;
             const reviewedCommitPattern = /Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i;
-            const controlledPrefixes = [
-              'aletheia/risk/',
-              'aletheia/execution/',
-              'aletheia/exchanges/bitget/auth.py',
-              'aletheia/exchanges/bitget/client.py',
-              'aletheia/config/secrets.py',
-              'aletheia/agent_runtime/permissions.py',
-              'aletheia/agent_runtime/tool_registry.py',
-              'aletheia/agent_shell/registry.py',
-              'aletheia/files/jsonl.py',
-              'aletheia/server/routes/live.py',
-            ];
+            const repairableCiConclusions = new Set(['failure', 'timed_out']);
 
             const resolveReviewedCommitSha = async (body) => {
               const match = String(body || '').match(reviewedCommitPattern);
@@ -145,12 +132,7 @@ jobs:
               }
             }
 
-            const [changedFiles, issueComments, allReviews] = await Promise.all([
-              github.paginate(github.rest.pulls.listFiles, {
-                ...context.repo,
-                pull_number: pullRequest.number,
-                per_page: 100,
-              }),
+            const [issueComments, allReviews] = await Promise.all([
               github.paginate(github.rest.issues.listComments, {
                 ...context.repo,
                 issue_number: pullRequest.number,
@@ -163,13 +145,6 @@ jobs:
               }),
             ]);
 
-            const touchesControlledPath = changedFiles.some(({filename, previous_filename}) =>
-              [filename, previous_filename]
-                .filter(Boolean)
-                .some((path) => controlledPrefixes.some((prefix) =>
-                  prefix.endsWith('/') ? path.startsWith(prefix) : path === prefix
-                ))
-            );
             const exactHeadReviews = allReviews.filter((review) =>
               isConnectorLogin(review.user?.login) &&
               review.commit_id === expectedHeadSha &&
@@ -177,17 +152,14 @@ jobs:
               review.state !== 'DISMISSED'
             );
 
-            const markers = issueComments.flatMap((comment) => {
+            // Only GitHub Actions may create Shepherd control markers. PR participants
+            // must not be able to suppress a review or forge a terminal hold by prose.
+            const shepherdComments = issueComments.filter(
+              (comment) => comment.user?.login === shepherdLogin
+            );
+            const markers = shepherdComments.flatMap((comment) => {
               const body = String(comment.body || '');
               const found = [];
-              for (const match of body.matchAll(repairMarkerPattern)) {
-                found.push({
-                  type: 'repair',
-                  head: match[1],
-                  kind: match[2],
-                  attempt: Number.parseInt(match[3], 10),
-                });
-              }
               for (const match of body.matchAll(reviewMarkerPattern)) {
                 found.push({type: 'review', head: match[1]});
               }
@@ -196,8 +168,6 @@ jobs:
               }
               return found;
             });
-            const repairMarkers = markers.filter(({type}) => type === 'repair');
-            const exactHeadRepair = repairMarkers.some(({head}) => head === expectedHeadSha);
             const exactHeadReviewRequest = markers.some(
               ({type, head}) => type === 'review' && head === expectedHeadSha
             );
@@ -228,7 +198,7 @@ jobs:
               });
             };
 
-            const haltForBudget = async () => {
+            const holdForOwner = async (reason, message) => {
               if (exactHeadHalt) return;
               await github.rest.issues.addLabels({
                 ...context.repo,
@@ -236,33 +206,10 @@ jobs:
                 labels: ['do-not-auto-merge'],
               });
               await postComment(
-                `Codex Shepherd stopped after ${maxRepairAttempts} autonomous repair cycles. ` +
-                `This PR now requires owner disposition before automation can resume.\n\n` +
-                `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} reason=repair-budget -->`
-              );
-            };
-
-            const requestRepair = async (kind, prompt) => {
-              if (touchesControlledPath) {
-                core.info('controlled trading/trust path requires owner-scoped repair; Shepherd will not mutate it');
-                return;
-              }
-              if (exactHeadRepair || exactHeadHalt) {
-                core.info('this exact head already has an autonomous repair request or terminal hold');
-                return;
-              }
-              if (repairMarkers.length >= maxRepairAttempts) {
-                await haltForBudget();
-                return;
-              }
-              const attempt = repairMarkers.length + 1;
-              await postComment(
-                `${prompt}\n\n` +
-                `Respect AGENTS.md and keep the patch to the smallest root-cause change. ` +
-                `Do not merge the PR, do not weaken tests or safety gates, and do not change controlled ` +
-                `trading/trust paths without explicit owner scope. Push a fix to this PR branch only when ` +
-                `a code change is justified; a new head SHA is the only repair-success signal.\n\n` +
-                `<!-- aletheia-codex-shepherd head=${expectedHeadSha} kind=${kind} attempt=${attempt} -->`
+                `${message}\n\n` +
+                `Codex Cloud repair is not authorized to push back to this repository yet, so ` +
+                `the Shepherd fails closed instead of claiming an autonomous repair.\n\n` +
+                `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} reason=${reason} -->`
               );
             };
 
@@ -286,9 +233,10 @@ jobs:
 
             if (context.eventName === 'pull_request_review') {
               if (exactHeadReviews.length === 0) return;
-              await requestRepair(
-                'finding',
-                `@codex fix all review findings on exact head \`${expectedHeadSha}\`.`
+              await holdForOwner(
+                'review-finding',
+                `Codex reported exact-head review findings on \`${expectedHeadSha}\`. ` +
+                `Owner disposition or a write-capable repair executor is required.`
               );
               return;
             }
@@ -301,38 +249,48 @@ jobs:
                 per_page: 100,
               });
               return runs
-                .filter((run) => run.name === 'Aletheia CI' && run.status === 'completed')
+                .filter((run) => run.name === 'Aletheia CI')
                 .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0] || null;
             };
 
             if (context.eventName === 'issue_comment') {
               if (!connectorCleanExactHead || exactHeadReviews.length !== 0) return;
               const run = await latestCiRun();
-              if (!run || run.conclusion === 'success' || run.conclusion === 'cancelled') return;
-              await requestRepair(
-                'ci',
-                `@codex fix the CI failures on exact head \`${expectedHeadSha}\`. ` +
-                `Aletheia CI run ${run.id} concluded \`${run.conclusion}\`; inspect the failing checks ` +
-                `and change code only for a reproducible repository defect.`
+              if (
+                !run ||
+                run.status !== 'completed' ||
+                !repairableCiConclusions.has(run.conclusion)
+              ) {
+                return;
+              }
+              await holdForOwner(
+                'ci-failure',
+                `Aletheia CI run ${run.id} concluded \`${run.conclusion}\` on exact head ` +
+                `\`${expectedHeadSha}\` after a clean Codex review. A write-capable repair executor ` +
+                `is required.`
               );
               return;
             }
 
             if (context.eventName === 'workflow_run') {
               const run = context.payload.workflow_run;
-              if (run.conclusion === 'success' || run.conclusion === 'cancelled') return;
+              if (!repairableCiConclusions.has(run.conclusion)) return;
               if (exactHeadReviews.length !== 0) {
-                core.info('exact-head review findings exist; review repair path owns this head');
+                await holdForOwner(
+                  'review-finding',
+                  `Codex findings already exist on exact head \`${expectedHeadSha}\`; review repair ` +
+                  `takes precedence over CI repair.`
+                );
                 return;
               }
               if (!connectorCleanExactHead) {
                 core.info('CI failed before exact-head Codex completion; wait for the Connector callback');
                 return;
               }
-              await requestRepair(
-                'ci',
-                `@codex fix the CI failures on exact head \`${expectedHeadSha}\`. ` +
-                `Aletheia CI run ${run.id} concluded \`${run.conclusion}\`; inspect the failing checks ` +
-                `and change code only for a reproducible repository defect.`
+              await holdForOwner(
+                'ci-failure',
+                `Aletheia CI run ${run.id} concluded \`${run.conclusion}\` on exact head ` +
+                `\`${expectedHeadSha}\` after a clean Codex review. A write-capable repair executor ` +
+                `is required.`
               );
             }
