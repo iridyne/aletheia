@@ -12,17 +12,112 @@ on:
   workflow_run:
     workflows: [Aletheia CI]
     types: [completed]
+  repository_dispatch:
+    types: [codex_shepherd_update]
 
 permissions:
   contents: read
 
-concurrency:
-  group: codex-shepherd-${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
-  cancel-in-progress: false
-
 jobs:
-  shepherd:
-    name: Codex PR shepherd
+  # pull_request_target can safely inspect trusted base-repository metadata, but this
+  # repository's GITHUB_TOKEN cannot mutate PR comments/labels from that event even
+  # when Issues: write is requested (GitHub returns 403). Keep the trigger-facing job
+  # dispatch-only, then perform PR-side mutations from a repository_dispatch run.
+  schedule:
+    name: Schedule Codex shepherd update
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (
+        github.event_name == 'pull_request_review' &&
+        (
+          github.event.review.user.login == 'chatgpt-codex-connector' ||
+          github.event.review.user.login == 'chatgpt-codex-connector[bot]'
+        )
+      ) ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        (
+          github.event.comment.user.login == 'chatgpt-codex-connector' ||
+          github.event.comment.user.login == 'chatgpt-codex-connector[bot]'
+        )
+      ) ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.event == 'pull_request'
+      )
+    permissions:
+      contents: write
+      pull-requests: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Dispatch trusted Shepherd update
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
+        with:
+          retries: 3
+          script: |
+            const connectorLogin = 'chatgpt-codex-connector';
+            const normalizeLogin = (login) => String(login || '').replace(/\[bot\]$/, '');
+            const isConnectorLogin = (login) => normalizeLogin(login) === connectorLogin;
+            const payload = context.payload;
+            let pullRequestNumbers = [];
+
+            if (context.eventName === 'pull_request_target') {
+              pullRequestNumbers = [payload.pull_request?.number].filter(Boolean);
+            } else if (context.eventName === 'pull_request_review') {
+              if (!isConnectorLogin(payload.review?.user?.login)) return;
+              pullRequestNumbers = [payload.pull_request?.number].filter(Boolean);
+            } else if (context.eventName === 'issue_comment') {
+              if (
+                !payload.issue?.pull_request ||
+                !isConnectorLogin(payload.comment?.user?.login)
+              ) {
+                return;
+              }
+              pullRequestNumbers = [payload.issue.number];
+            } else if (context.eventName === 'workflow_run') {
+              const run = payload.workflow_run;
+              if (run?.event !== 'pull_request') return;
+              pullRequestNumbers = [...new Set((run.pull_requests || []).map(({number}) => number))];
+              if (pullRequestNumbers.length !== 1) {
+                core.info(`expected one pull request for CI run, found ${pullRequestNumbers.length}`);
+                return;
+              }
+            }
+
+            for (const pullRequestNumber of [...new Set(pullRequestNumbers)]) {
+              const {data: pullRequest} = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: pullRequestNumber,
+              });
+              if (
+                pullRequest.state !== 'open' ||
+                pullRequest.base.ref !== 'master' ||
+                pullRequest.draft ||
+                pullRequest.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
+                pullRequest.head.ref.startsWith('release-please--branches--master')
+              ) {
+                continue;
+              }
+              await github.rest.repos.createDispatchEvent({
+                ...context.repo,
+                event_type: 'codex_shepherd_update',
+                client_payload: {
+                  pull_request_number: pullRequest.number,
+                  expected_head_sha: pullRequest.head.sha,
+                  source_event: context.eventName,
+                  source_action: String(payload.action || payload.workflow_run?.conclusion || ''),
+                },
+              });
+            }
+
+  apply:
+    name: Apply Codex shepherd update
+    if: >-
+      github.event_name == 'repository_dispatch' &&
+      github.event.sender.login == 'github-actions[bot]' &&
+      github.event.action == 'codex_shepherd_update'
     permissions:
       actions: read
       contents: read
@@ -30,6 +125,9 @@ jobs:
       pull-requests: read
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    concurrency:
+      group: codex-shepherd-update-${{ github.event.client_payload.pull_request_number }}
+      cancel-in-progress: true
     steps:
       - name: Drive exact-head Codex review state
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
@@ -41,20 +139,31 @@ jobs:
             const shepherdPath = '.github/workflows/codex-shepherd.yml';
             const normalizeLogin = (login) => String(login || '').replace(/\[bot\]$/, '');
             const isConnectorLogin = (login) => normalizeLogin(login) === connectorLogin;
-            const reviewTriggerActions = new Set([
-              'opened',
-              'reopened',
-              'ready_for_review',
-              'edited',
-              'synchronize',
-              'unlabeled',
-            ]);
+            const reviewedCommitPattern = /Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i;
             const reviewMarkerPattern =
               /<!-- aletheia-codex-shepherd head=([0-9a-f]{40}) kind=review -->/g;
             const haltMarkerPattern =
               /<!-- aletheia-codex-shepherd halt head=([0-9a-f]{40}) reason=([a-z-]+) -->/g;
-            const reviewedCommitPattern = /Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i;
             const repairableCiConclusions = new Set(['failure', 'timed_out']);
+            const request = context.payload.client_payload || {};
+            const pullRequestNumber = Number.parseInt(String(request.pull_request_number || ''), 10);
+            const expectedHeadSha = String(request.expected_head_sha || '');
+            const sourceEvent = String(request.source_event || '');
+
+            if (!Number.isInteger(pullRequestNumber) || pullRequestNumber <= 0) {
+              throw new Error('pull request number must be a positive integer');
+            }
+            if (!/^[0-9a-f]{40}$/.test(expectedHeadSha)) {
+              throw new Error('expected head SHA must be a 40-character lowercase Git object ID');
+            }
+            if (!new Set([
+              'pull_request_target',
+              'pull_request_review',
+              'issue_comment',
+              'workflow_run',
+            ]).has(sourceEvent)) {
+              throw new Error(`unsupported Shepherd source event: ${sourceEvent}`);
+            }
 
             const resolveReviewedCommitSha = async (body) => {
               const match = String(body || '').match(reviewedCommitPattern);
@@ -71,42 +180,10 @@ jobs:
               }
             };
 
-            const pullRequestNumberForEvent = () => {
-              const payload = context.payload;
-              if (context.eventName === 'pull_request_target') {
-                return payload.pull_request?.number || null;
-              }
-              if (context.eventName === 'pull_request_review') {
-                if (!isConnectorLogin(payload.review?.user?.login)) return null;
-                return payload.pull_request?.number || null;
-              }
-              if (context.eventName === 'issue_comment') {
-                if (!payload.issue?.pull_request || !isConnectorLogin(payload.comment?.user?.login)) {
-                  return null;
-                }
-                return payload.issue.number;
-              }
-              if (context.eventName === 'workflow_run') {
-                const run = payload.workflow_run;
-                if (run?.event !== 'pull_request') return null;
-                const numbers = [...new Set((run.pull_requests || []).map(({number}) => number))];
-                if (numbers.length !== 1) {
-                  core.info(`expected one pull request for CI run, found ${numbers.length}`);
-                  return null;
-                }
-                return numbers[0];
-              }
-              return null;
-            };
-
-            const pullRequestNumber = pullRequestNumberForEvent();
-            if (!pullRequestNumber) return;
-
             const {data: pullRequest} = await github.rest.pulls.get({
               ...context.repo,
               pull_number: pullRequestNumber,
             });
-            const expectedHeadSha = pullRequest.head.sha;
             if (
               pullRequest.state !== 'open' ||
               pullRequest.base.ref !== 'master' ||
@@ -117,27 +194,11 @@ jobs:
               core.info('pull request is outside the autonomous Shepherd boundary');
               return;
             }
-
-            if (
-              context.eventName === 'pull_request_review' &&
-              context.payload.review.commit_id !== expectedHeadSha
-            ) {
-              core.info('ignoring Connector review for a superseded head');
+            if (pullRequest.head.sha !== expectedHeadSha) {
+              core.info(
+                `Shepherd request for ${expectedHeadSha} is stale; current head is ${pullRequest.head.sha}`,
+              );
               return;
-            }
-            if (
-              context.eventName === 'workflow_run' &&
-              context.payload.workflow_run.head_sha !== expectedHeadSha
-            ) {
-              core.info('ignoring CI completion for a superseded head');
-              return;
-            }
-            if (context.eventName === 'issue_comment') {
-              const reviewedCommitSha = await resolveReviewedCommitSha(context.payload.comment.body);
-              if (reviewedCommitSha !== expectedHeadSha) {
-                core.info('ignoring Connector comment for a superseded or unbound head');
-                return;
-              }
             }
 
             const [changedFiles, issueComments, allReviews] = await Promise.all([
@@ -164,9 +225,6 @@ jobs:
               review.submitted_at &&
               review.state !== 'DISMISSED'
             );
-
-            // Only GitHub Actions may create Shepherd control markers. PR participants
-            // must not be able to suppress a review or forge a terminal hold by prose.
             const shepherdComments = issueComments.filter(
               (comment) => comment.user?.login === shepherdLogin
             );
@@ -195,18 +253,16 @@ jobs:
                 body,
               });
             };
-
+            const ensureHoldLabel = async () => {
+              if (pullRequest.labels.some(({name}) => name === 'do-not-auto-merge')) return;
+              await github.rest.issues.addLabels({
+                ...context.repo,
+                issue_number: pullRequest.number,
+                labels: ['do-not-auto-merge'],
+              });
+            };
             const holdForOwner = async (reason, message) => {
-              const alreadyHeld = pullRequest.labels.some(({name}) => name === 'do-not-auto-merge');
-              if (!alreadyHeld) {
-                await github.rest.issues.addLabels({
-                  ...context.repo,
-                  issue_number: pullRequest.number,
-                  labels: ['do-not-auto-merge'],
-                });
-              }
-              // A terminal marker suppresses duplicate prose only. It must never
-              // suppress restoring the safety label after an `unlabeled` event.
+              await ensureHoldLabel();
               if (exactHeadHalt) return;
               await postComment(
                 `${message}\n\n` +
@@ -216,8 +272,6 @@ jobs:
               );
             };
 
-            // The files endpoint is capped by GitHub. If it cannot prove that the full
-            // PR file set was enumerated, no authority decision is allowed.
             if (changedFiles.length !== pullRequest.changed_files) {
               await holdForOwner(
                 'file-list-incomplete',
@@ -227,21 +281,11 @@ jobs:
               return;
             }
 
-            // This workflow is itself a PR control authority. pull_request_target executes
-            // the trusted base/master copy, so a PR cannot remove this self-change guard by
-            // editing its own candidate workflow. Re-apply the hold on `unlabeled` events.
             const changesShepherdAuthority = changedFiles.some(({filename, previous_filename}) =>
               [filename, previous_filename].includes(shepherdPath)
             );
             if (changesShepherdAuthority) {
-              const alreadyHeld = pullRequest.labels.some(({name}) => name === 'do-not-auto-merge');
-              if (!alreadyHeld) {
-                await github.rest.issues.addLabels({
-                  ...context.repo,
-                  issue_number: pullRequest.number,
-                  labels: ['do-not-auto-merge'],
-                });
-              }
+              await ensureHoldLabel();
               if (!exactHeadHalt) {
                 await postComment(
                   `Codex Shepherd authority changed on exact head \`${expectedHeadSha}\`. ` +
@@ -258,8 +302,8 @@ jobs:
               return;
             }
 
-            // Event delivery is not a queue: concurrency can replace a pending callback.
-            // Therefore every surviving callback converges from current exact-head reviews.
+            // Every dispatched callback converges from the current exact-head review
+            // state. A dropped or reordered source event therefore cannot erase a hold.
             if (exactHeadReviews.length !== 0) {
               await holdForOwner(
                 'review-finding',
@@ -284,17 +328,7 @@ jobs:
               }
             }
 
-            // GitHub concurrency can replace a pending pull_request_target run. Any
-            // surviving trusted callback therefore repairs a missing exact-head review
-            // request before doing event-specific work.
-            if (
-              !exactHeadReviewRequest &&
-              !connectorCleanExactHead &&
-              (
-                context.eventName !== 'pull_request_target' ||
-                reviewTriggerActions.has(context.payload.action)
-              )
-            ) {
+            if (!exactHeadReviewRequest && !connectorCleanExactHead) {
               await postComment(
                 `@codex review\n\n` +
                 `Please review exact head \`${expectedHeadSha}\`. Follow the repository AGENTS.md ` +
@@ -305,7 +339,7 @@ jobs:
               return;
             }
 
-            if (context.eventName === 'pull_request_target') return;
+            if (sourceEvent === 'pull_request_target') return;
 
             const latestCiRun = async () => {
               const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
@@ -319,7 +353,7 @@ jobs:
                 .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0] || null;
             };
 
-            if (context.eventName === 'issue_comment') {
+            if (sourceEvent === 'issue_comment' || sourceEvent === 'workflow_run') {
               if (!connectorCleanExactHead) return;
               const run = await latestCiRun();
               if (
@@ -332,31 +366,6 @@ jobs:
               await holdForOwner(
                 'ci-failure',
                 `Aletheia CI run ${run.id} concluded \`${run.conclusion}\` on exact head ` +
-                `\`${expectedHeadSha}\` after a clean Codex review. A write-capable repair executor ` +
-                `is required.`
-              );
-              return;
-            }
-
-            if (context.eventName === 'workflow_run') {
-              const payloadRun = context.payload.workflow_run;
-              const currentRun = await latestCiRun();
-              if (
-                !currentRun ||
-                currentRun.id !== payloadRun.id ||
-                currentRun.status !== 'completed' ||
-                !repairableCiConclusions.has(currentRun.conclusion)
-              ) {
-                core.info('ignoring stale or non-actionable CI completion callback');
-                return;
-              }
-              if (!connectorCleanExactHead) {
-                core.info('CI failed before exact-head Codex completion; wait for the Connector callback');
-                return;
-              }
-              await holdForOwner(
-                'ci-failure',
-                `Aletheia CI run ${currentRun.id} concluded \`${currentRun.conclusion}\` on exact head ` +
                 `\`${expectedHeadSha}\` after a clean Codex review. A write-capable repair executor ` +
                 `is required.`
               );
