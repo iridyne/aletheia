@@ -35,7 +35,7 @@ def setup_env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         health,
         "_observer_latest_session_run_info",
-        lambda: {"status": "completed", "latest_opp_age_min": 5.0},
+        lambda: {"status": "completed", "latest_run_age_min": 5.0},
     )
     monkeypatch.setattr(health, "_market_data_stale_minutes", lambda cfg: 5.0)
     return real_market_stale
@@ -472,7 +472,7 @@ def test_observer_no_run_is_initializing(tmp_path, monkeypatch):
 
 
 def test_observer_valid_zero_opportunities_is_healthy(tmp_path, monkeypatch):
-    """After MO completes with zero eligible opportunities, health must remain healthy."""
+    """A fresh MO run stays healthy even when it has no eligible opportunities."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import health
     monkeypatch.setattr(health, "_mo_ran_in_current_session", lambda: True)
@@ -480,12 +480,160 @@ def test_observer_valid_zero_opportunities_is_healthy(tmp_path, monkeypatch):
     monkeypatch.setattr(
         health,
         "_observer_latest_session_run_info",
-        lambda: {"status": "completed", "latest_opp_age_min": None},
+        lambda: {"status": "completed", "latest_run_age_min": 1.0},
     )
     h = health.compute_health()
     assert h["status"] == "healthy"
     assert h["healthy"] is True
     assert not any("observer" in i for i in h["issues"])
+
+
+def test_observer_health_uses_run_freshness_not_opportunity_age(tmp_path, monkeypatch):
+    """Old opportunities must not make a completed Observer run look stale."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    monkeypatch.setattr(health, "_mo_ran_in_current_session", lambda: True)
+    monkeypatch.setattr(
+        health,
+        "_observer_latest_session_run_info",
+        lambda: {
+            "status": "completed",
+            "latest_run_age_min": 5.0,
+            "latest_opp_age_min": 120.0,  # legacy field must be ignored
+        },
+    )
+
+    h = health.compute_health()
+
+    assert h["status"] == "healthy"
+    assert not any("observer_stale" in i for i in h["issues"])
+
+
+def test_observer_run_info_reads_completion_timestamp(tmp_path, monkeypatch):
+    """The runtime probe derives freshness from AgentRun, not Opportunities."""
+    from aletheia.agent_runtime import health
+    real_observer_info = health._observer_latest_session_run_info
+    setup_env(tmp_path, monkeypatch)
+    from datetime import datetime, timedelta, timezone
+    from aletheia.storage.sqlite import get_db
+
+    # setup_env patches this helper for unrelated health tests; restore it so
+    # this test exercises the real SQL and timestamp parsing.
+    monkeypatch.setattr(health, "_observer_latest_session_run_info", real_observer_info)
+
+    now = datetime.now(timezone.utc)
+    started_at = (now - timedelta(minutes=5)).isoformat()
+    ended_at = (now - timedelta(minutes=4)).isoformat()
+    get_db().execute(
+        "INSERT INTO runtime_sessions (session_id, started_at) VALUES (?, ?)",
+        ("session-health", started_at),
+    )
+    get_db().commit()
+    repo.insert_agent_run(
+        AgentRun(
+            agent_name="market_observer",
+            permission_mode="Observe",
+            started_at=started_at,
+            ended_at=ended_at,
+            status="completed",
+        )
+    )
+
+    info = health._observer_latest_session_run_info()
+
+    assert info is not None
+    assert info["status"] == "completed"
+    assert 3.0 <= info["latest_run_age_min"] <= 5.0
+
+
+def test_observer_queued_run_does_not_hide_stale_success(tmp_path, monkeypatch):
+    """A queued manual run cannot suppress a stale successful heartbeat."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+
+    monkeypatch.setattr(health, "_mo_ran_in_current_session", lambda: True)
+    monkeypatch.setattr(
+        health,
+        "_observer_latest_session_run_info",
+        lambda: {
+            "status": "queued",
+            "latest_run_age_min": 1.0,
+            "latest_success_age_min": 60.0,
+        },
+    )
+
+    h = health.compute_health()
+
+    assert h["status"] == "degraded"
+    assert any("observer_stale:60min" in i for i in h["issues"])
+
+
+def test_observer_failed_first_run_is_degraded(tmp_path, monkeypatch):
+    """A failed first run is a negative signal, not an initializing warmup."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+
+    monkeypatch.setattr(health, "_mo_ran_in_current_session", lambda: False)
+    monkeypatch.setattr(
+        health,
+        "_observer_latest_session_run_info",
+        lambda: {
+            "status": "rejected_queue_full",
+            "latest_run_age_min": 1.0,
+            "latest_success_age_min": None,
+        },
+    )
+
+    h = health.compute_health()
+
+    assert h["status"] == "degraded"
+    assert any("observer_run_failed" in i for i in h["issues"])
+
+
+def test_observer_warmup_requires_successful_run(tmp_path, monkeypatch):
+    """Rejected or cancelled rows do not satisfy the first-success warmup."""
+    from aletheia.agent_runtime import health
+    real_mo_ran = health._mo_ran_in_current_session
+    setup_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(health, "_mo_ran_in_current_session", real_mo_ran)
+
+    from datetime import datetime, timezone
+    from aletheia.storage.sqlite import get_db
+
+    started_at = datetime.now(timezone.utc).isoformat()
+    get_db().execute(
+        "INSERT INTO runtime_sessions (session_id, started_at) VALUES (?, ?)",
+        ("session-health-warmup", started_at),
+    )
+    get_db().commit()
+    repo.insert_agent_run(
+        AgentRun(
+            agent_name="market_observer",
+            permission_mode="Observe",
+            started_at=started_at,
+            ended_at=started_at,
+            status="rejected_queue_full",
+        )
+    )
+
+    assert health._mo_ran_in_current_session() is False
+
+
+def test_observer_run_age_still_detects_a_real_stall(tmp_path, monkeypatch):
+    """A completed Observer run older than the freshness window is degraded."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import health
+    monkeypatch.setattr(health, "_mo_ran_in_current_session", lambda: True)
+    monkeypatch.setattr(
+        health,
+        "_observer_latest_session_run_info",
+        lambda: {"status": "completed", "latest_run_age_min": 60.0},
+    )
+
+    h = health.compute_health()
+
+    assert h["status"] == "degraded"
+    assert any("observer_stale:60min" in i for i in h["issues"])
 
 
 def test_observer_run_failed_is_degraded(tmp_path, monkeypatch):
@@ -496,7 +644,7 @@ def test_observer_run_failed_is_degraded(tmp_path, monkeypatch):
     monkeypatch.setattr(
         health,
         "_observer_latest_session_run_info",
-        lambda: {"status": "failed", "latest_opp_age_min": None},
+        lambda: {"status": "failed", "latest_run_age_min": 1.0},
     )
     h = health.compute_health()
     assert h["status"] == "degraded"
