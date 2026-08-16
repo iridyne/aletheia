@@ -41,6 +41,12 @@ jobs:
             const shepherdPath = '.github/workflows/codex-shepherd.yml';
             const normalizeLogin = (login) => String(login || '').replace(/\[bot\]$/, '');
             const isConnectorLogin = (login) => normalizeLogin(login) === connectorLogin;
+            const reviewTriggerActions = new Set([
+              'opened',
+              'reopened',
+              'ready_for_review',
+              'synchronize',
+            ]);
             const reviewMarkerPattern =
               /<!-- aletheia-codex-shepherd head=([0-9a-f]{40}) kind=review -->/g;
             const haltMarkerPattern =
@@ -203,6 +209,17 @@ jobs:
               );
             };
 
+            // The files endpoint is capped by GitHub. If it cannot prove that the full
+            // PR file set was enumerated, no authority decision is allowed.
+            if (changedFiles.length !== pullRequest.changed_files) {
+              await holdForOwner(
+                'file-list-incomplete',
+                `GitHub returned ${changedFiles.length} of ${pullRequest.changed_files} changed files ` +
+                `for exact head \`${expectedHeadSha}\`; Shepherd cannot prove the authority boundary.`
+              );
+              return;
+            }
+
             // This workflow is itself a PR control authority. pull_request_target executes
             // the trusted base/master copy, so a PR cannot remove this self-change guard by
             // editing its own candidate workflow. Re-apply the hold on `unlabeled` events.
@@ -234,6 +251,17 @@ jobs:
               return;
             }
 
+            // Event delivery is not a queue: concurrency can replace a pending callback.
+            // Therefore every surviving callback converges from current exact-head reviews.
+            if (exactHeadReviews.length !== 0) {
+              await holdForOwner(
+                'review-finding',
+                `Codex reported exact-head review findings on \`${expectedHeadSha}\`. ` +
+                `Owner disposition or a write-capable repair executor is required.`
+              );
+              return;
+            }
+
             let connectorCleanExactHead = false;
             for (const comment of issueComments) {
               if (
@@ -251,9 +279,8 @@ jobs:
 
             if (context.eventName === 'pull_request_target') {
               if (
-                context.payload.action === 'synchronize' &&
+                reviewTriggerActions.has(context.payload.action) &&
                 !exactHeadReviewRequest &&
-                exactHeadReviews.length === 0 &&
                 !connectorCleanExactHead
               ) {
                 await postComment(
@@ -264,16 +291,6 @@ jobs:
                   `<!-- aletheia-codex-shepherd head=${expectedHeadSha} kind=review -->`
                 );
               }
-              return;
-            }
-
-            if (context.eventName === 'pull_request_review') {
-              if (exactHeadReviews.length === 0) return;
-              await holdForOwner(
-                'review-finding',
-                `Codex reported exact-head review findings on \`${expectedHeadSha}\`. ` +
-                `Owner disposition or a write-capable repair executor is required.`
-              );
               return;
             }
 
@@ -290,7 +307,7 @@ jobs:
             };
 
             if (context.eventName === 'issue_comment') {
-              if (!connectorCleanExactHead || exactHeadReviews.length !== 0) return;
+              if (!connectorCleanExactHead) return;
               const run = await latestCiRun();
               if (
                 !run ||
@@ -309,14 +326,15 @@ jobs:
             }
 
             if (context.eventName === 'workflow_run') {
-              const run = context.payload.workflow_run;
-              if (!repairableCiConclusions.has(run.conclusion)) return;
-              if (exactHeadReviews.length !== 0) {
-                await holdForOwner(
-                  'review-finding',
-                  `Codex findings already exist on exact head \`${expectedHeadSha}\`; review repair ` +
-                  `takes precedence over CI repair.`
-                );
+              const payloadRun = context.payload.workflow_run;
+              const currentRun = await latestCiRun();
+              if (
+                !currentRun ||
+                currentRun.id !== payloadRun.id ||
+                currentRun.status !== 'completed' ||
+                !repairableCiConclusions.has(currentRun.conclusion)
+              ) {
+                core.info('ignoring stale or non-actionable CI completion callback');
                 return;
               }
               if (!connectorCleanExactHead) {
@@ -325,7 +343,7 @@ jobs:
               }
               await holdForOwner(
                 'ci-failure',
-                `Aletheia CI run ${run.id} concluded \`${run.conclusion}\` on exact head ` +
+                `Aletheia CI run ${currentRun.id} concluded \`${currentRun.conclusion}\` on exact head ` +
                 `\`${expectedHeadSha}\` after a clean Codex review. A write-capable repair executor ` +
                 `is required.`
               );
