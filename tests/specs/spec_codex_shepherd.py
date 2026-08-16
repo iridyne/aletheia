@@ -177,12 +177,20 @@ def test_auto_merge_atomically_protects_shepherd_authority() -> None:
     assert "!changedFilesComplete ||" in source[schedule_authority : schedule_authority + 700]
     assert schedule_complete < schedule_authority < shepherd_positions[0]
 
-    release_complete = source.index(
-        "if (changedFiles.length !== pullRequest.changed_files)",
-        shepherd_positions[0],
+    release_summary = source.index("const [pullRequestSummary] = candidates")
+    release_metadata = source.index(
+        "const {data: pullRequest} = await github.rest.pulls.get", release_summary
     )
-    assert release_complete < shepherd_positions[1] < message_positions[0]
-    assert "owner hold remains" in source[release_complete : shepherd_positions[1]]
+    release_complete = source.index(
+        "if (changedFiles.length !== pullRequest.changed_files)", release_metadata
+    )
+    assert release_summary < release_metadata < release_complete < shepherd_positions[1]
+    assert shepherd_positions[1] < message_positions[0]
+    assert "pull_number: pullRequestSummary.number" in source[release_metadata:release_complete]
+    assert "release candidate changed after discovery; owner hold remains" in source[
+        release_metadata:release_complete
+    ]
+    assert "owner hold remains" in source[release_complete:shepherd_positions[1]]
 
     ordinary_metadata = source.index("const {data: pullRequestMetadata} = await github.rest.pulls.get")
     ordinary_complete = source.index(
