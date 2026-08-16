@@ -217,13 +217,15 @@ def semantic_truth_failures() -> list[str]:
             measured_paths.append(str(node.args[0].value))
     if measured_paths != ["universe_family_calibration"]:
         failures.append(
-            "aletheia/learning/registry.py: expected exactly one measurement-supported "
-            f"path (universe_family_calibration), found {measured_paths}"
+            "aletheia/learning/registry.py: expected exactly one "
+            "measurement-supported path (universe_family_calibration), "
+            f"found {measured_paths}"
         )
 
     current_truth = {
         Path("docs/design/contracts/learning_contract.md"):
-            "Only `universe_family_calibration` is currently `measurement_supported`.",
+            "Only `universe_family_calibration` is currently "
+            "`measurement_supported`.",
         Path("docs/product/CAPABILITY_GROUND_TRUTH.md"):
             "LN-08 | Learned guard generation and observation",
         Path("docs/product/capability-integrity/CAPABILITY_INVENTORY.md"):
