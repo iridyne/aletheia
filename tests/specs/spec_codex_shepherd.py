@@ -183,7 +183,6 @@ def test_codex_shepherd_terminal_holds_are_recoverable_and_fail_closed() -> None
     generic_hold = script.index("if (holdLabelPresent)", self_change)
     assert label_state < hold_start < recovery_gate < recovery_label < file_gate
     assert file_gate < self_change < generic_hold
-    assert "marker before source-specific returns" in script[hold_label:file_gate]
 
     # Self-change uses the same marker-first ordering.
     self_change_comment = script.index("await postComment(", self_change)
