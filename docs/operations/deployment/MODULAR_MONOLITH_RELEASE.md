@@ -66,8 +66,9 @@ gh workflow run release-please.yml --repo iridite/aletheia --ref master
 The equivalent UI action is **Actions -> Prepare and tag releases -> Run
 workflow**, with `master` selected. Do not hand-edit a target version: the
 Conventional Commit history and `release-please-config.json` determine the next
-SemVer. In the current pre-1.0 policy, a `feat` produces the next minor version;
-a batch containing only `fix`/`perf` release notes produces the next patch.
+SemVer. In the current pre-1.0 policy, ordinary `feat`, `fix`, and `perf` release
+notes produce the next patch; an explicit breaking change produces the next
+minor version.
 
 The release is complete only after the generated `autorelease: pending` PR is
 observed as merged, its matching immutable `vX.Y.Z` tag exists, and the GitHub
