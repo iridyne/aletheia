@@ -340,7 +340,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     concurrency:
-      group: auto-merge-update-${{ github.event.client_payload.pull_request_number }}-${{ github.event.client_payload.expected_head_sha }}-${{ github.event.client_payload.expected_base_sha || 'none' }}
+      group: auto-merge-update-${{ github.event.client_payload.pull_request_number }}
       cancel-in-progress: true
     env:
       OPERATION: ${{ github.event.client_payload.operation }}
@@ -384,6 +384,14 @@ jobs:
                   mergeStateStatus
                   autoMergeRequest { enabledAt }
                   labels(first: 20) { nodes { name } }
+                  comments(last: 100) {
+                    nodes {
+                      author { login }
+                      authorAssociation
+                      body
+                      createdAt
+                    }
+                  }
                   mergeCommit { oid }
                   mergedBy { login }
                 }
@@ -419,6 +427,38 @@ jobs:
                 { pullRequestId: pullRequest.id },
               );
             };
+            const dispatchCurrentUpdate = async () => {
+              const {data: currentMetadata} = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: pullRequestNumber,
+              });
+              if (
+                currentMetadata.state !== 'open' ||
+                currentMetadata.base.ref !== 'master' ||
+                currentMetadata.draft ||
+                currentMetadata.head.ref.startsWith('release-please--branches--master')
+              ) {
+                return;
+              }
+              const {data: currentComparison} = await github.rest.repos.compareCommitsWithBasehead({
+                ...context.repo,
+                basehead: `${currentMetadata.base.sha}...${currentMetadata.head.sha}`,
+              });
+              const currentMergeBaseSha = currentComparison.merge_base_commit.sha;
+              if (!/^[0-9a-f]{40}$/.test(currentMergeBaseSha || '')) {
+                throw new Error('current pull request merge-base SHA is unavailable');
+              }
+              await github.rest.repos.createDispatchEvent({
+                ...context.repo,
+                event_type: 'auto_merge_update',
+                client_payload: {
+                  operation: 'enable',
+                  pull_request_number: pullRequestNumber,
+                  expected_head_sha: currentMetadata.head.sha,
+                  expected_base_sha: currentMergeBaseSha,
+                },
+              });
+            };
             if (operation === 'disable') {
               const pullRequest = await fetchPullRequest();
               if (!pullRequest || pullRequest.state !== 'OPEN') {
@@ -446,8 +486,9 @@ jobs:
               if (pullRequest.headRefOid !== expectedHeadSha) {
                 core.info(
                   `pull request head changed from ${expectedHeadSha} to ${pullRequest.headRefOid}; ` +
-                  'a newer pull request event must authorize the merge',
+                  'dispatching current exact-diff authorization',
                 );
+                await dispatchCurrentUpdate();
                 return;
               }
               const {data: pullRequestMetadata} = await github.rest.pulls.get({
@@ -469,8 +510,9 @@ jobs:
               if (currentBaseSha !== expectedBaseSha) {
                 core.info(
                   `pull request merge base changed from ${expectedBaseSha} to ${currentBaseSha}; ` +
-                  'a newer exact-diff event must authorize the merge',
+                  'dispatching current exact-diff authorization',
                 );
+                await dispatchCurrentUpdate();
                 return;
               }
               const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
