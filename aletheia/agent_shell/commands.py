@@ -2203,6 +2203,16 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     # is not model input; it selects the Risk policy/equity pool for deterministic
     # proposal sizing after the LLM returns.
     ctx["execution_mode"] = execution_mode
+    try:
+        from aletheia.risk.engine import account_equity_for_execution
+
+        account_equity = account_equity_for_execution(execution_mode)
+    except Exception:
+        account_equity = None
+    ctx["account_authority"] = {
+        "status": "available" if account_equity is not None else "unavailable",
+        "equity_usdt": account_equity,
+    }
     from aletheia.agent_shell.skip_policy import (
         ensure_skip_remediation_policy_epoch,
         skip_policy_context,
@@ -2646,6 +2656,10 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             # PiDecision that will own this Proposal.
             decision.market_type = prepared_proposal.market_type
             result["market_type"] = prepared_proposal.market_type
+            # Preparation re-reads account equity and risk policy after the model
+            # decision. Refresh the response so it describes the submitted
+            # proposal instead of the pre-preparation placeholder.
+            result["position_size_usdt"] = decision.position_size_usdt
             result["proposal_id"] = prepared_proposal.id
             result["proposal_status"] = "submitting"
             result["proposal_reason"] = None

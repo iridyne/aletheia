@@ -1592,7 +1592,24 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         decision.position_size_usdt = notional
     else:
         notional = decision.position_size_usdt or 25.0
-    quantity = round(notional / price, 6) or 0.000001
+    raw_quantity = notional / price
+    # Quantize downward at the current proposal precision.  Never substitute a
+    # positive minimum for an unrepresentable target: that would inflate a small
+    # account's configured risk budget and could pass downstream stop-loss checks.
+    quantity = math.floor(raw_quantity * 1_000_000) / 1_000_000
+    if quantity <= 0:
+        if decision.parameter_rationale_required:
+            _reject_operator_entry_plan(
+                "unrepresentable_position_size",
+                ["notional_usdt"],
+                diagnostics={
+                    "requested_notional": notional,
+                    "entry_price": price,
+                    "raw_quantity": raw_quantity,
+                    "quantity_precision": 6,
+                },
+            )
+        quantity = 0.000001
 
     entry_parameters = _build_entry_parameter_snapshot(
         decision=decision,
@@ -1663,9 +1680,8 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         take_profit=take_profit,
         risk_reward=risk_reward,
         execution_mode=execution_mode,
-        # Strategy ID is deprecated. Keep the nullable storage column only for
-        # historical rows; new Operator proposals never populate it.
-        strategy_id=None,
+        # Strategy ID is attribution metadata only; sizing never reads it.
+        strategy_id=decision.strategy_id,
         opportunity_id=decision.opportunity_id,
         agent_rationale=rationale,
         attribution_snapshot=json.dumps(attribution_snapshot, default=str),

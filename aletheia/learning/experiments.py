@@ -293,6 +293,21 @@ def _policy_epoch_definition(
             values["opportunity_information_policy"] = (
                 opportunity_information_policy_context()
             )
+            from aletheia.trading.sizing import (
+                ACCOUNT_EQUITY_RISK_BUDGET_POLICY_VERSION,
+            )
+
+            # Entry sizing is part of the treatment identity.  A cohort that
+            # mixes conviction/volatility sizing with account-equity risk
+            # budgeting cannot support a causal outcome comparison.
+            values["operator_sizing_policy"] = {
+                "policy_version": ACCOUNT_EQUITY_RISK_BUDGET_POLICY_VERSION,
+                "account_equity_authority": True,
+                "per_trade_risk_source": "risk_policy.loss.max_single_trade_risk_pct",
+                "futures_notional_source": "cost_budget_times_effective_leverage",
+                "demo_per_trade_risk_pct": cfg.risk.demo.loss.max_single_trade_risk_pct,
+                "live_per_trade_risk_pct": cfg.risk.live.loss.max_single_trade_risk_pct,
+            }
         _LAST_SUCCESS_POLICY_VALUES[path_id] = values
     except Exception as exc:
         cached = _LAST_SUCCESS_POLICY_VALUES.get(path_id)

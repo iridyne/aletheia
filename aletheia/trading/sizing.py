@@ -20,6 +20,10 @@ _MIN_MULTIPLIER = 0.3            # floor: $25 base → $7.50 minimum at lowest c
 _MAX_MULTIPLIER = 2.5            # cap: $25 base → $62.50 maximum at peak conviction
 _CONVICTION_MIDPOINT = 70.0      # conviction at which multiplier = 1.0 (base notional)
 
+# Stable identity shared by sizing traces and the Operator Learning policy epoch.
+# Changing the treatment requires a fresh evidence cohort.
+ACCOUNT_EQUITY_RISK_BUDGET_POLICY_VERSION = "account-equity-risk-budget/v1"
+
 
 def account_equity_risk_budget_size(
     account_equity_usdt: float,
@@ -54,7 +58,7 @@ def account_equity_risk_budget_size(
     if sizing_trace is not None:
         sizing_trace.clear()
         sizing_trace.update({
-            "policy_version": "account-equity-risk-budget/v1",
+            "policy_version": ACCOUNT_EQUITY_RISK_BUDGET_POLICY_VERSION,
             "value_source": "risk_policy_account_equity",
             "account_equity_usdt": round(equity, 8),
             "per_trade_risk_pct": round(risk_pct, 8),

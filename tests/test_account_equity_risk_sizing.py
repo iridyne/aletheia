@@ -83,6 +83,51 @@ def test_account_equity_risk_budget_rejects_invalid_authority_values():
         account_equity_risk_budget_size(600, 2, leverage=0)
 
 
+def test_operator_learning_epoch_carries_sizing_policy_identity(monkeypatch):
+    from aletheia.learning import experiments
+
+    policy = SimpleNamespace(loss=SimpleNamespace(max_single_trade_risk_pct=2.0))
+    cfg = SimpleNamespace(
+        agent=SimpleNamespace(autonomous_learning=False, permission_mode="Paper"),
+        universe=SimpleNamespace(scanner_weights={}, scanner_regime_scoring=False),
+        learning=SimpleNamespace(
+            lifecycle_automation_enabled=False,
+            paper_influence_enabled=False,
+            paper_influence_paths=[],
+            auto_refreeze=False,
+            paper_active_allocation_pct=0.0,
+        ),
+        risk=SimpleNamespace(demo=policy, live=policy),
+    )
+    monkeypatch.setattr(experiments, "load_config", lambda **_kwargs: cfg)
+    monkeypatch.setattr(
+        experiments,
+        "get_learning_path",
+        lambda _path_id: SimpleNamespace(behavior_contract_version="test-v1"),
+    )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.skip_policy.skip_policy_context",
+        lambda: {"version": "skip-v1"},
+    )
+    monkeypatch.setattr(
+        "aletheia.learning.opportunity_information_policy.opportunity_information_policy_context",
+        lambda: {"version": "information-v1"},
+    )
+
+    epoch = experiments._policy_epoch_definition(
+        "operator_learning_bundle", persist_config_migrations=False
+    )
+
+    assert epoch.effective_values["operator_sizing_policy"] == {
+        "policy_version": "account-equity-risk-budget/v1",
+        "account_equity_authority": True,
+        "per_trade_risk_source": "risk_policy.loss.max_single_trade_risk_pct",
+        "futures_notional_source": "cost_budget_times_effective_leverage",
+        "demo_per_trade_risk_pct": 2.0,
+        "live_per_trade_risk_pct": 2.0,
+    }
+
+
 def test_prepared_operator_proposal_recomputes_notional_from_final_leverage(
     monkeypatch,
 ):
@@ -105,11 +150,13 @@ def test_prepared_operator_proposal_recomputes_notional_from_final_leverage(
     cfg.serenity = SimpleNamespace(stop_loss_pct=4.0)
     cfg.trading.default_stop_loss_pct = 2.0
     cfg.trading.default_take_profit_pct = 4.0
+    equity = {"value": 600.0}
+    price = {"value": 100.0}
     monkeypatch.setattr(config_loader, "load_config", lambda: cfg)
     monkeypatch.setattr(
         risk_engine,
         "account_equity_for_execution",
-        lambda execution_mode, cfg: 600.0,
+        lambda execution_mode, cfg: equity["value"],
     )
     monkeypatch.setattr(
         risk_policy,
@@ -130,12 +177,12 @@ def test_prepared_operator_proposal_recomputes_notional_from_final_leverage(
             "symbol": "BTC/USDT",
             "market_type": "perp",
             "exchange": "binance",
-            "price": 100.0,
+            "price": price["value"],
         },
     )
     monkeypatch.setattr(
         "aletheia.data.price_feed.get_fresh_price_for_protective_close",
-        lambda *_args, **_kwargs: 100.0,
+        lambda *_args, **_kwargs: price["value"],
     )
     monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda _ctx: [])
     monkeypatch.setattr(
@@ -183,7 +230,32 @@ def test_prepared_operator_proposal_recomputes_notional_from_final_leverage(
 
     proposal = prepared["proposal"]
     assert proposal.leverage == 3
-    assert proposal.strategy_id is None
+    assert proposal.strategy_id == "obsolete-strategy-id"
     assert proposal.quantity == 0.36
     assert decision.position_size_usdt == 36.0
     assert decision.sizing_trace["cost_budget_usdt"] == 12.0
+
+    equity["value"] = 1.0
+    price["value"] = 100_000.0
+    tiny_decision = decision_module.TradingDecision(
+        action="trade",
+        symbol="BTC/USDT",
+        direction="long",
+        conviction=80,
+        reasoning="unrepresentable risk-budget regression",
+        market_type="usdt_futures",
+        leverage=1,
+        stop_price=98_000.0,
+        take_profit=104_000.0,
+        parameter_rationale=decision.parameter_rationale,
+        parameter_rationale_required=True,
+    )
+    with pytest.raises(
+        decision_module.DecisionUnavailable,
+        match="unrepresentable_position_size",
+    ):
+        asyncio.run(
+            decision_module.prepare_decision_as_proposal(
+                tiny_decision, "paper_internal"
+            )
+        )
