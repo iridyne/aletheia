@@ -1003,7 +1003,7 @@ async def operator_loop_trigger():
 
 
 @router.get("/events")
-async def operator_events(
+def operator_events(
     limit: int = 100,
     session_id: str | None = None,
     task_id: str | None = None,
@@ -1017,7 +1017,7 @@ async def operator_events_stream(limit: int = 50, once: bool = False):
         seen_ids: set[str] = set()
         idle_poll_secs = 1.0
         max_idle_poll_secs = 8.0
-        backlog = list_events(limit=limit)
+        backlog = await asyncio.to_thread(list_events, limit=limit)
         for event in reversed(backlog):
             seen_ids.add(event["id"])
             yield _sse_block("operator_event", event)
@@ -1026,7 +1026,7 @@ async def operator_events_stream(limit: int = 50, once: bool = False):
 
         while True:
             await asyncio.sleep(idle_poll_secs)
-            latest = list_events(limit=limit)
+            latest = await asyncio.to_thread(list_events, limit=limit)
             fresh = [event for event in reversed(latest) if event["id"] not in seen_ids]
             for event in fresh:
                 seen_ids.add(event["id"])
@@ -1293,7 +1293,7 @@ async def operator_context_query(payload: OperatorContextQueryRequest):
 
 
 @router.post("/internal/heartbeat")
-async def operator_heartbeat(payload: OperatorHeartbeatIn):
+def operator_heartbeat(payload: OperatorHeartbeatIn):
     record_heartbeat(**payload.model_dump())
     heartbeat = get_latest_heartbeat(payload.agent_id)
     if heartbeat is None:

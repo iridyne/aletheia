@@ -450,6 +450,69 @@ class TestDeferredDeadlineRecovery:
         conn.commit()
         assert next_pending_signal_defer_deadline(now_iso=now.isoformat()) is None
 
+    def test_deadline_lookup_stays_bounded_with_defer_history(
+        self, tmp_path, monkeypatch
+    ):
+        """Latest-per-opportunity lookup must not regress to a quadratic scan."""
+        conn = _setup_db(tmp_path, monkeypatch)
+        now = datetime.now(timezone.utc)
+        defer_until = (now + timedelta(seconds=30)).isoformat()
+        deferred_at = now - timedelta(minutes=10)
+        _seed_deferred_carrier(
+            conn,
+            opportunity_id="opp-history",
+            symbol="BTC/USDT",
+            asset_id="asset-history",
+            defer_until_iso=defer_until,
+            deferred_at_iso=deferred_at.isoformat(),
+        )
+        conn.execute(
+            "UPDATE opportunities SET valid_until=? WHERE id='opp-history'",
+            ((now + timedelta(minutes=5)).isoformat(),),
+        )
+        conn.executemany(
+            "INSERT INTO operator_evaluation_events "
+            "(id,dedup_key,event_kind,trigger,pending_unresolved_total,"
+            " pending_visible_count,pending_oldest_created_at,queue_snapshot_json,"
+            " data_health_json,policy_epoch_id,created_at) "
+            "VALUES (?,?, 'operator_decision_deferred_unchanged_context','signal',"
+            " 1,1,?,?,'{}','epoch-a',?)",
+            [
+                (
+                    f"ev-history-{index}",
+                    f"dedup-history-{index}",
+                    observed_at,
+                    json.dumps({
+                        "opportunity_id": "opp-history",
+                        "defer_until": defer_until,
+                    }),
+                    observed_at,
+                )
+                for index in range(1_500)
+                for observed_at in [
+                    (deferred_at + timedelta(milliseconds=index + 1)).isoformat()
+                ]
+            ],
+        )
+        conn.commit()
+
+        progress_callbacks = 0
+
+        def enforce_vm_budget():
+            nonlocal progress_callbacks
+            progress_callbacks += 1
+            return progress_callbacks > 1_000
+
+        conn.set_progress_handler(enforce_vm_budget, 1_000)
+        try:
+            from aletheia.storage.repositories import next_pending_signal_defer_deadline
+
+            assert next_pending_signal_defer_deadline(now_iso=now.isoformat()) == defer_until
+        finally:
+            conn.set_progress_handler(None, 0)
+
+        assert progress_callbacks <= 1_000
+
 
 class TestPendingQueueSort:
     """`_build_pending_signal_queue` demotes all active defers to the queue tail."""

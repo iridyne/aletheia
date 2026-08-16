@@ -1,4 +1,6 @@
+import asyncio
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -151,6 +153,45 @@ async def test_operator_internal_heartbeat_roundtrip(client):
     assert data["active_branch_title"] == "Momentum A Review"
     assert data["trading_daemon"]["state"] == "scheduled_fallback"
     assert data["trading_daemon"]["running"] is False
+
+
+@pytest.mark.anyio
+async def test_operator_heartbeat_write_does_not_block_the_event_loop(
+    client, monkeypatch
+):
+    from aletheia.server.routes import operator as operator_routes
+
+    write_started = threading.Event()
+    release_write = threading.Event()
+    released_by_loop: list[bool] = []
+    real_record_heartbeat = operator_routes.record_heartbeat
+
+    def blocking_record_heartbeat(**kwargs):
+        write_started.set()
+        released_by_loop.append(release_write.wait(timeout=0.5))
+        return real_record_heartbeat(**kwargs)
+
+    monkeypatch.setattr(operator_routes, "record_heartbeat", blocking_record_heartbeat)
+    request = asyncio.create_task(
+        client.post(
+            "/api/operator/internal/heartbeat",
+            json={
+                "agent_id": "operator",
+                "status": "online",
+                "mode": "Observing",
+                "permission_mode": "ReadOnly",
+                "is_busy": False,
+                "queue_size": 0,
+                "model_provider": "pi-shell",
+                "session_id": "operator-main",
+            },
+        )
+    )
+    assert await asyncio.wait_for(asyncio.to_thread(write_started.wait), timeout=1.0)
+    release_write.set()
+
+    assert (await request).status_code == 200
+    assert released_by_loop == [True]
 
 
 @pytest.mark.anyio

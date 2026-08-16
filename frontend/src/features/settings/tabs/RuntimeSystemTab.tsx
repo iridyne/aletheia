@@ -341,6 +341,11 @@ function UpdateCard({ settings, qc }: any) {
   const { data, isLoading } = useQuery({ queryKey: ['update-status'], queryFn: api.getUpdateStatus })
   const [applyMsg, setApplyMsg] = useState('')
 
+  const check = useMutation({
+    mutationFn: api.checkForUpdate,
+    onSuccess: result => qc.setQueryData(['update-status'], result),
+  })
+
   const cfgMut = useMutation({
     mutationFn: () => api.updateUpdateConfig({ enabled, branch }),
     onSuccess: () => { setCfgMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
@@ -358,7 +363,8 @@ function UpdateCard({ settings, qc }: any) {
   })
 
   let badge = <span className="badge badge-yellow">not available</span>
-  if (isLoading) badge = <span className="badge">checking…</span>
+  if (isLoading || check.isPending) badge = <span className="badge">checking…</span>
+  else if (data?.reason === 'update_check_required') badge = <span className="badge">not checked</span>
   else if (data?.ok && data.has_update) badge = <span className="badge badge-yellow">{data.behind_count} behind</span>
   else if (data?.ok && !data.has_update) badge = <span className="badge badge-green">up to date</span>
 
@@ -372,7 +378,7 @@ function UpdateCard({ settings, qc }: any) {
             {data.branch} · {data.current_commit?.slice(0, 8)}{data.has_update ? ` → ${data.remote_commit?.slice(0, 8)}` : ''}
           </span>
         )}
-        <button className="secondary" onClick={() => qc.invalidateQueries({ queryKey: ['update-status'] })}>Re-check</button>
+        <button className="secondary" onClick={() => check.mutate()} disabled={check.isPending}>Re-check</button>
         {data?.ok && data.has_update && (
           <button
             onClick={() => { if (confirm('Pull latest code? Restart the gateway afterward.')) apply.mutate() }}

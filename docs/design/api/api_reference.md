@@ -654,7 +654,8 @@ reconciled.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/update/status` | Update availability |
+| GET | `/update/status` | Read local update state without a network check |
+| POST | `/update/check` | Explicitly check remote update availability |
 | GET | `/update/progress` | Read durable packaged-update progress without repeating the network check |
 | POST | `/update/apply` | Human-confirmed update request; installed runtimes stage a signed payload in the background |
 | POST | `/update/rollback` | Human-confirmed rollback request within the recorded backup window |

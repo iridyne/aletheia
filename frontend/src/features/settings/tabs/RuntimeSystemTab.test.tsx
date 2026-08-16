@@ -46,6 +46,8 @@ describe('RuntimeSystemTab', () => {
     expect(html).toContain('Save config')
     expect(html).toContain('Enforce (fail-closed)')
     expect(html).toContain('Test Connection')
+    expect(SRC).toContain('mutationFn: api.checkForUpdate')
+    expect(SRC).toContain("onSuccess: result => qc.setQueryData(['update-status'], result)")
   })
 
   it('limits Usage-dependent retention to 90 days', () => {

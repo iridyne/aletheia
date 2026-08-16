@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v29"
+SCHEMA_VERSION = "aletheia-sqlite-v30"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3503,6 +3503,51 @@ _LEARNING_DREAMING_BACKLOG_CHECKSUM = hashlib.sha256(
         repr(_LEARNING_DREAMING_BACKLOG_COLUMNS)
         + _LEARNING_DREAMING_BACKLOG_INDEX_SQL
         + "\ndurable_dreaming_backlog_v1"
+    ).encode("utf-8")
+).hexdigest()
+
+_POSITION_REALTIME_REVISION_SQL = (
+    """
+    CREATE TABLE IF NOT EXISTS position_realtime_revision (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0)
+    )
+    """,
+    (
+        "INSERT OR IGNORE INTO position_realtime_revision(singleton, revision) "
+        "VALUES (1, 0)"
+    ),
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_positions_realtime_revision_insert
+    AFTER INSERT ON positions
+    BEGIN
+        UPDATE position_realtime_revision
+        SET revision = revision + 1
+        WHERE singleton = 1;
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_positions_realtime_revision_update
+    AFTER UPDATE ON positions
+    BEGIN
+        UPDATE position_realtime_revision
+        SET revision = revision + 1
+        WHERE singleton = 1;
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_positions_realtime_revision_delete
+    AFTER DELETE ON positions
+    BEGIN
+        UPDATE position_realtime_revision
+        SET revision = revision + 1
+        WHERE singleton = 1;
+    END
+    """,
+)
+_POSITION_REALTIME_REVISION_CHECKSUM = hashlib.sha256(
+    (
+        repr(_POSITION_REALTIME_REVISION_SQL) + "\nposition_realtime_revision_v1"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -4751,6 +4796,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260815_0028_learning_dreaming_backlog_v29": (
         "durable Dreaming case cursor and pending-backlog indexes"
     ),
+    "20260816_0029_position_realtime_revision_v30": (
+        "monotonic Position revisions for real-time invalidation"
+    ),
 }
 
 
@@ -4962,6 +5010,14 @@ def _apply_learning_dreaming_backlog_v29(db: sqlite3.Connection) -> None:
             "CREATE INDEX IF NOT EXISTS idx_ps_lessons_trade_case_source "
             "ON ps_lessons(source_type, source_id)"
         )
+    db.execute("PRAGMA optimize")
+
+
+def _apply_position_realtime_revision_v30(db: sqlite3.Connection) -> None:
+    """Give every Position change a cheap, schema-backed WS fingerprint."""
+
+    for statement in _POSITION_REALTIME_REVISION_SQL:
+        db.execute(statement)
     db.execute("PRAGMA optimize")
 
 
@@ -5476,6 +5532,12 @@ _MIGRATIONS = (
         checksum=_LEARNING_DREAMING_BACKLOG_CHECKSUM,
         schema_version="aletheia-sqlite-v29",
         apply=_apply_learning_dreaming_backlog_v29,
+    ),
+    MigrationStep(
+        migration_id="20260816_0029_position_realtime_revision_v30",
+        checksum=_POSITION_REALTIME_REVISION_CHECKSUM,
+        schema_version="aletheia-sqlite-v30",
+        apply=_apply_position_realtime_revision_v30,
     ),
 )
 

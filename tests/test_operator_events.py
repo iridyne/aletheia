@@ -1,5 +1,7 @@
+import asyncio
 import sqlite3
 import os
+import threading
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -159,6 +161,60 @@ async def test_operator_internal_event_roundtrip_and_stream(client):
                 break
 
     assert "operator_degraded" in body
+
+
+@pytest.mark.anyio
+async def test_operator_event_stream_poll_does_not_block_the_event_loop(
+    client, monkeypatch
+):
+    from aletheia.server.routes import operator as operator_routes
+
+    read_started = threading.Event()
+    release_read = threading.Event()
+    released_by_loop: list[bool] = []
+    real_list_events = operator_routes.list_events
+
+    def blocking_list_events(*args, **kwargs):
+        read_started.set()
+        released_by_loop.append(release_read.wait(timeout=0.5))
+        return real_list_events(*args, **kwargs)
+
+    monkeypatch.setattr(operator_routes, "list_events", blocking_list_events)
+    request = asyncio.create_task(
+        client.get("/api/operator/events/stream?limit=5&once=true")
+    )
+    assert await asyncio.wait_for(asyncio.to_thread(read_started.wait), timeout=1.0)
+    release_read.set()
+
+    assert (await request).status_code == 200
+    assert released_by_loop == [True]
+
+
+@pytest.mark.anyio
+async def test_runtime_event_stream_poll_does_not_block_the_event_loop(
+    client, monkeypatch
+):
+    from aletheia.server.routes import runtime as runtime_routes
+
+    read_started = threading.Event()
+    release_read = threading.Event()
+    released_by_loop: list[bool] = []
+
+    class BlockingService:
+        def list_events(self, *, limit):
+            read_started.set()
+            released_by_loop.append(release_read.wait(timeout=0.5))
+            return []
+
+    monkeypatch.setattr(runtime_routes, "_service", BlockingService)
+    request = asyncio.create_task(
+        client.get("/api/operator/runtime/events/stream?limit=5&once=true")
+    )
+    assert await asyncio.wait_for(asyncio.to_thread(read_started.wait), timeout=1.0)
+    release_read.set()
+
+    assert (await request).status_code == 200
+    assert released_by_loop == [True]
 
 
 @pytest.mark.anyio

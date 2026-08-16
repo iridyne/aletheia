@@ -63,7 +63,7 @@ async def test_preview_blocks_machine_level_gateway_and_update_controls(monkeypa
     monkeypatch.setattr(update_routes, "is_preview_mode", lambda: True)
 
     with pytest.raises(HTTPException) as update:
-        await update_routes.update_apply(update_routes.ApplyBody(confirm=True))
+        update_routes.update_apply(update_routes.ApplyBody(confirm=True))
 
     with pytest.raises(HTTPException) as restart:
         await gateway_routes.restart_gateway(type("Request", (), {"app": type("App", (), {"state": type("State", (), {})()})()})())
