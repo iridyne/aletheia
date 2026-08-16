@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-
 from starlette.requests import Request
 
 from aletheia.server.routes import update as update_routes
@@ -52,8 +50,8 @@ def test_empty_script_request_still_requires_explicit_confirmation(monkeypatch):
         lambda: (_ for _ in ()).throw(AssertionError("applier must not run")),
     )
 
-    result = asyncio.run(
-        update_routes.update_apply(_request(), update_routes.ApplyBody(confirm=False))
+    result = update_routes.update_apply(
+        _request(), update_routes.ApplyBody(confirm=False)
     )
     assert result["accepted"] is False
     assert result["reason"] == "confirmation_required"
@@ -74,14 +72,12 @@ def test_same_origin_dashboard_request_can_start_packaged_update(monkeypatch):
         },
     )
 
-    result = asyncio.run(
-        update_routes.update_apply(
-            _request(
-                referer="http://localhost:8787/settings?tab=runtime",
-                sec_fetch_site="same-origin",
-            ),
-            update_routes.ApplyBody(confirm=False),
-        )
+    result = update_routes.update_apply(
+        _request(
+            referer="http://localhost:8787/settings?tab=runtime",
+            sec_fetch_site="same-origin",
+        ),
+        update_routes.ApplyBody(confirm=False),
     )
     assert result["accepted"] is True
     assert result["reason"] == "update_started_in_background"
@@ -95,8 +91,8 @@ def test_rollback_requires_confirmation_before_calling_applier(monkeypatch):
         lambda: (_ for _ in ()).throw(AssertionError("rollback applier must not run")),
     )
 
-    result = asyncio.run(
-        update_routes.update_rollback(_request(), update_routes.ApplyBody(confirm=False))
+    result = update_routes.update_rollback(
+        _request(), update_routes.ApplyBody(confirm=False)
     )
     assert result == {
         "accepted": False,
