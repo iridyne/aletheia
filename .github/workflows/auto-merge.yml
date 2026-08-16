@@ -337,14 +337,6 @@ jobs:
                   mergeStateStatus
                   autoMergeRequest { enabledAt }
                   labels(first: 20) { nodes { name } }
-                  reviews(last: 100) {
-                    nodes {
-                      author { login }
-                      commit { oid }
-                      submittedAt
-                      state
-                    }
-                  }
                   comments(last: 100) {
                     nodes {
                       author { login }
@@ -460,12 +452,19 @@ jobs:
                   return null;
                 }
               };
-              const exactHeadReviews = pullRequest.reviews.nodes.filter((review) =>
-                isConnectorLogin(review.author?.login) &&
-                review.commit?.oid === expectedHeadSha &&
-                review.submittedAt &&
-                review.state !== 'DISMISSED'
-              );
+              const allReviews = await github.paginate(github.rest.pulls.listReviews, {
+                ...context.repo,
+                pull_number: pullRequest.number,
+                per_page: 100,
+              });
+              const exactHeadReviews = allReviews
+                .filter((review) =>
+                  isConnectorLogin(review.user?.login) &&
+                  review.commit_id === expectedHeadSha &&
+                  review.submitted_at &&
+                  review.state !== 'DISMISSED'
+                )
+                .map((review) => ({submittedAt: review.submitted_at}));
               const acknowledgements = pullRequest.comments.nodes.flatMap((comment) => {
                 if (!trustedAssociations.has(comment.authorAssociation)) return [];
                 const [command, ...detailLines] = String(comment.body || '')
