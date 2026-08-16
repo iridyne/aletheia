@@ -278,22 +278,28 @@ jobs:
               }
             }
 
-            if (context.eventName === 'pull_request_target') {
-              if (
-                reviewTriggerActions.has(context.payload.action) &&
-                !exactHeadReviewRequest &&
-                !connectorCleanExactHead
-              ) {
-                await postComment(
-                  `@codex review\n\n` +
-                  `Please review exact head \`${expectedHeadSha}\`. Follow the repository AGENTS.md ` +
-                  `review rules and report only consequential findings. CI remains the authority for ` +
-                  `deterministic checks.\n\n` +
-                  `<!-- aletheia-codex-shepherd head=${expectedHeadSha} kind=review -->`
-                );
-              }
+            // GitHub concurrency can replace a pending pull_request_target run. Any
+            // surviving trusted callback therefore repairs a missing exact-head review
+            // request before doing event-specific work.
+            if (
+              !exactHeadReviewRequest &&
+              !connectorCleanExactHead &&
+              (
+                context.eventName !== 'pull_request_target' ||
+                reviewTriggerActions.has(context.payload.action)
+              )
+            ) {
+              await postComment(
+                `@codex review\n\n` +
+                `Please review exact head \`${expectedHeadSha}\`. Follow the repository AGENTS.md ` +
+                `review rules and report only consequential findings. CI remains the authority for ` +
+                `deterministic checks.\n\n` +
+                `<!-- aletheia-codex-shepherd head=${expectedHeadSha} kind=review -->`
+              );
               return;
             }
+
+            if (context.eventName === 'pull_request_target') return;
 
             const latestCiRun = async () => {
               const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
