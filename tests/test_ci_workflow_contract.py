@@ -54,6 +54,7 @@ def test_only_expected_workflows_are_active() -> None:
     assert sorted(path.name for path in WORKFLOW_DIR.glob("*.yml")) == [
         "auto-merge.yml",
         "ci.yml",
+        "codex-shepherd.yml",
         "delete-merged-branch.yml",
         "release-please.yml",
     ]
