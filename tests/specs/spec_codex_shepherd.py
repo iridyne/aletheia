@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.specs.spec_meta import SpecClaim, spec_claim
+
 
 pytestmark = pytest.mark.tier_spec
 
@@ -27,6 +29,16 @@ def _auto_merge_source() -> str:
     return AUTO_MERGE_WORKFLOW_PATH.read_text(encoding="utf-8")
 
 
+@spec_claim(
+    SpecClaim(
+        "AG-CODEX-SHEPHERD-01",
+        "agent_contracts",
+        "§PR/CI control plane",
+        "L2a",
+        "Codex PR Shepherd is event-driven, least-privilege, and cannot obtain branch-write or merge authority.",
+        status="implemented",
+    )
+)
 def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
     workflow = _workflow()
     triggers = workflow["on"]
