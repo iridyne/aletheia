@@ -165,12 +165,22 @@ def test_codex_shepherd_self_change_and_incomplete_file_listing_fail_closed() ->
     assert "reason=shepherd-self-change" in script
     assert "requires explicit owner merge" in script
 
-    # Terminal markers deduplicate prose only; the hold label is established first.
-    ensure_label = script.index("const ensureHoldLabel")
-    hold_start = script.index("const holdForOwner", ensure_label)
-    add_label = script.index("await ensureHoldLabel()", hold_start)
-    marker_return = script.index("if (exactHeadHalt) return", add_label)
-    assert ensure_label < hold_start < add_label < marker_return
+    # Cancellation safety: persist the exact-head halt marker before the label.
+    # A successor can then reconstruct a missing label without losing the reason.
+    hold_start = script.index("const holdForOwner")
+    hold_comment = script.index("await postComment(", hold_start)
+    hold_label = script.index("await ensureHoldLabel()", hold_comment)
+    finding_gate = script.index("if (exactHeadReviews.length !== 0)", hold_label)
+    assert hold_start < hold_comment < hold_label < finding_gate
+    assert "Persist the exact-head halt marker before the label" in script[
+        hold_comment:finding_gate
+    ]
+
+    self_change = script.index("if (changesShepherdAuthority)")
+    self_change_comment = script.index("await postComment(", self_change)
+    self_change_label = script.index("await ensureHoldLabel()", self_change_comment)
+    generic_hold = script.index("do-not-auto-merge holds this pull request", self_change_label)
+    assert self_change < self_change_comment < self_change_label < generic_hold
 
 
 def test_auto_merge_atomically_protects_shepherd_authority() -> None:
@@ -273,8 +283,8 @@ def test_codex_shepherd_callbacks_converge_from_current_finding_state() -> None:
     review_request = script.index("!exactHeadReviewRequest && !connectorCleanExactHead", clean_scan)
     assert finding_gate < finding_hold < clean_scan < review_request
 
-    # Newer workflow_dispatch input for the same PR cancels an older apply run;
-    # exact-head revalidation makes that replacement fail closed for stale work.
+    # Newer workflow_dispatch input for the same PR may cancel an older apply run;
+    # exact-head revalidation plus marker-first terminal writes make this recoverable.
     apply = _workflow()["jobs"]["apply"]
     assert apply["concurrency"]["cancel-in-progress"] == "true"
     assert "pullRequest.head.sha !== expectedHeadSha" in script
