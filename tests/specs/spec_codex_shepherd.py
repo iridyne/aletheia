@@ -150,7 +150,7 @@ def test_codex_shepherd_binds_reviews_comments_and_markers_to_exact_head() -> No
     assert "reviewedCommitSha === expectedHeadSha" in script
 
 
-def test_codex_shepherd_self_change_and_incomplete_file_listing_fail_closed() -> None:
+def test_codex_shepherd_terminal_holds_are_recoverable_and_fail_closed() -> None:
     script = _apply_script()
 
     assert "changedFiles.length !== pullRequest.changed_files" in script
@@ -160,26 +160,34 @@ def test_codex_shepherd_self_change_and_incomplete_file_listing_fail_closed() ->
     assert "const changesShepherdAuthority" in script
     assert "[filename, previous_filename].includes(shepherdPath)" in script
     assert "if (changesShepherdAuthority)" in script
-    assert "await ensureHoldLabel()" in script
     assert "labels: ['do-not-auto-merge']" in script
     assert "reason=shepherd-self-change" in script
     assert "requires explicit owner merge" in script
 
-    # Cancellation safety: persist the exact-head halt marker before the label.
-    # A successor can then reconstruct a missing label without losing the reason.
+    # Marker-first write order makes a partial terminal hold reconstructible.
     hold_start = script.index("const holdForOwner")
     hold_comment = script.index("await postComment(", hold_start)
     hold_label = script.index("await ensureHoldLabel()", hold_comment)
-    finding_gate = script.index("if (exactHeadReviews.length !== 0)", hold_label)
-    assert hold_start < hold_comment < hold_label < finding_gate
+    assert hold_start < hold_comment < hold_label
     assert "Persist the exact-head halt marker before the label" in script[
-        hold_comment:finding_gate
+        hold_comment : hold_label + 300
     ]
 
-    self_change = script.index("if (changesShepherdAuthority)")
+    # Any exact-head halt marker is durable control state. Every successor restores
+    # the label before file/self-change/source-specific early returns.
+    label_state = script.index("let holdLabelPresent")
+    recovery_gate = script.index("if (exactHeadHalt) {", hold_label)
+    recovery_label = script.index("await ensureHoldLabel();", recovery_gate)
+    file_gate = script.index("if (changedFiles.length !== pullRequest.changed_files)", recovery_label)
+    self_change = script.index("if (changesShepherdAuthority)", file_gate)
+    generic_hold = script.index("if (holdLabelPresent)", self_change)
+    assert label_state < hold_start < recovery_gate < recovery_label < file_gate
+    assert file_gate < self_change < generic_hold
+    assert "marker before source-specific returns" in script[hold_label:file_gate]
+
+    # Self-change uses the same marker-first ordering.
     self_change_comment = script.index("await postComment(", self_change)
     self_change_label = script.index("await ensureHoldLabel()", self_change_comment)
-    generic_hold = script.index("do-not-auto-merge holds this pull request", self_change_label)
     assert self_change < self_change_comment < self_change_label < generic_hold
 
 
@@ -283,8 +291,6 @@ def test_codex_shepherd_callbacks_converge_from_current_finding_state() -> None:
     review_request = script.index("!exactHeadReviewRequest && !connectorCleanExactHead", clean_scan)
     assert finding_gate < finding_hold < clean_scan < review_request
 
-    # Newer workflow_dispatch input for the same PR may cancel an older apply run;
-    # exact-head revalidation plus marker-first terminal writes make this recoverable.
     apply = _workflow()["jobs"]["apply"]
     assert apply["concurrency"]["cancel-in-progress"] == "true"
     assert "pullRequest.head.sha !== expectedHeadSha" in script
