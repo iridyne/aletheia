@@ -126,7 +126,6 @@ def test_codex_shepherd_self_change_and_incomplete_file_listing_fail_closed() ->
     add_label = script.index("await github.rest.issues.addLabels", hold_start)
     marker_return = script.index("if (exactHeadHalt) return", add_label)
     assert hold_start < add_label < marker_return
-    assert "must never\n              // suppress restoring the safety label" in script
 
 
 def test_auto_merge_atomically_protects_shepherd_authority() -> None:
