@@ -49,16 +49,28 @@ def test_exact_head_clean_connector_comment_reenters_auto_merge_without_manual_t
     assert "Didn't find any major issues" in update_script
     assert "a clean Connector result will resume this PR automatically" in update_script
 
+    # Finding review discovery must be exhaustive. A limited GraphQL review
+    # window could omit an earlier exact-head P1/P2 review and accidentally
+    # allow a later clean comment to authorize the same head.
+    assert "github.paginate(github.rest.pulls.listReviews" in update_script
+    assert "pull_number: pullRequest.number" in update_script
+    assert "per_page: 100" in update_script
+    assert "review.commit_id === expectedHeadSha" in update_script
+    assert "review.state !== 'DISMISSED'" in update_script
+    assert "pullRequest.reviews.nodes.filter" not in update_script
+    assert "reviews(last: 100)" not in update_script
+
     # Automatic clean authorization is allowed only when there are no exact-head
     # Connector finding reviews. Once a finding review exists, the existing
     # maintainer triage-complete gate remains mandatory.
-    no_findings_gate = update_script.index("if (exactHeadReviews.length === 0)")
+    review_pagination = update_script.index("github.paginate(github.rest.pulls.listReviews")
+    no_findings_gate = update_script.index("if (exactHeadReviews.length === 0)", review_pagination)
     clean_gate = update_script.index("!connectorCleanExactHead", no_findings_gate)
     findings_triage = update_script.index("const triageComplete", clean_gate)
     merge_state_gate = update_script.index(
         "if (pullRequest.mergeStateStatus !== 'CLEAN')", findings_triage
     )
-    assert no_findings_gate < clean_gate < findings_triage < merge_state_gate
+    assert review_pagination < no_findings_gate < clean_gate < findings_triage < merge_state_gate
 
     # A stale review/comment must never authorize a newer head, and merge authority
     # continues to fail closed when this workflow itself is changed.
