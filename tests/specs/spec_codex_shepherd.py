@@ -120,6 +120,14 @@ def test_codex_shepherd_self_change_and_incomplete_file_listing_fail_closed() ->
     review_request = script.index("@codex review", ordinary_hold)
     assert incomplete < self_change < ordinary_hold < review_request
 
+    # A prior terminal marker only deduplicates its comment. Removing the safety
+    # label must still cause the next trusted callback to restore it first.
+    hold_start = script.index("const holdForOwner")
+    add_label = script.index("await github.rest.issues.addLabels", hold_start)
+    marker_return = script.index("if (exactHeadHalt) return", add_label)
+    assert hold_start < add_label < marker_return
+    assert "must never\n              // suppress restoring the safety label" in script
+
 
 def test_auto_merge_atomically_protects_shepherd_authority() -> None:
     source = _auto_merge_source()
@@ -160,6 +168,34 @@ def test_auto_merge_atomically_protects_shepherd_authority() -> None:
         < shepherd_positions[2]
         < message_positions[1]
     )
+
+    # Every authority decision must fail closed when GitHub's files endpoint is
+    # truncated. Schedule can disable directly; release and ordinary merge return.
+    schedule_complete = source.index(
+        "const changedFilesComplete = changedFiles.length === pullRequest.changed_files"
+    )
+    schedule_authority = source.index("const changesMergeAuthority", schedule_complete)
+    assert "!changedFilesComplete ||" in source[schedule_authority : schedule_authority + 700]
+    assert schedule_complete < schedule_authority < shepherd_positions[0]
+
+    release_complete = source.index(
+        "if (changedFiles.length !== pullRequest.changed_files)",
+        shepherd_positions[0],
+    )
+    assert release_complete < shepherd_positions[1] < message_positions[0]
+    assert "owner hold remains" in source[release_complete : shepherd_positions[1]]
+
+    ordinary_metadata = source.index("const {data: pullRequestMetadata} = await github.rest.pulls.get")
+    ordinary_complete = source.index(
+        "if (changedFiles.length !== pullRequestMetadata.changed_files)", ordinary_metadata
+    )
+    assert ordinary_metadata < ordinary_complete < shepherd_positions[2] < message_positions[1]
+    assert "pullRequestMetadata.head.sha !== expectedHeadSha" in source[
+        ordinary_metadata:ordinary_complete
+    ]
+    assert "exact-head merge remains disabled" in source[
+        ordinary_complete:shepherd_positions[2]
+    ]
 
 
 def test_codex_shepherd_requests_every_ready_or_resumed_exact_head_but_does_not_claim_repair() -> None:
