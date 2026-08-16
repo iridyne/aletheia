@@ -675,8 +675,8 @@ jobs:
                   core.info(
                     `waiting for P1/P2 triage on ${expectedHeadSha}@${expectedBaseSha}; ` +
                     `an authorized maintainer must comment "/codex-triage ${expectedHeadSha} ` +
-                    `complete" after the current exact-diff review and document every ` +
-                    `confirmed, false-positive, or deferred finding`,
+                    `complete" after the current exact-diff review and ` +
+                    `document every confirmed, false-positive, or deferred finding`,
                   );
                   return;
                 }
