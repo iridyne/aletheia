@@ -78,8 +78,12 @@ def test_codex_shepherd_binds_callbacks_and_control_markers_to_trusted_identity(
     assert "shepherdComments.flatMap" in script
 
 
-def test_codex_shepherd_self_change_is_fail_closed_from_trusted_base_workflow() -> None:
+def test_codex_shepherd_self_change_and_incomplete_file_listing_fail_closed() -> None:
     script = _script()
+
+    assert "changedFiles.length !== pullRequest.changed_files" in script
+    assert "file-list-incomplete" in script
+    assert "cannot prove the authority boundary" in script
 
     assert "const shepherdPath = '.github/workflows/codex-shepherd.yml'" in script
     assert "const changesShepherdAuthority" in script
@@ -90,15 +94,20 @@ def test_codex_shepherd_self_change_is_fail_closed_from_trusted_base_workflow() 
     assert "requires explicit owner merge" in script
     assert "Re-apply the hold on `unlabeled` events" in script
 
-    self_change = script.index("if (changesShepherdAuthority)")
+    incomplete = script.index("changedFiles.length !== pullRequest.changed_files")
+    self_change = script.index("if (changesShepherdAuthority)", incomplete)
     ordinary_hold = script.index("do-not-auto-merge holds this pull request", self_change)
     review_request = script.index("@codex review", ordinary_hold)
-    assert self_change < ordinary_hold < review_request
+    assert incomplete < self_change < ordinary_hold < review_request
 
 
-def test_codex_shepherd_requests_exact_head_review_but_does_not_claim_repair() -> None:
+def test_codex_shepherd_requests_every_ready_exact_head_but_does_not_claim_repair() -> None:
     script = _script()
 
+    assert "const reviewTriggerActions = new Set" in script
+    for action in ("'opened'", "'reopened'", "'ready_for_review'", "'synchronize'"):
+        assert action in script
+    assert "reviewTriggerActions.has(context.payload.action)" in script
     assert "@codex review" in script
     assert "kind=review" in script
     assert "const exactHeadReviewRequest" in script
@@ -110,32 +119,27 @@ def test_codex_shepherd_requests_exact_head_review_but_does_not_claim_repair() -
     # permission/executor exists, Shepherd must hold rather than fake autonomy.
     assert "@codex fix" not in script
     assert "const holdForOwner" in script
-    assert "labels: ['do-not-auto-merge']" in script
     assert "Codex Cloud repair is not authorized to push back" in script
-    assert "reason=${reason}" in script
     assert "review-finding" in script
     assert "ci-failure" in script
 
 
-def test_codex_shepherd_serializes_findings_before_ci_failure_handoff() -> None:
+def test_codex_shepherd_callbacks_converge_from_current_finding_state() -> None:
     script = _script()
 
-    review_handler = script.index("if (context.eventName === 'pull_request_review')")
-    review_hold = script.index("'review-finding'", review_handler)
-    issue_handler = script.index("if (context.eventName === 'issue_comment')", review_hold)
-    issue_requires_clean = script.index("!connectorCleanExactHead", issue_handler)
-    workflow_handler = script.index("if (context.eventName === 'workflow_run')", issue_requires_clean)
-    finding_precedence = script.index("if (exactHeadReviews.length !== 0)", workflow_handler)
-    wait_for_completion = script.index("if (!connectorCleanExactHead)", finding_precedence)
-    ci_hold = script.index("'ci-failure'", wait_for_completion)
-
-    assert review_handler < review_hold < issue_handler < issue_requires_clean
-    assert issue_requires_clean < workflow_handler < finding_precedence < wait_for_completion < ci_hold
-    assert "review repair takes precedence over CI repair" in script
-    assert "CI failed before exact-head Codex completion; wait for the Connector callback" in script
+    # GitHub concurrency can replace a pending run. Finding handling therefore
+    # must be a current-state gate shared by every surviving callback, not an
+    # exclusive pull_request_review event branch.
+    finding_gate = script.index("if (exactHeadReviews.length !== 0)")
+    finding_hold = script.index("'review-finding'", finding_gate)
+    clean_scan = script.index("let connectorCleanExactHead", finding_hold)
+    event_handler = script.index("if (context.eventName === 'pull_request_target')", clean_scan)
+    assert finding_gate < finding_hold < clean_scan < event_handler
+    assert "Event delivery is not a queue" in script
+    assert "if (context.eventName === 'pull_request_review')" not in script[finding_gate:]
 
 
-def test_codex_shepherd_only_holds_actionable_current_ci_failures() -> None:
+def test_codex_shepherd_only_holds_latest_actionable_ci_failure() -> None:
     script = _script()
 
     assert "const repairableCiConclusions = new Set(['failure', 'timed_out'])" in script
@@ -147,6 +151,13 @@ def test_codex_shepherd_only_holds_actionable_current_ci_failures() -> None:
     latest_ci = script[script.index("const latestCiRun") : script.index("if (context.eventName === 'issue_comment')")]
     assert ".filter((run) => run.name === 'Aletheia CI')" in latest_ci
     assert "run.status === 'completed'" not in latest_ci
+
+    workflow_handler = script[script.index("if (context.eventName === 'workflow_run')") :]
+    assert "const currentRun = await latestCiRun()" in workflow_handler
+    assert "currentRun.id !== payloadRun.id" in workflow_handler
+    assert "currentRun.status !== 'completed'" in workflow_handler
+    assert "!repairableCiConclusions.has(currentRun.conclusion)" in workflow_handler
+    assert "ignoring stale or non-actionable CI completion callback" in workflow_handler
 
     assert "pullRequest.base.ref !== 'master'" in script
     assert "pullRequest.draft" in script
