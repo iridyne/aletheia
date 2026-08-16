@@ -164,7 +164,12 @@ jobs:
                 per_page: 100,
               });
               const changesMergeAuthority = changedFiles.some(({filename, previous_filename}) =>
-                [filename, previous_filename].includes('.github/workflows/auto-merge.yml'),
+                [filename, previous_filename].some((path) =>
+                  [
+                    '.github/workflows/auto-merge.yml',
+                    '.github/workflows/codex-shepherd.yml',
+                  ].includes(path)
+                ),
               );
               const operation = (
                 changesMergeAuthority ||
@@ -240,7 +245,12 @@ jobs:
               per_page: 100,
             });
             if (changedFiles.some(({filename, previous_filename}) =>
-              [filename, previous_filename].includes('.github/workflows/auto-merge.yml'),
+              [filename, previous_filename].some((path) =>
+                [
+                  '.github/workflows/auto-merge.yml',
+                  '.github/workflows/codex-shepherd.yml',
+                ].includes(path)
+              )
             )) {
               core.info('merge-authority workflow changes require an explicit manual merge');
               return;
@@ -417,7 +427,12 @@ jobs:
                 per_page: 100,
               });
               if (changedFiles.some(({filename, previous_filename}) =>
-                [filename, previous_filename].includes('.github/workflows/auto-merge.yml'),
+                [filename, previous_filename].some((path) =>
+                  [
+                    '.github/workflows/auto-merge.yml',
+                    '.github/workflows/codex-shepherd.yml',
+                  ].includes(path)
+                )
               )) {
                 core.info('merge-authority workflow changes require an explicit manual merge');
                 return;
