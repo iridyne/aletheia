@@ -2953,7 +2953,7 @@ def list_exhausted_deferred_position_path_buckets(*, limit: int = 2_000) -> list
 
 
 def list_oldest_deferred_position_path_bucket(*, limit: int = 2_000) -> list[dict]:
-    """Return the oldest due bucket, at most one queued bucket per Position."""
+    """Return the oldest due bucket for each Position, bounded oldest-first."""
 
     bounded_limit = max(1, min(int(limit), 2_000))
     rows = get_db().execute(
@@ -2967,8 +2967,7 @@ def list_oldest_deferred_position_path_bucket(*, limit: int = 2_000) -> list[dic
         ")"
         ") "
         "SELECT * FROM due "
-        "WHERE bucket_open_ms=(SELECT MIN(bucket_open_ms) FROM due) "
-        "ORDER BY position_id LIMIT ?",
+        "ORDER BY bucket_open_ms, position_id LIMIT ?",
         (POSITION_PATH_MAX_RETRY_ATTEMPTS, bounded_limit),
     ).fetchall()
     return [dict(row) for row in rows]
