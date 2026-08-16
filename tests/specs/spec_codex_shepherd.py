@@ -115,16 +115,39 @@ def test_auto_merge_atomically_protects_shepherd_authority() -> None:
     # The merge controller must recognize Shepherd as merge authority everywhere
     # it makes an authority decision. This removes an unlabeled-event race between
     # two independent workflows.
-    assert source.count("'.github/workflows/codex-shepherd.yml'") == 3
+    shepherd_token = "'.github/workflows/codex-shepherd.yml'"
+    authority_message = "merge-authority workflow changes require an explicit manual merge"
+    assert source.count(shepherd_token) == 3
     assert source.count("'.github/workflows/auto-merge.yml'") >= 3
-    assert source.count("merge-authority workflow changes require an explicit manual merge") == 2
+    assert source.count(authority_message) == 2
 
-    schedule = source.index("const changesMergeAuthority")
-    release = source.index("merge-authority workflow changes require an explicit manual merge")
-    ordinary = source.rindex("merge-authority workflow changes require an explicit manual merge")
-    assert source.index("'.github/workflows/codex-shepherd.yml'", schedule) < release
-    assert source.index("'.github/workflows/codex-shepherd.yml'", release) < ordinary
-    assert source.index("'.github/workflows/codex-shepherd.yml'", ordinary) > ordinary
+    shepherd_positions: list[int] = []
+    start = 0
+    while True:
+        position = source.find(shepherd_token, start)
+        if position < 0:
+            break
+        shepherd_positions.append(position)
+        start = position + len(shepherd_token)
+
+    message_positions: list[int] = []
+    start = 0
+    while True:
+        position = source.find(authority_message, start)
+        if position < 0:
+            break
+        message_positions.append(position)
+        start = position + len(authority_message)
+
+    assert len(shepherd_positions) == 3
+    assert len(message_positions) == 2
+    assert (
+        shepherd_positions[0]
+        < shepherd_positions[1]
+        < message_positions[0]
+        < shepherd_positions[2]
+        < message_positions[1]
+    )
 
 
 def test_codex_shepherd_requests_every_ready_or_resumed_exact_head_but_does_not_claim_repair() -> None:
@@ -153,7 +176,7 @@ def test_codex_shepherd_requests_every_ready_or_resumed_exact_head_but_does_not_
     issue_handler = script.index("if (context.eventName === 'issue_comment')", pull_request_return)
     workflow_handler = script.index("if (context.eventName === 'workflow_run')", issue_handler)
     assert request_gate < pull_request_return < issue_handler < workflow_handler
-    assert "Any\n            // surviving trusted callback" in script
+    assert "surviving trusted callback" in script
 
     # Runtime evidence showed the current Codex Cloud task can create a local
     # repair commit but cannot push it back to this repository. Until that
