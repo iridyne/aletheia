@@ -2199,6 +2199,10 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     # scoped to one durable carrier. Authorizing the mixed queue creates an
     # unlinked exposure with no candidate outcome key.
     ctx = build_enriched_trading_context(authorize_learning=False)
+    # Keep the execution-account authority available to the decision layer. It
+    # is not model input; it selects the Risk policy/equity pool for deterministic
+    # proposal sizing after the LLM returns.
+    ctx["execution_mode"] = execution_mode
     from aletheia.agent_shell.skip_policy import (
         ensure_skip_remediation_policy_epoch,
         skip_policy_context,

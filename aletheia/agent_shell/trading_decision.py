@@ -3,7 +3,8 @@
 Provides evaluate_trading_opportunity() — the System Operator's ability to act as
 Trading Decision Authority. Given a rich context snapshot, it uses structured
 LLM output to decide whether to trade, then optionally runs a Bull/Bear debate
-when conviction is uncertain, and finally computes a conviction-based position size.
+when conviction is uncertain, and finally computes an account-equity risk-budget
+position size.
 
 This is intentionally a THIN layer over existing infrastructure:
   - Context comes from agent_shell/context.py (existing)
@@ -157,11 +158,12 @@ class TradingDecision:
     debate_bear_confidence: int | None = None
     debate_adjustment: int | None = None
     # R0 attribution: backfilled from the source opportunity by
-    # _attach_opportunity_context so the proposal carries a real opportunity_id /
-    # strategy_id and the decision_meta records scanner_family (LEARNING_LOOP_AUDIT
-    # §R0 + BACKEND_ISSUES §1.1 causal-chain strategy_id).
+    # _attach_opportunity_context. Retained as nullable legacy attribution only;
+    # it is not a sizing or account-authority input.
     opportunity_id: str | None = None
     learning_candidate_key: str | None = None
+    # Deprecated compatibility carrier for historical readers only. It is never
+    # written into a new Proposal and never participates in active sizing.
     strategy_id: str | None = None
     scanner_family: str | None = None
     # Phase 2 (Serenity Option A): which table opportunity_id resolves against.
@@ -404,7 +406,7 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
     Steps:
     1. Assess opportunities using structured LLM with full context
     2. If conviction in uncertain range (40-80), run Bull/Bear debate
-    3. Compute conviction-based position size
+    3. Compute account-equity risk-budget position size
     4. Return TradingDecision (caller submits a proposal only for action="trade")
     """
     decision_raw = await _assess_opportunity(trading_context)
@@ -846,7 +848,10 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
                 filter_trace=list(decision.filter_trace),
             )
 
-    # Compute sizing for the single executable entry action.
+    # Compute sizing for the single executable entry action. The command-level
+    # System Operator supplies execution_mode so this uses live account equity
+    # and the mode's Risk-page per-trade budget. Direct historical/programmatic
+    # callers without that authority retain the compatibility sizing path.
     if decision.action in trade_actions and decision.conviction >= _MIN_CONVICTION_TO_TRADE:
         decision.filter_trace.append({
             "filter_name": "operator_conviction_gate",
@@ -856,16 +861,40 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
             "inputs": {"conviction": decision.conviction},
             "parameters": {"minimum_conviction": _MIN_CONVICTION_TO_TRADE},
         })
-        ptc = _get_strategy_paper_trade_count(decision.strategy_id)
-        decision.position_size_usdt = _compute_position_size(
-            decision.conviction,
-            symbol=decision.symbol,
-            direction=decision.direction,
-            paper_trade_count=ptc,
-            opportunity_id=decision.opportunity_id,
-            learning_candidate_key=decision.learning_candidate_key,
-            sizing_trace=decision.sizing_trace,
-        )
+        execution_mode = str(trading_context.get("execution_mode") or "").strip()
+        if execution_mode:
+            from aletheia.config.loader import load_config
+
+            cfg = load_config()
+            market_type = decision.market_type or (
+                "usdt_futures" if decision.direction == "short" else "spot"
+            )
+            final_leverage, _ = _resolve_final_leverage(
+                decision, market_type, execution_mode, cfg
+            )
+            decision.position_size_usdt = _compute_position_size(
+                decision.conviction,
+                symbol=decision.symbol,
+                direction=decision.direction,
+                sizing_trace=decision.sizing_trace,
+                execution_mode=execution_mode,
+                market_type=market_type,
+                leverage=final_leverage,
+                cfg=cfg,
+            )
+        else:
+            # Legacy compatibility only. Strategy/sample scaling is not used by
+            # the active command path and cannot change a Risk-page budget.
+            ptc = _get_strategy_paper_trade_count(decision.strategy_id)
+            decision.position_size_usdt = _compute_position_size(
+                decision.conviction,
+                symbol=decision.symbol,
+                direction=decision.direction,
+                paper_trade_count=ptc,
+                opportunity_id=decision.opportunity_id,
+                learning_candidate_key=decision.learning_candidate_key,
+                sizing_trace=decision.sizing_trace,
+            )
     elif trade_intent:
         # Initial conviction < 55 without a debate range trigger (or debate did
         # not raise). Same rationale as debate_not_confirmed above (DL-S47):
@@ -1351,9 +1380,6 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         logger.info("guard_chain advisory (not blocking — Risk Engine is the gate): %s — %s",
                     decision.symbol, guard_summary["details"])
 
-    notional = decision.position_size_usdt or 25.0
-    quantity = round(notional / price, 6) or 0.000001
-
     # Phase 4 execution-school discriminator. Derived from the DECISION-level
     # signal_source (Phase 2): a 'serenity'-sourced decision opens a 'serenity'
     # position with the wider long-horizon stop. The risk engine stays school-
@@ -1547,13 +1573,26 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
     # cap (the risk engine enforces the same cap as a hard reject — clamping here keeps
     # the proposal inside the gate so a sane futures trade is not silently rejected for
     # an over-eager leverage number). Spot carries no leverage.
-    leverage: int | None = None
-    leverage_cap: int | None = None
-    if market_type == "usdt_futures" and decision.leverage and decision.leverage > 1:
-        from aletheia.trading.instruments import get_max_leverage
-        is_live = "live" in (execution_mode or "")
-        leverage_cap = get_max_leverage(decision.symbol, is_live, cfg)
-        leverage = max(1, min(decision.leverage, leverage_cap))
+    leverage, leverage_cap = _resolve_final_leverage(
+        decision, market_type, execution_mode, cfg
+    )
+
+    # The parsed System Operator path is authoritative: Risk-page per-trade risk
+    # determines the cost budget from current account equity, then final leverage
+    # converts that cost into perpetual-futures notional. Programmatic/historical
+    # callers retain their explicit position_size_usdt compatibility behavior.
+    if decision.parameter_rationale_required:
+        notional = _compute_account_equity_risk_size(
+            execution_mode=execution_mode,
+            market_type=market_type,
+            leverage=leverage,
+            cfg=cfg,
+            sizing_trace=decision.sizing_trace,
+        )
+        decision.position_size_usdt = notional
+    else:
+        notional = decision.position_size_usdt or 25.0
+    quantity = round(notional / price, 6) or 0.000001
 
     entry_parameters = _build_entry_parameter_snapshot(
         decision=decision,
@@ -1587,6 +1626,8 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         # absence here is why reasoning_feedback scanner was permanently unknown.
         "scanner_family": decision.scanner_family,
         "venue": decision.venue,
+        "sizing_policy": decision.sizing_trace,
+        # Legacy key retained for existing dashboard/feedback readers.
         "sizing_learning": decision.sizing_trace,
         "guards": guard_summary,
         # Immutable proposal evidence for why each entry value was used.  The
@@ -1622,7 +1663,9 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         take_profit=take_profit,
         risk_reward=risk_reward,
         execution_mode=execution_mode,
-        strategy_id=decision.strategy_id,
+        # Strategy ID is deprecated. Keep the nullable storage column only for
+        # historical rows; new Operator proposals never populate it.
+        strategy_id=None,
         opportunity_id=decision.opportunity_id,
         agent_rationale=rationale,
         attribution_snapshot=json.dumps(attribution_snapshot, default=str),
@@ -1657,7 +1700,6 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
         take_profit=proposal.take_profit,
         risk_reward=proposal.risk_reward,
         execution_mode=proposal.execution_mode,
-        strategy_id=proposal.strategy_id,
         opportunity_id=proposal.opportunity_id,
         agent_rationale=proposal.agent_rationale,
         trade_school=proposal.trade_school,
@@ -1704,6 +1746,9 @@ def _build_entry_parameter_snapshot(
 
     actual_notional = round(quantity * entry_price, 8)
     estimated_loss = round(quantity * abs(entry_price - stop_price), 8)
+    sizing_trace = decision.sizing_trace if isinstance(decision.sizing_trace, dict) else {}
+    cost_budget = sizing_trace.get("cost_budget_usdt")
+    target_notional = sizing_trace.get("target_notional_usdt")
     if decision.sizing_trace:
         notional_source = "deterministic_sizing_policy"
     elif decision.position_size_usdt is not None:
@@ -1749,6 +1794,9 @@ def _build_entry_parameter_snapshot(
         "notional_usdt": {
             "requested_value": requested_notional,
             "actual_value": actual_notional,
+            "target_value": target_notional,
+            "cost_budget_usdt": cost_budget,
+            "cost_formula": "account_equity_usdt * per_trade_risk_pct / 100",
             "estimated_loss_at_stop_usdt": estimated_loss,
             "value_source": notional_source,
             "reason": reason_for("notional_usdt"),
@@ -2017,6 +2065,71 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
 
 # ── sizing ────────────────────────────────────────────────────────────────────
 
+def _resolve_final_leverage(
+    decision: TradingDecision,
+    market_type: str,
+    execution_mode: str,
+    cfg,
+) -> tuple[int | None, int | None]:
+    """Resolve the same capped leverage used in the immutable Proposal."""
+    if market_type != "usdt_futures" or not decision.leverage or decision.leverage <= 1:
+        return None, None
+    from aletheia.trading.instruments import get_max_leverage
+
+    leverage_cap = get_max_leverage(
+        decision.symbol,
+        "live" in (execution_mode or ""),
+        cfg,
+    )
+    return max(1, min(int(decision.leverage), leverage_cap)), leverage_cap
+
+
+def _compute_account_equity_risk_size(
+    *,
+    execution_mode: str,
+    market_type: str,
+    leverage: int | float | None,
+    cfg,
+    sizing_trace: dict | None = None,
+) -> float:
+    """Compute the active Operator target notional from authoritative account data."""
+    from aletheia.risk.engine import account_equity_for_execution
+    from aletheia.risk.policy import resolve_risk_policy
+    from aletheia.trading.sizing import account_equity_risk_budget_size
+
+    equity = account_equity_for_execution(execution_mode, cfg)
+    if equity is None:
+        raise DecisionUnavailable(
+            f"account_equity_unavailable:{execution_mode}",
+            stage="operator_entry_plan",
+        )
+    try:
+        policy = resolve_risk_policy(cfg, execution_mode).policy
+        per_trade_risk_pct = float(policy.loss.max_single_trade_risk_pct)
+    except (AttributeError, TypeError, ValueError):
+        raise DecisionUnavailable(
+            "invalid_per_trade_risk_pct",
+            stage="operator_entry_plan",
+        ) from None
+    effective_leverage = (
+        float(leverage or 1)
+        if market_type == "usdt_futures"
+        else 1.0
+    )
+    try:
+        return account_equity_risk_budget_size(
+            equity,
+            per_trade_risk_pct,
+            leverage=effective_leverage,
+            sizing_trace=sizing_trace,
+        )
+    except ValueError:
+        raise DecisionUnavailable(
+            "invalid_account_equity_risk_budget",
+            stage="operator_entry_plan",
+        ) from None
+
+
 def _compute_position_size(
     conviction: int,
     symbol: str | None = None,
@@ -2025,16 +2138,39 @@ def _compute_position_size(
     opportunity_id: str | None = None,
     learning_candidate_key: str | None = None,
     sizing_trace: dict | None = None,
+    *,
+    execution_mode: str | None = None,
+    market_type: str | None = None,
+    leverage: int | float | None = None,
+    cfg=None,
 ) -> float:
-    """Compute notional position size from conviction score (0-100).
+    """Return active account-risk sizing, with a legacy-only compatibility path.
 
-    P1-5: paper_trade_count is passed through to vol_target_size so new strategies
-    start at a 0.1 legacy scaling factor and ramp to the configured factor.
+    The System Operator passes ``execution_mode`` and therefore never consults
+    Strategy ID, conviction multipliers, ATR, or paper-trade sample counts. The
+    argument-compatible fallback remains for historical/programmatic callers and
+    the non-Operator paper-trader path; it is not an active entry authority.
     """
     from aletheia.config.loader import load_config
-    cfg = load_config()
+
+    cfg = cfg or load_config()
+    if execution_mode:
+        resolved_market = market_type or (
+            "usdt_futures" if direction == "short" else "spot"
+        )
+        return _compute_account_equity_risk_size(
+            execution_mode=execution_mode,
+            market_type=resolved_market,
+            leverage=leverage,
+            cfg=cfg,
+            sizing_trace=sizing_trace,
+        )
+
+    # Compatibility path for direct/programmatic callers. Active System Operator
+    # proposals always provide execution_mode above and never reach this branch.
     if symbol:
         from aletheia.trading.sizing import vol_target_size
+
         return vol_target_size(
             symbol,
             conviction=conviction,
@@ -2048,12 +2184,12 @@ def _compute_position_size(
             sizing_trace=sizing_trace,
         )
     from aletheia.trading.sizing import compute_position_size
-    base = cfg.trading.default_notional_usdt
-    return compute_position_size(conviction, base)
+
+    return compute_position_size(conviction, cfg.trading.default_notional_usdt)
 
 
 def _get_strategy_paper_trade_count(strategy_id: str | None) -> int:
-    """Return eligible paper/demo outcomes used for sample-aware scaling."""
+    """Legacy compatibility helper; active Operator sizing never calls it."""
     if not strategy_id:
         return 0
     try:

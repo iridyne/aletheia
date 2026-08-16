@@ -281,6 +281,8 @@ class FilterCandidateOutcome(BaseModel):
 
 class TradeProposal(_Provenanced):
     id: str = Field(default_factory=new_id)
+    # Deprecated compatibility column. New Operator proposals leave this NULL;
+    # historical rows may still carry it until the storage schema is retired.
     strategy_id: str | None = None
     opportunity_id: str | None = None
     symbol: str
@@ -430,6 +432,8 @@ class Position(_Provenanced):
     # zero because that would fabricate net account economics.
     realized_pnl: float | None = 0.0
     execution_mode: str
+    # Deprecated compatibility column; active Operator positions inherit NULL
+    # because new proposals no longer carry Strategy ID.
     strategy_id: str | None = None
     # Futures: leverage used to open (None/1 = spot or 1x). liquidation_price is the
     # estimated isolated-margin liquidation level computed at open (None for 1x/spot).

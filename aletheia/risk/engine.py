@@ -1104,7 +1104,9 @@ def _evaluate_proposal_locked(
             if live_exposure_cap > 0 and projected > live_exposure_cap:
                 violations.append(f"max_total_live_exposure_exceeded:{projected}>{live_exposure_cap}")
 
-        # 13. Max single trade risk must be calculable and within cap.
+        # 13. Keep the stop-loss loss cap as a hard safety guard. Proposal sizing
+        # uses this same Risk-page percentage as the cost budget, but a wide stop
+        # may still be rejected when its loss-at-stop exceeds that budget.
         if not proposal.stop_price:
             violations.append("max_single_trade_risk_missing_stop_price")
         elif proposal.price and proposal.quantity:
@@ -1142,8 +1144,9 @@ def _evaluate_proposal_locked(
                     f"family_not_live_eligible:{prop_family}:wr={edge.get('win_rate')}<{min_wr}"
                 )
     else:
-        # Demo single-trade risk: paper trades may omit a stop (we don't force one),
-        # but when a stop is present the loss-at-stop must stay within the demo cap.
+        # Demo single-trade loss remains a hard safety guard. The same percentage
+        # also drives the active Operator cost budget; paper trades may omit a stop,
+        # but when present its loss-at-stop must stay within the demo budget.
         # Distinct token keeps this out of the live-critical-violation count.
         if proposal.stop_price and proposal.price and proposal.quantity:
             demo_risk_amount = abs(proposal.price - proposal.stop_price) * proposal.quantity
@@ -2265,6 +2268,16 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
     except Exception:
         pass
     return None
+
+
+def account_equity_for_execution(execution_mode: str, cfg=None) -> float | None:
+    """Return the cached equity for one execution account pool.
+
+    Proposal sizing and the Risk Engine must use the same account-authority
+    resolver.  This public read-only seam keeps callers from reimplementing the
+    paper/UTA cache rules or falling back to configured capital.
+    """
+    return _account_equity(execution_mode, cfg or load_config())
 
 
 def _resolve_capital_base(execution_mode: str, policy, cfg) -> tuple[float | None, str | None]:
