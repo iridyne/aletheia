@@ -114,6 +114,31 @@ def collect_bundle_files(root: Path) -> list[Path]:
         raise BundleBuildError(
             "aletheia/dashboard_static/index.html is missing; build the dashboard before the bundle"
         )
+    dashboard = dashboard_index.parent
+    modern_markers = (
+        dashboard / ".vite" / "manifest.json",
+        dashboard / "performance.json",
+    )
+    if any(marker.exists() for marker in modern_markers) or any(dashboard.rglob("*.br")):
+        required = [*modern_markers, dashboard / "assets"]
+        missing = [path.relative_to(root).as_posix() for path in required if not path.exists()]
+        if missing:
+            raise BundleBuildError(
+                "generated dashboard artifact is incomplete: " + ", ".join(missing)
+            )
+        logical = [dashboard_index, dashboard / ".vite" / "manifest.json", *dashboard.joinpath("assets").glob("*")]
+        sidecar_missing = []
+        for path in logical:
+            if not path.is_file() or path.suffix in {".br", ".gz", ".map"} or path == dashboard / "performance.json":
+                continue
+            if path.stat().st_size >= 256:
+                for suffix in (".br", ".gz"):
+                    if not path.with_name(path.name + suffix).is_file():
+                        sidecar_missing.append(f"{path.relative_to(root).as_posix()}{suffix}")
+        if sidecar_missing:
+            raise BundleBuildError(
+                "generated dashboard compression sidecars are missing: " + ", ".join(sidecar_missing)
+            )
 
     files: set[Path] = set()
     for relative in _REQUIRED_ROOT_FILES:

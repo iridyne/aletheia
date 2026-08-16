@@ -277,6 +277,9 @@ jobs:
           npm run lint
           npm test
           npx tsc -b --pretty false
+          build_dir="${RUNNER_TEMP}/aletheia-dashboard-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          VITE_BUILD_OUT_DIR="$build_dir" npm run build
+          test -s "$build_dir/performance.json"
 
       - name: Check Operator Shell
         if: ${{ always() && needs.review-core.outputs.operator == 'true' }}

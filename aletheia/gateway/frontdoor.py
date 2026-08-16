@@ -18,6 +18,7 @@ apply_windows_selector_policy()
 
 import os
 import time
+import mimetypes
 from pathlib import Path
 from typing import AsyncIterator, Iterable
 
@@ -428,13 +429,84 @@ def create_app(
                     return
                 await super().__call__(scope, receive, send)
 
+            @staticmethod
+            def _accepted_encodings(scope) -> list[str]:
+                header = next(
+                    (value.decode("latin-1") for key, value in scope.get("headers", []) if key.lower() == b"accept-encoding"),
+                    "",
+                )
+                accepted: dict[str, float] = {}
+                wildcard: float | None = None
+                for item in header.split(","):
+                    name, _, params = item.strip().lower().partition(";")
+                    if not name:
+                        continue
+                    quality = 1.0
+                    for param in params.split(";"):
+                        key, _, raw = param.strip().partition("=")
+                        if key == "q":
+                            try:
+                                quality = max(0.0, min(1.0, float(raw)))
+                            except ValueError:
+                                quality = 0.0
+                    if name == "*":
+                        wildcard = quality
+                    else:
+                        accepted[name] = quality
+                candidates = {
+                    "br": accepted.get("br", wildcard if wildcard is not None else 0.0),
+                    "gzip": accepted.get("gzip", wildcard if wildcard is not None else 0.0),
+                }
+                enabled = [(quality, 1 if name == "br" else 0, name) for name, quality in candidates.items() if quality > 0]
+                return [name for _quality, _br_first, name in sorted(enabled, reverse=True)]
+
+            @classmethod
+            def _accepted_encoding(cls, scope) -> str | None:
+                return next(iter(cls._accepted_encodings(scope)), None)
+
+            def _headers_for(self, response, *, url_path: str, encoding: str | None, source_path: str):
+                response.headers["Cache-Control"] = (
+                    "public, max-age=31536000, immutable"
+                    if url_path.startswith("/assets/")
+                    else "no-cache, must-revalidate"
+                )
+                response.headers["Vary"] = "Accept-Encoding"
+                content_type = mimetypes.guess_type(source_path)[0] or "application/octet-stream"
+                if source_path.endswith((".js", ".mjs")):
+                    content_type = "text/javascript"
+                response.headers["Content-Type"] = content_type
+                if encoding:
+                    response.headers["Content-Encoding"] = encoding
+                elif "content-encoding" in response.headers:
+                    del response.headers["Content-Encoding"]
+                return response
+
+            async def _serve(self, path: str, scope, *, url_path: str | None = None):
+                url_path = url_path or scope.get("path", "")
+                encoding = None
+                selected = path
+                # Sidecars are an implementation detail; only the logical URL is
+                # resolved through content negotiation.
+                for candidate_encoding in self._accepted_encodings(scope):
+                    candidate = f"{path}{'.br' if candidate_encoding == 'br' else '.gz'}"
+                    _, candidate_stat = self.lookup_path(candidate)
+                    if candidate_stat is not None:
+                        selected = candidate
+                        encoding = candidate_encoding
+                        break
+                result = await super().get_response(selected, scope)
+                return self._headers_for(result, url_path=url_path, encoding=encoding, source_path=path)
+
             async def get_response(self, path: str, scope):
+                url_path = scope.get("path", "")
+                if url_path.endswith((".br", ".gz", ".gzip")):
+                    raise StarletteHTTPException(status_code=404)
                 try:
-                    return await super().get_response(path, scope)
+                    return await self._serve(path, scope)
                 except StarletteHTTPException as exc:
                     url_path = scope.get("path", "")
-                    if exc.status_code == 404 and not url_path.startswith("/assets/"):
-                        return await super().get_response("index.html", scope)
+                    if exc.status_code == 404 and not url_path.startswith("/assets/") and not url_path.endswith((".br", ".gz", ".gzip")):
+                        return await self._serve("index.html", scope, url_path=url_path)
                     raise
 
         app.mount(

@@ -1,8 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useReducer, useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api/client'
-import type { AgentRun, Opportunity, TradeProposal } from '../types'
+import type { OverviewBootstrap } from '../api/boot'
 import { DetailDrawer, DrawerSection, DrawerField } from './DetailDrawer'
 import ThesisText from './ThesisText'
 import { ProposalRationaleDetail } from './ProposalRationaleDetail'
@@ -36,6 +34,37 @@ const FAILURE_STATUSES = new Set<string>([
   'error', 'failed', 'timed_out', 'stale', 'completed_with_errors', 'rejected',
 ])
 
+type CompactAgentRun = {
+  agent_name: string | null
+  trigger_type: string | null
+  status: string | null
+  started_at: string | null
+  ended_at: string | null
+  model_provider: string | null
+  outputs_created: string | null
+  errors: string | null
+}
+
+type CompactOpportunity = {
+  symbol: string | null
+  market: string | null
+  direction_bias: string | null
+  thesis: string | null
+  excerpt: string | null
+  confidence: string | null
+  confidence_score: number | null
+  source_agent: string | null
+}
+
+type CompactTradeProposal = {
+  symbol: string | null
+  market_type: string | null
+  direction: string | null
+  execution_mode: string | null
+  agent_rationale: string | null
+  status: string | null
+}
+
 type FeedItem = {
   key: string
   ts: string
@@ -47,9 +76,9 @@ type FeedItem = {
   headline?: string
   detail?: string
   // raw payloads for the drawer
-  run?: AgentRun
-  opportunity?: Opportunity
-  proposal?: TradeProposal
+  run?: CompactAgentRun
+  opportunity?: CompactOpportunity
+  proposal?: CompactTradeProposal
 }
 
 const AGENT_ICON: Record<string, string> = {
@@ -82,18 +111,18 @@ function safeDate(ts: string): number {
   return new Date(ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z').getTime()
 }
 
-function durationOf(run: AgentRun): string {
+function durationOf(run: Pick<CompactAgentRun, 'started_at' | 'ended_at'>): string {
   if (!run.started_at || !run.ended_at) return ''
   const ms = safeDate(run.ended_at) - safeDate(run.started_at)
   if (Number.isNaN(ms) || ms < 0) return ''
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
 }
 
-function outputsCount(run: AgentRun): number {
+function outputsCount(run: Pick<CompactAgentRun, 'outputs_created'>): number {
   try { return JSON.parse(run.outputs_created || '[]').length } catch { return 0 }
 }
 
-export default function AgentFeed() {
+export default function AgentFeed({ bootstrap }: { bootstrap?: OverviewBootstrap }) {
   const navigate = useNavigate()
   const cardRef = useRef<HTMLDivElement>(null)
   const [availableHeight, setAvailableHeight] = useState<number | null>(null)
@@ -163,57 +192,79 @@ export default function AgentFeed() {
     }
   }, [])
 
-  const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, refetchInterval: 10000, staleTime: 8000 })
-  const { data: opportunities = [] } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities, staleTime: 30000 })
-  const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals, staleTime: 30000 })
-
   const items: FeedItem[] = []
+  const activity = (bootstrap?.activity || []) as Array<Record<string, any>>
 
   // ----- ops/both track: agent runs -----
   if (mode === 'ops' || mode === 'both') {
-    for (const r of (runs as AgentRun[])) {
+    for (const r of activity.filter(item => item.kind === 'run') as any[]) {
       items.push({
         key: `run-${r.id}`,
-        ts: r.started_at,
+        ts: String(r.timestamp || ''),
         kind: 'run',
-        agent: r.agent_name,
-        icon: agentIcon(r.agent_name),
+        agent: String(r.agent || 'agent'),
+        icon: agentIcon(String(r.agent || '')),
         status: r.status,
-        headline: `${r.agent_name} ${r.status === 'completed' ? 'completed' : r.status}`,
-        run: r,
+        headline: r.headline || `${r.agent || 'agent'} ${r.status || ''}`,
+        run: {
+          agent_name: r.agent_name || r.agent || null,
+          trigger_type: r.trigger_type || null,
+          status: r.status || null,
+          started_at: r.started_at || r.timestamp || null,
+          ended_at: r.ended_at || null,
+          model_provider: r.model_provider || null,
+          outputs_created: r.outputs_created || null,
+          errors: r.errors || null,
+        },
       })
     }
   }
 
   // ----- narrative/both track: outputs (opportunities + proposals) -----
   if (mode === 'narrative' || mode === 'both') {
-    for (const o of (opportunities as Opportunity[])) {
-      const score = o.confidence_score != null || o.confidence != null
-        ? ` (${fmtOpportunityScore(o.source_agent, o.confidence_score, o.confidence)})`
+    for (const o of activity.filter(item => item.kind === 'opportunity') as any[]) {
+      const score = o.confidence_score != null
+        ? ` (${fmtOpportunityScore(o.agent, o.confidence_score, null)})`
         : ''
       items.push({
         key: `opp-${o.id}`,
-        ts: o.created_at,
+        ts: String(o.timestamp || ''),
         kind: 'opportunity',
-        agent: o.source_agent || 'agent',
-        icon: agentIcon(o.source_agent || ''),
-        headline: `${o.source_agent || 'Agent'} found ${o.direction_bias} opportunity on ${fmtSymbol(o.symbol, o.market)}${score}`,
-        detail: o.thesis || undefined,
-        opportunity: o,
+        agent: o.agent || 'agent',
+        icon: agentIcon(o.agent || ''),
+        headline: o.headline || `${o.agent || 'Agent'} found ${o.direction_bias || 'unknown'} opportunity on ${fmtSymbol(o.symbol, o.market)}${score}`,
+        detail: o.excerpt || undefined,
+        opportunity: {
+          symbol: o.symbol || null,
+          market: o.market || null,
+          direction_bias: o.direction_bias || null,
+          thesis: o.thesis || o.excerpt || null,
+          excerpt: o.excerpt || null,
+          confidence: o.confidence || null,
+          confidence_score: typeof o.confidence_score === 'number' ? o.confidence_score : null,
+          source_agent: o.source_agent || o.agent || null,
+        },
       })
     }
-    for (const p of (proposals as TradeProposal[])) {
+    for (const p of activity.filter(item => item.kind === 'proposal') as any[]) {
       if (p.status === 'pending') continue
       items.push({
         key: `prop-${p.id}`,
-        ts: p.created_at,
+        ts: String(p.timestamp || ''),
         kind: 'proposal',
         agent: 'strategy',
         icon: '📐',
         status: p.status,
-        headline: `Proposal: ${p.direction} ${fmtSymbol(p.symbol, p.market_type)} (${p.execution_mode})`,
-        detail: p.agent_rationale || undefined,
-        proposal: p,
+        headline: p.headline || `Proposal: ${p.direction || 'unknown'} ${fmtSymbol(p.symbol, p.market_type)} (${p.execution_mode || 'unknown'})`,
+        detail: p.excerpt || undefined,
+        proposal: {
+          symbol: p.symbol || null,
+          market_type: p.market_type || null,
+          direction: p.direction || null,
+          execution_mode: p.execution_mode || null,
+          agent_rationale: p.agent_rationale || p.excerpt || null,
+          status: p.status || null,
+        },
       })
     }
   }
@@ -303,10 +354,10 @@ function FeedDrawer({ item, onClose, navigate }: { item: FeedItem | null; onClos
       {item?.kind === 'opportunity' && item.opportunity && (
         <>
           <DrawerSection label="Opportunity">
-            <DrawerField label="Symbol" value={fmtSymbol(item.opportunity.symbol, item.opportunity.market)} mono />
+            <DrawerField label="Symbol" value={fmtSymbol(item.opportunity.symbol || '', item.opportunity.market || '')} mono />
             <DrawerField label="Bias" value={item.opportunity.direction_bias} />
             <DrawerField
-              label={opportunityScoreLabel(item.opportunity.source_agent)}
+              label={opportunityScoreLabel(item.opportunity.source_agent || '')}
               value={item.opportunity.confidence_score != null
                 ? fmtScore100(item.opportunity.confidence_score)
                 : item.opportunity.confidence ?? null}

@@ -36,6 +36,8 @@ describe('Command Palette mutation truthfulness', () => {
     expect(SRC).toContain("qc.setQueryData(['kill-switch'], confirmedState)")
     expect(SRC).toContain("queryKey: ['kill-switch']")
     expect(SRC).toContain("queryKey: ['risk-status']")
+    expect(SRC).toContain("queryKey: ['ui-shell-bootstrap']")
+    expect(SRC).toContain('initialOpen = false')
     expect(SRC).toContain('await api.startAgentRun')
     expect(SRC).toContain("queryKey: ['agent-runs']")
     expect(SRC).toContain('if (executingRef.current) return')

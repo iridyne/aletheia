@@ -18,6 +18,41 @@ logger = logging.getLogger("aletheia")
 PreflightStatus = Literal["pass", "warn", "fail"]
 
 
+def dashboard_artifact_errors(static_dir: Path) -> list[str]:
+    """Validate the complete generated dashboard tree when modern metadata exists.
+
+    Tiny legacy fixtures used by offline unit tests remain valid; every real Vite
+    build carries the manifest/performance marker and is checked as one artifact.
+    """
+    index = static_dir / "index.html"
+    if not index.is_file():
+        return ["index.html missing"]
+    manifest = static_dir / ".vite" / "manifest.json"
+    performance = static_dir / "performance.json"
+    sidecars = list(static_dir.rglob("*.br")) + list(static_dir.rglob("*.gz"))
+    modern = manifest.exists() or performance.exists() or bool(sidecars)
+    if not modern:
+        return []
+    errors: list[str] = []
+    if not manifest.is_file():
+        errors.append(".vite/manifest.json missing")
+    if not performance.is_file():
+        errors.append("performance.json missing")
+    assets = static_dir / "assets"
+    if not assets.is_dir() or not any(path.is_file() for path in assets.iterdir()):
+        errors.append("assets directory missing or empty")
+    logical_files = [index, manifest, *assets.glob("*")]
+    for path in logical_files:
+        if not path.is_file() or path.suffix in {".br", ".gz", ".map"} or path == performance:
+            continue
+        if path.stat().st_size >= 256:
+            if not path.with_name(f"{path.name}.br").is_file():
+                errors.append(f"{path.relative_to(static_dir)}.br missing")
+            if not path.with_name(f"{path.name}.gz").is_file():
+                errors.append(f"{path.relative_to(static_dir)}.gz missing")
+    return errors
+
+
 class PreflightCheck:
     """单个预检项的结果。"""
 
@@ -115,6 +150,15 @@ def check_static_files() -> PreflightCheck:
             "warn",
             f"index.html suspiciously small ({index_size} bytes)",
             remedy="Rebuild may have failed mid-way. Run: cd frontend && npm run build",
+        )
+
+    artifact_errors = dashboard_artifact_errors(static_dir)
+    if artifact_errors:
+        return PreflightCheck(
+            "static_files",
+            "fail",
+            "Incomplete generated dashboard artifact: " + ", ".join(artifact_errors),
+            remedy="Run: cd frontend && npm run build",
         )
 
     return PreflightCheck(

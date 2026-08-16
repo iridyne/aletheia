@@ -47,6 +47,8 @@ from aletheia.server.routes.capital import router as capital_router
 from aletheia.server.routes.economics import router as economics_router
 from aletheia.server.routes.export import router as export_router
 from aletheia.server.routes.ws import router as ws_router
+from aletheia.server.routes.ui import router as ui_router
+from aletheia.server.compression import JsonCompressionMiddleware
 
 logger = logging.getLogger("aletheia")
 
@@ -784,6 +786,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(JsonCompressionMiddleware, minimum_size=1024, compresslevel=6)
 
 
 # Trust-boundary auth: when tunnel is enabled, ALL /api/* and /_infra/* routes
@@ -1012,6 +1015,7 @@ app.include_router(analytics_router)
 app.include_router(capital_router)
 app.include_router(economics_router)
 app.include_router(export_router)
+app.include_router(ui_router)
 app.include_router(ws_router, prefix="/api")
 
 # Dev-reload routes — only mounted when ALETHEIA_DEV_RELOAD=1 and live is disabled.

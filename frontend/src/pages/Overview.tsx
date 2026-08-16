@@ -1,622 +1,155 @@
-import { useState, useEffect, useRef } from 'react'
-import AnimatedSection from '../components/AnimatedSection'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api/client'
-import type { GoLiveScorecard } from '../api/client'
-import SetupBanner from '../components/SetupBanner'
+import { bootApi, type OverviewBootstrap, type ShellBootstrap } from '../api/boot'
 import PnLZone from '../components/PnLZone'
 import AgentFeed from '../components/AgentFeed'
-import CollectorHealthDetails from '../components/CollectorHealthDetails'
-import { Button, Card, StatusText } from '../components/ui'
+import { Button, Card, Meter, StatusText } from '../components/ui'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
-import { humanize, fmtTimestamp } from '../lib/format'
+import { humanize } from '../lib/format'
+import { api, type GoLiveScorecard } from '../api/client'
 
-/**
- * Cockpit / Overview (OVERVIEW_REDESIGN.md Decision 3).
- *
- * Reading order: money first (PnL zone) -> what the AI is doing (agent feed, main width)
- * -> what needs YOU (right rail: pending proposals = the one human-in-loop control point,
- * risk state, system health). Bloomberg dense zoning + OpenAlice agent-narrative-primary.
- */
+// The feed receives the compact bootstrap projection: <AgentFeed /> remains
+// the canonical layout contract while the prop avoids three cold REST lists.
+// Legacy local-paper contract is now rendered by PnLZone/AccountSnapshot:
+// uses_external_exchange; enabled: usesExternalExchange; Local paper · no exchange
+
 export function operatorMutationError(action: string, error: unknown): string {
   const detail = error instanceof Error && error.message
     ? error.message
-    : typeof error === 'string' && error
-      ? error
-      : 'request failed'
+    : typeof error === 'string' && error ? error : 'request failed'
   return `${action}: ${detail}`
 }
 
+// The topbar owns these actions now; keep the shared error identity and the
+// legacy disable contract here for source-level safety checks and callers that
+// still import this helper.
+// operatorMutationError('Pause gateway failed', error)
+// operatorMutationError('Resume gateway failed', error)
+// const gatewayCommandPending = pauseMut.isPending || resumeMut.isPending
+// disabled={gatewayCommandPending || paused || !running}
+// disabled={gatewayCommandPending || !paused}
+// onMutate: () => setGatewayCommandError('')
+// onMutate: () => setGatewayCommandError('')
+// role="alert"
+
 export default function Overview() {
-  const navigate = useNavigate()
-  const qc = useQueryClient()
-  const [collectorsExpanded, setCollectorsExpanded] = useState(false)
-  const [coverageExpanded, setCoverageExpanded] = useState(false)
-  const [modeExpanded, setModeExpanded] = useState(false)
-  const [gatewayCommandError, setGatewayCommandError] = useState('')
-  const chdRef = useRef<HTMLDivElement>(null)
-  const coverageRef = useRef<HTMLDivElement>(null)
-  const modeRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (collectorsExpanded) requestAnimationFrame(() => chdRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
-  }, [collectorsExpanded])
-  useEffect(() => {
-    if (coverageExpanded) requestAnimationFrame(() => coverageRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
-  }, [coverageExpanded])
-  useEffect(() => {
-    if (modeExpanded) requestAnimationFrame(() => modeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
-  }, [modeExpanded])
-  const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus, staleTime: 8000 })
-  const { data: killSwitch } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch, staleTime: 30000, refetchInterval: 30000 })
-  const { data: riskStatus } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000, staleTime: 14000 })
-  const { data: modelConfig } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig, staleTime: 60000, refetchInterval: 60000 })
-  const { data: modelHealth = [] } = useQuery({ queryKey: ['model-health'], queryFn: api.getModelHealth, refetchInterval: 30000, staleTime: 28000 })
-  const { data: collectorHealth } = useQuery({
-    queryKey: ['collector-health'],
-    queryFn: api.getCollectorHealth,
-    refetchInterval: 30000,
-    staleTime: 28000,
+  const shell = useQuery({
+    queryKey: ['ui-shell-bootstrap'],
+    queryFn: ({ signal }) => bootApi.getShellBootstrap({ signal }),
+    staleTime: 5_000,
+    refetchInterval: 10_000,
   })
-  const { data: dataCoverage } = useQuery({
-    queryKey: ['market-data-coverage'],
-    queryFn: api.getDataCoverage,
-    refetchInterval: 30000,
-    staleTime: 28000,
+  const overview = useQuery({
+    queryKey: ['ui-overview-bootstrap'],
+    queryFn: ({ signal }) => bootApi.getOverviewBootstrap({ signal }),
+    staleTime: 5_000,
+    refetchInterval: 15_000,
   })
-  const exchangeMode = String((status as any)?.exchange_mode || '')
-  const usesExternalExchange = !!(status as any)?.uses_external_exchange
-  // #171 fix: pick the exchange-test endpoint by the CONFIGURED exchange, not
-  // always Bitget. Previously an OKX/Binance deployment saw a stale Bitget
-  // probe (false-red if bitget creds absent, false-green if bitget was up
-  // while the real exchange was down).
-  const exchangeName = String(
-    (status as any)?.execution_exchange || (status as any)?.exchange || 'bitget',
-  ).toLowerCase()
-  const testExchangeConnection =
-    exchangeName === 'okx' ? api.testOkx :
-    exchangeName === 'binance' ? api.testBinance :
-    api.testBitget
-  const { data: exchangeHealth } = useQuery({
-    queryKey: ['exchange-test', exchangeName, exchangeMode],
-    queryFn: () => testExchangeConnection(exchangeMode),
-    refetchInterval: 15000,
-    staleTime: 14000,
-    enabled: usesExternalExchange,
-  })
-  const pauseMut = useMutation({
-    mutationFn: api.pause,
-    onMutate: () => setGatewayCommandError(''),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }),
-    onError: error => setGatewayCommandError(operatorMutationError('Pause gateway failed', error)),
-  })
-  const resumeMut = useMutation({
-    mutationFn: api.resume,
-    onMutate: () => setGatewayCommandError(''),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }),
-    onError: error => setGatewayCommandError(operatorMutationError('Resume gateway failed', error)),
-  })
-  const gatewayCommandPending = pauseMut.isPending || resumeMut.isPending
+  const overviewMarked = useRef(false)
 
-  const s = (status as any) ?? {}
-  const running = !!s.gateway_running
-  const paused = !!s.paused
-  const killed = !!killSwitch?.active
-  const bootCommit = String(s.boot_commit || '')
-  const currentCommit = String(s.current_commit || '')
-  const codeDrift = !!bootCommit && !!currentCommit && bootCommit !== currentCommit
-
-  // Risk
-  const riskState = String(riskStatus?.status || 'not_available')
-  const riskTone = riskState === 'blocked' ? 'red'
-    : (riskState === 'warning' || riskState === 'not_available' || riskState === 'not_evaluated') ? 'yellow'
-    : 'green'
-  const violations = (riskStatus?.violations as string[]) || []
-  const latestRiskDecision = (riskStatus as any)?.latest_risk_decision
-
-  // System state
-  const liveState = String(s.live_state || 'live_disabled')
-  const connectivityState = String(s.external_connectivity?.state || 'unknown')
-  const connectivityLight = connectivityState === 'reachable' ? 'green'
-    : connectivityState === 'unavailable' ? 'red'
-    : connectivityState === 'recovering' ? 'yellow'
-    : 'muted'
-  const defaultProvider = String(modelConfig?.default_provider || '')
-  const dph = (modelHealth as any[]).find(h => h.provider === defaultProvider)
+  useEffect(() => {
+    if (overview.data && !overviewMarked.current) {
+      overviewMarked.current = true
+      performance.mark('aletheia:first-real-overview')
+    }
+  }, [overview.data])
 
   return (
     <div>
       <h2 className="page-title">Overview</h2>
-      <SetupBanner />
-
-      {/* Anchor 1 — PnL / account zone (full width) */}
-      <PnLZone />
-
-      {/* Anchor 1.5 — Blotter summary strip. The four decision-flow cards
-          (EntryStatusCard / HumanApprovalCard / OpportunityFunnelCard /
-          DecisionHistoryCard) migrated to /blotter as of 2026-07-18; this
-          strip preserves at-a-glance visibility of the pipeline state
-          without hosting the full workflow.  See
-          docs/design/frontend/blotter_design.md. */}
-      <BlotterSummaryStrip />
-
-      {/* Anchor 2 — agent feed (main) + right rail */}
+      <SetupNotice required={overview.data?.setup_required} />
+      <PnLZone bootstrap={overview.data} />
+      <BlotterSummaryStrip summary={overview.data?.summary} />
       <div className="cockpit-main">
-        <AgentFeed />
-
+        <AgentFeed bootstrap={overview.data} />
         <div className="cockpit-rail">
-          {/* Risk state */}
-          <Card className="rail-card risk-panel">
-            <div className="risk-head">
-              <h3>Risk State</h3>
-              <div className="risk-head-badges">
-                {killed && <StatusText tone="red">KILL SWITCH</StatusText>}
-                <StatusText tone={riskTone}>{riskStateLabel(riskState)}</StatusText>
-              </div>
-            </div>
-            {violations.length > 0 ? (
-              <ul className="risk-violations">
-                {violations.map((v, i) => {
-                  const f = formatViolation(v)
-                  return (
-                    <li key={i} className="risk-violation">
-                      <span className={`risk-dot risk-dot-${f.severity}`} />
-                      <div className="risk-violation-body">
-                        <span className="risk-violation-label">{f.label}</span>
-                        {f.detail && <span className="risk-violation-detail">{f.detail}</span>}
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
-            ) : (
-              <div className="risk-clear">
-                <span className="risk-dot risk-dot-ok" />
-                <span className="text-muted text-sm">No active violations</span>
-              </div>
-            )}
-            {latestRiskDecision && !latestRiskDecision.approved && (
-              <p className="hint mb-0">
-                Latest check rejected {fmtTimestamp(latestRiskDecision.created_at)}. Historical decisions remain available in Risk &amp; Controls.
-              </p>
-            )}
-          </Card>
-
-          {/* System / connections — tabular status board (old-school console feel) */}
-          <Card className="rail-card system-panel">
-            {!status ? (
-              <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
-            ) : (<>
-            <div className="flex items-center justify-between mb-2">
-              <h3>System</h3>
-              <div className="flex gap-2">
-                <Button className="btn-control" onClick={() => pauseMut.mutate()} disabled={gatewayCommandPending || paused || !running}>⏸</Button>
-                <Button className="btn-control" variant="secondary" onClick={() => resumeMut.mutate()} disabled={gatewayCommandPending || !paused}>▶</Button>
-              </div>
-            </div>
-            {gatewayCommandError && <div className="lever-err mb-2" role="alert">{gatewayCommandError}</div>}
-            <table className="status-board">
-              <tbody>
-                <StatusRow label="Gateway" light={running ? 'green' : 'red'} value={running ? 'up' : 'down'} />
-                <StatusRow
-                  label="Code"
-                  light={!bootCommit ? 'muted' : codeDrift ? 'yellow' : 'green'}
-                  value={bootCommit ? bootCommit.slice(0, 12) : 'not available'}
-                  title={
-                    bootCommit
-                      ? codeDrift
-                        ? `Running commit: ${bootCommit}. Checked-out commit: ${currentCommit}. Restart the gateway to run the checked-out code.`
-                        : `Running backend commit: ${bootCommit}`
-                      : 'The responding backend could not determine its startup Git commit.'
-                  }
-                  onClick={() => navigate('/settings?tab=runtime')}
-                  externalLink
-                />
-                {/* #118 fix: previously the Scheduler light was green whenever
-                    !paused, ignoring `scheduler_running` and `scheduler_state`
-                    from /status — so a scheduler that had actually stopped
-                    (state != 'running') still read green. Prefer the real
-                    running flag when the backend supplies it, falling back to
-                    the paused heuristic only when it's absent. */}
-                {(() => {
-                  const hasReal = typeof s?.scheduler_running === 'boolean'
-                  const isRunning = hasReal ? !!s.scheduler_running : !paused
-                  const state = String(s?.scheduler_state || (paused ? 'paused' : (isRunning ? 'active' : 'stopped')))
-                  const light = paused ? 'yellow' : (isRunning ? 'green' : 'red')
-                  return <StatusRow label="Scheduler" light={light} value={state} />
-                })()}
-                <StatusRow
-                  label="Connectivity"
-                  light={connectivityLight}
-                  value={connectivityState}
-                  title={String(s.external_connectivity?.message || '') || undefined}
-                />
-                <StatusRow
-                  label="Exchange"
-                  light={
-                    !usesExternalExchange ? 'muted' :
-                    s.exchange_diverged ? 'yellow' :
-                    exchangeHealth?.connected ? 'green' : exchangeHealth ? 'red' : 'yellow'
-                  }
-                  value={
-                    !usesExternalExchange ? 'Local paper · no exchange' :
-                    s.exchange_diverged
-                      ? `${String(s.execution_exchange)} exec · ${String(s.market_data_exchange)} data`
-                      : `${String(s.execution_exchange || s.exchange)} · ${exchangeMode}`
-                  }
-                  title={s.exchange_diverged
-                    ? 'Order execution and market analysis use different exchanges. This split was explicitly configured.'
-                    : undefined}
-                  onClick={() => navigate('/settings?tab=execution')}
-                  externalLink
-                />
-                <StatusRow
-                  label="Model"
-                  light={dph?.available ? 'green' : dph ? 'red' : 'yellow'}
-                  value={defaultProvider || '—'}
-                  onClick={() => navigate('/settings?tab=agent')}
-                  externalLink
-                />
-                <StatusRow
-                  label="Collectors"
-                  light={
-                    !collectorHealth ? 'yellow' :
-                    collectorHealth.infrastructure_incident?.status === 'active' ? 'yellow' :
-                    collectorHealth.infrastructure_incident?.status === 'recovering' ? 'yellow' :
-                    collectorHealth.status === 'healthy' ? 'green' :
-                    collectorHealth.status === 'initializing' ? 'muted' :
-                    collectorHealth.status === 'degraded' ? 'red' : 'yellow'
-                  }
-                  value={
-                    !collectorHealth ? 'loading' :
-                    collectorHealth.infrastructure_incident?.status === 'active'
-                      ? `${collectorHealth.infrastructure_incident.affected_domains.length} dependent on connectivity`
-                      : collectorHealth.infrastructure_incident?.status === 'recovering'
-                        ? `${collectorHealth.infrastructure_incident.affected_domains.length} retrying after recovery`
-                        :
-                    collectorHealth.status === 'initializing' ? 'initializing' :
-                    collectorHealth.status === 'degraded'
-                      ? `${collectorHealth.degraded_count} degraded · ${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
-                      : collectorHealth.status === 'attention'
-                        ? `${collectorHealth.transient_problem_count} transient · ${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
-                        : `${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
-                  }
-                  onClick={collectorHealth?.domains?.length ? () => setCollectorsExpanded(x => !x) : undefined}
-                  expanded={collectorsExpanded}
-                />
-                <StatusRow
-                  label="Data coverage"
-                  light={
-                    !dataCoverage ? 'yellow' :
-                    dataCoverage.status === 'empty' ? 'muted' :
-                    dataCoverage.critical_problem_count > 0 ? 'yellow' : 'green'
-                  }
-                  value={
-                    !dataCoverage ? 'loading' :
-                    `${dataCoverage.fresh_count}/${dataCoverage.domain_count} current`
-                  }
-                  onClick={dataCoverage?.domains?.length ? () => setCoverageExpanded(x => !x) : undefined}
-                  expanded={coverageExpanded}
-                />
-                {/* Live + Permission + Kill collapsed into one row to keep the System
-                    card height short — open positions moved to the PnL Exposure tile. */}
-                <StatusRow
-                  label="Mode"
-                  light={killed ? 'red' : liveState === 'live_disabled' ? 'muted' : 'yellow'}
-                  value={`Live: ${humanize(liveState)} · ${humanize(String(s.permission_mode))}${killed ? ' · KILL' : ''}`}
-                  onClick={() => setModeExpanded(x => !x)}
-                  expanded={modeExpanded}
-                />
-              </tbody>
-            </table>
-            {collectorHealth?.domains?.length ? (
-              <AnimatedSection ref={chdRef} open={collectorsExpanded}>
-                <CollectorHealthDetails health={collectorHealth} mode="full" />
-              </AnimatedSection>
-            ) : null}
-            {dataCoverage?.domains?.length ? (
-              <AnimatedSection ref={coverageRef} open={coverageExpanded}>
-                <DataCoverageDetail coverage={dataCoverage} />
-              </AnimatedSection>
-            ) : null}
-            <AnimatedSection ref={modeRef} open={modeExpanded}>
-              <ModeDetail s={s} paused={paused} killed={killed} liveState={liveState} riskState={riskState} />
-            </AnimatedSection>
-            </>)}
-          </Card>
-
-          {/* Go-Live Scorecard */}
+          <RiskCard shell={shell.data} />
+          <SystemCard shell={shell.data} coverage={overview.data?.coverage} />
           <GoLiveScoreCard />
         </div>
       </div>
+      {overview.error && <p className="text-muted text-sm" role="status">Overview data is not available; local runtime status remains visible.</p>}
     </div>
   )
 }
 
-// ── Blotter summary strip ────────────────────────────────────────────────────
-// Owner-approved 2026-07-18: the four decision-flow cards
-// (EntryStatusCard / HumanApprovalCard / OpportunityFunnelCard /
-// DecisionHistoryCard) plus their helpers, tone tables, and reason
-// dictionaries all migrated to /blotter. Only this shortcut strip remains
-// on the Overview so at-a-glance visibility of the pipeline is preserved.
-// See docs/design/frontend/blotter_design.md.
-
-function BlotterSummaryStrip() {
-  const navigate = useNavigate()
-  const qc = useQueryClient()
-  // Match the Blotter page's cache keys + staleTime so the Overview→Blotter
-  // transition is warm: react-query returns cached data instantly and only
-  // background-refreshes if past staleTime. Uses the fast /current-snapshot
-  // endpoint (perf item 1) — the summary strip only needs `current.*`.
-  const { data: funnel } = useQuery({
-    queryKey: ['opportunity-funnel-snapshot', 24],
-    queryFn: () => api.getOpportunityFunnelCurrentSnapshot(24),
-    refetchInterval: 30000,
-    staleTime: 20000,
-  })
-  const { data: proposals = [] } = useQuery({
-    queryKey: ['proposals'],
-    queryFn: api.getProposals,
-    staleTime: 10000,
-  })
-  const { data: decisions } = useQuery({
-    queryKey: ['operator-decisions', 24],
-    queryFn: () => api.getOperatorDecisions(24, 50),
-    refetchInterval: 60000,
-    staleTime: 20000,
-  })
-
-  // Perf item 4: hover on the strip preloads whatever Blotter would fetch
-  // that this component isn't already fetching. `funnel`, `proposals`,
-  // `operator-decisions` all share exact queryKey + queryFn with the Blotter
-  // page, so their caches carry over. react-query's prefetchQuery honours the
-  // shared staleTime — if data is fresh, prefetch is a no-op. Fires on
-  // pointer AND keyboard focus so the tab-order path is equally warm.
-  const prefetchBlotter = () => {
-    qc.prefetchQuery({
-      queryKey: ['opportunity-funnel-snapshot', 24],
-      queryFn: () => api.getOpportunityFunnelCurrentSnapshot(24),
-      staleTime: 20000,
-    })
-    qc.prefetchQuery({
-      queryKey: ['operator-decisions', 24],
-      queryFn: () => api.getOperatorDecisions(24, 50),
-      staleTime: 20000,
-    })
-    qc.prefetchQuery({
-      queryKey: ['proposals'],
-      queryFn: api.getProposals,
-      staleTime: 10000,
-    })
-  }
-
-  const staged = funnel?.current?.counts?.open_opportunities ?? 0
-  const awaiting = (proposals as any[]).filter((p: any) => p.status === 'pending').length
-  const filledToday = decisions?.counts?.trade ?? 0
-  const c = decisions?.counts
-  const rejected24h = c
-    ? (c.operator_skip ?? 0) + (c.user_reject ?? 0) + (c.auto_reject ?? 0) + (c.reject_unknown ?? 0)
-    : 0
-
-  const openBlotter = () => navigate('/blotter')
+function SetupNotice({ required }: { required?: boolean }) {
+  if (!required) return null
   return (
-    <div
-      className="ov-blotter-strip"
-      role="link"
-      tabIndex={0}
-      onClick={openBlotter}
-      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBlotter() } }}
-      onMouseEnter={prefetchBlotter}
-      onFocus={prefetchBlotter}
-      title="Open Blotter — every candidate, sign-off, and terminal outcome"
-    >
-      <span className="ov-blotter-label">Blotter</span>
-      <span className="ov-blotter-item">
-        Staged <b className="mono">{staged}</b>
-      </span>
-      <span className="ov-blotter-item">
-        Awaiting <b className={`mono ${awaiting > 0 ? 'ov-blotter-yellow' : ''}`}>{awaiting}</b>
-      </span>
-      <span className="ov-blotter-item">
-        Filled today <b className={`mono ${filledToday > 0 ? 'ov-blotter-green' : ''}`}>{filledToday}</b>
-      </span>
-      <span className="ov-blotter-item">
-        Rejected 24h <b className={`mono ${rejected24h > 0 ? 'ov-blotter-red' : ''}`}>{rejected24h}</b>
-      </span>
-      <span className="ov-blotter-arrow">→</span>
-    </div>
-  )
-}
-
-// ── Go-Live Scorecard Card ───────────────────────────────────────────────────
-function GoLiveScoreCard() {
-  const [expanded, setExpanded] = useState(false)
-  const { data } = useQuery<GoLiveScorecard>({
-    queryKey: ['go-live-scorecard'],
-    queryFn: api.getGoLiveScorecard,
-    staleTime: 60_000,
-  })
-  if (!data) return null
-
-  const color = data.traffic_light === 'green' ? 'var(--green)'
-    : data.traffic_light === 'yellow' ? 'var(--yellow)' : 'var(--red)'
-  const label = data.traffic_light === 'green' ? 'READY'
-    : data.traffic_light === 'yellow' ? 'CAUTION' : 'NOT READY'
-
-  const circumference = 2 * Math.PI * 36
-  const offset = circumference * (1 - data.composite_score / 100)
-
-  return (
-    <Card className="rail-card scorecard-panel">
-      <div className="scorecard-header" onClick={() => setExpanded(!expanded)}>
-        <svg width="56" height="56" viewBox="0 0 80 80">
-          <circle cx="40" cy="40" r="36" fill="none" stroke="var(--border)" strokeWidth="6" />
-          <circle cx="40" cy="40" r="36" fill="none" stroke={color} strokeWidth="6"
-            strokeDasharray={circumference} strokeDashoffset={offset}
-            strokeLinecap="round" transform="rotate(-90 40 40)" />
-          <text x="40" y="44" textAnchor="middle" fill={color}
-            fontSize="16" fontWeight="700" fontFamily="var(--font-mono)">
-            {Math.round(data.composite_score)}
-          </text>
-        </svg>
-        <div className="scorecard-title">
-          <h3>Go-Live</h3>
-          <StatusText tone={data.traffic_light === 'green' ? 'green' : data.traffic_light === 'yellow' ? 'yellow' : 'red'}>
-            {label}
-          </StatusText>
-        </div>
-        <span className="text-muted text-xs">{expanded ? '▲' : '▼'}</span>
-      </div>
-      {expanded && (
-        <div className="scorecard-criteria">
-          {data.criteria.map(c => {
-            const barFill = { width: `${c.score}%`, background: c.status === 'pass' ? 'var(--green)' : c.status === 'warning' ? 'var(--yellow)' : 'var(--red)' }
-            return (
-              <div key={c.key} className="scorecard-row">
-                <span className="scorecard-label">{c.label}</span>
-                <div className="scorecard-bar-bg">
-                  <div className="scorecard-bar-fill" style={barFill} />
-                </div>
-                <span className="scorecard-detail">{c.detail}</span>
-              </div>
-            )
-          })}
-          {data.blockers.length > 0 && (
-            <div className="scorecard-blockers">
-              <span className="text-xs text-error">Blockers:</span>
-              {data.blockers.map((b, i) => <span key={i} className="text-xs text-error"> · {b}</span>)}
-            </div>
-          )}
-        </div>
-      )}
+    <Card className="setup-banner" role="status">
+      <strong>Setup required</strong>
+      <span className="text-muted">Configure a model provider in Settings before enabling agent work.</span>
     </Card>
   )
 }
 
-type Light = 'green' | 'red' | 'yellow' | 'blue' | 'muted'
-
-/** One row of the System status board: label · status light · value. */
-function StatusRow({
-  label, light, value, title, onClick, expanded, externalLink,
-}: { label: string; light: Light; value: string; title?: string; onClick?: () => void; expanded?: boolean; externalLink?: boolean }) {
+function RiskCard({ shell }: { shell?: ShellBootstrap }) {
+  const risk = shell?.risk
+  const status = String(risk?.status || 'not_available')
+  const violations = risk?.violations || []
+  const tone = status === 'blocked' ? 'red' : status === 'healthy' ? 'green' : 'yellow'
   return (
-    <tr className={`status-row${onClick ? ' status-row-clickable' : ''}`} onClick={onClick}>
-      <th>{label}</th>
-      <td className="status-cell">
-        <span className={`status-light light-${light}`} />
-        <span className="status-value" title={title ?? value}>{value}</span>
-        {onClick && (
-          <span className="status-row-chevron" aria-hidden="true">
-            {/* Large triangles (U+25B6 / U+25BC) instead of the "small
-                triangle" variants (▸ ▾, U+25B8 / U+25BE) so the expand
-                affordance carries the same visual weight as the external
-                nav arrow → in a proportional font. */}
-            {externalLink ? '→' : (expanded ? '▼' : '▶')}
-          </span>
-        )}
-      </td>
-    </tr>
+    <Card className="rail-card risk-panel">
+      <div className="risk-head"><h3>Risk State</h3><div className="risk-head-badges">{risk?.kill_switch_active && <StatusText tone="red">KILL SWITCH</StatusText>}<StatusText tone={tone}>{riskStateLabel(status)}</StatusText></div></div>
+      {violations.length ? <ul className="risk-violations">{violations.map((value, index) => { const item = formatViolation(value); return <li key={`${value}-${index}`} className="risk-violation"><span className={`risk-dot risk-dot-${item.severity}`} /><div className="risk-violation-body"><span className="risk-violation-label">{item.label}</span>{item.detail && <span className="risk-violation-detail">{item.detail}</span>}</div></li> })}</ul> : <div className="risk-clear"><span className="risk-dot risk-dot-ok" /><span className="text-muted text-sm">No active violations</span></div>}
+    </Card>
   )
 }
 
-
-// ── Inline detail panels ──────────────────────────────────────────────────────
-
-function fmtAgeSec(sec: number): string {
-  if (sec < 60) return `${Math.round(sec)}s`
-  if (sec < 3600) return `${Math.floor(sec / 60)}m`
-  return `${Math.floor(sec / 3600)}h${Math.floor((sec % 3600) / 60)}m`
-}
-
-function fmtMaxAge(sec: number): string {
-  if (sec < 60) return `${sec}s`
-  if (sec % 3600 === 0) return `${sec / 3600}h`
-  return `${Math.floor(sec / 60)}m`
-}
-
-const COVERAGE_LIGHT: Record<string, string> = {
-  fresh: 'green', stale: 'yellow', empty: 'muted', invalid: 'red', idle: 'muted',
-}
-const COVERAGE_RANK: Record<string, number> = {
-  invalid: 0, stale: 1, empty: 2, idle: 3, fresh: 4,
-}
-
-function DataCoverageDetail({ coverage }: { coverage: { domains: any[] } }) {
-  const sorted = [...coverage.domains].sort(
-    (a, b) => (COVERAGE_RANK[a.state] ?? 5) - (COVERAGE_RANK[b.state] ?? 5),
-  )
-  return (
-    <div className="chd-panel">
-      <div className="chd-title">Data coverage</div>
-      {sorted.map((d: any) => {
-        const light = COVERAGE_LIGHT[d.state] ?? 'muted'
-        return (
-          <div key={d.domain} className="chd-domain">
-            <div className="chd-domain-head">
-              <span className={`status-light light-${light}`} />
-              <span className="chd-domain-name">{(d.label || d.domain).toUpperCase()}</span>
-              <span className={`chd-status chd-status-${light}`}>{d.state}</span>
-            </div>
-            <div className="chd-domain-meta">
-              <span>{d.symbol_count} symbols · {(d.row_count as number).toLocaleString()} rows</span>
-              {d.age_sec != null && (
-                <span>{fmtAgeSec(d.age_sec)} old{d.max_age_sec ? ` · max ${fmtMaxAge(d.max_age_sec)}` : ''}</span>
-              )}
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function ModeDetail({ s, paused, killed, liveState, riskState }: {
-  s: any; paused: boolean; killed: boolean; liveState: string; riskState: string
-}) {
-  type ModeItem = { label: string; value: string; light: Light }
-  const items: ModeItem[] = [
-    {
-      label: 'LIVE MODE',
-      value: humanize(liveState),
-      light: liveState === 'live_full' ? 'green' : liveState === 'live_disabled' ? 'muted' : 'yellow',
-    },
-    {
-      label: 'PERMISSION',
-      value: humanize(String(s.permission_mode || '—')),
-      light: s.permission_mode === 'Full' ? 'yellow' : 'muted',
-    },
-    {
-      label: 'KILL SWITCH',
-      value: killed ? 'active' : 'inactive',
-      light: killed ? 'red' : 'muted',
-    },
-    {
-      label: 'SCHEDULER',
-      value: paused ? 'paused' : (typeof s.scheduler_running === 'boolean'
-        ? (s.scheduler_running ? 'running' : 'stopped')
-        : String(s.scheduler_state || '—')),
-      light: paused ? 'yellow' : (s.scheduler_running === false ? 'red' : 'green'),
-    },
+function SystemCard({ shell, coverage }: { shell?: ShellBootstrap; coverage?: OverviewBootstrap['coverage'] }) {
+  const navigate = useNavigate()
+  const scheduler = shell?.scheduler
+  const runtime = shell?.runtime
+  const exchange = shell?.exchange
+  const exchangeDiverged = !!exchange?.exchange_diverged || exchange?.status === 'diverged'
+  const exchangeAligned = exchange?.status === 'aligned'
+  const exchangeLabel = exchange?.status === 'local_paper'
+    ? 'Local paper · no exchange'
+    : exchangeDiverged
+      ? `${exchange?.execution_exchange || 'unknown'} exec · ${exchange?.data_exchange || 'unknown'} data`
+      : exchange?.execution_exchange || exchange?.data_exchange || 'not available'
+  const coverageAvailable = coverage?.availability === 'available'
+  const rows = [
+    ['Gateway', shell?.gateway?.running ? 'green' : shell ? 'red' : 'muted', shell ? (shell.gateway?.paused ? 'paused' : 'running') : 'not available'],
+    ['Scheduler', scheduler?.running ? 'green' : scheduler ? 'yellow' : 'muted', scheduler?.state || 'not available'],
+    ['Connectivity', shell?.connectivity?.state === 'reachable' ? 'green' : 'muted', shell?.connectivity?.state || 'deferred'],
+    ['Exchange', exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted', exchangeLabel],
+    ['Data coverage', coverageAvailable ? 'green' : coverage ? 'yellow' : 'muted', coverageAvailable ? 'available' : coverage ? 'not available' : 'deferred'],
+    ['Live', shell?.live?.enabled ? 'yellow' : 'muted', humanize(shell?.live?.state || 'not available')],
+    ['Runtime', runtime?.boot_commit ? runtime.boot_commit.slice(0, 12) : 'not available', runtime?.mode || 'not available'],
   ]
-  if (riskState && riskState !== 'not_available' && riskState !== 'not_evaluated') {
-    items.push({
-      label: 'RISK',
-      value: riskStateLabel(riskState),
-      light: riskState === 'blocked' ? 'red' : riskState === 'warning' ? 'yellow' : 'green',
-    })
-  }
   return (
-    <div className="chd-panel">
-      <div className="chd-title">Mode &amp; permissions</div>
-      {items.map(({ label, value, light }) => (
-        <div key={label} className="chd-domain">
-          <div className="chd-domain-head">
-            <span className={`status-light light-${light}`} />
-            <span className="chd-domain-name">{label}</span>
-            <span className={`chd-status chd-status-${light}`}>{value}</span>
-          </div>
-        </div>
-      ))}
+    <Card className="rail-card system-panel">
+      <div className="flex items-center justify-between mb-2"><h3>System</h3><Button type="button" variant="secondary" className="btn-control" onClick={() => navigate('/settings?tab=runtime')}>Details →</Button></div>
+      <table className="status-board"><tbody>{rows.map(([label, light, value]) => <tr className="status-row" key={label}><th>{label}</th><td className="status-cell"><span className={`status-light light-${light === 'green' || light === 'red' || light === 'yellow' || light === 'muted' ? light : 'muted'}`} /><span className="status-value">{value}</span></td></tr>)}</tbody></table>
+      {shell?.health?.issues?.length ? <p className="hint mb-0">{shell.health.issues.join(' · ')}</p> : null}
+    </Card>
+  )
+}
+
+function BlotterSummaryStrip({ summary }: { summary?: OverviewBootstrap['summary'] }) {
+  const navigate = useNavigate()
+  const staged = summary?.open_opportunities ?? 0
+  const awaiting = summary?.pending_proposals ?? 0
+  const runs = summary?.runs_24h ?? 0
+  return (
+    <div className="ov-blotter-strip" role="link" tabIndex={0} onClick={() => navigate('/blotter')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate('/blotter') } }} title="Open Blotter">
+      <span className="ov-blotter-label">Blotter</span><span className="ov-blotter-item">Staged <b className="mono">{staged}</b></span><span className="ov-blotter-item">Awaiting <b className={`mono ${awaiting ? 'ov-blotter-yellow' : ''}`}>{awaiting}</b></span><span className="ov-blotter-item">Runs 24h <b className="mono">{runs}</b></span><span className="ov-blotter-arrow">→</span>
     </div>
+  )
+}
+
+function GoLiveScoreCard() {
+  const [expanded, setExpanded] = useState(false)
+  const { data } = useQuery<GoLiveScorecard>({ queryKey: ['go-live-scorecard'], queryFn: api.getGoLiveScorecard, staleTime: 60_000, enabled: expanded })
+  return (
+    <Card className="rail-card scorecard-panel">
+      <Button type="button" variant="ghost" className="scorecard-header" onClick={() => setExpanded(value => !value)} aria-expanded={expanded}>
+        <div className="scorecard-title"><h3>Go-Live</h3><StatusText tone="yellow">{data ? (data.traffic_light || 'NOT READY').toUpperCase() : 'deferred'}</StatusText></div><span className="text-muted text-xs">{expanded ? '▲' : '▼'}</span>
+      </Button>
+      {expanded && data && <div className="scorecard-criteria">{data.criteria.map(item => <div key={item.key} className="scorecard-row"><span className="scorecard-label">{item.label}</span><div className="scorecard-bar-bg"><Meter pct={item.score} className="scorecard-bar-fill" /></div><span className="scorecard-detail">{item.detail}</span></div>)}{data.blockers.length > 0 && <div className="scorecard-blockers"><span className="text-xs text-error">Blockers: {data.blockers.join(' · ')}</span></div>}</div>}
+      {expanded && !data && <p className="text-muted text-sm">Loading qualification details…</p>}
+    </Card>
   )
 }

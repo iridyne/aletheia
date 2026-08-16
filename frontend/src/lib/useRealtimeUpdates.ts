@@ -163,16 +163,20 @@ export interface RealtimeStatus {
  *
  * Must be called inside a component that is a descendant of QueryClientProvider.
  */
-export function useRealtimeUpdates(): RealtimeStatus {
+export function useRealtimeUpdates(enabled = true): RealtimeStatus {
   const queryClient = useQueryClient()
   const [status, setStatus] = useState<RealtimeStatus>({
-    state: 'connecting',
+    state: enabled ? 'connecting' : 'disconnected',
     lastFrameAt: null,
     malformedFrameCount: 0,
     unknownCategoryCount: 0,
   })
 
   useEffect(() => {
+    if (!enabled) {
+      setStatus(current => ({ ...current, state: 'disconnected' }))
+      return
+    }
     let retryDelay = WS_RETRY_BASE_MS
     let retryTimer: ReturnType<typeof setTimeout> | null = null
     let ws: WebSocket | null = null
@@ -259,7 +263,7 @@ export function useRealtimeUpdates(): RealtimeStatus {
       if (retryTimer) clearTimeout(retryTimer)
       ws?.close()
     }
-  }, [queryClient])
+  }, [enabled, queryClient])
 
   return status
 }

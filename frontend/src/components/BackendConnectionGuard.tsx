@@ -18,7 +18,7 @@ function notifyBrowser(key: string, title: string, body: string, lastKeyRef: Mut
   } catch { /* advisory only */ }
 }
 
-export default function BackendConnectionGuard() {
+export default function BackendConnectionGuard({ enabled = true }: { enabled?: boolean }) {
   const lastNotified = useRef('')
   const wasOffline = useRef(false)
   const [failureCount, setFailureCount] = useState(0)
@@ -30,6 +30,7 @@ export default function BackendConnectionGuard() {
     retry: 1,
     staleTime: 0,
     meta: { background: true },
+    enabled,
   })
 
   const disconnected = failureCount >= FAILURES_BEFORE_ALERT && !!errorUpdatedAt && (!dataUpdatedAt || errorUpdatedAt > dataUpdatedAt)
@@ -56,12 +57,6 @@ export default function BackendConnectionGuard() {
         'The dashboard cannot reach /api/ready. Check gateway status or start it explicitly.', lastNotified)
     }
   }, [disconnected])
-
-  useEffect(() => {
-    if (browserPermission() === 'default') {
-      Notification.requestPermission().catch(() => {})
-    }
-  }, [])
 
   return null
 }

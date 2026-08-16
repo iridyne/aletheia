@@ -32,8 +32,8 @@ export async function runCommandAction(
   }
 }
 
-export default function CommandPalette() {
-  const [open, setOpen] = useState(false)
+export default function CommandPalette({ initialOpen = false }: { initialOpen?: boolean }) {
+  const [open, setOpen] = useState(initialOpen)
   const [commandError, setCommandError] = useState('')
   const [executingCommand, setExecutingCommand] = useState<string | null>(null)
   const executingRef = useRef(false)
@@ -74,12 +74,16 @@ export default function CommandPalette() {
     await Promise.all([
       qc.invalidateQueries({ queryKey: ['kill-switch'] }),
       qc.invalidateQueries({ queryKey: ['risk-status'] }),
+      qc.invalidateQueries({ queryKey: ['ui-shell-bootstrap'] }),
     ])
   }
 
   const setGatewayPaused = async (paused: boolean) => {
     await (paused ? api.pause() : api.resume())
-    await qc.invalidateQueries({ queryKey: ['status'] })
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ['status'] }),
+      qc.invalidateQueries({ queryKey: ['ui-shell-bootstrap'] }),
+    ])
   }
 
   const startAgent = async (agentName: string) => {
