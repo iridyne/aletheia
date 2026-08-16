@@ -643,15 +643,17 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "expected_base_sha: expectedBaseSha" in update_script
     assert "event_type: 'release_candidate_merged'" in update_script
 
-    assert "reviews(last: 100)" in update_script
+    assert "reviews(last: 100)" not in update_script
     assert "comments(last: 100)" in update_script
-    assert "review.commit?.oid === expectedHeadSha" in update_script
-    assert "state !== 'DISMISSED'" in update_script
+    assert "github.paginate(github.rest.pulls.listReviews" in update_script
+    assert "review.commit_id === expectedHeadSha" in update_script
+    assert "review.state !== 'DISMISSED'" in update_script
     assert "chatgpt-codex-connector" in update_script
     assert "normalizeLogin" in update_script
-    assert "isConnectorLogin(review.author?.login)" in update_script
+    assert "isConnectorLogin(review.user?.login)" in update_script
     assert "trustedAssociations" in update_script
-    assert "match[1] !== expectedHeadSha" in update_script
+    assert "github.rest.repos.getCommit" in update_script
+    assert "reviewedCommitSha === expectedHeadSha" in update_script
     assert "disposition === 'clean'" in update_script
     assert "disposition === 'complete'" in update_script
     assert "acknowledgement.createdAt >= latestReviewAt" in update_script
