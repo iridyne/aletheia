@@ -33,6 +33,7 @@ def test_release_automation_tracks_the_product_without_component_versions() -> N
     assert config["include-v-in-tag"] is True
     assert config["include-component-in-tag"] is False
     assert config["bump-minor-pre-major"] is True
+    assert config["bump-patch-for-minor-pre-major"] is True
     assert config["draft-pull-request"] is False
     assert config["label"] == "autorelease: pending"
     assert config["packages"]["."]["extra-files"] == [

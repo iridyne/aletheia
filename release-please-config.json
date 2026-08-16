@@ -4,6 +4,7 @@
   "include-v-in-tag": true,
   "include-component-in-tag": false,
   "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": true,
   "bootstrap-sha": "724f7311cf4b158420f353a59d55ede7a16db23e",
   "draft-pull-request": false,
   "label": "autorelease: pending",
