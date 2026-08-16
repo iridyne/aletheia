@@ -425,10 +425,13 @@ def test_lco_projection_marks_authority_read_failure_partial(tmp_path, monkeypat
     result = build_learning_contribution_projection()
 
     assert result["availability"] == "partial"
-    assert result["path_states"][0]["availability"] == "partial"
-    assert result["path_states"][0]["unavailable_reason"] == (
-        "authority_projection_failed"
+    universe_state = next(
+        state
+        for state in result["path_states"]
+        if state["path_id"] == "universe_family_calibration"
     )
+    assert universe_state["availability"] == "partial"
+    assert universe_state["unavailable_reason"] == "authority_projection_failed"
     assert result["items"][0]["availability"] == "partial"
     assert result["items"][0]["lifecycle"]["authority_block_reason"] == (
         "authority_projection_failed"
@@ -598,23 +601,23 @@ def test_lco_projection_keeps_one_current_item_per_measurable_path(
     assert {item["path_id"] for item in result["items"]} == {
         "universe_family_calibration",
     }
-    assert {
-        state["path_id"]: state["state"] for state in result["path_states"]
-    } == {"universe_family_calibration": "active"}
+    states_by_path = {
+        state["path_id"]: state for state in result["path_states"]
+    }
+    assert states_by_path["universe_family_calibration"]["state"] == "active"
+    assert states_by_path["ranker_case_score"]["state"] == "empty"
     latest_by_path = {
         item["path_id"]: item
         for item in reversed(result["items"])
     }
-    states_by_path = {
-        state["path_id"]: state for state in result["path_states"]
-    }
+    for path_id, state in states_by_path.items():
+        if path_id not in latest_by_path:
+            assert state["state"] == "empty"
+            continue
+        assert state["data_freshness"] == latest_by_path[path_id]["data_freshness"]
     latest_universe_id = latest_by_path["universe_family_calibration"][
         "experiment_id"
     ]
-    for path_id in states_by_path:
-        assert states_by_path[path_id]["data_freshness"] == (
-            latest_by_path[path_id]["data_freshness"]
-        )
 
     import aletheia.learning.read_models as read_models
     real_project = read_models._project_experiment

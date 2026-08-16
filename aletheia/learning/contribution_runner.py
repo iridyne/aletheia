@@ -24,7 +24,8 @@ from aletheia.learning.fixed_look import (
     freeze_fixed_look_cutoff,
     get_fixed_look_decision,
 )
-from aletheia.learning.verdicts import METRIC_VERSION, VerdictEvaluation, evaluate_cohort
+from aletheia.learning.verdicts import VerdictEvaluation, evaluate_cohort
+from aletheia.learning.registry import metric_version_for_path
 from aletheia.storage.sqlite import get_db
 
 
@@ -149,7 +150,7 @@ def _build_verdict(
         policy_epoch=cohort.key.policy_epoch,
         target_horizon=cohort.key.horizon,
         outcome_contract_version=cohort.key.outcome_contract_version,
-        metric_version=METRIC_VERSION,
+        metric_version=metric_version_for_path(cohort.hypothesis.path_id),
         code_commit=(
             next(iter(cohort.source_code_commits))
             if (

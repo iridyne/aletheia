@@ -24,7 +24,22 @@ class LearningPath:
     consumer_wired: bool = True
     settings_supported: bool = True
     measurement_supported: bool = False
+    paper_authority_supported: bool = True
     behavior_contract_version: str | None = None
+    outcome_contract_version: str = "v1"
+    metric_version: str = "universe_family_calibration_cluster_allocation_utility_v10"
+    statistical_unit: str = "assignment_unit"
+
+RANKER_CASE_OUTCOME_CONTRACT_VERSION = "ranker-case-filter-candidate/v1"
+RANKER_CASE_METRIC_VERSION = "ranker_case_candidate_net_utility_v1"
+
+
+def outcome_contract_version_for_path(path_id: str) -> str:
+    return get_learning_path(path_id).outcome_contract_version
+
+
+def metric_version_for_path(path_id: str) -> str:
+    return get_learning_path(path_id).metric_version
 
 
 LEARNING_PATHS: tuple[LearningPath, ...] = (
@@ -34,6 +49,7 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
         "universe", "fixed-horizon candidate net outcome", "neutral multiplier 1.0",
         measurement_supported=True,
         behavior_contract_version="universe-family-calibration/v11",
+        statistical_unit="universe_allocation_member",
     ),
     LearningPath(
         "observer_advisory_bundle", "knowledge router and trading memo", "market observer",
@@ -44,6 +60,12 @@ LEARNING_PATHS: tuple[LearningPath, ...] = (
         "ranker_case_score", "retrieved trade cases", "paper ranker",
         "bounded paper score adjustment", ("score_adjustment",), "ranker",
         "fixed-horizon candidate net outcome", "zero case delta",
+        measurement_supported=True,
+        paper_authority_supported=False,
+        behavior_contract_version="ranker-case-score/v1",
+        outcome_contract_version=RANKER_CASE_OUTCOME_CONTRACT_VERSION,
+        metric_version=RANKER_CASE_METRIC_VERSION,
+        statistical_unit="ranker_candidate",
     ),
     LearningPath(
         "ranker_memo_score", "trading memo", "paper ranker",
@@ -196,6 +218,7 @@ def paper_influence_path_options() -> tuple[dict[str, object], ...]:
             path.consumer_wired
             and path.settings_supported
             and path.measurement_supported
+            and path.paper_authority_supported
         )
         status = (
             "supported"
@@ -222,5 +245,6 @@ def supported_paper_influence_path_ids() -> frozenset[str]:
             and path.consumer_wired
             and path.settings_supported
             and path.measurement_supported
+            and path.paper_authority_supported
         )
     )

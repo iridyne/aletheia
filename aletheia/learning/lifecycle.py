@@ -20,6 +20,7 @@ from aletheia.learning.authority import (
 )
 from aletheia.learning.cohorts import SUPPORTED_PATH_ID, SUPPORTED_PATH_IDS
 from aletheia.learning.behavior_contracts import current_behavior_contract_hash
+from aletheia.learning.registry import get_learning_path
 from aletheia.learning.control import global_learning_refreeze_reason
 from aletheia.learning.ledger import (
     count_unmirrored_lifecycle_events,
@@ -130,13 +131,14 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
     hypothesis = LearningHypothesis(**hypothesis_row)
     if hypothesis.path_id not in SUPPORTED_PATH_IDS:
         return LifecycleResult("hold", "hold", "unsupported_learning_path", experiment_id)
+    path = get_learning_path(hypothesis.path_id)
     try:
         expected_behavior_contract_hash = current_behavior_contract_hash(
             path_id=hypothesis.path_id,
             policy_epoch=current_policy_epoch,
             target_horizon=hypothesis.target_horizon,
-            outcome_contract_version="v1",
-            metric_version=METRIC_VERSION,
+            outcome_contract_version=path.outcome_contract_version,
+            metric_version=path.metric_version,
         )
     except (KeyError, ValueError):
         return LifecycleResult(
@@ -148,8 +150,8 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
         stage=experiment.stage,
         hypothesis_id=hypothesis.hypothesis_id,
         target_horizon=hypothesis.target_horizon,
-        outcome_contract_version="v1",
-        metric_version=METRIC_VERSION,
+        outcome_contract_version=path.outcome_contract_version,
+        metric_version=path.metric_version,
         behavior_contract_hash=expected_behavior_contract_hash,
         inference_role="monitoring",
     )
@@ -182,6 +184,8 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
         expected_horizon=hypothesis.target_horizon,
         expected_behavior_contract_hash=expected_behavior_contract_hash,
         expected_hypothesis_id=hypothesis.hypothesis_id,
+        expected_outcome_contract_version=path.outcome_contract_version,
+        expected_metric_version=path.metric_version,
     )
     stale_safety_reasons = {
         "stale_policy_epoch",
@@ -201,6 +205,17 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
         and measurement == "insufficient_data"
         and str(verdict.get("reason") or "") in TRIAL_ADMISSION_REASONS
     )
+    if (
+        not path.paper_authority_supported
+        and (recommended == "promote_stage" or trial_admission_candidate)
+    ):
+        return LifecycleResult(
+            "hold",
+            "admit_trial" if trial_admission_candidate else recommended,
+            "authority_unwired",
+            experiment_id,
+            verdict_id=str(verdict["verdict_id"]),
+        )
     trial_admission_reason = None
     if trial_admission_candidate:
         trial_admission_reason = trial_admission_measurement_block_reason(
@@ -329,6 +344,9 @@ def _execute_trial_admission(
     hypothesis = LearningHypothesis(**hypothesis_row)
     if hypothesis.path_id not in SUPPORTED_PATH_IDS:
         return LifecycleResult("hold", "admit_trial", "unsupported_learning_path", experiment_id, verdict_id=verdict_id)
+    path = get_learning_path(hypothesis.path_id)
+    if not path.paper_authority_supported:
+        return LifecycleResult("hold", "admit_trial", "authority_unwired", experiment_id, verdict_id=verdict_id)
 
     dedup_key = f"{verdict_id}:shadow:admit_trial"
     existing = get_lifecycle_event_by_dedup_key(dedup_key)
@@ -372,8 +390,8 @@ def _execute_trial_admission(
             path_id=hypothesis.path_id,
             policy_epoch=current_policy_epoch,
             target_horizon=hypothesis.target_horizon,
-            outcome_contract_version="v1",
-            metric_version=METRIC_VERSION,
+            outcome_contract_version=path.outcome_contract_version,
+            metric_version=path.metric_version,
         )
     except (KeyError, ValueError):
         return LifecycleResult(
@@ -387,8 +405,8 @@ def _execute_trial_admission(
         stage="shadow",
         hypothesis_id=hypothesis.hypothesis_id,
         target_horizon=hypothesis.target_horizon,
-        outcome_contract_version="v1",
-        metric_version=METRIC_VERSION,
+        outcome_contract_version=path.outcome_contract_version,
+        metric_version=path.metric_version,
         behavior_contract_hash=expected_behavior_contract_hash,
         inference_role="monitoring",
     )
@@ -723,12 +741,22 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
         return {"experiment_id": experiment_id, "status": "orphaned_hypothesis"}
     hypothesis = LearningHypothesis(**hypothesis_row)
     try:
+        path = get_learning_path(hypothesis.path_id)
+    except KeyError:
+        path = None
+    expected_outcome_contract_version = (
+        path.outcome_contract_version if path is not None else "v1"
+    )
+    expected_metric_version = (
+        path.metric_version if path is not None else METRIC_VERSION
+    )
+    try:
         expected_behavior_contract_hash = current_behavior_contract_hash(
             path_id=hypothesis.path_id,
             policy_epoch=current_policy_epoch,
             target_horizon=hypothesis.target_horizon,
-            outcome_contract_version="v1",
-            metric_version=METRIC_VERSION,
+            outcome_contract_version=expected_outcome_contract_version,
+            metric_version=expected_metric_version,
         )
     except (KeyError, ValueError):
         expected_behavior_contract_hash = None
@@ -738,8 +766,8 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
         stage=experiment.stage,
         hypothesis_id=hypothesis.hypothesis_id,
         target_horizon=hypothesis.target_horizon,
-        outcome_contract_version="v1",
-        metric_version=METRIC_VERSION,
+        outcome_contract_version=expected_outcome_contract_version,
+        metric_version=expected_metric_version,
         behavior_contract_hash=expected_behavior_contract_hash,
         inference_role="monitoring",
     )
@@ -750,6 +778,8 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
         expected_horizon=hypothesis.target_horizon,
         expected_behavior_contract_hash=expected_behavior_contract_hash,
         expected_hypothesis_id=hypothesis.hypothesis_id,
+        expected_outcome_contract_version=expected_outcome_contract_version,
+        expected_metric_version=expected_metric_version,
     ):
         verdict = None
     recommended = "hold"
@@ -763,6 +793,12 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
             )
         ):
             recommended = "admit_trial"
+    if (
+        path is not None
+        and not path.paper_authority_supported
+        and recommended in {"promote_stage", "admit_trial"}
+    ):
+        recommended = "hold"
     authority = resolve_learning_authority(
         hypothesis.path_id,
         experiment,
@@ -776,7 +812,7 @@ def inspect_learning_experiment(experiment_id: str, *, current_policy_epoch: str
         for cohort in build_experiment_cohorts(experiment.experiment_id)
         if cohort.key.policy_epoch == current_policy_epoch
         and cohort.key.horizon == hypothesis.target_horizon
-        and cohort.key.outcome_contract_version == "v1"
+        and cohort.key.outcome_contract_version == expected_outcome_contract_version
         and cohort.key.behavior_contract_hash == expected_behavior_contract_hash
     ]
     evaluator_health = get_learning_job_health("learning_contribution_evaluator")

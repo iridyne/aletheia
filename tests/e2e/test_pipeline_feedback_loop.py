@@ -101,7 +101,7 @@ class TestKnowledgeRankerBoundary:
         assert case_trace["proposed_delta"] == -12.0
         assert case_trace["actual_delta"] == 0.0
         assert case_trace["authority_applied"] is False
-        assert case_trace["reason"] == "measurement_unsupported"
+        assert case_trace["reason"] == "missing_candidate_key"
 
 
 class TestFamilyScorecardAccumulates:

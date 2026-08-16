@@ -79,6 +79,16 @@ def test_learning_behavior_paths_are_declared_with_safe_fallbacks():
     assert by_id["operator_learning_bundle"].consumer_wired is True
     assert by_id["operator_learning_bundle"].measurement_supported is False
 
+def test_ranker_case_declares_candidate_measurement_contract():
+    from aletheia.learning.registry import get_learning_path
+
+    path = get_learning_path("ranker_case_score")
+    assert path.measurement_supported is True
+    assert path.paper_authority_supported is False
+    assert path.outcome_contract_version == "ranker-case-filter-candidate/v1"
+    assert path.metric_version == "ranker_case_candidate_net_utility_v1"
+    assert path.statistical_unit == "ranker_candidate"
+
 
 def test_paper_influence_support_requires_every_capability(monkeypatch):
     from aletheia.learning import registry

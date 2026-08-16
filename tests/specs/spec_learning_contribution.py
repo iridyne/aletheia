@@ -352,35 +352,145 @@ def test_shadow_cohort_is_not_causally_eligible():
 
 
 @spec_claim(SpecClaim(
-    "LE-B29", _CONTRACT, "§measurement-support gate: paths without cohort adapters excluded (#324)", "L2b",
-    "operator_learning_bundle, observer_advisory_bundle and ranker paths must not appear in SUPPORTED_PATH_IDS — "
-    "their filter_candidate_outcomes rows have allocation_selected=NULL by contract "
-    "with no cohort adapter to handle it, so the cohort builder would emit "
-    "missing_allocation_result for pending outcomes. Operator prompt contribution also lacks "
-    "a decision-utility outcome that the prompt can causally change.",
+    "LE-B29", _CONTRACT, "§measurement-support gate: paths need exact cohort adapters (#324)", "L2b",
+    "Operator and Observer bundles plus ranker paths without exact adapters stay out of "
+    "SUPPORTED_PATH_IDS. ranker_case_score is admitted only because its candidate-level "
+    "filter_candidate_outcomes adapter does not require Universe allocation_selected.",
     status="implemented",
 ))
 def test_paths_without_cohort_adapters_excluded_from_supported_path_ids():
-    """Paths without cohort adapters must remain out of SUPPORTED_PATH_IDS.
-
-    These paths lack a causal path-specific outcome adapter and must stay out.
-    """
+    """Paths without exact cohort adapters must remain out of SUPPORTED_PATH_IDS."""
     from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
 
     _PATHS_WITHOUT_ADAPTERS = {
         "operator_learning_bundle",
         "observer_advisory_bundle",
-        "ranker_case_score",
         "ranker_memo_score",
         "ranker_factor_filter",
     }
     leaked = _PATHS_WITHOUT_ADAPTERS & SUPPORTED_PATH_IDS
-    assert not leaked, (
-        f"Path(s) {leaked} are in SUPPORTED_PATH_IDS without a cohort adapter — "
-        "their filter_candidate_outcomes rows have allocation_selected=NULL by contract, "
-        "so the cohort builder would emit missing_allocation_result for pending outcomes"
-    )
+    assert not leaked, f"paths without adapters leaked into support: {leaked}"
+    assert "ranker_case_score" in SUPPORTED_PATH_IDS
 
+def test_ranker_case_outcome_adapter_uses_exact_base_key_and_horizon():
+    from datetime import datetime, timezone
+
+    from aletheia.learning.cohorts import _load_ranker_case_outcomes
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc).isoformat()
+    db = get_db()
+    db.execute(
+        "INSERT INTO filter_candidate_outcomes ("
+        "id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
+        "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
+        "estimated_fee_pct, estimated_spread_slippage_pct, cost_model_version, status"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "ranker-outcome-1", "member-1", "bitget", "BTC/USDT", "spot", "long",
+            "4h", 100.0, now, now, now, 0.4, 0.05, 0.05, "cost-v1", "settled",
+        ),
+    )
+    db.commit()
+
+    resolved = _load_ranker_case_outcomes({"member-1:4h"}, "4h")
+    outcome, reason, duplicate_n, wrong_horizon_n, *_ = resolved["member-1:4h"]
+    assert reason is None
+    assert duplicate_n == 0
+    assert wrong_horizon_n == 0
+    assert outcome["outcome_candidate_key"] == "member-1"
+    assert outcome["_learning_outcome_source"] == "filter_candidate_outcomes"
+    assert outcome["_allocation_selection_source"] == "ranker_candidate_identity"
+
+
+def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    import json
+
+    import aletheia.agents.paper_trader_ranker as ranker
+    from aletheia.learning import experiments
+    from aletheia.learning.cohorts import build_experiment_cohorts
+    from aletheia.learning.experiments import stable_assignment
+    from aletheia.learning.models import LearningExperiment
+    from aletheia.learning.verdicts import evaluate_cohort
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
+    common = {
+        "path_id": "ranker_case_score",
+        "proposed_delta": 0.0,
+        "direction": "long",
+        "scope": {"symbol": "BTC/USDT", "direction": "long"},
+        "source_cohort": "trade_case_study:v1",
+        "learning_trace": None,
+    }
+
+    def expose(candidate_key: str) -> None:
+        ranker._authorized_ranker_delta(
+            **common,
+            opp={
+                "id": f"carrier-{candidate_key}",
+                "symbol": "BTC/USDT",
+                "metadata": json.dumps({
+                    "learning_candidate_key": candidate_key,
+                }),
+            },
+        )
+
+    expose("member-1")
+    db = get_db()
+    first = db.execute(
+        "SELECT * FROM learning_exposures WHERE path_id=? ORDER BY exposed_at",
+        ("ranker_case_score",),
+    ).fetchone()
+    assert first is not None
+    experiment = LearningExperiment(**dict(db.execute(
+        "SELECT * FROM learning_experiments WHERE experiment_id=?",
+        (first["experiment_id"],),
+    ).fetchone()))
+    opposite = next(
+        f"member-{index}"
+        for index in range(2, 1000)
+        if stable_assignment(experiment, f"member-{index}") != first["assignment"]
+    )
+    expose(opposite)
+
+    outcome_time = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+    for candidate_key, outcome in (("member-1", 0.4), (opposite, -0.2)):
+        db.execute(
+            "INSERT INTO filter_candidate_outcomes ("
+            "id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
+            "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
+            "estimated_fee_pct, estimated_spread_slippage_pct, mae_pct, "
+            "cost_model_version, status"
+            ") VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', '4h', "
+            "100, ?, ?, ?, ?, 0.05, 0.05, -0.5, 'cost-v1', 'settled')",
+            (f"outcome-{candidate_key}", candidate_key, outcome_time, outcome_time,
+             outcome_time, outcome),
+        )
+    db.commit()
+
+    cohorts = build_experiment_cohorts(experiment.experiment_id)
+    assert len(cohorts) == 1
+    cohort = cohorts[0]
+    assert {sample.assignment_unit_key for sample in cohort.samples} == {
+        "member-1", opposite,
+    }, cohort.inspection()
+    assert {sample.outcome_source for sample in cohort.samples} == {
+        "filter_candidate_outcomes",
+    }
+    assert len(cohort.treatment_samples) == 1
+    assert len(cohort.control_samples) == 1
+
+    evaluation = evaluate_cohort(cohort)
+    assert evaluation.harm_metrics["metric_version"] == (
+        "ranker_case_candidate_net_utility_v1"
+    )
+    assert evaluation.harm_metrics["statistical_unit"] == "ranker_candidate"
+    assert evaluation.harm_metrics["allocation_selection_source_member_counts"] == {
+        "ranker_candidate_identity": 2,
+    }
+    assert evaluation.verdict == "insufficient_data"
 
 @spec_claim(SpecClaim(
     "LE-B28", _CONTRACT, "§5 conflicting outcomes", "L2b",

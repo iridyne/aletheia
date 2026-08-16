@@ -758,7 +758,18 @@ def test_policy_epoch_and_outcome_contract_isolate_cohorts():
     assert {(item["policy_epoch"], item["outcome_contract_version"]) for item in metrics} == {
         ("epoch-a", "v1"), ("epoch-b", "v1"), ("epoch-b", "v2"),
     }
-    assert {verdict.delta for verdict in verdicts} == {1.0, 2.0, 3.0}
+    verdict_by_identity = {
+        (verdict.policy_epoch, verdict.outcome_contract_version): verdict
+        for verdict in verdicts
+    }
+    assert verdict_by_identity[("epoch-a", "v1")].delta == 1.0
+    assert verdict_by_identity[("epoch-b", "v1")].delta == 2.0
+    mismatched = verdict_by_identity[("epoch-b", "v2")]
+    assert mismatched.verdict == "invalid"
+    assert mismatched.delta is None
+    assert json.loads(mismatched.harm_metrics_json)["invalid_reasons"] == {
+        "outcome_contract_version_mismatch": 2,
+    }
 
 
 def test_same_behavior_contract_pools_exposures_across_commits():
