@@ -136,6 +136,23 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
 
     layer1 = ctx.get("layer1") or {}
     layer2 = ctx.get("layer2") or {}
+    account_authority = ctx.get("account_authority")
+    if not isinstance(account_authority, dict):
+        account_authority = layer1.get("balance")
+    if not isinstance(account_authority, dict):
+        account_authority = {}
+
+    def _account_value(name: str) -> float | None:
+        try:
+            value = float(account_authority.get(name))
+        except (TypeError, ValueError):
+            return None
+        return round(value, 8) if value == value and abs(value) != float("inf") else None
+
+    account_equity = _account_value("equity_usdt")
+    account_status = str(account_authority.get("status") or "").strip().lower()
+    if account_status not in {"available", "unavailable"}:
+        account_status = "available" if account_equity is not None and account_equity > 0 else "unavailable"
     pending = [_candidate(item) for item in (layer2.get("pending_signals") or [])]
     executable = [
         _candidate(item) for item in (layer2.get("executable_candidates") or [])
@@ -185,8 +202,16 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
         str(item.get("scanner_family") or ""),
     )
     projection = {
-        "version": "operator-decision-context-v4",
+        "version": "operator-decision-context-v5",
         "skip_policy_epoch_id": ctx.get("skip_policy_epoch_id"),
+        "execution_mode": ctx.get("execution_mode"),
+        # Account availability and equity are material to deterministic sizing;
+        # a recovery must reopen a previously deferred carrier immediately.
+        "account_authority": {
+            "status": account_status,
+            "equity_usdt": account_equity,
+            "available_usdt": _account_value("available_usdt"),
+        },
         "wake_context": ctx.get("wake_context"),
         "regime": layer1.get("regime") or layer1.get("market_regime"),
         "pending": sorted(pending, key=key),

@@ -2898,6 +2898,37 @@ def test_operator_context_fingerprint_tracks_real_b2_schema_fields():
     assert operator_decision_context_fingerprint(context(shrunk=-0.20, verdict="negative")) != baseline
 
 
+def test_operator_context_fingerprint_reopens_when_account_authority_recovers():
+    from aletheia.agent_shell.trading_context import operator_decision_context_fingerprint
+
+    base = {
+        "execution_mode": "paper_internal",
+        "account_authority": {"status": "unavailable", "equity_usdt": None},
+        "skip_policy_epoch_id": "epoch-sizing-v1",
+        "layer1": {"regime": "range"},
+        "layer2": {"pending_signals": [{
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "market_type": "spot",
+            "trade_score": 60,
+        }]},
+    }
+    unavailable = operator_decision_context_fingerprint(base)
+    recovered = {
+        **base,
+        "account_authority": {"status": "available", "equity_usdt": 600.0},
+    }
+    changed_equity = {
+        **recovered,
+        "account_authority": {"status": "available", "equity_usdt": 300.0},
+    }
+
+    assert operator_decision_context_fingerprint(recovered) != unavailable
+    assert operator_decision_context_fingerprint(changed_equity) != (
+        operator_decision_context_fingerprint(recovered)
+    )
+
+
 def test_tia_like_neutral_facts_cannot_be_relabelled_as_adverse(monkeypatch):
     import asyncio
 

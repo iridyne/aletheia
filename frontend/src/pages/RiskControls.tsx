@@ -437,7 +437,7 @@ const LIMIT_GROUPS: LimitGroup[] = [
     rows: [
       { label: 'Position notional cap', pair: ['live.capital.max_position_notional_usdt', 'demo.capital.max_position_notional_usdt'] },
       { label: 'Per-symbol cumulative cap', pair: ['live.capital.max_per_symbol_notional_usdt', 'demo.capital.max_per_symbol_notional_usdt'] },
-      { label: 'Single-trade risk', pair: ['live.loss.max_single_trade_risk_pct', 'demo.loss.max_single_trade_risk_pct'] },
+      { label: 'Per-trade cost/risk budget', pair: ['live.loss.max_single_trade_risk_pct', 'demo.loss.max_single_trade_risk_pct'] },
       { label: 'Max open positions', pair: ['live.positions.max_open_positions', 'demo.positions.max_open_positions'] },
     ],
   },

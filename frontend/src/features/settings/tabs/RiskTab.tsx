@@ -609,6 +609,9 @@ export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' 
         )}
       </div>
       <NumGrid fields={numFields} vals={vals} set={set} />
+      <p className="hint">
+        System Operator entry cost = matching account equity × this per-trade budget. For perpetual futures, final notional = cost × effective leverage; position, account-leverage, and stop-loss safety caps still apply.
+      </p>
       <ToggleGrid fields={RISK_POLICY_BOOLS} vals={vals} set={set} />
       <p className="hint">
         {capitalSource === 'custom'
