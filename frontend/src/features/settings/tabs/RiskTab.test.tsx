@@ -60,6 +60,16 @@ describe('RiskTab', () => {
     expect(SRC).toContain('<RiskPolicyProfiles risk={risk} qc={qc} onDirty={onDirty} />')
   })
 
+  it('gives Snapshot TTL its switch and numeric input separate names', () => {
+    const html = renderRiskTab()
+    const labelId = html.match(/<span id="([^"]+)">Snapshot TTL<\/span>/)?.[1]
+
+    expect(html).toContain('aria-label="Enable snapshot TTL"')
+    expect(labelId).toBeTruthy()
+    expect(html).toContain(`aria-labelledby="${labelId}"`)
+    expect(html).not.toContain('<label class="settings-field"><span>Snapshot TTL</span>')
+  })
+
   it('preserves a dirty risk draft across a sibling settings refresh', async () => {
     const client = new QueryClient()
     const onDirty = vi.fn()

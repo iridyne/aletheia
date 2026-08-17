@@ -142,10 +142,10 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         <span className="hint">min</span>
       </Row>
       <Row label="Yahoo Finance macro" hint="Enable macro indicator collection (DXY, VIX, S&P 500) via yfinance. Requires network access to Yahoo.">
-        <Toggle checked={yfinance} label="" onChange={v => { setYfinance(v); setMsg(null) }} />
+        <Toggle checked={yfinance} onChange={v => { setYfinance(v); setMsg(null) }} />
       </Row>
       <Row label="Long/Short ratio" hint="Pull Binance Futures globalLongShortAccountRatio per observed symbol every 2 min. Filled into open_interest_snapshots.long_short_ratio and folded into crowding_score. USDT-margined linear perps only.">
-        <Toggle checked={longShortRatio} label="" onChange={v => { setLongShortRatio(v); setMsg(null) }} />
+        <Toggle checked={longShortRatio} onChange={v => { setLongShortRatio(v); setMsg(null) }} />
       </Row>
       <Row label="Derivatives backfill" hint="Backfill funding/OI history on startup if the local window is sparse (idempotent — re-running with ≥3 rows in window is a no-op). 0 disables. Bitget OI history is not supported by CCXT; the path silently skips that exchange.">
         <input type="number" min={0} max={168} value={historyHours}
@@ -225,10 +225,10 @@ function MacroSignalsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   return (
     <>
       <Row label="Fear & Greed Index" hint="Pull Alternative.me's crypto fear/greed index (single 0-100 value, updated daily). No API key. Surfaces in the macro block of enriched_context fed to the LLM.">
-        <Toggle checked={fearGreed} label="" onChange={v => { setFearGreed(v); setMsg(null) }} />
+        <Toggle checked={fearGreed} onChange={v => { setFearGreed(v); setMsg(null) }} />
       </Row>
       <Row label="CoinGecko top markets" hint="Pull top-N coins by market cap every ~10 min. Builds a 'Top Gainers / Top Losers' string folded into the macro block. No API key.">
-        <Toggle checked={cgTop} label="" onChange={v => { setCgTop(v); setMsg(null) }} />
+        <Toggle checked={cgTop} onChange={v => { setCgTop(v); setMsg(null) }} />
       </Row>
       <Row label="Top-N count" hint="How many coins to pull per tick (10-250). Higher = broader universe context; CoinGecko free tier caps at 30 req/min.">
         <input type="number" min={10} max={250} value={cgTopN}
@@ -237,10 +237,10 @@ function MacroSignalsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         <span className="hint">coins</span>
       </Row>
       <Row label="Hyperliquid cross-venue" hint="Pull perp open-interest + funding from Hyperliquid's public API (no key) every ~10 min. Tagged as a cross-venue feed (kept separate from the primary exchange's per-symbol read), surfaced as cross-venue derivatives context.">
-        <Toggle checked={hyperliquid} label="" onChange={v => { setHyperliquid(v); setMsg(null) }} />
+        <Toggle checked={hyperliquid} onChange={v => { setHyperliquid(v); setMsg(null) }} />
       </Row>
       <Row label="DefiLlama on-chain" hint="Pull total stablecoin market cap, DeFi TVL, and DEX volume from DefiLlama's public API (no key) every ~10 min. Folded into the macro block of the LLM context as on-chain regime signal.">
-        <Toggle checked={defillama} label="" onChange={v => { setDefillama(v); setMsg(null) }} />
+        <Toggle checked={defillama} onChange={v => { setDefillama(v); setMsg(null) }} />
       </Row>
       {dirty && (
         <div className="flex justify-end" style={{ padding: '0.5rem 0' }}>

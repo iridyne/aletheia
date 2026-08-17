@@ -4,13 +4,13 @@ import { describe, expect, it } from 'vitest'
 import { SignalsTab } from './SignalsTab'
 import SRC from './SignalsTab.tsx?raw'
 
-function renderSignalsTab() {
+function renderSignalsTab(feeds: Array<{ name: string; url: string; source: string; enabled: boolean }> = []) {
   const client = new QueryClient()
   client.setQueryData(['prediction-status'], { enabled: true })
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <SignalsTab
-        settings={{ market_data: {}, exchange: {}, news: { enabled: true, feeds: [] } }}
+        settings={{ market_data: {}, exchange: {}, news: { enabled: true, feeds } }}
         qc={client}
         onDirty={() => undefined}
       />
@@ -38,5 +38,13 @@ describe('SignalsTab', () => {
     expect(html).toContain('News ingestion')
     expect(html).toContain('Prediction observer')
     expect(html).toContain('No tickers — equity_observer will not run.')
+  })
+
+  it('names each news-feed switch from its sibling feed identity', () => {
+    const html = renderSignalsTab([
+      { name: 'Reuters', url: 'https://example.test/reuters', source: 'wire', enabled: true },
+    ])
+
+    expect(html).toContain('aria-label="Enable Reuters"')
   })
 })

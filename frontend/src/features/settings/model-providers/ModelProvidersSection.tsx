@@ -174,6 +174,7 @@ export function ApiProfileEditor({
 	const [draft, setDraft] = useState(initial);
 	const [message, setMessage] = useState<string | null>(null);
 	const enabledToggleId = useId();
+	const enabledToggleLabelId = `${enabledToggleId}-label`;
 	const [models, setModels] = useState<
 		Array<{ slug: string; display_name: string }>
 	>([]);
@@ -374,10 +375,11 @@ export function ApiProfileEditor({
 					    <label> — nested labels are invalid HTML. */}
 					<Switch
 						id={enabledToggleId}
+						aria-labelledby={enabledToggleLabelId}
 						checked={draft.enabled}
 						onCheckedChange={(value) => set("enabled", value)}
 					/>
-					<label htmlFor={enabledToggleId}>Enable after verification</label>
+					<label id={enabledToggleLabelId} htmlFor={enabledToggleId}>Enable after verification</label>
 				</div>
 			</div>
 			<div className="model-editor-actions">
