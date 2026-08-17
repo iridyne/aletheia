@@ -266,6 +266,9 @@ def _check_pending_closes(cfg, state_store) -> tuple[bool, str]:
             _PENDING_CLOSE_STALE_HOURS,
             _pending_close_age_hours,
         )
+        from aletheia.execution.close_convergence import (
+            IMMEDIATE_RECONCILIATION_STATES,
+        )
         from aletheia.storage import sqlite as _sqlite
 
         db = _sqlite.get_db()
@@ -275,25 +278,26 @@ def _check_pending_closes(cfg, state_store) -> tuple[bool, str]:
         placeholders = ",".join("?" for _ in _OPEN_CLOSE_STATES)
         core_rows = db.execute(
             f"""
-            SELECT pending_close_status, pending_close_requested_at
+            SELECT pending_close_status, pending_close_requested_at,
+                   pending_close_order_id
             FROM positions
-            WHERE status='open'
-              AND pending_close_status IN ({placeholders})
+            WHERE status='open' AND (
+                pending_close_status IN ({placeholders})
+                OR (
+                    COALESCE(TRIM(pending_close_order_id), '') <> ''
+                    AND COALESCE(TRIM(pending_close_status), '') = ''
+                )
+            )
             """,
             tuple(sorted(_OPEN_CLOSE_STATES)),
         ).fetchall()
 
-        immediate_reconciliation_states = {
-            "submission_unknown",
-            "submission_rejected",
-            "materialization_missing",
-            "position_absence_unverified",
-            "overfilled",
-        }
+        immediate_reconciliation_states = IMMEDIATE_RECONCILIATION_STATES
         core_problems: dict[str, int] = {}
         for row in core_rows:
-            status = str(row["pending_close_status"])
-            if status in immediate_reconciliation_states:
+            status = str(row["pending_close_status"] or "").strip()
+            if not status or status in immediate_reconciliation_states:
+                status = status or "unknown"
                 label = status
             else:
                 age_hours = _pending_close_age_hours(

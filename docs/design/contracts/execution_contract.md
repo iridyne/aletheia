@@ -379,6 +379,12 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
 - **交易所明确拒单不得按 scheduler cadence 重试**：无法安全归类为“无仓位”的确定性 Close 拒单，
   Order 保持 `error`，Position 以 `pending_close_status=submission_rejected` 保留原 claim；不得新建 Close
   Order 或自动重发，须由既有 reconciliation 查明原因。该状态不伪装成成交或仓位消失。
+- **未决 claim 不得关闭保护性观察**：Position Manager 仍读取 exact fresh mark 并评估
+  Layer-0/SL/TP/max-hold/trailing；若保护规则再次触发，只记录等待原 claim 收敛，绝不调用
+  exchange close 或创建替代 Order。`positions` 的 owner read model 同时暴露
+  `close_convergence_state`、`close_convergence_owner_status`、claim age 与
+  `close_convergence_requires_reconciliation`；缺失/过期时间戳和 stale claim fail-closed 为
+  `manual attention required`。
 - **启动准入必须读取权威 Position 主账**：Startup Behavior Gate 的 `pending_closes` 检查不能只读取
   遗留 `ps_positions.status=unknown` 投影；它还必须读取 open `positions.pending_close_status`。
   `submission_unknown`、`submission_rejected`、`materialization_missing`、`position_absence_unverified`、

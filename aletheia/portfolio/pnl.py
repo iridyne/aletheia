@@ -1075,6 +1075,11 @@ def position_realized_pnl_view(row: dict) -> dict:
     while portfolio totals correctly say that funding is unknown.
     """
     view = dict(row)
+    # Keep the durable Position fields intact while exposing one shared,
+    # broker-neutral close-convergence projection for owner-facing readers.
+    from aletheia.execution.close_convergence import close_convergence_view
+
+    view.update(close_convergence_view(row))
     if str(row.get("status") or "") != "closed":
         return view
 

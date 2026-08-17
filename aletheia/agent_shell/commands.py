@@ -3452,14 +3452,12 @@ Return JSON: {_json.dumps(schema)}"""
             isinstance(adjustment, dict) and adjustment.get("updated") is True
         )
     elif action == "close_one":
-        from aletheia.portfolio.position_manager import _OPEN_CLOSE_STATES
+        from aletheia.execution.close_convergence import has_unresolved_close_claim
         from aletheia.storage.repositories import get_position
 
         close_state = get_position(matching[0]["id"]) if matching else None
         durable_close_claim = bool(
-            close_state
-            and close_state.get("pending_close_order_id")
-            and close_state.get("pending_close_status") in _OPEN_CLOSE_STATES
+            close_state and has_unresolved_close_claim(close_state)
         )
         review_completed = bool(closed_count == 1 or durable_close_claim)
     else:

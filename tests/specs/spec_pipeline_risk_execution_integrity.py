@@ -2090,6 +2090,22 @@ def test_startup_gate_reads_core_pending_close_truth(tmp_path, monkeypatch):
     assert "position_absence_unverified=1" in detail
     assert "stale:submitted=1" in detail
 
+    # A restart or legacy row with the durable claim but no status is still
+    # unresolved; startup must not admit new decisions on a guessed absence.
+    repo.insert_position(Position(
+        id="claim-without-status",
+        symbol="ADA/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=1.0,
+        execution_mode="bitget_demo",
+        pending_close_order_id="close-without-status",
+    ))
+    allowed, detail = _check_pending_closes(None, None)
+    assert allowed is False
+    assert "unknown=1" in detail
+
 
 @spec_claim(
     SpecClaim(

@@ -25,6 +25,12 @@ from aletheia.data.price_feed import (
     get_fresh_price_for_protective_close,
     protective_price_venue,
 )
+from aletheia.execution.close_convergence import (
+    CLOSE_CLAIM_STATES,
+    PENDING_CLOSE_STALE_HOURS,
+    has_unresolved_close_claim,
+    pending_close_age_hours,
+)
 from aletheia.storage.repositories import (
     PositionProtectionConflict,
     list_all_open_positions,
@@ -34,20 +40,15 @@ from aletheia.portfolio.pnl import close_position, _latest_price
 logger = logging.getLogger("aletheia.position_manager")
 
 _PAPER_MODES = {"paper_internal", "bitget_demo", "binance_testnet", "okx_demo"}
-_OPEN_CLOSE_STATES = {
-    "pending", "submitted", "partial", "partially_filled", "submission_unknown",
-    "submission_rejected", "materialization_missing", "position_absence_unverified",
-    "overfilled",
-}
-_PENDING_CLOSE_STALE_HOURS = 4
+_OPEN_CLOSE_STATES = set(CLOSE_CLAIM_STATES)
+_PENDING_CLOSE_STALE_HOURS = PENDING_CLOSE_STALE_HOURS
 
 
 def _pending_close_age_hours(requested_at: str | None) -> float | None:
-    requested = _parse_dt(requested_at)
-    if requested is None:
+    age_hours = pending_close_age_hours(requested_at)
+    if age_hours is None:
         return float("inf")  # unknown age must not suppress protection silently
-    age_hours = (datetime.now(timezone.utc) - requested).total_seconds() / 3600
-    return age_hours if age_hours >= 0 else float("inf")
+    return age_hours
 
 
 def _escalate_stale_pending_close(position: dict, age_hours: float) -> None:
@@ -1248,7 +1249,8 @@ def evaluate_open_positions() -> dict:
         if p.get("execution_mode") not in _PAPER_MODES:
             continue
         checked += 1
-        if p.get("pending_close_status") in _OPEN_CLOSE_STATES:
+        pending_close = has_unresolved_close_claim(p)
+        if pending_close:
             age_hours = _pending_close_age_hours(p.get("pending_close_requested_at"))
             if age_hours is not None and age_hours >= _PENDING_CLOSE_STALE_HOURS:
                 _escalate_stale_pending_close(p, age_hours)
@@ -1265,13 +1267,10 @@ def evaluate_open_positions() -> dict:
                 )
             else:
                 logger.info(
-                    "skip close for %s: pending close order %s status=%s",
+                    "observe protection for %s while close order %s status=%s is unresolved",
                     p["id"], p.get("pending_close_order_id"),
                     p.get("pending_close_status"),
                 )
-            # Never release an unresolved close claim or submit a replacement.
-            # The scheduler's read-only reconciliation job owns convergence.
-            continue
         try:
             price_venue = protective_price_venue(
                 p.get("execution_mode"),
@@ -1284,10 +1283,12 @@ def evaluate_open_positions() -> dict:
             )
         except Exception as e:
             logger.warning("protective mark lookup failed %s: %s", p["id"], e)
-            record_error(p, "protective_mark_lookup_failed", e)
+            if not pending_close:
+                record_error(p, "protective_mark_lookup_failed", e)
             continue
         if price is None:
-            record_error(p, "protective_mark_unavailable")
+            if not pending_close:
+                record_error(p, "protective_mark_unavailable")
             continue
 
         # Layer-0 hard safety (catastrophic stop, liquidation proximity) runs FIRST
@@ -1406,6 +1407,18 @@ def evaluate_open_positions() -> dict:
                     record_error(p, "market_aware_evaluation_failed", e)
 
         if decision is None:
+            continue
+        if pending_close:
+            # Keep evaluating fresh marks and protective rules while the durable
+            # exchange claim converges, but never turn a second trigger into a
+            # second close request. The existing claim/reconciliation path owns
+            # the exchange side effect and its eventual truth.
+            record_error(p, "pending_close_protection_waiting")
+            logger.warning(
+                "protective exit waiting for unresolved close claim: %s order=%s status=%s",
+                p["id"], p.get("pending_close_order_id"),
+                p.get("pending_close_status"),
+            )
             continue
         reason, exit_price = decision
         try:
