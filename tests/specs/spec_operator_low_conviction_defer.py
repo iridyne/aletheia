@@ -380,26 +380,25 @@ def test_low_conviction_event_kind_has_distinct_dedup(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# DL-S65 — /operator-decisions API surfaces conviction gate deferrals
+# DL-S65 — /operator-decisions keeps conviction gate deferrals non-terminal
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
         "DL-S65", "decision_lifecycle_contract",
-        "§4 conviction gate defer visible in operator-decisions API",
+        "§4 conviction gate defer remains lifecycle evidence, not a ledger outcome",
         "L2b",
-        "GET /analytics/operator-decisions must return conviction_gate_defer items "
+        "GET /analytics/operator-decisions must exclude conviction_gate_defer "
         "when the LLM said 'trade' (operator_action_assessment=passed) but conviction "
-        "was below the minimum (operator_conviction_gate=rejected). Fixes #327: these "
-        "46 evaluations were invisible — no pi_decisions row is written (DL-S47 "
-        "non-terminal), but filter_decisions records both gate outcomes. The API now "
-        "joins these to surface conviction_gate_defer as a queryable outcome.",
+        "was below the minimum (operator_conviction_gate=rejected). These evaluations "
+        "remain in filter_decisions as non-terminal evidence and do not create a "
+        "Candidate Ledger row.",
         status="implemented",
     ),
 )
-def test_conviction_gate_defer_is_visible_in_operator_decisions_api():
-    """DL-S65: conviction gate deferrals appear in GET /analytics/operator-decisions.
+def test_conviction_gate_defer_is_excluded_from_terminal_operator_decisions_api():
+    """DL-S65: conviction gate deferrals stay out of the terminal projection.
 
     Calls the route directly with a mocked DB that has paired filter_decision rows:
     operator_action_assessment=passed + operator_conviction_gate=rejected, same
@@ -499,28 +498,17 @@ def test_conviction_gate_defer_is_visible_in_operator_decisions_api():
         result = get_operator_decisions(hours=24)
 
     counts = result.get("counts", {})
-    assert counts.get("conviction_gate_defer", 0) == 1, (
-        f"Expected counts.conviction_gate_defer=1, got {counts} — "
-        "conviction gate deferrals must be visible as a distinct outcome "
-        "(fixes #327: 46 evaluations were invisible to the operator-decisions API)"
-    )
-
-    items = result.get("items", [])
-    matching = [it for it in items if it.get("outcome") == "conviction_gate_defer"]
-    assert len(matching) == 1, (
-        f"Expected 1 conviction_gate_defer item, got {len(matching)} in {items}"
-    )
-    item = matching[0]
-    assert item["opportunity_id"] == opp_id, (
-        f"Expected opportunity_id={opp_id!r}, got {item['opportunity_id']!r}"
-    )
-    assert item["symbol"] == "SOL/USDT", (
-        f"Expected symbol='SOL/USDT', got {item['symbol']!r}"
-    )
-    assert item["conviction"] == 35, (
-        f"Expected conviction=35 extracted from input_snapshot, got {item['conviction']!r}"
-    )
-    from aletheia.server.routes.analytics import _VALID_OUTCOMES
-    assert "conviction_gate_defer" in _VALID_OUTCOMES, (
-        "'conviction_gate_defer' must be in _VALID_OUTCOMES so the outcome= filter works"
-    )
+    assert counts == {
+        "trade": 0,
+        "operator_skip": 0,
+        "operator_watch": 0,
+        "portfolio_guard_reject": 0,
+        "user_reject": 0,
+        "auto_reject": 0,
+        "reject_unknown": 0,
+    }
+    assert result.get("total_count") == 0
+    assert result.get("items") == []
+    assert conn.execute(
+        "SELECT COUNT(*) FROM filter_decisions WHERE opportunity_id=?", (opp_id,)
+    ).fetchone()[0] == 2
