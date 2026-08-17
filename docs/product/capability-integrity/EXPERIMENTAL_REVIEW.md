@@ -17,10 +17,17 @@ states that More/Less records history only and does not change future research.
 The behavioral consumer was not invented merely to make the button appear more
 capable.
 
-Follow-up: Persona progressive unlock is the 21st Experimental capability.
-Only production-consumed entry parameters can now unlock, while Settings
-explicitly states that the current gate uses global historical closes rather
-than a fresh Persona-specific evidence window. GitHub #409 tracks that gap.
+Historical follow-up: Persona progressive unlock is the 21st Experimental capability.
+Only production-consumed entry parameters can now unlock. The original review
+recorded a global-historical-close gate rather than a fresh Persona-specific
+evidence window; GitHub #409 tracks that historical gap.
+
+2026-08-17 resolution: GitHub #409 is repaired by a durable SQLite rollout
+state machine. Exact Persona/policy/runtime/step manifests are copied into
+Positions, and only post-anchor clean outcomes with minimum sample, market-day,
+and stable non-degrading contribution verdicts can advance one parameter. The
+feature remains Experimental/default-off; the scheduler is a recheck cadence
+and never mutates unrelated configuration.
 
 ## Results
 
@@ -45,8 +52,8 @@ than a fresh Persona-specific evidence window. GitHub #409 tracks that gap.
 | LN-12 | Measured Learning contribution | Exposure/outcome cohorts reach evaluator verdicts and the Learning read model, including invalid/insufficient states. No natural treatment/control verdict is claimed. | Experimental |
 | LN-13 | Learning lifecycle automation | The scheduler reaches a paper-only, default-enabled capability whose experiment authority remains owner- and health-gated. It cannot obtain live authority. | Experimental |
 | LN-15 | Persona regime learning | Clean regime cohorts can produce a bounded appetite adjustment that reaches notional sizing; missing/dirty/small cohorts return zero. | Experimental |
-| LN-16 | Persona progressive unlock | Runtime filters the ladder to active entry notional/Kelly parameters and distress refreezes them. The gate still reuses lifetime eligible closes across Persona/policy epochs, so it remains default-off and explicitly non-supported. | Experimental — #409 |
-| LN-18 | Persona rollout automation | The 8-hour job is now a read-only safety hold. It preserves integrity/distress reasons but cannot treat elapsed time as a Persona/policy step verdict or mutate config. Settings blocks new enablement and allows legacy configurations to switch off. | Experimental — #409 |
+| LN-16 | Persona progressive unlock | Runtime filters the ladder to active entry notional/Kelly parameters and uses a durable exact-manifest cohort with sample, market-day, and stable non-degrading contribution gates; distress/provenance failures refreeze. | Experimental — #409 repaired, default-off |
+| LN-18 | Persona rollout automation | The 8-hour job rechecks the durable rollout state machine, advances one parameter at most, and never treats elapsed time as evidence or mutates unrelated config. | Experimental — #409 repaired |
 
 ## Evidence used
 

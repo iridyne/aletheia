@@ -484,10 +484,11 @@ export function TradingParamsCard({ settings, qc, onDirty }: any) {
                 onChange={v => { setPersonaUnlockEnabled(v); setMsg(null) }}
               />
               <p className="hint mt-1">
-                Experimental: only active entry parameters (<code>notional_usdt</code> and the{' '}
-                legacy-named <code>kelly_fraction</code> scaling field) can unlock. The current gate counts eligible historical
-                closes globally; it does not establish a fresh Persona-specific evidence window.
-                Account distress refreezes all. Default OFF.
+                Only active entry parameters (<code>notional_usdt</code> and the{' '}
+                legacy-named <code>kelly_fraction</code> scaling field) can unlock. Each rollout
+                starts a durable Persona/policy epoch and accepts only exact attributed outcomes
+                from that step; historical or mismatched outcomes never count. Account distress,
+                invalid provenance, or degradation refreezes all. Default OFF.
               </p>
               {personaUnlockEnabled && (
                 <label className="mt-2">
@@ -500,17 +501,37 @@ export function TradingParamsCard({ settings, qc, onDirty }: any) {
               <div className="mt-2">
                 <Toggle
                   checked={personaAutoAdvance}
-                  disabled={!personaAutoAdvance}
-                  label="Auto-advance rollout (Experimental safety hold)"
-                  onChange={v => { if (!v) setPersonaAutoAdvance(false); setMsg(null) }}
+                  label="Auto-advance rollout (evidence-gated)"
+                  onChange={v => { setPersonaAutoAdvance(v); setMsg(null) }}
                 />
                 <p className="hint mt-1">
-                  The 8-hour job is currently read-only and does not change Persona settings.
-                  Time and broad health checks are not a prospective Persona/policy step verdict.
-                  Existing enabled configurations can be switched off; new enablement is blocked.
+                  The 8-hour job only evaluates the durable rollout state. It can unlock at most
+                  one parameter after the scoped sample, market-day, and stable non-degrading
+                  verdict gates pass; the interval itself is never evidence.
                 </p>
               </div>
             </div>
+            {settings?.persona_rollout && (
+              <div className="settings-inline-note mt-2">
+                <span className="settings-field-label">Progressive-unlock authority</span>
+                <div className="mono text-sm">
+                  desired={settings.persona_rollout.desired_progressive_unlock ? 'on' : 'off'} ·{' '}
+                  status={settings.persona_rollout.status || 'not available'} ·{' '}
+                  actual={((settings.persona_rollout.actual_authorized_params || []) as string[]).join(', ') || 'none'}
+                </div>
+                <div className="mono text-sm">
+                  evidence={settings.persona_rollout.evidence?.sample_count ?? 'not available'}/
+                  {settings.persona_rollout.evidence?.required_samples ?? '—'} samples ·{' '}
+                  {settings.persona_rollout.evidence?.market_day_count ?? 'not available'}/
+                  {settings.persona_rollout.evidence?.required_market_days ?? '—'} market days ·{' '}
+                  verdict={settings.persona_rollout.evidence?.reason || 'not available'}
+                </div>
+                <p className="hint mt-1">
+                  Actual authority and evidence come from the backend rollout record; desired flags
+                  alone never authorize a parameter.
+                </p>
+              </div>
+            )}
             <div className="mt-2">
               <Toggle
                 checked={personaPyramidEnabled}

@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v30"
+SCHEMA_VERSION = "aletheia-sqlite-v31"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4705,6 +4705,61 @@ _SERENITY_RETRY_IDEMPOTENCY_CHECKSUM = hashlib.sha256(
     _SERENITY_RETRY_IDEMPOTENCY_SQL.encode("utf-8")
 ).hexdigest()
 
+_PERSONA_ROLLOUT_SQL = (
+    "CREATE TABLE IF NOT EXISTS persona_rollouts ("
+    "rollout_id TEXT PRIMARY KEY,"
+    "persona_id TEXT NOT NULL,"
+    "persona_fingerprint TEXT NOT NULL,"
+    "policy_epoch TEXT NOT NULL,"
+    "runtime_version TEXT,"
+    "current_step INTEGER NOT NULL DEFAULT 0,"
+    "current_parameter TEXT,"
+    "step_started_at TEXT NOT NULL,"
+    "baseline_snapshot_json TEXT NOT NULL DEFAULT '{}',"
+    "evidence_watermark TEXT,"
+    "status TEXT NOT NULL,"
+    "authority TEXT NOT NULL,"
+    "reason TEXT NOT NULL,"
+    "created_at TEXT NOT NULL,"
+    "updated_at TEXT NOT NULL,"
+    "ended_at TEXT"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_persona_rollouts_active "
+    "ON persona_rollouts(persona_id, policy_epoch, ended_at, updated_at);"
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_persona_rollouts_one_active_identity "
+    "ON persona_rollouts(persona_id, policy_epoch) WHERE ended_at IS NULL;"
+    "CREATE TABLE IF NOT EXISTS persona_rollout_events ("
+    "event_id TEXT PRIMARY KEY,"
+    "rollout_id TEXT NOT NULL REFERENCES persona_rollouts(rollout_id),"
+    "step INTEGER NOT NULL,"
+    "parameter TEXT,"
+    "status TEXT NOT NULL,"
+    "event_type TEXT NOT NULL,"
+    "authority TEXT NOT NULL,"
+    "reason TEXT NOT NULL,"
+    "evidence_json TEXT NOT NULL DEFAULT '{}',"
+    "actor TEXT NOT NULL,"
+    "source TEXT NOT NULL,"
+    "created_at TEXT NOT NULL"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_persona_rollout_events_rollout "
+    "ON persona_rollout_events(rollout_id, created_at, event_id);"
+    "CREATE TRIGGER IF NOT EXISTS trg_persona_rollout_events_no_update "
+    "BEFORE UPDATE ON persona_rollout_events BEGIN "
+    "SELECT RAISE(ABORT, 'persona_rollout_events is append-only'); END;"
+    "CREATE TRIGGER IF NOT EXISTS trg_persona_rollout_events_no_delete "
+    "BEFORE DELETE ON persona_rollout_events BEGIN "
+    "SELECT RAISE(ABORT, 'persona_rollout_events is append-only'); END;"
+)
+_PERSONA_ROLLOUT_COLUMNS = (("sizing_manifest", "positions", "TEXT"),)
+_PERSONA_ROLLOUT_CHECKSUM = hashlib.sha256(
+    (
+        _PERSONA_ROLLOUT_SQL
+        + repr(_PERSONA_ROLLOUT_COLUMNS)
+        + "\nprospective_persona_rollout_v1"
+    ).encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -4798,6 +4853,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260816_0029_position_realtime_revision_v30": (
         "monotonic Position revisions for real-time invalidation"
+    ),
+    "20260817_0030_persona_rollout_v31": (
+        "prospective Persona rollout state, evidence events, and sizing manifests"
     ),
 }
 
@@ -5018,6 +5076,19 @@ def _apply_position_realtime_revision_v30(db: sqlite3.Connection) -> None:
 
     for statement in _POSITION_REALTIME_REVISION_SQL:
         db.execute(statement)
+    db.execute("PRAGMA optimize")
+
+
+def _apply_persona_rollout_v31(db: sqlite3.Connection) -> None:
+    """Persist prospective Persona rollout state and entry manifests."""
+
+    for column, table, column_type in _PERSONA_ROLLOUT_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.executescript(_PERSONA_ROLLOUT_SQL)
     db.execute("PRAGMA optimize")
 
 
@@ -5538,6 +5609,12 @@ _MIGRATIONS = (
         checksum=_POSITION_REALTIME_REVISION_CHECKSUM,
         schema_version="aletheia-sqlite-v30",
         apply=_apply_position_realtime_revision_v30,
+    ),
+    MigrationStep(
+        migration_id="20260817_0030_persona_rollout_v31",
+        checksum=_PERSONA_ROLLOUT_CHECKSUM,
+        schema_version="aletheia-sqlite-v31",
+        apply=_apply_persona_rollout_v31,
     ),
 )
 

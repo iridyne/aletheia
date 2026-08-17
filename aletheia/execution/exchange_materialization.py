@@ -246,6 +246,23 @@ def _attribution_fields(proposal: dict) -> dict:
     if not isinstance(snapshot, dict):
         snapshot = {}
     market_context = snapshot.get("market_context")
+    sizing_manifest = None
+    try:
+        from aletheia.trading.persona_rollout import (
+            extract_sizing_manifest,
+            serialize_sizing_manifest,
+        )
+
+        sizing_manifest = serialize_sizing_manifest(
+            extract_sizing_manifest(
+                {
+                    "agent_rationale": proposal.get("agent_rationale"),
+                    "attribution_snapshot": snapshot,
+                }
+            )
+        )
+    except Exception:
+        sizing_manifest = None
     return {
         "btc_entry_price": snapshot.get("btc_entry_price"),
         "regime_tag": str(snapshot.get("regime_tag") or "unknown"),
@@ -255,6 +272,7 @@ def _attribution_fields(proposal: dict) -> dict:
             else None
         ),
         "decision_reasoning": proposal.get("agent_rationale"),
+        "sizing_manifest": sizing_manifest,
     }
 
 

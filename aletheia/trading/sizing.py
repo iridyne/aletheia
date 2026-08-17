@@ -230,6 +230,9 @@ def vol_target_size(
         "vol_sizing_enabled": bool(cfg.trading.vol_sizing_enabled),
         "atr_snapshot": atr_snapshot,
         "persona": static_params.get("_persona", "legacy"),
+        # Persist the exact rollout/persona/step identity with the Proposal so
+        # closed outcomes can never be pooled across a new rollout.
+        "persona_manifest": learned_params.get("_persona_rollout"),
         "legacy_parameter_name": "kelly_fraction",
         "baseline_calculation": baseline_calculation,
         "learned_calculation": learned_calculation,

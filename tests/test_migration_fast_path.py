@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 31)
+        f"aletheia-sqlite-v{version}" for version in range(2, 32)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v30"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v31"
     connection.close()
 
 
@@ -342,6 +342,48 @@ def test_position_realtime_revision_v30_tracks_every_change():
         "trg_positions_realtime_revision_update",
         "trg_positions_realtime_revision_delete",
     }
+    connection.close()
+
+
+def test_persona_rollout_v31_is_additive_and_events_are_append_only():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE positions (id TEXT PRIMARY KEY)")
+
+    migrations._apply_persona_rollout_v31(connection)
+    migrations._apply_persona_rollout_v31(connection)
+
+    columns = [row[1] for row in connection.execute("PRAGMA table_info(positions)")]
+    assert columns.count("sizing_manifest") == 1
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    assert {"persona_rollouts", "persona_rollout_events"} <= tables
+    connection.execute(
+        "INSERT INTO persona_rollouts "
+        "(rollout_id, persona_id, persona_fingerprint, policy_epoch, "
+        "step_started_at, status, authority, reason, created_at, updated_at) "
+        "VALUES ('r1','p','fp','epoch','2026-08-17T00:00:00+00:00',"
+        "'observing','safe','test','2026-08-17T00:00:00+00:00',"
+        "'2026-08-17T00:00:00+00:00')"
+    )
+    connection.execute(
+        "INSERT INTO persona_rollout_events "
+        "(event_id, rollout_id, step, status, event_type, authority, reason, "
+        "actor, source, created_at) VALUES "
+        "('e1','r1',0,'observing','started','safe','test','system','test',"
+        "'2026-08-17T00:00:00+00:00')"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "UPDATE persona_rollout_events SET reason='changed' WHERE event_id='e1'"
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute("DELETE FROM persona_rollout_events WHERE event_id='e1'")
     connection.close()
 
 
@@ -625,8 +667,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260816_0029_position_realtime_revision_v30",
-        "aletheia-sqlite-v30",
+        "20260817_0030_persona_rollout_v31",
+        "aletheia-sqlite-v31",
     )
     health_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(learning_job_health)")

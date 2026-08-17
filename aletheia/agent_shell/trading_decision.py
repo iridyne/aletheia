@@ -1624,6 +1624,52 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         market_snapshot=snap,
     )
 
+    # Persist the exact Persona rollout identity on every native Proposal.  The
+    # active account-risk sizing path remains Risk-owned; the manifest records
+    # only the Persona authority that was in force for this entry.
+    if getattr(cfg.trading, "persona_sizing_enabled", False):
+        try:
+            from aletheia.trading.persona import (
+                effective_operator_decidable,
+                get_active_persona,
+            )
+            from aletheia.trading.persona_rollout import (
+                build_sizing_manifest,
+                current_persona_rollout,
+            )
+
+            active_persona = get_active_persona(cfg)
+            rollout = (
+                current_persona_rollout(
+                    cfg,
+                    create=bool(
+                        getattr(cfg.trading, "persona_progressive_unlock_enabled", False)
+                    ),
+                )
+                if active_persona is not None
+                else None
+            )
+            decidable = (
+                effective_operator_decidable(active_persona, cfg)
+                if active_persona is not None
+                else {}
+            )
+            decision.sizing_trace["persona_manifest"] = build_sizing_manifest(
+                cfg,
+                authorized_params=[key for key, value in decidable.items() if value],
+                state=rollout,
+            )
+        except Exception:
+            # Proposal creation remains available, but an unavailable rollout
+            # cannot manufacture evidence that would later authorize a step.
+            decision.sizing_trace["persona_manifest"] = {
+                "schema_version": "persona-progressive-unlock/v2",
+                "persona_id": getattr(cfg.trading, "active_persona", "unknown"),
+                "parameter_state": "unavailable",
+                "assignment": "none",
+                "active_params": [],
+            }
+
     decision_meta = {
         "conviction": decision.conviction,
         "debate_ran": decision.debate_ran,

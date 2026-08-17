@@ -358,7 +358,18 @@ def test_operator_decidable_param_is_context_decided(tmp_path, monkeypatch):
 _CLOSED_IDS = count()
 
 
-def _closed(repo, Position, regime, pnl, reason="take_profit", entry=100.0, qty=1.0):
+def _closed(
+    repo,
+    Position,
+    regime,
+    pnl,
+    reason="take_profit",
+    entry=100.0,
+    qty=1.0,
+    *,
+    closed_at="2026-07-12T08:00:00+00:00",
+    sizing_manifest=None,
+):
     from tests.test_outcome_closure import _insert_entry_chain
 
     synthetic = reason == "reconciled_gone"
@@ -381,7 +392,7 @@ def _closed(repo, Position, regime, pnl, reason="take_profit", entry=100.0, qty=
         quantity=qty, entry_price=entry, execution_mode="okx_demo",
         current_price=entry + pnl / qty,
         status="closed", realized_pnl=pnl, close_reason=reason, regime_tag=regime,
-        closed_at="2026-07-12T08:00:00+00:00",
+        closed_at=closed_at,
         entry_fee=0.0, exit_fee=0.0,
         funding_cost=0.0, funding_source="broker_ledger",
         entry_price_source="unavailable" if synthetic else "broker_fill",
@@ -395,6 +406,7 @@ def _closed(repo, Position, regime, pnl, reason="take_profit", entry=100.0, qty=
         opportunity_id=opportunity_id,
         proposal_id=proposal_id,
         order_id=order_id,
+        sizing_manifest=sizing_manifest,
     ))
 
 
@@ -500,29 +512,34 @@ def test_sizing_policy_health(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim("PS-S10", "persona_sizing", "§8 progressive unlock ladder + distress refreeze", "L2b",
               "effective_operator_decidable: OFF → static dict (P1-P3); ON → unlock only "
-              "production-consumed entry-sizing params in ladder order as eligible closes "
-              "accrue; reference-only params are ignored and distress refreezes ALL."),
+              "production-consumed entry-sizing params in ladder order after durable exact "
+              "Persona/policy/step evidence; reference-only params are ignored and distress "
+              "refreezes ALL."),
 )
 def test_progressive_unlock_ladder(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
+    from datetime import datetime, timedelta, timezone
+
     from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
     from aletheia.storage.models import Position
     from aletheia.storage import repositories as repo
     from aletheia.trading.persona import effective_operator_decidable
+    from aletheia.trading.persona_rollout import (
+        build_sizing_manifest,
+        current_persona_rollout,
+        serialize_sizing_manifest,
+        start_persona_rollout,
+    )
 
     cfg = AletheiaConfig()
+    cfg.trading.persona_sizing_enabled = True
+    cfg.trading.active_persona = "roll"
+    cfg.trading.persona_auto_advance_enabled = True
     cfg.trading.persona_unlock_step_samples = 5
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
     roll = cfg.trading.personas["roll"]
     assert roll.unlock_ladder == ["notional_usdt", "kelly_fraction"]
-
-    # OFF → static (empty) regardless of samples.
-    assert effective_operator_decidable(roll, cfg) == {}
-
-    cfg.trading.persona_progressive_unlock_enabled = True
-    # 0 clean closes → nothing unlocked.
-    assert effective_operator_decidable(roll, cfg) == {}
 
     # Persisted/custom ladders may still contain old reference-only fields. Runtime
     # must ignore those fields rather than granting authority without a consumer.
@@ -531,11 +548,38 @@ def test_progressive_unlock_ladder(tmp_path, monkeypatch):
         "max_adds", "kelly_fraction",
     ]
 
-    # 12 clean closes, step 5 → both production-consumed params unlock.
+    cfg.trading.persona_progressive_unlock_enabled = True
+    # An established database still cannot authorize a fresh rollout.
     for _ in range(12):
         _closed(repo, Position, "bull", pnl=1.0)
+    anchor = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    start_persona_rollout(cfg, now=anchor)
+    assert effective_operator_decidable(roll, cfg) == {}
+
+    state = current_persona_rollout(cfg)
+    assert state and state["status"] == "observing"
+    assert state["current_parameter"] == "notional_usdt"
+
+    # Five exact control outcomes over three market days unlock exactly one
+    # production parameter; lifetime rows above are outside the rollout anchor.
+    state = current_persona_rollout(cfg)
+    control = serialize_sizing_manifest(build_sizing_manifest(cfg, state=state))
+    for i in range(5):
+        _closed(
+            repo,
+            Position,
+            "bull",
+            pnl=1.0,
+            closed_at=(anchor + timedelta(days=1 + i % 3, hours=i)).isoformat(),
+            sizing_manifest=control,
+        )
+    from aletheia.trading.persona_rollout import advance_persona_rollout
+
+    result = advance_persona_rollout(now=anchor + timedelta(days=5))
+    assert result["action"] == "unlocked"
+    assert result["parameter"] == "notional_usdt"
     dec = effective_operator_decidable(roll, cfg)
-    assert dec == {"notional_usdt": True, "kelly_fraction": True}
+    assert dec == {"notional_usdt": True}
 
     # Distress (kill switch) → refreeze ALL.
     cfg.runtime.kill_switch_active = True
@@ -543,8 +587,94 @@ def test_progressive_unlock_ladder(tmp_path, monkeypatch):
 
     settings_src = _PAPER_TRADING_SETTINGS.read_text(encoding="utf-8")
     assert "only active entry parameters" in settings_src
-    assert "counts eligible historical" in settings_src
-    assert "does not establish a fresh Persona-specific evidence window" in settings_src
+    assert "historical or mismatched outcomes never count" in settings_src
+    assert "the interval itself is never evidence" in settings_src
+
+
+def test_progressive_rollout_identity_is_restart_safe_and_switching_refreezes(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    from datetime import datetime, timezone
+
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    from aletheia.trading.persona_rollout import (
+        current_persona_rollout,
+        start_persona_rollout,
+    )
+
+    cfg = AletheiaConfig()
+    cfg.trading.persona_sizing_enabled = True
+    cfg.trading.persona_progressive_unlock_enabled = True
+    cfg.trading.active_persona = "roll"
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    anchor = datetime(2026, 8, 1, tzinfo=timezone.utc)
+
+    first = start_persona_rollout(cfg, now=anchor)
+    assert first and first["status"] == "observing"
+    restarted = current_persona_rollout(cfg)
+    assert restarted and restarted["rollout_id"] == first["rollout_id"]
+
+    cfg.trading.active_persona = "balanced"
+    switched = current_persona_rollout(cfg, create=True, now=anchor)
+    assert switched and switched["rollout_id"] != first["rollout_id"]
+    assert switched["persona_id"] == "balanced"
+    old = conn.execute(
+        "SELECT ended_at, status FROM persona_rollouts WHERE rollout_id=?",
+        (first["rollout_id"],),
+    ).fetchone()
+    assert old and old[0] is not None and old[1] == "refrozen"
+    assert conn.execute(
+        "SELECT event_type FROM persona_rollout_events WHERE rollout_id=? "
+        "ORDER BY created_at DESC LIMIT 1",
+        (first["rollout_id"],),
+    ).fetchone()[0] == "rollout_invalidated"
+
+    cfg.trading.persona_unlock_step_samples += 1
+    policy_changed = current_persona_rollout(cfg, create=True, now=anchor)
+    assert policy_changed and policy_changed["rollout_id"] != switched["rollout_id"]
+
+
+def test_progressive_rollout_negative_exact_cohort_refreezes(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+    from aletheia.trading.persona_rollout import (
+        advance_persona_rollout,
+        build_sizing_manifest,
+        current_persona_rollout,
+        serialize_sizing_manifest,
+        start_persona_rollout,
+    )
+
+    cfg = AletheiaConfig()
+    cfg.trading.persona_sizing_enabled = True
+    cfg.trading.persona_progressive_unlock_enabled = True
+    cfg.trading.persona_auto_advance_enabled = True
+    cfg.trading.active_persona = "roll"
+    cfg.trading.persona_unlock_step_samples = 3
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    anchor = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    start_persona_rollout(cfg, now=anchor)
+    state = current_persona_rollout(cfg)
+    manifest = serialize_sizing_manifest(build_sizing_manifest(cfg, state=state))
+    for day in range(1, 4):
+        _closed(
+            repo,
+            Position,
+            "bull",
+            pnl=-1.0,
+            closed_at=(anchor + timedelta(days=day)).isoformat(),
+            sizing_manifest=manifest,
+        )
+
+    result = advance_persona_rollout(now=anchor + timedelta(days=5))
+    assert result["action"] == "refrozen"
+    assert result["reason"] == "negative_contribution"
+    assert result["rollout"]["status"] == "refrozen"
 
 
 @spec_claim(
@@ -611,12 +741,11 @@ def test_pyramid_plan(tmp_path, monkeypatch):
     assert "no production trigger" in str(exc.value.detail)
     assert saved_configs == []
 
-    with pytest.raises(HTTPException) as exc:
-        asyncio.run(settings_routes.update_trading_config(
-            settings_routes.TradingConfigUpdate(persona_auto_advance_enabled=True)
-        ))
-    assert exc.value.status_code == 409
-    assert "prospective" in str(exc.value.detail)
+    result = asyncio.run(settings_routes.update_trading_config(
+        settings_routes.TradingConfigUpdate(persona_auto_advance_enabled=True)
+    ))
+    assert result["trading"]["persona_auto_advance_enabled"] is True
+    assert len(saved_configs) == 1
 
     # Legacy enabled configurations retain an explicit off-ramp.
     cfg.trading.persona_pyramid_enabled = True
@@ -624,7 +753,7 @@ def test_pyramid_plan(tmp_path, monkeypatch):
         settings_routes.TradingConfigUpdate(persona_pyramid_enabled=False)
     ))
     assert result["trading"]["persona_pyramid_enabled"] is False
-    assert len(saved_configs) == 1
+    assert len(saved_configs) == 2
 
     settings_src = _PAPER_TRADING_SETTINGS.read_text(encoding="utf-8")
     assert "Pyramid add-on policy helper (no runtime trigger)" in settings_src
@@ -662,11 +791,11 @@ def test_pyramid_never_exceeds_exposure_cap(tmp_path, monkeypatch):
 
 
 @spec_claim(
-    SpecClaim("PS-S13", "persona_sizing", "§8 rollout automation safety hold", "L2b",
+    SpecClaim("PS-S13", "persona_sizing", "§8 rollout automation evidence gate", "L2b",
               "advance_persona_rollout is read-only: disabled unless explicitly configured, "
               "retains specific distress/integrity hold reasons, and never changes Persona "
-              "flags without a prospective Persona/policy/step verdict. Settings blocks new "
-              "enablement while allowing legacy enabled configurations to be switched off."),
+              "flags without a prospective Persona/policy/step verdict. Settings exposes "
+              "the evidence-gated scheduler without broadening Risk or execution authority."),
 )
 def test_advance_persona_rollout(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
@@ -688,21 +817,19 @@ def test_advance_persona_rollout(tmp_path, monkeypatch):
     cfg.trading.persona_auto_advance_enabled = True
     assert advance_persona_rollout()["action"] == "hold"
 
-    # Sizing on and broadly healthy is still not prospective rollout evidence.
+    # Sizing on and progressive unlock enabled still needs scoped evidence.
     cfg.trading.persona_sizing_enabled = True
+    cfg.trading.persona_progressive_unlock_enabled = True
     r = advance_persona_rollout()
-    assert r == {
-        "action": "hold",
-        "reason": "prospective_persona_policy_step_verdict_unavailable",
-    }
-    assert cfg.trading.persona_progressive_unlock_enabled is False
+    assert r["action"] == "hold"
+    assert r["reason"] in {"insufficient_scoped_samples", "insufficient_market_days"}
+    assert cfg.trading.persona_progressive_unlock_enabled is True
     assert cfg.trading.persona_learning_enabled is False
     assert cfg.trading.persona_pyramid_enabled is False
     assert cfg.trading.active_persona == "conservative"
     assert saved == {}, "rollout safety probe must never persist config changes"
 
     # A legacy config with progressive unlock already on must not auto-enable Learning.
-    cfg.trading.persona_progressive_unlock_enabled = True
     assert advance_persona_rollout()["action"] == "hold"
     assert cfg.trading.persona_learning_enabled is False
     assert saved == {}
@@ -711,12 +838,13 @@ def test_advance_persona_rollout(tmp_path, monkeypatch):
     cfg2 = AletheiaConfig()
     cfg2.trading.persona_auto_advance_enabled = True
     cfg2.trading.persona_sizing_enabled = True
+    cfg2.trading.persona_progressive_unlock_enabled = True
     cfg2.runtime.kill_switch_active = True   # distress
     monkeypatch.setattr(loader, "load_config", lambda: cfg2)
-    assert advance_persona_rollout()["action"] == "hold"
-    assert cfg2.trading.persona_progressive_unlock_enabled is False  # not advanced under distress
+    assert advance_persona_rollout()["action"] == "refrozen"
+    assert cfg2.trading.persona_progressive_unlock_enabled is True  # no config mutation under distress
 
     settings_src = _PAPER_TRADING_SETTINGS.read_text(encoding="utf-8")
-    assert "Auto-advance rollout (Experimental safety hold)" in settings_src
-    assert "The 8-hour job is currently read-only" in settings_src
+    assert "Auto-advance rollout (evidence-gated)" in settings_src
+    assert "the interval itself is never evidence" in settings_src
     assert "new enablement is blocked" in settings_src

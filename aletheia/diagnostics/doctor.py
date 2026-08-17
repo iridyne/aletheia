@@ -2359,6 +2359,47 @@ def _probe_sizing_policy(report: Report) -> None:
         report.add("loop.sizing_policy", "info", f"probe error: {e}")
 
 
+def _probe_persona_rollout(report: Report) -> None:
+    """Show desired Persona flags separately from durable dynamic authority."""
+    try:
+        from aletheia.config.loader import load_config
+        from aletheia.trading.persona_rollout import persona_rollout_status
+
+        cfg = load_config()
+        status = persona_rollout_status(cfg)
+        if not status.get("desired_progressive_unlock"):
+            report.add(
+                "loop.persona_rollout",
+                "info",
+                "progressive unlock disabled; actual authority is static-only",
+            )
+            return
+        evidence = status.get("evidence") or {}
+        actual = ",".join(status.get("actual_authorized_params") or []) or "none"
+        detail = (
+            f"desired_progressive=on; status={status.get('status')}; actual={actual}; "
+            f"samples={evidence.get('sample_count', 'not available')}/"
+            f"{evidence.get('required_samples', 'not available')}; "
+            f"market_days={evidence.get('market_day_count', 'not available')}/"
+            f"{evidence.get('required_market_days', 'not available')}; "
+            f"verdict={evidence.get('reason', 'not available')}"
+        )
+        if status.get("status") == "refrozen" or evidence.get("reason") in {
+            "invalid_provenance",
+            "negative_contribution",
+            "degrading_contribution",
+            "unstable_contribution",
+            "reconcile_thrash_state_unavailable",
+        }:
+            report.add("loop.persona_rollout", "warn", detail)
+        elif status.get("status") in {"unlocked", "completed"}:
+            report.add("loop.persona_rollout", "ok", detail)
+        else:
+            report.add("loop.persona_rollout", "info", detail)
+    except Exception as e:
+        report.add("loop.persona_rollout", "info", f"probe error: {e}")
+
+
 def _probe_reconcile_thrash(report: Report) -> None:
     """Report current churn plus the durable circuit-breaker/recovery state."""
     try:
@@ -4004,6 +4045,7 @@ def build_report(*, probe_llm: bool = False) -> Report:
         _probe_reconciled_ratio,
         _probe_reconcile_thrash,
         _probe_sizing_policy,
+        _probe_persona_rollout,
         _probe_concentration,
         # content-quality (Phase 2): "is the AI's output garbage", not "is the loop alive"
         *_CONTENT_PROBES,

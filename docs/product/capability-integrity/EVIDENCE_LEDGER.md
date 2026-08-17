@@ -15,33 +15,41 @@
 
 ## Persona progressive unlock follow-up
 
-The review found that the mechanism uses lifetime eligible closes rather than
-a prospective Persona/policy cohort. It was not promoted to Supported and no
-new rollout framework was added. The bounded repair filters progressive
-authority to the two production-consumed entry parameters and makes the
-limitation explicit in Settings.
+2026-08-17 resolution: the original lifetime-history finding is repaired by a
+durable rollout state machine. This ledger's original review remains historical;
+the current implementation persists exact rollout/step identity and Position
+manifests, requires scoped post-anchor cost-aware evidence with sample and
+market-day coverage plus a stable non-degrading verdict, advances one parameter
+at a time, and refreezes on invalid/degrading/distress conditions.
+
+The original review found that the mechanism used lifetime eligible closes
+rather than a prospective Persona/policy cohort. That historical limitation was
+not promoted to Supported; the current follow-up supersedes it with the durable
+rollout framework above while retaining the two production-consumed entry
+parameters and the Experimental/default-off boundary.
 
 Executable verification:
 
-- Persona sizing specification: **14 passed**
-- Full executable SDD suite: **1,360 passed, 10 skipped, 15 xfailed**
-- SDD conformance checks: **7 passed**
+- Historical Persona sizing specification: **14 passed**
+- Historical full executable SDD suite: **1,360 passed, 10 skipped, 15 xfailed**
+- Historical SDD conformance checks: **7 passed**
 - Frontend compile was not run because this worktree has no installed frontend
   toolchain (`tsc` unavailable); the Settings contract text is protected by
   `PS-S10`.
 
 ## Persona rollout automation follow-up
 
-The eight-hour scheduler interval was incorrectly represented as an
+Historical finding: the eight-hour scheduler interval was incorrectly represented as an
 observation window. The job could enable progressive unlock against lifetime
 historical outcomes without a prospective Persona/policy/step verdict. The
-bounded repair removes all config mutation, retains explicit
-integrity/distress hold reasons, and blocks new Settings enablement.
+current follow-up replaces that path with the durable evidence-gated state
+machine; the interval is now only a recheck cadence.
 
 Executable verification:
 
-- Persona sizing plus reconciliation-integrity paths: **22 passed**
-- `PS-S13` protects the read-only scheduler and owner-facing safety boundary.
+- Historical Persona sizing plus reconciliation-integrity paths: **22 passed**
+- The current `PS-S13` contract protects the evidence-gated scheduler and
+  owner-facing safety boundary; rerun focused CI after this follow-up.
 
 ## Discovery coverage
 

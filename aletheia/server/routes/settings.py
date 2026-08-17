@@ -148,6 +148,7 @@ def _trading_mandate_view(cfg) -> dict[str, Any] | None:
 def get_settings():
     cfg = load_config()
     from aletheia.learning.registry import paper_influence_path_options
+    from aletheia.trading.persona_rollout import persona_rollout_status
     providers_safe = {}
     for name, p in cfg.models.providers.items():
         providers_safe[name] = {
@@ -188,6 +189,7 @@ def get_settings():
         "risk": cfg.risk.model_dump(mode="json"),
         "update": cfg.update.model_dump(mode="json"),
         "trading": cfg.trading.model_dump(mode="json"),
+        "persona_rollout": persona_rollout_status(cfg),
         "health": cfg.health.model_dump(mode="json"),
         "retention": cfg.retention.model_dump(mode="json"),
         "telegram": cfg.telegram.model_dump(mode="json"),
@@ -1861,10 +1863,6 @@ _EXPERIMENTAL_ENABLEMENT_HOLDS = {
         "Persona pyramid is a policy helper with no production trigger or "
         "risk-approved add-order materializer; new enablement is blocked"
     ),
-    "persona_auto_advance_enabled": (
-        "Persona auto-advance is safety-held until a prospective "
-        "Persona/policy/step verdict exists; new enablement is blocked"
-    ),
 }
 
 
@@ -1896,6 +1894,29 @@ async def update_trading_config(req: TradingConfigUpdate):
         setattr(cfg.trading, field, value)
 
     save_config(cfg)
+    old_rollout_enabled = bool(old.get("persona_progressive_unlock_enabled")) and bool(
+        old.get("persona_sizing_enabled")
+    )
+    new_rollout_enabled = bool(cfg.trading.persona_progressive_unlock_enabled) and bool(
+        cfg.trading.persona_sizing_enabled
+    )
+    if old_rollout_enabled and not new_rollout_enabled:
+        # Disabling either prerequisite ends the cohort. Re-enabling must not
+        # resurrect evidence collected before the off interval.
+        from aletheia.trading.persona_rollout import invalidate_persona_rollouts
+
+        invalidate_persona_rollouts(reason="progressive_rollout_disabled")
+    if (
+        cfg.trading.persona_progressive_unlock_enabled
+        and cfg.trading.persona_sizing_enabled
+    ):
+        # Reconcile the durable identity on every settings write.  Matching
+        # writes are a no-op; any Persona/policy epoch change invalidates the
+        # old rollout before a new one can collect evidence.
+        from aletheia.trading.persona_rollout import current_persona_rollout
+
+        current_persona_rollout(cfg, create=True)
+    from aletheia.trading.persona_rollout import persona_rollout_status
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "trading_config_changed",
                  "entity_type": "trading_config", "before": old,
@@ -1903,7 +1924,11 @@ async def update_trading_config(req: TradingConfigUpdate):
                  "message": f"Trading config updated: {list(updates.keys())}"})
     if "min_confidence_to_trade" in updates:
         _notify_ranker_config_change()
-    return {"updated": updates, "trading": cfg.trading.model_dump(mode="json")}
+    return {
+        "updated": updates,
+        "trading": cfg.trading.model_dump(mode="json"),
+        "persona_rollout": persona_rollout_status(cfg),
+    }
 
 
 # ---------------------------------------------------------------------------

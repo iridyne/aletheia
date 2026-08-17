@@ -150,20 +150,16 @@ def effective_operator_decidable(persona, cfg=None) -> dict:
 
     - persona_progressive_unlock_enabled OFF → the static persona.operator_decidable
       (P1-P3 behavior, unchanged).
-    - ON → unlock the persona's unlock_ladder in order: position i is decidable once
-      (i+1) * unlock_step clean closes have accrued. Account DISTRESS (drawdown / kill
-      switch) refreezes ALL (returns {}). This is the auto-refreeze safety.
+    - ON → read only the durable Persona rollout state. A parameter is decidable only
+      after that exact rollout step has a prospective, scoped, stable verdict. Account
+      DISTRESS (drawdown / kill switch) refreezes ALL (returns {}).
     """
     from aletheia.config.loader import load_config
     cfg = cfg or load_config()
     static = dict(persona.operator_decidable or {})
-    try:
-        from aletheia.learning.control import learning_influence_enabled
-        if not learning_influence_enabled():
-            return static
-    except Exception:
-        return static
     if not getattr(cfg.trading, "persona_progressive_unlock_enabled", False):
+        return static
+    if not getattr(cfg.trading, "persona_sizing_enabled", False):
         return static
     ladder = [
         key for key in (persona.unlock_ladder or [])
@@ -171,14 +167,40 @@ def effective_operator_decidable(persona, cfg=None) -> dict:
     ]
     if not ladder:
         return static
-    from aletheia.trading.sizing_policy import clean_close_count, in_distress
-    if in_distress(cfg):
-        return {}  # refreeze everything under distress
-    step = max(1, int(getattr(cfg.trading, "persona_unlock_step_samples", 25)))
-    unlocked_n = min(len(ladder), clean_close_count() // step)
-    out = dict(static)
-    for i in range(unlocked_n):
-        out[ladder[i]] = True
+    # Once progressive mode is selected, ladder parameters are controlled only
+    # by the durable rollout.  A stale static True must never bypass its gate.
+    out = {key: value for key, value in static.items() if key not in ladder}
+    try:
+        from aletheia.trading.persona_rollout import rollout_runtime_safe
+
+        if not rollout_runtime_safe(cfg):
+            return {}
+    except Exception:
+        return {}
+    try:
+        from aletheia.trading.persona_rollout import current_persona_rollout
+
+        rollout = current_persona_rollout(cfg, create=True)
+        if not rollout:
+            return {}
+        status = str(rollout.get("status") or "")
+        if status == "refrozen":
+            return {}
+        if status == "completed":
+            unlocked_n = len(ladder)
+        elif status == "unlocked":
+            unlocked_n = min(len(ladder), int(rollout.get("current_step") or 0) + 1)
+        elif status in {"frozen", "observing", "eligible"}:
+            # A new parameter's control arm keeps earlier successful parameters
+            # active while the current parameter remains frozen.
+            unlocked_n = min(len(ladder), int(rollout.get("current_step") or 0))
+        else:
+            return {}
+        for key in ladder[:unlocked_n]:
+            out[key] = True
+    except Exception:
+        # A missing/invalid rollout state must never grant dynamic authority.
+        return {}
     return out
 
 
@@ -229,4 +251,32 @@ def effective_sizing_params(
     out["_risk_appetite"] = ctx["risk_appetite"] if ctx else None
     out["_regime"] = ctx.get("regime") if ctx else None
     out["_learned_adj"] = ctx.get("learned_adj", 0.0) if ctx else 0.0
+    try:
+        from aletheia.trading.persona_rollout import (
+            build_sizing_manifest,
+            current_persona_rollout,
+        )
+
+        rollout = (
+            current_persona_rollout(
+                cfg,
+                create=bool(getattr(cfg.trading, "persona_progressive_unlock_enabled", False)),
+            )
+            if persona is not None
+            else None
+        )
+        out["_persona_rollout"] = build_sizing_manifest(
+            cfg,
+            authorized_params=[key for key, value in decidable.items() if value],
+            state=rollout,
+        )
+    except Exception:
+        # Preserve the legacy resolver result, but do not fabricate rollout evidence.
+        out["_persona_rollout"] = {
+            "schema_version": "persona-progressive-unlock/v2",
+            "persona_id": getattr(persona, "name", "unknown") if persona is not None else "legacy",
+            "parameter_state": "unavailable",
+            "assignment": "none",
+            "active_params": [],
+        }
     return out

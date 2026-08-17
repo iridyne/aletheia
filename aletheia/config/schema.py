@@ -1124,12 +1124,12 @@ class TradingConfig(BaseModel):
     # recent policy is degrading — a soft circuit-breaker, no config flip needed.
     persona_learning_enabled: bool = False
     persona_learning_min_samples: int = 15
-    # --- Progressive unlock (P4): unfreeze operator-decidable params one at a time ---
+    # --- Progressive unlock (P4): durable prospective state machine ---
     # When enabled, production-consumed params in a persona's unlock_ladder become
-    # operator_decidable in
-    # order — the next unlocks only after persona_unlock_step_samples more clean
-    # closes accrue; account distress (drawdown / kill switch) refreezes ALL. Default
-    # OFF → the static operator_decidable dict applies (P1-P3 behavior, zero change).
+    # operator-decidable only through the persisted Persona rollout record. Each step
+    # requires exact persona/policy/manifest evidence, sample + market-day coverage,
+    # and a stable non-degrading verdict; distress/provenance failures refreeze all.
+    # Default OFF → the static operator_decidable dict applies (P1-P3 behavior).
     persona_progressive_unlock_enabled: bool = False
     persona_unlock_step_samples: int = 25
     # --- Pyramid add-on policy helper (P4, roll persona) ---
@@ -1139,9 +1139,8 @@ class TradingConfig(BaseModel):
     # the flag and preserve forward compatibility.
     persona_pyramid_enabled: bool = False
     persona_pyramid_add_trigger_pct: float = 1.0
-    # Retained rollout-automation intent. The scheduler currently holds read-only:
-    # an interval and broad health check are not prospective Persona/policy evidence.
-    # Default OFF; Settings prevents new enablement until a step verdict exists.
+    # Optional scheduler recheck. It may perform only the same evidence-gated
+    # one-step transition as the durable rollout state machine.
     persona_auto_advance_enabled: bool = False
 
 
