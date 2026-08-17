@@ -987,7 +987,7 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
 
     from aletheia.trading.sizing_policy import in_distress
 
-    if in_distress(cfg):
+    if bool(getattr(runtime, "kill_switch_active", False)) or in_distress(cfg):
         refrozen_count = invalidate_persona_rollouts(
             reason="account_distress", now=now
         )
