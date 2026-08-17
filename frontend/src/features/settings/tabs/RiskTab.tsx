@@ -16,9 +16,12 @@ import { listToCsv, parseCsvList } from '../csvList'
 import {
   RISK_BOOLS, RISK_CORR, RISK_DEMO, RISK_FAMILY_GATE, RISK_FUTURES_DEMO,
   RISK_FUTURES_LIVE, RISK_LIVE, RISK_MARGIN, RISK_POLICY_BOOLS,
-  RISK_POLICY_LIVE_FIELDS, RISK_POLICY_NUM_FIELDS, RISK_SHARED,
+  RISK_POLICY_LIVE_FIELDS, RISK_POLICY_NUM_FIELDS, RISK_POLICY_PATHS, RISK_SHARED,
+  type RiskPolicyPath,
 } from '../risk/riskFields'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
+import type { DeepPartial, SettingsRiskConfig, SettingsRiskPolicy } from '../../../api/settings'
+import type { SettingsDirtyProps, SettingsProps } from '../types'
 
 export const UNIVERSE_SECTION = {
   id: 'universe', title: 'Universe Board', tab: 'risk',
@@ -46,7 +49,7 @@ export const RISK_LIMITS_SECTION = {
 
 // ─── Event Triggers config ───
 
-function EventTriggerCard({ settings, qc }: any) {
+function EventTriggerCard({ settings, qc }: SettingsProps) {
   const et = settings?.event_triggers as any
   const [vals, setVals] = useState<Record<string, unknown>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -93,7 +96,7 @@ function EventTriggerCard({ settings, qc }: any) {
 
 // ─── Universe config ───
 
-function UniverseConfigCard({ settings, qc, onDirty }: any) {
+function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const universe = settings?.universe as any
   const [enabled, setEnabled] = useState(false)
   const [refreshMin, setRefreshMin] = useState('10')
@@ -367,7 +370,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
 // RISK & SYMBOLS TAB — allowed symbols, risk limits
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function RiskTab({ settings, qc, onDirty }: any) {
+export function RiskTab({ settings, qc, onDirty }: SettingsDirtyProps) {
   // onDirty is forwarded to UniverseConfigCard below; its own dirty reporting
   // (see the useEffect near its definition) was a no-op until #632/#631 because
   // this tab accepted the prop and never passed it down.
@@ -397,7 +400,7 @@ export function RiskTab({ settings, qc, onDirty }: any) {
 
 // ─── Symbols ───
 
-function SymbolsCard({ settings, qc }: any) {
+function SymbolsCard({ settings, qc }: SettingsProps) {
   const serverMode: string = settings?.risk?.symbol_filter_mode ?? 'blacklist'
   const serverSymbols: string[] = settings?.risk?.symbol_list ?? []
 
@@ -488,7 +491,7 @@ function SymbolsCard({ settings, qc }: any) {
             Observed instruments (auto-derived · read-only)
           </span>
           <div className="flex flex-wrap gap-1">
-            {(settings.market_data.observed_instruments as string[]).map((id: string) => {
+            {(settings?.market_data?.observed_instruments ?? []).map((id: string) => {
               const [exch, sym, mtype] = id.split(':')
               return (
                 <span key={id} className="instrument-chip" title={id}>
@@ -507,21 +510,38 @@ function SymbolsCard({ settings, qc }: any) {
 
 // ─── Risk limits ───
 
-function readPolicyPath(value: any, path: string): any {
-  return path.split('.').reduce((current, key) => current?.[key], value)
+export type RiskPolicyDraft = DeepPartial<SettingsRiskPolicy> & Record<string, unknown>
+
+export function readPolicyPath(value: RiskPolicyDraft, path: RiskPolicyPath): unknown {
+  if (!RISK_POLICY_PATHS.has(path)) {
+    throw new Error(`Unsupported risk policy path: ${path}`)
+  }
+  return path.split('.').reduce<unknown>((current, key) => {
+    if (!current || typeof current !== 'object') return undefined
+    return (current as Record<string, unknown>)[key]
+  }, value)
 }
 
-function writePolicyPath(value: any, path: string, next: any): any {
-  const clone = structuredClone(value)
+export function writePolicyPath(value: RiskPolicyDraft, path: RiskPolicyPath, next: unknown): RiskPolicyDraft {
+  if (!RISK_POLICY_PATHS.has(path)) {
+    throw new Error(`Unsupported risk policy path: ${path}`)
+  }
+  const clone = structuredClone(value) as RiskPolicyDraft
   const parts = path.split('.')
-  let cursor = clone
-  for (const key of parts.slice(0, -1)) cursor = cursor[key]
+  let cursor: Record<string, unknown> = clone
+  for (const key of parts.slice(0, -1)) {
+    const child = cursor[key]
+    if (!child || typeof child !== 'object') {
+      throw new Error(`Missing risk policy object for path: ${path}`)
+    }
+    cursor = child as Record<string, unknown>
+  }
   cursor[parts[parts.length - 1]] = next
   return clone
 }
 
-export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' | 'live'; initial: any; qc: any; onDirty?: (id: string, isDirty: boolean) => void }) {
-  const [policy, setPolicy] = useState<any>(initial)
+export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' | 'live'; initial: RiskPolicyDraft; qc: SettingsProps['qc']; onDirty?: (id: string, isDirty: boolean) => void }) {
+  const [policy, setPolicy] = useState<RiskPolicyDraft>(initial)
   const [isDirty, setIsDirty] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   useEffect(() => {
@@ -541,7 +561,7 @@ export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' 
     mutationFn: () => api.replaceRiskPolicy(
       mode,
       policy,
-      policy.revision,
+      Number(policy.revision ?? 0),
       `${mode} policy edited in Settings`,
     ),
     onSuccess: (risk) => {
@@ -556,7 +576,7 @@ export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' 
   const reset = useMutation({
     mutationFn: () => api.resetRiskPolicy(
       mode,
-      policy.revision,
+      Number(policy.revision ?? 0),
       `${mode} policy reset to shipped defaults in Settings`,
     ),
     onSuccess: (risk) => {
@@ -568,14 +588,18 @@ export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' 
     },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
-  const set = (path: string, value: any) => {
-    setPolicy((current: any) => writePolicyPath(current, path, value))
+  const set = (path: RiskPolicyPath, value: unknown) => {
+    setPolicy(current => writePolicyPath(current, path, value))
     setIsDirty(true)
     setMsg(null)
   }
-  const capitalSource = policy.capital.base_source ?? 'account_equity'
-  const customCapital = Number(policy.capital.base_usdt || 0)
-  const threshold = customCapital * Number(policy.loss.max_daily_loss_pct || 0) / 100
+  const capital = policy.capital ?? {}
+  const loss = policy.loss ?? {}
+  const capitalSource = capital.base_source ?? 'account_equity'
+  const customCapital = Number(capital.base_usdt || 0)
+  const threshold = customCapital * Number(loss.max_daily_loss_pct || 0) / 100
+  const setNumber = (path: string, value: number) => set(path as RiskPolicyPath, value)
+  const setBoolean = (path: string, value: boolean) => set(path as RiskPolicyPath, value)
   return (
     <div style={{ flex: '1 1 420px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 'var(--space-4)' }}>
       <div className="section-label">{mode === 'demo' ? 'Demo / Paper Policy' : 'Live Policy'}</div>
@@ -599,7 +623,7 @@ export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' 
                 type="number"
                 min={1}
                 step={1}
-                value={policy.capital.base_usdt}
+                value={capital.base_usdt}
                 aria-label="Custom capital base"
                 onChange={event => set('capital.base_usdt', Number(event.target.value))}
               />
@@ -608,11 +632,11 @@ export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' 
           </label>
         )}
       </div>
-      <NumGrid fields={numFields} vals={vals} set={set} />
+      <NumGrid fields={numFields} vals={vals} set={setNumber} />
       <p className="hint">
         System Operator entry cost = matching account equity × this per-trade budget. For perpetual futures, final notional = cost × effective leverage; position, account-leverage, and stop-loss safety caps still apply.
       </p>
-      <ToggleGrid fields={RISK_POLICY_BOOLS} vals={vals} set={set} />
+      <ToggleGrid fields={RISK_POLICY_BOOLS} vals={vals} set={setBoolean} />
       <p className="hint">
         {capitalSource === 'custom'
           ? `Daily-loss threshold: −${fmtNum(threshold)} USDT.`
@@ -644,15 +668,20 @@ export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' 
   )
 }
 
-function RiskPolicyProfiles({ risk, qc, onDirty }: { risk: any; qc: any; onDirty?: (id: string, isDirty: boolean) => void }) {
+type RiskPolicyProfilesData = {
+  demo: RiskPolicyDraft
+  live: RiskPolicyDraft
+}
+
+function RiskPolicyProfiles({ risk, qc, onDirty }: { risk: RiskPolicyProfilesData; qc: SettingsProps['qc']; onDirty?: (id: string, isDirty: boolean) => void }) {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const copy = useMutation({
     mutationFn: ({ source, target }: { source: 'demo' | 'live'; target: 'demo' | 'live' }) =>
       api.copyRiskPolicy(
         source,
         target,
-        risk[source].revision,
-        risk[target].revision,
+        Number(risk[source].revision ?? 0),
+        Number(risk[target].revision ?? 0),
         `${source} policy copied to ${target} in Settings`,
       ),
     onSuccess: () => {
@@ -687,23 +716,27 @@ function RiskPolicyProfiles({ risk, qc, onDirty }: { risk: any; qc: any; onDirty
   )
 }
 
-function RiskCard({ settings, qc, onDirty }: any) {
-  const risk = settings?.risk as any
-  const [vals, setVals] = useState<Record<string, any>>({})
+function RiskCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+  type RiskSettings = Partial<SettingsRiskConfig> & Record<string, unknown> & {
+    demo?: RiskPolicyDraft
+    live?: RiskPolicyDraft
+  }
+  const risk = settings?.risk as RiskSettings | undefined
+  const [vals, setVals] = useState<Record<string, unknown>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
     if (!risk) return
-    const init: Record<string, any> = {}
+    const init: Record<string, unknown> = {}
     ;[...RISK_LIVE, ...RISK_DEMO, ...RISK_SHARED, ...RISK_CORR, ...RISK_FAMILY_GATE, ...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN].forEach(f => { init[f.key] = risk[f.key] })
     RISK_BOOLS.forEach(f => { init[f.key] = risk[f.key] })
     setVals(init)
   }, [settings])
 
-  const set = (k: string, v: any) => { setVals(prev => ({ ...prev, [k]: v })); setMsg(null); setErrors({}) }
+  const set = (k: string, v: unknown) => { setVals(prev => ({ ...prev, [k]: v })); setMsg(null); setErrors({}) }
   const [errors, setErrors] = useState<Record<string, string>>({})
 
-  const allNumFields = [...RISK_LIVE, ...RISK_DEMO, ...RISK_SHARED, ...RISK_CORR, ...RISK_FAMILY_GATE, ...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN]
+  const allNumFields: readonly NumField[] = [...RISK_LIVE, ...RISK_DEMO, ...RISK_SHARED, ...RISK_CORR, ...RISK_FAMILY_GATE, ...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN]
 
   const validateAndSave = () => {
     const errs: Record<string, string> = {}
@@ -725,7 +758,7 @@ function RiskCard({ settings, qc, onDirty }: any) {
   }
 
   const mut = useMutation({
-    mutationFn: () => api.updateRiskConfig(vals as any),
+    mutationFn: () => api.updateRiskConfig(vals as Parameters<typeof api.updateRiskConfig>[0]),
     onSuccess: () => {
       setMsg({ ok: true, text: '✓ saved' })
       qc.invalidateQueries({ queryKey: ['settings'] })
@@ -735,7 +768,7 @@ function RiskCard({ settings, qc, onDirty }: any) {
   })
 
   if (!risk) return null
-  if (risk.demo && risk.live) return <RiskPolicyProfiles risk={risk} qc={qc} onDirty={onDirty} />
+  if (risk.demo && risk.live) return <RiskPolicyProfiles risk={{ demo: risk.demo, live: risk.live }} qc={qc} onDirty={onDirty} />
 
   return (
     <div className="card mb-0">
@@ -807,9 +840,9 @@ function RiskCard({ settings, qc, onDirty }: any) {
               The old UI only showed the live formula, so operators reading it for
               a demo account saw a threshold ~1/1000th of the actual one. */}
           <li><strong>Trigger formula (live):</strong> daily realized PnL &le; &minus;(Live Cap &times; Max Daily Loss %)</li>
-          <li><strong>Live threshold:</strong> &minus;{fmtNum((vals.max_live_limited_cap_usdt || 0) * (vals.max_daily_loss_pct || 0) / 100)} USDT</li>
+          <li><strong>Live threshold:</strong> &minus;{fmtNum(Number(vals.max_live_limited_cap_usdt || 0) * Number(vals.max_daily_loss_pct || 0) / 100)} USDT</li>
           <li><strong>Trigger formula (demo):</strong> daily realized PnL &le; &minus;(Starting Capital &times; Max Daily Loss %)</li>
-          <li><strong>Demo threshold:</strong> &minus;{fmtNum((vals.starting_capital_usdt || 0) * (vals.max_daily_loss_pct || 0) / 100)} USDT</li>
+          <li><strong>Demo threshold:</strong> &minus;{fmtNum(Number(vals.starting_capital_usdt || 0) * Number(vals.max_daily_loss_pct || 0) / 100)} USDT</li>
           <li><strong>Scope:</strong> applies to live trades when "Kill switch auto-trigger (live)" is ON; applies to demo trades when "Kill switch auto-trigger (demo)" is ON</li>
           <li><strong>Effect:</strong> once tripped, ALL proposals (live + demo) are rejected until manually released</li>
           <li><strong>Reset:</strong> release from Risk Controls panel or CLI after UTC new day</li>

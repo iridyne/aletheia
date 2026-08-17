@@ -10,6 +10,8 @@ import {
 } from '../../../components/ui'
 import { ModelProvidersSection } from '../model-providers/ModelProvidersSection'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
+import type { SettingsData, SettingsProvider } from '../../../api/settings'
+import type { SettingsProps, SettingsStatusProps } from '../types'
 
 const PERMISSION_MODES = ['Observe', 'Paper', 'Full']
 const PROVIDER_LABELS: Record<string, string> = {
@@ -63,7 +65,7 @@ export const LLM_COST_SECTION = {
   searchTerms: ['tokenomics', 'spend', 'budget', 'economics', 'cooldown', 'broker', 'inference'],
 } satisfies SettingsFeatureDescriptor
 
-export function AgentModelsTab({ status, settings, qc }: any) {
+export function AgentModelsTab({ status, settings, qc }: SettingsStatusProps) {
   const agent = settings?.agent as any || {}
   const runtime = settings?.runtime as any || {}
   // #164 fix: previously these mutations had onSuccess only — a rejected save
@@ -90,32 +92,32 @@ export function AgentModelsTab({ status, settings, qc }: any) {
     onError: onSaveError('Bypass distress gate'),
   })
   const runtimeMut = useMutation({
-    mutationFn: (body: any) => api.updateRuntimeConfig(body),
+    mutationFn: (body: Parameters<typeof api.updateRuntimeConfig>[0]) => api.updateRuntimeConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Runtime config'),
   })
   const operatorMut = useMutation({
-    mutationFn: (body: any) => api.updateOperatorConfig(body),
+    mutationFn: (body: Parameters<typeof api.updateOperatorConfig>[0]) => api.updateOperatorConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Operator config'),
   })
   const piDaemonMut = useMutation({
-    mutationFn: (body: any) => api.updatePiDaemonConfig(body),
+    mutationFn: (body: Parameters<typeof api.updatePiDaemonConfig>[0]) => api.updatePiDaemonConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('System Operator daemon'),
   })
   const serenityMut = useMutation({
-    mutationFn: (body: any) => api.updateSerenityConfig(body),
+    mutationFn: (body: Parameters<typeof api.updateSerenityConfig>[0]) => api.updateSerenityConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Serenity config'),
   })
   const controllerMut = useMutation({
-    mutationFn: (body: any) => api.updateControllerConfig(body),
+    mutationFn: (body: Parameters<typeof api.updateControllerConfig>[0]) => api.updateControllerConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Filter controller config'),
   })
   const learningMut = useMutation({
-    mutationFn: (body: any) => api.updateLearningConfig(body),
+    mutationFn: (body: Parameters<typeof api.updateLearningConfig>[0]) => api.updateLearningConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Paper Learning config'),
   })
@@ -159,14 +161,14 @@ export function AgentModelsTab({ status, settings, qc }: any) {
   const legacyGuardAutoPromote = !!guardCfg.auto_promote_enabled
 
   const guardMut = useMutation({
-    mutationFn: (body: any) => api.updateGuardConfig(body),
+    mutationFn: (body: Parameters<typeof api.updateGuardConfig>[0]) => api.updateGuardConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Guard promotion'),
   })
 
   const regimeCfg = (settings?.regime ?? {}) as any
   const regimeMut = useMutation({
-    mutationFn: (body: any) => api.updateRegimeConfig(body),
+    mutationFn: (body: Parameters<typeof api.updateRegimeConfig>[0]) => api.updateRegimeConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Regime config'),
   })
@@ -560,7 +562,7 @@ export function AgentModelsTab({ status, settings, qc }: any) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-function EconomicsSnapshotCard({ economics, qc }: { economics: any; qc: any }) {
+function EconomicsSnapshotCard({ economics, qc }: { economics?: SettingsData['economics']; qc: SettingsProps['qc'] }) {
   const [saveErr, setSaveErr] = useState<string | null>(null)
   const economicsEnabled = economics?.enabled === true
   const shadowEnabled = economics?.budgets_shadow_enabled === true
@@ -630,7 +632,7 @@ function EconomicsSnapshotCard({ economics, qc }: { economics: any; qc: any }) {
 // the semantic decoupling shows up in the operator's UI, not just the code.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function InferenceAdmissionCard({ qc }: { qc: any }) {
+function InferenceAdmissionCard({ qc }: { qc: SettingsProps['qc'] }) {
   const { data } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
   const { data: broker } = useQuery({
     queryKey: ['model-broker'],
@@ -707,7 +709,7 @@ function InferenceAdmissionCard({ qc }: { qc: any }) {
 }
 
 function InferenceLimitsForm({ name, config, metrics, qc }: {
-  name: string; config: any; metrics?: Record<string, number>; qc: any
+  name: string; config: SettingsProvider & Record<string, unknown>; metrics?: Record<string, number>; qc: SettingsProps['qc']
 }) {
   const [maxConcurrency, setMaxConcurrency] = useState(config?.inference_max_concurrency ?? 2)
   const [rpm, setRpm] = useState(config?.inference_requests_per_minute ?? 60)

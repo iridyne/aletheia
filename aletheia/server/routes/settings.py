@@ -7,7 +7,38 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator
 
 from aletheia.config.loader import load_config, save_config
-from aletheia.config.schema import ModeRiskPolicy, default_mode_risk_policy
+from aletheia.config.schema import (
+    AgentConfig,
+    AppConfig,
+    ControllerConfig,
+    EconomicsConfig,
+    EventTriggerConfig,
+    ExchangeConfig,
+    GuardConfig,
+    HealthConfig,
+    HistoricalDataConfig,
+    LearningConfig,
+    LiveConfig,
+    MarketDataConfig,
+    ModeRiskPolicy,
+    NetworkConfig,
+    NewsConfig,
+    OperatorConfig,
+    PiDaemonConfig,
+    RegimeConfig,
+    RemoteControlConfig,
+    RetentionConfig,
+    RiskConfig,
+    RuntimeConfig,
+    SerenityConfig,
+    StrategyFactoryConfig,
+    TelegramConfig,
+    TradingConfig,
+    TunnelConfig,
+    UniverseConfig,
+    UpdateConfig,
+    default_mode_risk_policy,
+)
 from aletheia.risk.policy import risk_policy_hash
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -117,6 +148,138 @@ class TradingMandateRequest(SettingsRequest):
     mandate: dict[str, Any] | None
 
 
+class SettingsProviderResponse(BaseModel):
+    """The non-secret provider projection returned by ``GET /settings``."""
+
+    type: str
+    base_url: str
+    protocol: str
+    model: str
+    enabled: bool
+    command: str
+    mode: str
+    codex_model: str | None
+    workspace_url: str | None
+    auth_scheme: str
+    auth_type: str
+    oauth_expires_at: int | None
+    model_fallback_enabled: bool
+    fallback_models: list[str]
+    inference_max_concurrency: int
+    inference_requests_per_minute: int
+    inference_tpm: int
+    inference_queue_capacity: int
+    inference_reserved_high_priority_slots: int
+    inference_timeout_sec: float
+
+
+class SettingsModelsResponse(BaseModel):
+    default_provider: str
+    deep_provider: str | None
+    fast_provider: str | None
+    providers: dict[str, SettingsProviderResponse]
+
+
+class SettingsWebhookResponse(BaseModel):
+    enabled: bool
+    url: str
+    notify_trade_fills: bool
+    notify_alerts: bool
+    notify_daily_summary: bool
+    timeout_sec: float
+
+
+class SettingsTunnelResponse(BaseModel):
+    enabled: bool
+    tunnel_id: str
+    hostname: str
+    cloudflared_path: str
+    metrics_port: int
+
+
+class SettingsStrategyFactoryResponse(StrategyFactoryConfig):
+    """Deprecated config projection with its explicit UI deprecation marker."""
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+    deprecated: bool = Field(default=True, alias="_deprecated")
+    reason: str = Field(default="", alias="_reason")
+
+
+class SettingsPersonaRolloutResponse(BaseModel):
+    """Durable rollout status; nested evidence is intentionally read-only."""
+
+    model_config = ConfigDict(extra="allow")
+    desired_progressive_unlock: bool
+    desired_auto_advance: bool
+    status: str | None
+    actual_authorized_params: list[str]
+    evidence: dict[str, Any]
+    events: list[dict[str, Any]]
+    rollout: dict[str, Any] | None = None
+
+
+class SettingsTradingMandateResponse(BaseModel):
+    """Sanitized, resolver-backed mandate view with forward-compatible fields."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class LearningPathOption(BaseModel):
+    path_id: str
+    label: str
+    supported: bool
+    status: Literal[
+        "supported",
+        "consumer_unwired",
+        "measurement_unwired",
+        "authority_unwired",
+    ]
+
+
+class SettingsResponse(BaseModel):
+    """Authoritative, redacted response contract for ``GET /settings``.
+
+    The individual config sections are the same Pydantic models used by the
+    loader.  The few projections that redact secrets or add UI-only metadata
+    have dedicated models so OpenAPI (and generated frontend types) describe
+    the actual wire shape rather than the raw config file.
+    """
+
+    app: AppConfig
+    runtime: RuntimeConfig
+    exchange: ExchangeConfig
+    live: LiveConfig
+    agent: AgentConfig
+    operator: OperatorConfig
+    models: SettingsModelsResponse
+    risk: RiskConfig
+    update: UpdateConfig
+    trading: TradingConfig
+    persona_rollout: SettingsPersonaRolloutResponse
+    health: HealthConfig
+    retention: RetentionConfig
+    telegram: TelegramConfig
+    webhook: SettingsWebhookResponse
+    market_data: MarketDataConfig
+    universe: UniverseConfig
+    guard: GuardConfig
+    tunnel: SettingsTunnelResponse
+    remote_control: RemoteControlConfig
+    regime: RegimeConfig
+    network: NetworkConfig
+    strategy_factory: SettingsStrategyFactoryResponse
+    historical_data: HistoricalDataConfig
+    event_triggers: EventTriggerConfig
+    pi_daemon: PiDaemonConfig
+    news: NewsConfig
+    serenity: SerenityConfig
+    controller: ControllerConfig
+    learning: LearningConfig
+    economics: EconomicsConfig
+    trading_mandate: SettingsTradingMandateResponse | None = None
+    learning_path_options: list[LearningPathOption]
+
+
 def _trading_mandate_view(cfg) -> dict[str, Any] | None:
     value = getattr(cfg, "trading_mandate", None)
     if value is None:
@@ -156,8 +319,8 @@ def _trading_mandate_view(cfg) -> dict[str, Any] | None:
     return view
 
 
-@router.get("")
-def get_settings():
+@router.get("", response_model=SettingsResponse)
+def get_settings() -> SettingsResponse:
     cfg = load_config()
     from aletheia.learning.registry import paper_influence_path_options
     from aletheia.trading.persona_rollout import persona_rollout_status

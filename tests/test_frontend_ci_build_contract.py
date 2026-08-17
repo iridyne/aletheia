@@ -56,6 +56,7 @@ def test_frontend_review_typechecks_once_via_production_build() -> None:
         if line.strip() and not line.lstrip().startswith("#")
     ]
     assert not any(_is_direct_typecheck(line) for line in executed_lines)
+    assert "npm run check:settings-types" in executed_lines
     assert any("npm run build" in line for line in executed_lines)
     assert 'test -s "$build_dir/performance.json"' in executed_lines
 

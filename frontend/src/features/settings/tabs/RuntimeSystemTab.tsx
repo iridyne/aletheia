@@ -12,6 +12,7 @@ import {
   type NumField,
 } from '../../../components/ui'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
+import type { SettingsProps, SettingsStatusProps } from '../types'
 
 export const APP_SECTION = {
   id: 'app', title: 'App', tab: 'runtime', description: 'Dashboard process settings.',
@@ -42,7 +43,7 @@ export const NETWORK_PROXY_SECTION = {
   searchTerms: ['proxy', 'socks', 'http proxy', 'enforce', 'outbound', 'ip leak'],
 } satisfies SettingsFeatureDescriptor
 
-function HistoricalDataCard({ settings, qc }: any) {
+function HistoricalDataCard({ settings, qc }: SettingsProps) {
   const hd = settings?.historical_data as any
   const [vals, setVals] = useState<Record<string, unknown>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -63,7 +64,7 @@ function HistoricalDataCard({ settings, qc }: any) {
   }, [hd])
 
   const { mutate: save } = useMutation({
-    mutationFn: () => api.updateHistoricalDataConfig(vals as any),
+    mutationFn: () => api.updateHistoricalDataConfig(vals as Parameters<typeof api.updateHistoricalDataConfig>[0]),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setMsg({ ok: true, text: 'Saved' }) },
     onError: (e: any) => setMsg({ ok: false, text: e.message }),
   })
@@ -97,7 +98,7 @@ function HistoricalDataCard({ settings, qc }: any) {
   )
 }
 
-function AppRows({ status, settings, qc }: any) {
+function AppRows({ status, settings, qc }: SettingsStatusProps) {
   const app = settings?.app as any || {}
   const runtime = settings?.runtime as any || {}
   const remoteControl = settings?.remote_control as any || {}
@@ -121,11 +122,11 @@ function AppRows({ status, settings, qc }: any) {
   const codeDrift = !!bootCommit && !!currentCommit && bootCommit !== currentCommit
 
   const appMut = useMutation({
-    mutationFn: (body: any) => api.updateAppConfig(body),
+    mutationFn: (body: Parameters<typeof api.updateAppConfig>[0]) => api.updateAppConfig(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
   const runtimeMut = useMutation({
-    mutationFn: (body: any) => api.updateRuntimeConfig(body),
+    mutationFn: (body: Parameters<typeof api.updateRuntimeConfig>[0]) => api.updateRuntimeConfig(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
   const remoteControlMut = useMutation({
@@ -136,7 +137,7 @@ function AppRows({ status, settings, qc }: any) {
     },
   })
   const runtimePending = useRef(false)
-  const safeRuntimeMut = (body: any) => {
+  const safeRuntimeMut = (body: Parameters<typeof api.updateRuntimeConfig>[0]) => {
     if (runtimePending.current) return
     runtimePending.current = true
     runtimeMut.mutate(body, { onSettled: () => { runtimePending.current = false } })
@@ -281,9 +282,9 @@ function AppRows({ status, settings, qc }: any) {
   )
 }
 
-function RetentionCard({ settings, qc }: any) {
+function RetentionCard({ settings, qc }: SettingsProps) {
   const retention = settings?.retention as any
-  const [vals, setVals] = useState<Record<string, any>>({})
+  const [vals, setVals] = useState<Record<string, unknown>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
@@ -291,7 +292,7 @@ function RetentionCard({ settings, qc }: any) {
     setVals({ ...retention })
   }, [settings])
 
-  const set = (k: string, v: any) => { setVals(prev => ({ ...prev, [k]: v })); setMsg(null) }
+  const set = (k: string, v: unknown) => { setVals(prev => ({ ...prev, [k]: v })); setMsg(null) }
 
   const RETENTION_FIELDS: NumField[] = [
     { key: 'agent_runs_days',          label: 'Agent runs',          unit: 'days', min: 1, max: 90, step: 1, isInt: true },
@@ -306,7 +307,7 @@ function RetentionCard({ settings, qc }: any) {
 
   const mut = useMutation({
     mutationFn: () => api.updateRetentionConfig(
-      Object.fromEntries(RETENTION_FIELDS.map(({ key }) => [key, vals[key]])) as any,
+      Object.fromEntries(RETENTION_FIELDS.map(({ key }) => [key, vals[key]])) as Parameters<typeof api.updateRetentionConfig>[0],
     ),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
@@ -326,7 +327,7 @@ function RetentionCard({ settings, qc }: any) {
   )
 }
 
-function UpdateCard({ settings, qc }: any) {
+function UpdateCard({ settings, qc }: SettingsProps) {
   const updateCfg = settings?.update as any || {}
   const [branch, setBranch] = useState('')
   const [enabled, setEnabled] = useState(true)
@@ -406,7 +407,7 @@ function UpdateCard({ settings, qc }: any) {
   )
 }
 
-function NetworkCard({ settings, qc }: any) {
+function NetworkCard({ settings, qc }: SettingsProps) {
   const net = (settings?.network as any) || {}
   const [protocol, setProtocol] = useState<string>(net.proxy_protocol || 'http')
   const [host, setHost] = useState<string>(net.proxy_host ?? '')
@@ -426,7 +427,7 @@ function NetworkCard({ settings, qc }: any) {
   }, [net.proxy_protocol, net.proxy_host, net.proxy_port, net.enforce, net.no_proxy])
 
   const mut = useMutation({
-    mutationFn: (body: any) => api.updateNetworkConfig(body),
+    mutationFn: (body: Parameters<typeof api.updateNetworkConfig>[0]) => api.updateNetworkConfig(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
 
@@ -618,7 +619,7 @@ function DataExportCard() {
 
 // No child on this tab reports precise dirty state; the shell's delegated guard
 // (features/settings/dirtyGuard.ts) covers them, so there is no onDirty to accept.
-export function RuntimeSystemTab({ status, settings, qc }: any) {
+export function RuntimeSystemTab({ status, settings, qc }: SettingsStatusProps) {
   return (
     <div>
       <SettingsFeatureSection descriptor={APP_SECTION}>

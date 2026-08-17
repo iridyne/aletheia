@@ -1,6 +1,7 @@
 import type { InfraEvent, KnowledgeItem, SystemStatus, ThesisLineageRecord } from "../types";
 import type { GuardRow } from "../lib/guards";
 import type { MarketSnapshot, Opportunity, Position } from "../types";
+import type { SettingsResponse } from "./settings";
 
 const BASE = "/api";
 const REMOTE_CONTROL_TOKEN_KEY = "aletheia.remoteControlToken";
@@ -969,20 +970,7 @@ export const api = {
 	getRuntimeEvents: (limit = 100) =>
 		fetchJson<any[]>(`/operator/runtime/events?limit=${limit}`),
 	getSettings: () =>
-		fetchJson<
-			Record<string, unknown> & {
-				learning_path_options: Array<{
-					path_id: string;
-					label: string;
-					supported: boolean;
-					status:
-						| "supported"
-						| "consumer_unwired"
-						| "measurement_unwired"
-						| "authority_unwired";
-				}>;
-			}
-		>("/settings"),
+		fetchJson<SettingsResponse>("/settings"),
 
 	// Post-trade lessons (LessonStore). System Operator consumes them via trading_context.py:592
 	// (wired in b9ad957). TTL fields: accepted lessons enter 24h dry-run then expire after 30d.
