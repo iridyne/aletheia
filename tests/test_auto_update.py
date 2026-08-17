@@ -466,6 +466,7 @@ def test_systemd_install_migrates_owned_legacy_timer(tmp_path, monkeypatch):
 
     monkeypatch.setattr(auto.sys, "platform", "linux")
     monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
+    monkeypatch.delenv("ALETHEIA_DATA_DIR", raising=False)
     monkeypatch.setattr(git_ops, "is_repo", lambda: True)
     unit_dir = tmp_path / "units"
     unit_dir.mkdir()
