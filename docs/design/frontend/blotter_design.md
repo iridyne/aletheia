@@ -107,8 +107,8 @@ are the current-state working panels underneath.
 - **Ledger next**, at full width, right under the strip. It is the historical
   mass — the biggest information surface on the page — and it is where the
   operator answers "what has actually happened?" before drilling into current
-  candidates. Every terminal outcome (Filled / Op-Skip / Watch / User Reject /
-  Auto Reject / Reject-?) is a first-class row; nothing is hidden behind "click
+  candidates. Every terminal outcome (Filled / Op-Skip / Watch / Guard Reject /
+  User Reject / Auto Reject / Reject-?) is a first-class row; nothing is hidden behind "click
   to expand".
 - **Middle 2-panel band last** (not 3 — dropping a separate Gate Log panel per
   the adversarial-critique pass, which noted 3 panels at 4/12 columns would
@@ -131,9 +131,11 @@ Component: `frontend/src/components/DataTable.tsx` (existing wrapper over
 `@tanstack/react-table`). This wrapper already supports client-side sort,
 global filter, pagination, and persistent column visibility.
 
-**Default filter state**: no outcome pre-filter — all six terminal outcomes
-(`trade / operator_skip / operator_watch / user_reject / auto_reject /
-reject_unknown`) render as sibling rows.
+**Default filter state**: no outcome pre-filter — all seven terminal outcomes
+(`trade / operator_skip / operator_watch / portfolio_guard_reject / user_reject /
+auto_reject / reject_unknown`) render as sibling rows. Non-terminal conviction
+deferrals (`conviction_gate_defer` and `conviction_deferred`) stay in lifecycle
+evidence and are inspected through the opportunity trace, not this ledger.
 
 **Filter toolbar** (V1):
 - `Search` — global text filter over symbol / notes.
@@ -154,8 +156,9 @@ pi_reasoning / gate trace / execution report.
 **Not a filter bug — a UX design issue.** Code investigation
 (2026-07-18):
 
-- Backend `/analytics/operator-decisions`
-  (`aletheia/server/routes/analytics.py:797-968`) returns all six outcomes
+- Backend `/analytics/operator-decisions` (terminal outcomes only; defer facts are
+  available through `/analytics/opportunity-trace/{opportunity_id}`)
+  (`aletheia/server/routes/analytics.py`) returns all seven terminal outcomes
   with per-outcome counts.
 - Frontend `DecisionHistoryCard` (`frontend/src/pages/Overview.tsx:525-633`)
   iterates all items and renders every outcome.

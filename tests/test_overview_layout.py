@@ -68,12 +68,13 @@ def test_blotter_labels_every_terminal_outcome_without_false_health() -> None:
     # (Root cause fix for the "only trades are visible" report — see
     # blotter_design.md #root-cause-only-trades-are-visible.)
     for outcome in ("trade", "operator_skip", "operator_watch",
-                    "user_reject", "auto_reject", "reject_unknown"):
+                    "portfolio_guard_reject", "user_reject", "auto_reject", "reject_unknown"):
         assert outcome in blotter, f"{outcome} missing from Blotter Candidate Ledger"
 
     # Bloomberg-style short labels, mixed case (not shouty uppercase).
-    for label in ("Filled", "Op Skip", "Watch", "User Reject", "Auto Reject", "Reject (?)"):
+    for label in ("Filled", "Op Skip", "Watch", "Guard Reject", "User Reject", "Auto Reject", "Reject (?)"):
         assert label in blotter, f"{label} outcome label missing"
+    assert "c.portfolio_guard_reject" in blotter, "Guard rejects missing from Rejected (24h) arithmetic"
 
     # Honesty tokens the old test guarded still hold: no fake "Healthy" chip
     # and no "Passed gates" label pretending the ranker is a health signal.
