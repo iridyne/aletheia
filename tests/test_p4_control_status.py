@@ -422,6 +422,28 @@ def test_ufc_evaluator_failure_is_partial(monkeypatch):
     assert result["unavailable_reason"] == "evaluator_unavailable"
 
 
+def test_ufc_empty_projection_failure_is_unavailable(monkeypatch):
+    import aletheia.cli.control_cmd as cmd_mod
+
+    projection = {
+        "availability": "partial",
+        "unavailable_reason": "operations_projection_failed",
+        "items": [],
+        "path_states": [],
+    }
+    from aletheia.learning import read_models
+
+    monkeypatch.setattr(
+        read_models,
+        "build_learning_contribution_projection",
+        lambda limit=100: projection,
+    )
+    result = cmd_mod._ufc_status()
+    assert result["status"] == "unavailable"
+    assert result["availability"] == "partial"
+    assert result["unavailable_reason"] == "operations_projection_failed"
+
+
 def test_profit_loop_status_stays_collecting_before_cutoff(monkeypatch):
     import aletheia.cli.control_cmd as cmd_mod
 
