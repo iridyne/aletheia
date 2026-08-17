@@ -1432,12 +1432,16 @@ def _execute_proposal(
                     "message": "Live proposal does not match the selected exchange",
                 }
             if expected_live_mode is not None and cfg.live.state == "live_limited":
-                from aletheia.trust.live_unlock import evidence_matches_config
+                from aletheia.trust.live_unlock import (
+                    evidence_matches_config,
+                    revoke_stale_live_unlock,
+                )
 
                 evidence_ok, _ = evidence_matches_config(
                     cfg, getattr(cfg.live, "unlock_evidence", None),
                 )
                 if not evidence_ok:
+                    revoke_stale_live_unlock(cfg)
                     update_trade_proposal(proposal.id, status="rejected")
                     write_audit({
                         "actor": "system",

@@ -37,7 +37,9 @@ class LiveConfig:
 - `live.py` 路由**不得**下单。
 - 预检必须使用选定 broker 的签名私有账户请求；结果明确 `public_reachability=not_used_as_authority`，公共可达性、Bitget legacy cache、demo/testnet 响应不能证明 live 解锁。
 - 预检证据只保存 broker、live 环境、账户指纹、凭证/配置修订号、权限和有效期；缺少订单权限时按 `permission_unknown=deny` 失败。
+- Bitget 私有账户的 `authorities` 权限范围必须明确包含交易权限；只读或未知范围均拒绝。
 - 预检到提交之间若凭证、账户、环境或配置修订号改变，必须拒绝提交；切换选定交易所或修改其 live 凭证时必须先 lock。
+- 证据过期或不再匹配选定账户时，`/api/status`、Risk 或 Gateway 发现该状态会撤销 `live_limited`、清除证据并把 `operator.permission_mode` 重置为 `ReadOnly`；撤销原因和审计结果仍公开在状态响应和审计镜像中。
 - 测试须覆盖"默认 disabled"+"解锁审计"。
 
 > `operator.permission_mode` 管理 Agent/Operator 自主权限，不是人类 Dashboard 解锁的授权门；把它加到此路由会混淆两个信任面，因此旧 `BACKLOG-LU-01` 已否决。Live Unlock 虽有确认、scorecard 与审计门，但当前 System Operator Proposal 仍不会路由到 `*_live_limited`，所以产品能力保持 Experimental，见 GitHub #418。
@@ -52,7 +54,10 @@ class LiveConfig:
   "actor": "human", "source": "dashboard",
   "event_type": "live_unlocked", "entity_type": "live_state",
   "before": {"state": "live_disabled"},
-  "after": {"state": "live_limited"},
+  "after": {
+    "state": "live_limited",
+    "live_execution_identity": {"broker": "<selected broker>", "account_fingerprint": "sha256:<digest>"}
+  },
   "live_execution_identity": {
     "broker": "<selected broker>",
     "execution_mode": "<broker>_live_limited",

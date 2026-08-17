@@ -919,12 +919,16 @@ def _evaluate_proposal_locked(
                 f"selected_exchange_mismatch:{proposal.execution_mode}!={expected_live_mode}"
             )
         elif expected_live_mode is not None and live_state == "live_limited":
-            from aletheia.trust.live_unlock import evidence_matches_config
+            from aletheia.trust.live_unlock import (
+                evidence_matches_config,
+                revoke_stale_live_unlock,
+            )
 
             evidence_ok, evidence_reason = evidence_matches_config(
                 cfg, getattr(cfg.live, "unlock_evidence", None),
             )
             if not evidence_ok:
+                revoke_stale_live_unlock(cfg)
                 violations.append(f"live_identity_unverified:{evidence_reason}")
 
     # 4. Permission mode

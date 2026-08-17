@@ -104,7 +104,7 @@ async def test_bitget_live_account_uses_same_private_contract(monkeypatch):
             assert mode == "live"
 
         async def get_account(self):
-            return type("Account", (), {"raw": {"userId": "bitget-user", "permissions": ["trade"]}, "user_id": "bitget-user"})()
+            return type("Account", (), {"raw": {"userId": "bitget-user", "authorities": ["read", "trade"]}, "user_id": "bitget-user"})()
 
         async def close(self):
             pass
@@ -116,6 +116,36 @@ async def test_bitget_live_account_uses_same_private_contract(monkeypatch):
     assert result["ok"] is True
     assert result["broker"] == "bitget"
     assert result["execution_mode"] == "bitget_live_limited"
+    assert result["permission_status"] == "granted"
+
+
+@pytest.mark.anyio
+async def test_bitget_denied_authority_is_reported_without_losing_private_facts(monkeypatch):
+    cfg, trust = _config(monkeypatch, "bitget")
+
+    class FakeBitget:
+        def __init__(self, mode):
+            assert mode == "live"
+
+        async def get_account(self):
+            return type("Account", (), {
+                "raw": {"userId": "bitget-user", "authorities": ["read"]},
+                "user_id": "bitget-user",
+            })()
+
+        async def close(self):
+            pass
+
+    import aletheia.exchanges.bitget.client as bitget_client
+
+    monkeypatch.setattr(bitget_client, "BitgetClient", FakeBitget)
+    result = await trust.run_live_preflight(cfg)
+    assert result["ok"] is False
+    assert result["reason_code"] == "permission_denied"
+    assert result["account_environment"] == "live"
+    assert result["permission_status"] == "denied"
+    assert result["private_authenticated"] is True
+    assert result["account_readable"] is True
 
 
 @pytest.mark.anyio
@@ -274,6 +304,11 @@ def test_live_unlock_persists_and_lock_clears_selected_evidence(tmp_path, monkey
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    import aletheia.storage.sqlite as sq
+    from aletheia.storage.migrations import run_migrations
+
+    sq.reset_db()
+    run_migrations()
     cfg = AletheiaConfig()
     cfg.exchange.name = "okx"
     cfg.exchange.mode = "live"
@@ -302,6 +337,17 @@ def test_live_unlock_persists_and_lock_clears_selected_evidence(tmp_path, monkey
     saved = load_config()
     assert saved.live.unlock_evidence["broker"] == "okx"
     assert saved.live.unlock_evidence["account_fingerprint"] == "sha256:route-account"
+
+    from aletheia.storage.repositories import list_audit_events
+    import json as json_module
+
+    unlock_event = next(
+        event for event in list_audit_events(limit=20)
+        if event["event_type"] == "live_unlocked"
+    )
+    after = json_module.loads(unlock_event["after_state"])
+    assert after["live_execution_identity"]["broker"] == "okx"
+    assert after["live_execution_identity"]["account_fingerprint"] == "sha256:route-account"
 
     lock = client.post("/api/settings/live-lock")
     assert lock.status_code == 200

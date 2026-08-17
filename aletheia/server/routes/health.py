@@ -255,6 +255,9 @@ def stability():
 @router.get("/status")
 def status():
     cfg = load_config()
+    from aletheia.trust.live_unlock import revoke_stale_live_unlock
+
+    live_unlock_revocation = revoke_stale_live_unlock(cfg)
     from aletheia.agent_runtime.pause_ownership import active_pause_owners
 
     paper_execution_mode = cfg.exchange.paper_execution_mode
@@ -351,7 +354,20 @@ def status():
         "exchange_alignment": alignment.status,
         "exchange_diverged": alignment.diverged,
         "live_state": cfg.live.state,
+        "live_unlock": (
+            {
+                "evidence_status": "revoked",
+                **live_unlock_revocation,
+            }
+            if live_unlock_revocation
+            else {
+                "evidence_status": "valid"
+                if cfg.live.state == "live_limited"
+                else "not_active",
+            }
+        ),
         "permission_mode": cfg.agent.permission_mode,
+        "operator_permission_mode": cfg.operator.permission_mode,
         "scheduler_enabled": sched.get("enabled", cfg.runtime.scheduler_enabled),
         "scheduler_running": sched["running"],
         "scheduler_state": sched["state"],

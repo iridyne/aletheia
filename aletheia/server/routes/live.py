@@ -7,6 +7,8 @@ from aletheia.config.loader import load_config, save_config
 from aletheia.files.jsonl import write_audit
 from aletheia.trust.live_unlock import (
     evidence_matches_config,
+    public_evidence,
+    revoke_stale_live_unlock,
     run_live_preflight,
 )
 
@@ -19,18 +21,7 @@ class LiveUnlockRequest(BaseModel):
 
 
 def _public_evidence(evidence: dict) -> dict:
-    """Return only the stable, non-secret fields suitable for API/audit output."""
-    allowed = {
-        "broker", "execution_mode", "account_environment", "account_fingerprint",
-        "credential_revision", "config_revision", "adapter_capability_version",
-        "account_identity_source",
-        "ok", "reason_code", "private_authenticated", "account_readable",
-        "public_reachability",
-        "environment_verified", "permission_status", "completeness", "fetched_at",
-        "expires_at", "permission_unknown_policy",
-        "evidence_binding",
-    }
-    return {key: evidence[key] for key in allowed if key in evidence}
+    return public_evidence(evidence)
 
 
 @router.post("/live-preflight")
@@ -51,11 +42,16 @@ async def live_unlock(req: LiveUnlockRequest):
             valid, reason = evidence_matches_config(cfg, cfg.live.unlock_evidence)
             if valid:
                 return {"status": cfg.live.state, "message": "Already unlocked"}
+            revoke_stale_live_unlock(cfg)
             raise HTTPException(
                 409,
                 detail={
                     "error": "live_unlock_evidence_stale",
-                    "message": "Live unlock evidence is stale or no longer matches the selected account; lock and revalidate.",
+                    "message": (
+                        "Live unlock evidence was revoked because it is stale or no "
+                        "longer matches the selected account; revalidate before "
+                        "unlocking again."
+                    ),
                     "reason_code": reason,
                 },
             )
@@ -146,7 +142,11 @@ async def live_unlock(req: LiveUnlockRequest):
         "event_type": "live_unlocked",
         "entity_type": "live_state",
         "before": {"state": old_state, "operator_permission_mode": old_permission_mode},
-        "after": {"state": "live_limited", "operator_permission_mode": "Auto"},
+        "after": {
+            "state": "live_limited",
+            "operator_permission_mode": "Auto",
+            "live_execution_identity": _public_evidence(preflight),
+        },
         "live_execution_identity": _public_evidence(preflight),
         "message": "Live trading unlocked to live_limited by human confirmation after selected-account preflight; PI operator elevated to Auto",
     })

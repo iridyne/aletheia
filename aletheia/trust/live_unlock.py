@@ -28,6 +28,15 @@ _CREDENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
     "binance": ("api_key", "api_secret"),
 }
 
+_PUBLIC_EVIDENCE_FIELDS = frozenset({
+    "broker", "execution_mode", "account_environment", "account_fingerprint",
+    "credential_revision", "config_revision", "adapter_capability_version",
+    "account_identity_source", "ok", "reason_code", "private_authenticated",
+    "account_readable", "public_reachability", "environment_verified",
+    "permission_status", "completeness", "fetched_at", "expires_at",
+    "permission_unknown_policy", "evidence_binding",
+})
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -141,7 +150,7 @@ def _permission(raw: Any) -> str:
         if normalized not in {
             "cantrade", "can_trade", "trade", "trading", "order_permission",
             "order_permissions", "orderpermission", "tradepermission",
-            "permissions", "permission", "perm",
+            "permissions", "permission", "perm", "authorities",
         }:
             continue
         if isinstance(value, dict):
@@ -195,16 +204,36 @@ async def _private_account_probe(identity: dict[str, Any]) -> tuple[Any, str | N
     raise ValueError("selected_exchange_unsupported")
 
 
-def _result_failure(identity: dict[str, Any] | None, reason_code: str, *, now: datetime) -> dict[str, Any]:
+def public_evidence(evidence: dict[str, Any] | None) -> dict[str, Any]:
+    """Return only stable, non-secret evidence fields for API/audit output."""
+    evidence = evidence or {}
+    return {
+        key: evidence[key]
+        for key in _PUBLIC_EVIDENCE_FIELDS
+        if key in evidence
+    }
+
+
+def _result_failure(
+    identity: dict[str, Any] | None,
+    reason_code: str,
+    *,
+    now: datetime,
+    account_environment: str | None = None,
+    permission_status: str = "unknown",
+    private_authenticated: bool = False,
+    account_readable: bool = False,
+) -> dict[str, Any]:
     result = dict(identity or {})
     result.update({
         "ok": False,
         "reason_code": reason_code,
-        "private_authenticated": False,
+        "private_authenticated": private_authenticated,
         "public_reachability": "not_used_as_authority",
-        "account_readable": False,
+        "account_readable": account_readable,
+        "account_environment": account_environment or result.get("account_environment", "live"),
         "environment_verified": False,
-        "permission_status": "unknown",
+        "permission_status": permission_status,
         "permission_unknown_policy": PERMISSION_UNKNOWN_POLICY,
         "completeness": "incomplete",
         "fetched_at": _iso(now),
@@ -235,11 +264,35 @@ async def run_live_preflight(cfg=None) -> dict[str, Any]:
         return _result_failure(identity, reason, now=now)
 
     if environment != "live":
-        return _result_failure(identity, "environment_mismatch", now=now)
+        return _result_failure(
+            identity,
+            "environment_mismatch",
+            now=now,
+            account_environment=environment,
+            permission_status=permission,
+            private_authenticated=True,
+            account_readable=True,
+        )
     if permission == "denied":
-        return _result_failure(identity, "permission_denied", now=now)
+        return _result_failure(
+            identity,
+            "permission_denied",
+            now=now,
+            account_environment=environment,
+            permission_status=permission,
+            private_authenticated=True,
+            account_readable=True,
+        )
     if permission == "unknown" and PERMISSION_UNKNOWN_POLICY == "deny":
-        result = _result_failure(identity, "permission_unknown", now=now)
+        result = _result_failure(
+            identity,
+            "permission_unknown",
+            now=now,
+            account_environment=environment,
+            permission_status=permission,
+            private_authenticated=True,
+            account_readable=True,
+        )
         result.update({"private_authenticated": True, "account_readable": True})
         return result
 
@@ -310,3 +363,62 @@ def active_live_profile_conflict(cfg, broker: str, profile: str) -> bool:
         and str(getattr(getattr(cfg, "exchange", None), "name", "")).lower() == broker.lower()
         and profile == "live"
     )
+
+
+def revoke_stale_live_unlock(cfg) -> dict[str, Any] | None:
+    """Revoke live authority once its selected-account evidence is invalid."""
+    if getattr(getattr(cfg, "live", None), "state", "") != "live_limited":
+        return None
+    valid, reason = evidence_matches_config(cfg, getattr(cfg.live, "unlock_evidence", None))
+    if valid:
+        return None
+
+    old_permission_mode = getattr(getattr(cfg, "operator", None), "permission_mode", "ReadOnly")
+    identity = public_evidence(getattr(cfg.live, "unlock_evidence", None))
+    audit_ok = False
+    try:
+        from aletheia.files.jsonl import write_audit
+
+        audit_ok = bool(write_audit({
+            "actor": "system",
+            "source": "live_trust",
+            "event_type": "live_unlock_revoked",
+            "entity_type": "live_state",
+            "before": {
+                "state": "live_limited",
+                "operator_permission_mode": old_permission_mode,
+                "live_execution_identity": identity,
+            },
+            "after": {
+                "state": "live_disabled",
+                "operator_permission_mode": "ReadOnly",
+                "live_execution_identity": None,
+            },
+            "live_execution_identity": identity,
+            "message": (
+                "Live unlock revoked because selected-account evidence is invalid: "
+                f"{reason}"
+            ),
+        }))
+    except Exception:
+        audit_ok = False
+
+    cfg.live.state = "live_disabled"
+    cfg.live.unlock_evidence = None
+    if hasattr(cfg, "operator"):
+        cfg.operator.permission_mode = "ReadOnly"
+    persisted = False
+    try:
+        from aletheia.config.loader import save_config
+
+        save_config(cfg)
+        persisted = True
+    except Exception:
+        # The authority is already revoked in memory; the next status/guard pass
+        # retries persistence rather than allowing a live order through.
+        persisted = False
+    return {
+        "reason_code": reason,
+        "audit_written": audit_ok,
+        "state_persisted": persisted,
+    }
