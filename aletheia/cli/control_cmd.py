@@ -346,7 +346,12 @@ def _evidence_epochs() -> dict[str, Any]:
 
         # Force missing/read-only DB state to remain explicit; the summary helper
         # intentionally treats a failed epoch query as an empty historical view.
-        get_db().execute("SELECT 1")
+        db = get_db()
+        if db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='learning_policy_epochs'"
+        ).fetchone() is None:
+            raise RuntimeError("missing_learning_policy_epochs_table")
         return evidence_epoch_summary()
     except Exception as exc:
         return {"error": "evidence_epoch_read_failed", "error_type": type(exc).__name__}
