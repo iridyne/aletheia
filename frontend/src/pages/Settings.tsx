@@ -168,7 +168,12 @@ export default function Settings() {
   const qc = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
-  const { data: settings, dataUpdatedAt: settingsUpdatedAt } = useQuery({ queryKey: ['settings'], queryFn: api.getSettings })
+  const { data: settings, dataUpdatedAt: settingsUpdatedAt } = useQuery({
+    queryKey: ['settings'],
+    queryFn: api.getSettings,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: true,
+  })
   const [navWidth, setNavWidth] = useState(SETTINGS_NAV_DEFAULT)
   const [isNavCollapsed, setIsNavCollapsed] = useState(false)
   const navExpandedWidthRef = useRef(SETTINGS_NAV_DEFAULT)

@@ -563,6 +563,17 @@ def test_progressive_unlock_ladder(tmp_path, monkeypatch):
     # Five exact control outcomes over three market days unlock exactly one
     # production parameter; lifetime rows above are outside the rollout anchor.
     state = current_persona_rollout(cfg)
+    excluded = serialize_sizing_manifest(
+        build_sizing_manifest(cfg, state=state, consumed=False)
+    )
+    _closed(
+        repo,
+        Position,
+        "bull",
+        pnl=1.0,
+        closed_at=(anchor + timedelta(days=1, minutes=30)).isoformat(),
+        sizing_manifest=excluded,
+    )
     control = serialize_sizing_manifest(build_sizing_manifest(cfg, state=state))
     for i in range(5):
         _closed(
@@ -584,6 +595,8 @@ def test_progressive_unlock_ladder(tmp_path, monkeypatch):
     # Distress (kill switch) → refreeze ALL.
     cfg.runtime.kill_switch_active = True
     assert effective_operator_decidable(roll, cfg) == {}, "distress must refreeze all unlocked params"
+    cfg.trading.persona_auto_advance_enabled = False
+    assert advance_persona_rollout(now=anchor + timedelta(days=6))["action"] == "refrozen"
 
     settings_src = _PAPER_TRADING_SETTINGS.read_text(encoding="utf-8")
     assert "Only active entry parameters" in settings_src
@@ -849,3 +862,32 @@ def test_advance_persona_rollout(tmp_path, monkeypatch):
     assert "Auto-advance rollout (evidence-gated)" in settings_src
     assert "the interval itself is never evidence" in settings_src
     assert "new enablement is blocked" in settings_src
+
+
+def test_persona_rollout_audit_failure_refreezes_and_records_retry(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    from datetime import datetime, timezone
+
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.config.loader as loader
+    from aletheia.trading.persona_rollout import current_persona_rollout, start_persona_rollout
+
+    cfg = AletheiaConfig()
+    cfg.trading.persona_sizing_enabled = True
+    cfg.trading.persona_progressive_unlock_enabled = True
+    cfg.trading.active_persona = "roll"
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda *a, **k: False, raising=False)
+
+    started = start_persona_rollout(cfg, now=datetime(2026, 8, 1, tzinfo=timezone.utc))
+    assert started and started["status"] == "refrozen"
+    current = current_persona_rollout(cfg)
+    assert current and current["status"] == "refrozen"
+    event = conn.execute(
+        "SELECT event_type, reason, evidence_json FROM persona_rollout_events "
+        "WHERE rollout_id=? ORDER BY rowid DESC LIMIT 1",
+        (started["rollout_id"],),
+    ).fetchone()
+    assert event and event[0] == "audit_delivery_failed"
+    assert event[1] == "audit_delivery_failed"
+    assert '"retry_required": true' in event[2]

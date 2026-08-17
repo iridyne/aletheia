@@ -1658,6 +1658,7 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
                 cfg,
                 authorized_params=[key for key, value in decidable.items() if value],
                 state=rollout,
+                consumed=not decision.parameter_rationale_required,
             )
         except Exception:
             # Proposal creation remains available, but an unavailable rollout

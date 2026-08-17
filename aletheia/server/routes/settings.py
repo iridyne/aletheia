@@ -1924,10 +1924,11 @@ async def update_trading_config(req: TradingConfigUpdate):
                  "message": f"Trading config updated: {list(updates.keys())}"})
     if "min_confidence_to_trade" in updates:
         _notify_ranker_config_change()
+    rollout_status = await asyncio.to_thread(persona_rollout_status, cfg)
     return {
         "updated": updates,
         "trading": cfg.trading.model_dump(mode="json"),
-        "persona_rollout": persona_rollout_status(cfg),
+        "persona_rollout": rollout_status,
     }
 
 

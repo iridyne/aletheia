@@ -164,7 +164,7 @@ def _state_view(row) -> dict[str, Any]:
     return state
 
 
-def _audit(event_type: str, state: dict[str, Any], *, reason: str, before: str | None = None) -> None:
+def _audit(event_type: str, state: dict[str, Any], *, reason: str, before: str | None = None) -> bool:
     try:
         from aletheia.files.jsonl import write_audit
 
@@ -184,9 +184,61 @@ def _audit(event_type: str, state: dict[str, Any], *, reason: str, before: str |
         }
         if before is not None:
             payload["before"] = {"status": before}
-        write_audit(payload)
+        result = write_audit(payload)
+        return result is not False
     except Exception:
-        logger.debug("persona rollout audit unavailable", exc_info=True)
+        logger.warning("persona rollout audit unavailable", exc_info=True)
+        return False
+
+
+def _persist_audit_failure(
+    state: dict[str, Any],
+    *,
+    event_type: str,
+    reason: str,
+    before: str | None = None,
+) -> dict[str, Any]:
+    """Keep a durable failure marker and safe authority when JSONL audit fails."""
+    evidence = {
+        "audit_event_type": event_type,
+        "audit_reason": reason,
+        "before": before,
+        "retry_required": True,
+    }
+    try:
+        with _transaction():
+            db = _db()
+            row = db.execute(
+                "SELECT * FROM persona_rollouts WHERE rollout_id=? AND ended_at IS NULL",
+                (state.get("rollout_id"),),
+            ).fetchone()
+            current = _state_view(row) if row is not None else state
+            if row is not None:
+                updated = _update_state(
+                    db,
+                    current,
+                    updates={
+                        "status": "refrozen",
+                        "authority": "safe_static_baseline",
+                    },
+                    expected_status=str(current.get("status") or ""),
+                    event_type="audit_delivery_failed",
+                    reason="audit_delivery_failed",
+                    evidence=evidence,
+                )
+                if updated is not None:
+                    return updated
+            _record_event(
+                db,
+                current,
+                event_type="audit_delivery_failed",
+                reason="audit_delivery_failed",
+                evidence=evidence,
+            )
+            return current
+    except Exception:
+        logger.warning("persona rollout audit failure marker unavailable", exc_info=True)
+        return state
 
 
 def _record_event(
@@ -390,14 +442,33 @@ def current_persona_rollout(cfg=None, *, create: bool = False, now: datetime | N
                 cfg=cfg,
             )
         if rows:
-            _audit(
+            invalidated = {
+                **rows[0],
+                "status": "refrozen",
+                "reason": "persona_or_policy_identity_changed",
+                "updated_at": now_iso,
+                "ended_at": now_iso,
+            }
+            if not _audit(
                 "persona_rollout_refrozen",
-                {**rows[0], "status": "refrozen", "reason": "persona_or_policy_identity_changed"},
+                invalidated,
                 reason="persona or policy identity changed; old evidence cannot be reused",
                 before=str(rows[0].get("status") or "unknown"),
+            ):
+                _persist_audit_failure(
+                    invalidated,
+                    event_type="persona_rollout_refrozen",
+                    reason="persona or policy identity changed; old evidence cannot be reused",
+                    before=str(rows[0].get("status") or "unknown"),
+                )
+        state = _state_view(state)
+        if not _audit("persona_rollout_started", state, reason="prospective rollout identity created"):
+            state = _persist_audit_failure(
+                state,
+                event_type="persona_rollout_started",
+                reason="prospective rollout identity created",
             )
-        _audit("persona_rollout_started", state, reason="prospective rollout identity created")
-        return _state_view(state)
+        return state
     except Exception as exc:
         logger.warning("persona rollout state unavailable: %s", exc)
         return None
@@ -442,8 +513,10 @@ def start_persona_rollout(cfg=None, *, reason: str = "operator_enabled_progressi
                     reason="new rollout requested; old evidence cannot be reused",
                 )
             state = _insert_rollout(db, identity, now=now_iso, reason=reason, cfg=cfg)
-        _audit("persona_rollout_started", state, reason=reason)
-        return _state_view(state)
+        state = _state_view(state)
+        if not _audit("persona_rollout_started", state, reason=reason):
+            state = _persist_audit_failure(state, event_type="persona_rollout_started", reason=reason)
+        return state
     except Exception as exc:
         logger.warning("persona rollout start failed: %s", exc)
         return None
@@ -479,12 +552,20 @@ def invalidate_persona_rollouts(
                     reason=reason,
                 )
         for row in rows:
-            _audit(
+            invalidated = {**row, "status": "refrozen", "reason": reason}
+            before = str(row.get("status") or "unknown")
+            if not _audit(
                 "persona_rollout_refrozen",
-                {**row, "status": "refrozen", "reason": reason},
+                invalidated,
                 reason=reason,
-                before=str(row.get("status") or "unknown"),
-            )
+                before=before,
+            ):
+                _persist_audit_failure(
+                    invalidated,
+                    event_type="persona_rollout_refrozen",
+                    reason=reason,
+                    before=before,
+                )
         return len(rows)
     except Exception as exc:
         logger.warning("persona rollout invalidation failed: %s", exc)
@@ -548,7 +629,13 @@ def _authorized_params(cfg, state: dict[str, Any] | None) -> list[str]:
     return []
 
 
-def build_sizing_manifest(cfg, *, authorized_params: list[str] | tuple[str, ...] = (), state=None) -> dict[str, Any]:
+def build_sizing_manifest(
+    cfg,
+    *,
+    authorized_params: list[str] | tuple[str, ...] = (),
+    state=None,
+    consumed: bool = True,
+) -> dict[str, Any]:
     """Build the immutable, secret-free evidence identity attached to an entry."""
     if not getattr(cfg.trading, "persona_sizing_enabled", False):
         manifest = {
@@ -578,10 +665,11 @@ def build_sizing_manifest(cfg, *, authorized_params: list[str] | tuple[str, ...]
     progressive_enabled = bool(getattr(cfg.trading, "persona_progressive_unlock_enabled", False))
     parameter_state = (
         "unlocked"
-        if dynamic and (
+        if consumed and dynamic and (
             current_parameter in authorized or state.get("status") == "completed"
         )
-        else "frozen" if progressive_enabled
+        else "frozen" if consumed and progressive_enabled
+        else "not_consumed" if not consumed
         else "static"
     )
     manifest: dict[str, Any] = {
@@ -596,11 +684,12 @@ def build_sizing_manifest(cfg, *, authorized_params: list[str] | tuple[str, ...]
         "parameter": current_parameter if progressive_enabled else None,
         "parameter_state": parameter_state,
         "assignment": (
-            "treatment" if parameter_state == "unlocked"
+            "excluded" if not consumed
+            else "treatment" if parameter_state == "unlocked"
             else "control" if progressive_enabled
             else "none"
         ),
-        "active_params": authorized,
+        "active_params": authorized if consumed else [],
     }
     manifest["manifest_hash"] = _manifest_hash(manifest)
     return manifest
@@ -780,6 +869,10 @@ def _evidence(state: dict[str, Any]) -> dict[str, Any]:
         if not manifest:
             invalid += 1
             continue
+        if manifest.get("assignment") == "excluded":
+            if not _manifest_is_intact(manifest):
+                invalid += 1
+            continue
         if (
             not _manifest_is_intact(manifest)
             or manifest.get("schema_version") != ROLLOUT_SCHEMA_VERSION
@@ -870,7 +963,16 @@ def _evidence(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _update_state(db, state: dict[str, Any], *, updates: dict[str, Any], event_type: str, reason: str, evidence: dict[str, Any] | None = None) -> dict[str, Any]:
+def _update_state(
+    db,
+    state: dict[str, Any],
+    *,
+    updates: dict[str, Any],
+    event_type: str,
+    reason: str,
+    evidence: dict[str, Any] | None = None,
+    expected_status: str | tuple[str, ...] | None = None,
+) -> dict[str, Any] | None:
     now = _now()
     merged = {**state, **updates, "updated_at": now}
     assignments = {
@@ -886,17 +988,26 @@ def _update_state(db, state: dict[str, Any], *, updates: dict[str, Any], event_t
         "ended_at": merged.get("ended_at"),
         "rollout_id": merged["rollout_id"],
     }
-    db.execute(
+    where = "rollout_id=? AND ended_at IS NULL"
+    parameters: list[Any] = [
+        assignments["current_step"], assignments["current_parameter"],
+        assignments["step_started_at"], assignments["baseline_snapshot_json"],
+        assignments["evidence_watermark"], assignments["status"], assignments["authority"],
+        assignments["reason"], assignments["updated_at"], assignments["ended_at"],
+        assignments["rollout_id"],
+    ]
+    if expected_status is not None:
+        statuses = (expected_status,) if isinstance(expected_status, str) else expected_status
+        where += " AND status IN (" + ",".join("?" for _ in statuses) + ")"
+        parameters.extend(statuses)
+    cursor = db.execute(
         "UPDATE persona_rollouts SET current_step=?, current_parameter=?, step_started_at=?, "
         "baseline_snapshot_json=?, evidence_watermark=?, status=?, authority=?, reason=?, "
-        "updated_at=?, ended_at=? WHERE rollout_id=?",
-        (
-            assignments["current_step"], assignments["current_parameter"], assignments["step_started_at"],
-            assignments["baseline_snapshot_json"], assignments["evidence_watermark"], assignments["status"],
-            assignments["authority"], assignments["reason"], assignments["updated_at"], assignments["ended_at"],
-            assignments["rollout_id"],
-        ),
+        "updated_at=?, ended_at=? WHERE " + where,
+        parameters,
     )
+    if cursor.rowcount != 1:
+        return None
     merged.update(assignments)
     _record_event(db, merged, event_type=event_type, reason=reason, evidence=evidence)
     return _state_view(merged)
@@ -958,8 +1069,17 @@ def refreeze_persona_rollout(
                 event_type="parameter_refrozen",
                 reason=reason,
                 evidence=evidence,
+                expected_status=before,
             )
-        _audit("persona_parameter_refrozen", updated, reason=reason, before=before)
+        if updated is None:
+            return current_persona_rollout(cfg, create=False) or state
+        if not _audit("persona_parameter_refrozen", updated, reason=reason, before=before):
+            return _persist_audit_failure(
+                updated,
+                event_type="persona_parameter_refrozen",
+                reason=reason,
+                before=before,
+            )
         return updated
     except Exception as exc:
         logger.warning("persona rollout refreeze failed: %s", exc)
@@ -973,15 +1093,36 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
     cfg = load_config()
     t = cfg.trading
     runtime = getattr(cfg, "runtime", None)
-    if bool(getattr(runtime, "kill_switch_active", False)):
-        refrozen_count = invalidate_persona_rollouts(
-            reason="account_distress", now=now
-        )
+
+    def _refreeze_all(reason: str) -> dict[str, Any]:
         return {
             "action": "refrozen",
-            "reason": "account_distress",
-            "rollouts_refrozen": refrozen_count,
+            "reason": reason,
+            "rollouts_refrozen": invalidate_persona_rollouts(reason=reason, now=now),
         }
+
+    if bool(getattr(runtime, "kill_switch_active", False)):
+        return _refreeze_all("account_distress")
+    from aletheia.trading.sizing_policy import in_distress
+
+    if in_distress(cfg):
+        return _refreeze_all("account_distress")
+    try:
+        from aletheia.learning.control import global_learning_refreeze_reason
+
+        health_reason = global_learning_refreeze_reason()
+    except Exception:
+        health_reason = "learning_integrity_state_unavailable"
+    if health_reason:
+        return _refreeze_all(health_reason)
+    try:
+        from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
+
+        if detect_reconcile_thrash().get("is_thrashing"):
+            return _refreeze_all("reconcile_thrash")
+    except Exception:
+        return _refreeze_all("reconcile_thrash_state_unavailable")
+
     if not getattr(t, "persona_auto_advance_enabled", False):
         return {"action": "disabled", "reason": "persona_auto_advance_enabled=False"}
     agent = getattr(cfg, "agent", None)
@@ -994,17 +1135,8 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
     if not getattr(t, "persona_progressive_unlock_enabled", False):
         return {"action": "hold", "reason": "persona_progressive_unlock_enabled=False"}
 
-    from aletheia.trading.sizing_policy import in_distress
-
     if in_distress(cfg):
-        refrozen_count = invalidate_persona_rollouts(
-            reason="account_distress", now=now
-        )
-        return {
-            "action": "refrozen",
-            "reason": "account_distress",
-            "rollouts_refrozen": refrozen_count,
-        }
+        return _refreeze_all("account_distress")
 
     state = current_persona_rollout(cfg, create=True, now=now)
     if state is None:
@@ -1088,7 +1220,14 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
                 event_type="evidence_eligible",
                 reason="prospective stable non-degrading evidence verdict",
                 evidence=evidence,
+                expected_status=str(state.get("status") or ""),
             )
+            if eligible_state is None:
+                return {
+                    "action": "hold",
+                    "reason": "persona_rollout_state_changed",
+                    "rollout": state,
+                }
             phase = str(state.get("status") or "")
             if phase in {"frozen", "observing", "eligible"}:
                 # Control evidence proves the frozen baseline for this exact
@@ -1135,8 +1274,29 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
                 event_type=event,
                 reason="prospective stable non-degrading evidence verdict",
                 evidence=evidence,
+                expected_status="eligible",
             )
-        _audit(event, updated, reason="prospective stable non-degrading evidence verdict", before=str(state.get("status")))
+            if updated is None:
+                return {
+                    "action": "hold",
+                    "reason": "persona_rollout_state_changed",
+                    "rollout": state,
+                }
+        transition_reason = "prospective stable non-degrading evidence verdict"
+        before = str(state.get("status"))
+        if not _audit(event, updated, reason=transition_reason, before=before):
+            failed = _persist_audit_failure(
+                updated,
+                event_type=event,
+                reason=transition_reason,
+                before=before,
+            )
+            return {
+                "action": "hold",
+                "reason": "audit_delivery_failed",
+                "evidence": evidence,
+                "rollout": failed,
+            }
         action = {
             "parameter_unlocked": "unlocked",
             "step_started": "observing",
