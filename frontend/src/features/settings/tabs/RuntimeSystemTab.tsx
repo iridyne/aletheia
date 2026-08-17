@@ -13,6 +13,7 @@ import {
 } from '../../../components/ui'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
+import type { SettingsDirtyProps, SettingsStatusProps } from '../types'
 
 export const APP_SECTION = {
   id: 'app', title: 'App', tab: 'runtime', description: 'Dashboard process settings.',
@@ -43,7 +44,7 @@ export const NETWORK_PROXY_SECTION = {
   searchTerms: ['proxy', 'socks', 'http proxy', 'enforce', 'outbound', 'ip leak'],
 } satisfies SettingsFeatureDescriptor
 
-function HistoricalDataCard({ settings, qc, onDirty }: any) {
+function HistoricalDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const hd = settings?.historical_data as any
   const [vals, setVals] = useState<Record<string, unknown>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -103,7 +104,7 @@ function HistoricalDataCard({ settings, qc, onDirty }: any) {
   )
 }
 
-function AppRows({ status, settings, qc, onDirty }: any) {
+function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
   const app = settings?.app as any || {}
   const runtime = settings?.runtime as any || {}
   const remoteControl = settings?.remote_control as any || {}
@@ -295,7 +296,7 @@ function AppRows({ status, settings, qc, onDirty }: any) {
   )
 }
 
-function RetentionCard({ settings, qc, onDirty }: any) {
+function RetentionCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const retention = settings?.retention as any
   const [vals, setVals] = useState<Record<string, any>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -343,7 +344,7 @@ function RetentionCard({ settings, qc, onDirty }: any) {
   )
 }
 
-function UpdateCard({ settings, qc, onDirty }: any) {
+function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const updateCfg = settings?.update as any || {}
   const [branch, setBranch] = useState('master')
   const [enabled, setEnabled] = useState(true)
@@ -429,7 +430,7 @@ function UpdateCard({ settings, qc, onDirty }: any) {
   )
 }
 
-function NetworkCard({ settings, qc, onDirty }: any) {
+function NetworkCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const net = (settings?.network as any) || {}
   const [protocol, setProtocol] = useState<string>(net.proxy_protocol || 'http')
   const [host, setHost] = useState<string>(net.proxy_host ?? '')
@@ -649,7 +650,7 @@ function DataExportCard() {
   )
 }
 
-export function RuntimeSystemTab({ status, settings, qc, onDirty }: any) {
+export function RuntimeSystemTab({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
   return (
     <div>
       <SettingsFeatureSection descriptor={APP_SECTION}>

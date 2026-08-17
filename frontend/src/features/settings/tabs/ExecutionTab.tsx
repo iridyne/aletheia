@@ -12,6 +12,7 @@ import { executionExchangeFromPaperMode } from '../execution/exchangeMode'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import { CapitalEventsCard, PaperAccountCard, TradingParamsCard } from '../execution/PaperTradingSettings'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
+import type { SettingsDirtyProps, SettingsProps, SettingsStatusProps } from '../types'
 
 export const EXCHANGE_CONNECTION_SECTION = {
   id: 'exchange-connection', title: 'Exchange Connection', tab: 'execution',
@@ -43,7 +44,7 @@ export const PAPER_ACCOUNT_SECTION = {
   searchTerms: ['no exchange', 'paper cash', 'available balance', 'close positions'],
 } satisfies SettingsFeatureDescriptor
 
-export function ExecutionTab({ status, settings, qc, onDirty }: any) {
+export function ExecutionTab({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
   const currentPaperMode = String((settings?.exchange as any)?.paper_execution_mode || '')
   const currentExecutionExchange = executionExchangeFromPaperMode(
     currentPaperMode, String((settings?.exchange as any)?.name || ''),
@@ -98,7 +99,7 @@ const PRIMARY_EXCHANGES = [
   { id: 'paper_internal',label: 'Paper (internal)', desc: 'No exchange — local fill simulation only' },
 ] as const
 
-function PrimaryExchangeCard({ settings, qc }: any) {
+function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
   const exchangeName = String((settings?.exchange as any)?.name || 'bitget')
   const paperMode = String((settings?.exchange as any)?.paper_execution_mode || 'bitget_demo')
   const effective = paperMode === 'paper_internal' ? 'paper_internal' : exchangeName
@@ -138,7 +139,7 @@ function PrimaryExchangeCard({ settings, qc }: any) {
   )
 }
 
-function ExchangeModeRow({ status, qc, settings }: any) {
+function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
   const paperMode = String((settings?.exchange as any)?.paper_execution_mode || 'bitget_demo')
   const modeLabel: Record<string, string> = {
     okx_demo: 'OKX Demo', bitget_demo: 'Bitget Demo',
@@ -162,7 +163,7 @@ function ExchangeModeRow({ status, qc, settings }: any) {
   )
 }
 
-function ExchangeMarketsRow({ settings, qc, onDirty }: any) {
+function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
   const markets = (settings?.exchange as any)?.enabled_markets || { spot: true, usdt_futures: true }
   const serverPaperMode = String((settings?.exchange as any)?.paper_execution_mode || 'bitget_demo')
   const [spot, setSpot] = useState(!!markets.spot)
@@ -286,7 +287,7 @@ function LiveUnlockWarningWall({ credError, preflight, broker, onConfirm, onCanc
   )
 }
 
-function LiveStateRow({ status, settings, qc }: any) {
+function LiveStateRow({ status, settings, qc }: SettingsStatusProps) {
   const isDisabled = status.live_state === 'live_disabled' || status.live_state === 'disabled'
   const [warning, setWarning] = useState('')
   const [showWall, setShowWall] = useState(false)
@@ -362,7 +363,7 @@ const EXCHANGE_CONFIG = [
 
 type ExchangeId = typeof EXCHANGE_CONFIG[number]['id']
 
-function ExchangeConnectionCard({ qc, onDirty }: any) {
+function ExchangeConnectionCard({ qc, onDirty }: SettingsDirtyProps) {
   const [exchange, setExchange] = useState<ExchangeId>('bitget')
   const exCfg = EXCHANGE_CONFIG.find(e => e.id === exchange)!
   const [profile, setProfile] = useState<string>(exCfg.profiles[0])

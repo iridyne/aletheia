@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { api } from '../../../api/client'
+import type { RiskPolicyDraft } from './RiskTab'
 import { RiskPolicyEditor, RiskTab } from './RiskTab'
 import SRC from './RiskTab.tsx?raw'
 
@@ -14,7 +15,7 @@ const DEMO_POLICY = {
   revision: 1,
   capital: { base_source: 'account_equity', base_usdt: 100 },
   loss: { max_daily_loss_pct: 1 },
-}
+} as const satisfies RiskPolicyDraft
 
 function changeNumber(input: HTMLInputElement, value: string) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set

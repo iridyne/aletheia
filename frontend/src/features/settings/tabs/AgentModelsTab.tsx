@@ -11,6 +11,8 @@ import {
 import { ModelProvidersSection } from '../model-providers/ModelProvidersSection'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
+import type { SettingsData, SettingsProvider } from '../../../api/settings'
+import type { SettingsDirtyProps, SettingsProps, SettingsStatusProps } from '../types'
 
 const PERMISSION_MODES = ['Observe', 'Paper', 'Full']
 const PROVIDER_LABELS: Record<string, string> = {
@@ -64,7 +66,7 @@ export const LLM_COST_SECTION = {
   searchTerms: ['tokenomics', 'spend', 'budget', 'economics', 'cooldown', 'broker', 'inference'],
 } satisfies SettingsFeatureDescriptor
 
-export function AgentModelsTab({ status, settings, qc, onDirty }: any) {
+export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
   const agent = settings?.agent as any || {}
   const runtime = settings?.runtime as any || {}
   // #164 fix: previously these mutations had onSuccess only — a rejected save
@@ -561,7 +563,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: any) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-function EconomicsSnapshotCard({ economics, qc }: { economics: any; qc: any }) {
+function EconomicsSnapshotCard({ economics, qc }: { economics?: SettingsData['economics']; qc: SettingsProps['qc'] }) {
   const [saveErr, setSaveErr] = useState<string | null>(null)
   const economicsEnabled = economics?.enabled === true
   const shadowEnabled = economics?.budgets_shadow_enabled === true
@@ -631,7 +633,7 @@ function EconomicsSnapshotCard({ economics, qc }: { economics: any; qc: any }) {
 // the semantic decoupling shows up in the operator's UI, not just the code.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function InferenceAdmissionCard({ qc, onDirty }: { qc: any; onDirty?: (id: string, isDirty: boolean) => void }) {
+function InferenceAdmissionCard({ qc, onDirty }: { qc: SettingsProps['qc']; onDirty?: SettingsDirtyProps['onDirty'] }) {
   const { data } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
   const { data: broker } = useQuery({
     queryKey: ['model-broker'],
@@ -708,7 +710,7 @@ function InferenceAdmissionCard({ qc, onDirty }: { qc: any; onDirty?: (id: strin
 }
 
 function InferenceLimitsForm({ name, config, metrics, qc, onDirty }: {
-  name: string; config: any; metrics?: Record<string, number>; qc: any; onDirty?: (id: string, isDirty: boolean) => void
+  name: string; config: Partial<SettingsProvider> & Record<string, unknown>; metrics?: Record<string, number>; qc: SettingsProps['qc']; onDirty?: SettingsDirtyProps['onDirty']
 }) {
   const [maxConcurrency, setMaxConcurrency] = useState(config?.inference_max_concurrency ?? 2)
   const [rpm, setRpm] = useState(config?.inference_requests_per_minute ?? 60)

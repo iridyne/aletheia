@@ -126,7 +126,7 @@ export function NumberFieldGrid({
   set,
   errors,
 }: {
-  fields: NumField[]
+  fields: readonly NumField[]
   vals: Record<string, unknown>
   set: (key: string, value: number) => void
   errors?: Record<string, string>
@@ -148,7 +148,7 @@ export function SwitchGrid({
   vals,
   set,
 }: {
-  fields: BoolField[]
+  fields: readonly BoolField[]
   vals: Record<string, unknown>
   set: (key: string, value: boolean) => void
 }) {

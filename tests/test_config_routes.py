@@ -443,6 +443,18 @@ async def test_get_settings_masks_inline_secret_fields(client):
     assert "127.0.0.1:7890" in data["network"]["proxy_url"]
 
 
+def test_settings_openapi_exposes_redacted_typed_response_contract():
+    response_schema = app.openapi()["paths"]["/api/settings"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    assert response_schema == {"$ref": "#/components/schemas/SettingsResponse"}
+
+    schemas = app.openapi()["components"]["schemas"]
+    settings = schemas["SettingsResponse"]["properties"]
+    assert settings["models"]["$ref"] == "#/components/schemas/SettingsModelsResponse"
+    assert settings["network"]["$ref"] == "#/components/schemas/NetworkConfig"
+    assert "secret" not in schemas["SettingsWebhookResponse"]["properties"]
+    assert "credentials_path" not in schemas["SettingsTunnelResponse"]["properties"]
+
+
 @pytest.mark.anyio
 async def test_settings_post_does_not_echo_secrets(client):
     """Regression #2/#4: webhook/network POST responses must not echo the submitted secret/creds."""

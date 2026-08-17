@@ -11,6 +11,7 @@ import { listToCsv, parseCsvList } from '../csvList'
 import { executionExchangeFromPaperMode } from '../execution/exchangeMode'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
+import type { SettingsDirtyProps, SettingsProps } from '../types'
 
 export const MARKET_DATA_SECTION = {
   id: 'market-data-sources', title: 'Market Data Sources', tab: 'signals',
@@ -42,7 +43,7 @@ export const EQUITIES_SECTION = {
   searchTerms: ['xstocks', 'equity'],
 } satisfies SettingsFeatureDescriptor
 
-function MarketDataCard({ settings, qc, onDirty }: any) {
+function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const md = settings?.market_data || {}
   const exchangeSettings = settings?.exchange || {}
   const EXCHANGES = ['binance', 'bybit', 'okx', 'bitget', 'gate', 'kucoin', 'htx']
@@ -179,7 +180,7 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
   )
 }
 
-function MacroSignalsCard({ settings, qc, onDirty }: any) {
+function MacroSignalsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const md = settings?.market_data || {}
 
   const [fearGreed, setFearGreed] = useState(md.enable_fear_greed ?? true)
@@ -255,7 +256,7 @@ function MacroSignalsCard({ settings, qc, onDirty }: any) {
 
 // ─── Prediction Markets Toggle ───
 
-function PredictionToggleCard({ qc }: { qc: any }) {
+function PredictionToggleCard({ qc }: { qc: SettingsProps['qc'] }) {
   const { data: status } = useQuery({
     queryKey: ['prediction-status'],
     queryFn: api.getPredictionStatus,
@@ -286,7 +287,7 @@ function PredictionToggleCard({ qc }: { qc: any }) {
 
 // ─── Equities ───
 
-function EquitiesCard({ settings, qc, onDirty }: any) {
+function EquitiesCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const serverTickers: string[] = settings?.market_data?.observed_equities ?? []
   const [draft, setDraft] = useState<string[]>(serverTickers)
   const [input, setInput] = useState('')
@@ -353,7 +354,7 @@ function EquitiesCard({ settings, qc, onDirty }: any) {
 
 // ─── News Feeds config ───
 
-function NewsFeedsCard({ settings, qc, onDirty }: any) {
+function NewsFeedsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const news = settings?.news as any
   const [enabled, setEnabled] = useState(true)
   const [interval, setInterval_] = useState(15)
@@ -431,7 +432,7 @@ function NewsFeedsCard({ settings, qc, onDirty }: any) {
 // SIGNALS TAB — market data, news, macro signals, prediction markets, equities
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function SignalsTab({ settings, qc, onDirty }: any) {
+export function SignalsTab({ settings, qc, onDirty }: SettingsDirtyProps) {
   return (
     <div>
       <SettingsFeatureSection descriptor={MARKET_DATA_SECTION}>

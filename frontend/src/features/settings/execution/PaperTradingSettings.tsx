@@ -9,6 +9,7 @@ import {
   Switch as Toggle,
 } from '../../../components/ui'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
+import type { SettingsDirtyProps } from '../types'
 
 const CONFIDENCE_LEVELS = ['high', 'medium', 'speculative'] as const
 
@@ -183,7 +184,7 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
   )
 }
 
-export function TradingParamsCard({ settings, qc, onDirty }: any) {
+export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const trading = settings?.trading as any
   const [stopLoss, setStopLoss] = useState('')
   const [takeProfit, setTakeProfit] = useState('')
@@ -574,11 +575,11 @@ export function TradingParamsCard({ settings, qc, onDirty }: any) {
                   actual={((settings.persona_rollout.actual_authorized_params || []) as string[]).join(', ') || 'none'}
                 </div>
                 <div className="mono text-sm">
-                  evidence={settings.persona_rollout.evidence?.sample_count ?? 'not available'}/
-                  {settings.persona_rollout.evidence?.required_samples ?? '—'} samples ·{' '}
-                  {settings.persona_rollout.evidence?.market_day_count ?? 'not available'}/
-                  {settings.persona_rollout.evidence?.required_market_days ?? '—'} market days ·{' '}
-                  verdict={settings.persona_rollout.evidence?.reason || 'not available'}
+                  evidence={String(settings.persona_rollout.evidence?.sample_count ?? 'not available')}/
+                  {String(settings.persona_rollout.evidence?.required_samples ?? '—')} samples ·{' '}
+                  {String(settings.persona_rollout.evidence?.market_day_count ?? 'not available')}/
+                  {String(settings.persona_rollout.evidence?.required_market_days ?? '—')} market days ·{' '}
+                  verdict={String(settings.persona_rollout.evidence?.reason || 'not available')}
                 </div>
                 <p className="hint mt-1">
                   Actual authority and evidence come from the backend rollout record; desired flags
