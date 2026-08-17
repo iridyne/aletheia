@@ -47,14 +47,14 @@ export function providerStatus(
 		(!config && !health)
 	)
 		return { tone: "muted", label: "disabled" };
+	if (config?.kind === "oauth" && !config.oauth.configured) {
+		return { tone: "yellow", label: "authentication required" };
+	}
 	if (
 		health?.configured === false ||
 		(config?.configured === false && config.enabled)
 	)
 		return { tone: "muted", label: "not configured" };
-	if (config?.kind === "oauth" && !config.oauth.configured) {
-		return { tone: "yellow", label: "authentication required" };
-	}
 	if (!health) return { tone: "yellow", label: "checking" };
 	if (health.freshness !== "fresh") {
 		if (health.freshness === "stale")
