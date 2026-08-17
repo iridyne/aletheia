@@ -25,7 +25,7 @@ Layout = OpenAlice card-cluster (top) + TradingView large equity curve (bottom):
   - In exchange modes, the source is the named fresh exchange/UTA account
     equity as before.
 - **4 tiles, each with one line of context (OpenAlice style):**
-  - Today PnL — `today_pnl` + day % , green/red.
+  - Today PnL — pure UTC-today `today_realized_pnl` + day % , green/red; incomplete close/funding economics stays unavailable.
   - Unrealized — `unrealized_pnl` ("holding").
   - Realized — `realized_pnl` ("all-time").
   - Exposure — `exposure_by_symbol` (BTC/ETH/SOL share).

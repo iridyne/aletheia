@@ -24,6 +24,70 @@ def test_shell_bootstrap_is_compact_local_and_no_store():
     assert len(str(payload)) < 20_000
 
 
+def test_shell_bootstrap_projects_cached_connectivity(monkeypatch):
+    import aletheia.server.routes.ui as ui
+
+    monkeypatch.setattr(ui, "_connectivity_snapshot", lambda: {
+        "state": "reachable",
+        "severity": "ok",
+        "priority": 4,
+        "message": "External connectivity is available.",
+        "action": None,
+        "observed_at": "2026-08-17T00:00:00+00:00",
+    })
+    payload = ui.shell_bootstrap(Response())
+    assert payload["connectivity"]["state"] == "reachable"
+    assert payload["connectivity"]["severity"] == "ok"
+
+
+def test_overview_account_projection_preserves_pnl_zone_inputs():
+    from aletheia.server.routes.ui import _project_overview_account
+
+    cfg = SimpleNamespace(exchange=SimpleNamespace(mode="paper", paper_execution_mode="paper_internal"))
+    account = _project_overview_account(
+        {
+            "today_pnl": 99.0,
+            "today_realized_pnl": 3.0,
+            "today_realized_pnl_complete": True,
+            "today_pnl_by_symbol": {"BTC/USDT": 3.0},
+            "unrealized_by_symbol": {"BTC/USDT": 96.0},
+            "all_historical_reconciled_pnl": 2.0,
+            "uta_state": {
+                "total_equity_usdt": 100.0,
+                "age_seconds": 2,
+                "accounts": [{"broker_id": "demo", "display_name": "Demo", "equity_usdt": 100.0}],
+            },
+        },
+        cfg,
+    )
+    assert account["today_realized_pnl"] == 3.0
+    assert account["today_pnl_by_symbol"] == {"BTC/USDT": 3.0}
+    assert account["all_historical_reconciled_pnl"] == 2.0
+    assert account["uta_state"]["sync_status"] == "ok"
+    assert account["uta_state"]["accounts"][0]["broker_id"] == "demo"
+    assert account["execution_mode"] == "paper_internal"
+
+
+def test_overview_bootstrap_marks_partial_sections_instead_of_available(monkeypatch):
+    import aletheia.server.routes.ui as ui
+
+    cfg = SimpleNamespace(exchange=SimpleNamespace(mode="paper", paper_execution_mode="paper_internal"))
+
+    def fake_safe(name, fn, default):
+        if name == "summary":
+            return {"value": default, "reason": "summary:RuntimeError"}
+        if name == "config":
+            return {"value": cfg, "reason": None}
+        if name == "setup":
+            return {"value": True, "reason": None}
+        return {"value": default if name != "portfolio" else {}, "reason": None}
+
+    monkeypatch.setattr(ui, "_safe", fake_safe)
+    payload = ui.overview_bootstrap(Response())
+    assert payload["availability"] == "partial"
+    assert payload["errors"] == {"summary": "summary:RuntimeError"}
+
+
 def test_bootstrap_failure_isolation_keeps_schema(monkeypatch):
     import aletheia.server.routes.ui as ui
 

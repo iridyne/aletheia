@@ -11,6 +11,15 @@
 
 export type MasterTone = 'green' | 'yellow' | 'red' | 'blue' | 'muted'
 
+export type ConnectivityTone = 'green' | 'yellow' | 'red' | 'muted'
+
+export function connectivityTone(state?: string | null): ConnectivityTone {
+  if (state === 'reachable') return 'green'
+  if (state === 'unavailable') return 'red'
+  if (state === 'recovering') return 'yellow'
+  return 'muted'
+}
+
 export interface MasterStateInput {
   gatewayRunning: boolean
   killed: boolean

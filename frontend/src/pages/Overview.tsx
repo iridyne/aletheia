@@ -7,6 +7,7 @@ import AgentFeed from '../components/AgentFeed'
 import { Button, Card, Meter, StatusText } from '../components/ui'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
 import { humanize } from '../lib/format'
+import { connectivityTone } from '../lib/systemState'
 import { api, type GoLiveScorecard } from '../api/client'
 import type { MarketDataCoverageReport } from '../types'
 
@@ -72,11 +73,26 @@ export default function Overview() {
   return (
     <div>
       <h2 className="page-title">Overview</h2>
-      <SetupNotice required={overview.data?.setup_required} />
-      <PnLZone bootstrap={overview.data} />
-      <BlotterSummaryStrip summary={overview.data?.summary} />
+      <SetupNotice
+        required={overview.data?.setup_required}
+        unavailable={Boolean(overview.data?.errors?.config || overview.data?.errors?.setup)}
+      />
+      <PnLZone bootstrap={overview.data} unavailable={Boolean(overview.error)} />
+      <BlotterSummaryStrip
+        summary={overview.data?.summary}
+        state={overview.error
+          ? 'unavailable'
+          : !overview.data
+            ? 'loading'
+            : overview.data.errors?.summary || !overview.data.summary
+              || overview.data.summary.open_opportunities == null
+              || overview.data.summary.pending_proposals == null
+              || overview.data.summary.runs_24h == null
+              ? 'unavailable'
+              : 'ready'}
+      />
       <div className="cockpit-main">
-        <AgentFeed bootstrap={overview.data} />
+        <AgentFeed bootstrap={overview.data} unavailable={Boolean(overview.error)} />
         <div className="cockpit-rail">
           <RiskCard shell={shell.data} />
           <SystemCard
@@ -89,11 +105,24 @@ export default function Overview() {
         </div>
       </div>
       {overview.error && <p className="text-muted text-sm" role="status">Overview data is not available; local runtime status remains visible.</p>}
+      {overview.data && Object.keys(overview.data.errors || {}).length > 0 && (
+        <p className="text-muted text-sm" role="status">
+          Some Overview data is unavailable: {Object.keys(overview.data.errors || {}).join(', ')}.
+        </p>
+      )}
     </div>
   )
 }
 
-function SetupNotice({ required }: { required?: boolean }) {
+function SetupNotice({ required, unavailable }: { required?: boolean; unavailable?: boolean }) {
+  if (unavailable) {
+    return (
+      <Card className="setup-banner" role="status">
+        <strong>Setup status unavailable</strong>
+        <span className="text-muted">The runtime could not verify model-provider configuration.</span>
+      </Card>
+    )
+  }
   if (!required) return null
   return (
     <Card className="setup-banner" role="status">
@@ -148,10 +177,11 @@ function SystemCard({
     : coverage
     ? `${coverage.fresh_count}/${coverage.domain_count} current`
     : coverageLoading ? 'loading' : 'deferred'
+  const connectivityState = shell?.connectivity?.state
   const rows = [
     ['Gateway', shell?.gateway?.running ? 'green' : shell ? 'red' : 'muted', shell ? (shell.gateway?.paused ? 'paused' : 'running') : 'not available'],
     ['Scheduler', scheduler?.running ? 'green' : scheduler ? 'yellow' : 'muted', scheduler?.state || 'not available'],
-    ['Connectivity', shell?.connectivity?.state === 'reachable' ? 'green' : 'muted', shell?.connectivity?.state || 'deferred'],
+    ['Connectivity', connectivityTone(connectivityState), connectivityState || (shell ? 'not available' : 'deferred')],
     ['Exchange', exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted', exchangeLabel],
     ['Data coverage', coverageLight, coverageValue],
     ['Live', shell?.live?.enabled ? 'yellow' : 'muted', humanize(shell?.live?.state || 'not available')],
@@ -166,14 +196,18 @@ function SystemCard({
   )
 }
 
-function BlotterSummaryStrip({ summary }: { summary?: OverviewBootstrap['summary'] }) {
+function BlotterSummaryStrip({ summary, state }: {
+  summary?: OverviewBootstrap['summary']
+  state: 'loading' | 'unavailable' | 'ready'
+}) {
   const navigate = useNavigate()
-  const staged = summary?.open_opportunities ?? 0
-  const awaiting = summary?.pending_proposals ?? 0
-  const runs = summary?.runs_24h ?? 0
+  const value = (number: number | undefined) => state === 'loading' ? 'loading' : state === 'unavailable' ? 'not available' : String(number ?? 0)
+  const staged = value(summary?.open_opportunities)
+  const awaiting = value(summary?.pending_proposals)
+  const runs = value(summary?.runs_24h)
   return (
     <div className="ov-blotter-strip" role="link" tabIndex={0} onClick={() => navigate('/blotter')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate('/blotter') } }} title="Open Blotter">
-      <span className="ov-blotter-label">Blotter</span><span className="ov-blotter-item">Staged <b className="mono">{staged}</b></span><span className="ov-blotter-item">Awaiting <b className={`mono ${awaiting ? 'ov-blotter-yellow' : ''}`}>{awaiting}</b></span><span className="ov-blotter-item">Runs 24h <b className="mono">{runs}</b></span><span className="ov-blotter-arrow">→</span>
+      <span className="ov-blotter-label">Blotter</span><span className="ov-blotter-item">Staged <b className="mono">{staged}</b></span><span className="ov-blotter-item">Awaiting <b className={`mono ${state === 'ready' && Number(summary?.pending_proposals) > 0 ? 'ov-blotter-yellow' : ''}`}>{awaiting}</b></span><span className="ov-blotter-item">Runs 24h <b className="mono">{runs}</b></span><span className="ov-blotter-arrow">→</span>
     </div>
   )
 }

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import MetricTile from './MetricTile'
-import type { OverviewBootstrap } from '../api/boot'
+import type { OverviewBootstrap, OverviewUtaAccount } from '../api/boot'
 import { fmtNum, fmtSigned, fmtCompactSigned, fmtSymbol } from '../lib/format'
 
 // Legacy local-paper contract is surfaced by AccountSnapshot: execution_target === 'local_paper'.
@@ -93,9 +93,15 @@ function AssetTooltip({ items }: { items: AssetItem[] }) {
 interface UTAAccount {
   broker_id: string
   display_name: string
-  equity_usdt: number
-  available_usdt: number
-  unrealized_pnl: number
+  equity_usdt: number | null
+  available_usdt: number | null
+  unrealized_pnl: number | null
+}
+
+export function overviewTodayPnl(account?: OverviewBootstrap['account']): number | null {
+  if (!account || account.today_realized_pnl_complete === false || account.today_realized_pnl == null) return null
+  const value = Number(account.today_realized_pnl)
+  return Number.isFinite(value) ? value : null
 }
 
 function BrokerBreakdown({ accounts, open }: { accounts: UTAAccount[]; open: boolean }) {
@@ -224,31 +230,48 @@ function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip }
 }
 
 /** PnL / Account zone — hero account value (UTA unified > exchange > local notional) + context tiles + equity curve. */
-export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }) {
+export default function PnLZone({ bootstrap, unavailable = false }: { bootstrap?: OverviewBootstrap; unavailable?: boolean }) {
   const navigate = useNavigate()
   const [hovered, setHovered] = useState(false)
   const [rangeDays, setRangeDays] = useState<number | undefined>(30)
   const [curveKind, setCurveKind] = useState<'equity' | 'pnl'>('equity')
 
   const portfolio = bootstrap?.account
-  const exchangeMode = String((portfolio as any)?.exchange_mode || 'demo')
-  const isLocalPaper = String((portfolio as any)?.execution_mode || '') === 'paper_internal'
+  const accountState: 'loading' | 'unavailable' | 'ready' = unavailable
+    ? 'unavailable'
+    : !bootstrap
+      ? 'loading'
+    : bootstrap.errors?.portfolio || !portfolio
+      ? 'unavailable'
+      : 'ready'
+  const exchangeMode = accountState === 'ready' ? String(portfolio?.exchange_mode || 'not available') : 'not available'
+  const isLocalPaper = accountState === 'ready' && portfolio?.execution_mode === 'paper_internal'
 
   const toneOf = (n: number | null) => (n == null ? 'muted' : n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral')
 
-  const p = portfolio as any
-  const uta = p?.uta_state as any
+  const p = accountState === 'ready' ? portfolio : undefined
+  const uta = p?.uta_state
 
   // UTA unified equity takes priority when available and has multiple accounts
   const utaEquity = uta?.sync_status === 'ok' && uta?.total_equity_usdt > 0 ? uta.total_equity_usdt : null
-  const utaAccounts: UTAAccount[] = uta?.accounts ?? []
+  const utaAccounts: UTAAccount[] = (uta?.accounts ?? []).map((account: OverviewUtaAccount) => ({
+    broker_id: String(account.broker_id || 'unknown'),
+    display_name: String(account.display_name || account.broker_id || 'Broker'),
+    equity_usdt: account.equity_usdt ?? null,
+    available_usdt: account.available_usdt ?? null,
+    unrealized_pnl: account.unrealized_pnl ?? null,
+  }))
 
-  const exchangeEquity = p?.exchange_equity_usdt
+  const exchangeEquity = p?.exchange_equity_usdt ?? null
   const syncStatus: string = utaEquity != null ? (uta?.sync_status ?? 'ok') : (p?.exchange_sync_status ?? 'unconfigured')
-  const totalRaw = utaEquity ?? exchangeEquity ?? p?.total_value_usdt
-  const totalValue = fmtNum(totalRaw)
+  const totalRaw = utaEquity ?? exchangeEquity ?? p?.total_value_usdt ?? null
+  const totalValue = accountState === 'loading' ? 'loading' : accountState === 'unavailable' ? 'not available' : fmtNum(totalRaw)
   const syncCaveat =
-    isLocalPaper
+    accountState === 'loading'
+      ? 'loading'
+      : accountState === 'unavailable'
+        ? 'not available'
+        : isLocalPaper
       ? 'local paper · no exchange'
       : utaEquity != null
       ? utaAccounts.length > 1 ? `${utaAccounts.length} accounts · unified` : 'unified'
@@ -260,9 +283,8 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
 
   const breakdown: AssetItem[] = p?.exchange_asset_breakdown ?? []
 
-  const todayRaw = p?.today_pnl
-  const todayComplete = p?.today_realized_pnl_complete !== false
-  const todayNum = todayRaw == null ? null : Number(todayRaw)
+  const todayComplete = accountState === 'ready' && p?.today_realized_pnl_complete !== false
+  const todayNum = accountState === 'ready' ? overviewTodayPnl(p) : null
   const dayPct = todayNum != null && totalRaw ? (todayNum / Number(totalRaw)) * 100 : null
 
   const unrealNum = p?.unrealized_pnl == null ? null : Number(p.unrealized_pnl)
@@ -271,8 +293,11 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
   const historicalNum = p?.all_historical_reconciled_pnl == null ? null : Number(p.all_historical_reconciled_pnl)
   const historicalCount = Number(p?.all_historical_reconciled_count ?? 0)
   const historicalUnavailable = Number(p?.all_historical_reconciliation_unavailable_count ?? 0)
-  const realComplete = p?.all_realized_pnl_complete !== false
-  const realizedContext = realizedUnavailableCount > 0
+  const realizedContext = accountState === 'loading'
+    ? 'loading'
+    : accountState === 'unavailable'
+      ? 'not available'
+      : realizedUnavailableCount > 0
     ? `partial · ${realizedUnavailableCount} close${realizedUnavailableCount === 1 ? '' : 's'} unverified`
     : realNum != null
       ? 'all-time'
@@ -288,10 +313,11 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
       const pct = exposureTotal > 0 ? Math.round((Number(val) / exposureTotal) * 100) : 0
       return `${sym.replace('USDT', '')} ${pct}%`
     })
-  const positionsCount = Number(p?.positions_count ?? 0)
+  const positionsCount = p?.positions_count == null ? null : Number(p.positions_count)
 
-  const todayPnlBySymbol = (p?.today_pnl_by_symbol || {}) as Record<string, number | null>
-  const unrealBySymbol = (p?.unrealized_by_symbol || {}) as Record<string, number>
+  const todayPnlBySymbol = p?.today_pnl_by_symbol || {}
+  const unrealBySymbol = p?.unrealized_by_symbol || {}
+  const metricValue = (value: number | null) => accountState === 'loading' ? 'loading' : value == null ? 'not available' : fmtCompactSigned(value)
 
   return (
     <div className="pnl-zone">
@@ -339,10 +365,14 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
         <div className="pnl-tiles">
           <HoverTile
             label="Today PnL"
-            value={todayNum == null ? 'not available' : fmtCompactSigned(todayNum)}
+            value={metricValue(todayNum)}
             tone={toneOf(todayNum)}
-            context={todayNum == null
-              ? todayComplete ? 'no data' : 'funding or close economics unavailable'
+            context={accountState === 'loading'
+              ? 'loading'
+              : accountState === 'unavailable'
+                ? 'not available'
+                : todayNum == null
+                  ? todayComplete ? 'no data' : 'funding or close economics unavailable'
               : !todayComplete
                 ? dayPct != null ? `${fmtCompactSigned(dayPct)}% · some closes unverified` : 'some closes unverified'
                 : dayPct != null ? `${fmtCompactSigned(dayPct)}% of managed` : undefined}
@@ -351,23 +381,23 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
           />
           <HoverTile
             label="Unrealized"
-            value={fmtCompactSigned(unrealNum)}
+            value={metricValue(unrealNum)}
             tone={toneOf(unrealNum)}
             onClick={() => navigate('/trades?tab=blotter')}
             tooltip={unrealBySymbol}
           />
           <MetricTile
             label="Realized"
-            value={fmtCompactSigned(realNum)}
+            value={metricValue(realNum)}
             tone={toneOf(realNum)}
             context={realizedContext}
             onClick={() => navigate('/trades?tab=analytics')}
           />
           <MetricTile
             label="Exposure"
-            value={positionsCount === 0 ? 'flat' : `${positionsCount} pos`}
-            tone={positionsCount > 0 ? 'neutral' : 'muted'}
-            context={exposureParts.length ? exposureParts.slice(0, 3).join(' · ') : 'no open exposure'}
+            value={accountState === 'loading' ? 'loading' : accountState === 'unavailable' ? 'not available' : positionsCount == null ? 'not available' : positionsCount === 0 ? 'flat' : `${positionsCount} pos`}
+            tone={positionsCount != null && positionsCount > 0 ? 'neutral' : 'muted'}
+            context={accountState === 'loading' ? 'loading' : accountState === 'unavailable' ? 'not available' : positionsCount == null ? 'not available' : exposureParts.length ? exposureParts.slice(0, 3).join(' · ') : 'no open exposure'}
             onClick={() => navigate('/trades?tab=blotter')}
           />
         </div>

@@ -122,7 +122,7 @@ function outputsCount(run: Pick<CompactAgentRun, 'outputs_created'>): number {
   try { return JSON.parse(run.outputs_created || '[]').length } catch { return 0 }
 }
 
-export default function AgentFeed({ bootstrap }: { bootstrap?: OverviewBootstrap }) {
+export default function AgentFeed({ bootstrap, unavailable = false }: { bootstrap?: OverviewBootstrap; unavailable?: boolean }) {
   const navigate = useNavigate()
   const cardRef = useRef<HTMLDivElement>(null)
   const [availableHeight, setAvailableHeight] = useState<number | null>(null)
@@ -194,6 +194,13 @@ export default function AgentFeed({ bootstrap }: { bootstrap?: OverviewBootstrap
 
   const items: FeedItem[] = []
   const activity = (bootstrap?.activity || []) as Array<Record<string, any>>
+  const activityState: 'loading' | 'unavailable' | 'ready' = unavailable
+    ? 'unavailable'
+    : !bootstrap
+      ? 'loading'
+    : bootstrap.errors?.activity || !bootstrap.activity
+      ? 'unavailable'
+      : 'ready'
 
   // ----- ops/both track: agent runs -----
   if (mode === 'ops' || mode === 'both') {
@@ -293,7 +300,9 @@ export default function AgentFeed({ bootstrap }: { bootstrap?: OverviewBootstrap
         </div>
       </div>
 
-      {visible.length === 0 ? (
+      {activityState !== 'ready' ? (
+        <p className="text-muted text-sm">{activityState === 'loading' ? 'Loading agent activity…' : 'Agent activity is not available.'}</p>
+      ) : visible.length === 0 ? (
         <p className="text-muted text-sm">No agent activity yet.</p>
       ) : (
         <div className="feed-list feed-list-scroll">

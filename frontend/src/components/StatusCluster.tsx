@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { RealtimeStatus } from '../lib/useRealtimeUpdates'
 import type { ShellBootstrap } from '../api/boot'
-import { deriveMasterState } from '../lib/systemState'
+import { connectivityTone, deriveMasterState } from '../lib/systemState'
 
 const StatusDiagnostics = lazy(() => import('./StatusDiagnostics'))
 const MODES = ['Observe', 'Paper', 'Full'] as const
@@ -56,7 +56,7 @@ export default function StatusCluster({
     <div className="topbar-status" aria-label="System status">
       <span className="status-cluster-lights" aria-hidden="true">
         <span className={`dot dot-${tone(running, 'red')}`} />
-        <span className={`dot dot-${data?.connectivity?.state === 'reachable' ? 'green' : data?.connectivity?.state === 'unavailable' ? 'red' : 'muted'}`} />
+        <span className={`dot dot-${connectivityTone(data?.connectivity?.state)}`} />
         <span className={`dot dot-${data?.live?.enabled ? 'yellow' : 'muted'}`} />
         <span className={`dot dot-${killed ? 'red' : 'muted'}`} />
       </span>

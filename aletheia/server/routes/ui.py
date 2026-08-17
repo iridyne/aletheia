@@ -87,6 +87,23 @@ def _scheduler_snapshot() -> dict:
         return {"enabled": None, "running": False, "state": f"unavailable:{type(exc).__name__}"}
 
 
+def _connectivity_snapshot() -> dict:
+    """Read the cached connectivity verdict without starting a network probe."""
+    from aletheia.agent_runtime.connectivity import get_status
+
+    status = get_status().get("external_connectivity")
+    if isinstance(status, dict):
+        return status
+    return {
+        "state": "unknown",
+        "severity": "info",
+        "priority": 3,
+        "message": "External connectivity status is unavailable.",
+        "action": "Wait for the next connectivity probe.",
+        "observed_at": None,
+    }
+
+
 def _operator_snapshot() -> dict:
     try:
         from aletheia.server.routes.operator import _operator_status_payload
@@ -156,6 +173,56 @@ def _count_summary() -> dict:
     }
 
 
+def _project_overview_account(portfolio: dict, cfg) -> dict:
+    """Keep the compact account read model in parity with PnLZone's inputs."""
+    fields = (
+        "total_value_usdt", "account_equity_usdt", "position_notional_usdt",
+        "today_pnl", "today_realized_pnl", "today_realized_pnl_complete",
+        "today_realized_pnl_unavailable_count", "unrealized_pnl", "realized_pnl",
+        "realized_pnl_complete", "realized_pnl_unavailable_count", "all_realized_pnl",
+        "all_realized_pnl_complete", "all_realized_pnl_unavailable_count",
+        "all_historical_reconciled_pnl", "all_historical_reconciled_count",
+        "all_historical_reconciliation_unavailable_count", "positions_count",
+        "exchange_equity_usdt", "exchange_state_age_sec", "exchange_sync_status",
+    )
+    account = {key: portfolio.get(key) for key in fields}
+    account["exposure_by_symbol"] = dict(list((portfolio.get("exposure_by_symbol") or {}).items())[:8])
+    account["today_pnl_by_symbol"] = dict(list((portfolio.get("today_pnl_by_symbol") or {}).items())[:8])
+    account["unrealized_by_symbol"] = dict(list((portfolio.get("unrealized_by_symbol") or {}).items())[:8])
+    account["exchange_asset_breakdown"] = list((portfolio.get("exchange_asset_breakdown") or [])[:8])
+
+    uta = portfolio.get("uta_state")
+    if isinstance(uta, dict):
+        age = uta.get("age_seconds")
+        try:
+            sync_status = uta.get("sync_status") or ("ok" if age is not None and float(age) <= 600 else "stale")
+        except (TypeError, ValueError):
+            sync_status = "stale"
+        account["uta_state"] = {
+            "sync_status": sync_status,
+            "total_equity_usdt": uta.get("total_equity_usdt"),
+            "total_available_usdt": uta.get("total_available_usdt"),
+            "total_unrealized_pnl": uta.get("total_unrealized_pnl"),
+            "age_seconds": age,
+            "fetched_at": uta.get("fetched_at"),
+            "accounts": [
+                {key: item.get(key) for key in ("broker_id", "display_name", "equity_usdt", "available_usdt", "unrealized_pnl")}
+                for item in (uta.get("accounts") or [])[:8]
+                if isinstance(item, dict)
+            ],
+        }
+    else:
+        account["uta_state"] = None
+
+    if cfg is not None:
+        account["exchange_mode"] = str(cfg.exchange.mode)
+        account["execution_mode"] = str(cfg.exchange.paper_execution_mode)
+    else:
+        account["exchange_mode"] = portfolio.get("exchange_mode")
+        account["execution_mode"] = portfolio.get("execution_mode")
+    return account
+
+
 @router.get("/shell-bootstrap")
 def shell_bootstrap(response: Response):
     started = time.perf_counter()
@@ -176,6 +243,14 @@ def shell_bootstrap(response: Response):
     except Exception:
         killed = bool(cfg.runtime.kill_switch_active)
     ticker = _safe("ticker", _ticker_snapshot, {})
+    connectivity = _safe("connectivity", _connectivity_snapshot, {
+        "state": "unknown",
+        "severity": "info",
+        "priority": 3,
+        "message": "External connectivity status is unavailable.",
+        "action": "Wait for the next connectivity probe.",
+        "observed_at": None,
+    })
     risk = _safe("risk", lambda: _risk_snapshot(cfg), {"status": "not_evaluated", "violations": []})
     alignment = _safe("exchange_alignment", lambda: exchange_alignment(cfg).to_dict(), {
         "status": "not_available",
@@ -185,6 +260,9 @@ def shell_bootstrap(response: Response):
         "paper_execution_mode": None,
     })
     alignment_value = alignment["value"]
+    connectivity_value = dict(connectivity["value"])
+    if connectivity["reason"]:
+        connectivity_value.update({"state": "unknown", "reason": connectivity["reason"]})
     current_commit = _safe("current_commit", _cached_head_commit, None)
     packaged = _safe("packaged_mode", lambda: __import__("aletheia.update.packaged_commands", fromlist=["is_packaged_mode"]).is_packaged_mode(), False)
     payload = {
@@ -205,7 +283,7 @@ def shell_bootstrap(response: Response):
             "paper_execution_mode": alignment_value.get("paper_execution_mode"),
         },
         "operator": operator["value"],
-        "connectivity": {"state": "not_available", "reason": "deferred_until_diagnostics"},
+        "connectivity": connectivity_value,
         "health": {"status": health["value"].get("status", "not_available"), "issues": health["value"].get("issues", [])[:3], "availability": health["availability"], "reason": health["reason"]},
         "runtime": {"version": __version__, "boot_commit": _safe("boot_commit", lambda: __import__("aletheia.agent_runtime.build_info", fromlist=["get_boot_commit"]).get_boot_commit(), None)["value"], "current_commit": current_commit["value"], "mode": "packaged" if packaged["value"] else "development", "update": _safe("update", lambda: __import__("aletheia.update.applier", fromlist=["update_progress"]).update_progress(), {})["value"]},
         "ticker": ticker["value"],
@@ -225,28 +303,19 @@ def overview_bootstrap(response: Response):
     setup = _safe("setup", lambda: _model_provider_usable(cfg["value"]) if cfg["value"] is not None else False, False)
     setup_required = not bool(setup["value"])
     p = portfolio["value"] or {}
-    account = {key: p.get(key) for key in (
-        "total_value_usdt", "account_equity_usdt", "today_pnl", "today_realized_pnl",
-        "today_realized_pnl_complete", "unrealized_pnl", "all_realized_pnl",
-        "all_realized_pnl_complete", "all_realized_pnl_unavailable_count", "positions_count",
-        "exchange_mode", "exchange_sync_status",
-    )}
-    account["exposure_by_symbol"] = dict(list((p.get("exposure_by_symbol") or {}).items())[:8])
-    account["exchange_asset_breakdown"] = list((p.get("exchange_asset_breakdown") or [])[:8])
-    if cfg["value"] is not None:
-        account["exchange_mode"] = str(cfg["value"].exchange.mode)
-        account["execution_mode"] = str(cfg["value"].exchange.paper_execution_mode)
+    account = _project_overview_account(p, cfg["value"])
+    errors = {key: value["reason"] for key, value in {"portfolio": portfolio, "summary": summary, "activity": activity, "config": cfg, "setup": setup}.items() if value["reason"]}
     payload = {
         "schema_version": "ui-overview-v1",
         "generated_at": _now(),
         "freshness": {"state": "fresh", "max_age_sec": 15},
-        "availability": "available",
+        "availability": "partial" if errors else "available",
         "account": account,
         "summary": summary["value"],
         "activity": activity["value"],
         "setup_required": setup_required,
-        "coverage": {"availability": "unavailable", "reason": "deferred_until_diagnostics"},
-        "errors": {key: value["reason"] for key, value in {"portfolio": portfolio, "summary": summary, "activity": activity, "config": cfg, "setup": setup}.items() if value["reason"]},
+        "coverage": {"availability": "deferred", "reason": "deferred_until_diagnostics"},
+        "errors": errors,
     }
     response.headers["Cache-Control"] = "no-store"
     response.headers["Server-Timing"] = f"local;dur={(time.perf_counter() - started) * 1000:.1f}"
