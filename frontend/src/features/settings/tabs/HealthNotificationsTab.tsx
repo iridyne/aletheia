@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useMutation, type QueryClient } from "@tanstack/react-query";
 import { api } from "../../../api/client";
 import {
@@ -12,25 +12,29 @@ import {
 import { SettingsFeatureSection } from "../SettingsFeatureSection";
 import { HEALTH_MONITORING_SECTION, WEBHOOK_SECTION } from "../health/healthState";
 import { TelegramSection } from "../telegram/TelegramSection";
+import { useSettingsDraftLifecycle } from "../draftLifecycle";
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : "Request failed";
 }
 
-function HealthCard({ settings, qc }: { settings?: Record<string, unknown>; qc: QueryClient }) {
+function HealthCard({ settings, qc, onDirty }: { settings?: Record<string, unknown>; qc: QueryClient; onDirty?: (id: string, isDirty: boolean) => void }) {
 	const health = settings?.health as Record<string, unknown> | undefined;
 	const [vals, setVals] = useState<Record<string, unknown>>({});
 	const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-
-	useEffect(() => {
-		if (!health) return;
-		setVals({ ...health });
-	}, [settings]);
 
 	const set = (key: string, value: unknown) => {
 		setVals((previous) => ({ ...previous, [key]: value }));
 		setMsg(null);
 	};
+	const dirty = Object.keys(vals).length > 0 && JSON.stringify(vals) !== JSON.stringify(health ?? {});
+	useSettingsDraftLifecycle({
+		id: "health-monitoring",
+		dirty,
+		onDirty,
+		serverKey: settings,
+		adoptServer: () => { if (health) setVals({ ...health }); },
+	});
 
 	const mutation = useMutation({
 		mutationFn: () => api.updateHealthConfig(vals),
@@ -98,7 +102,7 @@ interface WebhookConfig {
 	timeout_sec?: number;
 }
 
-function WebhookCard({ settings, qc }: { settings?: Record<string, unknown>; qc: QueryClient }) {
+function WebhookCard({ settings, qc, onDirty }: { settings?: Record<string, unknown>; qc: QueryClient; onDirty?: (id: string, isDirty: boolean) => void }) {
 	const webhook = (settings?.webhook as WebhookConfig | undefined) ?? {};
 	const [enabled, setEnabled] = useState(false);
 	const [url, setUrl] = useState("");
@@ -108,15 +112,6 @@ function WebhookCard({ settings, qc }: { settings?: Record<string, unknown>; qc:
 	const [notifySummary, setNotifySummary] = useState(true);
 	const [timeoutSec, setTimeoutSec] = useState(10);
 	const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-
-	useEffect(() => {
-		setEnabled(!!webhook.enabled);
-		setUrl(webhook.url || "");
-		setNotifyFills(webhook.notify_trade_fills !== false);
-		setNotifyAlerts(webhook.notify_alerts !== false);
-		setNotifySummary(webhook.notify_daily_summary !== false);
-		setTimeoutSec(webhook.timeout_sec ?? 10);
-	}, [settings]);
 
 	const mutation = useMutation({
 		mutationFn: () =>
@@ -136,6 +131,28 @@ function WebhookCard({ settings, qc }: { settings?: Record<string, unknown>; qc:
 		},
 		onError: (error) =>
 			setMsg({ ok: false, text: `✗ ${errorMessage(error)}` }),
+	});
+	const dirty = enabled !== !!webhook.enabled
+		|| url !== (webhook.url || "")
+		|| secret !== ""
+		|| notifyFills !== (webhook.notify_trade_fills !== false)
+		|| notifyAlerts !== (webhook.notify_alerts !== false)
+		|| notifySummary !== (webhook.notify_daily_summary !== false)
+		|| timeoutSec !== (webhook.timeout_sec ?? 10);
+	useSettingsDraftLifecycle({
+		id: "webhook",
+		dirty,
+		onDirty,
+		serverKey: settings,
+		adoptServer: () => {
+			setEnabled(!!webhook.enabled);
+			setUrl(webhook.url || "");
+			setSecret("");
+			setNotifyFills(webhook.notify_trade_fills !== false);
+			setNotifyAlerts(webhook.notify_alerts !== false);
+			setNotifySummary(webhook.notify_daily_summary !== false);
+			setTimeoutSec(webhook.timeout_sec ?? 10);
+		},
 	});
 
 	return (
@@ -210,20 +227,22 @@ function WebhookCard({ settings, qc }: { settings?: Record<string, unknown>; qc:
 export function HealthNotificationsTab({
 	settings,
 	qc,
+	onDirty,
 }: {
 	settings?: Record<string, unknown>;
 	qc: QueryClient;
+	onDirty?: (id: string, isDirty: boolean) => void;
 }) {
 	return (
 		<div>
 			<SettingsFeatureSection descriptor={HEALTH_MONITORING_SECTION}>
-				<HealthCard settings={settings} qc={qc} />
+				<HealthCard settings={settings} qc={qc} onDirty={onDirty} />
 			</SettingsFeatureSection>
 
-			<TelegramSection settings={settings} qc={qc} />
+			<TelegramSection settings={settings} qc={qc} onDirty={onDirty} />
 
 			<SettingsFeatureSection descriptor={WEBHOOK_SECTION}>
-				<WebhookCard settings={settings} qc={qc} />
+				<WebhookCard settings={settings} qc={qc} onDirty={onDirty} />
 			</SettingsFeatureSection>
 		</div>
 	);

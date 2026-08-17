@@ -53,7 +53,7 @@ describe('RiskTab', () => {
     const html = renderRiskTab()
 
     expect(SRC).toContain('<UniverseConfigCard settings={settings} qc={qc} onDirty={onDirty} />')
-    expect(SRC).toContain('<EventTriggerCard settings={settings} qc={qc} />')
+    expect(SRC).toContain('<EventTriggerCard settings={settings} qc={qc} onDirty={onDirty} />')
     expect(html).toContain('Empty — all symbols are tradable.')
     expect(html).toContain('Max daily loss')
     expect(html).toContain('Kill switch auto-trigger (live)')

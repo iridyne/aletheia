@@ -119,6 +119,7 @@ class Position:
     leverage: int | None = None
     mark_price: float = 0.0  # current exchange mark price (for honest valuation)
     ctime_ms: int | None = None  # exchange-reported position open time
+    position_id: str | None = None  # exchange-reported position identity
 
 
 def _bitget_int(value) -> int:
@@ -558,6 +559,7 @@ class BitgetClient:
                 leverage=int(lev) if lev not in (None, "") else None,
                 mark_price=float(p.get("markPrice", 0) or 0),
                 ctime_ms=ctime_ms,
+                position_id=str(p.get("posId") or p.get("positionId") or p.get("id") or "") or None,
             ))
         return positions
 

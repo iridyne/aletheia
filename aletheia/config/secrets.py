@@ -6,6 +6,33 @@ from aletheia.config.loader import get_data_dir, is_preview_mode
 
 _SERVICE_NAME = "aletheia-trading-os"
 
+# These fragments are matched after key names are case/separator-normalized,
+# so ``api_key``, ``ApiKey``, and ``api-key`` share one trust-boundary rule.
+SECRET_KEY_FRAGMENTS = (
+    "secret",
+    "password",
+    "passphrase",
+    "apikey",
+    "token",
+    "credential",
+    "privatekey",
+)
+
+
+def normalize_secret_key(key: object) -> str:
+    """Normalize a mapping key without treating ``key`` itself as sensitive."""
+    return "".join(
+        character
+        for character in str(key).casefold()
+        if character.isascii() and character.isalnum()
+    )
+
+
+def is_secret_key(key: object) -> bool:
+    """Return whether a mapping key can carry a credential-like value."""
+    normalized = normalize_secret_key(key)
+    return any(fragment in normalized for fragment in SECRET_KEY_FRAGMENTS)
+
 
 class PreviewSecretAccessError(RuntimeError):
     """Raised when an isolated preview tries to persist a credential."""

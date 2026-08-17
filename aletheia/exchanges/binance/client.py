@@ -182,6 +182,11 @@ class BinanceClient:
                 result.append({
                     "symbol": p.get("symbol", ""),
                     "side": p.get("side", ""),
+                    "position_id": str(
+                        p.get("id")
+                        or (p.get("info") or {}).get("positionId")
+                        or ""
+                    ) or None,
                     "quantity": qty,
                     "entry_price": float(p.get("entryPrice", 0) or 0),
                     "unrealized_pnl": float(p.get("unrealizedPnl", 0) or 0),

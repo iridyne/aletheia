@@ -9,9 +9,10 @@ import {
   Switch as Toggle,
 } from '../../../components/ui'
 import { ModelProvidersSection } from '../model-providers/ModelProvidersSection'
+import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
 import type { SettingsData, SettingsProvider } from '../../../api/settings'
-import type { SettingsProps, SettingsStatusProps } from '../types'
+import type { SettingsDirtyProps, SettingsProps, SettingsStatusProps } from '../types'
 
 const PERMISSION_MODES = ['Observe', 'Paper', 'Full']
 const PROVIDER_LABELS: Record<string, string> = {
@@ -65,7 +66,7 @@ export const LLM_COST_SECTION = {
   searchTerms: ['tokenomics', 'spend', 'budget', 'economics', 'cooldown', 'broker', 'inference'],
 } satisfies SettingsFeatureDescriptor
 
-export function AgentModelsTab({ status, settings, qc }: SettingsStatusProps) {
+export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
   const agent = settings?.agent as any || {}
   const runtime = settings?.runtime as any || {}
   // #164 fix: previously these mutations had onSuccess only — a rejected save
@@ -92,32 +93,32 @@ export function AgentModelsTab({ status, settings, qc }: SettingsStatusProps) {
     onError: onSaveError('Bypass distress gate'),
   })
   const runtimeMut = useMutation({
-    mutationFn: (body: Parameters<typeof api.updateRuntimeConfig>[0]) => api.updateRuntimeConfig(body),
+    mutationFn: (body: any) => api.updateRuntimeConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Runtime config'),
   })
   const operatorMut = useMutation({
-    mutationFn: (body: Parameters<typeof api.updateOperatorConfig>[0]) => api.updateOperatorConfig(body),
+    mutationFn: (body: any) => api.updateOperatorConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Operator config'),
   })
   const piDaemonMut = useMutation({
-    mutationFn: (body: Parameters<typeof api.updatePiDaemonConfig>[0]) => api.updatePiDaemonConfig(body),
+    mutationFn: (body: any) => api.updatePiDaemonConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('System Operator daemon'),
   })
   const serenityMut = useMutation({
-    mutationFn: (body: Parameters<typeof api.updateSerenityConfig>[0]) => api.updateSerenityConfig(body),
+    mutationFn: (body: any) => api.updateSerenityConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Serenity config'),
   })
   const controllerMut = useMutation({
-    mutationFn: (body: Parameters<typeof api.updateControllerConfig>[0]) => api.updateControllerConfig(body),
+    mutationFn: (body: any) => api.updateControllerConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Filter controller config'),
   })
   const learningMut = useMutation({
-    mutationFn: (body: Parameters<typeof api.updateLearningConfig>[0]) => api.updateLearningConfig(body),
+    mutationFn: (body: any) => api.updateLearningConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Paper Learning config'),
   })
@@ -161,14 +162,14 @@ export function AgentModelsTab({ status, settings, qc }: SettingsStatusProps) {
   const legacyGuardAutoPromote = !!guardCfg.auto_promote_enabled
 
   const guardMut = useMutation({
-    mutationFn: (body: Parameters<typeof api.updateGuardConfig>[0]) => api.updateGuardConfig(body),
+    mutationFn: (body: any) => api.updateGuardConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Guard promotion'),
   })
 
   const regimeCfg = (settings?.regime ?? {}) as any
   const regimeMut = useMutation({
-    mutationFn: (body: Parameters<typeof api.updateRegimeConfig>[0]) => api.updateRegimeConfig(body),
+    mutationFn: (body: any) => api.updateRegimeConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
     onError: onSaveError('Regime config'),
   })
@@ -547,10 +548,10 @@ export function AgentModelsTab({ status, settings, qc }: SettingsStatusProps) {
         )}
       </SettingsFeatureSection>
 
-      <ModelProvidersSection qc={qc} />
+      <ModelProvidersSection qc={qc} onDirty={onDirty} />
 
       <SettingsFeatureSection descriptor={INFERENCE_ADMISSION_SECTION}>
-        <InferenceAdmissionCard qc={qc} />
+        <InferenceAdmissionCard qc={qc} onDirty={onDirty} />
       </SettingsFeatureSection>
 
       <SettingsFeatureSection descriptor={LLM_COST_SECTION}>
@@ -632,7 +633,7 @@ function EconomicsSnapshotCard({ economics, qc }: { economics?: SettingsData['ec
 // the semantic decoupling shows up in the operator's UI, not just the code.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function InferenceAdmissionCard({ qc }: { qc: SettingsProps['qc'] }) {
+function InferenceAdmissionCard({ qc, onDirty }: { qc: SettingsProps['qc']; onDirty?: SettingsDirtyProps['onDirty'] }) {
   const { data } = useQuery({ queryKey: ['model'], queryFn: api.getModelConfig })
   const { data: broker } = useQuery({
     queryKey: ['model-broker'],
@@ -700,7 +701,7 @@ function InferenceAdmissionCard({ qc }: { qc: SettingsProps['qc'] }) {
                 </span>
               )}
             </div>
-            <InferenceLimitsForm name={name} config={cfg} metrics={metrics} qc={qc} />
+            <InferenceLimitsForm name={name} config={cfg} metrics={metrics} qc={qc} onDirty={onDirty} />
           </div>
         )
       })}
@@ -708,8 +709,8 @@ function InferenceAdmissionCard({ qc }: { qc: SettingsProps['qc'] }) {
   )
 }
 
-function InferenceLimitsForm({ name, config, metrics, qc }: {
-  name: string; config: SettingsProvider & Record<string, unknown>; metrics?: Record<string, number>; qc: SettingsProps['qc']
+function InferenceLimitsForm({ name, config, metrics, qc, onDirty }: {
+  name: string; config: Partial<SettingsProvider> & Record<string, unknown>; metrics?: Record<string, number>; qc: SettingsProps['qc']; onDirty?: SettingsDirtyProps['onDirty']
 }) {
   const [maxConcurrency, setMaxConcurrency] = useState(config?.inference_max_concurrency ?? 2)
   const [rpm, setRpm] = useState(config?.inference_requests_per_minute ?? 60)
@@ -717,6 +718,29 @@ function InferenceLimitsForm({ name, config, metrics, qc }: {
   const [queueCapacity, setQueueCapacity] = useState(config?.inference_queue_capacity ?? 64)
   const [reservedSlots, setReservedSlots] = useState(config?.inference_reserved_high_priority_slots ?? 8)
   const [timeoutSec, setTimeoutSec] = useState(config?.inference_timeout_sec ?? 300)
+  const serverValues = {
+    maxConcurrency: config?.inference_max_concurrency ?? 2,
+    rpm: config?.inference_requests_per_minute ?? 60,
+    tpm: config?.inference_tpm ?? 120000,
+    queueCapacity: config?.inference_queue_capacity ?? 64,
+    reservedSlots: config?.inference_reserved_high_priority_slots ?? 8,
+    timeoutSec: config?.inference_timeout_sec ?? 300,
+  }
+  const dirty = JSON.stringify({ maxConcurrency, rpm, tpm, queueCapacity, reservedSlots, timeoutSec }) !== JSON.stringify(serverValues)
+  useSettingsDraftLifecycle({
+    id: `inference-limits-${name}`,
+    dirty,
+    onDirty,
+    serverKey: JSON.stringify(serverValues),
+    adoptServer: () => {
+      setMaxConcurrency(serverValues.maxConcurrency)
+      setRpm(serverValues.rpm)
+      setTpm(serverValues.tpm)
+      setQueueCapacity(serverValues.queueCapacity)
+      setReservedSlots(serverValues.reservedSlots)
+      setTimeoutSec(serverValues.timeoutSec)
+    },
+  })
   const save = useMutation({
     mutationFn: () => {
       const payload = {
@@ -734,6 +758,7 @@ function InferenceLimitsForm({ name, config, metrics, qc }: {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['model'] })
       qc.invalidateQueries({ queryKey: ['model-broker'] })
+      qc.invalidateQueries({ queryKey: ['settings'] })
     },
   })
 

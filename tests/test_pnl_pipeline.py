@@ -155,9 +155,11 @@ def test_paper_internal_never_consumes_exchange_upnl(
     [marked] = pnl.mark_positions_to_market(persist=True)
 
     assert marked["unrealized_pnl"] == 10.0
+    assert marked["unrealized_pnl_source"] == "local_estimate"
     stored = repo._select_one("positions", "upnl-local-paper")
     assert stored is not None
     assert stored["unrealized_pnl"] == 10.0
+    assert stored["unrealized_pnl_source"] == "local_estimate"
 
 
 @spec_claim(
@@ -262,12 +264,242 @@ def test_exchange_aggregate_upnl_is_not_reused_across_local_positions(
 
     assert marked["upnl-bitget-leg-a"]["unrealized_pnl"] == 10.0
     assert marked["upnl-bitget-leg-b"]["unrealized_pnl"] == -20.0
+    assert marked["upnl-bitget-leg-a"]["unrealized_pnl_source"] == "ambiguous"
+    assert marked["upnl-bitget-leg-b"]["unrealized_pnl_source"] == "ambiguous"
     stored_a = repo._select_one("positions", "upnl-bitget-leg-a")
     stored_b = repo._select_one("positions", "upnl-bitget-leg-b")
     assert stored_a is not None
     assert stored_b is not None
     assert stored_a["unrealized_pnl"] == 10.0
     assert stored_b["unrealized_pnl"] == -20.0
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PM-19",
+        "pipeline_position_manager",
+        "§1 exchange uPnL account and Position identity",
+        "L2c",
+        "Exchange uPnL must match the local broker/account fingerprint and, when "
+        "available, the broker Position identity; mismatches or ambiguous rows "
+        "fall back without persisting the remote value and expose a source status.",
+        status="implemented",
+    )
+)
+def test_exchange_upnl_account_fingerprint_mismatch_falls_back_and_is_labeled(
+    db, monkeypatch,
+):
+    """A cached value from another account cannot become authoritative PnL."""
+    from aletheia.portfolio import exchange_sync, pnl
+
+    repo.insert_position(Position(
+        id="upnl-account-mismatch",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="okx_demo",
+    ))
+    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "age_seconds": 0.0,
+        "positions": [{
+            "broker_id": "okx_demo",
+            "account_fingerprint": "sha256:other-account",
+            "symbol": "BTC/USDT",
+            "market_type": "usdt_futures",
+            "side": "long",
+            "unrealized_pnl": 777.0,
+        }],
+    })
+
+    [marked] = pnl.mark_positions_to_market(persist=True)
+
+    assert marked["unrealized_pnl"] == 10.0
+    assert marked["unrealized_pnl_source"] == "unavailable"
+    stored = repo._select_one("positions", "upnl-account-mismatch")
+    assert stored is not None
+    assert stored["unrealized_pnl"] == 10.0
+    assert stored["unrealized_pnl_source"] == "unavailable"
+
+
+def test_exchange_position_identity_disambiguates_same_instrument_rows(
+    db, monkeypatch,
+):
+    """A broker Position ID permits independent attribution of same-key rows."""
+    from aletheia.portfolio import exchange_sync, pnl
+    from aletheia.portfolio.disappearance_confirmation import logical_account_fingerprint
+
+    account_fingerprint = logical_account_fingerprint(
+        broker_id="okx_demo",
+        account_environment="demo",
+        execution_mode="okx_demo",
+    )
+    for position_id, broker_position_id, entry_price in (
+        ("upnl-position-a", "venue-a", 100.0),
+        ("upnl-position-b", "venue-b", 120.0),
+    ):
+        repo.insert_position(Position(
+            id=position_id,
+            symbol="BTC/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            quantity=1.0,
+            entry_price=entry_price,
+            execution_mode="okx_demo",
+            reconciliation_identity=json.dumps({
+                "account_fingerprint": account_fingerprint,
+                "broker_position_id": broker_position_id,
+            }),
+        ))
+    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "age_seconds": 0.0,
+        "positions": [
+            {
+                "broker_id": "okx_demo",
+                "account_fingerprint": account_fingerprint,
+                "position_id": "venue-a",
+                "symbol": "BTC/USDT",
+                "market_type": "usdt_futures",
+                "side": "long",
+                "unrealized_pnl": 11.0,
+            },
+            {
+                "broker_id": "okx_demo",
+                "account_fingerprint": account_fingerprint,
+                "position_id": "venue-b",
+                "symbol": "BTC/USDT",
+                "market_type": "usdt_futures",
+                "side": "long",
+                "unrealized_pnl": 22.0,
+            },
+        ],
+    })
+
+    marked = {
+        row["id"]: row for row in pnl.mark_positions_to_market(persist=True)
+    }
+
+    assert marked["upnl-position-a"]["unrealized_pnl"] == 11.0
+    assert marked["upnl-position-a"]["unrealized_pnl_source"] == "exchange_exact"
+    assert marked["upnl-position-b"]["unrealized_pnl"] == 22.0
+    assert marked["upnl-position-b"]["unrealized_pnl_source"] == "exchange_exact"
+
+
+def test_duplicate_local_broker_position_identity_falls_back(
+    db, monkeypatch,
+):
+    """Duplicate local rows cannot both adopt one exact venue uPnL value."""
+    from aletheia.portfolio import exchange_sync, pnl
+    from aletheia.portfolio.disappearance_confirmation import logical_account_fingerprint
+
+    account_fingerprint = logical_account_fingerprint(
+        broker_id="okx_demo",
+        account_environment="demo",
+        execution_mode="okx_demo",
+    )
+    for position_id, entry_price in (("upnl-duplicate-a", 100.0), ("upnl-duplicate-b", 120.0)):
+        repo.insert_position(Position(
+            id=position_id,
+            symbol="BTC/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            quantity=1.0,
+            entry_price=entry_price,
+            execution_mode="okx_demo",
+            reconciliation_identity=json.dumps({
+                "account_fingerprint": account_fingerprint,
+                "broker_position_id": "venue-duplicate",
+            }),
+        ))
+    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "age_seconds": 0.0,
+        "positions": [{
+            "broker_id": "okx_demo",
+            "account_fingerprint": account_fingerprint,
+            "position_id": "venue-duplicate",
+            "symbol": "BTC/USDT",
+            "market_type": "usdt_futures",
+            "side": "long",
+            "unrealized_pnl": 777.0,
+        }],
+    })
+
+    marked = {
+        row["id"]: row for row in pnl.mark_positions_to_market(persist=True)
+    }
+
+    assert marked["upnl-duplicate-a"]["unrealized_pnl"] == 10.0
+    assert marked["upnl-duplicate-a"]["unrealized_pnl_source"] == "ambiguous"
+    assert marked["upnl-duplicate-b"]["unrealized_pnl"] == -10.0
+    assert marked["upnl-duplicate-b"]["unrealized_pnl_source"] == "ambiguous"
+
+
+def test_exchange_exact_short_does_not_inherit_long_upnl(
+    db, monkeypatch,
+):
+    """Direction remains part of the exchange uPnL identity."""
+    from aletheia.portfolio import exchange_sync, pnl
+
+    repo.insert_position(Position(
+        id="upnl-short-exact",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="short",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="okx_demo",
+    ))
+    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 90.0)
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "age_seconds": 0.0,
+        "positions": [
+            {
+                "broker_id": "okx_demo",
+                "symbol": "BTC/USDT",
+                "market_type": "usdt_futures",
+                "side": "long",
+                "unrealized_pnl": -777.0,
+            },
+            {
+                "broker_id": "okx_demo",
+                "symbol": "BTC/USDT",
+                "market_type": "usdt_futures",
+                "side": "short",
+                "unrealized_pnl": 7.0,
+            },
+        ],
+    })
+
+    [marked] = pnl.mark_positions_to_market(persist=True)
+
+    assert marked["unrealized_pnl"] == 7.0
+    assert marked["unrealized_pnl_source"] == "exchange_exact"
+
+
+@pytest.mark.asyncio
+async def test_positions_api_exposes_unrealized_pnl_source(client):
+    """The owner-facing Position projection preserves mark provenance."""
+    http_client, _tmp_path = client
+    repo.insert_position(Position(
+        id="upnl-api-source",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="okx_demo",
+        unrealized_pnl_source="ambiguous",
+    ))
+
+    response = await http_client.get("/api/positions")
+
+    assert response.status_code == 200
+    [row] = [item for item in response.json() if item["id"] == "upnl-api-source"]
+    assert row["unrealized_pnl_source"] == "ambiguous"
 
 
 @spec_claim(

@@ -974,6 +974,32 @@ def test_scheduler_logs_safe_position_manager_error_facts(monkeypatch):
     )]
 
 
+def test_scheduler_does_not_fail_on_pending_close_waiting_observation(monkeypatch):
+    import aletheia.agent_runtime.scheduler as sched
+    import aletheia.portfolio.position_manager as position_manager
+    import aletheia.portfolio.protective_barrier as protective_barrier
+
+    monkeypatch.setattr(
+        protective_barrier,
+        "run_due_position_protection_cycle",
+        lambda: {"errors": []},
+    )
+    monkeypatch.setattr(
+        position_manager,
+        "evaluate_open_positions",
+        lambda: {
+            "errors": [],
+            "observations": [{"code": "pending_close_protection_waiting"}],
+        },
+    )
+    failures = []
+    monkeypatch.setattr(sched, "_record_job_failure", lambda *args: failures.append(args))
+
+    sched._run_position_manager()
+
+    assert failures == []
+
+
 @spec_claim(
     SpecClaim(
         "PL-PM-14",

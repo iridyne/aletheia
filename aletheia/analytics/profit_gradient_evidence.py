@@ -35,6 +35,7 @@ from aletheia.analytics.profit_loop_counterfactual import (
     COUNTERFACTUAL_CONTRACT_VERSION,
     profit_loop_registry_hash,
 )
+from aletheia.config.secrets import SECRET_KEY_FRAGMENTS, is_secret_key
 from aletheia.storage.hashing import sha256_json
 from aletheia.storage.sqlite import readonly_db
 
@@ -71,9 +72,8 @@ _PROFIT_LOOP_ELIGIBILITY = (
     "opened_on_or_after_registration_closed_by_cutoff_complete_position_fact_with_frozen_hypothesis_and_1m_prefix"
 )
 _PROFIT_LOOP_STOPPING_RULE = "single_locked_retrospective_evaluation_after_fixed_cutoff_no_optional_stopping"
-_SECRET_FRAGMENTS = (
-    "secret", "password", "passphrase", "api_key", "token", "credential", "private_key"
-)
+# Backwards-compatible module alias for the shared trust-boundary contract.
+_SECRET_FRAGMENTS = SECRET_KEY_FRAGMENTS
 _WATERFALL_ORDER = (
     "source_unavailable",
     "outside_epoch",
@@ -182,7 +182,7 @@ def _redact(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {
             str(key): "[redacted]"
-            if any(fragment in str(key).lower() for fragment in _SECRET_FRAGMENTS)
+            if is_secret_key(key)
             else _redact(item)
             for key, item in value.items()
         }

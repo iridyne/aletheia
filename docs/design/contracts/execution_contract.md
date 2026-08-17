@@ -252,13 +252,17 @@ Position 的 id、symbol、market type 与 sanitized field category，不执行�
 `PL-ADOPT-26` 还验证已接管 futures Position 的持久化 leverage 被 Risk 账户杠杆计算实际采用。
 
 交易所返回的 Position uPnL 是账户内的聚合暴露，不能被复制成多个本地 Position 各自的完整 uPnL。
-在没有可直连的 broker Position identity 时，远端当前 match key 只有一个候选且本地 open Position 也
-只有一个候选，才允许采用该聚合值；任一侧基数大于一都必须拒绝分配，逐仓保留现有本地 mark estimate，
-持久化路径也不得把同一聚合值写入每一行。当前 match key 必须包含 canonical symbol、broker、归一化后的
-market type 与 direction；market type 缺失、未知或不一致时拒绝采用远端值。该守卫仍不替代 account
-fingerprint 与直接 Position identity 的完整匹配要求。远端值还必须来自被现有 cache-health classifier
-判定为 `ok` 的统一缓存；`stale` 或无法判定 freshness 的缓存只能退回本地 mark estimate，持久化路径也
-不得把其中的远端值写入 Position。可执行检查：`PL-PM-16`、`PL-PM-17`、`PL-PM-18`。
+当前身份包含 canonical symbol、broker/execution mode、归一化 market type、direction，以及双方可用的
+非敏感 account fingerprint；fingerprint 不一致时必须 fail closed。broker 提供 Position identity 时，
+远端值还必须在同一 fingerprint 作用域内命中该 identity；同一作用域的重复 identity 标为 ambiguous，
+不能 last-row-wins。没有本地 broker Position identity 时，只有远端当前作用域唯一且本地 open Position
+也只有一个候选，才允许采用聚合值；任一侧基数大于一都拒绝分配，逐行保留本地 mark estimate。
+缺失/未知/不一致 market type 仍拒绝采用远端值。没有 fingerprint 或 broker identity 的 legacy cache
+行只走原有单候选兼容路径，不能作为 exchange-backed Demo qualification 证据。远端值还必须来自被现有
+cache-health classifier 判定为 `ok` 的统一缓存；`stale` 或无法判定 freshness 的缓存只能退回本地 mark
+estimate，持久化路径也不得把其中的远端值写入 Position。Position/API/UI 通过
+`unrealized_pnl_source` 暴露 `exchange_exact`、`ambiguous`、`unavailable` 或 `local_estimate`。
+可执行检查：`PL-PM-16`、`PL-PM-17`、`PL-PM-18`、`PL-PM-19`。
 
 一次新鲜快照里缺少本地持仓，只能创建 `position_disappearance_candidates` 和一条不可变 observation，
 不能直接调用 fallback-price close。重复读取同一个 cache、时间倒退、stale/incomplete/wrong-account
@@ -379,6 +383,12 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
 - **交易所明确拒单不得按 scheduler cadence 重试**：无法安全归类为“无仓位”的确定性 Close 拒单，
   Order 保持 `error`，Position 以 `pending_close_status=submission_rejected` 保留原 claim；不得新建 Close
   Order 或自动重发，须由既有 reconciliation 查明原因。该状态不伪装成成交或仓位消失。
+- **未决 claim 不得关闭保护性观察**：Position Manager 仍读取 exact fresh mark 并评估
+  Layer-0/SL/TP/max-hold/trailing；若保护规则再次触发，只记录等待原 claim 收敛，绝不调用
+  exchange close 或创建替代 Order。`positions` 的 owner read model 同时暴露
+  `close_convergence_state`、`close_convergence_owner_status`、claim age 与
+  `close_convergence_requires_reconciliation`；缺失/过期时间戳和 stale claim fail-closed 为
+  `manual attention required`。
 - **启动准入必须读取权威 Position 主账**：Startup Behavior Gate 的 `pending_closes` 检查不能只读取
   遗留 `ps_positions.status=unknown` 投影；它还必须读取 open `positions.pending_close_status`。
   `submission_unknown`、`submission_rejected`、`materialization_missing`、`position_absence_unverified`、

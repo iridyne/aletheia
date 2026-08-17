@@ -37,13 +37,13 @@ describe('ExecutionTab', () => {
   it('keeps exchange, live authority, and paper components composed', () => {
     const html = renderExecutionTab()
 
-    expect(SRC).toContain('<ExchangeConnectionCard qc={qc} />')
+    expect(SRC).toContain('<ExchangeConnectionCard qc={qc} onDirty={onDirty} />')
     expect(html).toContain('Experimental Live authority state')
     expect(SRC).toContain('此操作只记录 live_limited 权限前置状态，不会把新 Proposal 路由到实盘')
     expect(SRC).toContain('当前自主 Proposal 仍使用 Paper execution mode 中选择的模拟执行通道')
     expect(SRC).toContain('只有未来独立完成并验证 live Proposal 路由后，真实资金风险才会出现')
     expect(SRC).toContain('<TradingParamsCard settings={settings} qc={qc} onDirty={onDirty} />')
-    expect(SRC).toContain('<CapitalEventsCard />')
-    expect(SRC).toContain('<PaperAccountCard qc={qc} />')
+    expect(SRC).toContain('<CapitalEventsCard onDirty={onDirty} />')
+    expect(SRC).toContain('<PaperAccountCard qc={qc} onDirty={onDirty} />')
   })
 })

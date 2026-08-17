@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v31"
+SCHEMA_VERSION = "aletheia-sqlite-v32"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4760,6 +4760,16 @@ _PERSONA_ROLLOUT_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+_EXCHANGE_UPNL_IDENTITY_COLUMNS = (
+    ("unrealized_pnl_source", "positions", "TEXT NOT NULL DEFAULT 'local_estimate'"),
+)
+_EXCHANGE_UPNL_IDENTITY_CHECKSUM = hashlib.sha256(
+    (
+        repr(_EXCHANGE_UPNL_IDENTITY_COLUMNS)
+        + "\nexchange_upnl_identity_v1"
+    ).encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -4856,6 +4866,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260817_0030_persona_rollout_v31": (
         "prospective Persona rollout state, evidence events, and sizing manifests"
+    ),
+    "20260817_0031_exchange_upnl_identity_v32": (
+        "owner-facing exchange uPnL identity and fallback source"
     ),
 }
 
@@ -5089,6 +5102,18 @@ def _apply_persona_rollout_v31(db: sqlite3.Connection) -> None:
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.executescript(_PERSONA_ROLLOUT_SQL)
+    db.execute("PRAGMA optimize")
+
+
+def _apply_exchange_upnl_identity_v32(db: sqlite3.Connection) -> None:
+    """Persist the owner-facing source of each open-position uPnL mark."""
+
+    for column, table, column_type in _EXCHANGE_UPNL_IDENTITY_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.execute("PRAGMA optimize")
 
 
@@ -5615,6 +5640,12 @@ _MIGRATIONS = (
         checksum=_PERSONA_ROLLOUT_CHECKSUM,
         schema_version="aletheia-sqlite-v31",
         apply=_apply_persona_rollout_v31,
+    ),
+    MigrationStep(
+        migration_id="20260817_0031_exchange_upnl_identity_v32",
+        checksum=_EXCHANGE_UPNL_IDENTITY_CHECKSUM,
+        schema_version="aletheia-sqlite-v32",
+        apply=_apply_exchange_upnl_identity_v32,
     ),
 )
 

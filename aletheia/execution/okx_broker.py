@@ -24,6 +24,10 @@ from aletheia.exchanges.submission_errors import (
     is_ambiguous_submission_error as _is_ambiguous_submission_error,
 )
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
+from aletheia.execution.close_convergence import (
+    CLOSE_CLAIM_STATES,
+    has_unresolved_close_claim,
+)
 from aletheia.execution.broker_utils import clean_error_message
 from aletheia.execution.post_commit_audit import write_post_commit_audit
 from aletheia.execution.position_enrichment import build_entry_enrichment, liquidation_price_for
@@ -43,11 +47,7 @@ _OKX_ACCOUNT_MODES = {
     "okx_demo": "demo",
     "okx_live_limited": "live",
 }
-_OPEN_CLOSE_STATES = {
-    "pending", "submitted", "partial", "partially_filled", "submission_unknown",
-    "submission_rejected", "materialization_missing", "position_absence_unverified",
-    "overfilled",
-}
+_OPEN_CLOSE_STATES = set(CLOSE_CLAIM_STATES)
 _RETRY_SUPPRESSING_ORDER_STATES = (
     "pending", "submitted", "partial", "partially_filled", "submission_unknown",
     "materialization_missing",
@@ -613,10 +613,7 @@ def _claim_close_order(
             raise ValueError(
                 f"position {position_id} is not open (status={row.get('status')})"
             )
-        if (
-            row.get("pending_close_order_id")
-            and row.get("pending_close_status") in _OPEN_CLOSE_STATES
-        ):
+        if has_unresolved_close_claim(row):
             return row, None, None
 
         requested_at = datetime.now(timezone.utc).isoformat()

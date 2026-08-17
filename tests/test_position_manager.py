@@ -380,8 +380,10 @@ def test_stale_pending_close_is_escalated_without_resubmission(tmp_path, monkeyp
     second = evaluate_open_positions()
 
     assert first["closed"] == second["closed"] == 0
-    assert {error["code"] for error in first["errors"]} == {
-        "pending_close_reconciliation_required"
+    error_codes = {error["code"] for error in first["errors"]}
+    assert "pending_close_reconciliation_required" in error_codes
+    assert error_codes & {
+        "protective_mark_lookup_failed", "protective_mark_unavailable",
     }
     assert repo._select_one("positions", p.id)["pending_close_order_id"] == "unresolved-close"
     assert repo._select_all("orders", where="position_id=?", params=(p.id,), limit=10) == []
@@ -433,5 +435,8 @@ def test_pending_close_with_unknown_age_is_escalated(tmp_path, monkeypatch, requ
     result = evaluate_open_positions()
 
     assert result["closed"] == 0
-    assert result["errors"][0]["code"] == "pending_close_reconciliation_required"
+    assert any(
+        error["code"] == "pending_close_reconciliation_required"
+        for error in result["errors"]
+    )
     assert repo._select_one("positions", p.id)["pending_close_order_id"] == "unresolved-close"

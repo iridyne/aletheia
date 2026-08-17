@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
 	useMutation,
 	useQuery,
@@ -13,6 +13,7 @@ import {
 	Switch as Toggle,
 } from "../../../components/ui";
 import { SettingsFeatureSection } from "../SettingsFeatureSection";
+import { useSettingsDraftLifecycle } from "../draftLifecycle";
 import { TELEGRAM_SECTION } from "./telegramState";
 
 interface TelegramConfig {
@@ -139,9 +140,11 @@ export function parseTelegramDraft({
 export function TelegramSection({
 	settings,
 	qc,
+	onDirty,
 }: {
 	settings?: Record<string, unknown>;
 	qc: QueryClient;
+	onDirty?: (id: string, isDirty: boolean) => void;
 }) {
 	const { data: health } = useQuery({
 		queryKey: ["telegram-health"],
@@ -160,18 +163,7 @@ export function TelegramSection({
 		null,
 	);
 
-	useEffect(() => {
-		const telegram = (settings?.telegram as TelegramConfig | undefined) ?? {};
-		setEnabled(!!telegram.enabled);
-		setChatIdsInput((telegram.allowed_chat_ids ?? []).join(", "));
-		setNotifyFills(telegram.notify_trade_fills !== false);
-		setNotifySummary(telegram.notify_daily_summary !== false);
-		setSummaryHourInput(String(telegram.daily_summary_hour_cst ?? 8));
-		setDndEnabled(!!telegram.dnd_enabled);
-		setDndStartInput(String(telegram.dnd_start_hour ?? 23));
-		setDndEndInput(String(telegram.dnd_end_hour ?? 7));
-	}, [settings]);
-
+	const telegram = (settings?.telegram as TelegramConfig | undefined) ?? {};
 	const draft = parseTelegramDraft({
 		chatIdsInput,
 		summaryHourInput,
@@ -180,6 +172,30 @@ export function TelegramSection({
 	});
 	const inputErrorId = "telegram-input-error";
 	const summaryHourLabel = summaryHourInput.trim() || "--";
+	const dirty = enabled !== !!telegram.enabled
+		|| chatIdsInput !== (telegram.allowed_chat_ids ?? []).join(", ")
+		|| notifyFills !== (telegram.notify_trade_fills !== false)
+		|| notifySummary !== (telegram.notify_daily_summary !== false)
+		|| summaryHourInput !== String(telegram.daily_summary_hour_cst ?? 8)
+		|| dndEnabled !== !!telegram.dnd_enabled
+		|| dndStartInput !== String(telegram.dnd_start_hour ?? 23)
+		|| dndEndInput !== String(telegram.dnd_end_hour ?? 7);
+	useSettingsDraftLifecycle({
+		id: "telegram",
+		dirty,
+		onDirty,
+		serverKey: settings,
+		adoptServer: () => {
+			setEnabled(!!telegram.enabled);
+			setChatIdsInput((telegram.allowed_chat_ids ?? []).join(", "));
+			setNotifyFills(telegram.notify_trade_fills !== false);
+			setNotifySummary(telegram.notify_daily_summary !== false);
+			setSummaryHourInput(String(telegram.daily_summary_hour_cst ?? 8));
+			setDndEnabled(!!telegram.dnd_enabled);
+			setDndStartInput(String(telegram.dnd_start_hour ?? 23));
+			setDndEndInput(String(telegram.dnd_end_hour ?? 7));
+		},
+	});
 
 	const mutation = useMutation({
 		mutationFn: () => {

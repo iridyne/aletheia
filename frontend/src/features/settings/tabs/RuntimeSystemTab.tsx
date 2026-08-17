@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { api } from '../../../api/client'
 import {
@@ -12,7 +12,8 @@ import {
   type NumField,
 } from '../../../components/ui'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
-import type { SettingsProps, SettingsStatusProps } from '../types'
+import { useSettingsDraftLifecycle } from '../draftLifecycle'
+import type { SettingsDirtyProps, SettingsStatusProps } from '../types'
 
 export const APP_SECTION = {
   id: 'app', title: 'App', tab: 'runtime', description: 'Dashboard process settings.',
@@ -43,14 +44,12 @@ export const NETWORK_PROXY_SECTION = {
   searchTerms: ['proxy', 'socks', 'http proxy', 'enforce', 'outbound', 'ip leak'],
 } satisfies SettingsFeatureDescriptor
 
-function HistoricalDataCard({ settings, qc }: SettingsProps) {
+function HistoricalDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const hd = settings?.historical_data as any
   const [vals, setVals] = useState<Record<string, unknown>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  useEffect(() => {
-    if (!hd) return
-    setVals({
+  const serverVals = hd ? {
       enabled: hd.enabled ?? true,
       max_bars_per_pair: hd.max_bars_per_pair ?? 50000,
       default_months: hd.default_months ?? 6,
@@ -60,11 +59,18 @@ function HistoricalDataCard({ settings, qc }: SettingsProps) {
       active_universe_backfill_enabled: hd.active_universe_backfill_enabled ?? true,
       active_universe_backfill_interval_minutes: hd.active_universe_backfill_interval_minutes ?? 10,
       active_universe_backfill_max_pairs_per_run: hd.active_universe_backfill_max_pairs_per_run ?? 3,
-    })
-  }, [hd])
+  } : {}
+  const dirty = !!hd && Object.keys(vals).length > 0 && JSON.stringify(vals) !== JSON.stringify(serverVals)
+  useSettingsDraftLifecycle({
+    id: 'historical-data',
+    dirty,
+    onDirty,
+    serverKey: hd,
+    adoptServer: () => { if (hd) setVals({ ...serverVals }) },
+  })
 
   const { mutate: save } = useMutation({
-    mutationFn: () => api.updateHistoricalDataConfig(vals as Parameters<typeof api.updateHistoricalDataConfig>[0]),
+    mutationFn: () => api.updateHistoricalDataConfig(vals as any),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setMsg({ ok: true, text: 'Saved' }) },
     onError: (e: any) => setMsg({ ok: false, text: e.message }),
   })
@@ -98,7 +104,7 @@ function HistoricalDataCard({ settings, qc }: SettingsProps) {
   )
 }
 
-function AppRows({ status, settings, qc }: SettingsStatusProps) {
+function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
   const app = settings?.app as any || {}
   const runtime = settings?.runtime as any || {}
   const remoteControl = settings?.remote_control as any || {}
@@ -111,6 +117,7 @@ function AppRows({ status, settings, qc }: SettingsStatusProps) {
       ok: result.ok,
       text: result.ok ? 'Token saved in this browser.' : result.error,
     })
+    if (result.ok) setRemoteToken('')
   }
   const { data: remoteInterfaces } = useQuery({
     queryKey: ['remote-control-interfaces'],
@@ -122,11 +129,11 @@ function AppRows({ status, settings, qc }: SettingsStatusProps) {
   const codeDrift = !!bootCommit && !!currentCommit && bootCommit !== currentCommit
 
   const appMut = useMutation({
-    mutationFn: (body: Parameters<typeof api.updateAppConfig>[0]) => api.updateAppConfig(body),
+    mutationFn: (body: any) => api.updateAppConfig(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
   const runtimeMut = useMutation({
-    mutationFn: (body: Parameters<typeof api.updateRuntimeConfig>[0]) => api.updateRuntimeConfig(body),
+    mutationFn: (body: any) => api.updateRuntimeConfig(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
   })
   const remoteControlMut = useMutation({
@@ -137,7 +144,14 @@ function AppRows({ status, settings, qc }: SettingsStatusProps) {
     },
   })
   const runtimePending = useRef(false)
-  const safeRuntimeMut = (body: Parameters<typeof api.updateRuntimeConfig>[0]) => {
+  useSettingsDraftLifecycle({
+    id: 'remote-control-token',
+    dirty: remoteToken.length > 0,
+    onDirty,
+    serverKey: undefined,
+    adoptServer: () => undefined,
+  })
+  const safeRuntimeMut = (body: any) => {
     if (runtimePending.current) return
     runtimePending.current = true
     runtimeMut.mutate(body, { onSettled: () => { runtimePending.current = false } })
@@ -282,17 +296,20 @@ function AppRows({ status, settings, qc }: SettingsStatusProps) {
   )
 }
 
-function RetentionCard({ settings, qc }: SettingsProps) {
+function RetentionCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const retention = settings?.retention as any
-  const [vals, setVals] = useState<Record<string, unknown>>({})
+  const [vals, setVals] = useState<Record<string, any>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  useEffect(() => {
-    if (!retention) return
-    setVals({ ...retention })
-  }, [settings])
-
-  const set = (k: string, v: unknown) => { setVals(prev => ({ ...prev, [k]: v })); setMsg(null) }
+  const set = (k: string, v: any) => { setVals(prev => ({ ...prev, [k]: v })); setMsg(null) }
+  const dirty = Object.keys(vals).length > 0 && JSON.stringify(vals) !== JSON.stringify(retention ?? {})
+  useSettingsDraftLifecycle({
+    id: 'retention',
+    dirty,
+    onDirty,
+    serverKey: retention,
+    adoptServer: () => { if (retention) setVals({ ...retention }) },
+  })
 
   const RETENTION_FIELDS: NumField[] = [
     { key: 'agent_runs_days',          label: 'Agent runs',          unit: 'days', min: 1, max: 90, step: 1, isInt: true },
@@ -307,7 +324,7 @@ function RetentionCard({ settings, qc }: SettingsProps) {
 
   const mut = useMutation({
     mutationFn: () => api.updateRetentionConfig(
-      Object.fromEntries(RETENTION_FIELDS.map(({ key }) => [key, vals[key]])) as Parameters<typeof api.updateRetentionConfig>[0],
+      Object.fromEntries(RETENTION_FIELDS.map(({ key }) => [key, vals[key]])) as any,
     ),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
@@ -327,17 +344,11 @@ function RetentionCard({ settings, qc }: SettingsProps) {
   )
 }
 
-function UpdateCard({ settings, qc }: SettingsProps) {
+function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const updateCfg = settings?.update as any || {}
-  const [branch, setBranch] = useState('')
+  const [branch, setBranch] = useState('master')
   const [enabled, setEnabled] = useState(true)
   const [cfgMsg, setCfgMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  useEffect(() => {
-    if (!updateCfg) return
-    setBranch(updateCfg.branch || 'master')
-    setEnabled(updateCfg.enabled !== false)
-  }, [settings])
 
   const { data, isLoading } = useQuery({ queryKey: ['update-status'], queryFn: api.getUpdateStatus })
   const [applyMsg, setApplyMsg] = useState('')
@@ -351,6 +362,18 @@ function UpdateCard({ settings, qc }: SettingsProps) {
     mutationFn: () => api.updateUpdateConfig({ enabled, branch }),
     onSuccess: () => { setCfgMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setCfgMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+
+  const dirty = !!settings && (branch !== (updateCfg.branch || 'master') || enabled !== (updateCfg.enabled !== false))
+  useSettingsDraftLifecycle({
+    id: 'software-updates',
+    dirty,
+    onDirty,
+    serverKey: settings,
+    adoptServer: () => {
+      setBranch(updateCfg.branch || 'master')
+      setEnabled(updateCfg.enabled !== false)
+    },
   })
 
   const apply = useMutation({
@@ -407,7 +430,7 @@ function UpdateCard({ settings, qc }: SettingsProps) {
   )
 }
 
-function NetworkCard({ settings, qc }: SettingsProps) {
+function NetworkCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const net = (settings?.network as any) || {}
   const [protocol, setProtocol] = useState<string>(net.proxy_protocol || 'http')
   const [host, setHost] = useState<string>(net.proxy_host ?? '')
@@ -417,18 +440,28 @@ function NetworkCard({ settings, qc }: SettingsProps) {
   const [testResult, setTestResult] = useState<{ reachable: boolean; latency_ms: number; error: string | null } | null>(null)
   const [testing, setTesting] = useState(false)
 
-  // Sync from server state when settings load
-  useEffect(() => {
-    setProtocol(net.proxy_protocol || 'http')
-    setHost(net.proxy_host ?? '')
-    setPort(net.proxy_port != null ? String(net.proxy_port) : '')
-    setEnforce(!!net.enforce)
-    setNoProxy(net.no_proxy || '')
-  }, [net.proxy_protocol, net.proxy_host, net.proxy_port, net.enforce, net.no_proxy])
-
   const mut = useMutation({
-    mutationFn: (body: Parameters<typeof api.updateNetworkConfig>[0]) => api.updateNetworkConfig(body),
+    mutationFn: (body: any) => api.updateNetworkConfig(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+  })
+
+  const dirty = protocol !== (net.proxy_protocol || 'http')
+    || host !== (net.proxy_host ?? '')
+    || port !== (net.proxy_port != null ? String(net.proxy_port) : '')
+    || enforce !== !!net.enforce
+    || noProxy !== (net.no_proxy || '')
+  useSettingsDraftLifecycle({
+    id: 'network-proxy',
+    dirty,
+    onDirty,
+    serverKey: settings,
+    adoptServer: () => {
+      setProtocol(net.proxy_protocol || 'http')
+      setHost(net.proxy_host ?? '')
+      setPort(net.proxy_port != null ? String(net.proxy_port) : '')
+      setEnforce(!!net.enforce)
+      setNoProxy(net.no_proxy || '')
+    },
   })
 
   const handleSave = () => {
@@ -617,25 +650,23 @@ function DataExportCard() {
   )
 }
 
-// No child on this tab reports precise dirty state; the shell's delegated guard
-// (features/settings/dirtyGuard.ts) covers them, so there is no onDirty to accept.
-export function RuntimeSystemTab({ status, settings, qc }: SettingsStatusProps) {
+export function RuntimeSystemTab({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
   return (
     <div>
       <SettingsFeatureSection descriptor={APP_SECTION}>
-        <AppRows status={status} settings={settings} qc={qc} />
+        <AppRows status={status} settings={settings} qc={qc} onDirty={onDirty} />
       </SettingsFeatureSection>
 
       <SettingsFeatureSection descriptor={DATA_RETENTION_SECTION}>
         <Collapsible title="Historical Data">
           <p className="hint mb-2">Controls local OHLCV bulk storage for backtesting. Nightly backfill downloads missing candles so backtests run entirely offline.</p>
           <Collapsible title="Backfill & Storage Parameters">
-            <HistoricalDataCard settings={settings} qc={qc} />
+            <HistoricalDataCard settings={settings} qc={qc} onDirty={onDirty} />
           </Collapsible>
         </Collapsible>
         <Collapsible title="Data Retention">
           <p className="hint mb-2">How long telemetry is kept before automatic pruning. Trust-bearing records (trades, audit log) are never pruned.</p>
-          <RetentionCard settings={settings} qc={qc} />
+          <RetentionCard settings={settings} qc={qc} onDirty={onDirty} />
         </Collapsible>
       </SettingsFeatureSection>
 
@@ -646,11 +677,11 @@ export function RuntimeSystemTab({ status, settings, qc }: SettingsStatusProps) 
       </SettingsFeatureSection>
 
       <SettingsFeatureSection descriptor={SOFTWARE_UPDATES_SECTION}>
-        <UpdateCard settings={settings} qc={qc} />
+        <UpdateCard settings={settings} qc={qc} onDirty={onDirty} />
       </SettingsFeatureSection>
 
       <SettingsFeatureSection descriptor={NETWORK_PROXY_SECTION}>
-        <NetworkCard settings={settings} qc={qc} />
+        <NetworkCard settings={settings} qc={qc} onDirty={onDirty} />
       </SettingsFeatureSection>
     </div>
   )

@@ -39,6 +39,10 @@ class BrokerPosition:
     leverage: int | None = None
     mark_price: float = 0.0
     opened_at_ms: int | None = None  # exchange-reported position open time
+    # Optional public venue identity. It is never a local Position id and must
+    # only be used when the broker actually reports it.
+    position_id: str | None = None
+    account_fingerprint: str | None = None
     leverage_source: str | None = None
     market_type: str = "usdt_futures"
 
