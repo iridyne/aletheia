@@ -11,6 +11,7 @@ export interface KeyStatus {
 export interface ProviderConfigView {
 	type: string;
 	kind: ProviderCategory;
+	configured: boolean;
 	display_name: string;
 	enabled: boolean;
 	model: string;

@@ -26,7 +26,12 @@ from aletheia.model_provider.registry import (  # pyright: ignore[reportMissingI
 from aletheia.model_provider.router import (
     clear_cache,
     clear_cache_async,
+    clear_provider_verification,
+    _classify_health_error,
     healthcheck_all_with_metadata,
+    persist_provider_verification,
+    provider_configuration_identity,
+    provider_is_configured,
     PROVIDER_REGISTRY,
 )
 
@@ -42,7 +47,28 @@ class ModelHealthRecord(BaseModel):
     """Canonical provider health observation returned to UI/API consumers."""
 
     provider: str
-    available: bool
+    configured: bool
+    enabled: bool
+    reachable: bool | None = None
+    verified: bool | None = None
+    verified_at: str | None = None
+    verification_identity: str | None = None
+    verification_source: str | None = None
+    verification_invalidated: bool = False
+    verification_detail: str | None = None
+    state: Literal[
+        "not_configured",
+        "disabled",
+        "unknown",
+        "stale",
+        "unavailable",
+        "reachable",
+        "verified",
+    ] = "unknown"
+    reason_code: str = "no_observation"
+    routing_roles: list[str] = Field(default_factory=list)
+    # Compatibility alias retained while consumers migrate to reachable.
+    available: bool = False
     model: str = ""
     error: str | None = None
     models: list[str] = Field(default_factory=list)
@@ -92,8 +118,59 @@ def _model_health_record(
         )
         freshness = "fresh" if age_seconds <= stale_after_seconds else "stale"
 
+    configured = bool(getattr(health, "configured", True))
+    enabled = bool(getattr(health, "enabled", True))
+    raw_reachable = getattr(health, "reachable", None)
+    reachable = (
+        bool(getattr(health, "available", False))
+        if raw_reachable is None and observed is not None
+        else raw_reachable
+    )
+    verified = getattr(health, "verified", None)
+    verification_invalidated = bool(getattr(health, "verification_invalidated", False))
+    reason_code = str(getattr(health, "reason_code", "") or "")
+    raw_state = str(getattr(health, "state", "") or "")
+    if not enabled and raw_state == "disabled":
+        state: Literal[
+            "not_configured", "disabled", "unknown", "stale", "unavailable", "reachable", "verified"
+        ] = "disabled"
+        reason_code = "disabled"
+    elif not configured:
+        state: Literal[
+            "not_configured", "disabled", "unknown", "stale", "unavailable", "reachable", "verified"
+        ] = "not_configured"
+        reason_code = "missing_configuration"
+    elif observed is not None and freshness == "stale":
+        state = "stale"
+    elif reachable is True:
+        state = "verified" if verified is True else "reachable"
+        reason_code = reason_code or ("verified" if verified is True else "reachable")
+    elif reachable is False:
+        state = "unavailable"
+    elif verified is True:
+        state = "verified"
+        reason_code = reason_code or "verified"
+    elif verification_invalidated:
+        state = "unknown"
+        reason_code = "verification_invalidated"
+    else:
+        state = "unknown"
+        reason_code = reason_code or "no_observation"
+
     return ModelHealthRecord(
         provider=str(getattr(health, "provider", "")),
+        configured=configured,
+        enabled=enabled,
+        reachable=reachable,
+        verified=verified,
+        verified_at=getattr(health, "verified_at", None),
+        verification_identity=getattr(health, "verification_identity", None),
+        verification_source=getattr(health, "verification_source", None),
+        verification_invalidated=verification_invalidated,
+        verification_detail=getattr(health, "verification_detail", None),
+        state=state,
+        reason_code=reason_code,
+        routing_roles=list(getattr(health, "routing_roles", None) or []),
         available=bool(getattr(health, "available", False)),
         model=str(getattr(health, "model", "") or ""),
         error=getattr(health, "error", None),
@@ -154,6 +231,7 @@ def get_model_config():
         entry: dict = {
             "type": ptype,
             "kind": provider_kind(ptype),
+            "configured": provider_is_configured(name, pcfg),
             "display_name": pcfg.display_name or (definition.label if definition else name),
             "enabled": pcfg.enabled,
             "model": pcfg.model,
@@ -261,19 +339,66 @@ async def ping_model():
         latency_ms = int((time.monotonic() - t0) * 1000)
         content = (resp.content or "").strip()
         if not content and not _has_provider_completion_evidence(resp.raw):
+            verification_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            verification_identity = None
+            verification_persisted = False
+            try:
+                current_cfg = await asyncio.to_thread(load_config)
+                current_pcfg = current_cfg.models.providers.get(provider_name)
+                if current_pcfg is not None:
+                    verification_identity = provider_configuration_identity(provider_name, current_pcfg)
+                    verification_persisted = await asyncio.to_thread(
+                        persist_provider_verification,
+                        provider_name,
+                        identity=verification_identity,
+                        verified=False,
+                        source="model_ping",
+                        reason_code="probe_failure",
+                        detail="empty response",
+                        verified_at=verification_at,
+                    )
+            except Exception:
+                verification_persisted = False
             return {
                 "ok": False,
                 "latency_ms": latency_ms,
                 "model": resp.model or "unknown",
                 "response": "",
                 "error": "empty response",
+                "verified": False,
+                "verified_at": verification_at,
+                "verification_identity": verification_identity,
+                "verification_persisted": verification_persisted,
             }
+        verification_persisted = False
+        verification_identity = None
+        verification_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        try:
+            current_cfg = await asyncio.to_thread(load_config)
+            current_pcfg = current_cfg.models.providers.get(provider_name)
+            if current_pcfg is not None:
+                verification_identity = provider_configuration_identity(provider_name, current_pcfg)
+                verification_persisted = await asyncio.to_thread(
+                    persist_provider_verification,
+                    provider_name,
+                    identity=verification_identity,
+                    verified=True,
+                    source="model_ping",
+                    reason_code="verified",
+                    verified_at=verification_at,
+                )
+        except Exception:
+            verification_persisted = False
         return {
             "ok": True,
             "latency_ms": latency_ms,
             "model": resp.model or "unknown",
             "response": content[:50],
             "error": None,
+            "verified": True,
+            "verified_at": verification_at,
+            "verification_identity": verification_identity,
+            "verification_persisted": verification_persisted,
         }
     except Exception as e:
         if inference_call is not None:
@@ -281,7 +406,41 @@ async def ping_model():
                 inference_call, status="error", error_type=type(e).__name__
             )
         latency_ms = int((time.monotonic() - t0) * 1000)
-        return {"ok": False, "latency_ms": latency_ms, "model": "unknown", "response": "", "error": str(e)[:200]}
+        verification_persisted = False
+        verification_identity = None
+        verification_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        try:
+            failed_cfg = await asyncio.to_thread(load_config)
+            failed_pcfg = failed_cfg.models.providers.get(
+                failed_cfg.models.default_provider
+            )
+            if failed_pcfg is not None:
+                verification_identity = provider_configuration_identity(
+                    failed_cfg.models.default_provider, failed_pcfg
+                )
+                verification_persisted = await asyncio.to_thread(
+                    persist_provider_verification,
+                    failed_cfg.models.default_provider,
+                    identity=verification_identity,
+                    verified=False,
+                    source="model_ping",
+                    reason_code=_classify_health_error(str(e)),
+                    detail=str(e)[:200],
+                    verified_at=verification_at,
+                )
+        except Exception:
+            verification_persisted = False
+        return {
+            "ok": False,
+            "latency_ms": latency_ms,
+            "model": "unknown",
+            "response": "",
+            "error": str(e)[:200],
+            "verified": False,
+            "verified_at": verification_at,
+            "verification_identity": verification_identity,
+            "verification_persisted": verification_persisted,
+        }
 
 
 @router.get("/model/provider-types")
@@ -336,7 +495,8 @@ async def detect_models(req: DetectModelsRequest):
             raise HTTPException(422, str(exc)) from exc
         if candidate_origin != persisted_origin:
             stored_key = None
-    api_key = req.api_key or stored_key
+    candidate_key = req.api_key.strip() if isinstance(req.api_key, str) else req.api_key
+    api_key = candidate_key or stored_key
 
     if provider_type == "openai_compatible":
         provider = OpenAICompatibleProvider(
@@ -390,9 +550,12 @@ class TestCandidateRequest(BaseModel):
 
 @router.post("/model/test-candidate")
 async def test_model_candidate(req: TestCandidateRequest):
-    """Verify-before-commit probe: health-check a CANDIDATE provider config without
-    persisting anything. The candidate api_key is used for the live check only and is
-    never stored, logged, or echoed back."""
+    """Probe a candidate without storing its credentials.
+
+    Passive checks only report reachability. ``probe=true`` performs explicit
+    inference verification and persists evidence only when the candidate matches
+    the currently saved provider identity.
+    """
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
     from aletheia.model_provider.databricks import DatabricksProvider
@@ -417,7 +580,8 @@ async def test_model_candidate(req: TestCandidateRequest):
             raise HTTPException(422, str(exc)) from exc
         if candidate_origin != persisted_origin:
             stored_key = None
-    api_key = req.api_key or stored_key
+    candidate_key = req.api_key.strip() if isinstance(req.api_key, str) else req.api_key
+    api_key = candidate_key or stored_key
 
     if provider_type == "openai_compatible":
         provider = OpenAICompatibleProvider(
@@ -451,12 +615,26 @@ async def test_model_candidate(req: TestCandidateRequest):
     else:
         raise HTTPException(400, f"No test-candidate support for {provider_type}")
 
+    candidate_identity = _candidate_configuration_identity(req, provider_type, pcfg, api_key)
     try:
         health = await provider.healthcheck()
         # /models access is optional: gateways can permit inference while denying or
         # intermittently failing catalogue listing. An explicit probe is the authority.
         if not health.available and not req.probe:
-            return {"available": False, "model": health.model, "error": health.error}
+            return {
+                "available": False,
+                "configured": True,
+                "reachable": False,
+                "verified": None,
+                "verified_at": None,
+                "verification_identity": candidate_identity,
+                "verification_source": None,
+                "state": "unavailable",
+                "reason_code": _classify_health_error(health.error),
+                "model": health.model,
+                "error": health.error,
+                "persisted": False,
+            }
 
         if req.probe:
             from aletheia.model_provider.base import ModelRequest
@@ -503,9 +681,61 @@ async def test_model_candidate(req: TestCandidateRequest):
                     record_inference_finished(
                         inference_call, status="error", error_type=type(e).__name__
                     )
-                return {"available": False, "model": health.model, "error": f"inference failed: {e}"}
+                detail = f"inference failed: {e}"
+                verification_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                persisted = await asyncio.to_thread(
+                    persist_provider_verification,
+                    req.provider,
+                    identity=candidate_identity,
+                    verified=False,
+                    source="explicit_probe",
+                    reason_code=_classify_health_error(detail),
+                    detail=detail[:200],
+                    verified_at=verification_at,
+                )
+                return {
+                    "available": False,
+                    "configured": True,
+                    "reachable": False,
+                    "verified": False,
+                    "verified_at": verification_at,
+                    "verification_identity": candidate_identity,
+                    "verification_source": "explicit_probe",
+                    "state": "unavailable",
+                    "reason_code": _classify_health_error(detail),
+                    "model": health.model,
+                    "error": detail,
+                    "persisted": persisted,
+                }
 
-        return {"available": True, "model": health.model, "error": None, "models": health.models}
+        persisted = False
+        verification_at = None
+        if req.probe:
+            verification_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            persisted = await asyncio.to_thread(
+                persist_provider_verification,
+                req.provider,
+                identity=candidate_identity,
+                verified=True,
+                source="explicit_probe",
+                reason_code="verified",
+                verified_at=verification_at,
+            )
+        return {
+            "available": True,
+            "configured": True,
+            "reachable": True,
+            "verified": True if req.probe else None,
+            "verified_at": verification_at,
+            "verification_identity": candidate_identity,
+            "verification_source": "explicit_probe" if req.probe else None,
+            "state": "verified" if req.probe else "reachable",
+            "reason_code": "verified" if req.probe else "reachable",
+            "model": health.model,
+            "error": None,
+            "models": health.models,
+            "persisted": persisted,
+        }
     finally:
         await _close_candidate_provider(provider)
 
@@ -670,12 +900,40 @@ def _profile_api_key_ref(provider_id: str, provider_type: str, pcfg) -> str:
     return f"model.profile.{provider_id}.api_key"
 
 
-def _apply_model_config_sync(req: ModelConfigRequest):
+def _candidate_configuration_identity(req, provider_type: str, pcfg, api_key: str | None) -> str:
+    """Build the same identity that a verified profile will persist."""
+
+    from aletheia.config.schema import ProviderConfig
+
+    values = pcfg.model_dump(mode="python") if pcfg is not None else {}
+    for field_name in ProviderConfig.model_fields:
+        if field_name in req.model_fields and getattr(req, field_name) is not None:
+            values[field_name] = getattr(req, field_name)
+    values["type"] = provider_type
+    if provider_type == "databricks" and not values.get("protocol"):
+        values["protocol"] = "serving_endpoint"
+    candidate = ProviderConfig.model_validate(values)
+    if api_key:
+        candidate.api_key_secret_ref = _profile_api_key_ref(req.provider, provider_type, candidate)
+        overrides = {candidate.api_key_secret_ref: api_key}
+    else:
+        overrides = None
+    return provider_configuration_identity(
+        req.provider,
+        candidate,
+        credential_overrides=overrides,
+    )
+
+
+def _apply_model_config_sync(req: ModelConfigRequest, verification: dict | None = None):
     if req.api_key is not None:
         req.api_key = req.api_key.strip() or None
 
     cfg = load_config()
     pcfg = cfg.models.providers.get(req.provider)
+    identity_before = (
+        provider_configuration_identity(req.provider, pcfg) if pcfg is not None else None
+    )
     provider_type = _resolve_request_type(req, pcfg)
     previous_workspace_url = (pcfg.workspace_url or pcfg.base_url) if pcfg is not None else None
     if pcfg is None:
@@ -758,6 +1016,22 @@ def _apply_model_config_sync(req: ModelConfigRequest):
         written_secret_ref = secret_ref
         pcfg.api_key_secret_ref = secret_ref
 
+    identity_after = provider_configuration_identity(req.provider, pcfg)
+    if verification is not None:
+        if verification.get("identity") != identity_after:
+            raise HTTPException(409, "Provider configuration changed during verification")
+        pcfg.verification_identity = identity_after
+        pcfg.verification_verified = bool(verification.get("verified", False))
+        pcfg.verification_at = str(
+            verification.get("verified_at")
+            or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        )
+        pcfg.verification_source = str(verification.get("source") or "explicit_probe")
+        pcfg.verification_reason_code = str(verification.get("reason_code") or "verified")
+        pcfg.verification_detail = verification.get("detail")
+    elif identity_before is not None and identity_before != identity_after:
+        clear_provider_verification(pcfg)
+
     try:
         save_config(cfg)
     except Exception:
@@ -780,8 +1054,8 @@ def _apply_model_config_sync(req: ModelConfigRequest):
     return cfg, pcfg
 
 
-async def _apply_model_config(req: ModelConfigRequest) -> dict:
-    cfg, pcfg = await asyncio.to_thread(_apply_model_config_sync, req)
+async def _apply_model_config(req: ModelConfigRequest, verification: dict | None = None) -> dict:
+    cfg, pcfg = await asyncio.to_thread(_apply_model_config_sync, req, verification)
     await clear_cache_async()
     from aletheia.model_provider.broker import inference_broker
 
@@ -793,6 +1067,12 @@ async def _apply_model_config(req: ModelConfigRequest) -> dict:
         "deep_provider": cfg.models.deep_provider,
         "fast_provider": cfg.models.fast_provider,
         "api_key": key_status,
+        "verification": {
+            "verified": pcfg.verification_verified,
+            "verified_at": pcfg.verification_at,
+            "verification_identity": pcfg.verification_identity,
+            "source": pcfg.verification_source,
+        },
     }
 
 
@@ -806,17 +1086,34 @@ async def set_model(req: ModelConfigRequest, response: Response):
     return await _apply_model_config(req)
 
 
-async def _verify_profile_candidate(profile_id: str, provider_type: str, payload: dict) -> None:
+async def _verify_profile_candidate(profile_id: str, provider_type: str, payload: dict) -> dict:
     candidate_fields = set(TestCandidateRequest.model_fields) - {"provider", "type", "probe"}
+    normalized = dict(payload)
+    if isinstance(normalized.get("api_key"), str):
+        normalized["api_key"] = normalized["api_key"].strip() or None
     candidate = TestCandidateRequest(
         provider=profile_id,
         type=provider_type,
         probe=True,
-        **{key: value for key, value in payload.items() if key in candidate_fields},
+        **{key: value for key, value in normalized.items() if key in candidate_fields},
     )
     result = await test_model_candidate(candidate)
-    if not result.get("available"):
-        raise HTTPException(422, "Model profile verification failed")
+    if not result.get("verified"):
+        raise HTTPException(
+            422,
+            {
+                "code": result.get("reason_code") or "verification_failed",
+                "message": "Model profile verification failed",
+                "detail": result.get("error"),
+            },
+        )
+    return {
+        "identity": result.get("verification_identity"),
+        "verified": True,
+        "verified_at": result.get("verified_at"),
+        "source": "settings.model_profile",
+        "reason_code": "verified",
+    }
 
 
 @router.post("/settings/model-profiles", status_code=201)
@@ -827,8 +1124,10 @@ async def create_model_profile(req: CreateModelProfileRequest):
     if req.profile_id in cfg.models.providers:
         raise HTTPException(409, f"Model provider profile already exists: {req.profile_id}")
     payload = req.model_dump(exclude={"profile_id"})
-    await _verify_profile_candidate(req.profile_id, req.type, payload)
-    return await _apply_model_config(ModelConfigRequest(provider=req.profile_id, **payload))
+    verification = await _verify_profile_candidate(req.profile_id, req.type, payload)
+    return await _apply_model_config(
+        ModelConfigRequest(provider=req.profile_id, **payload), verification
+    )
 
 
 @router.patch("/settings/model-profiles/{profile_id}")
@@ -842,9 +1141,12 @@ async def update_model_profile(profile_id: str, req: UpdateModelProfileRequest):
         raise HTTPException(422, "CLI and OAuth integrations are not editable API profiles")
     payload = req.model_dump(exclude_unset=True)
     verification_fields = {"base_url", "workspace_url", "protocol", "model", "api_key", "auth_scheme"}
+    verification = None
     if verification_fields.intersection(payload) or bool(payload.get("enabled")):
-        await _verify_profile_candidate(profile_id, provider_type, payload)
-    return await _apply_model_config(ModelConfigRequest(provider=profile_id, **payload))
+        verification = await _verify_profile_candidate(profile_id, provider_type, payload)
+    return await _apply_model_config(
+        ModelConfigRequest(provider=profile_id, **payload), verification
+    )
 
 
 class UpdateModelIntegrationRequest(BaseModel):
@@ -1065,6 +1367,7 @@ def openai_oauth_disconnect():
         pcfg.oauth_refresh_ref = None
     pcfg.oauth_expires_at = None
     pcfg.auth_type = "api_key"
+    clear_provider_verification(pcfg)
 
     save_config(cfg)
     clear_cache()
@@ -1109,6 +1412,8 @@ def _persist_openai_oauth(tokens: dict) -> None:
 
     if tokens.get("expires_at"):
         pcfg.oauth_expires_at = tokens["expires_at"]
+
+    clear_provider_verification(pcfg)
 
     save_config(cfg)
     clear_cache()
@@ -1177,6 +1482,7 @@ def claude_oauth_disconnect():
         pcfg.oauth_refresh_ref = None
     pcfg.oauth_expires_at = None
     pcfg.auth_type = "api_key"
+    clear_provider_verification(pcfg)
 
     save_config(cfg)
     clear_cache()
@@ -1221,6 +1527,8 @@ def _persist_claude_oauth(tokens: dict) -> None:
 
     if tokens.get("expires_at"):
         pcfg.oauth_expires_at = tokens["expires_at"]
+
+    clear_provider_verification(pcfg)
 
     save_config(cfg)
     clear_cache()

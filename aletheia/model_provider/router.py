@@ -3,11 +3,14 @@
 import asyncio
 from concurrent.futures import Future
 from datetime import datetime, timezone
+import hashlib
+import json
 import logging
 import threading
 import time
 
 from aletheia.config.loader import load_config, save_config
+from aletheia.config.secrets import get_secret
 from aletheia.model_provider.base import (
     MODEL_HEALTH_STALE_AFTER_SECONDS,
     ModelHealth,
@@ -49,6 +52,158 @@ _health_lock = threading.Lock()
 _REFRESH_MARGIN_MS = 5 * 60 * 1000  # refresh 5 min before expiry
 _oauth_refresh_inflight: dict[str, Future[str | None]] = {}
 _oauth_refresh_lock = threading.Lock()
+
+_HTTP_PROVIDER_TYPES = {
+    "openai_compatible",
+    "anthropic_compatible",
+    "databricks",
+}
+_VERIFICATION_FIELDS = (
+    "verification_identity",
+    "verification_verified",
+    "verification_at",
+    "verification_source",
+    "verification_reason_code",
+    "verification_detail",
+)
+
+
+def clear_provider_verification(pcfg) -> None:
+    """Remove durable verification evidence from one provider config."""
+
+    for field_name in _VERIFICATION_FIELDS:
+        setattr(pcfg, field_name, None)
+
+
+def provider_is_configured(name: str, pcfg) -> bool:
+    """Return whether the provider has enough owner-supplied config to probe."""
+
+    if pcfg is None:
+        return False
+    provider_type = str(getattr(pcfg, "type", "") or name)
+    if provider_type in _HTTP_PROVIDER_TYPES:
+        endpoint = str(
+            getattr(pcfg, "workspace_url", None)
+            or getattr(pcfg, "base_url", None)
+            or ""
+        ).strip()
+        return bool(endpoint)
+    if provider_type in {"anthropic_native", "openai_native"}:
+        credential_refs = (
+            getattr(pcfg, "api_key_secret_ref", None),
+            getattr(pcfg, "oauth_token_ref", None),
+        )
+        return any(get_secret(ref) for ref in credential_refs if ref)
+    # CLI integrations own their credentials outside Aletheia.  An entry in
+    # ModelsConfig is the explicit integration configuration boundary.
+    return True
+
+
+def provider_configuration_identity(
+    name: str,
+    pcfg,
+    *,
+    credential_overrides: dict[str, str | None] | None = None,
+) -> str:
+    """Fingerprint probe-relevant config without persisting raw credentials."""
+
+    refs = (
+        getattr(pcfg, "api_key_secret_ref", None),
+        getattr(pcfg, "oauth_token_ref", None),
+        getattr(pcfg, "oauth_refresh_ref", None),
+    )
+    credential_fingerprints: list[dict[str, str | None]] = []
+    for ref in refs:
+        if not ref:
+            continue
+        if credential_overrides is not None and ref in credential_overrides:
+            value = credential_overrides[ref]
+        else:
+            value = get_secret(ref)
+        credential_fingerprints.append(
+            {
+                "ref": ref,
+                "sha256": hashlib.sha256((value or "").encode("utf-8")).hexdigest()
+                if value
+                else None,
+            }
+        )
+    payload = {
+        "provider": name,
+        "type": str(getattr(pcfg, "type", "") or name),
+        "base_url": str(getattr(pcfg, "base_url", "") or ""),
+        "workspace_url": str(getattr(pcfg, "workspace_url", "") or ""),
+        "protocol": str(getattr(pcfg, "protocol", "") or ""),
+        "model": str(getattr(pcfg, "model", "") or ""),
+        "auth_scheme": str(getattr(pcfg, "auth_scheme", "") or ""),
+        "auth_type": str(getattr(pcfg, "auth_type", "") or ""),
+        "command": str(getattr(pcfg, "command", "") or ""),
+        "mode": str(getattr(pcfg, "mode", "") or ""),
+        "codex_model": str(getattr(pcfg, "codex_model", "") or ""),
+        "api_key_secret_ref": getattr(pcfg, "api_key_secret_ref", None),
+        "oauth_token_ref": getattr(pcfg, "oauth_token_ref", None),
+        "oauth_refresh_ref": getattr(pcfg, "oauth_refresh_ref", None),
+        "credential_fingerprints": credential_fingerprints,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def provider_verification_snapshot(name: str, pcfg) -> dict[str, object]:
+    """Return current-identity verification facts, failing closed on mismatch."""
+
+    if pcfg is None:
+        return {
+            "verified": None,
+            "verified_at": None,
+            "verification_identity": None,
+            "verification_source": None,
+            "verification_invalidated": False,
+            "verification_detail": None,
+        }
+    current_identity = provider_configuration_identity(name, pcfg)
+    stored_identity = getattr(pcfg, "verification_identity", None)
+    invalidated = bool(stored_identity and stored_identity != current_identity)
+    matches = bool(stored_identity and stored_identity == current_identity)
+    return {
+        "verified": getattr(pcfg, "verification_verified", None) if matches else None,
+        "verified_at": (
+            getattr(pcfg, "verification_at", None)
+            if matches
+            else None
+        ),
+        "verification_identity": stored_identity if matches else None,
+        "verification_source": getattr(pcfg, "verification_source", None) if matches else None,
+        "verification_invalidated": invalidated,
+        "verification_detail": getattr(pcfg, "verification_detail", None) if matches else None,
+    }
+
+
+def persist_provider_verification(
+    name: str,
+    *,
+    identity: str,
+    verified: bool,
+    source: str,
+    reason_code: str,
+    detail: str | None = None,
+    verified_at: str | None = None,
+) -> bool:
+    """Persist verification only when it still describes current config."""
+
+    cfg = load_config()
+    pcfg = cfg.models.providers.get(name)
+    if pcfg is None or provider_configuration_identity(name, pcfg) != identity:
+        return False
+    pcfg.verification_identity = identity
+    pcfg.verification_verified = verified
+    pcfg.verification_at = verified_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    pcfg.verification_source = source
+    pcfg.verification_reason_code = reason_code
+    pcfg.verification_detail = detail
+    save_config(cfg)
+    invalidate_health_cache()
+    return True
 
 
 def _claim_oauth_refresh(name: str) -> tuple[Future[str | None], bool]:
@@ -533,6 +688,102 @@ def _unobserved_health(provider: str, *, error: str) -> ModelHealth:
     )
 
 
+def _routing_roles(cfg, provider: str) -> list[str]:
+    roles: list[str] = []
+    if cfg.models.default_provider == provider:
+        roles.append("default")
+    if cfg.models.deep_provider == provider:
+        roles.append("deep")
+    if cfg.models.fast_provider == provider:
+        roles.append("fast")
+    return roles
+
+
+def _classify_health_error(error: str | None) -> str:
+    """Map provider diagnostics to a bounded, stable reason vocabulary."""
+
+    detail = str(error or "").casefold()
+    if detail == "disabled":
+        return "disabled"
+    if not detail:
+        return "no_observation"
+    if detail in {"not_logged_in", "no_configured_models"}:
+        return "authentication_failure"
+    if detail == "not_installed":
+        return "not_installed"
+    if "cooldown" in detail:
+        return "cooldown"
+    if any(token in detail for token in ("401", "403", "unauthor", "forbidden", "authentication", "api key", "token")):
+        return "authentication_failure"
+    if any(token in detail for token in ("timeout", "timed out", "connect", "connection", "network", "dns", "refused", "unreachable", "pool")):
+        return "network_failure"
+    if any(token in detail for token in ("400", "404", "405", "422", "catalogue", "catalog", "endpoint state", "not found", "unsupported", "invalid")):
+        return "provider_rejection"
+    return "probe_failure"
+
+
+def _decorate_health(name: str, health: ModelHealth, cfg, pcfg) -> ModelHealth:
+    """Attach independent config, reachability, verification, and routing facts."""
+
+    configured = provider_is_configured(name, pcfg)
+    health.provider = name
+    health.configured = configured
+    health.enabled = bool(getattr(pcfg, "enabled", False)) if pcfg is not None else False
+    health.routing_roles = _routing_roles(cfg, name)
+    if pcfg is not None and not health.enabled:
+        snapshot = provider_verification_snapshot(name, pcfg)
+        health.available = False
+        health.reachable = None
+        health.verified = snapshot["verified"]  # type: ignore[assignment]
+        health.verified_at = snapshot["verified_at"]  # type: ignore[assignment]
+        health.verification_identity = snapshot["verification_identity"]  # type: ignore[assignment]
+        health.verification_source = snapshot["verification_source"]  # type: ignore[assignment]
+        health.verification_invalidated = bool(snapshot["verification_invalidated"])
+        health.verification_detail = snapshot["verification_detail"]  # type: ignore[assignment]
+        health.reason_code = "disabled"
+        health.state = "disabled"
+        return health
+    if not configured:
+        health.available = False
+        health.reachable = None
+        health.verified = None
+        health.reason_code = "missing_configuration"
+        health.state = "not_configured"
+        health.error = health.error or "provider configuration is incomplete"
+        return health
+
+    snapshot = provider_verification_snapshot(name, pcfg)
+    health.verified = snapshot["verified"]  # type: ignore[assignment]
+    health.verified_at = snapshot["verified_at"]  # type: ignore[assignment]
+    health.verification_identity = snapshot["verification_identity"]  # type: ignore[assignment]
+    health.verification_source = snapshot["verification_source"]  # type: ignore[assignment]
+    health.verification_invalidated = bool(snapshot["verification_invalidated"])
+    health.verification_detail = snapshot["verification_detail"]  # type: ignore[assignment]
+    if health.observed_at is not None:
+        health.reachable = bool(health.available)
+        if health.reachable:
+            health.reason_code = "verified" if health.verified is True else "reachable"
+            health.state = "verified" if health.verified is True else "reachable"
+        else:
+            health.reason_code = _classify_health_error(health.error)
+            health.state = "unavailable"
+    else:
+        health.reachable = None
+        if health.verified is False:
+            health.reason_code = getattr(pcfg, "verification_reason_code", None) or _classify_health_error(health.error)
+            health.state = "unavailable"
+        elif health.verified is True:
+            health.reason_code = "verified"
+            health.state = "verified"
+        elif health.verification_invalidated:
+            health.reason_code = "verification_invalidated"
+            health.state = "unknown"
+        else:
+            health.reason_code = "no_observation"
+            health.state = "unknown"
+    return health
+
+
 async def healthcheck_all_with_metadata(
     *, force: bool = False
 ) -> tuple[list[ModelHealth], bool]:
@@ -579,18 +830,45 @@ async def healthcheck_all_with_metadata(
 async def _refresh_health_all() -> list[ModelHealth]:
     cfg = load_config()
     results: list[ModelHealth] = []
-    tasks: list = []
+    tasks: list[tuple[str, object, object]] = []
     for name, pcfg in cfg.models.providers.items():
+        if not provider_is_configured(name, pcfg):
+            results.append(
+                _decorate_health(
+                    name,
+                    _unobserved_health(name, error="missing_configuration"),
+                    cfg,
+                    pcfg,
+                )
+            )
+            continue
         if not pcfg.enabled:
             # Keep disabled profiles visible without invoking their provider.
-            results.append(_unobserved_health(name, error="disabled"))
+            results.append(_decorate_health(name, _unobserved_health(name, error="disabled"), cfg, pcfg))
             continue
         # Enabled is the operator's probe decision. Keyless local endpoints are
         # valid, so credential/URL heuristics must not turn a configured profile
         # into an unobserved row.
-        tasks.append(_safe_healthcheck(name))
+        tasks.append((name, pcfg, _safe_healthcheck(name)))
     if tasks:
-        results.extend(await asyncio.gather(*tasks))
+        probed = await asyncio.gather(*(task for _, _, task in tasks))
+        results.extend(
+            _decorate_health(name, health, cfg, pcfg)
+            for (name, pcfg, _), health in zip(tasks, probed, strict=True)
+        )
+    # Include registry-backed singleton and adapter rows even before an owner
+    # creates a config entry, so consumers never infer health from omission.
+    for name in PROVIDER_REGISTRY:
+        if name in cfg.models.providers:
+            continue
+        results.append(
+            _decorate_health(
+                name,
+                _unobserved_health(name, error="missing_configuration"),
+                cfg,
+                None,
+            )
+        )
     return results
 
 

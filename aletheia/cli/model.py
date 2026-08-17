@@ -51,7 +51,11 @@ def set_cmd(
     """Configure a model provider (guide §12.3). Dashboard is the primary surface."""
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.secrets import set_secret
-    from aletheia.model_provider.router import clear_cache
+    from aletheia.model_provider.router import (
+        clear_cache,
+        clear_provider_verification,
+        provider_configuration_identity,
+    )
 
     valid = {"openai_compatible", "anthropic_compatible", "codex_cli"}
     if provider not in valid:
@@ -60,6 +64,9 @@ def set_cmd(
 
     cfg = load_config()
     pcfg = cfg.models.providers.get(provider)
+    identity_before = (
+        provider_configuration_identity(provider, pcfg) if pcfg is not None else None
+    )
     if pcfg is None:
         from aletheia.config.schema import ProviderConfig
         pcfg = ProviderConfig()
@@ -81,6 +88,10 @@ def set_cmd(
         set_secret(ref, value)
         pcfg.api_key_secret_ref = ref
 
+    identity_after = provider_configuration_identity(provider, pcfg)
+    if identity_before is not None and identity_before != identity_after:
+        clear_provider_verification(pcfg)
+
     save_config(cfg)
     clear_cache()
     from aletheia.files.jsonl import write_audit
@@ -98,8 +109,10 @@ def test():
     from aletheia.model_provider.router import healthcheck_all
     results = asyncio.run(healthcheck_all())
     for h in results:
-        icon = "✓" if h.available else "✗"
-        detail = "available" if h.available else h.error
+        icon = "✓" if h.state in {"reachable", "verified"} else "✗"
+        detail = h.state if h.state else ("available" if h.available else h.error)
+        if h.reason_code and h.reason_code != h.state:
+            detail += f" ({h.reason_code})"
         if h.available and h.models:
             detail += f" ({len(h.models)} models)"
         typer.echo(f"  {icon} {h.provider}: {detail}")

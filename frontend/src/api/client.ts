@@ -686,9 +686,29 @@ export interface EconomicsModelHealthResponse {
 }
 
 export type ModelHealthFreshness = "fresh" | "stale" | "unknown";
+export type ModelProviderState =
+	| "not_configured"
+	| "disabled"
+	| "unknown"
+	| "stale"
+	| "unavailable"
+	| "reachable"
+	| "verified";
 
 export interface ModelProviderHealth {
 	provider: string;
+	configured: boolean;
+	enabled: boolean;
+	reachable: boolean | null;
+	verified: boolean | null;
+	verified_at: string | null;
+	verification_identity: string | null;
+	verification_source: string | null;
+	verification_invalidated: boolean;
+	verification_detail: string | null;
+	state: ModelProviderState;
+	reason_code: string;
+	routing_roles: string[];
 	available: boolean;
 	model: string;
 	error: string | null;
@@ -1265,6 +1285,9 @@ export const api = {
 			model: string;
 			response: string;
 			error: string | null;
+			verified?: boolean;
+			verification_identity?: string | null;
+			verification_persisted?: boolean;
 		}>("/model/ping"),
 	createModelProfile: (body: Record<string, unknown>) =>
 		post("/settings/model-profiles", body),
@@ -1331,9 +1354,18 @@ export const api = {
 	}) =>
 		post<{
 			available: boolean;
+			configured: boolean;
+			reachable: boolean | null;
+			verified: boolean | null;
+			verified_at?: string | null;
+			verification_identity?: string | null;
+			verification_source?: string | null;
+			state?: ModelProviderState;
+			reason_code?: string;
 			model: string;
 			error: string | null;
 			models?: string[];
+			persisted?: boolean;
 		}>("/model/test-candidate", body),
 	detectModels: (body: {
 		provider: string;

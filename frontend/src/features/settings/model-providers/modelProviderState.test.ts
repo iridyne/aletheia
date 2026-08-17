@@ -34,6 +34,7 @@ describe("model provider settings state", () => {
 		const oauth: ProviderConfigView = {
 			type: "openai_native",
 			kind: "oauth",
+			configured: false,
 			display_name: "OpenAI OAuth",
 			enabled: true,
 			model: "default",
@@ -50,6 +51,7 @@ describe("model provider settings state", () => {
 		const config: ProviderConfigView = {
 			type: "openai_compatible",
 			kind: "api",
+			configured: true,
 			display_name: "API",
 			enabled: true,
 			model: "model-a",
@@ -58,6 +60,18 @@ describe("model provider settings state", () => {
 		};
 		const base: ModelHealthView = {
 			provider: "openai_compatible",
+			configured: true,
+			enabled: true,
+			reachable: true,
+			verified: true,
+			verified_at: "2026-08-17T12:00:00Z",
+			verification_identity: "identity",
+			verification_source: "model_ping",
+			verification_invalidated: false,
+			verification_detail: null,
+			state: "verified",
+			reason_code: "verified",
+			routing_roles: [],
 			available: true,
 			model: "model-a",
 			error: null,
@@ -72,7 +86,11 @@ describe("model provider settings state", () => {
 
 		expect(providerStatus(config, base)).toEqual({
 			tone: "green",
-			label: "available",
+			label: "verified",
+		});
+		expect(providerStatus(config, { ...base, verified: null })).toEqual({
+			tone: "yellow",
+			label: "reachable · unverified",
 		});
 		expect(providerStatus(config, { ...base, freshness: "stale" })).toEqual({
 			tone: "yellow",
