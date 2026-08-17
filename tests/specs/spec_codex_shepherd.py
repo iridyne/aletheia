@@ -208,7 +208,7 @@ def test_shepherd_only_uses_connector_evidence_after_current_request() -> None:
     script = _apply_script()
 
     assert "review.commit_id === expectedHeadSha" in script
-    assert "review.submitted_at >= latestReviewRequestAt" in script
+    assert "review.submitted_at > latestReviewRequestAt" in script
     assert "review.state !== 'DISMISSED'" in script
     assert "cleanCompletionTimes" in script
     assert "connectorCompletionTimes" in script
