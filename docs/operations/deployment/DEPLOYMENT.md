@@ -81,17 +81,53 @@ staging 目录、Smoke、Gateway 重启以及启动期 Migration/SQLite 校验�
 `update --no-restart` 仅保留 source checkout 的应急控制；packaged runtime 的同一个裸命令自动走签名发布流程。
 完成自动或手动恢复后只做以下验收：
 
-1. Fedora `git rev-parse HEAD` 等于预期 merge SHA；
+1. Fedora `git rev-parse HEAD` 等于预先记录的目标 Tag/merge SHA；
 2. `/api/status` 的 `boot_commit == current_commit ==` 预期 SHA；
 3. `/api/health` 为 healthy，Gateway 与 scheduler 正在运行；
-4. 仍为 `paper_internal` / `local_paper`，`live_disabled`；
-5. Provider、Outcome settlement 和目标 Evaluation evidence 正常继续采集。
+4. 版本、schema/migration ledger 与目标发布一致；
+5. 仍为 `paper_internal` / `local_paper`，`live_disabled`；
+6. Provider、Outcome settlement 和目标 Evaluation evidence 正常继续采集；
+7. 从 Mac 通过 Fedora 的实际外部地址复核 frontdoor 端口 8787：
+   `/_infra/readyz` 和 `/api/health` 都成功返回。
+
+```sh
+# Mac 控制端：先把 FEDORA_ADDR 设为 owner 选定的 Fedora 外部地址
+curl -fsS "http://${FEDORA_ADDR}:8787/_infra/readyz"
+curl -fsS "http://${FEDORA_ADDR}:8787/api/health"
+```
 
 每次部署都记录新的 Runtime provenance segment。只读审计、文档或不改变 behavior contract
 的修复不要求随机 A/B；是否延续 cohort 仍由显式 comparability/admission 判断。部署会改变
 选择、仓位、Risk、成本模型或实验 identity 的代码时，按
 [Experiment Protocol](../../product/experiments/EXPERIMENT_PROTOCOL.md) 关闭受影响窗口并从首次
 eligible exposure 开新窗口。PR merge 本身不等于部署。
+
+### 手动更新与短暂中断复核
+
+生产日常发布只走稳定 Release Tag 和 `aletheia-auto-update.timer`；不要把 mutable
+`master` 的 Dashboard/API Apply 或裸 `uv run aletheia update` 当作常规发布入口。只有自动部署
+连续失败或 owner 明确批准恢复时，才允许使用 source-checkout 应急路径。
+
+手动更新前，维护记录必须先写下 owner、维护窗口、目标精确 SHA（优先是稳定 Tag；应急
+`master` 更新也必须固定到当时批准的 merge SHA）以及会停止并重启 Gateway 的影响。更新完成后
+按上面的统一验收清单执行；`update --no-restart` 只能用于应急准备，运行中的 Gateway 仍可能是
+旧版本，不得把它当作完成态。
+
+若再次出现短暂中断，先不要重启或 kill 进程。先在同一时间窗检查
+`$HOME/.aletheia/logs/audit.jsonl` 中的 `update_checked`、`update_applied`、
+`gateway_signal_shutdown`，再检查 `aletheia-gateway.service` 的 systemd journal、
+`Result` 和 `NRestarts`。审计事件的落盘顺序可能因更新在重启后才写入 `update_applied` 而与
+时间线略有不同；应以事件字段、目标 SHA、`restart` 标志和 systemd 结果共同判定：有明确更新
+审计且正常 ready 是部署重启，没有更新审计而伴随异常退出/OOM 才按故障处理。
+
+```sh
+ssh fedora 'grep -E "update_checked|update_applied|gateway_signal_shutdown" "$HOME/.aletheia/logs/audit.jsonl" | tail -n 100'
+ssh fedora 'journalctl --user -u aletheia-gateway.service --since "15 min ago" --no-pager'
+ssh fedora 'systemctl --user show aletheia-gateway.service -p Result -p NRestarts'
+```
+
+后续可单独提交一个小改动，限制生产环境的 `master` Apply：要求目标 SHA、维护原因/窗口、
+重启影响和操作者身份全部显式记录；本节只固定操作边界，不在本次变更中修改运行时权限。
 
 ### 无人值守升级边界
 
