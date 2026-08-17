@@ -66,6 +66,7 @@ export interface Position {
   entry_price: number
   current_price: number | null
   unrealized_pnl: number | null
+  unrealized_pnl_source?: 'exchange_exact' | 'local_estimate' | 'ambiguous' | 'unavailable' | string
   realized_pnl: number | null
   realized_pnl_complete?: boolean
   realized_pnl_unavailable_reason?: string | null

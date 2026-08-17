@@ -335,8 +335,22 @@ def sync_exchange_account() -> Optional[ExchangeAccountState]:
         try:
             futures = _run_async(client.get_positions())
             positions_count = len(futures)
+            from aletheia.portfolio.disappearance_confirmation import (
+                logical_account_fingerprint,
+            )
+
+            broker_id = "bitget_demo" if mode == "demo" else "bitget_live_limited"
+            account_fingerprint = logical_account_fingerprint(
+                broker_id=broker_id,
+                account_environment=mode,
+                execution_mode=broker_id,
+            )
             positions_list = [
                 {
+                    "broker_id": broker_id,
+                    "account_environment": mode,
+                    "account_fingerprint": account_fingerprint,
+                    "position_id": getattr(p, "position_id", None),
                     "symbol": p.symbol,
                     "side": p.side,
                     "quantity": p.quantity,

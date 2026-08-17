@@ -427,6 +427,10 @@ class Position(_Provenanced):
     entry_price: float
     current_price: float | None = None
     unrealized_pnl: float = 0.0
+    # Provenance of the latest open-position mark.  Exchange values are only
+    # authoritative after exact identity matching; otherwise the local mark is
+    # retained with an explicit fallback status.
+    unrealized_pnl_source: str = "local_estimate"
     # Open positions start at zero.  A closed futures position may remain NULL
     # when its real funding ledger is unavailable; NULL must never be coerced to
     # zero because that would fabricate net account economics.

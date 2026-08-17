@@ -116,6 +116,8 @@ class BitgetDemoAdapter:
                 leverage=leverage,
                 mark_price=float(position.mark_price or 0),
                 opened_at_ms=position.ctime_ms,
+                position_id=getattr(position, "position_id", None),
+                account_fingerprint=getattr(position, "account_fingerprint", None),
                 leverage_source=leverage_source,
             ))
         return result

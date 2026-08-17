@@ -78,7 +78,8 @@ async def test_get_positions(fake_http):
     fake_http.routes = {"/api/v2/mix/position/all-position": {
         "code": "00000",
         "data": [
-            {"symbol": "BTCUSDT", "holdSide": "long", "total": "0.5",
+            {"symbol": "BTCUSDT", "posId": "bitget-position-1",
+             "holdSide": "long", "total": "0.5",
              "averageOpenPrice": "60000", "unrealizedPL": "12.5", "leverage": "2"},
         ],
     }}
@@ -89,6 +90,7 @@ async def test_get_positions(fake_http):
     assert positions[0].side == "long"
     assert positions[0].quantity == 0.5
     assert positions[0].entry_price == 60000.0
+    assert positions[0].position_id == "bitget-position-1"
 
 
 @pytest.mark.anyio

@@ -69,9 +69,27 @@ async def get_unified_state() -> UnifiedState:
             "unrealized_pnl": acct_info.unrealized_pnl,
             "asset_breakdown": acct_info.asset_breakdown,
         })
+        from aletheia.portfolio.disappearance_confirmation import (
+            logical_account_fingerprint,
+        )
+
+        account_environment = (
+            "demo" if broker.broker_id.endswith("_demo")
+            else "testnet" if broker.broker_id.endswith("_testnet")
+            else "live" if broker.broker_id.endswith("_live_limited")
+            else "unknown"
+        )
+        account_fingerprint = logical_account_fingerprint(
+            broker_id=broker.broker_id,
+            account_environment=account_environment,
+            execution_mode=broker.broker_id,
+        )
         for p in positions:
             all_positions.append({
                 "broker_id": broker.broker_id,
+                "account_environment": account_environment,
+                "account_fingerprint": getattr(p, "account_fingerprint", None) or account_fingerprint,
+                "position_id": getattr(p, "position_id", None),
                 "symbol": p.symbol,
                 "side": p.side,
                 "quantity": p.quantity,

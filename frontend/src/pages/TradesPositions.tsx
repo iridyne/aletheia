@@ -78,6 +78,16 @@ const marketBadge = (v: string) => (
 	</Badge>
 );
 
+const pnlSourceBadge = (source: string | undefined) => {
+	const value = source || "unavailable";
+	const tone = value === "exchange_exact"
+		? "green"
+		: value === "local_estimate"
+			? "muted"
+			: "yellow";
+	return <Badge tone={tone}>{humanize(value)}</Badge>;
+};
+
 const openColumns = [
 	posCol.accessor("symbol", {
 		header: "Symbol",
@@ -136,6 +146,11 @@ const openColumns = [
 	posCol.accessor("unrealized_pnl", {
 		header: "uPnL (USDT)",
 		cell: (info) => pnlCell(info.getValue()),
+	}),
+	posCol.display({
+		id: "unrealized_pnl_source",
+		header: "uPnL source",
+		cell: ({ row }) => pnlSourceBadge(row.original.unrealized_pnl_source),
 	}),
 ];
 
@@ -802,6 +817,10 @@ function PositionDetail({
 			</DrawerSection>
 			<DrawerSection label="PnL">
 				<DrawerField label="Unrealized" value={position.unrealized_pnl} mono />
+				<DrawerField
+					label="uPnL source"
+					value={pnlSourceBadge(position.unrealized_pnl_source)}
+				/>
 				<DrawerField label="Realized" value={position.realized_pnl} mono />
 				{position.realized_pnl_complete === false && (
 					<DrawerField
