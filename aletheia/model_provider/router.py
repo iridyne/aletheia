@@ -895,7 +895,7 @@ async def _refresh_health_all() -> list[ModelHealth]:
         # into an unobserved row.
         tasks.append((name, pcfg, _safe_healthcheck(name), True))
     if tasks:
-        probed = await asyncio.gather(*(task for _, _, task in tasks))
+        probed = await asyncio.gather(*(task for _, _, task, _ in tasks))
         results.extend(
             await asyncio.gather(
                 *(
