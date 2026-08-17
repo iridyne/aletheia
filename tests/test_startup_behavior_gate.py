@@ -483,6 +483,31 @@ def test_gate_passes_clears_blocker_and_does_not_pause(tmp_path, monkeypatch, _m
     assert gate.read_gate_state() is None        # no durable blocker
 
 
+def test_gate_recovers_orphaned_startup_owner_without_state_file(
+    tmp_path, monkeypatch, _mock_scheduler
+):
+    """A crash between lease persistence and gate-state persistence is recoverable."""
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg()
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+
+    cfg = load_config()
+    cfg.runtime.acquire_pause(
+        "startup_behavior_gate",
+        reason="startup_behavior_checks_blocked",
+        generation="orphan-1",
+        source="startup_behavior_gate",
+    )
+    save_config(cfg)
+    assert gate.read_gate_state() is None
+
+    verdict = asyncio.run(gate.startup_behavior_gate())
+
+    assert verdict["passed"] is True
+    assert load_config().runtime.pause_owners == {}
+    assert _mock_scheduler["resume"] == 1
+
+
 def test_gate_disabled_is_noop(tmp_path, monkeypatch, _mock_scheduler):
     setup_env(tmp_path, monkeypatch)
     _healthy_cfg(

@@ -141,7 +141,7 @@ async def _auto_resume_loop(interval_sec: int = 300) -> None:
                 logger.info("auto_resume: LLM available — scheduler resumed")
                 return
             if (
-                result.get("reason") == "active_pause_owners"
+                result.get("reason") in {"active_pause_owners", "trading_brake_active"}
                 and "llm_startup_gate" not in (result.get("blockers") or [])
             ):
                 logger.info(

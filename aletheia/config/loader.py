@@ -219,6 +219,7 @@ def save_config(cfg: AletheiaConfig) -> None:
     """Persist config to disk (atomic write + thread lock)."""
     _invalidate_config_cache()
     ensure_data_dirs()
+    cfg.runtime.set_pause_scope(cfg.exchange.mode)
     data = cfg.model_dump(mode="json")
     content = yaml.dump(data, default_flow_style=False, sort_keys=False)
     with _config_write_lock:

@@ -153,18 +153,23 @@ async def resume_if_llm_available(
 
     if cfg.health.startup_behavior_gate_enabled:
         try:
-            from aletheia.agent_runtime.startup_behavior_gate import evaluate_startup_gate
+            from aletheia.agent_runtime import startup_behavior_gate
 
-            startup_gate = evaluate_startup_gate(cfg)
+            startup_gate = startup_behavior_gate.evaluate_startup_gate(cfg)
         except Exception:
-            startup_lease = load_config().runtime.pause_owners.get(STARTUP_BEHAVIOR_OWNER)
-            if startup_lease is None or not startup_lease.active:
-                acquire_pause(
-                    STARTUP_BEHAVIOR_OWNER,
-                    reason="startup_behavior_gate_evaluation_failed",
-                    actor=actor,
-                    source="startup_behavior_gate",
-                )
+            startup_gate = {
+                "passed": False,
+                "checks": [{
+                    "name": "startup_gate_evaluation_error",
+                    "ok": False,
+                    "detail": "startup behavior gate evaluation raised",
+                    "blocking": True,
+                }],
+                "blockers": ["startup_gate_evaluation_error"],
+                "user_blocked": False,
+                "user_block_reason": None,
+            }
+            startup_behavior_gate._apply_block(startup_gate, load_config())
             response = {
                 "allowed": False,
                 "reason": "startup_behavior_gate_unavailable",
@@ -177,14 +182,7 @@ async def resume_if_llm_available(
             return response
 
         if not bool(startup_gate.get("passed")):
-            startup_lease = load_config().runtime.pause_owners.get(STARTUP_BEHAVIOR_OWNER)
-            if startup_lease is None or not startup_lease.active:
-                acquire_pause(
-                    STARTUP_BEHAVIOR_OWNER,
-                    reason="startup_behavior_checks_blocked",
-                    actor=actor,
-                    source="startup_behavior_gate",
-                )
+            startup_behavior_gate._apply_block(startup_gate, load_config())
             response = {
                 "allowed": False,
                 "reason": "startup_behavior_gate_blocked",

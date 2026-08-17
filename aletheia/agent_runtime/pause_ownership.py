@@ -17,6 +17,15 @@ LLM_STARTUP_OWNER = "llm_startup_gate"
 _pause_transition_lock = threading.RLock()
 
 
+def _generation_matches(current: str | None, requested: str | None) -> bool:
+    """Match exact generations, with ``""`` reserved for legacy ``None``."""
+    return (
+        requested is None
+        or current == requested
+        or (requested == "" and current is None)
+    )
+
+
 def _active_owner_names(cfg) -> tuple[str, ...]:
     return tuple(
         sorted(
@@ -213,7 +222,7 @@ def release_pauses(
             if (
                 lease is None
                 or not lease.active
-                or (generation is not None and lease.generation != generation)
+                or not _generation_matches(lease.generation if lease else None, generation)
             ):
                 rejected.append((owner, generation, lease))
                 continue
@@ -306,6 +315,7 @@ def active_pause_blocker_names(cfg=None) -> tuple[str, ...]:
     if cfg is None:
         cfg = _config_loader.load_config()
     current_scope = _current_behavior_scope(cfg)
+    cfg.runtime.set_pause_scope(current_scope)
     return tuple(
         sorted(
             owner

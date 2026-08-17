@@ -565,19 +565,60 @@ def test_scheduler_resume_refuses_hard_brake_owner(tmp_path, monkeypatch) -> Non
 def test_mode_brake_only_blocks_its_execution_pool() -> None:
     from aletheia.agent_runtime.pause_ownership import active_pause_blocker_names
 
-    cfg = AletheiaConfig()
-    cfg.exchange.mode = "live"
-    cfg.runtime.acquire_pause(
-        "demo_brake",
-        reason="demo panic",
-        generation="demo-1",
-        source="dashboard",
-        scope="demo",
+    cfg = AletheiaConfig.model_validate(
+        {
+            "exchange": {"mode": "live"},
+            "runtime": {
+                "demo_brake_active": True,
+            },
+        }
     )
 
+    assert cfg.runtime.paused is False
     assert active_pause_blocker_names(cfg) == ()
     cfg.exchange.mode = "demo"
+    cfg.runtime.set_pause_scope(cfg.exchange.mode)
+    assert cfg.runtime.paused is True
     assert active_pause_blocker_names(cfg) == ("demo_brake",)
+
+
+def test_legacy_generationless_release_is_exact_not_a_newer_wildcard() -> None:
+    legacy = AletheiaConfig.model_validate({"runtime": {"paused": True}})
+    assert legacy.runtime.release_pause("manual", generation="") is True
+
+    current = RuntimeConfig()
+    current.acquire_pause("manual", reason="operator pause", generation="new-1")
+    assert current.release_pause("manual", generation="") is False
+    assert current.paused is True
+
+
+def test_kill_switch_activate_is_idempotent_and_final_release_resumes(
+    tmp_path, monkeypatch
+) -> None:
+    _isolated_config(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config
+    from aletheia.risk import kill_switch
+
+    resumed: list[bool] = []
+    monkeypatch.setattr("aletheia.agent_runtime.scheduler.pause_scheduler", lambda: None)
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.resume_scheduler",
+        lambda: resumed.append(True) or True,
+    )
+
+    kill_switch.activate(reason="first", actor="human")
+    first = load_config().runtime.pause_owners["kill_switch"]
+    kill_switch.activate(reason="second", actor="human")
+    second = load_config().runtime.pause_owners["kill_switch"]
+
+    assert (second.generation, second.acquired_at, second.reason) == (
+        first.generation,
+        first.acquired_at,
+        first.reason,
+    )
+    kill_switch.deactivate(actor="human")
+    assert load_config().runtime.pause_owners == {}
+    assert resumed == [True]
 
 
 def test_resume_initializes_then_releases_nonblocking_mode_brake(
