@@ -21,6 +21,9 @@ _ESTIMATORS = (
 
 def _context(method: str = "prospective_randomized") -> dict:
     return {
+        "gradient_contract_version": "profit_gradient/v3",
+        "evidence_integrity": "verified",
+        "reconciliation_contract_version": gradient.RECONCILIATION_CONTRACT_VERSION,
         "behavior_fingerprints": ["behavior-v1"],
         "policy_epochs": ["policy-v1"],
         "market_data_epochs": ["market-v1"],
@@ -60,6 +63,36 @@ def _cost_rows(
             "arm": arm,
             "paired_net_delta_bp": bp,
             "paired_net_delta_quote": quote,
+            "notional_quote": (
+                abs(float(quote) / float(bp) * 10_000.0)
+                if bp and quote and bp * quote > 0
+                else 1000.0
+            ),
+            "harm_event_id": f"cost-harm-{index}",
+            "attribution_event_id": f"cost-attribution-{index}",
+            "position_id": f"position-{index}",
+            "component": "avoidable_extra_cost",
+            "ownership": {"stage": "costs", "loss_component": "avoidable_extra_cost"},
+            "stage_window": {
+                "start_at": started.isoformat(),
+                "end_at": (started + timedelta(hours=index + 1)).isoformat(),
+            },
+            "evidence_refs": [f"fixture:cost:{index}"],
+            "cost_evidence": {
+                "cost_event_id": f"cost-event:{index}",
+                "avoidable": True,
+                "baseline_kind": "realizable_limit",
+                "baseline_id": f"baseline:{index}",
+                "cost_model_id": "cost-v1",
+                "avoidable_extra_cost_quote": abs(quote),
+            },
+            "reconciliation": {
+                "mode": "exclusive",
+                "group_id": f"cost-rec:{index}",
+                "declared_total_quote": quote,
+                "component_quote": quote,
+                "component_bp": bp,
+            },
         }
         for index, (bp, quote, arm) in enumerate(values)
     ]
@@ -70,6 +103,21 @@ def _normalized(rows: list[dict]) -> list[dict]:
     assert exclusions == []
     assert raw_count == len(samples)
     return samples
+
+
+def _sync_reconciliation(sample: dict) -> None:
+    reconciliation = sample["reconciliation"]
+    quote = sample["paired_net_delta_quote"]
+    bp = sample["paired_net_delta_bp"]
+    if quote and bp and quote * bp > 0:
+        sample["notional_quote"] = abs(float(quote) / float(bp) * 10_000.0)
+    reconciliation["component_quote"] = quote
+    reconciliation["component_bp"] = bp
+    if reconciliation["mode"] == "exclusive":
+        reconciliation["declared_total_quote"] = quote
+    cost_evidence = sample.get("cost_evidence")
+    if isinstance(cost_evidence, dict):
+        cost_evidence["avoidable_extra_cost_quote"] = abs(float(quote))
 
 
 def _select(costs: list[dict], method: str = "prospective_randomized") -> dict:
@@ -208,6 +256,7 @@ def test_positive_quote_scaling_preserves_bp_and_concentration(estimator, scale)
     scaled = deepcopy(samples)
     for sample in scaled:
         sample["paired_net_delta_quote"] *= scale
+        _sync_reconciliation(sample)
 
     baseline = estimator(samples, iterations=_BOOTSTRAP_ITERATIONS)
     changed = estimator(scaled, iterations=_BOOTSTRAP_ITERATIONS)
@@ -260,6 +309,7 @@ def test_positive_quote_scaling_preserves_selector_verdict(method, scale):
     scaled = deepcopy(rows)
     for sample in scaled:
         sample["paired_net_delta_quote"] *= scale
+        _sync_reconciliation(sample)
 
     baseline = _select(rows, method)
     changed = _select(scaled, method)
@@ -292,6 +342,7 @@ def test_randomized_centered_concentration_is_affine_invariant(translation, scal
         sample["paired_net_delta_quote"] = (
             sample["paired_net_delta_quote"] + translation
         ) * scale
+        _sync_reconciliation(sample)
 
     baseline = estimators.estimate_prospective_randomized(
         samples, iterations=_BOOTSTRAP_ITERATIONS
@@ -330,6 +381,32 @@ def test_equal_randomized_arm_cluster_means_cannot_confirm_a_winner(values):
                     "arm": arm,
                     "paired_net_delta_bp": float(value),
                     "paired_net_delta_quote": float(value) / 10.0,
+                    "notional_quote": 1000.0,
+                    "harm_event_id": f"equal-harm-{arm}-{index}",
+                    "attribution_event_id": f"equal-attr-{arm}-{index}",
+                    "position_id": f"equal-position-{arm}-{index}",
+                    "component": "avoidable_extra_cost",
+                    "ownership": {"stage": "costs", "loss_component": "avoidable_extra_cost"},
+                    "stage_window": {
+                        "start_at": started.isoformat(),
+                        "end_at": (started + timedelta(hours=index * 2 + arm_index + 1)).isoformat(),
+                    },
+                    "evidence_refs": [f"fixture:equal:{arm}:{index}"],
+                    "cost_evidence": {
+                        "cost_event_id": f"equal-cost:{arm}:{index}",
+                        "avoidable": True,
+                        "baseline_kind": "realizable_limit",
+                        "baseline_id": f"equal-baseline:{arm}:{index}",
+                        "cost_model_id": "cost-v1",
+                        "avoidable_extra_cost_quote": float(value) / 10.0,
+                    },
+                    "reconciliation": {
+                        "mode": "exclusive",
+                        "group_id": f"equal-rec:{arm}:{index}",
+                        "declared_total_quote": float(value) / 10.0,
+                        "component_quote": float(value) / 10.0,
+                        "component_bp": float(value),
+                    },
                 }
             )
 

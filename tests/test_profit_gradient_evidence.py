@@ -26,7 +26,7 @@ def test_compiler_emits_versioned_read_only_artifact_and_stable_hashes():
     )
 
     assert first == second
-    assert first["contract_version"] == "profit_gradient_evidence/v1"
+    assert first["contract_version"] == evidence.PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION
     assert first["read_only"] is True
     assert first["behavior_changed"] is False
     assert set(first["layer_samples"]) == set(evidence.LAYERS)
@@ -35,6 +35,26 @@ def test_compiler_emits_versioned_read_only_artifact_and_stable_hashes():
     assert len(first["content_hash"]) == 64
     assert first["source_hashes"]
     assert first["exclusion_waterfall"]["order"]
+    assert evidence.verify_profit_gradient_evidence(first, revalidate_sources=True) == (True, None)
+
+
+def test_historical_v1_artifact_keeps_hash_verification_without_new_selector_shape():
+    payload = evidence.build_profit_gradient_evidence(
+        evidence_epoch_id="missing-epoch",
+        cutoff_at="2026-08-14T00:00:00Z",
+        cost_model_id="missing-cost-model",
+    )
+    payload = dict(payload)
+    payload["contract_version"] = evidence.LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION
+    payload["producer"] = dict(evidence._LEGACY_COMPILER_PRODUCER)
+    payload.pop("reconciliation")
+    payload["evidence_context"] = {}
+    payload["content_hash"] = evidence._hash(
+        {key: value for key, value in payload.items() if key != "content_hash"}
+    )
+
+    assert evidence.verify_profit_gradient_evidence(payload, revalidate_sources=True) == (True, None)
+    assert payload["contract_version"] != evidence.PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION
 
 
 def test_compiler_does_not_write_database():
@@ -130,6 +150,7 @@ def _execution_fact(*, residual_within_tolerance: bool = True) -> dict:
             "entry_fee": 0.0,
             "exit_fee": 0.0,
             "funding_cost": 0.0,
+            "gross_pnl": 10.0,
             "net_pnl": 9.0,
         },
         "stages": {
@@ -194,9 +215,39 @@ def test_position_assignment_precedes_entry_and_execution_chain_is_validated(mon
         epoch_id="epoch-1",
     )
 
-    assert cost_reason is None and cost_sample is not None
+    assert cost_sample is None
+    assert cost_reason == "cost_not_actionable"
     assert execution_reason is None and execution_sample is not None
-    assert observed == [datetime(2026, 8, 13, tzinfo=timezone.utc)] * 2
+    assert observed == [datetime(2026, 8, 13, tzinfo=timezone.utc)]
+
+
+def test_execution_delta_excludes_settled_fees_and_costs_need_an_alternative(monkeypatch):
+    monkeypatch.setattr(evidence, "_paired_position_cost", lambda *_: ({}, None))
+    monkeypatch.setattr(
+        evidence,
+        "_position_assignment",
+        lambda *_args, **_kwargs: ("treatment", "cluster-1", "pair-1", "policy-1", "commit-1", None),
+    )
+    fact = _execution_fact()
+    fact["economics"].update({"gross_pnl": 8.0, "net_pnl": 7.0, "entry_fee": 0.4, "exit_fee": 0.4, "funding_cost": 0.2})
+    execution, reason = evidence._position_execution_sample(
+        sqlite3.connect(":memory:"), fact,
+        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cost_model_id="paper-execution-reference/v1", epoch_id="epoch-1",
+    )
+    cost, cost_reason = evidence._position_cost_sample(
+        sqlite3.connect(":memory:"), fact,
+        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cost_model_id="paper-execution-reference/v1", epoch_id="epoch-1",
+    )
+
+    assert reason is None and execution is not None
+    assert execution["paired_net_delta_quote"] == 2.0
+    assert execution["cost_applied_once"] is False
+    assert execution["execution_evidence"]["fees_excluded"] is True
+    assert cost is None and cost_reason == "cost_not_actionable"
 
 
 def test_execution_sample_rejects_invalid_fill_chain(monkeypatch):
@@ -336,6 +387,79 @@ def test_pairing_rejects_unpaired_units_and_emits_one_contrast_per_arm():
     assert paired[0]["paired_net_delta_quote"] == 2.0
 
 
+def test_pairing_builds_cost_delta_from_both_arms_and_preserves_execution_metadata():
+    treatment_cost = {
+        "cost_event_id": "treatment-cost",
+        "avoidable": True,
+        "baseline_kind": "realizable_limit",
+        "baseline_id": "treatment-baseline",
+        "cost_model_id": "cost-v1",
+        "avoidable_extra_cost_quote": 5.0,
+    }
+    control_cost = {
+        **treatment_cost,
+        "cost_event_id": "control-cost",
+        "baseline_id": "control-baseline",
+        "avoidable_extra_cost_quote": 2.0,
+    }
+    cost_pair, excluded = evidence._pair_confirmatory_samples(
+        [
+            {
+                "unit_id": "treatment-cost-unit",
+                "pair_id": "cost-pair",
+                "arm": "treatment",
+                "component": "avoidable_extra_cost",
+                "notional_quote": 1000.0,
+                "arm_net_delta_bp": 50.0,
+                "arm_net_delta_quote": 5.0,
+                "cost_evidence": treatment_cost,
+                "cost_applied_once": False,
+            },
+            {
+                "unit_id": "control-cost-unit",
+                "pair_id": "cost-pair",
+                "arm": "control",
+                "component": "avoidable_extra_cost",
+                "notional_quote": 1000.0,
+                "arm_net_delta_bp": 20.0,
+                "arm_net_delta_quote": 2.0,
+                "cost_evidence": control_cost,
+            },
+        ]
+    )
+    execution_pair, execution_excluded = evidence._pair_confirmatory_samples(
+        [
+            {
+                "unit_id": "treatment-execution-unit",
+                "pair_id": "execution-pair",
+                "arm": "treatment",
+                "component": "fill_or_execution",
+                "notional_quote": 1000.0,
+                "arm_net_delta_bp": 20.0,
+                "arm_net_delta_quote": 2.0,
+                "cost_applied_once": False,
+            },
+            {
+                "unit_id": "control-execution-unit",
+                "pair_id": "execution-pair",
+                "arm": "control",
+                "component": "fill_or_execution",
+                "notional_quote": 1000.0,
+                "arm_net_delta_bp": 10.0,
+                "arm_net_delta_quote": 1.0,
+            },
+        ]
+    )
+
+    assert excluded == []
+    assert execution_excluded == []
+    assert cost_pair[0]["cost_evidence"]["avoidable_extra_cost_quote"] == 3.0
+    assert cost_pair[0]["cost_evidence"]["cost_event_id"] == "treatment-cost|control-cost"
+    assert cost_pair[0]["cost_evidence"]["cost_event_ids"] == ["treatment-cost", "control-cost"]
+    assert cost_pair[0]["cost_applied_once"] is False
+    assert execution_pair[0]["cost_applied_once"] is False
+
+
 def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_horizon_net_once():
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
@@ -418,7 +542,7 @@ def test_cli_rejects_rehashed_fabricated_sources(tmp_path):
     result = runner.invoke(inspect_app, ["profit-gradient", "--evidence", str(path), "--json"])
 
     assert result.exit_code != 0
-    assert "evidence_source_revalidation_mismatch" in result.output
+    assert "evidence_gradient_contract_invalid" in result.output
 
 
 def test_compiled_artifact_hash_rejects_tampering():
@@ -433,7 +557,7 @@ def test_compiled_artifact_hash_rejects_tampering():
     verified, reason = evidence.verify_profit_gradient_evidence(tampered)
 
     assert verified is False
-    assert reason == "evidence_content_hash_mismatch"
+    assert reason == "evidence_gradient_contract_invalid"
 
 
 def test_profit_gradient_evidence_cli_writes_compiler_artifact(tmp_path, monkeypatch):
@@ -449,8 +573,17 @@ def test_profit_gradient_evidence_cli_writes_compiler_artifact(tmp_path, monkeyp
             "manual_layer_samples": False,
         },
         "registration": {"status": "unavailable", "reason": "test"},
-        "evidence_context": {},
+        "evidence_context": {
+            "gradient_contract_version": "profit_gradient/v3",
+            "evidence_integrity": "verified",
+            "reconciliation_contract_version": evidence.RECONCILIATION_CONTRACT_VERSION,
+        },
         "layer_samples": {layer: [] for layer in evidence.LAYERS},
+        "reconciliation": {
+            "contract_version": evidence.RECONCILIATION_CONTRACT_VERSION,
+            "tolerance_quote": evidence.RECONCILIATION_TOLERANCE_QUOTE,
+            "status": "requires_selector_evaluation",
+        },
         "exclusion_waterfall": {},
         "source_hashes": {
             "evidence_epoch": "a" * 64,

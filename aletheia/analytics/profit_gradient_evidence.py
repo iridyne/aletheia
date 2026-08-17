@@ -26,7 +26,11 @@ from aletheia.analytics.execution_contribution import (
     _paired_position_cost,
 )
 from aletheia.analytics.position_replay import build_position_replay
-from aletheia.analytics.profit_gradient import LAYERS
+from aletheia.analytics.profit_gradient import (
+    LAYERS,
+    RECONCILIATION_CONTRACT_VERSION,
+    RECONCILIATION_TOLERANCE_QUOTE,
+)
 from aletheia.analytics.profit_loop_counterfactual import (
     COUNTERFACTUAL_CONTRACT_VERSION,
     profit_loop_registry_hash,
@@ -35,12 +39,17 @@ from aletheia.storage.hashing import sha256_json
 from aletheia.storage.sqlite import readonly_db
 
 
-PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION = "profit_gradient_evidence/v1"
+LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION = "profit_gradient_evidence/v1"
+PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION = "profit_gradient_evidence/v2"
 _COMPILER_PRODUCER = {
     "module": "aletheia.analytics.profit_gradient_evidence",
     "contract_version": PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
     "source_mode": "database_read_only",
     "manual_layer_samples": False,
+}
+_LEGACY_COMPILER_PRODUCER = {
+    **_COMPILER_PRODUCER,
+    "contract_version": LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
 }
 _FIXED_CANDIDATE_HORIZON = "24h"
 _GRADIENT_COMPARISON_METHOD = "paired_same_unit"
@@ -81,6 +90,53 @@ _WATERFALL_ORDER = (
     "nonfinite_delta",
     "duplicate_assignment_unit",
     "paired_evidence_unavailable",
+    "sample_not_object",
+    "layer_samples_malformed",
+    "layer_samples_incomplete",
+    "layer_samples_unknown_layer",
+    "layer_component_mismatch",
+    "ownership_evidence_missing",
+    "ownership_stage_mismatch",
+    "ownership_loss_component_invalid",
+    "evidence_reference_missing",
+    "stage_window_invalid",
+    "attribution_identity_missing",
+    "notional_basis_invalid",
+    "position_identity_missing",
+    "execution_component_not_isolated",
+    "execution_fees_not_excluded",
+    "execution_funding_not_excluded",
+    "execution_cost_event_overlap",
+    "execution_baseline_identity_missing",
+    "execution_fill_loss_invalid",
+    "cost_baseline_unavailable",
+    "cost_event_identity_missing",
+    "cost_not_avoidable",
+    "cost_baseline_not_realizable",
+    "cost_baseline_identity_missing",
+    "cost_model_identity_missing",
+    "avoidable_cost_amount_invalid",
+    "avoidable_cost_amount_mismatch",
+    "duplicate_harm_event",
+    "duplicate_attribution_event",
+    "duplicate_cost_event",
+    "paired_delta_units_mismatch",
+    "reconciliation_mapping_missing",
+    "reconciliation_mode_invalid",
+    "reconciliation_identity_missing",
+    "reconciliation_component_quote_mismatch",
+    "reconciliation_component_bp_mismatch",
+    "reconciliation_declared_total_mismatch",
+    "reconciliation_notional_mismatch",
+    "exclusive_reconciliation_multiple_components",
+    "reconciliation_component_sum_mismatch",
+    "reconciliation_bp_sum_mismatch",
+    "reconciliation_non_finite",
+    "cross_layer_harm_event",
+    "cross_layer_attribution_event",
+    "cross_layer_cost_event",
+    "reconciliation_mismatch",
+    "cost_not_actionable",
 )
 
 
@@ -785,6 +841,20 @@ def _candidate_notional(db: Any, fact: Mapping[str, Any]) -> float | None:
     return quantity * price if quantity is not None and price is not None else None
 
 
+def _exclusive_reconciliation(group_id: str, quote: float, bp: float) -> dict[str, Any]:
+    return {
+        "mode": "exclusive",
+        "group_id": group_id,
+        "declared_total_quote": quote,
+        "component_quote": quote,
+        "component_bp": bp,
+    }
+
+
+def _stage_window(start: datetime, end: datetime) -> dict[str, str]:
+    return {"start_at": _iso(start), "end_at": _iso(end)}
+
+
 def _candidate_sample(
     db: Any,
     fact: Mapping[str, Any],
@@ -869,6 +939,24 @@ def _candidate_sample(
         "cost_model_id": cost_model_id,
         "cost_applied_once": True,
         "pairing": "unpaired_arm_observation_pending_explicit_pair",
+        "harm_event_id": f"candidate:{key}:net",
+        "attribution_event_id": f"candidate:{key}:{layer.lower()}",
+        "component": {
+            "Selection": "candidate_selection",
+            "Decision": "operator_decision",
+            "Risk": "risk_policy",
+        }[layer],
+        "ownership": {
+            "stage": layer.lower(),
+            "loss_component": {
+                "Selection": "candidate_selection",
+                "Decision": "operator_decision",
+                "Risk": "risk_policy",
+            }[layer],
+        },
+        "stage_window": _stage_window(occurred, settled_at),
+        "evidence_refs": [f"candidate_fact:{key}", f"outcome:{outcome.get('outcome_candidate_key') or key}"],
+        "reconciliation": _exclusive_reconciliation(f"candidate:{key}:net", delta_quote, delta_bp),
     }, None
 
 
@@ -989,6 +1077,23 @@ def _position_cost_sample(
         return None, "cost_incomplete"
     if registration is not None and not _position_provenance_matches(fact, registration):
         return None, "epoch_mismatch"
+    cost_evidence = fact.get("cost_evidence")
+    if not isinstance(cost_evidence, Mapping):
+        economics_cost_evidence = economics.get("cost_evidence")
+        cost_evidence = economics_cost_evidence if isinstance(economics_cost_evidence, Mapping) else None
+    if not isinstance(cost_evidence, Mapping):
+        return None, "cost_not_actionable"
+    if cost_evidence.get("avoidable") is not True or cost_evidence.get("baseline_kind") not in {
+        "realizable_limit", "spot_vs_perpetual", "turnover", "venue"
+    }:
+        return None, "cost_not_actionable"
+    extra = _finite(cost_evidence.get("avoidable_extra_cost_quote"), nonnegative=True)
+    if extra is None or not str(cost_evidence.get("cost_event_id") or "").strip():
+        return None, "cost_not_actionable"
+    if not str(cost_evidence.get("baseline_id") or "").strip() or not str(cost_evidence.get("cost_model_id") or "").strip():
+        return None, "cost_not_actionable"
+    if str(cost_evidence.get("cost_model_id")) != cost_model_id:
+        return None, "cost_incomplete"
     assignment_metadata: dict[str, str] = {}
     arm, cluster, pair_id, policy_epoch, producer_commit, assignment_reason = _position_assignment(
         db, fact, cutoff, epoch_start, epoch_id,
@@ -999,7 +1104,9 @@ def _position_cost_sample(
     )
     if assignment_reason is not None:
         return None, assignment_reason
-    delta_quote = gross - net
+    # Production gross-minus-net is the settled cost ledger, not an actionable
+    # alternative.  Only an explicit realizable counterfactual may enter Costs.
+    delta_quote = extra
     delta_bp = delta_quote / notional * 10_000.0
     if not math.isfinite(delta_quote) or not math.isfinite(delta_bp):
         return None, "nonfinite_delta"
@@ -1015,15 +1122,26 @@ def _position_cost_sample(
         "producer_commit": producer_commit,
         "outcome_contract_version": assignment_metadata.get("outcome_contract_version"),
         "stage": assignment_metadata.get("stage"),
-        "arm_net_delta_bp": -delta_quote / notional * 10_000.0,
-        "arm_net_delta_quote": -delta_quote,
-        "paired_net_delta_bp": -delta_bp,
-        "paired_net_delta_quote": -delta_quote,
+        "arm_net_delta_bp": delta_quote / notional * 10_000.0,
+        "arm_net_delta_quote": delta_quote,
+        "paired_net_delta_bp": delta_bp,
+        "paired_net_delta_quote": delta_quote,
         "cost_model_id": cost_model_id,
         "cost_applied_once": True,
         "notional_quote": notional,
         "cohort_id": pair_id.rsplit("|", 1)[0] if pair_id and "|" in pair_id else None,
-        "pairing": "verified_gross_vs_settled_net_economics",
+        "pairing": "explicit_realizable_cost_alternative",
+        "harm_event_id": f"position:{unit_id}:cost:{cost_evidence.get('cost_event_id')}",
+        "attribution_event_id": f"position:{unit_id}:cost",
+        "position_id": unit_id,
+        "component": "avoidable_extra_cost",
+        "ownership": {"stage": "costs", "loss_component": "avoidable_extra_cost"},
+        "stage_window": _stage_window(opened_at, closed_at),
+        "evidence_refs": [f"position_fact:{unit_id}", f"cost_event:{cost_evidence.get('cost_event_id')}", f"baseline:{cost_evidence.get('baseline_id')}"],
+        "cost_evidence": dict(cost_evidence),
+        "reconciliation": _exclusive_reconciliation(
+            f"position:{unit_id}:cost:{cost_evidence.get('cost_event_id')}", delta_quote, delta_bp
+        ),
     }, None
 
 
@@ -1074,9 +1192,9 @@ def _position_execution_sample(
     entry_fee = _finite(economics.get("entry_fee"))
     exit_fee = _finite(economics.get("exit_fee"))
     funding = _finite(economics.get("funding_cost"))
-    actual_net = _finite(economics.get("net_pnl"))
+    actual_gross = _finite(economics.get("gross_pnl"))
     entry_price = _finite(entry_reference, positive=True)
-    if None in (entry_reference, close_reference, quantity, entry_fee, exit_fee, funding, actual_net, entry_price):
+    if None in (entry_reference, close_reference, quantity, entry_fee, exit_fee, funding, actual_gross, entry_price):
         return None, "cost_incomplete"
     position = exit_stage.get("position") if isinstance(exit_stage.get("position"), Mapping) else {}
     try:
@@ -1092,8 +1210,9 @@ def _position_execution_sample(
         reference_gross = (entry_reference - close_reference) * quantity
     else:
         return None, "missing_identity"
-    reference_net = reference_gross - entry_fee - exit_fee - funding
-    delta_quote = reference_net - actual_net
+    # Execution owns fill/routing deviation only.  Fees, funding and other
+    # settled costs remain outside this component and cannot be double-counted.
+    delta_quote = reference_gross - actual_gross
     notional = entry_reference * quantity
     delta_bp = delta_quote / notional * 10_000.0
     if not math.isfinite(delta_quote) or not math.isfinite(delta_bp):
@@ -1125,15 +1244,32 @@ def _position_execution_sample(
         "producer_commit": producer_commit,
         "outcome_contract_version": assignment_metadata.get("outcome_contract_version"),
         "stage": assignment_metadata.get("stage"),
-        "arm_net_delta_bp": -delta_quote / notional * 10_000.0,
-        "arm_net_delta_quote": -delta_quote,
-        "paired_net_delta_bp": -delta_bp,
-        "paired_net_delta_quote": -delta_quote,
+        "arm_net_delta_bp": delta_quote / notional * 10_000.0,
+        "arm_net_delta_quote": delta_quote,
+        "paired_net_delta_bp": delta_bp,
+        "paired_net_delta_quote": delta_quote,
         "cost_model_id": cost_model_id,
-        "cost_applied_once": True,
+        "cost_applied_once": False,
+        "costs_excluded": True,
         "notional_quote": notional,
         "cohort_id": pair_id.rsplit("|", 1)[0] if pair_id and "|" in pair_id else None,
-        "pairing": "requested_reference_vs_actual_settled_execution",
+        "pairing": "requested_reference_vs_actual_gross_execution",
+        "harm_event_id": f"position:{unit_id}:execution",
+        "attribution_event_id": f"position:{unit_id}:execution",
+        "position_id": unit_id,
+        "component": "execution_fill",
+        "ownership": {"stage": "execution", "decision": "exit_authorized", "loss_component": "fill_or_execution"},
+        "stage_window": _stage_window(opened_at, closed_at),
+        "evidence_refs": [f"position_fact:{unit_id}", f"entry_order:{entry_order.get('order_id') or unit_id}", f"close_order:{close_order.get('order_id') or unit_id}"],
+        "execution_evidence": {
+            "fees_excluded": True,
+            "funding_excluded": True,
+            "baseline_id": f"requested_reference:{unit_id}",
+            "incremental_fill_loss_quote": max(delta_quote, 0.0),
+        },
+        "reconciliation": _exclusive_reconciliation(
+            f"position:{unit_id}:execution", delta_quote, delta_bp
+        ),
     }, None
 
 
@@ -1210,9 +1346,33 @@ def _pair_confirmatory_samples(
                 "paired_net_delta_bp": delta_bp,
                 "paired_net_delta_quote": delta_quote,
                 "pairing": "explicit_treatment_control_assignment_unit_pair",
-                "cost_applied_once": True,
+                "cost_applied_once": sample.get("cost_applied_once", True),
+                "harm_event_id": f"paired:{pair_id}:net",
+                "attribution_event_id": f"paired:{pair_id}:{str(sample.get('component') or 'layer')}",
+                "reconciliation": _exclusive_reconciliation(
+                    f"paired:{pair_id}:net", delta_quote, delta_bp
+                ),
             }
         )
+        if treatment.get("component") == "avoidable_extra_cost":
+            treatment_cost = treatment.get("cost_evidence")
+            control_cost = control.get("cost_evidence")
+            if isinstance(treatment_cost, Mapping) and isinstance(control_cost, Mapping):
+                treatment_extra = _finite(treatment_cost.get("avoidable_extra_cost_quote"), nonnegative=True)
+                control_extra = _finite(control_cost.get("avoidable_extra_cost_quote"), nonnegative=True)
+                if treatment_extra is not None and control_extra is not None:
+                    combined_cost = dict(treatment_cost)
+                    treatment_event = str(treatment_cost.get("cost_event_id") or "")
+                    control_event = str(control_cost.get("cost_event_id") or "")
+                    combined_cost.update(
+                        {
+                            "cost_event_id": f"{treatment_event}|{control_event}",
+                            "cost_event_ids": [treatment_event, control_event],
+                            "avoidable_extra_cost_quote": abs(treatment_extra - control_extra),
+                        }
+                    )
+                    sample["cost_evidence"] = combined_cost
+                    sample["cost_applied_once"] = treatment.get("cost_applied_once", True)
         paired.append(sample)
     return paired, excluded
 
@@ -1523,6 +1683,10 @@ def _coverage_context(
         "candidate_economic_unit": "fixed_horizon_net_return",
         "position_economic_unit": "verified_settled_net_economics",
         "confirmatory_evidence_only": True,
+        "gradient_contract_version": "profit_gradient/v3",
+        "evidence_integrity": "verified",
+        "reconciliation_contract_version": RECONCILIATION_CONTRACT_VERSION,
+        "reconciliation_tolerance_quote": RECONCILIATION_TOLERANCE_QUOTE,
         "layer_path_mapping": {layer: list(paths) for layer, paths in _LAYER_PATH_IDS.items()},
     }
 
@@ -1554,9 +1718,18 @@ def verify_profit_gradient_evidence(
     revalidate_sources: bool = False,
 ) -> tuple[bool, str | None]:
     """Verify an artifact; optionally rebuild its frozen sources for CLI trust."""
-    if payload.get("contract_version") != PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
+    contract_version = payload.get("contract_version")
+    if contract_version not in {
+        LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
+        PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
+    }:
         return False, "evidence_contract_version_mismatch"
-    if payload.get("producer") != _COMPILER_PRODUCER:
+    expected_producer = (
+        _COMPILER_PRODUCER
+        if contract_version == PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION
+        else _LEGACY_COMPILER_PRODUCER
+    )
+    if payload.get("producer") != expected_producer:
         return False, "evidence_producer_mismatch"
     if payload.get("read_only") is not True or payload.get("behavior_changed") is not False:
         return False, "evidence_authority_metadata_invalid"
@@ -1564,6 +1737,8 @@ def verify_profit_gradient_evidence(
         "registration", "evidence_context", "layer_samples", "exclusion_waterfall",
         "source_hashes", "source_status", "exploratory_evidence", "inputs", "producer", "content_hash",
     }
+    if contract_version == PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
+        required.add("reconciliation")
     if not required <= set(payload):
         return False, "evidence_artifact_fields_missing"
     inputs = payload.get("inputs")
@@ -1572,9 +1747,22 @@ def verify_profit_gradient_evidence(
         for field in ("evidence_epoch_id", "cutoff_at", "cost_model_id")
     ):
         return False, "evidence_inputs_invalid"
-    for field in ("registration", "evidence_context", "exclusion_waterfall", "exploratory_evidence"):
+    mapping_fields = ("registration", "evidence_context", "exclusion_waterfall", "exploratory_evidence")
+    if contract_version == PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
+        mapping_fields += ("reconciliation",)
+    for field in mapping_fields:
         if not isinstance(payload.get(field), Mapping):
             return False, f"evidence_{field}_invalid"
+    context = payload["evidence_context"]
+    if contract_version == PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
+        if payload["reconciliation"].get("contract_version") != RECONCILIATION_CONTRACT_VERSION:
+            return False, "evidence_reconciliation_contract_invalid"
+        if context.get("gradient_contract_version") != "profit_gradient/v3":
+            return False, "evidence_gradient_contract_invalid"
+        if context.get("reconciliation_contract_version") != RECONCILIATION_CONTRACT_VERSION:
+            return False, "evidence_reconciliation_contract_invalid"
+        if context.get("evidence_integrity") != "verified":
+            return False, "evidence_integrity_invalid"
     if not isinstance(payload["registration"].get("status"), str):
         return False, "evidence_registration_invalid"
     if "profit_loop_counterfactual" not in payload["exploratory_evidence"]:
@@ -1605,7 +1793,8 @@ def verify_profit_gradient_evidence(
     expected = _hash({key: value for key, value in payload.items() if key != "content_hash"})
     if supplied != expected:
         return False, "evidence_content_hash_mismatch"
-    if revalidate_sources:
+    # Historical v1 keeps frozen-hash integrity; only v2 has a shape-compatible rebuild.
+    if revalidate_sources and contract_version == PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
         try:
             rebuilt = build_profit_gradient_evidence(
                 evidence_epoch_id=str(inputs["evidence_epoch_id"]),
@@ -1625,7 +1814,7 @@ def build_profit_gradient_evidence(
     cutoff_at: str,
     cost_model_id: str,
 ) -> dict[str, Any]:
-    """Build the frozen ``profit_gradient_evidence/v1`` artifact.
+    """Build the frozen ``profit_gradient_evidence/v2`` artifact.
 
     All three inputs are identity selectors, not data.  Candidate samples and
     Position samples are derived from the database; there is no parameter for
@@ -1649,8 +1838,19 @@ def build_profit_gradient_evidence(
             "cost_model_id": cost_model_id,
         },
         "registration": _unavailable("database_unavailable", evidence_epoch_id=evidence_epoch_id),
-        "evidence_context": {},
+        "evidence_context": {
+            "gradient_contract_version": "profit_gradient/v3",
+            "evidence_integrity": "verified",
+            "reconciliation_contract_version": RECONCILIATION_CONTRACT_VERSION,
+            "reconciliation_tolerance_quote": RECONCILIATION_TOLERANCE_QUOTE,
+            "availability": "unavailable",
+        },
         "layer_samples": {layer: [] for layer in LAYERS},
+        "reconciliation": {
+            "contract_version": RECONCILIATION_CONTRACT_VERSION,
+            "tolerance_quote": RECONCILIATION_TOLERANCE_QUOTE,
+            "status": "requires_selector_evaluation",
+        },
         "exclusion_waterfall": {
             "order": list(_WATERFALL_ORDER),
             "layers": {},
@@ -1784,7 +1984,10 @@ def build_profit_gradient_evidence(
 
 
 __all__ = [
+    "LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION",
     "PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION",
+    "RECONCILIATION_CONTRACT_VERSION",
+    "RECONCILIATION_TOLERANCE_QUOTE",
     "build_profit_gradient_evidence",
     "verify_profit_gradient_evidence",
 ]
