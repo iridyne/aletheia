@@ -142,10 +142,28 @@ def _learning_authority() -> dict[str, Any]:
 def _runtime_continuity() -> dict[str, Any]:
     try:
         from aletheia.config.loader import load_config
+        from aletheia.agent_runtime.pause_ownership import (
+            active_pause_blocker_names,
+            active_pause_owners,
+            pause_blocked_reason,
+        )
         cfg = load_config()
+        owners = active_pause_owners(cfg)
+        blockers = active_pause_blocker_names(cfg)
         return {
             "enabled": cfg.runtime.runtime_continuity_enabled,
             "paused": cfg.runtime.paused,
+            "pause_owners": owners,
+            "pause_blockers": list(blockers),
+            "resume_blocked_reason": pause_blocked_reason(cfg),
+            "scheduler_resume_authority": {
+                "allowed": not blockers,
+                "blocked_by": list(blockers),
+                "dependency_recovery_is_resume": False,
+            },
+            "kill_switch_active": cfg.runtime.kill_switch_active,
+            "demo_brake_active": cfg.runtime.demo_brake_active,
+            "live_brake_active": cfg.runtime.live_brake_active,
         }
     except Exception:
         return {"error": "unavailable"}
@@ -305,6 +323,17 @@ def status(
     typer.echo(f"  Gateway   : {'running' if data.get('gateway_running') else 'stopped' if data.get('gateway_running') is False else 'unknown'}")
     paused = data.get("runtime", {}).get("paused")
     typer.echo(f"  Paused    : {paused}")
+    runtime = data.get("runtime", {})
+    blockers = runtime.get("pause_blockers") or []
+    typer.echo(f"  Resume    : {'blocked by ' + ', '.join(blockers) if blockers else 'permitted'}")
+    owners = runtime.get("pause_owners") or []
+    if owners:
+        for owner in owners:
+            typer.echo(
+                f"  Owner     : {owner.get('owner')} ({owner.get('reason')}) "
+                f"generation={owner.get('generation') or 'unknown'} "
+                f"age={owner.get('age_seconds') if owner.get('age_seconds') is not None else 'unknown'}s"
+            )
     typer.echo("╠═ SHA ════════════════════════════════════════════════╣")
     typer.echo(f"  Running   : {sha['deployed_head_short']}{'  ✓ matches recorded deployment' if sha.get('deployed_matches_recorded') else '  ⚠ recorded deployment disagrees' if sha.get('deployed_matches_recorded') is False else ''}")
     typer.echo(f"  Disk      : {sha['disk_head_short']}{'  (same as running)' if sha.get('disk_matches_deployed') else '  (different from running)' if sha.get('disk_matches_deployed') is False else ''}")

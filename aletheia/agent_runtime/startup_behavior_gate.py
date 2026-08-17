@@ -502,7 +502,9 @@ def _persist_paused(paused: bool, *, generation: str | None = None):
             )
         return release_pause(
             STARTUP_BEHAVIOR_OWNER,
-            generation=generation,
+            # A missing gate-state generation is legacy/unknown and must not
+            # wildcard-release a newer startup blocker.
+            generation=generation if generation is not None else "",
             resume_when_clear=True,
             source="startup_behavior_gate",
         )
@@ -604,8 +606,8 @@ def _resume_from_gate(cause: str, *, generation: str | None = None):
     if not release.released:
         logger.info("startup gate: pause generation changed — staying paused")
         return release
-    if release.remaining_owners:
-        remaining = ", ".join(release.remaining_owners)
+    if release.blocking_owners:
+        remaining = ", ".join(release.blocking_owners)
         _audit(
             "startup_behavior_gate_released_paused",
             f"Startup behaviour gate cleared; trading remains paused by {remaining} ({cause})",

@@ -10,6 +10,7 @@ any LLM-callable tool — only human/system actors through this module.
 """
 
 from aletheia.config.loader import load_config, save_config
+from aletheia.config.schema import BRAKE_OWNERS_BY_SCOPE
 from aletheia.files.jsonl import write_audit
 
 
@@ -37,19 +38,45 @@ def activate(
     scope: str = "global",
 ) -> None:
     """Engage the kill switch. Idempotent; always writes an audit event."""
-    cfg = load_config()
+    from aletheia.agent_runtime.pause_ownership import _pause_transition_lock
+
     field = _field(scope)
-    was_active = bool(getattr(cfg.runtime, field))
-    setattr(cfg.runtime, field, True)
-    save_config(cfg)
+    owner = BRAKE_OWNERS_BY_SCOPE[scope]
+    source = {"system": "risk_engine", "telegram": "telegram"}.get(actor, "dashboard")
+    with _pause_transition_lock:
+        cfg = load_config()
+        was_active = bool(getattr(cfg.runtime, field))
+        lease = cfg.runtime.acquire_pause(
+            owner,
+            reason=reason or f"{scope}_trading_brake_active",
+            source=source,
+            scope=scope,
+        )
+        save_config(cfg)
+        try:
+            from aletheia.agent_runtime.scheduler import pause_scheduler
+
+            pause_scheduler()
+        except Exception:
+            # The durable brake remains authoritative even if the in-process
+            # scheduler is unavailable during startup or shutdown.
+            pass
     write_audit({
         "actor": actor,
-        "source": "risk_engine" if actor == "system" else "dashboard",
+        "source": source,
         "event_type": "trading_brake_activated",
         "entity_type": "trading_brake",
         "entity_id": scope,
         "before": {"active": was_active},
         "after": {"active": True},
+        "metadata": {
+            "pause_owner": owner,
+            "pause_generation": lease.generation,
+            "pause_reason": lease.reason,
+            "pause_acquired_at": lease.acquired_at,
+            "pause_source": lease.source,
+            "pause_scope": lease.scope,
+        },
         "message": (
             f"{scope} trading brake activated: {reason}"
             if reason else f"{scope} trading brake activated"
@@ -59,18 +86,45 @@ def activate(
 
 def deactivate(actor: str = "human", scope: str = "global") -> None:
     """Release the kill switch. Only human/system actors should call this."""
-    cfg = load_config()
+    from aletheia.agent_runtime.pause_ownership import _audit, _pause_transition_lock
+
     field = _field(scope)
-    was_active = bool(getattr(cfg.runtime, field))
-    setattr(cfg.runtime, field, False)
-    save_config(cfg)
+    owner = BRAKE_OWNERS_BY_SCOPE[scope]
+    with _pause_transition_lock:
+        cfg = load_config()
+        was_active = bool(getattr(cfg.runtime, field))
+        lease = cfg.runtime.pause_owners.get(owner)
+        if lease is not None:
+            cfg.runtime.release_pause(owner, generation=lease.generation)
+        else:
+            setattr(cfg.runtime, field, False)
+        remaining = tuple(sorted(cfg.runtime.pause_owners))
+        save_config(cfg)
+        if lease is not None:
+            _audit(
+                "pause_owner_released",
+                owner=owner,
+                lease=lease,
+                remaining=remaining,
+                actor=actor,
+                source={"system": "risk_engine", "telegram": "telegram"}.get(actor, "dashboard"),
+            )
     write_audit({
         "actor": actor,
-        "source": "dashboard",
+        "source": {"system": "risk_engine", "telegram": "telegram"}.get(actor, "dashboard"),
         "event_type": "trading_brake_deactivated",
         "entity_type": "trading_brake",
         "entity_id": scope,
         "before": {"active": was_active},
         "after": {"active": False},
+        "metadata": {
+            "pause_owner": owner,
+            "pause_generation": lease.generation if lease else None,
+            "pause_reason": lease.reason if lease else None,
+            "pause_acquired_at": lease.acquired_at if lease else None,
+            "pause_source": lease.source if lease else None,
+            "pause_scope": lease.scope if lease else scope,
+            "pause_active": False,
+        },
         "message": f"{scope} trading brake deactivated",
     })

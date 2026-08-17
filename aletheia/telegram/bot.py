@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from aletheia.net import httpx_client
-from aletheia.config.loader import load_config, save_config
+from aletheia.config.loader import load_config
 from aletheia.config.secrets import get_secret
 from aletheia.files.jsonl import write_audit
 
@@ -223,9 +223,9 @@ class TelegramBot:
         if time.monotonic() - requested_at > _KILL_CONFIRM_TIMEOUT_SEC:
             return "Kill request expired (>5 min). Send /kill again."
         try:
-            cfg = load_config()
-            cfg.runtime.kill_switch_active = True
-            save_config(cfg)
+            from aletheia.risk import kill_switch
+
+            kill_switch.activate(reason="telegram kill confirmation", actor="telegram")
             write_audit({
                 "actor": "telegram",
                 "source": "telegram",

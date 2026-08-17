@@ -231,6 +231,19 @@ async def _llm_startup_gate(cfg) -> None:
     POST /api/gateway/resume. Never raises (degrades to a logged warning)."""
     if not cfg.health.require_llm_at_startup:
         return
+    from aletheia.agent_runtime.pause_ownership import LLM_STARTUP_OWNER
+    from aletheia.config.loader import load_config as _load_config
+
+    # Fence the asynchronous probe to the owner generation observed before it
+    # starts.  A missing/legacy generation is represented by a non-matching
+    # sentinel so this task can never wildcard-release a newer owner.
+    before_probe = _load_config()
+    llm_lease = before_probe.runtime.pause_owners.get(LLM_STARTUP_OWNER)
+    llm_generation = (
+        llm_lease.generation
+        if llm_lease is not None and llm_lease.generation is not None
+        else ""
+    )
     try:
         from aletheia.agent_runtime.startup_gate import probe_llm_providers_at_startup
 
@@ -253,13 +266,13 @@ async def _llm_startup_gate(cfg) -> None:
         # Clear any stale failure count so /api/health starts clean.
         from aletheia.agent_runtime.health import record_llm_success
         from aletheia.agent_runtime.pause_ownership import (
-            LLM_STARTUP_OWNER,
             release_pause,
         )
 
         record_llm_success()
         release = release_pause(
             LLM_STARTUP_OWNER,
+            generation=llm_generation,
             resume_when_clear=True,
             source="llm_startup_gate",
         )
@@ -283,8 +296,7 @@ async def _llm_startup_gate(cfg) -> None:
     # window (e.g. an operator changing settings via the dashboard, now reachable
     # because the port is already serving). Full elimination of the last-writer
     # race would need a file lock and is outside this startup safeguard's scope.
-    from aletheia.agent_runtime.pause_ownership import LLM_STARTUP_OWNER, acquire_pause
-    from aletheia.config.loader import load_config as _load_config
+    from aletheia.agent_runtime.pause_ownership import acquire_pause
 
     acquire_pause(
         LLM_STARTUP_OWNER,

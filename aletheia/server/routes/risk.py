@@ -38,6 +38,11 @@ async def brakes_status():
 @router.get("/status")
 async def risk_status():
     cfg = load_config()
+    from aletheia.agent_runtime.pause_ownership import (
+        active_pause_blocker_names,
+        active_pause_owners,
+        pause_blocked_reason,
+    )
     # Migrations run once at startup (aletheia/server/app.py:44).
     latest = list_risk_decisions(limit=1)
     latest_decision = latest[0] if latest else None
@@ -78,6 +83,9 @@ async def risk_status():
         "latest_risk_decision": latest_decision,
         "status": status,
         "violations": violations,
+        "pause_owners": active_pause_owners(cfg),
+        "pause_blockers": list(active_pause_blocker_names(cfg)),
+        "resume_blocked_reason": pause_blocked_reason(cfg),
     }
 
 

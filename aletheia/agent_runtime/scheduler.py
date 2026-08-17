@@ -1641,12 +1641,38 @@ def resume_scheduler() -> bool:
     global _scheduler
     with _pause_transition_lock:
         cfg = load_config()
-        active_owners = tuple(sorted(cfg.runtime.pause_owners))
+        from aletheia.agent_runtime.pause_ownership import (
+            active_pause_blocker_names,
+            active_pause_owners,
+            pause_blocked_reason,
+        )
+
+        active_owners = active_pause_blocker_names(cfg)
         if active_owners:
             logger.warning(
                 "resume_scheduler: blocked by durable pause owner(s): %s",
                 ", ".join(active_owners),
             )
+            try:
+                from aletheia.files.jsonl import write_audit
+
+                write_audit(
+                    {
+                        "actor": "system",
+                        "source": "scheduler",
+                        "event_type": "scheduler_resume_blocked",
+                        "entity_type": "gateway",
+                        "entity_id": "gateway",
+                        "message": "Scheduler resume blocked by durable pause owner(s)",
+                        "metadata": {
+                            "pause_blockers": list(active_owners),
+                            "pause_owners": active_pause_owners(cfg),
+                            "resume_blocked_reason": pause_blocked_reason(cfg),
+                        },
+                    }
+                )
+            except Exception:
+                pass
             return False
 
         if _scheduler is None:
@@ -1655,7 +1681,7 @@ def resume_scheduler() -> bool:
                 logger.warning(
                     "resume_scheduler: scheduler unavailable (disabled or init failed)"
                 )
-            return True
+                return True
         # If blanket-paused, resume the whole scheduler
         if _scheduler.state == STATE_PAUSED:
             _scheduler.resume()

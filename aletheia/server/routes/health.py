@@ -135,10 +135,44 @@ def _cached_compute_health(ttl_sec: float = 5.0) -> dict:
 @router.get("/health")
 def health():
     h = _cached_compute_health()
+    try:
+        cfg = load_config()
+        from aletheia.agent_runtime.pause_ownership import (
+            active_pause_blocker_names,
+            active_pause_owners,
+            pause_blocked_reason,
+        )
+        owners = active_pause_owners(cfg)
+        blockers = list(active_pause_blocker_names(cfg))
+        pause_projection = {
+            "paused": cfg.runtime.paused,
+            "pause_owners": owners,
+            "pause_blockers": blockers,
+            "resume_blocked_reason": pause_blocked_reason(cfg),
+            "scheduler_resume_authority": {
+                "allowed": not blockers,
+                "blocked_by": blockers,
+                "dependency_recovery_is_resume": False,
+            },
+        }
+    except Exception as exc:
+        pause_projection = {
+            "paused": None,
+            "pause_owners": None,
+            "pause_blockers": None,
+            "resume_blocked_reason": "unavailable",
+            "scheduler_resume_authority": {
+                "allowed": None,
+                "blocked_by": None,
+                "dependency_recovery_is_resume": False,
+                "unavailable_reason": type(exc).__name__,
+            },
+        }
     return {
         "status": h["status"],
         "issues": h["issues"],
         "version": __version__,
+        **pause_projection,
     }
 
 
@@ -255,7 +289,11 @@ def stability():
 @router.get("/status")
 def status():
     cfg = load_config()
-    from aletheia.agent_runtime.pause_ownership import active_pause_owners
+    from aletheia.agent_runtime.pause_ownership import (
+        active_pause_blocker_names,
+        active_pause_owners,
+        pause_blocked_reason,
+    )
 
     paper_execution_mode = cfg.exchange.paper_execution_mode
     uses_external_exchange = paper_execution_mode != "paper_internal"
@@ -337,10 +375,19 @@ def status():
         logger.debug("status lifecycle task snapshot failed: %s", e)
         lifecycle_tasks = []
 
+    pause_owners = active_pause_owners(cfg)
+    pause_blockers = active_pause_blocker_names(cfg)
     return {
         "gateway_running": True,  # if we can respond, we are running
         "paused": cfg.runtime.paused,
-        "pause_owners": active_pause_owners(cfg),
+        "pause_owners": pause_owners,
+        "pause_blockers": list(pause_blockers),
+        "resume_blocked_reason": pause_blocked_reason(cfg),
+        "scheduler_resume_authority": {
+            "allowed": not pause_blockers,
+            "blocked_by": list(pause_blockers),
+            "dependency_recovery_is_resume": False,
+        },
         "exchange": cfg.exchange.name,
         "exchange_mode": cfg.exchange.mode,
         "paper_execution_mode": paper_execution_mode,

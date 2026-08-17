@@ -231,6 +231,41 @@ def test_startup_gate_passes_when_usable(tmp_path, monkeypatch):
     assert get_llm_consecutive_failures() == 0
 
 
+def test_startup_gate_does_not_release_new_llm_generation(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.server import app as appmod
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
+    cfg.runtime.acquire_pause(
+        "llm_startup_gate",
+        reason="old probe",
+        generation="old-generation",
+    )
+    save_config(cfg)
+
+    async def probe_and_rotate(_cfg):
+        fresh = load_config()
+        fresh.runtime.acquire_pause(
+            "llm_startup_gate",
+            reason="new probe",
+            generation="new-generation",
+        )
+        save_config(fresh)
+        return {"any_usable": True, "checked": 1, "results": []}
+
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.startup_gate.probe_llm_providers_at_startup",
+        probe_and_rotate,
+    )
+
+    asyncio.run(appmod._llm_startup_gate(cfg))
+
+    persisted = load_config()
+    assert persisted.runtime.pause_owners["llm_startup_gate"].generation == "new-generation"
+    assert persisted.runtime.paused is True
+
+
 # --- 5c. gate disabled by config → no-op even if all providers are dead ---
 
 def test_startup_gate_respects_disable_flag(tmp_path, monkeypatch):
@@ -376,7 +411,7 @@ def test_resume_gate_allows_when_one_provider_usable(tmp_path, monkeypatch):
         lambda: True,
     )
 
-    def fake_persist_resumed(*, actor, source):
+    def fake_persist_resumed(*, actor, source, generations):
         cfg.runtime.paused = False
         save_config(cfg)
         return PauseReleaseResult(released=True, resumed=True, remaining_owners=())
