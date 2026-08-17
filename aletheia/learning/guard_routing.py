@@ -4,15 +4,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import Any
 
 from aletheia.knowledge.manager import create_guard_candidate
+from aletheia.learning.hypothesis_research import research_learning_hypothesis
+from aletheia.learning.hypotheses import HypothesisResearchEvidenceV1
 
 
 _BLOCK_ACTIONS = {"block_scanner", "block_direction", "block_symbol"}
 
 
-def route_automatic_block_recommendation(
-    recommendation: dict | None, *, evidence: dict, source_id: str,
+async def route_automatic_block_recommendation(
+    recommendation: dict | None,
+    *,
+    evidence: dict,
+    source_id: str,
+    research_evidence: HypothesisResearchEvidenceV1 | dict[str, Any] | None = None,
+    deadline: float | None = None,
 ) -> dict | None:
     if not recommendation or recommendation.get("action") not in _BLOCK_ACTIONS:
         return recommendation
@@ -35,6 +43,51 @@ def route_automatic_block_recommendation(
         sort_keys=True,
     )
     guard_id = f"auto_shadow_{hashlib.sha256(identity.encode()).hexdigest()[:16]}"
+    source_ids = list(dict.fromkeys(
+        value
+        for value in (
+            str(source_id).strip(),
+            *(str(item).strip() for item in evidence.get("supporting_source_ids") or []),
+        )
+        if value
+    ))
+    if research_evidence is None:
+        research = HypothesisResearchEvidenceV1.model_validate(
+            await research_learning_hypothesis(
+                candidate_explanation=_candidate_explanation(
+                    action=action, field=field, value=value, scope=scope,
+                ),
+                source_artifact_ids=source_ids,
+                evidence=evidence,
+                proposed_scope=scope,
+                target_horizon="4h",
+                deadline=deadline,
+            )
+        )
+    else:
+        research = HypothesisResearchEvidenceV1.model_validate(research_evidence)
+    if set(source_ids) != set(research.observation.source_artifact_ids):
+        return {
+            "action": "guard_shadow_unavailable",
+            "reason": "research_source_identity_mismatch",
+            "research_status": "insufficient_context",
+        }
+    research_payload = research.canonical_payload()
+    if research.research_status not in {"ready", "narrowed"}:
+        return {
+            "action": "guard_shadow_unavailable",
+            "reason": f"research_{research.research_status}",
+            "research_status": research.research_status,
+            "research_evidence": research_payload,
+        }
+    if research.relevant_context.material_scope:
+        return {
+            "action": "guard_shadow_unavailable",
+            "reason": "research_material_scope_not_expressible_by_guard",
+            "research_status": research.research_status,
+            "research_evidence": research_payload,
+        }
+
     metadata = {
         "type": "Trading Guard", "guard_id": guard_id, "status": "candidate",
         "scope": "paper_entry", "enforcement": "advisory", "severity": "warning",
@@ -44,6 +97,8 @@ def route_automatic_block_recommendation(
         "source_type": "automatic_lesson_recommendation", "source_id": source_id,
         "predicates": [{"field": field, "op": "eq", "value": value}],
         "applies_to": scope, "evidence_summary": evidence,
+        "hypothesis_research": research_payload,
+        "research_status": research.research_status,
         "tags": ["auto-generated", "shadow-only", action],
     }
     try:
@@ -52,7 +107,7 @@ def route_automatic_block_recommendation(
             content=(
                 "Automatic Learning recommendation routed to guard shadow evaluation. "
                 "It has no Risk Engine or paper-entry blocking authority.\n\n"
-                f"Evidence: {json.dumps(evidence, sort_keys=True, default=str)}"
+                f"Research evidence: {json.dumps(research_payload, sort_keys=True, default=str)}"
             ),
             metadata=metadata,
         )
@@ -75,20 +130,21 @@ def route_automatic_block_recommendation(
     }
     from aletheia.learning.hypotheses import nominate_learning_hypothesis
 
+    hypothesis_scope: dict[str, Any] = {
+        "guard_id": guard_id,
+        "applies_to": scope,
+    }
     hypothesis = nominate_learning_hypothesis(
         path_id="ranker_learned_guard",
-        scope={"guard_id": guard_id},
+        scope=hypothesis_scope,
         action=hypothesis_action,
         source_type="guard_candidate",
-        source_artifact_ids=[source_id, guard_candidate_id],
-        source_cohort=f"learned_guard:{guard_id}:v1",
+        source_artifact_ids=[*source_ids, guard_candidate_id],
+        source_cohort=f"learned_guard:{guard_id}:research-v1",
         consumer="paper_trader_ranker",
         target_horizon="4h",
-        evidence_summary={
-            "guard_candidate_id": guard_candidate_id,
-            "applies_to": scope,
-            "evidence": evidence,
-        },
+        evidence_summary=research,
+        require_research_evidence=True,
     )
     # A repeated nomination may return the original fingerprinted hypothesis
     # while this call created a fresh candidate row. Report the candidate that
@@ -108,8 +164,19 @@ def route_automatic_block_recommendation(
         "guard_candidate_id": linked_candidate_id,
         "hypothesis_id": hypothesis.hypothesis_id,
         "hypothesis_status": "proposed",
+        "research_status": research.research_status,
         "original_action": action,
     }
+
+
+def _candidate_explanation(
+    *, action: str, field: str, value: str, scope: dict[str, Any],
+) -> str:
+    return (
+        f"Applying the proposed {action} treatment for {field}={value} within "
+        f"the recorded scope {json.dumps(scope, sort_keys=True)} may improve net "
+        "candidate utility over the declared 4h horizon."
+    )
 
 
 def _predicate(action: str, recommendation: dict) -> tuple[str | None, str | None]:

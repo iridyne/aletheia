@@ -5,13 +5,139 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 if TYPE_CHECKING:
     from aletheia.learning.models import LearningHypothesis
 
 
 HYPOTHESIS_FINGERPRINT_SCHEMA_VERSION = 1
+HYPOTHESIS_RESEARCH_EVIDENCE_VERSION = "hypothesis-research-evidence/v1"
+
+ResearchStatus = Literal["ready", "narrowed", "rejected", "insufficient_context"]
+ResearchText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000),
+]
+ResearchIdentity = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=256),
+]
+
+
+class HypothesisResearchObservationV1(BaseModel):
+    """Exact historical fact being explained, never an inferred market state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    statement: ResearchText
+    source_artifact_ids: list[ResearchIdentity] = Field(min_length=1, max_length=20)
+    outcome_identities: list[ResearchIdentity] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def _identities_are_unique(self) -> HypothesisResearchObservationV1:
+        if len(set(self.source_artifact_ids)) != len(self.source_artifact_ids):
+            raise ValueError("research source artifact identities must be unique")
+        if len(set(self.outcome_identities)) != len(self.outcome_identities):
+            raise ValueError("research outcome identities must be unique")
+        return self
+
+
+class HypothesisRelevantContextV1(BaseModel):
+    """Only decision-time context plus explicit unavailable dimensions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    recorded_at_t0: dict[str, Any] = Field(default_factory=dict)
+    missing: list[ResearchText] = Field(default_factory=list, max_length=20)
+    material_scope: dict[str, Any] = Field(default_factory=dict, max_length=3)
+
+    @model_validator(mode="after")
+    def _context_is_explicit(self) -> HypothesisRelevantContextV1:
+        if not self.recorded_at_t0 and not self.missing:
+            raise ValueError("research context must be recorded or explicitly missing")
+        if not set(self.material_scope).issubset(self.recorded_at_t0):
+            raise ValueError("material scope must use recorded T0 context keys")
+        return self
+
+
+class HypothesisCounterfactualCheckV1(BaseModel):
+    """One bounded check linked to existing exact durable identities."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    check_type: ResearchText
+    source_identity: ResearchIdentity
+    comparison_identity: ResearchIdentity | None = None
+    evidence: dict[str, Any] = Field(min_length=1)
+
+
+class HypothesisRedTeamSummaryV1(BaseModel):
+    """The four answers required from the single bounded causal review."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    strongest_simpler_competing_explanation: ResearchText | None = None
+    material_confounders_or_missing: list[ResearchText] = Field(
+        default_factory=list, max_length=10,
+    )
+    smallest_falsification_test: ResearchText
+    decision: ResearchStatus
+    reasoning: ResearchText
+
+
+class HypothesisResearchEvidenceV1(BaseModel):
+    """Canonical research evidence for an explicit Learning nomination."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal[HYPOTHESIS_RESEARCH_EVIDENCE_VERSION] = (
+        HYPOTHESIS_RESEARCH_EVIDENCE_VERSION
+    )
+    observation: HypothesisResearchObservationV1
+    original_candidate_explanation: ResearchText | None = None
+    candidate_explanation: ResearchText
+    competing_explanations: list[ResearchText] = Field(default_factory=list, max_length=3)
+    no_material_alternative_reason: ResearchText | None = None
+    relevant_context: HypothesisRelevantContextV1
+    falsification_condition: ResearchText
+    supporting_evidence: list[ResearchText] = Field(default_factory=list, max_length=20)
+    opposing_evidence: list[ResearchText] = Field(default_factory=list, max_length=20)
+    missing_evidence: list[ResearchText] = Field(default_factory=list, max_length=20)
+    counterfactual_checks: list[HypothesisCounterfactualCheckV1] = Field(
+        default_factory=list, max_length=3,
+    )
+    red_team_summary: HypothesisRedTeamSummaryV1
+    research_status: ResearchStatus
+
+    @model_validator(mode="after")
+    def _research_contract_is_coherent(self) -> HypothesisResearchEvidenceV1:
+        if not self.competing_explanations and not self.no_material_alternative_reason:
+            raise ValueError(
+                "research evidence requires competing explanations or an explicit "
+                "no-material-alternative reason"
+            )
+        if self.red_team_summary.decision != self.research_status:
+            raise ValueError("red-team decision and research status disagree")
+        if self.red_team_summary.smallest_falsification_test != self.falsification_condition:
+            raise ValueError("red-team falsification test must be the stored condition")
+        if self.research_status in {"ready", "narrowed"} and not self.observation.outcome_identities:
+            raise ValueError("research-ready evidence requires exact outcome identities")
+        if self.research_status == "narrowed":
+            if (
+                not self.original_candidate_explanation
+                or self.original_candidate_explanation == self.candidate_explanation
+                or not self.relevant_context.material_scope
+            ):
+                raise ValueError(
+                    "narrowed research requires a changed explanation and material scope"
+                )
+        return self
+
+    def canonical_payload(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude_none=True)
 
 
 def hypothesis_fingerprint(
@@ -44,7 +170,8 @@ def nominate_learning_hypothesis(
     source_cohort: str,
     consumer: str,
     target_horizon: str,
-    evidence_summary: dict[str, Any] | None = None,
+    evidence_summary: HypothesisResearchEvidenceV1 | dict[str, Any] | None = None,
+    require_research_evidence: bool = False,
 ) -> LearningHypothesis:
     """Persist one scoped hypothesis candidate without opening authority state."""
     from aletheia.learning.ledger import (
@@ -72,6 +199,26 @@ def nominate_learning_hypothesis(
     ))
     if not artifact_ids:
         raise ValueError("hypothesis nomination source artifact is required")
+
+    if require_research_evidence:
+        try:
+            research_evidence = HypothesisResearchEvidenceV1.model_validate(
+                evidence_summary or {},
+            )
+        except Exception as exc:
+            raise ValueError("hypothesis research evidence v1 is required") from exc
+        if research_evidence.research_status not in {"ready", "narrowed"}:
+            raise ValueError(
+                "hypothesis research is not ready for nomination: "
+                f"{research_evidence.research_status}"
+            )
+        evidence_payload = research_evidence.canonical_payload()
+    else:
+        evidence_payload = (
+            evidence_summary.canonical_payload()
+            if isinstance(evidence_summary, HypothesisResearchEvidenceV1)
+            else _normalize(evidence_summary or {})
+        )
 
     path = get_learning_path(path_id)
     if not path.is_learning_treatment:
@@ -103,7 +250,7 @@ def nominate_learning_hypothesis(
         target_horizon=target_horizon,
         status="proposed",
         evidence_summary_json=json.dumps(
-            _normalize(evidence_summary or {}),
+            evidence_payload,
             sort_keys=True,
             separators=(",", ":"),
         ),

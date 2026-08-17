@@ -298,9 +298,10 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
     from pathlib import Path
 
     from aletheia.agents import dreaming_agent
-    from aletheia.learning import hypotheses
+    from aletheia.learning import guard_routing, hypotheses
     from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import pending_trade_case_studies_summary
+    from tests.specs.spec_learning_attribution import _ready_research
 
     factor = "momentum:BTC/USDT:long:medium_confidence:not_late"
     path = Path(tmp_path) / "case-retry.md"
@@ -325,8 +326,10 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
         ),
     )
     db.commit()
+    observed_deadlines = []
 
     async def _structured_recommendation(*_args, **_kwargs):
+        observed_deadlines.append(_kwargs.get("deadline"))
         return {"lessons": [{
             "summary": "Retryable guard hypothesis",
             "supporting_factor_keys": [factor],
@@ -336,12 +339,18 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
     def fail_nomination(**_):
         raise RuntimeError("temporary nomination failure")
 
+    async def ready_research(**kwargs):
+        observed_deadlines.append(kwargs.get("deadline"))
+        return _ready_research(*kwargs["source_artifact_ids"])
+
     monkeypatch.setattr(dreaming_agent, "llm_structured", _structured_recommendation)
+    monkeypatch.setattr(guard_routing, "research_learning_hypothesis", ready_research)
     monkeypatch.setattr(hypotheses, "nominate_learning_hypothesis", fail_nomination)
 
     with pytest.raises(RuntimeError, match="temporary nomination failure"):
-        await dreaming_agent._extract_lessons(None, [], [])
+        await dreaming_agent._extract_lessons(None, [], [], deadline=123.0)
 
+    assert observed_deadlines == [123.0, 123.0]
     assert db.execute("SELECT COUNT(*) FROM ps_lessons").fetchone()[0] == 0
     assert pending_trade_case_studies_summary()[0] == 1
 
@@ -411,6 +420,12 @@ async def test_lesson_extraction_links_each_lesson_to_its_supporting_case(
     ]
     assert [json.loads(row["evidence_json"])["supporting_source_ids"] for row in rows] == [
         ["case-1"], ["case-2"],
+    ]
+    exact_evidence = [json.loads(row["evidence_json"]) for row in rows]
+    assert [item["case_count"] for item in exact_evidence] == [1, 1]
+    assert [item["factor_keys"] for item in exact_evidence] == [
+        ["momentum:BTC/USDT:long"],
+        ["volatility:ETH/USDT:short"],
     ]
 
 

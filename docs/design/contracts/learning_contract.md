@@ -550,6 +550,29 @@ automatic demotion remain part of the
 [`learning_evolution.md`](../proposals/learning_evolution.md) design, not current
 Contract behavior.
 
+### 7.1 Explicit Knowledge-to-hypothesis research gate
+
+The automatic learned-guard nomination is the first explicit Knowledge-derived
+`LearningHypothesis` path protected by Hypothesis Research Evidence v1. Before a
+proposed hypothesis is persisted, the gate records the exact source and outcome
+identities, one scoped candidate explanation, at most three competing explanations
+(or an explicit reason none was found), recorded T0 context plus explicit gaps, and
+a future falsification condition. It may inspect at most three exact existing shadow
+alternatives and performs one structured causal red-team review.
+
+The review result lives only inside `evidence_summary_json`; it is not a second
+lifecycle. `rejected` and `insufficient_context` create no guard candidate or
+hypothesis, while `ready` and `narrowed` may create only the existing `proposed`
+hypothesis. The gate does not open an Experiment, Exposure, Contribution Verdict,
+consumer influence, or any Paper/Live authority. Existing internal experiment
+identity paths, including Universe Family Calibration, do not require this explicit
+Knowledge research contract and retain their existing behavior.
+
+The current learned-guard predicate vocabulary cannot express regime, funding/OI,
+or other composite research context. A `narrowed` result that needs such material
+scope therefore remains research evidence and fails closed instead of persisting a
+broader guard candidate with different treatment semantics.
+
 Ranker enforcement keeps two authority classes separate:
 
 - shipped seed guards and owner-authored manual guards follow `guard.enabled` and
@@ -647,6 +670,7 @@ Primary executable claims:
 - `tests/specs/spec_pi_decision_chain.py`
 - `tests/specs/spec_learning_registry.py`
 - `tests/specs/spec_learning_attribution.py`
+- `tests/specs/spec_hypothesis_research.py`
 - `tests/specs/spec_learning_ledger.py`
 - `tests/specs/spec_learning_contribution.py`
 - `tests/specs/spec_learning_authority.py`
