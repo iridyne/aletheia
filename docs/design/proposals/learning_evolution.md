@@ -644,7 +644,7 @@ paths remain static and create no formal experiment, exposure, verdict, or autho
 | LE-B31 | L2b | gateway restart preserves the contribution evaluator's durable deadline and recovers an overdue deadline before the legacy startup catch-up | implemented |
 | LE-B32 | L2b | explicit research-ready hypotheses carry exact source/outcome identities, bounded alternatives, recorded-or-missing T0 context, and a falsification condition | implemented |
 | LE-B33 | L2b | missing T0 context and rejected or insufficient research create no hypothesis or Learning authority state | implemented |
-| LE-B34 | L2c | one bounded exact replay narrows a broad learned-guard claim before one idempotent proposed hypothesis is persisted | implemented |
+| LE-B34 | L2c | one bounded exact replay narrows a broad learned-guard claim and refuses a guard treatment that cannot express the narrowed condition | implemented |
 | LE-V01 | L2b | the Universe runtime verdict adapter reads canonical full-arm filter outcomes by exact key, calculates cluster intent-to-treat allocation utility, uses selected-member Universe rows only as mirror/fallback, and fails closed on disagreement | implemented — measurement-only evaluator; the non-causal Operator Opportunity 4h adapter is disabled; no empirical positive-contribution claim |
 | LE-V02 | L2c | deterministic verdict storage cannot alter Learning authority or experiment lifecycle | implemented — evaluator writes only its idempotent measurement record |
 | LE-V03 | L2c | shadow assignments with no actually applied treatment cannot produce a causal positive/negative verdict | implemented — exposure manifests feed cohort samples and return `insufficient_data/no_actual_intervention` |

@@ -28,6 +28,7 @@ _LEDGER_STATES = [
 ]
 # Knowledge item types that signal learning output.
 _LEDGER_KNOWLEDGE = ["research_note", "strategy_memory", "post_trade_review", "dreaming_log"]
+_LESSON_EXTRACTION_BUDGET_SECONDS = 270.0
 
 
 class _ExtractedLesson(BaseModel):
@@ -51,6 +52,37 @@ class _LessonExtractionResult(BaseModel):
     """Structured transport contract for the nightly lesson extractor."""
 
     lessons: list[_ExtractedLesson] = Field(min_length=1, max_length=3)
+
+
+def _aggregate_case_facts(
+    case_facts: dict[str, dict], source_ids: list[str],
+) -> dict:
+    """Aggregate only the exact source cases selected for one lesson."""
+    facts = [
+        case_facts[source_id]
+        for source_id in source_ids
+        if source_id in case_facts
+    ]
+    outcomes = [str(fact["outcome"]) for fact in facts if fact.get("outcome")]
+    pnls = [
+        float(fact["realized_pnl_pct"])
+        for fact in facts
+        if fact.get("realized_pnl_pct") is not None
+    ]
+    outcome_counts: dict[str, int] = {}
+    for outcome in outcomes:
+        outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
+    return {
+        "outcome_counts": outcome_counts,
+        "avg_pnl_pct": round(sum(pnls) / len(pnls), 3) if pnls else None,
+        "factor_keys": list(dict.fromkeys(
+            str(fact["factor_key"]) for fact in facts if fact.get("factor_key")
+        )),
+        "scanner_families": list(dict.fromkeys(
+            str(fact["scanner_family"]) for fact in facts if fact.get("scanner_family")
+        )),
+        "case_count": len(facts),
+    }
 
 
 def _build_daily_trading_performance(cutoff_iso: str) -> str:
@@ -283,6 +315,8 @@ async def _extract_lessons(
     run_id: str | None,
     outputs: list[str],
     errors: list[str],
+    *,
+    deadline: float | None = None,
 ) -> list[dict[str, str]]:
     """Extract structured lessons from oldest pending trade cases into ps_lessons.
 
@@ -291,6 +325,9 @@ async def _extract_lessons(
     """
     from aletheia.storage.repositories import list_pending_trade_case_studies
     from aletheia.learning.lessons import LessonStore
+
+    if deadline is None:
+        deadline = time.monotonic() + _LESSON_EXTRACTION_BUDGET_SECONDS
 
     health = get_learning_job_health("dreaming_daily")
     cursor = health.input_cursor
@@ -371,6 +408,7 @@ async def _extract_lessons(
         provider=get_provider_for_tier("deep"),
         caller="dreaming.lesson_extraction",
         reasoning_effort="none",
+        deadline=deadline,
     )
     log_tool(
         run_id,
@@ -396,43 +434,44 @@ async def _extract_lessons(
     if reviews:
         from pathlib import Path
         from aletheia.knowledge.frontmatter import parse_frontmatter
-        outcomes: list[str] = []
-        pnls: list[float] = []
-        factors: list[str] = []
-        scanners: list[str] = []
+        case_facts: dict[str, dict] = {}
         factor_source_ids: dict[str, list[str]] = {}
         for r in reviews:
+            source_id = str(r.get("id") or "")
+            if source_id:
+                case_facts[source_id] = {}
             fpath = r.get("file_path")
             if fpath:
                 try:
                     meta, _ = parse_frontmatter(Path(fpath))
                     meta = meta or {}
-                    if meta.get("outcome"):
-                        outcomes.append(meta["outcome"])
+                    if source_id:
+                        case_facts[source_id] = {
+                            key: meta.get(key)
+                            for key in (
+                                "outcome", "realized_pnl_pct", "factor_key",
+                                "scanner_family",
+                            )
+                        }
                     if meta.get("realized_pnl_pct") is not None:
                         try:
-                            pnls.append(float(meta["realized_pnl_pct"]))
+                            if source_id:
+                                case_facts[source_id]["realized_pnl_pct"] = float(
+                                    meta["realized_pnl_pct"]
+                                )
                         except (ValueError, TypeError):
-                            pass
+                            if source_id:
+                                case_facts[source_id]["realized_pnl_pct"] = None
                     if meta.get("factor_key"):
                         factor_key = str(meta["factor_key"])
-                        factors.append(factor_key)
-                        if r.get("id"):
-                            factor_source_ids.setdefault(factor_key, []).append(str(r["id"]))
-                    if meta.get("scanner_family"):
-                        scanners.append(meta["scanner_family"])
+                        if source_id:
+                            factor_source_ids.setdefault(factor_key, []).append(source_id)
                 except Exception:
                     pass
-        outcome_counts: dict[str, int] = {}
-        for o in outcomes:
-            outcome_counts[o] = outcome_counts.get(o, 0) + 1
-        agg_evidence = {
-            "outcome_counts": outcome_counts,
-            "avg_pnl_pct": round(sum(pnls) / len(pnls), 3) if pnls else None,
-            "factor_keys": list(dict.fromkeys(factors)),
-            "scanner_families": list(dict.fromkeys(scanners)),
-            "case_count": len(reviews),
-        }
+        agg_evidence = _aggregate_case_facts(
+            case_facts,
+            [str(row["id"]) for row in reviews if row.get("id")],
+        )
 
     store = LessonStore()
     artifact_refs: list[dict[str, str]] = []
@@ -441,14 +480,12 @@ async def _extract_lessons(
     for lesson in lessons[:3]:
         if not isinstance(lesson, dict) or not lesson.get("summary"):
             continue
-        # Merge LLM-supplied evidence with deterministic aggregate; deterministic wins.
+        # Merge LLM evidence only after exact supporting source identities are known.
         llm_evidence = lesson.get("evidence") or {}
-        evidence = {**llm_evidence, **agg_evidence}
         supporting_factor_keys = [
             key for key in dict.fromkeys(lesson.get("supporting_factor_keys") or [])
             if key in agg_evidence.get("factor_keys", [])
         ]
-        evidence["supporting_factor_keys"] = supporting_factor_keys
         supporting_source_ids = list(dict.fromkeys(
             source_id
             for key in supporting_factor_keys
@@ -459,16 +496,21 @@ async def _extract_lessons(
                 errors.append("lesson_extraction_ambiguous_source")
                 continue
             supporting_source_ids = [str(reviews[0]["id"])]
+        evidence = {
+            **llm_evidence,
+            **_aggregate_case_facts(case_facts, supporting_source_ids),
+        }
+        evidence["supporting_factor_keys"] = supporting_factor_keys
         evidence["supporting_source_ids"] = supporting_source_ids
         # Phase 1c: deterministic recommendation fallback when LLM omits it.
         # If aggregate evidence shows a clear loss pattern for a specific scanner,
         # propose block_scanner for guard shadow evaluation (never Risk authority).
         rec = lesson.get("recommendation") or None
-        if not rec and agg_evidence.get("outcome_counts"):
-            losses = agg_evidence["outcome_counts"].get("loss", 0)
-            total = sum(agg_evidence["outcome_counts"].values())
-            if total >= 3 and losses / total >= 0.6 and agg_evidence.get("scanner_families"):
-                rec = {"action": "block_scanner", "scanner": agg_evidence["scanner_families"][0]}
+        if not rec and evidence.get("outcome_counts"):
+            losses = evidence["outcome_counts"].get("loss", 0)
+            total = sum(evidence["outcome_counts"].values())
+            if total >= 3 and losses / total >= 0.6 and evidence.get("scanner_families"):
+                rec = {"action": "block_scanner", "scanner": evidence["scanner_families"][0]}
                 logger.info(
                     "dreaming_agent: deterministic recommendation generated "
                     "(block_scanner=%s, loss_rate=%d/%d)",
@@ -479,7 +521,7 @@ async def _extract_lessons(
         if rec and rec.get("action") in {"block_scanner", "block_direction", "block_symbol"}:
             from aletheia.learning.guard_routing import route_automatic_block_recommendation
             rec = await route_automatic_block_recommendation(
-                rec, evidence=evidence, source_id=source_id,
+                rec, evidence=evidence, source_id=source_id, deadline=deadline,
             )
         started_at = time.monotonic()
         created = store.create(

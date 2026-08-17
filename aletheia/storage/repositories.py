@@ -9780,6 +9780,7 @@ def list_shadow_trades(
     batch_id: str | None = None,
     scanner_family: str | None = None,
     opportunity_id: str | None = None,
+    was_selected: bool | None = None,
     resolved: bool | None = None,
     limit: int = 200,
 ) -> list[dict]:
@@ -9794,6 +9795,9 @@ def list_shadow_trades(
     if opportunity_id is not None:
         conditions.append("opportunity_id = ?")
         params.append(opportunity_id)
+    if was_selected is not None:
+        conditions.append("was_selected = ?")
+        params.append(int(was_selected))
     if resolved is True:
         conditions.append("resolved_at IS NOT NULL")
     elif resolved is False:

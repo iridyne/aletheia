@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +72,7 @@ async def research_learning_hypothesis(
     proposed_scope: dict[str, Any],
     target_horizon: str,
     max_counterfactual_checks: int = 3,
+    deadline: float | None = None,
 ) -> HypothesisResearchEvidenceV1:
     """Return canonical evidence after exact-context checks and one red-team call."""
     if not 0 <= max_counterfactual_checks <= 3:
@@ -80,13 +83,26 @@ async def research_learning_hypothesis(
     if not artifact_ids:
         raise ValueError("hypothesis research requires a source artifact identity")
 
-    recorded, missing, outcome_ids, cases = _assemble_exact_context(artifact_ids)
+    target_horizon_hours = _target_horizon_hours(target_horizon)
+    recorded, missing, outcome_ids, cases = _assemble_exact_context(
+        artifact_ids, target_horizon,
+    )
+    try:
+        declared_case_count = int(evidence["case_count"])
+    except (KeyError, TypeError, ValueError):
+        declared_case_count = None
+    if declared_case_count is not None and declared_case_count != len(artifact_ids):
+        missing.append("selected_source_aggregate_count_mismatch")
     observation = HypothesisResearchObservationV1(
-        statement=_observation_statement(evidence, len(artifact_ids)),
+        statement=_observation_statement(cases),
         source_artifact_ids=artifact_ids,
         outcome_identities=outcome_ids,
     )
-    if not recorded or len(outcome_ids) != len(artifact_ids):
+    if (
+        not recorded
+        or len(outcome_ids) != len(artifact_ids)
+        or "selected_source_aggregate_count_mismatch" in missing
+    ):
         return _insufficient_evidence(
             observation=observation,
             candidate_explanation=candidate_explanation,
@@ -98,17 +114,23 @@ async def research_learning_hypothesis(
             ),
         )
 
-    checks = _bounded_counterfactual_checks(cases, max_counterfactual_checks)
+    checks = _bounded_counterfactual_checks(
+        cases, max_counterfactual_checks, target_horizon_hours,
+    )
     if not checks:
         missing.append("exact_counterfactual_evidence_unavailable")
-    allowed_material_keys = sorted(set(recorded) - _BASE_SCOPE_KEYS)
+    allowed_material_keys = sorted(
+        key for key, values in recorded.items()
+        if key not in _BASE_SCOPE_KEYS and len(values) == len(artifact_ids)
+    )
+    explicit_missing = _bounded_missing(missing)
     review_payload = {
         "candidate_explanation": candidate_explanation,
         "proposed_scope": _bounded(proposed_scope),
         "target_horizon": target_horizon,
         "observation": observation.model_dump(mode="json"),
         "recorded_t0_context": recorded,
-        "explicitly_missing_context": sorted(set(missing)),
+        "explicitly_missing_context": explicit_missing,
         "counterfactual_checks": [check.model_dump(mode="json") for check in checks],
         "allowed_material_context_keys": allowed_material_keys,
     }
@@ -130,6 +152,7 @@ async def research_learning_hypothesis(
         provider=get_provider_for_tier("deep"),
         caller="learning.hypothesis_causal_red_team",
         reasoning_effort="none",
+        deadline=deadline,
     )
     if error or payload is None:
         return _insufficient_evidence(
@@ -152,19 +175,26 @@ async def research_learning_hypothesis(
     }:
         status = "insufficient_context"
     elif status == "narrowed":
-        if invalid_keys or not selected_keys:
+        narrowed_candidate = str(review.narrowed_candidate_explanation).strip()
+        if (
+            invalid_keys
+            or not selected_keys
+            or narrowed_candidate == candidate_explanation.strip()
+        ):
             status = "insufficient_context"
+            if narrowed_candidate == candidate_explanation.strip():
+                missing.append("narrowed_candidate_explanation_unchanged")
         else:
-            candidate = str(review.narrowed_candidate_explanation)
+            candidate = narrowed_candidate
             material_scope = {key: recorded[key] for key in selected_keys}
 
     falsification = review.smallest_falsification_test
     competing = list(dict.fromkeys(review.competing_explanations))[:3]
-    missing_evidence = list(dict.fromkeys([
+    missing_evidence = _bounded_missing([
         *missing,
         *review.material_confounders_or_missing,
         *([f"invalid_material_context_key:{key}" for key in invalid_keys]),
-    ]))
+    ])
     return HypothesisResearchEvidenceV1(
         observation=observation,
         original_candidate_explanation=candidate_explanation,
@@ -175,7 +205,7 @@ async def research_learning_hypothesis(
         ),
         relevant_context=HypothesisRelevantContextV1(
             recorded_at_t0=recorded,
-            missing=sorted(set(missing)),
+            missing=_bounded_missing(missing),
             material_scope=material_scope,
         ),
         falsification_condition=falsification,
@@ -195,7 +225,7 @@ async def research_learning_hypothesis(
 
 
 def _assemble_exact_context(
-    artifact_ids: list[str],
+    artifact_ids: list[str], target_horizon: str,
 ) -> tuple[dict[str, Any], list[str], list[str], list[dict[str, Any]]]:
     from aletheia.analytics.trade_attribution import build_trade_attribution_for_position
     from aletheia.knowledge.frontmatter import parse_frontmatter
@@ -226,10 +256,16 @@ def _assemble_exact_context(
         if attribution is None:
             missing.append(f"exact_trade_attribution_unavailable:{artifact_id}")
             continue
+        if not _holding_matches_horizon(attribution.get("holding_hours"), target_horizon):
+            missing.append(f"outcome_horizon_mismatch:{artifact_id}")
+            continue
         position = repo.get_position(position_id) or {}
         opportunity_id = str(attribution.get("opportunity_id") or "").strip()
         opportunity = repo.get_opportunity(opportunity_id) if opportunity_id else None
         context = _recorded_case_context(attribution, position, opportunity or {})
+        for dimension in _MISSING_CONTEXT_DIMENSIONS:
+            if dimension not in context:
+                missing.append(f"t0_context_missing:{dimension}:{artifact_id}")
         for key, value in context.items():
             recorded.setdefault(key, []).append({
                 "source_artifact_id": artifact_id,
@@ -241,11 +277,8 @@ def _assemble_exact_context(
             "position_id": position_id,
             "opportunity_id": opportunity_id,
             "realized_pnl_pct": attribution.get("realized_pnl_pct"),
+            "opened_at": attribution.get("opened_at"),
         })
-
-    for dimension in _MISSING_CONTEXT_DIMENSIONS:
-        if dimension not in recorded:
-            missing.append(f"t0_context_missing:{dimension}")
     return (
         {key: recorded[key] for key in sorted(recorded)},
         list(dict.fromkeys(missing)),
@@ -312,7 +345,7 @@ def _recorded_case_context(
 
 
 def _bounded_counterfactual_checks(
-    cases: list[dict[str, Any]], max_checks: int,
+    cases: list[dict[str, Any]], max_checks: int, target_horizon_hours: float,
 ) -> list[HypothesisCounterfactualCheckV1]:
     from aletheia.storage import repositories as repo
 
@@ -324,13 +357,20 @@ def _bounded_counterfactual_checks(
     for case in cases[:3]:
         opportunity_id = str(case.get("opportunity_id") or "")
         selected_rows = repo.list_shadow_trades(
-            opportunity_id=opportunity_id, resolved=True, limit=10,
+            opportunity_id=opportunity_id,
+            was_selected=True,
+            resolved=True,
+            limit=2,
         )
-        selected = next(
-            (row for row in selected_rows if row.get("was_selected") and row.get("batch_id")),
-            None,
-        )
-        if selected is None:
+        if len(selected_rows) != 1:
+            continue
+        selected = selected_rows[0]
+        if (
+            not selected.get("batch_id")
+            or not _at_or_before(selected.get("created_at"), case.get("opened_at"))
+            or not _shadow_matches_horizon(selected, target_horizon_hours)
+            or selected.get("net_pnl_pct") is None
+        ):
             continue
         batch = repo.list_shadow_trades(
             batch_id=str(selected["batch_id"]), resolved=True, limit=10,
@@ -342,6 +382,7 @@ def _bounded_counterfactual_checks(
                 and not row.get("was_selected")
                 and row.get("outcome_candidate_key")
                 and row.get("net_pnl_pct") is not None
+                and _shadow_matches_horizon(row, target_horizon_hours)
             ),
             key=lambda row: (int(row.get("rank") or 10_000), str(row.get("id") or "")),
         )
@@ -353,11 +394,7 @@ def _bounded_counterfactual_checks(
                 evidence={
                     "batch_id": selected["batch_id"],
                     "selected_opportunity_id": opportunity_id,
-                    "selected_net_pnl_pct": (
-                        selected.get("net_pnl_pct")
-                        if selected.get("net_pnl_pct") is not None
-                        else case.get("realized_pnl_pct")
-                    ),
+                    "selected_net_pnl_pct": selected["net_pnl_pct"],
                     "alternative_opportunity_id": alternative.get("opportunity_id"),
                     "alternative_net_pnl_pct": alternative.get("net_pnl_pct"),
                     "alternative_rank": alternative.get("rank"),
@@ -387,10 +424,10 @@ def _insufficient_evidence(
         no_material_alternative_reason=reason,
         relevant_context=HypothesisRelevantContextV1(
             recorded_at_t0=recorded,
-            missing=list(dict.fromkeys(missing)),
+            missing=_bounded_missing(missing),
         ),
         falsification_condition=falsification,
-        missing_evidence=list(dict.fromkeys(missing)),
+        missing_evidence=_bounded_missing(missing),
         counterfactual_checks=checks or [],
         red_team_summary=HypothesisRedTeamSummaryV1(
             material_confounders_or_missing=list(dict.fromkeys(missing))[:10],
@@ -402,14 +439,99 @@ def _insufficient_evidence(
     )
 
 
-def _observation_statement(evidence: dict[str, Any], source_count: int) -> str:
-    compact = {
-        key: evidence.get(key)
-        for key in ("case_count", "outcome_counts", "avg_pnl_pct", "factor_keys")
-        if evidence.get(key) is not None
-    }
+def _target_horizon_hours(target_horizon: str) -> float:
+    text = str(target_horizon).strip().lower()
+    try:
+        hours = float(text[:-1]) if text.endswith("h") else math.nan
+    except ValueError:
+        hours = math.nan
+    if not math.isfinite(hours) or hours <= 0:
+        raise ValueError(f"unsupported hypothesis target horizon: {target_horizon}")
+    return hours
+
+
+def _holding_matches_horizon(value: Any, target_horizon: str) -> bool:
+    try:
+        observed = float(value)
+    except (TypeError, ValueError):
+        return False
+    return math.isclose(
+        observed,
+        _target_horizon_hours(target_horizon),
+        rel_tol=0.0,
+        abs_tol=1e-6,
+    )
+
+
+def _shadow_matches_horizon(row: dict[str, Any], target_hours: float) -> bool:
+    price_source = str(row.get("settlement_price_source") or "")
+    lag_seconds = row.get("settlement_lag_sec")
+    if price_source in {"position_close", "stale_forward_ohlcv"}:
+        try:
+            observed_hours = float(lag_seconds) / 3_600.0
+        except (TypeError, ValueError):
+            return False
+    else:
+        created_at = _parse_timestamp(row.get("created_at"))
+        resolved_at = _parse_timestamp(row.get("resolved_at"))
+        if created_at is None or resolved_at is None:
+            return False
+        observed_hours = (resolved_at - created_at).total_seconds() / 3_600.0
+        if lag_seconds is not None and price_source:
+            try:
+                observed_hours -= float(lag_seconds) / 3_600.0
+            except (TypeError, ValueError):
+                return False
+    return math.isclose(
+        observed_hours, target_hours, rel_tol=0.0, abs_tol=1e-6,
+    )
+
+
+def _at_or_before(value: Any, boundary: Any) -> bool:
+    parsed = _parse_timestamp(value)
+    parsed_boundary = _parse_timestamp(boundary)
     return (
-        f"{source_count} exact trade-case artifact(s) produced the recorded outcome pattern: "
+        parsed is not None
+        and parsed_boundary is not None
+        and parsed <= parsed_boundary
+    )
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _bounded_missing(values: Iterable[Any]) -> list[str]:
+    entries = list(dict.fromkeys(
+        text
+        for value in values
+        if (text := str(value).strip()[:2_000])
+    ))
+    if len(entries) <= 20:
+        return entries
+    return [
+        *entries[:19],
+        f"additional_missing_context_entries:{len(entries) - 19}",
+    ]
+
+
+def _observation_statement(cases: list[dict[str, Any]]) -> str:
+    compact = [
+        {
+            "source_artifact_id": case["source_artifact_id"],
+            "position_id": case["position_id"],
+            "realized_pnl_pct": case.get("realized_pnl_pct"),
+        }
+        for case in cases
+    ]
+    return (
+        f"{len(cases)} exact horizon-matched trade case(s) produced these outcomes: "
         f"{json.dumps(_bounded(compact), sort_keys=True, default=str)}"
     )[:2_000]
 
@@ -423,10 +545,10 @@ def _supporting_evidence(evidence: dict[str, Any]) -> list[str]:
         )
         if evidence.get(key) is not None
     }
-    return [
-        f"Recorded aggregate: "
-        f"{json.dumps(_bounded(compact), sort_keys=True, default=str)}"[:2_000]
-    ]
+    return [(
+        "Recorded aggregate: "
+        f"{json.dumps(_bounded(compact), sort_keys=True, default=str)}"
+    )[:2_000]]
 
 
 def _counterfactual_summaries(

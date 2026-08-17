@@ -568,6 +568,11 @@ consumer influence, or any Paper/Live authority. Existing internal experiment
 identity paths, including Universe Family Calibration, do not require this explicit
 Knowledge research contract and retain their existing behavior.
 
+The current learned-guard predicate vocabulary cannot express regime, funding/OI,
+or other composite research context. A `narrowed` result that needs such material
+scope therefore remains research evidence and fails closed instead of persisting a
+broader guard candidate with different treatment semantics.
+
 Ranker enforcement keeps two authority classes separate:
 
 - shipped seed guards and owner-authored manual guards follow `guard.enabled` and

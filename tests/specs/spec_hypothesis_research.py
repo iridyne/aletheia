@@ -74,7 +74,9 @@ async def test_missing_t0_context_fails_closed_without_research_or_authority(mon
     monkeypatch.setattr(
         hypothesis_research,
         "_assemble_exact_context",
-        lambda _ids: ({}, ["exact_recorded_t0_context_unavailable"], [], []),
+        lambda _ids, _horizon: (
+            {}, ["exact_recorded_t0_context_unavailable"], [], [],
+        ),
     )
 
     async def review_must_not_run(**_kwargs):
@@ -129,18 +131,98 @@ async def test_missing_t0_context_fails_closed_without_research_or_authority(mon
     ):
         assert list_records(table) == []
 
+    cases = [
+        {
+            "source_artifact_id": f"case-{index}",
+            "position_id": f"position-{index}",
+            "opportunity_id": "",
+            "realized_pnl_pct": -1.0,
+            "opened_at": "2026-08-16T00:00:00+00:00",
+        }
+        for index in (1, 2)
+    ]
+    mode = "partial"
+
+    def assembled(_ids, _horizon):
+        regime_values = [{"source_artifact_id": "case-1", "value": "risk_off"}]
+        if mode == "full":
+            regime_values.append({"source_artifact_id": "case-2", "value": "risk_off"})
+        return (
+            {
+                "symbol": [
+                    {"source_artifact_id": "case-1", "value": "BTC/USDT"},
+                    {"source_artifact_id": "case-2", "value": "BTC/USDT"},
+                ],
+                "regime": regime_values,
+            },
+            (["t0_context_missing:regime:case-2"] if mode == "partial" else []),
+            ["position:position-1", "position:position-2"],
+            cases,
+        )
+
+    async def narrowed_review(*, user, **_kwargs):
+        payload = json.loads(user)
+        if mode == "partial":
+            assert "regime" not in payload["allowed_material_context_keys"]
+        return {
+            "competing_explanations": ["The recorded regime may explain the pattern."],
+            "material_confounders_or_missing": [],
+            "smallest_falsification_test": "Compare conditional treatment with control.",
+            "decision": "narrowed",
+            "narrowed_candidate_explanation": (
+                "A broad momentum block may improve 4h net utility."
+                if mode == "full"
+                else "Under risk_off, the momentum block may improve 4h net utility."
+            ),
+            "material_context_keys": ["regime"],
+            "reasoning": "The factor-only explanation is incomplete.",
+        }, None
+
+    monkeypatch.setattr(hypothesis_research, "_assemble_exact_context", assembled)
+    monkeypatch.setattr(hypothesis_research, "llm_structured", narrowed_review)
+    partial = await hypothesis_research.research_learning_hypothesis(
+        candidate_explanation="A broad momentum block may improve 4h net utility.",
+        source_artifact_ids=["case-1", "case-2"],
+        evidence={"case_count": 2},
+        proposed_scope={"symbol": ["BTC/USDT"], "scanner_family": ["momentum"]},
+        target_horizon="4h",
+    )
+    assert partial.research_status == "insufficient_context"
+    assert "invalid_material_context_key:regime" in partial.missing_evidence
+
+    mode = "full"
+    unchanged = await hypothesis_research.research_learning_hypothesis(
+        candidate_explanation="A broad momentum block may improve 4h net utility.",
+        source_artifact_ids=["case-1", "case-2"],
+        evidence={"case_count": 2},
+        proposed_scope={"symbol": ["BTC/USDT"], "scanner_family": ["momentum"]},
+        target_horizon="4h",
+    )
+    assert unchanged.research_status == "insufficient_context"
+    assert "narrowed_candidate_explanation_unchanged" in unchanged.missing_evidence
+
+    bounded = hypothesis_research._insufficient_evidence(
+        observation=research.observation,
+        candidate_explanation=research.candidate_explanation,
+        recorded={},
+        missing=[f"missing:{index}" for index in range(30)],
+        reason="Bounded failure evidence.",
+    )
+    assert len(bounded.relevant_context.missing) == 20
+    assert bounded.relevant_context.missing[-1] == "additional_missing_context_entries:11"
+
 
 @spec_claim(SpecClaim(
     "LE-B34", "learning_evolution", "§9.8 causal red-team replay", "L2c",
     "A deterministic exact closed-trade replay bounds shadow counterfactuals to three "
     "and narrows a broad repeated-loss learned-guard claim to recorded risk-off and OI "
-    "context before persisting one idempotent proposed hypothesis only.",
+    "context without emitting a guard treatment that cannot express that condition.",
     status="implemented",
 ))
 async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypatch):
     from aletheia.knowledge.manager import create_trade_case_study
     from aletheia.learning import guard_routing, hypothesis_research
-    from aletheia.learning.ledger import get_record, list_records
+    from aletheia.learning.ledger import list_records
     from aletheia.learning.registry import get_learning_path
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import PiDecision, Position, ShadowTrade
@@ -255,9 +337,12 @@ async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypa
         entry_price=100.0,
         outcome_candidate_key=f"opportunity:{opportunity_id}",
         was_selected=True,
+        created_at="2026-08-16T00:00:00+00:00",
         exit_price=98.0,
         pnl_pct=-2.0,
         net_pnl_pct=-2.0,
+        settlement_price_source="position_close",
+        settlement_lag_sec=14_400.0,
         resolved_at="2026-08-16T04:00:00+00:00",
     ))
     for rank in range(2, 6):
@@ -273,9 +358,12 @@ async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypa
             entry_price=100.0,
             outcome_candidate_key=f"opportunity:alternative-{rank}",
             was_selected=False,
+            created_at="2026-08-16T00:00:00+00:00",
             exit_price=101.0,
             pnl_pct=1.0,
             net_pnl_pct=1.0,
+            settlement_price_source="position_close",
+            settlement_lag_sec=14_400.0,
             resolved_at="2026-08-16T04:00:00+00:00",
         ))
 
@@ -291,7 +379,10 @@ async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypa
             == -12.0
         )
         assert "catalyst_news" not in payload["recorded_t0_context"]
-        assert "t0_context_missing:catalyst_news" in payload["explicitly_missing_context"]
+        assert any(
+            item.startswith("t0_context_missing:catalyst_news:")
+            for item in payload["explicitly_missing_context"]
+        )
         return {
             "competing_explanations": [
                 "The recorded risk-off regime and OI contraction explain the losses."
@@ -327,12 +418,12 @@ async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypa
         evidence=evidence,
         source_id=case_ids[0],
     )
+    assert routed["action"] == "guard_shadow_unavailable"
+    assert routed["reason"] == "research_material_scope_not_expressible_by_guard"
     assert routed["research_status"] == "narrowed"
     assert len(review_calls) == 1
 
-    row = get_record("learning_hypotheses", routed["hypothesis_id"])
-    assert row is not None and row["status"] == "proposed"
-    stored = json.loads(row["evidence_summary_json"])
+    stored = routed["research_evidence"]
     assert stored["contract_version"] == "hypothesis-research-evidence/v1"
     assert stored["candidate_explanation"] != stored["original_candidate_explanation"]
     assert set(stored["relevant_context"]["material_scope"]) == {"regime", "funding_oi"}
@@ -344,8 +435,8 @@ async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypa
         source_id=case_ids[0],
         research_evidence=stored,
     )
-    assert repeated["hypothesis_id"] == routed["hypothesis_id"]
-    assert len(list_records("learning_hypotheses")) == 1
+    assert repeated["reason"] == "research_material_scope_not_expressible_by_guard"
+    assert list_records("learning_hypotheses") == []
     assert list_records("learning_experiments") == []
     assert list_records("learning_exposures") == []
     assert list_records("learning_contribution_verdicts") == []
@@ -355,3 +446,55 @@ async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypa
     assert ufc.behavior_contract_version == "universe-family-calibration/v11"
     assert ufc.measurement_supported is True
     assert learned_guard.measurement_supported is False
+
+    repo.insert_shadow_trade(ShadowTrade(
+        id="causal-shadow-later-selected",
+        batch_id="later-causal-replay-batch",
+        opportunity_id=opportunity_id,
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        scanner_family="momentum",
+        rank=1,
+        entry_price=100.0,
+        outcome_candidate_key=f"opportunity:{opportunity_id}",
+        was_selected=True,
+        created_at="2026-08-16T01:00:00+00:00",
+        exit_price=98.0,
+        pnl_pct=-2.0,
+        net_pnl_pct=-2.0,
+        settlement_price_source="position_close",
+        settlement_lag_sec=14_400.0,
+        resolved_at="2026-08-16T05:00:00+00:00",
+    ))
+    assert hypothesis_research._bounded_counterfactual_checks(
+        [{"opportunity_id": opportunity_id, "opened_at": "2026-08-16T00:00:00+00:00"}],
+        3,
+        4.0,
+    ) == []
+    assert not hypothesis_research._shadow_matches_horizon({
+        "created_at": "2026-08-16T00:00:00+00:00",
+        "resolved_at": "2026-08-17T01:00:00+00:00",
+        "settlement_price_source": "horizon_ohlcv",
+        "settlement_lag_sec": 3_600.0,
+    }, 4.0)
+    assert hypothesis_research._shadow_matches_horizon({
+        "created_at": "2026-08-16T00:00:00+00:00",
+        "resolved_at": "2026-08-17T01:00:00+00:00",
+        "settlement_price_source": "horizon_ohlcv",
+        "settlement_lag_sec": 3_600.0,
+    }, 24.0)
+
+    repo.update_position(
+        "causal-loss-position-0",
+        closed_at="2026-08-16T01:00:00+00:00",
+    )
+    horizon_mismatch = await hypothesis_research.research_learning_hypothesis(
+        candidate_explanation="A broad momentum block may improve 4h net utility.",
+        source_artifact_ids=[case_ids[0]],
+        evidence={"case_count": 1},
+        proposed_scope={"symbol": ["BTC/USDT"], "scanner_family": ["momentum"]},
+        target_horizon="4h",
+    )
+    assert horizon_mismatch.research_status == "insufficient_context"
+    assert f"outcome_horizon_mismatch:{case_ids[0]}" in horizon_mismatch.missing_evidence

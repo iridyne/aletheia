@@ -20,6 +20,7 @@ async def route_automatic_block_recommendation(
     evidence: dict,
     source_id: str,
     research_evidence: HypothesisResearchEvidenceV1 | dict[str, Any] | None = None,
+    deadline: float | None = None,
 ) -> dict | None:
     if not recommendation or recommendation.get("action") not in _BLOCK_ACTIONS:
         return recommendation
@@ -60,6 +61,7 @@ async def route_automatic_block_recommendation(
                 evidence=evidence,
                 proposed_scope=scope,
                 target_horizon="4h",
+                deadline=deadline,
             )
         )
     else:
@@ -75,6 +77,13 @@ async def route_automatic_block_recommendation(
         return {
             "action": "guard_shadow_unavailable",
             "reason": f"research_{research.research_status}",
+            "research_status": research.research_status,
+            "research_evidence": research_payload,
+        }
+    if research.relevant_context.material_scope:
+        return {
+            "action": "guard_shadow_unavailable",
+            "reason": "research_material_scope_not_expressible_by_guard",
             "research_status": research.research_status,
             "research_evidence": research_payload,
         }
@@ -125,9 +134,6 @@ async def route_automatic_block_recommendation(
         "guard_id": guard_id,
         "applies_to": scope,
     }
-    if research.relevant_context.material_scope:
-        hypothesis_scope["material_context"] = research.relevant_context.material_scope
-
     hypothesis = nominate_learning_hypothesis(
         path_id="ranker_learned_guard",
         scope=hypothesis_scope,
