@@ -62,3 +62,17 @@ def test_frontend_review_typechecks_once_via_production_build() -> None:
 
     package = json.loads(FRONTEND_PACKAGE_PATH.read_text(encoding="utf-8"))
     assert package["scripts"]["build"] == EXPECTED_BUILD
+
+
+def test_settings_schema_changes_run_the_generated_contract_check() -> None:
+    workflow = yaml.load(WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    core = workflow["jobs"]["review-core"]
+    detector = next(step for step in core["steps"] if step["name"] == "Detect affected review surfaces")
+    script = str(detector["run"])
+
+    for path in (
+        "aletheia/server/routes/settings.py",
+        "aletheia/config/schema.py",
+        "scripts/export_openapi_schema.py",
+    ):
+        assert path in script

@@ -117,12 +117,17 @@ jobs:
 
           # npm workspaces can make commands launched from a child project
           # inherit the repository-root manifest, lockfile, and npm config.
+          # The settings type check imports this backend contract, so backend-
+          # only schema changes must not leave settings.d.ts stale.
           if git diff --quiet "$base"...HEAD -- \
             frontend/ \
             package.json \
             package-lock.json \
             npm-shrinkwrap.json \
-            .npmrc; then
+            .npmrc \
+            aletheia/server/routes/settings.py \
+            aletheia/config/schema.py \
+            scripts/export_openapi_schema.py; then
             echo 'frontend=false' >> "$GITHUB_OUTPUT"
           else
             echo 'frontend=true' >> "$GITHUB_OUTPUT"
