@@ -594,15 +594,64 @@ def _ufc_status() -> dict[str, Any]:
     }
 
 
-def _profit_loop_coverage() -> dict[str, Any]:
-    """Read bounded candidate/Position/path/economics counts without evaluation."""
+def _profit_loop_coverage(
+    *, registration_at: str | None = None, cutoff_at: str | None = None
+) -> dict[str, Any]:
+    """Read epoch-bounded candidate/Position/path/economics counts without evaluation."""
 
     try:
         from aletheia.analytics.candidate_facts import build_candidate_facts
         from aletheia.storage.sqlite import readonly_db
 
+        start = str(registration_at or "0001-01-01T00:00:00+00:00")
+        end = str(cutoff_at or datetime.now(timezone.utc).isoformat())
+        try:
+            lower = datetime.fromisoformat(start.replace("Z", "+00:00"))
+            upper = datetime.fromisoformat(end.replace("Z", "+00:00"))
+            if lower.tzinfo is None or upper.tzinfo is None or lower > upper:
+                raise ValueError
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("invalid_profit_loop_window") from exc
+        start = lower.isoformat()
+        end = upper.isoformat()
+
+        def _parse_timestamp(value: object) -> datetime | None:
+            if value is None:
+                return None
+            try:
+                timestamp = datetime.fromisoformat(
+                    str(value).replace("Z", "+00:00")
+                )
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=timezone.utc)
+                return timestamp
+            except (TypeError, ValueError, OverflowError):
+                return None
+
         with readonly_db() as db:
-            candidates = build_candidate_facts(horizon="24h", db=db)
+            candidates = build_candidate_facts(
+                horizon="24h", as_of_at=end, db=db
+            )
+            facts = candidates.get("facts")
+            if not isinstance(facts, list):
+                raise RuntimeError("malformed_candidate_facts")
+            window_facts = []
+            candidate_unknown = 0
+            for fact in facts:
+                if not isinstance(fact, dict):
+                    candidate_unknown += 1
+                    continue
+                timestamp = _parse_timestamp(fact.get("event_at"))
+                if timestamp is None:
+                    candidate_unknown += 1
+                elif lower <= timestamp <= upper:
+                    window_facts.append(fact)
+            window_settled = sum(
+                1
+                for fact in window_facts
+                if isinstance(fact.get("fixed_horizon_outcome"), dict)
+                and fact["fixed_horizon_outcome"].get("status") == "settled"
+            )
             table_exists = {
                 table: db.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
@@ -619,18 +668,24 @@ def _profit_loop_coverage() -> dict[str, Any]:
                 "SUM(CASE WHEN status='closed' THEN 1 ELSE 0 END) AS closed, "
                 "SUM(CASE WHEN status='open' THEN 1 ELSE 0 END) AS open, "
                 "SUM(CASE WHEN status='closed' AND realized_pnl IS NOT NULL THEN 1 ELSE 0 END) AS economics "
-                "FROM positions WHERE status IN ('open','closed')"
+                "FROM positions WHERE status IN ('open','closed') "
+                "AND datetime(opened_at) >= datetime(?) "
+                "AND datetime(opened_at) <= datetime(?)",
+                (start, end),
             ).fetchone()
             path_counts = db.execute(
                 "SELECT COUNT(*) AS observations, COUNT(DISTINCT position_id) AS positions, "
                 "SUM(CASE WHEN evidence_status='available' THEN 1 ELSE 0 END) AS available, "
                 "SUM(CASE WHEN evidence_status='unavailable' THEN 1 ELSE 0 END) AS unavailable "
-                "FROM position_path_observations"
+                "FROM position_path_observations "
+                "WHERE datetime(observed_at) >= datetime(?) "
+                "AND datetime(observed_at) <= datetime(?)",
+                (start, end),
             ).fetchone()
         position_counts = dict(position_counts or {})
         path_counts = dict(path_counts or {})
-        candidate_count = int(candidates.get("candidate_count") or 0)
-        settled_count = int(candidates.get("settled_outcome_count") or 0)
+        candidate_count = len(window_facts)
+        settled_count = window_settled
         return {
             "availability": "available",
             "unavailable_reason": None,
@@ -640,6 +695,7 @@ def _profit_loop_coverage() -> dict[str, Any]:
                 "settled_outcome_units": settled_count,
                 "outcome_coverage": candidates.get("outcome_coverage"),
                 "unavailable_units": candidates.get("unavailable_count", 0),
+                "unknown_timestamp_units": candidate_unknown,
             },
             "position": {
                 "availability": "available",
@@ -731,12 +787,26 @@ def _profit_loop_status(evidence: dict[str, Any] | None = None) -> dict[str, Any
             "availability": "unavailable",
             "unavailable_reason": "malformed_profit_loop_identity",
         }
+    started_at = entry.get("started_at")
+    try:
+        registered = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+        if registered.tzinfo is None:
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        return {
+            **base,
+            "status": "unavailable",
+            "availability": "unavailable",
+            "unavailable_reason": "malformed_profit_loop_registration",
+        }
     cutoff_at = entry.get("cutoff_at")
     try:
         cutoff = datetime.fromisoformat(str(cutoff_at).replace("Z", "+00:00"))
         if cutoff.tzinfo is None:
             raise ValueError
-    except (TypeError, ValueError):
+        if registered > cutoff:
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
         return {
             **base,
             "status": "unavailable",
@@ -745,7 +815,9 @@ def _profit_loop_status(evidence: dict[str, Any] | None = None) -> dict[str, Any
         }
     now = datetime.now(timezone.utc)
     lifecycle_status = "collecting" if now < cutoff else "cutoff_reached"
-    coverage = _profit_loop_coverage()
+    coverage = _profit_loop_coverage(
+        registration_at=registered.isoformat(), cutoff_at=cutoff.isoformat()
+    )
     if not isinstance(coverage, dict):
         coverage = {
             "availability": "unavailable",

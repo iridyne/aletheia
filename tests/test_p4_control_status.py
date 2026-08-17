@@ -400,7 +400,7 @@ def test_profit_loop_status_stays_collecting_before_cutoff(monkeypatch):
     monkeypatch.setattr(
         cmd_mod,
         "_profit_loop_coverage",
-        lambda: {"availability": "available", "unavailable_reason": None},
+        lambda **_kwargs: {"availability": "available", "unavailable_reason": None},
     )
     result = cmd_mod._profit_loop_status(evidence)
     assert result["status"] == "collecting"
