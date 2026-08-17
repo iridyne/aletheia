@@ -315,7 +315,9 @@ def active_pause_blocker_names(cfg=None) -> tuple[str, ...]:
     if cfg is None:
         cfg = _config_loader.load_config()
     current_scope = _current_behavior_scope(cfg)
-    cfg.runtime.set_pause_scope(current_scope)
+    sync_scope = getattr(cfg.runtime, "set_pause_scope", None)
+    if callable(sync_scope):
+        sync_scope(current_scope)
     return tuple(
         sorted(
             owner
