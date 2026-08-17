@@ -1,3 +1,3 @@
 """Aletheia Trading OS — local-first AI-native agentic trading system."""
 
-__version__ = "0.8.1"  # x-release-please-version
+__version__ = "0.8.2"  # x-release-please-version

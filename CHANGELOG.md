@@ -4,6 +4,14 @@ All notable product changes are recorded here. Aletheia uses Semantic Versioning
 for the product release, while build identities and data/behavior contracts keep
 their own independent versions.
 
+## [0.8.2](https://github.com/iridite/aletheia/compare/v0.8.1...v0.8.2) (2026-08-17)
+
+
+### Bug Fixes
+
+* **frontdoor:** serve root dashboard as HTML ([#1041](https://github.com/iridite/aletheia/issues/1041)) ([1c6ec28](https://github.com/iridite/aletheia/commit/1c6ec2803d8057383b2d1a13e212c3fc733b01e4))
+* **health:** use observer run heartbeat for freshness ([#1040](https://github.com/iridite/aletheia/issues/1040)) ([12e969d](https://github.com/iridite/aletheia/commit/12e969d44da15b6ab1bc4e65988a70af2dc47d54))
+
 ## [0.8.1](https://github.com/iridite/aletheia/compare/v0.8.0...v0.8.1) (2026-08-16)
 
 
