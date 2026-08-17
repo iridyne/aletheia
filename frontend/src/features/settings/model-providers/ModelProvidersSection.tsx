@@ -680,6 +680,7 @@ function IntegrationCard({
 		mutationFn: (body: Record<string, unknown>) =>
 			api.updateModelIntegration(definition.id, body),
 		onSuccess: invalidate,
+		meta: { errorSurface: "inline" },
 	});
 	const roles = routingRoles(model, definition.id);
 	return (

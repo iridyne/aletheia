@@ -761,6 +761,7 @@ function InferenceLimitsForm({ name, config, metrics, qc, onDirty }: {
     },
   })
   const save = useMutation({
+    meta: { errorSurface: 'inline' },
     mutationFn: () => {
       const payload = {
         inference_max_concurrency: Number(maxConcurrency),
