@@ -617,8 +617,8 @@ async def _resume_from_network(
         logger.info("exchange_auto_resume: connectivity owner changed before release")
         return True
 
-    if release.remaining_owners:
-        remaining = ", ".join(release.remaining_owners)
+    if release.blocking_owners:
+        remaining = ", ".join(release.blocking_owners)
         emit_infra_event(
             severity="info",
             source="connectivity_monitor",
@@ -646,7 +646,7 @@ async def _resume_from_network(
                 },
                 "after": {
                     "paused": True,
-                    "remaining_pause_owners": list(release.remaining_owners),
+                    "remaining_pause_owners": list(release.blocking_owners),
                 },
             }
         )

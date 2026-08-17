@@ -46,7 +46,7 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 
 | # | 关卡 | 判断 | config 字段 | 失败标签 | 位置 |
 |---|------|------|------------|---------|------|
-| 0 | Trading Brakes | global brake 阻断全部；demo/live mode brake 只阻断对应 pool | `runtime.kill_switch_active/demo_brake_active/live_brake_active` | `kill_switch_active` / `demo_brake_active` / `live_brake_active` | engine.py |
+| 0 | Trading Brakes | global brake 阻断全部；demo/live mode brake 只阻断对应 pool；三者同时以带 scope/generation 的 durable pause owner 投影，resume authority 仍先检查独立 brake | `runtime.kill_switch_active/demo_brake_active/live_brake_active` + `runtime.pause_owners` | `kill_switch_active` / `demo_brake_active` / `live_brake_active` | engine.py / pause_ownership.py |
 | 1 | Symbol Filter | white/blacklist | `risk.symbol_filter_mode/symbol_list` | `symbol_blocked/not_allowed:{sym}` | :83 |
 | 1a | Local Paper Market Authority | authoritative `native + paper_internal` 只接受主数据 venue、canonical symbol、physical market 完全匹配的新鲜 mark（内存≤90s，SQLite≤120s）；Proposal.price 必须以极窄 `math.isclose` 容差等于该 mark，broker 只在批准后施加滑点；本地 limit 不受支持 | `market_data.ccxt_exchange` | `paper_market_data_unavailable:{venue}:{market}` / `proposal_price_not_current_mark` / `paper_internal_limit_not_supported` | engine.py local-paper authority block |
 | 1b | Local Paper Causal Identity | authoritative `native + paper_internal` 必须在 `opportunities` 与 `serenity_opportunities` 中恰有一个 durable carrier，且 canonical symbol、physical market、direction 完全一致 | —（始终启用） | `proposal_opportunity_required/not_found/ambiguous/symbol_mismatch/market_mismatch/direction_mismatch/check_error` | engine.py `_paper_opportunity_identity_violations` |

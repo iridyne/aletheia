@@ -1149,7 +1149,14 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
     Returns a summary dict of the assessment and actions taken.
     """
     cfg = load_config()
-    if cfg.runtime.paused:
+    from aletheia.agent_runtime.pause_ownership import active_pause_blocker_names
+
+    # Trading brakes pause behavior-producing jobs, but the supervisory loop
+    # must still observe and notify about the brake. Other pause owners keep the
+    # existing fail-closed skip behavior.
+    brake_owners = {"kill_switch", "demo_brake", "live_brake"}
+    non_brake_blockers = set(active_pause_blocker_names(cfg)) - brake_owners
+    if cfg.runtime.paused and non_brake_blockers:
         logger.debug("operator_loop: gateway paused, skipping")
         return {"status": "skipped", "reason": "gateway_paused"}
 

@@ -231,6 +231,41 @@ def test_startup_gate_passes_when_usable(tmp_path, monkeypatch):
     assert get_llm_consecutive_failures() == 0
 
 
+def test_startup_gate_does_not_release_new_llm_generation(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.server import app as appmod
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
+    cfg.runtime.acquire_pause(
+        "llm_startup_gate",
+        reason="old probe",
+        generation="old-generation",
+    )
+    save_config(cfg)
+
+    async def probe_and_rotate(_cfg):
+        fresh = load_config()
+        fresh.runtime.acquire_pause(
+            "llm_startup_gate",
+            reason="new probe",
+            generation="new-generation",
+        )
+        save_config(fresh)
+        return {"any_usable": True, "checked": 1, "results": []}
+
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.startup_gate.probe_llm_providers_at_startup",
+        probe_and_rotate,
+    )
+
+    asyncio.run(appmod._llm_startup_gate(cfg))
+
+    persisted = load_config()
+    assert persisted.runtime.pause_owners["llm_startup_gate"].generation == "new-generation"
+    assert persisted.runtime.paused is True
+
+
 # --- 5c. gate disabled by config → no-op even if all providers are dead ---
 
 def test_startup_gate_respects_disable_flag(tmp_path, monkeypatch):
@@ -376,7 +411,7 @@ def test_resume_gate_allows_when_one_provider_usable(tmp_path, monkeypatch):
         lambda: True,
     )
 
-    def fake_persist_resumed(*, actor, source):
+    def fake_persist_resumed(*, actor, source, generations):
         cfg.runtime.paused = False
         save_config(cfg)
         return PauseReleaseResult(released=True, resumed=True, remaining_owners=())
@@ -476,6 +511,47 @@ def test_resume_gate_keeps_startup_behavior_blocker_paused(tmp_path, monkeypatch
     assert result["blockers"] == ["reconciliation_incident"]
     assert probe_called is False
     assert load_config().runtime.paused is True
+
+
+def test_resume_gate_evaluation_error_persists_gate_state_and_recheck(
+    tmp_path, monkeypatch
+):
+    """An unknown startup-gate result owns a durable pause and rechecks it."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import resume_gate, startup_behavior_gate
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
+    cfg.health.startup_behavior_gate_enabled = True
+    cfg.runtime.acquire_pause(
+        "llm_startup_gate",
+        reason="provider unavailable",
+        generation="llm-1",
+    )
+    save_config(cfg)
+
+    rechecks: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        startup_behavior_gate,
+        "evaluate_startup_gate",
+        lambda _cfg: (_ for _ in ()).throw(RuntimeError("probe failed")),
+    )
+    monkeypatch.setattr(
+        startup_behavior_gate,
+        "_start_recheck_loop",
+        lambda interval, *args: rechecks.append((interval, len(args))),
+    )
+
+    result = asyncio.run(
+        resume_gate.resume_if_llm_available(actor="human", source="dashboard")
+    )
+
+    assert result["allowed"] is False
+    assert result["reason"] == "startup_behavior_gate_unavailable"
+    assert rechecks == [(cfg.health.startup_gate_recheck_interval_sec, 0)]
+    persisted = load_config()
+    assert persisted.runtime.pause_owners["startup_behavior_gate"].active is True
+    assert startup_behavior_gate.read_gate_state()["paused_by_gate"] is True
 
 
 def test_resume_gate_keeps_real_reconciliation_incident_paused(tmp_path, monkeypatch):

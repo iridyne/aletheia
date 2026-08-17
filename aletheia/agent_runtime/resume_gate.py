@@ -27,7 +27,12 @@ def summarize_resume_gate(result: dict[str, Any]) -> str:
     return f"{reason}: {detail}"
 
 
-def _persist_resumed(*, actor: str, source: str):
+def _persist_resumed(
+    *,
+    actor: str,
+    source: str,
+    generations: dict[str, str | None] | None = None,
+):
     from aletheia.agent_runtime.pause_ownership import (
         LLM_STARTUP_OWNER,
         MANUAL_OWNER,
@@ -37,6 +42,10 @@ def _persist_resumed(*, actor: str, source: str):
     owners = {LLM_STARTUP_OWNER: None}
     if not (actor == "system" and source == "auto_resume"):
         owners[MANUAL_OWNER] = None
+    if generations is not None:
+        # Only owners observed before the async probe are releasable.  An owner
+        # acquired during the probe must not be matched by a wildcard ``None``.
+        owners = {owner: generations[owner] for owner in owners if owner in generations}
     return release_pauses(
         owners,
         resume_when_clear=True,
@@ -51,13 +60,20 @@ def _remaining_owner_response(
     checked: int = 0,
     results: list[dict] | None = None,
 ) -> dict[str, Any] | None:
-    if release.remaining_owners:
+    blockers = release.blocking_owners
+    if blockers:
+        from aletheia.agent_runtime.pause_ownership import (
+            active_pause_owners,
+            pause_blocked_reason,
+        )
+
         return {
             "allowed": False,
-            "reason": "active_pause_owners",
+            "reason": pause_blocked_reason() or "active_pause_owners",
             "checked": checked,
             "results": list(results or []),
-            "blockers": list(release.remaining_owners),
+            "blockers": list(blockers),
+            "pause_owners": active_pause_owners(),
         }
     return None
 
@@ -74,6 +90,10 @@ def _audit_resume_blocked(*, actor: str, source: str, cause: str, result: dict[s
                 "entity_type": "gateway",
                 "entity_id": "gateway",
                 "message": f"Resume blocked ({cause}): {summarize_resume_gate(result)}",
+                "metadata": {
+                    "pause_blockers": list(result.get("blockers") or []),
+                    "pause_owners": list(result.get("pause_owners") or []),
+                },
             }
         )
     except Exception:
@@ -93,71 +113,179 @@ async def resume_if_llm_available(
     the request returns within a single probe instead of the full startup window.
     """
     cfg = load_config()
+    from aletheia.agent_runtime.pause_ownership import (
+        LLM_STARTUP_OWNER,
+        MANUAL_OWNER,
+        STARTUP_BEHAVIOR_OWNER,
+        active_pause_blocker_names,
+        active_pause_owners,
+        acquire_pause,
+        pause_blocked_reason,
+    )
 
-    if cfg.runtime.paused and cfg.runtime.paused_by_connectivity:
+    blocker_names = active_pause_blocker_names(cfg)
+    release_targets = {LLM_STARTUP_OWNER}
+    if not (actor == "system" and source == "auto_resume"):
+        release_targets.add(MANUAL_OWNER)
+    protected_blockers = tuple(name for name in blocker_names if name not in release_targets)
+    if protected_blockers:
+        reason = pause_blocked_reason(cfg) or "active_pause_owners"
         response = {
             "allowed": False,
-            "reason": "exchange_connectivity_pause",
+            "reason": reason,
             "checked": 0,
             "results": [],
-            "blockers": ["exchange_connectivity"],
+            "blockers": list(protected_blockers),
+            "pause_owners": active_pause_owners(cfg),
         }
         _audit_resume_blocked(actor=actor, source=source, cause=cause, result=response)
         return response
 
+    owner_generations = {
+        owner: (
+            cfg.runtime.pause_owners[owner].generation
+            if cfg.runtime.pause_owners[owner].generation is not None
+            else ""
+        )
+        for owner in release_targets
+        if owner in cfg.runtime.pause_owners
+    }
+
     if cfg.health.startup_behavior_gate_enabled:
         try:
-            from aletheia.agent_runtime.startup_behavior_gate import evaluate_startup_gate
+            from aletheia.agent_runtime import startup_behavior_gate
 
-            startup_gate = evaluate_startup_gate(cfg)
+            startup_gate = startup_behavior_gate.evaluate_startup_gate(cfg)
         except Exception:
+            startup_gate = {
+                "passed": False,
+                "checks": [{
+                    "name": "startup_gate_evaluation_error",
+                    "ok": False,
+                    "detail": "startup behavior gate evaluation raised",
+                    "blocking": True,
+                }],
+                "blockers": ["startup_gate_evaluation_error"],
+                "user_blocked": False,
+                "user_block_reason": None,
+            }
+            startup_behavior_gate._apply_block(startup_gate, load_config())
             response = {
                 "allowed": False,
                 "reason": "startup_behavior_gate_unavailable",
                 "checked": 0,
                 "results": [],
-                "blockers": [],
+                "blockers": [STARTUP_BEHAVIOR_OWNER],
+                "pause_owners": active_pause_owners(load_config()),
             }
             _audit_resume_blocked(actor=actor, source=source, cause=cause, result=response)
             return response
 
         if not bool(startup_gate.get("passed")):
+            startup_behavior_gate._apply_block(startup_gate, load_config())
             response = {
                 "allowed": False,
                 "reason": "startup_behavior_gate_blocked",
                 "checked": 0,
                 "results": [],
-                "blockers": list(startup_gate.get("blockers") or []),
+                "blockers": list(startup_gate.get("blockers") or []) or [STARTUP_BEHAVIOR_OWNER],
+                "pause_owners": active_pause_owners(load_config()),
             }
             _audit_resume_blocked(actor=actor, source=source, cause=cause, result=response)
             return response
 
     if not cfg.health.require_llm_at_startup:
-        release = _persist_resumed(actor=actor, source=source)
+        release = _persist_resumed(
+            actor=actor,
+            source=source,
+            generations=owner_generations,
+        )
         blocked = _remaining_owner_response(release)
         if blocked is not None:
             _audit_resume_blocked(actor=actor, source=source, cause=cause, result=blocked)
             return blocked
+        if not release.resumed:
+            try:
+                from aletheia.agent_runtime.scheduler import resume_scheduler
+
+                if resume_scheduler() is False:
+                    blocked = {
+                        "allowed": False,
+                        "reason": pause_blocked_reason(load_config()) or "active_pause_owners",
+                        "checked": 0,
+                        "results": [],
+                        "blockers": list(active_pause_blocker_names(load_config())),
+                    }
+                    _audit_resume_blocked(actor=actor, source=source, cause=cause, result=blocked)
+                    return blocked
+            except Exception:
+                blocked = {
+                    "allowed": False,
+                    "reason": "scheduler_resume_failed",
+                    "checked": 0,
+                    "results": [],
+                    "blockers": [],
+                }
+                _audit_resume_blocked(actor=actor, source=source, cause=cause, result=blocked)
+                return blocked
         return {
             "allowed": True,
             "reason": "llm_startup_gate_disabled",
             "checked": 0,
             "results": [],
+            "pause_owners": active_pause_owners(load_config()),
         }
 
     # Call positionally-only when no override so test doubles that patch the probe
     # with a single-arg signature keep working (auto_resume integration tests).
-    if max_retries is None:
-        result = await probe_llm_providers_at_startup(cfg)
-    else:
-        result = await probe_llm_providers_at_startup(cfg, max_retries=max_retries)
+    try:
+        if max_retries is None:
+            result = await probe_llm_providers_at_startup(cfg)
+        else:
+            result = await probe_llm_providers_at_startup(cfg, max_retries=max_retries)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        # A required dependency that could not be verified is itself a durable
+        # blocker.  Never turn an orchestration exception into permission to
+        # resume; acquire the LLM owner when no other owner already holds it.
+        llm_lease = load_config().runtime.pause_owners.get(LLM_STARTUP_OWNER)
+        if llm_lease is None or not llm_lease.active:
+            acquire_pause(
+                LLM_STARTUP_OWNER,
+                reason="required_llm_probe_exception",
+                actor=actor,
+                source=source,
+            )
+        response = {
+            "allowed": False,
+            "reason": "llm_probe_exception",
+            "checked": 0,
+            "results": [],
+            "blockers": [LLM_STARTUP_OWNER],
+            "pause_owners": active_pause_owners(load_config()),
+            "error_type": type(exc).__name__,
+        }
+        _audit_resume_blocked(actor=actor, source=source, cause=cause, result=response)
+        return response
     response = {
         "allowed": bool(result.get("any_usable")),
         "reason": None if result.get("any_usable") else "llm_unavailable",
         "checked": int(result.get("checked") or 0),
         "results": list(result.get("results") or []),
+        "pause_owners": active_pause_owners(load_config()),
     }
     if not response["allowed"]:
+        response["blockers"] = [LLM_STARTUP_OWNER]
+        llm_lease = load_config().runtime.pause_owners.get(LLM_STARTUP_OWNER)
+        if llm_lease is None or not llm_lease.active:
+            acquire_pause(
+                LLM_STARTUP_OWNER,
+                reason="llm_unavailable",
+                actor=actor,
+                source=source,
+            )
+            response["pause_owners"] = active_pause_owners(load_config())
         _audit_resume_blocked(actor=actor, source=source, cause=cause, result=response)
         return response
 
@@ -167,7 +295,11 @@ async def resume_if_llm_available(
         record_llm_success()
     except Exception:
         pass
-    release = _persist_resumed(actor=actor, source=source)
+    release = _persist_resumed(
+        actor=actor,
+        source=source,
+        generations=owner_generations,
+    )
     blocked = _remaining_owner_response(
         release,
         checked=response["checked"],
@@ -176,6 +308,23 @@ async def resume_if_llm_available(
     if blocked is not None:
         response.update(blocked)
         _audit_resume_blocked(actor=actor, source=source, cause=cause, result=response)
+    elif not release.resumed:
+        # A brake may have been released separately, leaving no releasable
+        # behavioral owner to trigger the scheduler transition.  Route that
+        # final action through the same public, owner-aware gate.
+        try:
+            from aletheia.agent_runtime.scheduler import resume_scheduler
+
+            if resume_scheduler() is False:
+                response.update({
+                    "allowed": False,
+                    "reason": pause_blocked_reason(load_config()) or "active_pause_owners",
+                    "blockers": list(active_pause_blocker_names(load_config())),
+                })
+                _audit_resume_blocked(actor=actor, source=source, cause=cause, result=response)
+        except Exception:
+            response.update({"allowed": False, "reason": "scheduler_resume_failed"})
+            _audit_resume_blocked(actor=actor, source=source, cause=cause, result=response)
     return response
 
 
