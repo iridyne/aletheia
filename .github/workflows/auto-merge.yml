@@ -158,14 +158,6 @@ jobs:
                   }
                 }
               }
-              const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({
-                ...context.repo,
-                basehead: `${pullRequest.base.sha}...${pullRequest.head.sha}`,
-              });
-              const expectedBaseSha = comparison.merge_base_commit.sha;
-              if (!/^[0-9a-f]{40}$/.test(expectedBaseSha || '')) {
-                throw new Error('pull request merge-base SHA is unavailable');
-              }
               const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
                 ...context.repo,
                 pull_number: pullRequest.number,
@@ -195,7 +187,6 @@ jobs:
                   operation,
                   pull_request_number: pullRequest.number,
                   expected_head_sha: pullRequest.head.sha,
-                  expected_base_sha: expectedBaseSha,
                 },
               });
             }
@@ -368,8 +359,8 @@ jobs:
             if (!/^[0-9a-f]{40}$/.test(expectedHeadSha)) {
               throw new Error('expected head SHA must be a 40-character lowercase Git object ID');
             }
-            if (operation === 'enable' && !/^[0-9a-f]{40}$/.test(expectedBaseSha)) {
-              throw new Error('expected merge-base SHA must be a 40-character lowercase Git object ID');
+            if (releaseAfterMerge && !/^[0-9a-f]{40}$/.test(expectedBaseSha)) {
+              throw new Error('expected release base SHA must be a 40-character lowercase Git object ID');
             }
 
             const pullRequestQuery = `query($owner: String!, $repo: String!, $number: Int!) {
@@ -427,38 +418,6 @@ jobs:
                 { pullRequestId: pullRequest.id },
               );
             };
-            const dispatchCurrentUpdate = async () => {
-              const {data: currentMetadata} = await github.rest.pulls.get({
-                ...context.repo,
-                pull_number: pullRequestNumber,
-              });
-              if (
-                currentMetadata.state !== 'open' ||
-                currentMetadata.base.ref !== 'master' ||
-                currentMetadata.draft ||
-                currentMetadata.head.ref.startsWith('release-please--branches--master')
-              ) {
-                return;
-              }
-              const {data: currentComparison} = await github.rest.repos.compareCommitsWithBasehead({
-                ...context.repo,
-                basehead: `${currentMetadata.base.sha}...${currentMetadata.head.sha}`,
-              });
-              const currentMergeBaseSha = currentComparison.merge_base_commit.sha;
-              if (!/^[0-9a-f]{40}$/.test(currentMergeBaseSha || '')) {
-                throw new Error('current pull request merge-base SHA is unavailable');
-              }
-              await github.rest.repos.createDispatchEvent({
-                ...context.repo,
-                event_type: 'auto_merge_update',
-                client_payload: {
-                  operation: 'enable',
-                  pull_request_number: pullRequestNumber,
-                  expected_head_sha: currentMetadata.head.sha,
-                  expected_base_sha: currentMergeBaseSha,
-                },
-              });
-            };
             if (operation === 'disable') {
               const pullRequest = await fetchPullRequest();
               if (!pullRequest || pullRequest.state !== 'OPEN') {
@@ -486,9 +445,8 @@ jobs:
               if (pullRequest.headRefOid !== expectedHeadSha) {
                 core.info(
                   `pull request head changed from ${expectedHeadSha} to ${pullRequest.headRefOid}; ` +
-                  'dispatching current exact-diff authorization',
+                  'a newer pull request event must authorize the merge',
                 );
-                await dispatchCurrentUpdate();
                 return;
               }
               const {data: pullRequestMetadata} = await github.rest.pulls.get({
@@ -502,19 +460,6 @@ jobs:
                 core.info('pull request metadata changed while checking merge authority');
                 return;
               }
-              const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({
-                ...context.repo,
-                basehead: `${pullRequestMetadata.base.sha}...${pullRequestMetadata.head.sha}`,
-              });
-              const currentBaseSha = comparison.merge_base_commit.sha;
-              if (currentBaseSha !== expectedBaseSha) {
-                core.info(
-                  `pull request merge base changed from ${expectedBaseSha} to ${currentBaseSha}; ` +
-                  'dispatching current exact-diff authorization',
-                );
-                await dispatchCurrentUpdate();
-                return;
-              }
               const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
                 ...context.repo,
                 pull_number: pullRequest.number,
@@ -524,7 +469,7 @@ jobs:
                 core.info(
                   `changed-file listing is incomplete ` +
                   `(${changedFiles.length}/${pullRequestMetadata.changed_files}); ` +
-                  'exact-diff merge remains disabled',
+                  'exact-head merge remains disabled',
                 );
                 return;
               }
@@ -542,7 +487,7 @@ jobs:
 
               // Native auto-merge survives synchronize events and could merge a new
               // head before the Connector responds. Ordinary pull requests therefore
-              // use only this exact-diff, event-driven merge path.
+              // use only this exact-SHA, event-driven merge path.
               await disableAutoMerge(pullRequest);
               if (pullRequest.labels.nodes.some(({name}) => name === 'do-not-auto-merge')) {
                 core.info('do-not-auto-merge holds this pull request');
@@ -550,14 +495,11 @@ jobs:
               }
 
               const connectorLogin = 'chatgpt-codex-connector';
-              const shepherdLogin = 'github-actions[bot]';
               const normalizeLogin = (login) => String(login || '').replace(/\[bot\]$/, '');
               const isConnectorLogin = (login) => normalizeLogin(login) === connectorLogin;
               const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
               const triagePattern = /^\/codex-triage ([0-9a-f]{40}) (clean|complete)$/;
               const reviewedCommitPattern = /Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i;
-              const shepherdReviewMarkerPattern =
-                /<!-- aletheia-codex-shepherd head=([0-9a-f]{40}) base=([0-9a-f]{40}) kind=review -->/;
               const resolveReviewedCommitSha = async (body) => {
                 const match = String(body || '').match(reviewedCommitPattern);
                 if (!match) return null;
@@ -572,90 +514,21 @@ jobs:
                   return null;
                 }
               };
-              const [allReviews, allComments] = await Promise.all([
-                github.paginate(github.rest.pulls.listReviews, {
-                  ...context.repo,
-                  pull_number: pullRequest.number,
-                  per_page: 100,
-                }),
-                github.paginate(github.rest.issues.listComments, {
-                  ...context.repo,
-                  issue_number: pullRequest.number,
-                  per_page: 100,
-                }),
-              ]);
-              const sameHeadReviewRequests = allComments.flatMap((comment) => {
-                if (comment.user?.login !== shepherdLogin || !comment.created_at) return [];
-                const marker = String(comment.body || '').match(shepherdReviewMarkerPattern);
-                if (!marker || marker[1] !== expectedHeadSha) return [];
-                return [{base: marker[2], createdAt: comment.created_at}];
-              }).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-              const latestReviewRequest = sameHeadReviewRequests.at(-1) || null;
-              if (!latestReviewRequest || latestReviewRequest.base !== expectedBaseSha) {
-                core.info(
-                  `waiting for latest Shepherd review request to match current exact diff ` +
-                  `${expectedHeadSha}@${expectedBaseSha}`,
-                );
-                return;
-              }
-              const latestReviewRequestAt = latestReviewRequest.createdAt;
-
-              const connectorCleanCandidates = allComments.filter((comment) =>
-                isConnectorLogin(comment.user?.login) &&
-                comment.created_at &&
-                /Didn't find any major issues\./i.test(String(comment.body || ''))
-              );
-              const cleanCompletionTimes = [];
-              for (const comment of connectorCleanCandidates) {
-                const reviewedCommitSha = await resolveReviewedCommitSha(comment.body);
-                if (reviewedCommitSha === expectedHeadSha) {
-                  cleanCompletionTimes.push(comment.created_at);
-                }
-              }
-              const formalReviewCompletionTimes = allReviews
-                .filter((review) =>
-                  isConnectorLogin(review.user?.login) &&
-                  review.commit_id === expectedHeadSha &&
-                  review.submitted_at &&
-                  review.state !== 'DISMISSED'
-                )
-                .map((review) => review.submitted_at);
-              const connectorCompletionTimes = [
-                ...formalReviewCompletionTimes,
-                ...cleanCompletionTimes,
-              ].sort();
-              for (let index = 0; index < sameHeadReviewRequests.length - 1; index += 1) {
-                const request = sameHeadReviewRequests[index];
-                const nextRequest = sameHeadReviewRequests[index + 1];
-                const drainedBeforeNextRequest = connectorCompletionTimes.some((completedAt) =>
-                  completedAt >= request.createdAt && completedAt < nextRequest.createdAt
-                );
-                if (!drainedBeforeNextRequest) {
-                  core.info(
-                    `same-head Shepherd review request chain is ambiguous between ` +
-                    `${request.base} and ${nextRequest.base}; exact-diff merge remains disabled`,
-                  );
-                  return;
-                }
-              }
-
+              const allReviews = await github.paginate(github.rest.pulls.listReviews, {
+                ...context.repo,
+                pull_number: pullRequest.number,
+                per_page: 100,
+              });
               const exactHeadReviews = allReviews
                 .filter((review) =>
                   isConnectorLogin(review.user?.login) &&
                   review.commit_id === expectedHeadSha &&
                   review.submitted_at &&
-                  review.submitted_at >= latestReviewRequestAt &&
                   review.state !== 'DISMISSED'
                 )
                 .map((review) => ({submittedAt: review.submitted_at}));
-              const acknowledgements = allComments.flatMap((comment) => {
-                if (
-                  !trustedAssociations.has(comment.author_association) ||
-                  !comment.created_at ||
-                  comment.created_at < latestReviewRequestAt
-                ) {
-                  return [];
-                }
+              const acknowledgements = pullRequest.comments.nodes.flatMap((comment) => {
+                if (!trustedAssociations.has(comment.authorAssociation)) return [];
                 const [command, ...detailLines] = String(comment.body || '')
                   .replace(/\r/g, '')
                   .split('\n');
@@ -664,12 +537,20 @@ jobs:
                 if (!match || match[1] !== expectedHeadSha || !details) return [];
                 return [{
                   disposition: match[2],
-                  createdAt: comment.created_at,
+                  createdAt: comment.createdAt,
                 }];
               });
+              const connectorCleanCandidates = pullRequest.comments.nodes.filter((comment) =>
+                isConnectorLogin(comment.author?.login) &&
+                /Didn't find any major issues\./i.test(String(comment.body || ''))
+              );
               let connectorCleanExactHead = false;
-              if (cleanCompletionTimes.some((completedAt) => completedAt >= latestReviewRequestAt)) {
-                connectorCleanExactHead = true;
+              for (const comment of connectorCleanCandidates) {
+                const reviewedCommitSha = await resolveReviewedCommitSha(comment.body);
+                if (reviewedCommitSha === expectedHeadSha) {
+                  connectorCleanExactHead = true;
+                  break;
+                }
               }
 
               if (exactHeadReviews.length === 0) {
@@ -678,9 +559,8 @@ jobs:
                   !acknowledgements.some(({disposition}) => disposition === 'clean')
                 ) {
                   core.info(
-                    `waiting for exact-diff Connector completion on ` +
-                    `${expectedHeadSha}@${expectedBaseSha}; a clean Connector result will ` +
-                    'resume this PR automatically',
+                    `waiting for exact-head Connector completion on ${expectedHeadSha}; ` +
+                    'a clean Connector result will resume this PR automatically',
                   );
                   return;
                 }
@@ -695,10 +575,9 @@ jobs:
                 );
                 if (!triageComplete) {
                   core.info(
-                    `waiting for P1/P2 triage on ${expectedHeadSha}@${expectedBaseSha}; ` +
-                    `an authorized maintainer must comment "/codex-triage ${expectedHeadSha} ` +
-                    `complete" after the current exact-diff review and ` +
-                    `document every confirmed, false-positive, or deferred finding`,
+                    `waiting for P1/P2 triage on ${expectedHeadSha}; an authorized maintainer ` +
+                    `must comment "/codex-triage ${expectedHeadSha} complete" after the exact-head ` +
+                    `review and document every confirmed, false-positive, or deferred finding`,
                   );
                   return;
                 }
@@ -706,42 +585,11 @@ jobs:
 
               if (pullRequest.mergeStateStatus !== 'CLEAN') {
                 core.info(
-                  `exact-diff Connector gate passed; waiting for an event after pull request ` +
+                  `exact-head Connector gate passed; waiting for an event after pull request ` +
                   `status ${pullRequest.mergeStateStatus}`,
                 );
                 return;
               }
-
-              // Revalidate authority at the actual merge boundary. Head SHA alone is
-              // not sufficient because a same-head retarget can change the diff.
-              const {data: mergeBoundaryMetadata} = await github.rest.pulls.get({
-                ...context.repo,
-                pull_number: pullRequestNumber,
-              });
-              if (
-                mergeBoundaryMetadata.state !== 'open' ||
-                mergeBoundaryMetadata.base.ref !== 'master' ||
-                mergeBoundaryMetadata.draft ||
-                mergeBoundaryMetadata.head.sha !== expectedHeadSha ||
-                mergeBoundaryMetadata.labels.some(({name}) => name === 'do-not-auto-merge')
-              ) {
-                core.info('pull request changed at exact-diff merge boundary');
-                return;
-              }
-              const {data: mergeBoundaryComparison} = await github.rest.repos.compareCommitsWithBasehead({
-                ...context.repo,
-                basehead: `${mergeBoundaryMetadata.base.sha}...${mergeBoundaryMetadata.head.sha}`,
-              });
-              const mergeBoundaryBaseSha = mergeBoundaryComparison.merge_base_commit.sha;
-              if (mergeBoundaryBaseSha !== expectedBaseSha) {
-                core.info(
-                  `pull request merge base changed at merge boundary from ${expectedBaseSha} ` +
-                  `to ${mergeBoundaryBaseSha}; dispatching current exact-diff authorization`,
-                );
-                await dispatchCurrentUpdate();
-                return;
-              }
-
               const mergeResult = await github.rest.pulls.merge({
                 ...context.repo,
                 pull_number: pullRequestNumber,

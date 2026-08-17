@@ -34,11 +34,6 @@ permissions:
   contents: read
 
 jobs:
-  # PR-facing events run with a repository policy that rejects comment/label writes
-  # from their GITHUB_TOKEN. Keep this job mutation-free: it only starts the trusted
-  # default-branch workflow with Actions: write, which does not grant merge/content
-  # authority. The workflow_dispatch run performs PR-side mutations after exact-diff
-  # revalidation.
   schedule:
     name: Schedule Codex shepherd update
     if: >-
@@ -85,10 +80,7 @@ jobs:
               if (!isConnectorLogin(payload.review?.user?.login)) return;
               pullRequestNumbers = [payload.pull_request?.number].filter(Boolean);
             } else if (context.eventName === 'issue_comment') {
-              if (
-                !payload.issue?.pull_request ||
-                !isConnectorLogin(payload.comment?.user?.login)
-              ) {
+              if (!payload.issue?.pull_request || !isConnectorLogin(payload.comment?.user?.login)) {
                 return;
               }
               pullRequestNumbers = [payload.issue.number];
@@ -149,10 +141,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
-      # Serialize every base revision for the same PR head. A stale-base callback
-      # is allowed to converge the current base when it reaches the front of the
-      # lane; it must never race another marker writer for the same head.
-      group: codex-shepherd-update-${{ github.event.inputs.pull_request_number }}-${{ github.event.inputs.expected_head_sha }}
+      group: codex-shepherd-update-${{ github.event.inputs.pull_request_number }}
       cancel-in-progress: false
     steps:
       - name: Drive exact-diff Codex review state
@@ -174,7 +163,7 @@ jobs:
             const request = context.payload.inputs || {};
             const pullRequestNumber = Number.parseInt(String(request.pull_request_number || ''), 10);
             const expectedHeadSha = String(request.expected_head_sha || '');
-            let expectedBaseSha = String(request.expected_base_sha || '');
+            const expectedBaseSha = String(request.expected_base_sha || '');
             const sourceEvent = String(request.source_event || '');
 
             if (!Number.isInteger(pullRequestNumber) || pullRequestNumber <= 0) {
@@ -210,39 +199,61 @@ jobs:
               }
             };
 
-            const {data: pullRequest} = await github.rest.pulls.get({
-              ...context.repo,
-              pull_number: pullRequestNumber,
-            });
-            if (
-              pullRequest.state !== 'open' ||
-              pullRequest.base.ref !== 'master' ||
-              pullRequest.draft ||
-              pullRequest.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
-              pullRequest.head.ref.startsWith('release-please--branches--master')
-            ) {
+            const loadCurrentIdentity = async () => {
+              const {data: pullRequest} = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: pullRequestNumber,
+              });
+              if (
+                pullRequest.state !== 'open' ||
+                pullRequest.base.ref !== 'master' ||
+                pullRequest.draft ||
+                pullRequest.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
+                pullRequest.head.ref.startsWith('release-please--branches--master')
+              ) {
+                return {pullRequest, baseSha: null, eligible: false};
+              }
+              const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({
+                ...context.repo,
+                basehead: `${pullRequest.base.sha}...${pullRequest.head.sha}`,
+              });
+              return {
+                pullRequest,
+                baseSha: comparison.merge_base_commit.sha,
+                eligible: true,
+              };
+            };
+
+            const initialIdentity = await loadCurrentIdentity();
+            if (!initialIdentity.eligible) {
               core.info('pull request is outside the autonomous Shepherd boundary');
               return;
             }
-            const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({
-              ...context.repo,
-              basehead: `${pullRequest.base.sha}...${pullRequest.head.sha}`,
-            });
-            const currentBaseSha = comparison.merge_base_commit.sha;
-            if (pullRequest.head.sha !== expectedHeadSha) {
+            const pullRequest = initialIdentity.pullRequest;
+            if (
+              pullRequest.head.sha !== expectedHeadSha ||
+              initialIdentity.baseSha !== expectedBaseSha
+            ) {
               core.info(
-                `Shepherd request for head ${expectedHeadSha} is stale; ` +
-                `current head is ${pullRequest.head.sha}`,
+                `Shepherd request for ${expectedHeadSha}@${expectedBaseSha} is stale; ` +
+                `current review identity is ${pullRequest.head.sha}@${initialIdentity.baseSha}`,
               );
               return;
             }
-            if (currentBaseSha !== expectedBaseSha) {
-              core.info(
-                `Shepherd request base changed from ${expectedBaseSha} to ${currentBaseSha}; ` +
-                `converging the current base in the same head-serialized lane`,
-              );
-              expectedBaseSha = currentBaseSha;
-            }
+
+            const identityStillCurrent = async () => {
+              const current = await loadCurrentIdentity();
+              const matches =
+                current.eligible &&
+                current.pullRequest.head.sha === expectedHeadSha &&
+                current.baseSha === expectedBaseSha;
+              if (!matches) {
+                core.info(
+                  `skipping stale Shepherd mutation for ${expectedHeadSha}@${expectedBaseSha}`,
+                );
+              }
+              return matches;
+            };
 
             const [changedFiles, issueComments, allReviews] = await Promise.all([
               github.paginate(github.rest.pulls.listFiles, {
@@ -296,8 +307,8 @@ jobs:
             const latestReviewRequestAt = (
               latestSameHeadReviewRequest?.base === expectedBaseSha
             ) ? latestSameHeadReviewRequest.createdAt : null;
-            const exactHeadReviewRequest = latestReviewRequestAt !== null;
-            const exactHeadHalt = markers.some(
+            const exactDiffReviewRequest = latestReviewRequestAt !== null;
+            const exactDiffHalt = markers.some(
               ({type, head, base}) =>
                 type === 'halt' && head === expectedHeadSha && base === expectedBaseSha
             );
@@ -328,56 +339,59 @@ jobs:
               ...formalReviewCompletionTimes,
               ...cleanCompletionTimes,
             ].sort();
-            const requestHasCompletion = (requestMarker, beforeAt = null) =>
+            const requestHasCompletion = (requestMarker) =>
               connectorCompletionTimes.some((completedAt) =>
-                completedAt >= requestMarker.createdAt &&
-                (beforeAt === null || completedAt < beforeAt)
+                completedAt >= requestMarker.createdAt
               );
 
-            const exactHeadReviews = latestReviewRequestAt === null ? [] : allReviews.filter((review) =>
+            const exactDiffReviews = latestReviewRequestAt === null ? [] : allReviews.filter((review) =>
               isConnectorLogin(review.user?.login) &&
               review.commit_id === expectedHeadSha &&
               review.submitted_at &&
               review.submitted_at >= latestReviewRequestAt &&
               review.state !== 'DISMISSED'
             );
-            const connectorCleanExactHead = latestReviewRequestAt !== null &&
+            const connectorCleanExactDiff = latestReviewRequestAt !== null &&
               cleanCompletionTimes.some((completedAt) => completedAt >= latestReviewRequestAt);
 
+            let holdLabelPresent = pullRequest.labels.some(
+              ({name}) => name === 'do-not-auto-merge'
+            );
             const postComment = async (body) => {
+              if (!(await identityStillCurrent())) return false;
               await github.rest.issues.createComment({
                 ...context.repo,
                 issue_number: pullRequest.number,
                 body,
               });
+              return true;
             };
-            let holdLabelPresent = pullRequest.labels.some(
-              ({name}) => name === 'do-not-auto-merge'
-            );
             const ensureHoldLabel = async () => {
-              if (holdLabelPresent) return;
+              if (holdLabelPresent) return true;
+              if (!(await identityStillCurrent())) return false;
               await github.rest.issues.addLabels({
                 ...context.repo,
                 issue_number: pullRequest.number,
                 labels: ['do-not-auto-merge'],
               });
               holdLabelPresent = true;
+              return true;
             };
             const holdForOwner = async (reason, message) => {
-              if (!exactHeadHalt) {
-                await postComment(
+              if (!(await identityStillCurrent())) return false;
+              if (!exactDiffHalt) {
+                const posted = await postComment(
                   `${message}\n\n` +
                   `Codex Cloud repair is not authorized to push back to this repository yet, so ` +
                   `the Shepherd fails closed instead of claiming an autonomous repair.\n\n` +
                   `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} base=${expectedBaseSha} reason=${reason} -->`
                 );
+                if (!posted) return false;
               }
-              await ensureHoldLabel();
+              return ensureHoldLabel();
             };
 
-            if (exactHeadHalt) {
-              await ensureHoldLabel();
-            }
+            if (exactDiffHalt && !(await ensureHoldLabel())) return;
 
             if (changedFiles.length !== pullRequest.changed_files) {
               await holdForOwner(
@@ -393,15 +407,12 @@ jobs:
               [filename, previous_filename].includes(shepherdPath)
             );
             if (changesShepherdAuthority) {
-              if (!exactHeadHalt) {
-                await postComment(
-                  `Codex Shepherd authority changed on exact review identity ` +
-                  `\`${expectedHeadSha}@${expectedBaseSha}\`. This control-plane change ` +
-                  `requires explicit owner merge and cannot resume through ordinary auto-merge.\n\n` +
-                  `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} base=${expectedBaseSha} reason=shepherd-self-change -->`
-                );
-              }
-              await ensureHoldLabel();
+              await holdForOwner(
+                'shepherd-self-change',
+                `Codex Shepherd authority changed on exact review identity ` +
+                `\`${expectedHeadSha}@${expectedBaseSha}\`. This control-plane change ` +
+                `requires explicit owner merge and cannot resume through ordinary auto-merge.`
+              );
               return;
             }
 
@@ -410,7 +421,7 @@ jobs:
               return;
             }
 
-            if (exactHeadReviews.length !== 0) {
+            if (exactDiffReviews.length !== 0) {
               await holdForOwner(
                 'review-finding',
                 `Codex reported findings on exact review identity ` +
@@ -420,7 +431,7 @@ jobs:
               return;
             }
 
-            if (!exactHeadReviewRequest) {
+            if (!exactDiffReviewRequest) {
               if (
                 latestSameHeadReviewRequest &&
                 !requestHasCompletion(latestSameHeadReviewRequest)
@@ -432,35 +443,6 @@ jobs:
                 );
                 return;
               }
-
-              // The base can change while this run is doing API reads. Revalidate
-              // immediately before writing the next immutable review marker. A
-              // retarget emits another callback in this same PR+head lane.
-              const {data: markerBoundaryPullRequest} = await github.rest.pulls.get({
-                ...context.repo,
-                pull_number: pullRequest.number,
-              });
-              if (
-                markerBoundaryPullRequest.state !== 'open' ||
-                markerBoundaryPullRequest.base.ref !== 'master' ||
-                markerBoundaryPullRequest.head.sha !== expectedHeadSha
-              ) {
-                core.info('pull request changed at Shepherd marker boundary');
-                return;
-              }
-              const {data: markerBoundaryComparison} = await github.rest.repos.compareCommitsWithBasehead({
-                ...context.repo,
-                basehead: `${markerBoundaryPullRequest.base.sha}...${markerBoundaryPullRequest.head.sha}`,
-              });
-              const markerBoundaryBaseSha = markerBoundaryComparison.merge_base_commit.sha;
-              if (markerBoundaryBaseSha !== expectedBaseSha) {
-                core.info(
-                  `merge base changed again from ${expectedBaseSha} to ${markerBoundaryBaseSha}; ` +
-                  'the queued same-head callback will converge the new base',
-                );
-                return;
-              }
-
               await postComment(
                 `@codex review\n\n` +
                 `Please review exact head \`${expectedHeadSha}\` against merge base ` +
@@ -484,10 +466,7 @@ jobs:
                 .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0] || null;
             };
 
-            // Every surviving callback converges actionable CI failure state before
-            // it is allowed to exit based on its source event. This repairs partial
-            // terminal writes even when the successor callback has a different type.
-            if (connectorCleanExactHead) {
+            if (connectorCleanExactDiff) {
               const run = await latestCiRun();
               if (
                 run &&
