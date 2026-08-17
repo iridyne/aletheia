@@ -147,9 +147,12 @@ def get_cached_state(mode: Optional[str] = None) -> Optional[dict]:
 
 
 def status_for(state: Optional[dict], max_age_sec: int = _DEFAULT_MAX_AGE_SEC) -> str:
-    """Classify a cached state for the UI: ok / stale / unconfigured / error."""
+    """Classify a cached state for the UI, including fresh-but-partial UTA data."""
     if state is None:
         return "unconfigured"
+    if state.get("errors"):
+        age = state.get("age_seconds")
+        return "partial" if age is not None and age <= max_age_sec else "stale"
     age = state.get("age_seconds")
     if age is None or age > max_age_sec:
         return "stale"

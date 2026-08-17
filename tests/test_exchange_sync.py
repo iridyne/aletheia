@@ -168,6 +168,12 @@ def test_status_stale_when_cache_too_old(tmp_path, monkeypatch):
     assert es.status_for(cached) == "stale"
 
 
+def test_status_partial_when_fresh_cache_has_broker_errors():
+    from aletheia.portfolio import exchange_sync as es
+
+    assert es.status_for({"age_seconds": 2, "errors": ["okx_demo: timeout"]}) == "partial"
+
+
 # --- portfolio integration: new fields exposed ---
 
 def test_compute_portfolio_carries_exchange_fields(tmp_path, monkeypatch):

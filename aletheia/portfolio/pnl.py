@@ -1487,26 +1487,32 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
 
             unified = exchange_sync.get_unified_cached_state()
             if unified is not None:
-                uta_age = unified.get("age_seconds")
-                if uta_age is not None and uta_age < 600:
-                    uta_state = unified
-                    # When unified state is available and has data, use as hero number
-                    uta_equity = unified.get("total_equity_usdt")
-                    if uta_equity and uta_equity > 0:
-                        final_total_value = float(uta_equity)
-                        account_equity_usdt = final_total_value
-                    # UTA uPnL is the authoritative cross-broker unrealized PnL. The
-                    # legacy single-broker Bitget cache above sets final_unrealized to
-                    # 0 when the active account is on another broker (e.g. OKX), which
-                    # contradicted the equity-curve's local estimate. Prefer UTA here
-                    # so the UNREALIZED card matches the real exchange mark-price uPnL.
-                    uta_count = len(unified.get("positions") or [])
-                    uta_upnl = unified.get("total_unrealized_pnl")
-                    if uta_upnl is not None:
-                        final_unrealized = float(uta_upnl)
-                        final_today_pnl = float(uta_upnl) + total_today_realized
-                    if uta_count:
-                        final_positions_count = uta_count
+                uta_status = exchange_sync.status_for(unified)
+                if uta_status in ("ok", "partial"):
+                    uta_state = {**unified, "sync_status": uta_status}
+                    if uta_status != "ok":
+                        # A fresh aggregate with one or more failed brokers is
+                        # not an account-equity fact. Keep the failure evidence
+                        # for the UI, but do not promote its partial totals.
+                        sync_status = uta_status
+                    else:
+                        # When unified state is available and has data, use as hero number
+                        uta_equity = unified.get("total_equity_usdt")
+                        if uta_equity and uta_equity > 0:
+                            final_total_value = float(uta_equity)
+                            account_equity_usdt = final_total_value
+                        # UTA uPnL is the authoritative cross-broker unrealized PnL. The
+                        # legacy single-broker Bitget cache above sets final_unrealized to
+                        # 0 when the active account is on another broker (e.g. OKX), which
+                        # contradicted the equity-curve's local estimate. Prefer UTA here
+                        # so the UNREALIZED card matches the real exchange mark-price uPnL.
+                        uta_count = len(unified.get("positions") or [])
+                        uta_upnl = unified.get("total_unrealized_pnl")
+                        if uta_upnl is not None:
+                            final_unrealized = float(uta_upnl)
+                            final_today_pnl = float(uta_upnl) + total_today_realized
+                        if uta_count:
+                            final_positions_count = uta_count
         except Exception:
             pass
 
@@ -1603,7 +1609,7 @@ def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> Portfo
     # fallback to legacy single-broker Bitget cache.
     uta_state = summary.get("uta_state")
     uta_equity = None
-    if uta_state:
+    if uta_state and not (uta_state.get("errors") or uta_state.get("sync_status") == "partial"):
         uta_equity = uta_state.get("total_equity_usdt")
     exchange_equity = uta_equity or summary.get("exchange_equity_usdt")
     # View-completeness gate (P0, 2026-07-02): the UNIFIED total (uta_equity) is a

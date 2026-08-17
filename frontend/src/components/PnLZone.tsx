@@ -379,7 +379,7 @@ export default function PnLZone({ bootstrap, unavailable = false }: { bootstrap?
                 ? dayPct != null ? `${fmtCompactSigned(dayPct)}% · some closes unverified` : 'some closes unverified'
                 : dayPct != null ? `${fmtCompactSigned(dayPct)}% of managed` : undefined}
             onClick={() => navigate('/trades?tab=blotter')}
-            tooltip={todayPnlBySymbol}
+            tooltip={todayComplete ? todayPnlBySymbol : {}}
           />
           <HoverTile
             label="Unrealized"

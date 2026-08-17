@@ -40,6 +40,7 @@ export interface OverviewAccount {
   execution_mode?: string | null
   uta_state?: {
     sync_status?: string
+    errors?: string[]
     total_equity_usdt?: number | null
     total_available_usdt?: number | null
     total_unrealized_pnl?: number | null

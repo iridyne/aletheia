@@ -408,8 +408,7 @@ async def uta_state():
 
     unified = get_unified_cached_state()
     if unified is not None:
-        age = unified.get("age_seconds")
-        sync_status = "ok" if (age is not None and age <= 600) else "stale"
+        sync_status = status_for(unified)
         return {**unified, "sync_status": sync_status}
 
     # Fallback is valid only for the Bitget demo account that owns this legacy

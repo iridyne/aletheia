@@ -187,22 +187,39 @@ def _project_overview_account(portfolio: dict, cfg) -> dict:
     )
     account = {key: portfolio.get(key) for key in fields}
     account["exposure_by_symbol"] = dict(list((portfolio.get("exposure_by_symbol") or {}).items())[:8])
-    account["today_pnl_by_symbol"] = dict(list((portfolio.get("today_pnl_by_symbol") or {}).items())[:8])
+    account["today_pnl_by_symbol"] = (
+        dict(list((portfolio.get("today_pnl_by_symbol") or {}).items())[:8])
+        if portfolio.get("today_realized_pnl_complete") is not False
+        else {}
+    )
     account["unrealized_by_symbol"] = dict(list((portfolio.get("unrealized_by_symbol") or {}).items())[:8])
     account["exchange_asset_breakdown"] = list((portfolio.get("exchange_asset_breakdown") or [])[:8])
 
     uta = portfolio.get("uta_state")
     if isinstance(uta, dict):
         age = uta.get("age_seconds")
+        raw_errors = uta.get("errors") or []
+        if isinstance(raw_errors, dict):
+            uta_errors = [f"{key}: {value}" for key, value in list(raw_errors.items())[:8]]
+        elif isinstance(raw_errors, (list, tuple)):
+            uta_errors = [str(error) for error in raw_errors[:8]]
+        else:
+            uta_errors = [str(raw_errors)]
         try:
             sync_status = uta.get("sync_status") or ("ok" if age is not None and float(age) <= 600 else "stale")
         except (TypeError, ValueError):
             sync_status = "stale"
+        if uta_errors:
+            try:
+                sync_status = "partial" if age is not None and float(age) <= 600 else "stale"
+            except (TypeError, ValueError):
+                sync_status = "stale"
         account["uta_state"] = {
             "sync_status": sync_status,
             "total_equity_usdt": uta.get("total_equity_usdt"),
             "total_available_usdt": uta.get("total_available_usdt"),
             "total_unrealized_pnl": uta.get("total_unrealized_pnl"),
+            "errors": uta_errors,
             "age_seconds": age,
             "fetched_at": uta.get("fetched_at"),
             "accounts": [
@@ -211,6 +228,13 @@ def _project_overview_account(portfolio: dict, cfg) -> dict:
                 if isinstance(item, dict)
             ],
         }
+        if uta_errors:
+            # A fresh UTA cache can still be incomplete. Do not let a partial
+            # aggregate fall through to the account-value or unrealized tiles.
+            for key in ("total_value_usdt", "account_equity_usdt", "exchange_equity_usdt", "unrealized_pnl"):
+                account[key] = None
+            account["exchange_asset_breakdown"] = []
+            account["exchange_sync_status"] = sync_status
     else:
         account["uta_state"] = None
 
@@ -220,6 +244,9 @@ def _project_overview_account(portfolio: dict, cfg) -> dict:
     else:
         account["exchange_mode"] = portfolio.get("exchange_mode")
         account["execution_mode"] = portfolio.get("execution_mode")
+    if account["execution_mode"] != "paper_internal":
+        # The local position map cannot explain an external account headline.
+        account["unrealized_by_symbol"] = {}
     return account
 
 

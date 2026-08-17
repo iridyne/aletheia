@@ -68,6 +68,38 @@ def test_overview_account_projection_preserves_pnl_zone_inputs():
     assert account["execution_mode"] == "paper_internal"
 
 
+def test_overview_account_projection_fails_closed_for_partial_uta():
+    from aletheia.server.routes.ui import _project_overview_account
+
+    cfg = SimpleNamespace(exchange=SimpleNamespace(mode="paper", paper_execution_mode="okx_demo"))
+    account = _project_overview_account(
+        {
+            "total_value_usdt": 9000.0,
+            "account_equity_usdt": 9000.0,
+            "exchange_equity_usdt": 9000.0,
+            "unrealized_pnl": 12.0,
+            "today_realized_pnl": 3.0,
+            "today_realized_pnl_complete": False,
+            "today_pnl_by_symbol": {"BTC/USDT": 3.0},
+            "unrealized_by_symbol": {"BTC/USDT": 12.0},
+            "uta_state": {
+                "total_equity_usdt": 9000.0,
+                "age_seconds": 2,
+                "errors": ["binance_testnet: timeout"],
+                "accounts": [{"broker_id": "okx_demo", "equity_usdt": 9000.0}],
+            },
+        },
+        cfg,
+    )
+    assert account["uta_state"]["sync_status"] == "partial"
+    assert account["uta_state"]["errors"] == ["binance_testnet: timeout"]
+    assert account["total_value_usdt"] is None
+    assert account["exchange_equity_usdt"] is None
+    assert account["unrealized_pnl"] is None
+    assert account["today_pnl_by_symbol"] == {}
+    assert account["unrealized_by_symbol"] == {}
+
+
 def test_overview_bootstrap_marks_partial_sections_instead_of_available(monkeypatch):
     import aletheia.server.routes.ui as ui
 
