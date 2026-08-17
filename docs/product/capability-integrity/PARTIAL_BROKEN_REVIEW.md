@@ -26,7 +26,7 @@ mandatory support gate, and it does not authorize implementation.
 | PF-03 Capital-adjusted curve | Broken | Implemented | Capital Events now feed a separate adjusted account-equity series with visible method, markers, and baseline; raw equity and verified PnL are unchanged. |
 | LN-03 Dreaming consolidation | Partial | Supported | Daily scheduler/agent output is executable; extracted `trade_case_study` lessons cross review into the applied Layer3/Operator-prompt consumer. |
 | LN-14 Persona base sizing | Partial | Supported | The capability is narrowed to its real promise: persona notional/Kelly reach immutable Proposal quantity; adjacent leverage/stop/add experiments remain LN-16/LN-17. |
-| LN-16 Persona progressive unlock | Partial | Experimental | Runtime now ignores reference-only ladder fields and Settings names the lifetime-history limitation. The default-off experiment still lacks a prospective Persona/policy cohort; #409. |
+| LN-16 Persona progressive unlock | Partial | Experimental | #409 follow-up adds a durable Persona/policy/step cohort, exact Position manifests, sample/market-day/stability gates, one-step progression, and refreeze; the capability remains default-off and experimental. |
 | LN-17 Persona pyramid decision | Partial | Experimental | `pyramid_plan()` is a bounded reference helper; Settings/API block new enablement and preserve an off-ramp for legacy configs; #410. |
 | LN-19 Policy history and diff | Partial | Supported | `/policies/diff` precedes the dynamic route; `LP-S22` crosses API diff, detail, and history against two immutable versions. Default-branch delivery resolves #428. |
 | OS-03 Exchange credential verification | Partial | Implemented | Bitget, Binance, and OKX candidate/stored checks now use private read-only endpoints; failures close clients and never echo raw secrets. Outside Supported Core. |
@@ -73,8 +73,13 @@ LN-03 moved from Partial to Supported after its existing
 `trade_case_study`-lesson consumer was executed with the correct durable source
 identity. LN-14 moved from Partial to Supported after base entry sizing was
 separated from adjacent Persona experiments and executed through Proposal
-quantity. Persona progressive unlock then moved from Partial to Experimental:
+quantity. Historical review: Persona progressive unlock then moved from Partial to Experimental:
 unconsumed fields are filtered, while the remaining lifetime-history evidence
 gate is honestly default-off and tracked by #409. Subsequent Doctor, policy
 diff, credential, and tunnel reviews bring the current totals to 68 Supported,
 4 Implemented, 6 Partial, 21 Experimental, and 1 Broken.
+
+2026-08-17 follow-up: #409's lifetime-history gate is no longer current. The
+durable rollout state machine now owns progressive authority and preserves the
+same Experimental/default-off classification; the separate #410 pyramid gap is
+unchanged.

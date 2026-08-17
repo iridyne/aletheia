@@ -7,9 +7,11 @@
 > P2=`9c27dc4`(Operator 规则式上下文决策)· P3=`3fbdd79`(regime 干净窗学习)· P4=`884e035`
 > (渐进解冻+金字塔 policy)。specs:PS-S01..S12 + PL-ADOPT-19..21。所有 flag 默认 OFF。
 >
-> **2026-07-28 能力事实修正**:定时器间隔和宽泛健康检查不构成当前 Persona/策略步骤的前瞻证据。
-> `persona_rollout` 现为只读 safety hold，不再自动打开 progressive unlock 或 persona learning；
-> GitHub #409 跟踪真正的逐步授权证据缺口。
+> **2026-08-17 #409 修复**: `persona_rollout` 使用持久化的 rollout/step 状态机。
+> 每个 Persona/policy identity 记录 step anchor、baseline、watermark、manifest cohort 和
+> verdict；只接受 exact persona + policy epoch + parameter assignment 的前瞻 outcome，并要求
+> clean sample、连续 market-day 和 stable non-degrading verdict。scheduler 只重检该状态机，
+> 一次最多解冻一个参数；历史 outcome、身份漂移、负贡献、distress 都 fail-closed refreeze。
 >
 > **2026-08-11 sizing 语义校正**:当前实现中的 `kelly_fraction` /
 > `vol_kelly_cap_fraction` 是历史命名的 conviction-policy scaling factor，不是
@@ -172,13 +174,19 @@ owner 要点:把 Operator 可抉择的**大参数值域**纳入 Learning,让它�
   (等价于"稍微放大版的现状",零学习风险。)
 - **逐个解冻**:一次只解冻**一个参数(或一小组)**,其余保持冻结安全值。每次解冻的门槛:
   1. 干净窗样本足够(该 persona 下 ≥K 笔带完整归因的真实成交);
-  2. 当前已解冻参数的策略已**稳定**(近 M 窗策略输出方差收敛、reward 不再退化);
+  2. 当前 step 的 exact control/treatment cohort 跨至少 3 个 market-day，且 cost-aware
+     reward 通过 stable/non-degrading contribution verdict;
   3. 无 active kill/distress。
 - **建议解冻顺序**(从影响可控→影响大):① 基准仓位% → ② 杠杆 → ③ 单笔止损带 → ④ 加仓/金字塔 → ⑤ Kelly。
   每个参数解冻时先给**窄搜索区间**,随信心增长再放宽(区间本身也是渐进的)。
 - **自动再冻结(auto-refreeze)**:某参数解冻后策略退化(reward 掉、回撤超阈)→ **自动冻回安全默认 + 通知**。
   这就是把本会话的"reconciler 断路器 / doctor 探针 + 自愈"模式**套用到 learning 回路**:
   监测策略健康 → 退化即熔断回退 → 报人。
+
+实现上，rollout 记录与 `persona_rollout_events` 持久化在 SQLite；每个 entry Proposal/Position
+保存 hash-checked `sizing_manifest`（Proposal rationale 是不可变来源），其包含 rollout id、Persona fingerprint、policy epoch、step、
+parameter state 与 control/treatment assignment。`effective_operator_decidable()` 只读取已
+通过 verdict 的状态，绝不从 lifetime close count 推导 authority。
 
 ---
 

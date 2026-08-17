@@ -252,10 +252,24 @@ def _materialize_paper_entry(
                 symbol, fill_price, attribution_snapshot
             )
             decision_reasoning = None
+            sizing_manifest = None
             try:
                 proposal = repo._select_one("trade_proposals", proposal_id)
                 if proposal:
                     decision_reasoning = proposal.get("agent_rationale")
+                    from aletheia.trading.persona_rollout import (
+                        extract_sizing_manifest,
+                        serialize_sizing_manifest,
+                    )
+
+                    sizing_manifest = serialize_sizing_manifest(
+                        extract_sizing_manifest(
+                            {
+                                "decision_reasoning": decision_reasoning,
+                                "attribution_snapshot": attribution_snapshot,
+                            }
+                        )
+                    )
             except Exception:
                 pass
             position = Position(
@@ -280,6 +294,7 @@ def _materialize_paper_entry(
                 regime_tag=attribution["regime_tag"],
                 entry_market_summary=attribution["entry_market_summary"],
                 decision_reasoning=decision_reasoning,
+                sizing_manifest=sizing_manifest,
                 entry_fee=round(fill_price * quantity * fee_rate, 8),
                 slippage_cost=round(
                     abs(fill_price - requested_price) * quantity, 8

@@ -28,7 +28,7 @@ implementation by itself.
 Settings says deposits and withdrawals are recorded so cumulative PnL reflects
 true investment performance.
 
-**Actual path**
+**Historical pre-fix path (retained for discovery/provenance)**
 
 ```text
 Settings Capital Events card
@@ -240,7 +240,17 @@ unchanged.
 ## CI-04 — Persona unlock reuses historical outcomes outside the current rollout
 
 **Capabilities:** LN-16 progressive unlock; LN-18 Persona rollout automation
-**Status:** Experimental / safety evidence gap / GitHub #409
+**Status:** Repaired in the 2026-08-17 durable rollout follow-up; remains Experimental/default-off / GitHub #409
+
+**Resolution:** `persona_rollouts` and append-only `persona_rollout_events` now
+persist the exact Persona fingerprint, policy/runtime/outcome epoch, step anchor,
+watermark, baseline, authority, and refreeze reason. Entry Positions retain the
+hash-checked `sizing_manifest` copied from the immutable Proposal rationale.
+Unlocking uses only post-anchor, exact-rollout/step/assignment outcomes from the
+central clean outcome contract, with minimum K samples, three market days, and a
+stable non-degrading cost-aware contribution verdict. Each successful scheduler
+run advances one parameter at most; distress, invalid provenance, degradation, or
+identity changes refreeze without changing Risk or execution authority.
 
 **Product promise**
 
@@ -257,23 +267,24 @@ all lifetime eligible strategy outcomes
 → entry sizing and Proposal quantity
 ```
 
-The consumer mismatch is repaired locally: persisted/custom ladders are
+In that historical implementation, the consumer mismatch was repaired locally: persisted/custom ladders were
 filtered to `notional_usdt` and `kelly_fraction`, the two active entry
-consumers. The remaining gate does not scope evidence to the current Persona,
-policy epoch, rollout start, or prior unlock step. An established database can
-therefore unlock both active parameters immediately after the feature is
-enabled.
+consumers. The remaining gate did not scope evidence to the current Persona,
+policy epoch, rollout start, or prior unlock step. An established database could
+therefore unlock both active parameters immediately after the feature was
+enabled; the resolution removes this lifetime-count path.
 
 The scheduled rollout previously compounded this gap by treating each
 eight-hour invocation as an observation window and automatically enabling the
-next flag. It is now a read-only safety hold and cannot mutate Persona config.
+next flag. The 2026-08-17 resolution replaced that path with the durable state
+machine described above; the interval is now only a recheck cadence.
 
-**User impact**
+**Historical user impact**
 
 Historical trades generated under another policy can grant new sizing
 authority without evaluating the current Persona.
 
-**Target state**
+**Target state (now implemented)**
 
 If this experiment becomes worth supporting, each unlock must use prospective,
 attributable evidence for the current Persona and policy step.

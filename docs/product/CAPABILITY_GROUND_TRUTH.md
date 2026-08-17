@@ -166,9 +166,9 @@ Outside these canonical tables, use the full capability name.
 | LN-13 | Learning lifecycle automation | E1+E2 | Experimental | Owner-gated Paper stages and fixed-look progression are executable; no qualified natural promotion run | No |
 | LN-14 | Persona base sizing | E1+E2 | Supported | Notional/Kelly reach immutable Proposal quantity; other persona fields are explicitly outside this capability | No |
 | LN-15 | Persona regime learning | E1+E2 | Experimental | Bounded notional appetite only; default influence closed | No |
-| LN-16 | Persona progressive unlock | E1+E2 | Experimental | Default-off; active entry parameters only, but the gate uses lifetime eligible closes rather than a prospective Persona/policy cohort (#409) | No |
+| LN-16 | Persona progressive unlock | E1+E2 | Experimental | Default-off; active entry parameters require a durable rollout identity, exact manifest, scoped clean outcomes, market-day coverage, and stable non-degrading contribution; Risk/live authority is unchanged | No |
 | LN-17 | Persona pyramid decision | E1+E2 | Experimental | Reference-only helper; Settings/API block new enablement and no order capability is promised (#410) | No |
-| LN-18 | Persona rollout automation | E1+E2 | Experimental | Scheduler is an explicit read-only safety hold; prospective Persona/policy step verdict is absent (#409) | No |
+| LN-18 | Persona rollout automation | E1+E2 | Experimental | Scheduler only rechecks the durable rollout state machine; one-step transitions remain evidence-gated and never mutate unrelated config | No |
 | LN-19 | Policy/version history and diff | E1+E2 | Supported | Static diff route precedes the dynamic detail route; endpoint acceptance covers immutable diff, detail, and history | No |
 
 ### Security, configuration, and owner visibility
@@ -249,20 +249,21 @@ reach System Operator sizing and immutable Proposal quantity. Settings now
 labels leverage, stop, and add ranges as experimental/reference-only rather
 than implying that base sizing consumes every persona field.
 
-Persona progressive unlock is `Experimental`, not `Supported`: runtime now
-ignores ladder fields without a production entry consumer, but its evidence
-gate still counts lifetime eligible closes rather than a prospective cohort
-for the current Persona and policy epoch. Settings states that limitation and
-the mechanism remains default-off. GitHub #409 tracks the evidence-safety gap;
-the separate pyramid materialization gap remains on GitHub #410.
+Persona progressive unlock remains `Experimental` and default-off, but the
+#409 evidence-safety gap is repaired. SQLite now persists rollout identity,
+policy/runtime epoch, step anchor, baseline, watermark, append-only events, and
+the exact sizing manifest copied into each Position. Only exact prospective
+Persona/epoch/step cohorts can pass the sample, market-day, and stable
+non-degrading contribution gate; old or dirty outcomes cannot authorize a
+parameter. Distress, provenance failure, degradation, and identity changes
+refreeze the rollout while static sizing and Risk bounds remain unchanged.
 
-Persona rollout automation remains `Experimental` and no longer mutates
-configuration. The former implementation treated an eight-hour interval plus
-broad health checks as an observation verdict and could automatically activate
-the unsafe historical-count unlock path. The retained scheduler job now reports
-a read-only safety hold; Settings blocks new enablement and permits legacy
-enabled configurations to be switched off. No new rollout state machine was
-introduced.
+Persona rollout automation remains `Experimental`. The eight-hour job now only
+rechecks that same durable state machine, advances at most one ladder parameter
+per successful verdict, and never toggles Persona/Learning configuration flags.
+Settings and Doctor show desired flags separately from actual authorized
+parameters and the supporting evidence. The separate pyramid materialization
+gap remains on GitHub #410.
 
 Three `Implemented` exchange-lifecycle rows were then reviewed as one existing
 recovery chain. EX-06, EX-12, and EX-13 all retain complete static consumers
@@ -323,8 +324,8 @@ joins:
 1. capital events persist but do not change performance curves;
 2. live unlock changes authority state but not new-proposal execution mode;
 3. market-aware exits now reach a bounded Operator hold/adjust/close review;
-4. progressive Persona authority uses lifetime outcomes rather than a
-   prospective Persona/policy step cohort;
+4. progressive Persona authority is default-off and evidence-gated by a
+   durable Persona/policy/step cohort;
 5. exchange-backed close economics lack a complete private funding/bill
    evidence writer;
 6. pyramid/scale behavior has decision logic without a production

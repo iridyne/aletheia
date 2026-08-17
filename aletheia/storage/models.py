@@ -517,6 +517,10 @@ class Position(_Provenanced):
     closed_runtime_session_id: str | None = None
     closed_producer_commit: str | None = None
     closed_behavior_fingerprint: str | None = None
+    # Exact persona/progressive-unlock manifest used for this entry.  It is
+    # copied from the immutable Proposal rationale at materialization time so
+    # a later rollout cannot claim an outcome that used another policy.
+    sizing_manifest: str | None = None
     # Market-aware evaluation is advisory only.  Keep the legacy summary fields
     # and store exact venue/symbol/market + source provenance separately as JSON.
     last_market_signal_action: str | None = None

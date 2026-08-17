@@ -1363,8 +1363,8 @@ def init_scheduler() -> BackgroundScheduler | None:
         _guarded("health_check", _run_health_check), "interval", minutes=10, id="health_check",
         misfire_grace_time=120, executor="io",
     )
-    # Persona rollout safety probe: retained on the 8h schedule for compatibility
-    # and visibility, but read-only until a prospective step verdict exists.
+    # Persona rollout state machine: retained on the 8h schedule as a bounded
+    # evidence recheck; it can only advance one exact step or refreeze.
     _scheduler.add_job(
         _guarded("persona_rollout", _run_persona_rollout), "interval", hours=8,
         id="persona_rollout", misfire_grace_time=600, executor="io",
@@ -3345,7 +3345,7 @@ async def _async_news_analyze():
 
 
 def _run_persona_rollout():
-    """Every 8h: inspect Persona rollout safety without mutating config."""
+    """Every 8h: recheck the durable Persona rollout state machine."""
     try:
         from aletheia.trading.persona_rollout import advance_persona_rollout
         result = advance_persona_rollout()

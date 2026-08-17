@@ -41,7 +41,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 
 ## 3. Table Groups
 
-### A. Trading Core (20 tables)
+### A. Trading Core (22 tables)
 | Table | Purpose | Key columns | Written by |
 |-------|---------|-------------|------------|
 | `opportunities` | Scanner output -- trading signals; lifecycle is `open→queued→reviewed` or `open/queued→expired`; expired never regresses to reviewed | symbol, direction, confidence, key_observations (JSON), last_ranked_at, universe snapshot/member identity | market_observer |
@@ -52,7 +52,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `approvals` | Human approval records | proposal_id, decision, decided_by | frontend |
 | `orders` | Execution orders; native exchange entry `pending` is an unresolved Risk reservation, not zero exposure | symbol, side, quantity, order_type, status | execution gateway |
 | `fills` | Order fill confirmations | order_id, fill_price, fill_quantity, fee | broker adapter |
-| `positions` | Open/closed positions; a closed future may keep net economics unavailable. Delayed local funding materialization stores its versioned evidence fingerprint in reconciliation evidence. Market-aware evaluation remains advisory: its structured evidence records the exact venue/symbol/physical-market identity and source rows used for an Operator wake. | symbol, direction, entry_price, quantity, status, nullable realized_pnl, funding_cost, funding_source, **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence), **exit_limit_source** ('human'|'system_operator'; author of a resting limit exit — selects human_limit_exit vs operator_limit_exit in close_reason for attribution honesty), **exit_plan_effective_at** (nullable projection to the current immutable ExitPlan; NULL means the dormant barrier has not been activated), **last_market_signal_evidence** (versioned JSON; exact position/signal identities, Opportunity/member/asset/Feature provenance, evaluation and delivery result) | position_manager / outcome closure / paper funding settler |
+| `positions` | Open/closed positions; a closed future may keep net economics unavailable. Delayed local funding materialization stores its versioned evidence fingerprint in reconciliation evidence. Market-aware evaluation remains advisory: its structured evidence records the exact venue/symbol/physical-market identity and source rows used for an Operator wake. | symbol, direction, entry_price, quantity, status, nullable realized_pnl, funding_cost, funding_source, **sizing_manifest** (hash-checked Persona/policy/step assignment copied from the Proposal), **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence), **exit_limit_source** ('human'|'system_operator'; author of a resting limit exit — selects human_limit_exit vs operator_limit_exit in close_reason for attribution honesty), **exit_plan_effective_at** (nullable projection to the current immutable ExitPlan; NULL means the dormant barrier has not been activated), **last_market_signal_evidence** (versioned JSON; exact position/signal identities, Opportunity/member/asset/Feature provenance, evaluation and delivery result) | position_manager / outcome closure / paper funding settler |
 | `position_exit_plan_versions` | Retained, append-only resolved ExitPlan history. `(position_id, version)` is contiguous and immutable; insert atomically advances the nullable Position projection. | position_id, version, effective_at, resolved stop/take-profit/exit-limit, plan_json, plan_hash, provenance, created_at | protection repository + new/forward-adopted Paper runtime |
 | `position_protection_state` | One retained row per newly protected local-paper Position. It freezes exact instrument identity and monotonic cursors, preserves gap history, and projects first-trigger plus exact close linkage. | position_id, venue, canonical symbol, physical market_type, timeframe=1m, activated_at, cursor/gap/status, trigger_id, close Order/Fill linkage | protection repository + protective scheduler |
 | `position_protection_triggers` | Append-only first-barrier evidence. One immutable row per protected Position contains the exact 1-minute bar, resolved ExitPlan and deterministic collision policy. | trigger_id, position_id, exact instrument/bar/provider/hash, ExitPlan identity/barriers, hit flags/reason | protective scheduler + native paper close |
@@ -67,6 +67,8 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `portfolio_snapshots` | Periodic portfolio/account snapshots; `account_equity_usdt` is the only field eligible for the Overview account-equity curve. Legacy local rows with only `total_value_usdt` are position notional and excluded from that curve. Realized PnL may be NULL when included close economics are incomplete. | total_value_usdt, account_equity_usdt, unrealized_pnl, nullable realized_pnl, execution_mode | scheduler job |
 | `paper_account_events` | **Local `paper_internal` cash ledger only**; immutable starting funds, human adjustments, economically complete realized-PnL settlements, and owner-approved correction deltas. Unknown futures funding creates no close-settlement event. Corrections reuse `manual_credit`/`manual_debit` with position/source/fingerprint evidence rather than rewriting history. | action, amount_usdt, cash_balance_before_usdt, cash_balance_after_usdt, actor, source, position_id, note | paper account service |
 | `market_regimes` | Detected market regimes | regime_type, confidence, indicators (JSON) | market_observer |
+| `persona_rollouts` | Restart-safe progressive Persona authority state; one current identity per active rollout and immutable refreeze/step baseline | rollout_id, persona_id/fingerprint, policy_epoch/runtime_version, current_step/parameter, step_started_at, baseline_snapshot, evidence_watermark, status (`frozen`/`observing`/`eligible`/`unlocked`/`refrozen`/`completed`), authority/reason | Persona resolver / rollout scheduler |
+| `persona_rollout_events` | Append-only audit/evidence transitions for each rollout | rollout_id, step/parameter, status, event_type, authority, reason, evidence_json, actor/source, created_at | Persona resolver / rollout scheduler |
 
 Open `opportunities` are read through a bounded mixed workset: half of the normal
 page is reserved for `last_ranked_at IS NULL` rows and half for the oldest non-NULL
@@ -522,6 +524,10 @@ Audit chain (12): `trade_proposals` · `risk_decisions` · `orders` · `fills` �
 Protective-barrier evidence (3): `position_exit_plan_versions` ·
 `position_protection_state` · `position_protection_triggers`. All are retained
 and absent from `_PRUNABLE`.
+
+Persona rollout authority (2): `persona_rollouts` · `persona_rollout_events`.
+These append-only identity, verdict, and refreeze records are retained with the
+trust-bearing chain and are absent from `_PRUNABLE`.
 
 `ps_positions`.
 

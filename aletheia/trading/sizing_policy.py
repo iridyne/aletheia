@@ -61,13 +61,47 @@ def _clean_bucket_rewards(regime_bucket: str) -> list[float]:
     return out
 
 
-def clean_close_count() -> int:
-    """Total count of GENUINE closed positions (synthetic/administrative excluded).
+def clean_close_count(
+    *,
+    anchor_at: str | None = None,
+    rollout_id: str | None = None,
+    persona_id: str | None = None,
+    policy_epoch: str | None = None,
+    parameter: str | None = None,
+    parameter_state: str | None = None,
+) -> int:
+    """Count only genuine outcomes in a complete prospective evidence scope.
 
-    Drives the progressive-unlock gate (P4): params unfreeze as clean evidence
-    accrues. Read-only; 0 on error."""
+    The durable Persona state machine is the authority for unlocks.  This helper
+    remains a read-only compatibility seam for diagnostics and older callers; an
+    incomplete scope returns zero rather than turning a lifetime count into
+    dynamic authority.
+    """
+    if not anchor_at or not rollout_id or not persona_id or not policy_epoch:
+        return 0
     try:
-        return len(eligible_strategy_outcomes())
+        kwargs: dict[str, object] = {}
+        kwargs["closed_after"] = anchor_at
+        rows = eligible_strategy_outcomes(**kwargs)
+        from aletheia.trading.persona_rollout import extract_sizing_manifest
+
+        count = 0
+        for row in rows:
+            manifest = extract_sizing_manifest(row)
+            if not manifest:
+                continue
+            if manifest.get("rollout_id") != rollout_id:
+                continue
+            if manifest.get("persona_id") != persona_id:
+                continue
+            if manifest.get("policy_epoch") != policy_epoch:
+                continue
+            if parameter is not None and manifest.get("parameter") != parameter:
+                continue
+            if parameter_state is not None and manifest.get("parameter_state") != parameter_state:
+                continue
+            count += 1
+        return count
     except Exception:
         return 0
 

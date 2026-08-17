@@ -1995,7 +1995,11 @@ export const api = {
 			}>;
 		}>,
 	) =>
-		post<{ updated: Record<string, any>; trading: Record<string, any> }>(
+		post<{
+			updated: Record<string, any>;
+			trading: Record<string, any>;
+			persona_rollout?: Record<string, any>;
+		}>(
 			"/settings/trading",
 			body,
 		),
