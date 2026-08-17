@@ -5,6 +5,10 @@ from pydantic import BaseModel
 
 from aletheia.config.loader import load_config, save_config
 from aletheia.files.jsonl import write_audit
+from aletheia.trust.live_unlock import (
+    evidence_matches_config,
+    run_live_preflight,
+)
 
 router = APIRouter(prefix="/api/settings", tags=["live"])
 
@@ -12,6 +16,27 @@ router = APIRouter(prefix="/api/settings", tags=["live"])
 class LiveUnlockRequest(BaseModel):
     confirm: bool = False
     acknowledge_first_unlock: bool = False
+
+
+def _public_evidence(evidence: dict) -> dict:
+    """Return only the stable, non-secret fields suitable for API/audit output."""
+    allowed = {
+        "broker", "execution_mode", "account_environment", "account_fingerprint",
+        "credential_revision", "config_revision", "adapter_capability_version",
+        "account_identity_source",
+        "ok", "reason_code", "private_authenticated", "account_readable",
+        "public_reachability",
+        "environment_verified", "permission_status", "completeness", "fetched_at",
+        "expires_at", "permission_unknown_policy",
+        "evidence_binding",
+    }
+    return {key: evidence[key] for key in allowed if key in evidence}
+
+
+@router.post("/live-preflight")
+async def live_preflight():
+    """Read-only private-account preflight for the selected live exchange."""
+    return await run_live_preflight(load_config())
 
 
 @router.post("/live-unlock")
@@ -22,15 +47,52 @@ async def live_unlock(req: LiveUnlockRequest):
 
     cfg = load_config()
     if cfg.live.state != "live_disabled":
-        return {"status": cfg.live.state, "message": "Already unlocked"}
+        if cfg.live.state == "live_limited":
+            valid, reason = evidence_matches_config(cfg, cfg.live.unlock_evidence)
+            if valid:
+                return {"status": cfg.live.state, "message": "Already unlocked"}
+            raise HTTPException(
+                409,
+                detail={
+                    "error": "live_unlock_evidence_stale",
+                    "message": "Live unlock evidence is stale or no longer matches the selected account; lock and revalidate.",
+                    "reason_code": reason,
+                },
+            )
+        raise HTTPException(409, "Live state is not unlockable from its current state")
 
     if not cfg.live.first_live_confirmation_done and not req.acknowledge_first_unlock:
         raise HTTPException(400, "First-time live unlock requires acknowledge_first_unlock=true")
 
+    # The selected account is the first gate.  It is private, broker-specific,
+    # live-environment, permission-aware, and expires before any state mutation.
+    preflight = await run_live_preflight(cfg)
+    if not preflight.get("ok"):
+        raise HTTPException(
+            403,
+            detail={
+                "error": "live_preflight_failed",
+                "message": "Selected live account preflight failed; live unlock remains disabled.",
+                "reason_code": preflight.get("reason_code", "preflight_failed"),
+                "broker": preflight.get("broker"),
+                "account_environment": preflight.get("account_environment"),
+                "permission_status": preflight.get("permission_status", "unknown"),
+                "preflight": _public_evidence(preflight),
+            },
+        )
+
     # D8-B02/C01: scorecard gate — composite_score must reach ≥70 before live unlock.
     # Ensures demo performance meets the minimum readiness threshold (product §8 K3).
     from aletheia.analytics.go_live_scorecard import compute_scorecard
-    scorecard = compute_scorecard()
+    try:
+        scorecard = compute_scorecard(live_evidence=preflight)
+    except TypeError as exc:
+        # Existing extension/test callables may still expose the old no-argument
+        # signature.  Keep that compatibility without weakening the production
+        # scorecard path above.
+        if "live_evidence" not in str(exc):
+            raise
+        scorecard = compute_scorecard()
     composite_score = scorecard["composite_score"]
     traffic_light = scorecard.get("traffic_light")
     blockers = scorecard.get("blockers") or []
@@ -55,6 +117,23 @@ async def live_unlock(req: LiveUnlockRequest):
             },
         )
 
+    # Re-read after the network call and scorecard.  A credential, exchange, or
+    # mode change during preflight must never be committed against old evidence.
+    latest = load_config()
+    if latest.live.state != "live_disabled":
+        raise HTTPException(409, "Live state changed during preflight; retry after revalidation")
+    valid, reason = evidence_matches_config(latest, preflight)
+    if not valid:
+        raise HTTPException(
+            409,
+            detail={
+                "error": "live_unlock_config_revision_conflict",
+                "message": "Selected live exchange or credentials changed during preflight; no unlock was applied.",
+                "reason_code": reason,
+            },
+        )
+    cfg = latest
+
     old_state = cfg.live.state
     old_permission_mode = cfg.operator.permission_mode
 
@@ -68,7 +147,8 @@ async def live_unlock(req: LiveUnlockRequest):
         "entity_type": "live_state",
         "before": {"state": old_state, "operator_permission_mode": old_permission_mode},
         "after": {"state": "live_limited", "operator_permission_mode": "Auto"},
-        "message": "Live trading unlocked to live_limited by human confirmation; PI operator elevated to Auto",
+        "live_execution_identity": _public_evidence(preflight),
+        "message": "Live trading unlocked to live_limited by human confirmation after selected-account preflight; PI operator elevated to Auto",
     })
     if not audit_ok:
         raise HTTPException(
@@ -85,13 +165,18 @@ async def live_unlock(req: LiveUnlockRequest):
 
     cfg.live.state = "live_limited"
     cfg.live.first_live_confirmation_done = True
+    cfg.live.unlock_evidence = _public_evidence(preflight)
     # §4b: System Operator gets full autonomy (Auto=4) when live is unlocked.
     # This is the only path that can elevate operator.permission_mode to Auto;
     # it must be symmetric with live_lock() which resets it to ReadOnly.
     cfg.operator.permission_mode = "Auto"
     save_config(cfg)
 
-    return {"status": "live_limited", "message": "Live-limited trading enabled"}
+    return {
+        "status": "live_limited",
+        "message": "Live-limited trading enabled",
+        "execution_identity": _public_evidence(preflight),
+    }
 
 
 @router.post("/live-lock")
@@ -109,12 +194,21 @@ async def live_lock():
         "source": "dashboard",
         "event_type": "live_locked",
         "entity_type": "live_state",
-        "before": {"state": old_state, "operator_permission_mode": old_permission_mode},
-        "after": {"state": "live_disabled", "operator_permission_mode": "ReadOnly"},
+        "before": {
+            "state": old_state,
+            "operator_permission_mode": old_permission_mode,
+            "live_execution_identity": _public_evidence(cfg.live.unlock_evidence or {}),
+        },
+        "after": {
+            "state": "live_disabled",
+            "operator_permission_mode": "ReadOnly",
+            "live_execution_identity": None,
+        },
         "message": "Live trading locked; PI operator reset to ReadOnly",
     })
 
     cfg.live.state = "live_disabled"
+    cfg.live.unlock_evidence = None
     # §4b symmetry: locking live must reset PI operator back to ReadOnly so the
     # Auto authority granted by live_unlock does not persist after locking.
     cfg.operator.permission_mode = "ReadOnly"

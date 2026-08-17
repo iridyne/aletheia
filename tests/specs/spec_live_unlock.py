@@ -130,6 +130,40 @@ def _make_live_app():
     return app
 
 
+def _seed_test_live_identity(cfg, monkeypatch):
+    """Provide deterministic sanitized evidence for unlock contract tests."""
+    from datetime import datetime, timedelta, timezone
+    import aletheia.trust.live_unlock as trust
+
+    cfg.exchange.name = "bitget"
+    cfg.exchange.mode = "live"
+    cfg.risk.allowed_exchange = "bitget"
+    monkeypatch.setattr(trust, "get_secret", lambda ref: f"test-secret:{ref}")
+    identity = trust.resolve_live_execution_identity(cfg)
+    now = datetime.now(timezone.utc)
+    evidence = {
+        **identity,
+        "ok": True,
+        "reason_code": "ok",
+        "account_fingerprint": "sha256:test-account",
+        "private_authenticated": True,
+        "account_readable": True,
+        "environment_verified": True,
+        "permission_status": "granted",
+        "completeness": "complete",
+        "fetched_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=300)).isoformat(),
+    }
+    evidence["evidence_binding"] = trust._evidence_binding(evidence)
+    if cfg.live.state == "live_limited":
+        cfg.live.unlock_evidence = evidence
+
+    async def _fake_preflight(_cfg):
+        return evidence
+
+    monkeypatch.setattr("aletheia.server.routes.live.run_live_preflight", _fake_preflight)
+
+
 @spec_claim(
     SpecClaim(
         "LU-B03", "live_unlock_contract", "§2 unlock prerequisites", "L2b",
@@ -199,6 +233,7 @@ def test_live_unlock_no_escalation_from_limited(tmp_path, monkeypatch):
     cfg = AletheiaConfig()
     cfg.live.state = "live_limited"
     cfg.live.first_live_confirmation_done = True
+    _seed_test_live_identity(cfg, monkeypatch)
     (tmp_path / "config.yaml").write_text(
         yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
     )
@@ -239,6 +274,7 @@ def test_live_unlock_writes_audit_event(tmp_path, monkeypatch):
     from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()
+    _seed_test_live_identity(cfg, monkeypatch)
     cfg.live.state = "live_disabled"
     cfg.live.first_live_confirmation_done = False
     (tmp_path / "config.yaml").write_text(
@@ -334,6 +370,7 @@ def test_live_unlock_sets_operator_auto(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     cfg = AletheiaConfig()
+    _seed_test_live_identity(cfg, monkeypatch)
     cfg.live.state = "live_disabled"
     cfg.live.first_live_confirmation_done = False
     cfg.operator.permission_mode = "ReadOnly"
@@ -380,6 +417,7 @@ def test_unlock_invariant_state_and_permission(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     cfg = AletheiaConfig()
+    _seed_test_live_identity(cfg, monkeypatch)
     cfg.live.state = "live_disabled"
     cfg.live.first_live_confirmation_done = True  # already confirmed once
     (tmp_path / "config.yaml").write_text(
@@ -497,6 +535,7 @@ def test_live_lock_resets_operator_permission(tmp_path, monkeypatch):
     cfg.live.state = "live_limited"
     cfg.live.first_live_confirmation_done = True
     cfg.operator.permission_mode = "Auto"
+    _seed_test_live_identity(cfg, monkeypatch)
     (tmp_path / "config.yaml").write_text(
         yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
     )

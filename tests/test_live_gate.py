@@ -17,6 +17,37 @@ async def client(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    from aletheia.config.loader import load_config, save_config
+    import aletheia.trust.live_unlock as trust
+    from datetime import datetime, timedelta, timezone
+
+    cfg = load_config()
+    cfg.exchange.name = "bitget"
+    cfg.exchange.mode = "live"
+    cfg.risk.allowed_exchange = "bitget"
+    save_config(cfg)
+    monkeypatch.setattr(trust, "get_secret", lambda ref: f"test-secret:{ref}")
+    identity = trust.resolve_live_execution_identity(cfg)
+    now = datetime.now(timezone.utc)
+    evidence = {
+        **identity,
+        "ok": True,
+        "reason_code": "ok",
+        "account_fingerprint": "sha256:test-account",
+        "private_authenticated": True,
+        "account_readable": True,
+        "environment_verified": True,
+        "permission_status": "granted",
+        "completeness": "complete",
+        "fetched_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=300)).isoformat(),
+    }
+    evidence["evidence_binding"] = trust._evidence_binding(evidence)
+
+    async def _fake_preflight(_cfg):
+        return evidence
+
+    monkeypatch.setattr("aletheia.server.routes.live.run_live_preflight", _fake_preflight)
     reset_db()
     sq._db_conn = None
     import sqlite3

@@ -15,6 +15,7 @@
 class LiveConfig:
     state: str = "live_disabled"               # 默认锁死
     first_live_confirmation_done: bool = False
+    unlock_evidence: dict | None = None        # sanitized, expiring selected-account proof
 ```
 
 状态值:`live_disabled`(默认) / `live_limited`。**契约**:系统出厂即 `live_disabled`,任何 live 执行被 [risk_engine_contract §2 第3关](risk_engine_contract.md) 拒。
@@ -25,15 +26,18 @@ class LiveConfig:
 
 | 项 | 行为 | 位置 |
 |----|------|------|
-| 入口 | `live_unlock(req: LiveUnlockRequest)` | `server/routes/live.py:17` |
-| 前置 | `confirm=true` **且** 首次需 `acknowledge_first_unlock=true`;当前状态须为 `live_disabled` | `live.py:17-45` |
+| 入口 | `live_unlock(req: LiveUnlockRequest)` | `server/routes/live.py` |
+| 前置 | `confirm=true` **且** 首次需 `acknowledge_first_unlock=true`;当前状态须为 `live_disabled`;随后必须通过当前 `exchange.name` 对应 live broker 的私有账户预检 | `live.py` |
 | 方向 | 仅 `live_disabled → live_limited`(单向) | — |
-| 反向锁定 | 独立路由 | `live.py:48-66` |
+| 反向锁定 | 独立路由；同时清除 unlock evidence | `live.py` |
 
 **不变式([trust §6.3](../../governance/policies/trust_and_change_control.md)):**
 - 首次 live 解锁**必须**人工显式确认。
 - live lock/unlock **必须**写审计事件。
 - `live.py` 路由**不得**下单。
+- 预检必须使用选定 broker 的签名私有账户请求；结果明确 `public_reachability=not_used_as_authority`，公共可达性、Bitget legacy cache、demo/testnet 响应不能证明 live 解锁。
+- 预检证据只保存 broker、live 环境、账户指纹、凭证/配置修订号、权限和有效期；缺少订单权限时按 `permission_unknown=deny` 失败。
+- 预检到提交之间若凭证、账户、环境或配置修订号改变，必须拒绝提交；切换选定交易所或修改其 live 凭证时必须先 lock。
 - 测试须覆盖"默认 disabled"+"解锁审计"。
 
 > `operator.permission_mode` 管理 Agent/Operator 自主权限，不是人类 Dashboard 解锁的授权门；把它加到此路由会混淆两个信任面，因此旧 `BACKLOG-LU-01` 已否决。Live Unlock 虽有确认、scorecard 与审计门，但当前 System Operator Proposal 仍不会路由到 `*_live_limited`，所以产品能力保持 Experimental，见 GitHub #418。
@@ -49,7 +53,15 @@ class LiveConfig:
   "event_type": "live_unlocked", "entity_type": "live_state",
   "before": {"state": "live_disabled"},
   "after": {"state": "live_limited"},
-  "message": "Live trading unlocked to live_limited by human confirmation"
+  "live_execution_identity": {
+    "broker": "<selected broker>",
+    "execution_mode": "<broker>_live_limited",
+    "account_environment": "live",
+    "account_fingerprint": "sha256:<digest>",
+    "credential_revision": "sha256:<digest>",
+    "config_revision": "sha256:<digest>"
+  },
+  "message": "Live trading unlocked to live_limited by human confirmation after selected-account preflight; PI operator elevated to Auto"
 }
 ```
 append-only(`jsonl.py` 不删,rotate 改名 `.1`)。完整审计字段见 [trust §1.4](../../governance/policies/trust_and_change_control.md)。

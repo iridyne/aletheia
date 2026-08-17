@@ -298,6 +298,9 @@ class MarketDataConfig(BaseModel):
 class LiveConfig(BaseModel):
     state: str = "live_disabled"
     first_live_confirmation_done: bool = False
+    # Sanitised, short-lived proof that the selected live account was privately
+    # authenticated.  Raw credentials and exchange payloads never belong here.
+    unlock_evidence: dict[str, Any] | None = None
 
 
 class AgentConfig(BaseModel):

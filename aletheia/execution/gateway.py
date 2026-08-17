@@ -1406,6 +1406,49 @@ def _execute_proposal(
             # Defense in depth: risk engine already checked live_disabled, but re-check here.
             # The quantity-only execution snapshot likewise preserves
             # trade_school=proposal.trade_school on this live dispatch path.
+            from aletheia.config.exchanges import live_execution_mode_for_exchange
+
+            expected_live_mode = live_execution_mode_for_exchange(cfg.exchange.name)
+            if expected_live_mode is not None and allowed_mode != expected_live_mode:
+                update_trade_proposal(proposal.id, status="rejected")
+                write_audit({
+                    "actor": "system",
+                    "source": "execution_gateway",
+                    "event_type": "proposal_rejected",
+                    "entity_type": "trade_proposal",
+                    "entity_id": proposal.id,
+                    "before": {"status": proposal.status},
+                    "after": {"status": "rejected"},
+                    "message": "Live proposal does not match the selected exchange",
+                })
+                return {
+                    "status": "rejected",
+                    "proposal_id": proposal.id,
+                    "message": "Live proposal does not match the selected exchange",
+                }
+            if expected_live_mode is not None and cfg.live.state == "live_limited":
+                from aletheia.trust.live_unlock import evidence_matches_config
+
+                evidence_ok, _ = evidence_matches_config(
+                    cfg, getattr(cfg.live, "unlock_evidence", None),
+                )
+                if not evidence_ok:
+                    update_trade_proposal(proposal.id, status="rejected")
+                    write_audit({
+                        "actor": "system",
+                        "source": "execution_gateway",
+                        "event_type": "proposal_rejected",
+                        "entity_type": "trade_proposal",
+                        "entity_id": proposal.id,
+                        "before": {"status": proposal.status},
+                        "after": {"status": "rejected"},
+                        "message": "Live account trust evidence is missing or stale",
+                    })
+                    return {
+                        "status": "rejected",
+                        "proposal_id": proposal.id,
+                        "message": "Live account trust evidence is missing or stale",
+                    }
             if cfg.live.state == "live_disabled":
                 update_trade_proposal(proposal.id, status="rejected")
                 write_audit({

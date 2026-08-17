@@ -10,14 +10,14 @@ from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.analytics.learning_window import outcome_window_metadata
 
 
-def compute_scorecard() -> dict:
+def compute_scorecard(*, live_evidence: dict | None = None) -> dict:
     """Compute the go-live readiness scorecard. Pure read-only, no side effects."""
     criteria = [
         _check_trade_volume(),
         _check_profit_factor(),
         _check_win_rate(),
         _check_max_drawdown(),
-        _check_exchange_connectivity(),
+        _check_exchange_connectivity(live_evidence),
         _check_risk_violations(),
         _check_data_coverage(),
         _check_model_health(),
@@ -274,14 +274,49 @@ def _check_max_drawdown() -> dict:
         return _criterion("max_drawdown", "Max Drawdown (<10%)", 0, 0.135, "unavailable")
 
 
-def _check_exchange_connectivity() -> dict:
+def _check_exchange_connectivity(live_evidence: dict | None = None) -> dict:
+    """Check the exact configured broker, never the legacy Bitget-only cache."""
     try:
-        from aletheia.portfolio.exchange_sync import get_cached_state
-        state = get_cached_state()
-        if state and state.get("age_seconds", 999) < 300:
-            return _criterion("exchange_ok", "Exchange Connected", 100, 0.09, "connected")
-        return _criterion("exchange_ok", "Exchange Connected", 0, 0.09,
-                          "stale or missing exchange state")
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        broker = str(getattr(cfg.exchange, "name", "") or "").lower()
+        if str(getattr(cfg.exchange, "mode", "") or "").lower() == "live":
+            from aletheia.trust.live_unlock import evidence_matches_config
+
+            evidence = live_evidence or getattr(cfg.live, "unlock_evidence", None)
+            valid, reason = evidence_matches_config(cfg, evidence)
+            if not valid:
+                return _criterion(
+                    "exchange_ok", "Selected Live Account Connected", 0, 0.09,
+                    f"selected {broker or 'not available'} live account is not verified ({reason})",
+                )
+            return _criterion(
+                "exchange_ok", "Selected Live Account Connected", 100, 0.09,
+                f"{broker} live private account authenticated; evidence is fresh",
+            )
+
+        selected_mode = str(getattr(cfg.exchange, "paper_execution_mode", "") or "")
+        if selected_mode == "paper_internal":
+            return _criterion("exchange_ok", "Exchange Connected", 100, 0.09, "internal paper account")
+
+        from aletheia.portfolio.exchange_sync import get_unified_cached_state
+
+        state = get_unified_cached_state()
+        connected = set(state.get("connected_brokers") or []) if state else set()
+        if state and not connected:
+            connected = {
+                str(account.get("broker_id") or "")
+                for account in (state.get("accounts") or [])
+            }
+        if state and state.get("age_seconds", 999) < 300 and selected_mode in connected:
+            return _criterion(
+                "exchange_ok", "Exchange Connected", 100, 0.09,
+                f"{selected_mode} connected",
+            )
+        return _criterion(
+            "exchange_ok", "Exchange Connected", 0, 0.09,
+            f"selected {selected_mode or 'not available'} account is stale, missing, or not connected",
+        )
     except Exception:
         return _criterion("exchange_ok", "Exchange Connected", 0, 0.09, "unavailable")
 
