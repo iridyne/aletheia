@@ -985,6 +985,18 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
     if not getattr(t, "persona_progressive_unlock_enabled", False):
         return {"action": "hold", "reason": "persona_progressive_unlock_enabled=False"}
 
+    from aletheia.trading.sizing_policy import in_distress
+
+    if in_distress(cfg):
+        refrozen_count = invalidate_persona_rollouts(
+            reason="account_distress", now=now
+        )
+        return {
+            "action": "refrozen",
+            "reason": "account_distress",
+            "rollouts_refrozen": refrozen_count,
+        }
+
     state = current_persona_rollout(cfg, create=True, now=now)
     if state is None:
         try:
@@ -1001,12 +1013,6 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
             cfg, reason="invalid_rollout_status", state=state
         )
         return {"action": "refrozen", "reason": "invalid_rollout_status", "rollout": frozen}
-    from aletheia.trading.sizing_policy import in_distress
-
-    if in_distress(cfg):
-        frozen = refreeze_persona_rollout(cfg, reason="account_distress", state=state)
-        return {"action": "refrozen", "reason": "account_distress", "rollout": frozen}
-
     try:
         from aletheia.learning.control import global_learning_refreeze_reason
 
