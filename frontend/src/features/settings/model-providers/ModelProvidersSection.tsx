@@ -3,6 +3,7 @@ import { useMutation, useQuery, type QueryClient } from "@tanstack/react-query";
 import { api } from "../../../api/client";
 import { Switch } from "../../../components/ui";
 import { SettingsFeatureSection } from "../SettingsFeatureSection";
+import { useSettingsDraftLifecycle } from "../draftLifecycle";
 import {
 	MODEL_PROVIDERS_SECTION,
 	apiTypes,
@@ -37,6 +38,7 @@ function createModelInvalidator(qc: QueryClient) {
 		qc.invalidateQueries({ queryKey: ["model"] });
 		qc.invalidateQueries({ queryKey: ["model-health"] });
 		qc.invalidateQueries({ queryKey: ["status"] });
+		qc.invalidateQueries({ queryKey: ["settings"] });
 	};
 }
 
@@ -160,12 +162,14 @@ export function ApiProfileEditor({
 	providerTypes,
 	qc,
 	onClose,
+	onDirty,
 }: {
 	initial: ApiProfileDraft;
 	existing?: ProviderConfigView;
 	providerTypes: ProviderTypeView[];
 	qc: QueryClient;
 	onClose: () => void;
+	onDirty?: (id: string, isDirty: boolean) => void;
 }) {
 	const [draft, setDraft] = useState(initial);
 	const [message, setMessage] = useState<string | null>(null);
@@ -178,6 +182,14 @@ export function ApiProfileEditor({
 		key: K,
 		value: ApiProfileDraft[K],
 	) => setDraft((current) => ({ ...current, [key]: value }));
+	const dirty = JSON.stringify(draft) !== JSON.stringify(initial);
+	useSettingsDraftLifecycle({
+		id: "model-profile-editor",
+		dirty,
+		onDirty,
+		serverKey: JSON.stringify(initial),
+		adoptServer: () => setDraft(initial),
+	});
 
 	const candidate = () => ({
 		provider: draft.profile_id,
@@ -402,11 +414,13 @@ function ApiProfiles({
 	types,
 	health,
 	qc,
+	onDirty,
 }: {
 	model: ModelConfigView;
 	types: Record<string, ProviderTypeView>;
 	health: ModelHealthView[];
 	qc: QueryClient;
+	onDirty?: (id: string, isDirty: boolean) => void;
 }) {
 	const [editing, setEditing] = useState<string | "new" | null>(null);
 	const [error, setError] = useState<string | null>(null);
@@ -452,6 +466,7 @@ function ApiProfiles({
 					providerTypes={supportedTypes}
 					qc={qc}
 					onClose={() => setEditing(null)}
+					onDirty={onDirty}
 				/>
 			)}
 			{error && (
@@ -537,6 +552,7 @@ function ApiProfiles({
 									providerTypes={supportedTypes}
 									qc={qc}
 									onClose={() => setEditing(null)}
+									onDirty={onDirty}
 								/>
 							)}
 						</article>
@@ -617,6 +633,7 @@ function IntegrationCard({
 	health,
 	model,
 	qc,
+	onDirty,
 	children,
 }: {
 	definition: ProviderTypeView;
@@ -624,16 +641,22 @@ function IntegrationCard({
 	health?: ModelHealthView;
 	model: ModelConfigView;
 	qc: QueryClient;
+	onDirty?: (id: string, isDirty: boolean) => void;
 	children?: React.ReactNode;
 }) {
 	const [modelValue, setModelValue] = useState(
 		config?.codex_model || config?.model || "",
 	);
 	const invalidate = createModelInvalidator(qc);
-	useEffect(
-		() => setModelValue(config?.codex_model || config?.model || ""),
-		[config?.codex_model, config?.model],
-	);
+	const serverModelValue = config?.codex_model || config?.model || "";
+	const dirty = modelValue !== serverModelValue;
+	useSettingsDraftLifecycle({
+		id: `model-integration-${definition.id}`,
+		dirty,
+		onDirty,
+		serverKey: serverModelValue,
+		adoptServer: () => setModelValue(serverModelValue),
+	});
 	const update = useMutation({
 		mutationFn: (body: Record<string, unknown>) =>
 			api.updateModelIntegration(definition.id, body),
@@ -709,11 +732,13 @@ function CliIntegrations({
 	types,
 	health,
 	qc,
+	onDirty,
 }: {
 	model: ModelConfigView;
 	types: Record<string, ProviderTypeView>;
 	health: ModelHealthView[];
 	qc: QueryClient;
+	onDirty?: (id: string, isDirty: boolean) => void;
 }) {
 	return (
 		<div className="model-category-panel">
@@ -735,6 +760,7 @@ function CliIntegrations({
 						health={health.find((item) => item.provider === definition.id)}
 						model={model}
 						qc={qc}
+						onDirty={onDirty}
 					>
 						{definition.id === "codex_cli" ? (
 							<CodexLogin qc={qc} />
@@ -754,9 +780,11 @@ function CliIntegrations({
 function OAuthAction({
 	providerId,
 	qc,
+	onDirty,
 }: {
 	providerId: string;
 	qc: QueryClient;
+	onDirty?: (id: string, isDirty: boolean) => void;
 }) {
 	const [state, setState] = useState<{
 		state: string;
@@ -772,6 +800,13 @@ function OAuthAction({
 		refetchInterval: 2000,
 	});
 	const finalize = useMutation({ mutationFn: api.openaiOAuthFinalize });
+	useSettingsDraftLifecycle({
+		id: `oauth-${providerId}`,
+		dirty: code !== "",
+		onDirty,
+		serverKey: undefined,
+		adoptServer: () => undefined,
+	});
 	useEffect(() => {
 		if (
 			isOpenAI &&
@@ -783,6 +818,7 @@ function OAuthAction({
 				onSuccess: () => {
 					qc.invalidateQueries({ queryKey: ["model"] });
 					qc.invalidateQueries({ queryKey: ["model-health"] });
+					setCode("");
 				},
 			});
 		}
@@ -799,13 +835,14 @@ function OAuthAction({
 		mutationFn: () => api.claudeOAuthComplete({ code: code.trim() }),
 		onSuccess: (result) => {
 			setState(result);
+			setCode("");
 			qc.invalidateQueries({ queryKey: ["model"] });
 			qc.invalidateQueries({ queryKey: ["model-health"] });
 		},
 	});
 	const cancel = useMutation({
 		mutationFn: isOpenAI ? api.openaiOAuthCancel : api.claudeOAuthCancel,
-		onSuccess: () => setState(null),
+		onSuccess: () => { setState(null); setCode("") },
 	});
 	if (state?.state === "awaiting" || state?.state === "awaiting_code") {
 		return (
@@ -853,11 +890,13 @@ function OAuthConnections({
 	types,
 	health,
 	qc,
+	onDirty,
 }: {
 	model: ModelConfigView;
 	types: Record<string, ProviderTypeView>;
 	health: ModelHealthView[];
 	qc: QueryClient;
+	onDirty?: (id: string, isDirty: boolean) => void;
 }) {
 	const invalidate = createModelInvalidator(qc);
 	const disconnect = useMutation({
@@ -889,6 +928,7 @@ function OAuthConnections({
 							health={health.find((item) => item.provider === definition.id)}
 							model={model}
 							qc={qc}
+							onDirty={onDirty}
 						>
 							{config?.oauth.configured ? (
 								<button
@@ -902,7 +942,7 @@ function OAuthConnections({
 									Disconnect
 								</button>
 							) : (
-								<OAuthAction providerId={definition.id} qc={qc} />
+								<OAuthAction providerId={definition.id} qc={qc} onDirty={onDirty} />
 							)}
 						</IntegrationCard>
 					);
@@ -912,7 +952,7 @@ function OAuthConnections({
 	);
 }
 
-export function ModelProvidersSection({ qc }: { qc: QueryClient }) {
+export function ModelProvidersSection({ qc, onDirty }: { qc: QueryClient; onDirty?: (id: string, isDirty: boolean) => void }) {
 	const [category, setCategory] = useState<"api" | "cli" | "oauth">("api");
 	const modelQuery = useQuery({
 		queryKey: ["model"],
@@ -963,7 +1003,7 @@ export function ModelProvidersSection({ qc }: { qc: QueryClient }) {
 						))}
 					</div>
 					{category === "api" && (
-						<ApiProfiles model={model} types={types} health={health} qc={qc} />
+						<ApiProfiles model={model} types={types} health={health} qc={qc} onDirty={onDirty} />
 					)}
 					{category === "cli" && (
 						<CliIntegrations
@@ -971,6 +1011,7 @@ export function ModelProvidersSection({ qc }: { qc: QueryClient }) {
 							types={types}
 							health={health}
 							qc={qc}
+							onDirty={onDirty}
 						/>
 					)}
 					{category === "oauth" && (
@@ -979,6 +1020,7 @@ export function ModelProvidersSection({ qc }: { qc: QueryClient }) {
 							types={types}
 							health={health}
 							qc={qc}
+							onDirty={onDirty}
 						/>
 					)}
 				</div>

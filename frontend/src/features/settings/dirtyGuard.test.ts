@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isUnsavedEdit, shouldBlockNavigation } from "./dirtyGuard";
+import { hasUncontrolledDraft, isFallbackDraftControl, isUnsavedEdit, shouldBlockNavigation } from "./dirtyGuard";
 
 describe("isUnsavedEdit", () => {
 	it("treats a text input as an edit", () => {
@@ -36,16 +36,49 @@ describe("isUnsavedEdit", () => {
 
 describe("shouldBlockNavigation", () => {
 	it("blocks when a section reports precise dirty state", () => {
-		// The 5 sections that already call registerDirty (e.g. TradingParamsCard).
+		// Precise editors such as TradingParamsCard use this path.
 		expect(shouldBlockNavigation(1, false)).toBe(true);
 	});
 
 	it("blocks when only the delegated fallback fired", () => {
-		// The 26 sections that report nothing — the #631 regression.
+		// Editors without precise state still use the shell fallback.
 		expect(shouldBlockNavigation(0, true)).toBe(true);
 	});
 
 	it("does not block a clean tab", () => {
 		expect(shouldBlockNavigation(0, false)).toBe(false);
+	});
+});
+
+describe("isFallbackDraftControl", () => {
+	it("keeps browser-managed text controls in the shell fallback", () => {
+		expect(isFallbackDraftControl({ tagName: "INPUT", type: "number" })).toBe(true);
+		expect(isFallbackDraftControl({ tagName: "TEXTAREA" })).toBe(true);
+	});
+
+	it("leaves controlled select and boolean controls to their own lifecycle", () => {
+		expect(isFallbackDraftControl({ tagName: "SELECT" })).toBe(false);
+		expect(isFallbackDraftControl({ tagName: "INPUT", type: "checkbox" })).toBe(false);
+		expect(isFallbackDraftControl({ tagName: "INPUT", type: "radio" })).toBe(false);
+	});
+});
+
+describe("hasUncontrolledDraft", () => {
+	it("keeps browser-managed input drafts across a refetch", () => {
+		expect(hasUncontrolledDraft({ tagName: "INPUT", type: "number", value: "2", defaultValue: "1" } as any)).toBe(true);
+		expect(hasUncontrolledDraft({ tagName: "INPUT", type: "number", value: "1", defaultValue: "1" } as any)).toBe(false);
+	});
+
+	it("detects staged select and checkbox changes", () => {
+		expect(hasUncontrolledDraft({
+			tagName: "SELECT",
+			options: [{ selected: true, defaultSelected: false }],
+		} as any)).toBe(true);
+		expect(hasUncontrolledDraft({
+			tagName: "INPUT",
+			type: "checkbox",
+			checked: true,
+			defaultChecked: false,
+		} as any)).toBe(true);
 	});
 });

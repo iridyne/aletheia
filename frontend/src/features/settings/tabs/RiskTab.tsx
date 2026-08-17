@@ -13,6 +13,7 @@ import {
 } from '../../../components/ui'
 import { fmtNum, humanize, humanizeBool } from '../../../lib/format'
 import { listToCsv, parseCsvList } from '../csvList'
+import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import {
   RISK_BOOLS, RISK_CORR, RISK_DEMO, RISK_FAMILY_GATE, RISK_FUTURES_DEMO,
   RISK_FUTURES_LIVE, RISK_LIVE, RISK_MARGIN, RISK_POLICY_BOOLS,
@@ -46,20 +47,25 @@ export const RISK_LIMITS_SECTION = {
 
 // ─── Event Triggers config ───
 
-function EventTriggerCard({ settings, qc }: any) {
+function EventTriggerCard({ settings, qc, onDirty }: any) {
   const et = settings?.event_triggers as any
   const [vals, setVals] = useState<Record<string, unknown>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  useEffect(() => {
-    if (!et) return
-    setVals({
+  const serverVals = et ? {
       enabled: et.enabled ?? true,
       price_move_pct_threshold: et.price_move_pct_threshold ?? 3.0,
       volume_surge_multiplier: et.volume_surge_multiplier ?? 3.0,
       watch_universe_members: et.watch_universe_members ?? true,
-    })
-  }, [et])
+  } : {}
+  const dirty = !!et && Object.keys(vals).length > 0 && JSON.stringify(vals) !== JSON.stringify(serverVals)
+  useSettingsDraftLifecycle({
+    id: 'event-triggers',
+    dirty,
+    onDirty,
+    serverKey: et,
+    adoptServer: () => { if (et) setVals({ ...serverVals }) },
+  })
 
   const { mutate: save } = useMutation({
     mutationFn: () => api.updateEventTriggerConfig(vals as any),
@@ -113,33 +119,39 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [changed, setChanged] = useState(false)
 
-  useEffect(() => {
-    if (!universe) return
-    setEnabled(!!universe.enabled)
-    setRefreshMin(String(universe.refresh_interval_min ?? 10))
-    setMaxCandidates(String(universe.max_candidates ?? 30))
-    setCorePool(String(universe.core_pool_size ?? 10))
-    setMinVolume(String(universe.min_volume_24h_usdt ?? 5000000))
-    setMaxSpread(String(universe.max_spread_bps ?? 25))
-    setMinDepth(String(universe.min_depth_10bps_usd ?? 25000))
-    setExploreRatio(String(universe.explore_ratio ?? 0.2))
-    setSnapshotTtlEnabled(universe.snapshot_ttl_enabled ?? true)
-    setSnapshotTtlHours(String(universe.snapshot_ttl_hours ?? 24))
-    setBlacklist(listToCsv(universe.blacklist))
-    setFallbackSymbols(listToCsv(universe.fallback_symbols ?? ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']))
-    setMarketType(universe.market_type || 'crypto')
-    const fq = universe.family_quota || { momentum: 0.3, mean_reversion: 0.2, derivatives: 0.3, event: 0.2 }
-    const stringified: Record<string, string> = {}
-    for (const [k, v] of Object.entries(fq)) stringified[k] = String(v)
-    setFamilyQuota(stringified)
-    const fqr = (universe.family_quota_by_regime || {}) as Record<string, Record<string, number>>
-    const fqrStr: Record<string, Record<string, string>> = {}
-    for (const [regime, quota] of Object.entries(fqr)) {
-      fqrStr[regime] = {}
-      for (const [fam, v] of Object.entries(quota)) fqrStr[regime][fam] = String(v)
-    }
-    setFamilyQuotaByRegime(fqrStr)
-  }, [settings])
+  useSettingsDraftLifecycle({
+    id: 'universe-config',
+    dirty: changed,
+    onDirty,
+    serverKey: settings,
+    adoptServer: () => {
+      if (!universe) return
+      setEnabled(!!universe.enabled)
+      setRefreshMin(String(universe.refresh_interval_min ?? 10))
+      setMaxCandidates(String(universe.max_candidates ?? 30))
+      setCorePool(String(universe.core_pool_size ?? 10))
+      setMinVolume(String(universe.min_volume_24h_usdt ?? 5000000))
+      setMaxSpread(String(universe.max_spread_bps ?? 25))
+      setMinDepth(String(universe.min_depth_10bps_usd ?? 25000))
+      setExploreRatio(String(universe.explore_ratio ?? 0.2))
+      setSnapshotTtlEnabled(universe.snapshot_ttl_enabled ?? true)
+      setSnapshotTtlHours(String(universe.snapshot_ttl_hours ?? 24))
+      setBlacklist(listToCsv(universe.blacklist))
+      setFallbackSymbols(listToCsv(universe.fallback_symbols ?? ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']))
+      setMarketType(universe.market_type || 'crypto')
+      const fq = universe.family_quota || { momentum: 0.3, mean_reversion: 0.2, derivatives: 0.3, event: 0.2 }
+      const stringified: Record<string, string> = {}
+      for (const [k, v] of Object.entries(fq)) stringified[k] = String(v)
+      setFamilyQuota(stringified)
+      const fqr = (universe.family_quota_by_regime || {}) as Record<string, Record<string, number>>
+      const fqrStr: Record<string, Record<string, string>> = {}
+      for (const [regime, quota] of Object.entries(fqr)) {
+        fqrStr[regime] = {}
+        for (const [fam, v] of Object.entries(quota)) fqrStr[regime][fam] = String(v)
+      }
+      setFamilyQuotaByRegime(fqrStr)
+    },
+  })
 
   const mut = useMutation({
     mutationFn: () => {
@@ -171,11 +183,6 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); setChanged(false); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
-
-  useEffect(() => {
-    onDirty?.('universe-config', changed)
-    return () => onDirty?.('universe-config', false)
-  }, [changed])
 
   if (!universe) return null
 
@@ -369,8 +376,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: any) {
 
 export function RiskTab({ settings, qc, onDirty }: any) {
   // onDirty is forwarded to UniverseConfigCard below; its own dirty reporting
-  // (see the useEffect near its definition) was a no-op until #632/#631 because
-  // this tab accepted the prop and never passed it down.
+  // now adopts or preserves local state through useSettingsDraftLifecycle.
   return (
     <div>
       <SettingsFeatureSection descriptor={UNIVERSE_SECTION}>
@@ -379,12 +385,12 @@ export function RiskTab({ settings, qc, onDirty }: any) {
 
       <SettingsFeatureSection descriptor={EVENT_TRIGGERS_SECTION}>
         <Collapsible title="Trigger Thresholds">
-          <EventTriggerCard settings={settings} qc={qc} />
+          <EventTriggerCard settings={settings} qc={qc} onDirty={onDirty} />
         </Collapsible>
       </SettingsFeatureSection>
 
       <SettingsFeatureSection descriptor={TRADABLE_SYMBOLS_SECTION}>
-        <SymbolsCard settings={settings} qc={qc} />
+        <SymbolsCard settings={settings} qc={qc} onDirty={onDirty} />
       </SettingsFeatureSection>
 
       <SettingsFeatureSection descriptor={RISK_LIMITS_SECTION}>
@@ -397,7 +403,7 @@ export function RiskTab({ settings, qc, onDirty }: any) {
 
 // ─── Symbols ───
 
-function SymbolsCard({ settings, qc }: any) {
+function SymbolsCard({ settings, qc, onDirty }: any) {
   const serverMode: string = settings?.risk?.symbol_filter_mode ?? 'blacklist'
   const serverSymbols: string[] = settings?.risk?.symbol_list ?? []
 
@@ -405,11 +411,6 @@ function SymbolsCard({ settings, qc }: any) {
   const [draft, setDraft] = useState<string[]>([])
   const [input, setInput] = useState('')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  useEffect(() => {
-    setMode(serverMode as any)
-    setDraft(serverSymbols)
-  }, [settings])
 
   const mut = useMutation({
     mutationFn: () => api.updateSymbolFilter({ mode, symbols: draft }),
@@ -426,6 +427,17 @@ function SymbolsCard({ settings, qc }: any) {
 
   const dirty = mode !== serverMode
     || JSON.stringify(draft.slice().sort()) !== JSON.stringify(serverSymbols.slice().sort())
+
+  useSettingsDraftLifecycle({
+    id: 'tradable-symbols',
+    dirty,
+    onDirty,
+    serverKey: settings,
+    adoptServer: () => {
+      setMode(serverMode as any)
+      setDraft(serverSymbols)
+    },
+  })
 
   const canSave = mode === 'blacklist' || draft.length > 0
 
@@ -692,13 +704,17 @@ function RiskCard({ settings, qc, onDirty }: any) {
   const [vals, setVals] = useState<Record<string, any>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  useEffect(() => {
-    if (!risk) return
-    const init: Record<string, any> = {}
-    ;[...RISK_LIVE, ...RISK_DEMO, ...RISK_SHARED, ...RISK_CORR, ...RISK_FAMILY_GATE, ...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN].forEach(f => { init[f.key] = risk[f.key] })
-    RISK_BOOLS.forEach(f => { init[f.key] = risk[f.key] })
-    setVals(init)
-  }, [settings])
+  const serverVals: Record<string, any> = {}
+  ;[...RISK_LIVE, ...RISK_DEMO, ...RISK_SHARED, ...RISK_CORR, ...RISK_FAMILY_GATE, ...RISK_FUTURES_LIVE, ...RISK_FUTURES_DEMO, ...RISK_MARGIN].forEach(f => { serverVals[f.key] = risk?.[f.key] })
+  RISK_BOOLS.forEach(f => { serverVals[f.key] = risk?.[f.key] })
+  const dirty = !!risk && Object.keys(vals).length > 0 && JSON.stringify(vals) !== JSON.stringify(serverVals)
+  useSettingsDraftLifecycle({
+    id: 'risk-limits',
+    dirty,
+    onDirty,
+    serverKey: settings,
+    adoptServer: () => { if (risk) setVals({ ...serverVals }) },
+  })
 
   const set = (k: string, v: any) => { setVals(prev => ({ ...prev, [k]: v })); setMsg(null); setErrors({}) }
   const [errors, setErrors] = useState<Record<string, string>>({})
