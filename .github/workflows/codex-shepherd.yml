@@ -149,8 +149,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
-      group: codex-shepherd-update-${{ github.event.inputs.pull_request_number }}-${{ github.event.inputs.expected_head_sha }}-${{ github.event.inputs.expected_base_sha }}
-      cancel-in-progress: true
+      # Serialize every base revision for the same PR head. A stale-base callback
+      # is allowed to converge the current base when it reaches the front of the
+      # lane; it must never race another marker writer for the same head.
+      group: codex-shepherd-update-${{ github.event.inputs.pull_request_number }}-${{ github.event.inputs.expected_head_sha }}
+      cancel-in-progress: false
     steps:
       - name: Drive exact-diff Codex review state
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
@@ -171,7 +174,7 @@ jobs:
             const request = context.payload.inputs || {};
             const pullRequestNumber = Number.parseInt(String(request.pull_request_number || ''), 10);
             const expectedHeadSha = String(request.expected_head_sha || '');
-            const expectedBaseSha = String(request.expected_base_sha || '');
+            let expectedBaseSha = String(request.expected_base_sha || '');
             const sourceEvent = String(request.source_event || '');
 
             if (!Number.isInteger(pullRequestNumber) || pullRequestNumber <= 0) {
@@ -226,15 +229,19 @@ jobs:
               basehead: `${pullRequest.base.sha}...${pullRequest.head.sha}`,
             });
             const currentBaseSha = comparison.merge_base_commit.sha;
-            if (
-              pullRequest.head.sha !== expectedHeadSha ||
-              currentBaseSha !== expectedBaseSha
-            ) {
+            if (pullRequest.head.sha !== expectedHeadSha) {
               core.info(
-                `Shepherd request for ${expectedHeadSha}@${expectedBaseSha} is stale; ` +
-                `current review identity is ${pullRequest.head.sha}@${currentBaseSha}`,
+                `Shepherd request for head ${expectedHeadSha} is stale; ` +
+                `current head is ${pullRequest.head.sha}`,
               );
               return;
+            }
+            if (currentBaseSha !== expectedBaseSha) {
+              core.info(
+                `Shepherd request base changed from ${expectedBaseSha} to ${currentBaseSha}; ` +
+                `converging the current base in the same head-serialized lane`,
+              );
+              expectedBaseSha = currentBaseSha;
             }
 
             const [changedFiles, issueComments, allReviews] = await Promise.all([
@@ -425,6 +432,35 @@ jobs:
                 );
                 return;
               }
+
+              // The base can change while this run is doing API reads. Revalidate
+              // immediately before writing the next immutable review marker. A
+              // retarget emits another callback in this same PR+head lane.
+              const {data: markerBoundaryPullRequest} = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: pullRequest.number,
+              });
+              if (
+                markerBoundaryPullRequest.state !== 'open' ||
+                markerBoundaryPullRequest.base.ref !== 'master' ||
+                markerBoundaryPullRequest.head.sha !== expectedHeadSha
+              ) {
+                core.info('pull request changed at Shepherd marker boundary');
+                return;
+              }
+              const {data: markerBoundaryComparison} = await github.rest.repos.compareCommitsWithBasehead({
+                ...context.repo,
+                basehead: `${markerBoundaryPullRequest.base.sha}...${markerBoundaryPullRequest.head.sha}`,
+              });
+              const markerBoundaryBaseSha = markerBoundaryComparison.merge_base_commit.sha;
+              if (markerBoundaryBaseSha !== expectedBaseSha) {
+                core.info(
+                  `merge base changed again from ${expectedBaseSha} to ${markerBoundaryBaseSha}; ` +
+                  'the queued same-head callback will converge the new base',
+                );
+                return;
+              }
+
               await postComment(
                 `@codex review\n\n` +
                 `Please review exact head \`${expectedHeadSha}\` against merge base ` +
