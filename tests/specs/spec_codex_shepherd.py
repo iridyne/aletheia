@@ -39,7 +39,7 @@ def _auto_merge_source() -> str:
         "agent_contracts",
         "§PR/CI control plane",
         "L2a",
-        "Codex PR Shepherd separates trigger-facing workflow dispatch from PR-side metadata mutation, binds review state to the exact head/merge-base diff, and does not obtain repository-content or merge authority.",
+        "Codex PR Shepherd separates trigger-facing workflow dispatch from PR-side metadata mutation, binds review state to the exact head/merge-base diff, serializes same-head review requests across bases, and does not obtain repository-content or merge authority.",
         status="implemented",
     )
 )
@@ -147,7 +147,26 @@ def test_shepherd_workflow_dispatch_is_exact_diff_bound() -> None:
     assert "release-please--branches--master" in apply_script
 
 
-def test_codex_shepherd_binds_reviews_comments_and_markers_to_exact_diff() -> None:
+def test_codex_shepherd_serializes_same_head_requests_across_bases() -> None:
+    script = _apply_script()
+
+    assert "const sameHeadReviewRequests" in script
+    assert "const latestSameHeadReviewRequest" in script
+    assert "latestSameHeadReviewRequest?.base === expectedBaseSha" in script
+    assert "const requestHasCompletion" in script
+    assert "connectorCompletionTimes.some" in script
+    assert "waiting for prior same-head Codex request" in script
+
+    request_log = script.index("const sameHeadReviewRequests")
+    completion_times = script.index("const connectorCompletionTimes", request_log)
+    completion_check = script.index("const requestHasCompletion", completion_times)
+    current_request_gate = script.index("if (!exactHeadReviewRequest)", completion_check)
+    wait_prior = script.index("!requestHasCompletion(latestSameHeadReviewRequest)", current_request_gate)
+    post_current = script.index("await postComment(", wait_prior)
+    assert request_log < completion_times < completion_check < current_request_gate < wait_prior < post_current
+
+
+def test_codex_shepherd_binds_current_evidence_to_latest_exact_diff_request() -> None:
     script = _apply_script()
 
     assert "const reviewedCommitPattern" in script
@@ -159,13 +178,11 @@ def test_codex_shepherd_binds_reviews_comments_and_markers_to_exact_diff() -> No
 
     assert "head=([0-9a-f]{40}) base=([0-9a-f]{40}) kind=review" in script
     assert "halt head=([0-9a-f]{40}) base=([0-9a-f]{40}) reason=" in script
-    assert "head === expectedHeadSha && base === expectedBaseSha" in script
     assert "const latestReviewRequestAt" in script
     assert "review.commit_id === expectedHeadSha" in script
     assert "review.submitted_at >= latestReviewRequestAt" in script
     assert "review.state !== 'DISMISSED'" in script
-    assert "comment.created_at < latestReviewRequestAt" in script
-    assert "reviewedCommitSha === expectedHeadSha" in script
+    assert "cleanCompletionTimes.some((completedAt) => completedAt >= latestReviewRequestAt)" in script
     assert "base=${expectedBaseSha} kind=review" in script
 
 
@@ -182,13 +199,11 @@ def test_codex_shepherd_terminal_holds_are_recoverable_and_fail_closed() -> None
     assert "reason=shepherd-self-change" in script
     assert "requires explicit owner merge" in script
 
-    # Terminal state is persisted marker-first, then projected to the safety label.
     hold_start = script.index("const holdForOwner")
     hold_comment = script.index("await postComment(", hold_start)
     hold_label = script.index("await ensureHoldLabel();", hold_comment)
     assert hold_start < hold_comment < hold_label
 
-    # Any exact-diff halt marker restores the label before downstream authority gates.
     recovery_gate = script.index("if (exactHeadHalt) {", hold_label)
     recovery_label = script.index("await ensureHoldLabel();", recovery_gate)
     file_gate = script.index("if (changedFiles.length !== pullRequest.changed_files)", recovery_label)
@@ -289,7 +304,8 @@ def test_codex_shepherd_requests_retargeted_and_resumed_exact_diffs_without_repa
     assert "against merge base" in script
     assert "kind=review" in script
     assert "const exactHeadReviewRequest" in script
-    assert "!exactHeadReviewRequest && !connectorCleanExactHead" in script
+    assert "if (!exactHeadReviewRequest)" in script
+    assert "requestHasCompletion(latestSameHeadReviewRequest)" in script
     assert "@codex fix" not in script
     assert "Codex Cloud repair is not authorized to push back" in script
     assert "review-finding" in script
@@ -302,9 +318,8 @@ def test_codex_shepherd_callbacks_converge_without_cross_diff_cancellation() -> 
 
     finding_gate = script.index("if (exactHeadReviews.length !== 0)")
     finding_hold = script.index("'review-finding'", finding_gate)
-    clean_scan = script.index("let connectorCleanExactHead", finding_hold)
-    review_request = script.index("!exactHeadReviewRequest && !connectorCleanExactHead", clean_scan)
-    assert finding_gate < finding_hold < clean_scan < review_request
+    request_gate = script.index("if (!exactHeadReviewRequest)", finding_hold)
+    assert finding_gate < finding_hold < request_gate
 
     concurrency_group = apply["concurrency"]["group"]
     assert apply["concurrency"]["cancel-in-progress"] == "true"
