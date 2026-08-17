@@ -649,7 +649,11 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         "VALUES (?, ?, ?, '2026-08-08T00:00:00+00:00', 0)",
         [
             (step.migration_id, step.checksum, step.schema_version)
-            for step in migrations._MIGRATIONS[:-7]
+            # Keep the v24 identity migration pending so it materializes the
+            # columns that the following v25 migration reads.  The new v31
+            # rollout step adds one more tail migration than this fixture had
+            # when the prefix was written.
+            for step in migrations._MIGRATIONS[:-8]
         ],
     )
     connection.commit()
