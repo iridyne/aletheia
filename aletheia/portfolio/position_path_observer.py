@@ -1074,6 +1074,11 @@ def build_position_path_observer_status(
     position_ids = [str(position["id"]) for position in positions]
     bucket_state = repo.get_position_path_bucket_state(position_ids)
     oldest_missing: tuple[int, str] | None = None
+    latest_materialized: tuple[int, str] | None = None
+    expected_bucket_count = 0
+    materialized_bucket_count = 0
+    deferred_bucket_count = 0
+    invalid_position_count = 0
     skipped = 0
     cutoff_ms = now_ms - 24 * 60 * 60 * 1000
 
@@ -1084,8 +1089,22 @@ def build_position_path_observer_status(
             latest_completed_bucket_open_ms=latest_completed_bucket_open_ms,
         )
         if first_bucket_open_ms is None or last_bucket_open_ms is None:
+            invalid_position_count += 1
             continue
         state = bucket_state[position_id]
+        expected_bucket_count += max(
+            0, ((last_bucket_open_ms - first_bucket_open_ms) // _BUCKET_MS) + 1
+        )
+        expected_buckets = set(
+            range(first_bucket_open_ms, last_bucket_open_ms + 1, _BUCKET_MS)
+        )
+        materialized = state["observed"] & expected_buckets
+        materialized_bucket_count += len(materialized)
+        deferred_bucket_count += len(state["deferred"] & expected_buckets)
+        if materialized:
+            newest = max(materialized)
+            if latest_materialized is None or newest > latest_materialized[0]:
+                latest_materialized = (newest, position_id)
         for bucket_open_ms in range(
             first_bucket_open_ms, last_bucket_open_ms + 1, _BUCKET_MS
         ):
@@ -1114,10 +1133,74 @@ def build_position_path_observer_status(
 
     last_24h = repo.count_position_path_observations_since(cutoff_ms)
     last_24h["skipped"] = skipped
+    evidence_counts = {"available": 0, "unavailable": 0}
+    try:
+        rows = repo.get_db().execute(
+            "SELECT evidence_status, COUNT(*) AS count "
+            "FROM position_path_observations GROUP BY evidence_status"
+        ).fetchall()
+        for row in rows:
+            status = str(row["evidence_status"])
+            if status in evidence_counts:
+                evidence_counts[status] = int(row["count"])
+    except Exception:
+        evidence_counts = {"available": None, "unavailable": None}
+    oldest_deferred_rows = repo.list_oldest_deferred_position_path_bucket(limit=1)
+    oldest_deferred_bucket = None
+    if oldest_deferred_rows:
+        deferred = oldest_deferred_rows[0]
+        deferred_ms = deferred.get("bucket_open_ms")
+        oldest_deferred_bucket = {
+            "position_id": deferred.get("position_id"),
+            "bucket_open_ms": deferred_ms,
+            "bucket_open_at": (
+                datetime.fromtimestamp(int(deferred_ms) / 1000, tz=timezone.utc).isoformat()
+                if deferred_ms is not None
+                else None
+            ),
+            "attempt_count": deferred.get("attempt_count"),
+            "reason": deferred.get("reason"),
+        }
+    missing_bucket_count = max(0, expected_bucket_count - materialized_bucket_count)
+    if expected_bucket_count == 0:
+        coverage_state = "empty"
+    elif missing_bucket_count == 0 and invalid_position_count == 0:
+        coverage_state = "complete"
+    else:
+        coverage_state = "incomplete"
+    if invalid_position_count:
+        unavailable_reason = "invalid_position_timestamps"
+    elif oldest_deferred_bucket is not None:
+        unavailable_reason = "deferred_bucket_pending"
+    elif oldest_missing_bucket is not None:
+        unavailable_reason = "missing_expected_bucket"
+    else:
+        unavailable_reason = None
+
+    def _bucket_ref(value: tuple[int, str] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        bucket_open_ms, position_id = value
+        return {
+            "position_id": position_id,
+            "bucket_open_ms": bucket_open_ms,
+            "bucket_open_at": datetime.fromtimestamp(
+                bucket_open_ms / 1000, tz=timezone.utc
+            ).isoformat(),
+        }
+
     return {
         "eligible_position_count": len(positions),
         "latest_completed_bucket_open_ms": latest_completed_bucket_open_ms,
+        "latest_expected_bucket": {
+            "bucket_open_ms": latest_completed_bucket_open_ms,
+            "bucket_open_at": datetime.fromtimestamp(
+                latest_completed_bucket_open_ms / 1000, tz=timezone.utc
+            ).isoformat(),
+        },
+        "latest_materialized_bucket": _bucket_ref(latest_materialized),
         "oldest_missing_bucket": oldest_missing_bucket,
+        "oldest_deferred_bucket": oldest_deferred_bucket,
         "deferred_bucket_count": repo.count_deferred_position_path_observation_buckets(),
         "observer_lag": {
             "seconds": round(lag_seconds, 3),
@@ -1128,6 +1211,23 @@ def build_position_path_observer_status(
             ),
         },
         "last_24h": last_24h,
+        "recent_counts": dict(last_24h),
+        "ordered_path_coverage": {
+            "status": coverage_state,
+            "expected_bucket_count": expected_bucket_count,
+            "materialized_bucket_count": materialized_bucket_count,
+            "missing_bucket_count": missing_bucket_count,
+            "deferred_bucket_count": deferred_bucket_count,
+            "invalid_position_count": invalid_position_count,
+            "available_observation_count": evidence_counts["available"],
+            "unavailable_observation_count": evidence_counts["unavailable"],
+            "coverage_ratio": (
+                materialized_bucket_count / expected_bucket_count
+                if expected_bucket_count
+                else None
+            ),
+        },
+        "unavailable_reason": unavailable_reason,
     }
 
 

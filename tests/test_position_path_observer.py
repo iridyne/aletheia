@@ -1114,6 +1114,25 @@ def test_position_path_observer_status_exposes_recovery_and_24h_counts():
         "unavailable": 1,
         "skipped": 3,
     }
+    assert status["latest_expected_bucket"]["bucket_open_ms"] == bucket + 1_500_000
+    assert status["latest_materialized_bucket"] == {
+        "position_id": position.id,
+        "bucket_open_ms": bucket + 600_000,
+        "bucket_open_at": "2026-08-13T00:10:00+00:00",
+    }
+    assert status["oldest_deferred_bucket"]["bucket_open_ms"] == bucket
+    assert status["ordered_path_coverage"] == {
+        "status": "incomplete",
+        "expected_bucket_count": 6,
+        "materialized_bucket_count": 2,
+        "missing_bucket_count": 4,
+        "deferred_bucket_count": 1,
+        "invalid_position_count": 0,
+        "available_observation_count": 1,
+        "unavailable_observation_count": 1,
+        "coverage_ratio": 1 / 3,
+    }
+    assert status["unavailable_reason"] == "deferred_bucket_pending"
 
 
 @pytest.mark.asyncio

@@ -46,6 +46,18 @@ def _minimal_status(**overrides):
             "observer_lag": {"seconds": 0.0, "buckets": 0},
             "last_24h": {"available": 0, "unavailable": 0, "skipped": 0},
         },
+        _ufc_status=lambda: {
+            "schema_version": "ufc_control_status/v1",
+            "path_id": "universe_family_calibration",
+            "status": "not_registered",
+            "availability": "available",
+        },
+        _profit_loop_status=lambda evidence=None: {
+            "schema_version": "profit_loop_control_status/v1",
+            "path_id": "profit_loop_observability",
+            "status": "not_registered",
+            "availability": "available",
+        },
     )
     defaults.update(overrides)
 
@@ -67,6 +79,8 @@ def _minimal_status(**overrides):
             "_position_path_observer_status",
             defaults["_position_path_observer_status"],
         ),
+        patch.object(cmd_mod, "_ufc_status", defaults["_ufc_status"]),
+        patch.object(cmd_mod, "_profit_loop_status", defaults["_profit_loop_status"]),
     ):
         return build_control_status()
 
@@ -78,10 +92,10 @@ def _minimal_status(**overrides):
 def test_control_status_has_all_sections():
     data = _minimal_status()
 
-    required = {"as_of", "sha", "gateway_running", "runtime", "authority",
+    required = {"schema_version", "as_of", "sha", "gateway_running", "runtime", "safety", "authority",
                 "active_experiments", "active_experiments_available",
                 "open_policy_epochs", "evidence_epochs", "window_continuity",
-                "position_path_observer"}
+                "position_path_observer", "ufc", "profit_loop"}
     assert required.issubset(data.keys()), (
         f"Missing keys: {required - set(data.keys())}"
     )
@@ -105,6 +119,29 @@ def test_control_status_exposes_position_path_recovery():
     }
     data = _minimal_status(_position_path_observer_status=lambda: observer)
     assert data["position_path_observer"] == observer
+
+
+def test_control_status_keeps_ufc_and_profit_loop_separate():
+    ufc = {
+        "path_id": "universe_family_calibration",
+        "status": "collecting",
+        "availability": "available",
+        "assignment": {"complete_treatment_units": 7, "complete_control_units": 9},
+    }
+    profit_loop = {
+        "path_id": "profit_loop_observability",
+        "status": "collecting",
+        "availability": "available",
+        "registration": {"epoch_id": "profit-epoch", "cutoff_at": "2026-09-01T00:00:00+00:00"},
+    }
+    data = _minimal_status(
+        _ufc_status=lambda: ufc,
+        _profit_loop_status=lambda evidence=None: profit_loop,
+    )
+    assert data["schema_version"] == "control_status/v1"
+    assert data["ufc"] == ufc
+    assert data["profit_loop"] == profit_loop
+    assert data["ufc"]["path_id"] != data["profit_loop"]["path_id"]
 
 
 def test_sha_section_deployed_matches_config():
@@ -199,6 +236,15 @@ def test_active_experiments_unavailable_is_not_empty_success():
     assert data["active_experiments_error"] == "OperationalError"
 
 
+def test_malformed_experiment_rows_fail_closed_without_crashing():
+    data = _minimal_status(
+        _open_experiments=lambda: {"available": True, "items": [None]},
+    )
+    assert data["active_experiments_available"] is False
+    assert data["active_experiments_error"] == "malformed_experiment_row"
+    assert data["active_experiments"] == []
+
+
 # ---------------------------------------------------------------------------
 # Test 4: evidence epochs from evidence_epoch_summary
 # ---------------------------------------------------------------------------
@@ -275,3 +321,99 @@ def test_sha_values_come_from_git_not_hardcoded():
     assert data_a["sha"]["deployed_head_short"] == sha_a[:12]
     assert data_b["sha"]["deployed_head_short"] == sha_b[:12]
     assert data_a["sha"]["deployed_head_short"] != data_b["sha"]["deployed_head_short"]
+
+
+def test_ufc_status_projects_fixed_look_units_and_coverage(monkeypatch):
+    import aletheia.cli.control_cmd as cmd_mod
+
+    projection = {
+        "schema_version": "lco-v1",
+        "items": [
+            {
+                "path_id": "universe_family_calibration",
+                "availability": "available",
+                "data_freshness": {"state": "fresh"},
+                "hypothesis_id": "hyp-1",
+                "experiment_id": "exp-1",
+                "stage": "paper",
+                "experiment_status": "active",
+                "allocation_pct": 10,
+                    "current_identity": {
+                        "policy_epoch": "epoch-1",
+                        "target_horizon": "24h",
+                        "outcome_contract_version": "outcome/v1",
+                        "metric_version": "metric/v1",
+                        "statistical_unit": "assignment_unit",
+                        "behavior_contract_hash": "behavior-contract",
+                        "code_commit": "boot-sha",
+                    },
+                "measurement": {
+                    "state": "insufficient_data",
+                    "coverage": {"current_consecutive_market_days": 3},
+                    "evaluated_at": None,
+                },
+                "inference": {"status": "collecting", "plan_hash": "plan-1"},
+                "samples": {
+                    "treatment_assignment_units": 11,
+                    "control_assignment_units": 13,
+                    "complete_assignment_units": 24,
+                    "actual_intervention_treatment_units": 7,
+                    "exposed_actual_intervention_treatment_units": 8,
+                    "required_per_arm": 50,
+                },
+                "integrity": {"harm_state": "none"},
+                "lifecycle": {"authority_enabled": False, "authority_block_reason": "not_ready"},
+            }
+        ],
+        "path_states": [],
+        "operations": {"evaluator": {"status": "running"}},
+    }
+    from aletheia.learning import read_models
+
+    monkeypatch.setattr(read_models, "build_learning_contribution_projection", lambda limit=100: projection)
+    result = cmd_mod._ufc_status()
+    assert result["status"] == "collecting"
+    assert result["assignment"]["complete_treatment_units"] == 11
+    assert result["assignment"]["actual_intervention_units"] == 7
+    assert result["coverage"]["current_consecutive_eligible_utc_days"] == 3
+    assert result["fixed_look"]["plan_hash"] == "plan-1"
+    assert result["path_id"] == "universe_family_calibration"
+
+
+def test_profit_loop_status_stays_collecting_before_cutoff(monkeypatch):
+    import aletheia.cli.control_cmd as cmd_mod
+
+    evidence = {
+        "paths": [
+            {
+                "path_id": "profit_loop_observability",
+                "status": "open",
+                "epoch_id": "profit-epoch",
+                "started_at": "2026-08-17T00:00:00+00:00",
+                "cutoff_at": "2099-08-17T00:00:00+00:00",
+                "deploy_commit": "boot-sha",
+                "behavior_fingerprint": "behavior-sha",
+                "registry_hash": "registry-sha",
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        cmd_mod,
+        "_profit_loop_coverage",
+        lambda: {"availability": "available", "unavailable_reason": None},
+    )
+    result = cmd_mod._profit_loop_status(evidence)
+    assert result["status"] == "collecting"
+    assert result["identity"]["registry_hash"] == "registry-sha"
+    assert result["artifact"]["status"] == "unavailable"
+    assert result["fixed_result_hash"] is None
+    assert "layer_winner" not in result
+
+
+def test_malformed_profit_epoch_fails_closed():
+    import aletheia.cli.control_cmd as cmd_mod
+
+    result = cmd_mod._profit_loop_status({"paths": None})
+    assert result["status"] == "unavailable"
+    assert result["availability"] == "unavailable"
+    assert result["unavailable_reason"] == "malformed_evidence_epoch_paths"

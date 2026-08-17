@@ -2107,7 +2107,7 @@ def status_snapshot() -> dict:
     does not show "active" when init failed or the scheduler is paused.
     """
     try:
-        enabled = bool(load_config().runtime.scheduler_enabled)
+        enabled = bool(load_config(persist_migrations=False).runtime.scheduler_enabled)
     except Exception:
         enabled = None
     if _scheduler is None:
