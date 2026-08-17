@@ -14,16 +14,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from aletheia.config.secrets import SECRET_KEY_FRAGMENTS, is_secret_key
 
-_SECRET_FRAGMENTS = (
-    "secret",
-    "password",
-    "passphrase",
-    "api_key",
-    "token",
-    "credential",
-    "private_key",
-)
+# Backwards-compatible module alias for the shared trust-boundary contract.
+_SECRET_FRAGMENTS = SECRET_KEY_FRAGMENTS
 
 
 @dataclass(frozen=True)
@@ -189,8 +183,7 @@ def _without_secrets(value: Any) -> Any:
 
 
 def _is_secret_key(key: str) -> bool:
-    lowered = key.lower()
-    return any(fragment in lowered for fragment in _SECRET_FRAGMENTS)
+    return is_secret_key(key)
 
 
 def _without_code_commit(value: Any) -> Any:
