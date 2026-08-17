@@ -4467,6 +4467,10 @@ def update_knowledge_item(kid: str, **kwargs) -> None:
     _update("knowledge_items", kid, kwargs)
 
 
+def get_knowledge_item(kid: str) -> dict | None:
+    return _select_one("knowledge_items", kid)
+
+
 def list_knowledge_items(
     item_type: str | None = None, limit: int = 50, strategy_id: str | None = None, status: str = "active"
 ) -> list[dict]:
@@ -9775,6 +9779,7 @@ def resolve_shadow_trade_if_pending(
 def list_shadow_trades(
     batch_id: str | None = None,
     scanner_family: str | None = None,
+    opportunity_id: str | None = None,
     resolved: bool | None = None,
     limit: int = 200,
 ) -> list[dict]:
@@ -9786,6 +9791,9 @@ def list_shadow_trades(
     if scanner_family is not None:
         conditions.append("scanner_family = ?")
         params.append(scanner_family)
+    if opportunity_id is not None:
+        conditions.append("opportunity_id = ?")
+        params.append(opportunity_id)
     if resolved is True:
         conditions.append("resolved_at IS NOT NULL")
     elif resolved is False:

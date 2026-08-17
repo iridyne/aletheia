@@ -10,6 +10,35 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
+def _ready_research(*source_ids: str) -> dict:
+    falsification = "Reject if prospective exact-scope treatment underperforms control."
+    return {
+        "observation": {
+            "statement": "The exact source cases recorded the declared loss pattern.",
+            "source_artifact_ids": list(source_ids),
+            "outcome_identities": [f"position:{source_id}" for source_id in source_ids],
+        },
+        "candidate_explanation": (
+            "The scoped candidate guard may improve net utility over 4h."
+        ),
+        "competing_explanations": ["The recorded regime may explain the loss pattern."],
+        "relevant_context": {
+            "recorded_at_t0": {"symbol": "BTC/USDT"},
+            "missing": ["t0_context_missing:catalyst_news"],
+        },
+        "falsification_condition": falsification,
+        "red_team_summary": {
+            "strongest_simpler_competing_explanation": (
+                "The recorded regime may explain the loss pattern."
+            ),
+            "smallest_falsification_test": falsification,
+            "decision": "ready",
+            "reasoning": "The bounded exact evidence is sufficient for Shadow testing only.",
+        },
+        "research_status": "ready",
+    }
+
+
 @spec_claim(SpecClaim(
     "LE-B15", "learning_evolution", "§9.4 causal reflection", "L2b",
     "Reflection resolves outcomes only through proposal/opportunity causal ids; symbol-only movement "
@@ -175,7 +204,7 @@ def test_operator_prompt_bundle_manifest_is_one_durable_unit(monkeypatch):
     "lessons and are never promoted while carrying the shadow-only tag (#197).",
     status="implemented",
 ))
-def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
+async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     from aletheia.learning import guard_routing
 
     captured = {}
@@ -194,10 +223,11 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
         "supporting_factor_keys": ["momentum:BTCUSDT:long:medium_confidence:not_late"],
         "scanner_families": ["momentum"],
     }
-    routed = guard_routing.route_automatic_block_recommendation(
+    routed = await guard_routing.route_automatic_block_recommendation(
         {"action": "block_scanner", "scanner": "momentum"},
         evidence=evidence_with_scope,
         source_id="case-1",
+        research_evidence=_ready_research("case-1"),
     )
 
     assert routed["action"] == "guard_shadow_candidate"
@@ -212,6 +242,7 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     assert hypothesis_row["target_horizon"] == "4h"
     assert hypothesis_row["source_type"] == "guard_candidate"
     assert json.loads(hypothesis_row["scope_json"]) == {
+        "applies_to": {"scanner_family": ["momentum"], "symbol": ["BTCUSDT"]},
         "guard_id": routed["guard_id"],
     }
     assert json.loads(hypothesis_row["action_json"]) == {
@@ -223,10 +254,11 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     assert json.loads(hypothesis_row["source_artifact_ids_json"]) == [
         "case-1", "candidate-item",
     ]
-    repeated = guard_routing.route_automatic_block_recommendation(
+    repeated = await guard_routing.route_automatic_block_recommendation(
         {"action": "block_scanner", "scanner": "momentum"},
         evidence=evidence_with_scope,
         source_id="case-1",
+        research_evidence=_ready_research("case-1"),
     )
     assert repeated["hypothesis_id"] == routed["hypothesis_id"]
     assert repeated["guard_candidate_id"] == "candidate-item"
@@ -248,7 +280,7 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     assert "BTCUSDT" in applies_to["symbol"]
     assert "scanner_family" in applies_to, "applies_to must contain scanner_family scope"
     assert "momentum" in applies_to["scanner_family"]
-    unavailable = guard_routing.route_automatic_block_recommendation(
+    unavailable = await guard_routing.route_automatic_block_recommendation(
         {"action": "block_scanner", "scanner": "momentum"},
         evidence={
             "supporting_factor_keys": [],
@@ -297,7 +329,7 @@ def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch):
     "for a later retry.",
     status="implemented",
 ))
-def test_automatic_block_recommendation_propagates_nomination_failure(monkeypatch):
+async def test_automatic_block_recommendation_propagates_nomination_failure(monkeypatch):
     from aletheia.learning import guard_routing, hypotheses
 
     monkeypatch.setattr(
@@ -312,13 +344,14 @@ def test_automatic_block_recommendation_propagates_nomination_failure(monkeypatc
     monkeypatch.setattr(hypotheses, "nominate_learning_hypothesis", fail_nomination)
 
     with pytest.raises(RuntimeError, match="temporary nomination failure"):
-        guard_routing.route_automatic_block_recommendation(
+        await guard_routing.route_automatic_block_recommendation(
             {"action": "block_scanner", "scanner": "momentum"},
             evidence={
                 "factor_keys": ["momentum:BTCUSDT:long:medium_confidence:not_late"],
                 "scanner_families": ["momentum"],
             },
             source_id="case-retry",
+            research_evidence=_ready_research("case-retry"),
         )
 
 
@@ -329,7 +362,7 @@ def test_automatic_block_recommendation_propagates_nomination_failure(monkeypatc
     "invalid_block_scope without writing a guard candidate (#197).",
     status="implemented",
 ))
-def test_automatic_block_recommendation_fails_closed_without_scope(monkeypatch):
+async def test_automatic_block_recommendation_fails_closed_without_scope(monkeypatch):
     from aletheia.learning import guard_routing
 
     create_called = []
@@ -340,7 +373,7 @@ def test_automatic_block_recommendation_fails_closed_without_scope(monkeypatch):
 
     monkeypatch.setattr(guard_routing, "create_guard_candidate", fake_create)
     # Evidence has no factor_keys, so symbol scope cannot be derived.
-    result = guard_routing.route_automatic_block_recommendation(
+    result = await guard_routing.route_automatic_block_recommendation(
         {"action": "block_scanner", "scanner": "momentum"},
         evidence={"case_count": 5, "outcome_counts": {"loss": 4}},
         source_id="case-no-scope",

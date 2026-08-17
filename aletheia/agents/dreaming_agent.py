@@ -478,7 +478,7 @@ async def _extract_lessons(
         covered_case_ids.update(set(supporting_source_ids) & batch_case_ids)
         if rec and rec.get("action") in {"block_scanner", "block_direction", "block_symbol"}:
             from aletheia.learning.guard_routing import route_automatic_block_recommendation
-            rec = route_automatic_block_recommendation(
+            rec = await route_automatic_block_recommendation(
                 rec, evidence=evidence, source_id=source_id,
             )
         started_at = time.monotonic()

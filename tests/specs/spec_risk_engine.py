@@ -327,7 +327,7 @@ def test_lesson_constraints_error_produces_violation(monkeypatch):
         "manually created category='risk' lessons.",
     ),
 )
-def test_lesson_constraint_category_gate_is_risk_only():
+async def test_lesson_constraint_category_gate_is_risk_only():
     """block_* enforcement requires category='risk'; other categories are silently skipped."""
     import inspect
     from aletheia.risk import engine as eng
@@ -339,6 +339,7 @@ def test_lesson_constraint_category_gate_is_risk_only():
     # Verify guard routing ensures dreaming_agent block_* never reaches ps_lessons
     # as a block_* recommendation (they become guard_shadow_candidate instead).
     from aletheia.learning.guard_routing import route_automatic_block_recommendation
+    from tests.specs.spec_learning_attribution import _ready_research
     from unittest.mock import patch
 
     # Evidence must include scanner_families scope so the guard is not global (#197).
@@ -348,9 +349,10 @@ def test_lesson_constraint_category_gate_is_risk_only():
     }
     with patch("aletheia.learning.guard_routing.create_guard_candidate") as mock_create:
         mock_create.return_value = type("Item", (), {"id": "g-1"})()
-        result = route_automatic_block_recommendation(
+        result = await route_automatic_block_recommendation(
             {"action": "block_symbol", "symbol": "BTC/USDT"},
             evidence=scoped_evidence, source_id="test-src",
+            research_evidence=_ready_research("test-src"),
         )
     assert result is not None and result.get("action") == "guard_shadow_candidate", (
         "block_symbol routed by dreaming_agent must become guard_shadow_candidate, not block_symbol"

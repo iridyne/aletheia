@@ -298,9 +298,10 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
     from pathlib import Path
 
     from aletheia.agents import dreaming_agent
-    from aletheia.learning import hypotheses
+    from aletheia.learning import guard_routing, hypotheses
     from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import pending_trade_case_studies_summary
+    from tests.specs.spec_learning_attribution import _ready_research
 
     factor = "momentum:BTC/USDT:long:medium_confidence:not_late"
     path = Path(tmp_path) / "case-retry.md"
@@ -336,7 +337,11 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
     def fail_nomination(**_):
         raise RuntimeError("temporary nomination failure")
 
+    async def ready_research(**kwargs):
+        return _ready_research(*kwargs["source_artifact_ids"])
+
     monkeypatch.setattr(dreaming_agent, "llm_structured", _structured_recommendation)
+    monkeypatch.setattr(guard_routing, "research_learning_hypothesis", ready_research)
     monkeypatch.setattr(hypotheses, "nominate_learning_hypothesis", fail_nomination)
 
     with pytest.raises(RuntimeError, match="temporary nomination failure"):
