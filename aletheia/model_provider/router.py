@@ -9,7 +9,7 @@ import logging
 import threading
 import time
 
-from aletheia.config.loader import load_config, save_config
+from aletheia.config.loader import load_config, mutate_config, save_config
 from aletheia.config.secrets import get_secret
 from aletheia.model_provider.base import (
     MODEL_HEALTH_STALE_AFTER_SECONDS,
@@ -191,19 +191,25 @@ def persist_provider_verification(
 ) -> bool:
     """Persist verification only when it still describes current config."""
 
-    cfg = load_config()
-    pcfg = cfg.models.providers.get(name)
-    if pcfg is None or provider_configuration_identity(name, pcfg) != identity:
-        return False
-    pcfg.verification_identity = identity
-    pcfg.verification_verified = verified
-    pcfg.verification_at = verified_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    pcfg.verification_source = source
-    pcfg.verification_reason_code = reason_code
-    pcfg.verification_detail = detail
-    save_config(cfg)
-    invalidate_health_cache()
-    return True
+    def apply(cfg) -> bool:
+        pcfg = cfg.models.providers.get(name)
+        if pcfg is None or provider_configuration_identity(name, pcfg) != identity:
+            return False
+        pcfg.verification_identity = identity
+        pcfg.verification_verified = verified
+        pcfg.verification_at = (
+            verified_at
+            or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        )
+        pcfg.verification_source = source
+        pcfg.verification_reason_code = reason_code
+        pcfg.verification_detail = detail
+        return True
+
+    persisted = mutate_config(apply)
+    if persisted:
+        invalidate_health_cache()
+    return persisted
 
 
 def _claim_oauth_refresh(name: str) -> tuple[Future[str | None], bool]:
@@ -722,10 +728,18 @@ def _classify_health_error(error: str | None) -> str:
     return "probe_failure"
 
 
-def _decorate_health(name: str, health: ModelHealth, cfg, pcfg) -> ModelHealth:
+def _decorate_health(
+    name: str,
+    health: ModelHealth,
+    cfg,
+    pcfg,
+    *,
+    configured: bool | None = None,
+) -> ModelHealth:
     """Attach independent config, reachability, verification, and routing facts."""
 
-    configured = provider_is_configured(name, pcfg)
+    if configured is None:
+        configured = provider_is_configured(name, pcfg)
     health.provider = name
     health.configured = configured
     health.enabled = bool(getattr(pcfg, "enabled", False)) if pcfg is not None else False
@@ -784,6 +798,26 @@ def _decorate_health(name: str, health: ModelHealth, cfg, pcfg) -> ModelHealth:
     return health
 
 
+async def _decorate_health_async(
+    name: str,
+    health: ModelHealth,
+    cfg,
+    pcfg,
+    *,
+    configured: bool,
+) -> ModelHealth:
+    """Keep credential-backed identity checks off the request event loop."""
+
+    return await asyncio.to_thread(
+        _decorate_health,
+        name,
+        health,
+        cfg,
+        pcfg,
+        configured=configured,
+    )
+
+
 async def healthcheck_all_with_metadata(
     *, force: bool = False
 ) -> tuple[list[ModelHealth], bool]:
@@ -830,31 +864,53 @@ async def healthcheck_all_with_metadata(
 async def _refresh_health_all() -> list[ModelHealth]:
     cfg = load_config()
     results: list[ModelHealth] = []
-    tasks: list[tuple[str, object, object]] = []
+    tasks: list[tuple[str, object, object, bool]] = []
     for name, pcfg in cfg.models.providers.items():
-        if not provider_is_configured(name, pcfg):
+        configured = await asyncio.to_thread(provider_is_configured, name, pcfg)
+        if not configured:
             results.append(
-                _decorate_health(
+                await _decorate_health_async(
                     name,
                     _unobserved_health(name, error="missing_configuration"),
                     cfg,
                     pcfg,
+                    configured=False,
                 )
             )
             continue
         if not pcfg.enabled:
             # Keep disabled profiles visible without invoking their provider.
-            results.append(_decorate_health(name, _unobserved_health(name, error="disabled"), cfg, pcfg))
+            results.append(
+                await _decorate_health_async(
+                    name,
+                    _unobserved_health(name, error="disabled"),
+                    cfg,
+                    pcfg,
+                    configured=True,
+                )
+            )
             continue
         # Enabled is the operator's probe decision. Keyless local endpoints are
         # valid, so credential/URL heuristics must not turn a configured profile
         # into an unobserved row.
-        tasks.append((name, pcfg, _safe_healthcheck(name)))
+        tasks.append((name, pcfg, _safe_healthcheck(name), True))
     if tasks:
         probed = await asyncio.gather(*(task for _, _, task in tasks))
         results.extend(
-            _decorate_health(name, health, cfg, pcfg)
-            for (name, pcfg, _), health in zip(tasks, probed, strict=True)
+            await asyncio.gather(
+                *(
+                    _decorate_health_async(
+                        name,
+                        health,
+                        cfg,
+                        pcfg,
+                        configured=configured,
+                    )
+                    for (name, pcfg, _, configured), health in zip(
+                        tasks, probed, strict=True
+                    )
+                )
+            )
         )
     # Include registry-backed singleton and adapter rows even before an owner
     # creates a config entry, so consumers never infer health from omission.
@@ -862,11 +918,12 @@ async def _refresh_health_all() -> list[ModelHealth]:
         if name in cfg.models.providers:
             continue
         results.append(
-            _decorate_health(
+            await _decorate_health_async(
                 name,
                 _unobserved_health(name, error="missing_configuration"),
                 cfg,
                 None,
+                configured=False,
             )
         )
     return results

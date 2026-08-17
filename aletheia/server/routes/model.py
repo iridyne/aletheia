@@ -306,6 +306,7 @@ async def ping_model():
     from aletheia.config.loader import load_config
 
     t0 = time.monotonic()
+    provider_name: str | None = None
     inference_call = None
     try:
         cfg = load_config()
@@ -346,7 +347,9 @@ async def ping_model():
                 current_cfg = await asyncio.to_thread(load_config)
                 current_pcfg = current_cfg.models.providers.get(provider_name)
                 if current_pcfg is not None:
-                    verification_identity = provider_configuration_identity(provider_name, current_pcfg)
+                    verification_identity = await asyncio.to_thread(
+                        provider_configuration_identity, provider_name, current_pcfg
+                    )
                     verification_persisted = await asyncio.to_thread(
                         persist_provider_verification,
                         provider_name,
@@ -377,7 +380,9 @@ async def ping_model():
             current_cfg = await asyncio.to_thread(load_config)
             current_pcfg = current_cfg.models.providers.get(provider_name)
             if current_pcfg is not None:
-                verification_identity = provider_configuration_identity(provider_name, current_pcfg)
+                verification_identity = await asyncio.to_thread(
+                    provider_configuration_identity, provider_name, current_pcfg
+                )
                 verification_persisted = await asyncio.to_thread(
                     persist_provider_verification,
                     provider_name,
@@ -411,16 +416,20 @@ async def ping_model():
         verification_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         try:
             failed_cfg = await asyncio.to_thread(load_config)
-            failed_pcfg = failed_cfg.models.providers.get(
-                failed_cfg.models.default_provider
+            failed_pcfg = (
+                failed_cfg.models.providers.get(provider_name)
+                if provider_name
+                else None
             )
-            if failed_pcfg is not None:
-                verification_identity = provider_configuration_identity(
-                    failed_cfg.models.default_provider, failed_pcfg
+            if provider_name and failed_pcfg is not None:
+                verification_identity = await asyncio.to_thread(
+                    provider_configuration_identity,
+                    provider_name,
+                    failed_pcfg,
                 )
                 verification_persisted = await asyncio.to_thread(
                     persist_provider_verification,
-                    failed_cfg.models.default_provider,
+                    provider_name,
                     identity=verification_identity,
                     verified=False,
                     source="model_ping",
@@ -486,7 +495,11 @@ async def detect_models(req: DetectModelsRequest):
     provider_type, pcfg = _resolve_candidate_provider(req.provider, req.type, cfg)
     if provider_type in CLI_PROVIDERS:
         raise HTTPException(400, f"{provider_type} uses CLI introspection, not HTTP detection")
-    stored_key = get_secret(pcfg.api_key_secret_ref) if pcfg and pcfg.api_key_secret_ref else None
+    stored_key = (
+        await asyncio.to_thread(get_secret, pcfg.api_key_secret_ref)
+        if pcfg and pcfg.api_key_secret_ref
+        else None
+    )
     if provider_type == "databricks" and req.workspace_url:
         try:
             candidate_origin = validate_workspace_url(req.workspace_url)
@@ -571,7 +584,7 @@ async def test_model_candidate(req: TestCandidateRequest):
         raise HTTPException(400, f"{provider_type} uses local auth, not a candidate key")
     stored_key = None
     if pcfg and pcfg.api_key_secret_ref:
-        stored_key = get_secret(pcfg.api_key_secret_ref)
+        stored_key = await asyncio.to_thread(get_secret, pcfg.api_key_secret_ref)
     if provider_type == "databricks" and req.workspace_url:
         try:
             candidate_origin = validate_workspace_url(req.workspace_url)
@@ -615,7 +628,9 @@ async def test_model_candidate(req: TestCandidateRequest):
     else:
         raise HTTPException(400, f"No test-candidate support for {provider_type}")
 
-    candidate_identity = _candidate_configuration_identity(req, provider_type, pcfg, api_key)
+    candidate_identity = await asyncio.to_thread(
+        _candidate_configuration_identity, req, provider_type, pcfg, api_key
+    )
     try:
         health = await provider.healthcheck()
         # /models access is optional: gateways can permit inference while denying or
@@ -693,15 +708,16 @@ async def test_model_candidate(req: TestCandidateRequest):
                     detail=detail[:200],
                     verified_at=verification_at,
                 )
+                reachable = bool(health.available)
                 return {
-                    "available": False,
+                    "available": reachable,
                     "configured": True,
-                    "reachable": False,
+                    "reachable": reachable,
                     "verified": False,
                     "verified_at": verification_at,
                     "verification_identity": candidate_identity,
                     "verification_source": "explicit_probe",
-                    "state": "unavailable",
+                    "state": "reachable" if reachable else "unavailable",
                     "reason_code": _classify_health_error(detail),
                     "model": health.model,
                     "error": detail,
@@ -1009,14 +1025,18 @@ def _apply_model_config_sync(req: ModelConfigRequest, verification: dict | None 
 
     written_secret_ref = None
     previous_secret = None
+    secret_override = None
     if req.api_key:
         secret_ref = _profile_api_key_ref(req.provider, provider_type, pcfg)
         previous_secret = get_secret(secret_ref)
-        set_secret(secret_ref, req.api_key)
-        written_secret_ref = secret_ref
         pcfg.api_key_secret_ref = secret_ref
+        secret_override = {secret_ref: req.api_key}
 
-    identity_after = provider_configuration_identity(req.provider, pcfg)
+    identity_after = provider_configuration_identity(
+        req.provider,
+        pcfg,
+        credential_overrides=secret_override,
+    )
     if verification is not None:
         if verification.get("identity") != identity_after:
             raise HTTPException(409, "Provider configuration changed during verification")
@@ -1033,6 +1053,9 @@ def _apply_model_config_sync(req: ModelConfigRequest, verification: dict | None 
         clear_provider_verification(pcfg)
 
     try:
+        if req.api_key:
+            set_secret(secret_ref, req.api_key)
+            written_secret_ref = secret_ref
         save_config(cfg)
     except Exception:
         if written_secret_ref:
