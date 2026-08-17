@@ -8,6 +8,7 @@ import {
 } from "./modelProviderState";
 import type {
 	ModelConfigView,
+	ModelHealthView,
 	ProviderConfigView,
 	ProviderTypeView,
 } from "./types";
@@ -42,6 +43,44 @@ describe("model provider settings state", () => {
 		expect(providerStatus(oauth, undefined)).toEqual({
 			tone: "yellow",
 			label: "authentication required",
+		});
+	});
+
+	it("keeps stale and unknown observations out of green", () => {
+		const config: ProviderConfigView = {
+			type: "openai_compatible",
+			kind: "api",
+			display_name: "API",
+			enabled: true,
+			model: "model-a",
+			api_key: { configured: true, last4: "1234" },
+			oauth: { configured: false, last4: null },
+		};
+		const base: ModelHealthView = {
+			provider: "openai_compatible",
+			available: true,
+			model: "model-a",
+			error: null,
+			models: ["model-a"],
+			model_metadata: [],
+			observed_at: "2026-08-17T12:00:00Z",
+			age_seconds: 0,
+			freshness: "fresh",
+			cached: false,
+			stale_after_seconds: 30,
+		};
+
+		expect(providerStatus(config, base)).toEqual({
+			tone: "green",
+			label: "available",
+		});
+		expect(providerStatus(config, { ...base, freshness: "stale" })).toEqual({
+			tone: "yellow",
+			label: "stale",
+		});
+		expect(providerStatus(config, { ...base, freshness: "unknown" })).toEqual({
+			tone: "yellow",
+			label: "unknown",
 		});
 	});
 

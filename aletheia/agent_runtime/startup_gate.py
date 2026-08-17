@@ -10,7 +10,8 @@ Why a real `complete()` call and not `router.healthcheck_all()`:
   - claude_cli's healthcheck returns available=True whenever the `claude` binary
     exists (it only runs `--version` + lists hardcoded models), even when real
     inference times out on every call — the exact zombie this gate exists to catch.
-  - healthcheck_all() also silently skips keyless/default-URL HTTP providers.
+  - healthcheck_all() is a catalogue/liveness check, not proof of usable
+    inference, even when a keyless local endpoint answers successfully.
 Neither answers the only question that matters here: "can this provider actually
 do inference right now?" A minimal real completion does.
 

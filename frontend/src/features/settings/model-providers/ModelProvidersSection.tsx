@@ -148,10 +148,25 @@ function Status({
 	health?: ModelHealthView;
 }) {
 	const status = providerStatus(config, health);
+	const freshness = health?.freshness;
+	const label = freshness && freshness !== status.label
+		? `${status.label} · ${freshness}`
+		: status.label;
+	const observation = health?.observed_at
+		? `${health.observed_at} (age ${health.age_seconds ?? "?"}s at response)`
+		: "no observation";
+	const source = health?.observed_at
+		? health.cached
+			? "cached"
+			: "probed"
+		: "unobserved";
+	const evidence = health
+		? `${freshness ?? "unknown"}; ${source}; observed ${observation}`
+		: "no health observation";
 	return (
-		<span className={`model-provider-status ${status.tone}`}>
+		<span className={`model-provider-status ${status.tone}`} title={evidence}>
 			<span aria-hidden="true" />
-			{status.label}
+			{label}
 		</span>
 	);
 }

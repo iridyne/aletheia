@@ -685,6 +685,22 @@ export interface EconomicsModelHealthResponse {
 	snapshot: ModelHealthEntry[];
 }
 
+export type ModelHealthFreshness = "fresh" | "stale" | "unknown";
+
+export interface ModelProviderHealth {
+	provider: string;
+	available: boolean;
+	model: string;
+	error: string | null;
+	models: string[];
+	model_metadata: Array<Record<string, unknown>>;
+	observed_at: string | null;
+	age_seconds: number | null;
+	freshness: ModelHealthFreshness;
+	cached: boolean;
+	stale_after_seconds: number;
+}
+
 export type UsageInsightsAvailability =
 	| "available"
 	| "partial"
@@ -1050,16 +1066,7 @@ export const api = {
 			>
 		>("/model/provider-types"),
 	getModelHealth: () =>
-		fetchJson<
-			{
-				provider: string;
-				available: boolean;
-				model: string;
-				error: string | null;
-				models: string[];
-				model_metadata?: Array<Record<string, any>>;
-			}[]
-		>("/model/health"),
+		fetchJson<ModelProviderHealth[]>("/model/health"),
 	getInferenceBroker: () =>
 		fetchJson<{
 			running: boolean;

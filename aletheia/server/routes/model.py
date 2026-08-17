@@ -5,7 +5,9 @@ returns a key. GET responses only report whether a key is configured + last-4.
 """
 
 import asyncio
+from datetime import datetime, timezone
 import hashlib
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Response  # pyright: ignore[reportMissingImports]
 from pydantic import BaseModel, Field
@@ -13,6 +15,7 @@ from pydantic import BaseModel, Field
 from aletheia.config.loader import load_config, save_config
 from aletheia.config.secrets import delete_secret, get_secret, set_secret
 from aletheia.files.jsonl import write_audit
+from aletheia.model_provider.base import MODEL_HEALTH_STALE_AFTER_SECONDS
 from aletheia.model_provider.databricks import DATABRICKS_PROTOCOLS, validate_workspace_url
 from aletheia.model_provider.registry import (  # pyright: ignore[reportMissingImports]
     API_PROVIDER_TYPES,
@@ -23,7 +26,7 @@ from aletheia.model_provider.registry import (  # pyright: ignore[reportMissingI
 from aletheia.model_provider.router import (
     clear_cache,
     clear_cache_async,
-    healthcheck_all,
+    healthcheck_all_with_metadata,
     PROVIDER_REGISTRY,
 )
 
@@ -33,6 +36,78 @@ VALID_PROVIDERS = set(PROVIDER_REGISTRY.keys())
 
 HTTP_PROVIDERS = {"openai_compatible", "anthropic_compatible", "databricks", "anthropic_native", "openai_native"}
 CLI_PROVIDERS = set(CLI_PROVIDER_TYPES)
+
+
+class ModelHealthRecord(BaseModel):
+    """Canonical provider health observation returned to UI/API consumers."""
+
+    provider: str
+    available: bool
+    model: str = ""
+    error: str | None = None
+    models: list[str] = Field(default_factory=list)
+    model_metadata: list[dict[str, Any]] = Field(default_factory=list)
+    observed_at: str | None = None
+    age_seconds: float | None = None
+    freshness: Literal["fresh", "stale", "unknown"]
+    cached: bool
+    stale_after_seconds: float
+
+
+def _health_observation(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _model_health_record(
+    health: object,
+    *,
+    cached: bool,
+    now: datetime | None = None,
+) -> ModelHealthRecord:
+    """Project one router result without using the client's receipt time."""
+
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    current = current.astimezone(timezone.utc)
+    observed = _health_observation(getattr(health, "observed_at", None))
+    if observed is None:
+        observed_at = None
+        age_seconds = None
+        freshness: Literal["fresh", "stale", "unknown"] = "unknown"
+    else:
+        observed_at = observed.isoformat().replace("+00:00", "Z")
+        age_seconds = round(max(0.0, (current - observed).total_seconds()), 3)
+        stale_after_seconds = float(
+            getattr(health, "stale_after_seconds", MODEL_HEALTH_STALE_AFTER_SECONDS)
+            or MODEL_HEALTH_STALE_AFTER_SECONDS
+        )
+        freshness = "fresh" if age_seconds <= stale_after_seconds else "stale"
+
+    return ModelHealthRecord(
+        provider=str(getattr(health, "provider", "")),
+        available=bool(getattr(health, "available", False)),
+        model=str(getattr(health, "model", "") or ""),
+        error=getattr(health, "error", None),
+        models=list(getattr(health, "models", None) or []),
+        model_metadata=list(getattr(health, "model_metadata", None) or []),
+        observed_at=observed_at,
+        age_seconds=age_seconds,
+        freshness=freshness,
+        cached=cached,
+        stale_after_seconds=float(
+            getattr(health, "stale_after_seconds", MODEL_HEALTH_STALE_AFTER_SECONDS)
+            or MODEL_HEALTH_STALE_AFTER_SECONDS
+        ),
+    )
 
 
 def _has_provider_completion_evidence(raw: object) -> bool:
@@ -114,20 +189,10 @@ def get_model_config():
     }
 
 
-@router.get("/model/health")
+@router.get("/model/health", response_model=list[ModelHealthRecord])
 async def get_model_health():
-    results = await healthcheck_all()
-    return [
-        {
-            "provider": h.provider,
-            "available": h.available,
-            "model": h.model,
-            "error": h.error,
-            "models": h.models,
-            "model_metadata": h.model_metadata,
-        }
-        for h in results
-    ]
+    results, cached = await healthcheck_all_with_metadata()
+    return [_model_health_record(health, cached=cached) for health in results]
 
 
 @router.get("/model/broker")

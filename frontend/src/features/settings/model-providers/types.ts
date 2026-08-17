@@ -1,3 +1,5 @@
+import type { ModelProviderHealth } from "../../../api/client";
+
 export type ProviderCategory = "api" | "cli" | "oauth";
 export type RoutingRole = "default" | "deep" | "fast";
 
@@ -37,19 +39,7 @@ export interface ProviderTypeView {
 	protocols?: string[];
 }
 
-export interface ModelHealthView {
-	provider: string;
-	available: boolean;
-	model: string;
-	error: string | null;
-	models: string[];
-	model_metadata?: Array<{
-		slug?: string;
-		display_name?: string;
-		tier?: string;
-		context_window?: number;
-	}>;
-}
+export type ModelHealthView = ModelProviderHealth;
 
 export interface ApiProfileDraft {
 	profile_id: string;
