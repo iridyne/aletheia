@@ -21,7 +21,7 @@ def _serialized_request_chain_is_valid(
     """Model the workflow rule: every non-latest request must drain before the next."""
     return all(
         any(request <= completion < following for completion in completion_times)
-        for request, following in zip(request_times, request_times[1:], strict=True)
+        for request, following in zip(request_times[:-1], request_times[1:], strict=True)
     )
 
 
