@@ -161,7 +161,7 @@ function Status({
 			: "probed"
 		: "unobserved";
 	const evidence = health
-		? `${freshness ?? "unknown"}; ${source}; observed ${observation}`
+		? `${health.state}; ${health.reason_code}; ${freshness ?? "unknown"}; ${source}; observed ${observation}`
 		: "no health observation";
 	return (
 		<span className={`model-provider-status ${status.tone}`} title={evidence}>

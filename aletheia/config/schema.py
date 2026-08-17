@@ -447,6 +447,15 @@ class ProviderConfig(BaseModel):
     oauth_token_ref: str | None = None
     oauth_refresh_ref: str | None = None
     oauth_expires_at: int | None = None  # Unix ms timestamp
+    # Explicit verification is durable evidence for the exact provider
+    # configuration identity.  The identity is a one-way fingerprint; raw
+    # credentials never belong in config or API responses.
+    verification_identity: str | None = None
+    verification_verified: bool | None = None
+    verification_at: str | None = None
+    verification_source: str | None = None
+    verification_reason_code: str | None = None
+    verification_detail: str | None = None
     # Request-level model fallback. When the configured model returns a
     # transient capacity/rate-limit error, the runtime can try these models
     # before giving up. If empty, the runtime may use list_models() detection as

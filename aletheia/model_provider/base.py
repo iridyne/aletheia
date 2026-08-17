@@ -166,6 +166,20 @@ class ModelHealth:
     freshness: ModelHealthFreshness = "unknown"
     cached: bool = False
     stale_after_seconds: float = MODEL_HEALTH_STALE_AFTER_SECONDS
+    # Fact-oriented provider state. ``available`` remains as a compatibility
+    # alias for older callers; new consumers must use the independent fields.
+    configured: bool = True
+    enabled: bool = True
+    reachable: bool | None = None
+    verified: bool | None = None
+    verified_at: str | None = None
+    verification_identity: str | None = None
+    verification_source: str | None = None
+    verification_invalidated: bool = False
+    verification_detail: str | None = None
+    state: str = "unknown"
+    reason_code: str = "no_observation"
+    routing_roles: list[str] = field(default_factory=list)
 
 
 class ModelProvider:

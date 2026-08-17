@@ -23,6 +23,7 @@ const API_TYPE: ProviderTypeView = {
 const EXISTING_PROFILE: ProviderConfigView = {
 	type: "openai_compatible",
 	kind: "api",
+	configured: true,
 	display_name: "Primary API",
 	enabled: false,
 	model: "model-a",

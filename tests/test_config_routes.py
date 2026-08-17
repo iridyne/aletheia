@@ -380,6 +380,117 @@ def test_model_health_freshness_boundary_is_server_owned():
 
 
 @pytest.mark.anyio
+async def test_model_health_separates_reachability_and_verification(client, monkeypatch):
+    from aletheia.model_provider.base import ModelHealth
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+
+    async def healthy(self):
+        return ModelHealth(provider="openai_compatible", available=True, model=self.model)
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", healthy)
+    saved = await client.post(
+        "/api/settings/model",
+        json={
+            "provider": "openai_compatible",
+            "base_url": "http://model.test/v1",
+            "model": "model-a",
+            "enabled": True,
+            "default": True,
+        },
+    )
+    assert saved.status_code == 200, saved.text
+
+    response = await client.get("/api/model/health")
+    assert response.status_code == 200
+    entry = next(item for item in response.json() if item["provider"] == "openai_compatible")
+    assert entry["configured"] is True
+    assert entry["enabled"] is True
+    assert entry["reachable"] is True
+    assert entry["verified"] is None
+    assert entry["state"] == "reachable"
+    assert entry["reason_code"] == "reachable"
+    assert entry["routing_roles"] == ["default"]
+
+
+@pytest.mark.anyio
+async def test_model_profile_verification_persists_and_config_change_invalidates(
+    client, monkeypatch
+):
+    from aletheia.model_provider.base import ModelHealth, ModelResponse
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+
+    async def healthy(self):
+        return ModelHealth(provider="openai_compatible", available=True, model=self.model)
+
+    async def inference(*args, **kwargs):
+        return ModelResponse(content="OK", model="model-a", usage={})
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", healthy)
+    monkeypatch.setattr(
+        "aletheia.model_provider.broker.brokered_complete", inference
+    )
+    monkeypatch.setattr(
+        "aletheia.economics.inference_calls.record_inference_started",
+        lambda _call: True,
+    )
+    monkeypatch.setattr(
+        "aletheia.economics.inference_calls.record_inference_finished",
+        lambda _call, **_kwargs: True,
+    )
+
+    created = await client.post(
+        "/api/settings/model-profiles",
+        json={
+            "profile_id": "openai_compatible",
+            "display_name": "Primary API",
+            "type": "openai_compatible",
+            "base_url": "http://model.test/v1",
+            "model": "model-a",
+            "enabled": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+    verification = created.json()["verification"]
+    assert verification["verified"] is True
+    assert verification["verified_at"]
+    assert verification["verification_identity"]
+
+    healthy_response = await client.get("/api/model/health")
+    entry = next(
+        item for item in healthy_response.json() if item["provider"] == "openai_compatible"
+    )
+    assert entry["reachable"] is True
+    assert entry["verified"] is True
+    assert entry["state"] == "verified"
+
+    changed = await client.post(
+        "/api/settings/model",
+        json={"provider": "openai_compatible", "base_url": "http://other.test/v1"},
+    )
+    assert changed.status_code == 200, changed.text
+    after_change = await client.get("/api/model/health")
+    changed_entry = next(
+        item for item in after_change.json() if item["provider"] == "openai_compatible"
+    )
+    assert changed_entry["reachable"] is True
+    assert changed_entry["verified"] is None
+    assert changed_entry["verification_invalidated"] is False
+    assert changed_entry["state"] == "reachable"
+
+
+@pytest.mark.anyio
+async def test_model_health_lists_unconfigured_registry_rows(client):
+    response = await client.get("/api/model/health")
+    assert response.status_code == 200
+    rows = {item["provider"]: item for item in response.json()}
+    assert rows["openai_compatible"]["configured"] is False
+    assert rows["openai_compatible"]["state"] == "not_configured"
+    assert rows["openai_compatible"]["reason_code"] == "missing_configuration"
+    assert rows["openai_compatible"]["reachable"] is None
+    assert rows["openai_compatible"]["verified"] is None
+
+
+@pytest.mark.anyio
 async def test_universe_settings_are_visible_and_persisted(client):
     resp = await client.get("/api/settings")
     assert resp.status_code == 200

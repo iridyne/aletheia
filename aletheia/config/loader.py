@@ -215,29 +215,44 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
     return cfg.model_copy(deep=True)
 
 
-def save_config(cfg: AletheiaConfig) -> None:
-    """Persist config to disk (atomic write + thread lock)."""
+def _save_config_locked(cfg: AletheiaConfig) -> None:
+    """Persist config while the process-wide config write lock is held."""
     _invalidate_config_cache()
     ensure_data_dirs()
     cfg.runtime.set_pause_scope(cfg.exchange.mode)
     data = cfg.model_dump(mode="json")
     content = yaml.dump(data, default_flow_style=False, sort_keys=False)
-    with _config_write_lock:
-        tmp_fd, tmp_path = tempfile.mkstemp(
-            dir=str(CONFIG_PATH.parent), suffix=".tmp"
-        )
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(CONFIG_PATH.parent), suffix=".tmp")
+    try:
+        os.write(tmp_fd, content.encode("utf-8"))
+        os.close(tmp_fd)
+        os.replace(tmp_path, str(CONFIG_PATH))
+    except BaseException:
+        os.close(tmp_fd) if not os.get_inheritable(tmp_fd) else None
         try:
-            os.write(tmp_fd, content.encode("utf-8"))
-            os.close(tmp_fd)
-            os.replace(tmp_path, str(CONFIG_PATH))
-        except BaseException:
-            os.close(tmp_fd) if not os.get_inheritable(tmp_fd) else None
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def save_config(cfg: AletheiaConfig) -> None:
+    """Persist config to disk (atomic write + thread lock)."""
+    with _config_write_lock:
+        _save_config_locked(cfg)
     _emit_consistency_events(cfg)
+
+
+def mutate_config(mutator):
+    """Apply one mutation to the latest config snapshot under the write lock."""
+    with _config_write_lock:
+        cfg = load_config(persist_migrations=False)
+        changed = bool(mutator(cfg))
+        if changed:
+            _save_config_locked(cfg)
+    if changed:
+        _emit_consistency_events(cfg)
+    return changed
 
 
 def _emit_consistency_events(cfg: AletheiaConfig) -> None:

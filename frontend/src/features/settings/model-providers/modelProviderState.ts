@@ -41,17 +41,29 @@ export function providerStatus(
 	config: ProviderConfigView | undefined,
 	health: ModelHealthView | undefined,
 ): { tone: "muted" | "green" | "yellow" | "red"; label: string } {
-	if (!config?.enabled) return { tone: "muted", label: "disabled" };
-	if (config.kind === "oauth" && !config.oauth.configured) {
+	if (
+		health?.state === "disabled" ||
+		config?.enabled === false ||
+		(!config && !health)
+	)
+		return { tone: "muted", label: "disabled" };
+	if (config?.kind === "oauth" && !config.oauth.configured) {
 		return { tone: "yellow", label: "authentication required" };
 	}
+	if (
+		health?.configured === false ||
+		(config?.configured === false && config.enabled)
+	)
+		return { tone: "muted", label: "not configured" };
 	if (!health) return { tone: "yellow", label: "checking" };
 	if (health.freshness !== "fresh") {
 		if (health.freshness === "stale")
 			return { tone: "yellow", label: "stale" };
-		if (health.error === "not_installed")
+		if (health.reason_code === "not_installed" || health.error === "not_installed")
 			return { tone: "yellow", label: "not installed" };
 		if (
+			health.reason_code === "authentication_failure" ||
+			health.reason_code === "missing_configuration" ||
 			health.error === "not_logged_in" ||
 			health.error === "no_configured_models"
 		) {
@@ -59,16 +71,21 @@ export function providerStatus(
 		}
 		return { tone: "yellow", label: "unknown" };
 	}
-	if (health.available) return { tone: "green", label: "available" };
-	if (health.error === "not_installed")
+	if (health.reachable && health.verified) {
+		return { tone: "green", label: "verified" };
+	}
+	if (health.reachable) return { tone: "yellow", label: "reachable · unverified" };
+	if (health.reason_code === "not_installed" || health.error === "not_installed")
 		return { tone: "yellow", label: "not installed" };
 	if (
+		health.reason_code === "authentication_failure" ||
+		health.reason_code === "missing_configuration" ||
 		health.error === "not_logged_in" ||
 		health.error === "no_configured_models"
 	) {
 		return { tone: "yellow", label: "authentication required" };
 	}
-	return { tone: "red", label: health.error || "unavailable" };
+	return { tone: "red", label: health.reason_code || health.error || "unavailable" };
 }
 
 export function apiTypes(
