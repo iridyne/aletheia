@@ -584,29 +584,61 @@ jobs:
                   per_page: 100,
                 }),
               ]);
-              const currentReviewRequests = allComments.flatMap((comment) => {
+              const sameHeadReviewRequests = allComments.flatMap((comment) => {
                 if (comment.user?.login !== shepherdLogin || !comment.created_at) return [];
                 const marker = String(comment.body || '').match(shepherdReviewMarkerPattern);
-                if (
-                  !marker ||
-                  marker[1] !== expectedHeadSha ||
-                  marker[2] !== expectedBaseSha
-                ) {
-                  return [];
-                }
-                return [{createdAt: comment.created_at}];
-              });
-              const latestReviewRequestAt = currentReviewRequests
-                .map(({createdAt}) => createdAt)
-                .sort()
-                .at(-1);
-              if (!latestReviewRequestAt) {
+                if (!marker || marker[1] !== expectedHeadSha) return [];
+                return [{base: marker[2], createdAt: comment.created_at}];
+              }).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+              const latestReviewRequest = sameHeadReviewRequests.at(-1) || null;
+              if (!latestReviewRequest || latestReviewRequest.base !== expectedBaseSha) {
                 core.info(
-                  `waiting for current Shepherd review request on ` +
+                  `waiting for latest Shepherd review request to match current exact diff ` +
                   `${expectedHeadSha}@${expectedBaseSha}`,
                 );
                 return;
               }
+              const latestReviewRequestAt = latestReviewRequest.createdAt;
+
+              const connectorCleanCandidates = allComments.filter((comment) =>
+                isConnectorLogin(comment.user?.login) &&
+                comment.created_at &&
+                /Didn't find any major issues\./i.test(String(comment.body || ''))
+              );
+              const cleanCompletionTimes = [];
+              for (const comment of connectorCleanCandidates) {
+                const reviewedCommitSha = await resolveReviewedCommitSha(comment.body);
+                if (reviewedCommitSha === expectedHeadSha) {
+                  cleanCompletionTimes.push(comment.created_at);
+                }
+              }
+              const formalReviewCompletionTimes = allReviews
+                .filter((review) =>
+                  isConnectorLogin(review.user?.login) &&
+                  review.commit_id === expectedHeadSha &&
+                  review.submitted_at &&
+                  review.state !== 'DISMISSED'
+                )
+                .map((review) => review.submitted_at);
+              const connectorCompletionTimes = [
+                ...formalReviewCompletionTimes,
+                ...cleanCompletionTimes,
+              ].sort();
+              for (let index = 0; index < sameHeadReviewRequests.length - 1; index += 1) {
+                const request = sameHeadReviewRequests[index];
+                const nextRequest = sameHeadReviewRequests[index + 1];
+                const drainedBeforeNextRequest = connectorCompletionTimes.some((completedAt) =>
+                  completedAt >= request.createdAt && completedAt < nextRequest.createdAt
+                );
+                if (!drainedBeforeNextRequest) {
+                  core.info(
+                    `same-head Shepherd review request chain is ambiguous between ` +
+                    `${request.base} and ${nextRequest.base}; exact-diff merge remains disabled`,
+                  );
+                  return;
+                }
+              }
+
               const exactHeadReviews = allReviews
                 .filter((review) =>
                   isConnectorLogin(review.user?.login) &&
@@ -635,19 +667,9 @@ jobs:
                   createdAt: comment.created_at,
                 }];
               });
-              const connectorCleanCandidates = allComments.filter((comment) =>
-                isConnectorLogin(comment.user?.login) &&
-                comment.created_at &&
-                comment.created_at >= latestReviewRequestAt &&
-                /Didn't find any major issues\./i.test(String(comment.body || ''))
-              );
               let connectorCleanExactHead = false;
-              for (const comment of connectorCleanCandidates) {
-                const reviewedCommitSha = await resolveReviewedCommitSha(comment.body);
-                if (reviewedCommitSha === expectedHeadSha) {
-                  connectorCleanExactHead = true;
-                  break;
-                }
+              if (cleanCompletionTimes.some((completedAt) => completedAt >= latestReviewRequestAt)) {
+                connectorCleanExactHead = true;
               }
 
               if (exactHeadReviews.length === 0) {
