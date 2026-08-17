@@ -59,6 +59,7 @@ jobs:
       )
     permissions:
       actions: write
+      contents: read
       pull-requests: read
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -134,7 +135,7 @@ jobs:
     name: Apply Codex shepherd update
     if: github.event_name == 'workflow_dispatch'
     permissions:
-      actions: read
+      actions: write
       contents: read
       issues: write
       pull-requests: read
@@ -144,7 +145,7 @@ jobs:
       group: codex-shepherd-update-${{ github.event.inputs.pull_request_number }}
       cancel-in-progress: false
     steps:
-      - name: Drive exact-diff Codex review state
+      - name: Converge exact-diff Codex review state
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
         with:
           retries: 3
@@ -157,18 +158,21 @@ jobs:
             const reviewedCommitPattern = /Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i;
             const reviewMarkerPattern =
               /<!-- aletheia-codex-shepherd head=([0-9a-f]{40}) base=([0-9a-f]{40}) kind=review -->/g;
-            const haltMarkerPattern =
-              /<!-- aletheia-codex-shepherd halt head=([0-9a-f]{40}) base=([0-9a-f]{40}) reason=([a-z-]+) -->/g;
-            const repairableCiConclusions = new Set(['failure', 'timed_out']);
+            const noteMarkerPattern =
+              /<!-- aletheia-codex-shepherd head=([0-9a-f]{40}) base=([0-9a-f]{40}) kind=note reason=([a-z-]+) -->/g;
             const request = context.payload.inputs || {};
-            const pullRequestNumber = Number.parseInt(String(request.pull_request_number || ''), 10);
+            const pullRequestNumberInput = String(request.pull_request_number || '');
+            if (!/^[1-9][0-9]*$/.test(pullRequestNumberInput)) {
+              throw new Error('pull request number must use canonical positive-integer form');
+            }
+            const pullRequestNumber = Number(pullRequestNumberInput);
+            if (!Number.isSafeInteger(pullRequestNumber)) {
+              throw new Error('pull request number exceeds the safe integer range');
+            }
             const expectedHeadSha = String(request.expected_head_sha || '');
             const expectedBaseSha = String(request.expected_base_sha || '');
             const sourceEvent = String(request.source_event || '');
 
-            if (!Number.isInteger(pullRequestNumber) || pullRequestNumber <= 0) {
-              throw new Error('pull request number must be a positive integer');
-            }
             if (!/^[0-9a-f]{40}$/.test(expectedHeadSha)) {
               throw new Error('expected head SHA must be a 40-character lowercase Git object ID');
             }
@@ -224,6 +228,24 @@ jobs:
               };
             };
 
+            const dispatchCurrentIdentity = async (reason) => {
+              const current = await loadCurrentIdentity();
+              if (!current.eligible || !/^[0-9a-f]{40}$/.test(current.baseSha || '')) return false;
+              await github.rest.actions.createWorkflowDispatch({
+                ...context.repo,
+                workflow_id: 'codex-shepherd.yml',
+                ref: 'master',
+                inputs: {
+                  pull_request_number: String(current.pullRequest.number),
+                  expected_head_sha: current.pullRequest.head.sha,
+                  expected_base_sha: current.baseSha,
+                  source_event: sourceEvent,
+                  source_action: `reconcile:${reason}`,
+                },
+              });
+              return true;
+            };
+
             const initialIdentity = await loadCurrentIdentity();
             if (!initialIdentity.eligible) {
               core.info('pull request is outside the autonomous Shepherd boundary');
@@ -238,6 +260,7 @@ jobs:
                 `Shepherd request for ${expectedHeadSha}@${expectedBaseSha} is stale; ` +
                 `current review identity is ${pullRequest.head.sha}@${initialIdentity.baseSha}`,
               );
+              await dispatchCurrentIdentity('stale-apply');
               return;
             }
 
@@ -249,8 +272,9 @@ jobs:
                 current.baseSha === expectedBaseSha;
               if (!matches) {
                 core.info(
-                  `skipping stale Shepherd mutation for ${expectedHeadSha}@${expectedBaseSha}`,
+                  `skipping stale Shepherd comment for ${expectedHeadSha}@${expectedBaseSha}`,
                 );
+                await dispatchCurrentIdentity('stale-comment-boundary');
               }
               return matches;
             };
@@ -287,9 +311,9 @@ jobs:
                   createdAt: comment.created_at,
                 });
               }
-              for (const match of body.matchAll(haltMarkerPattern)) {
+              for (const match of body.matchAll(noteMarkerPattern)) {
                 found.push({
-                  type: 'halt',
+                  type: 'note',
                   head: match[1],
                   base: match[2],
                   reason: match[3],
@@ -308,10 +332,6 @@ jobs:
               latestSameHeadReviewRequest?.base === expectedBaseSha
             ) ? latestSameHeadReviewRequest.createdAt : null;
             const exactDiffReviewRequest = latestReviewRequestAt !== null;
-            const exactDiffHalt = markers.some(
-              ({type, head, base}) =>
-                type === 'halt' && head === expectedHeadSha && base === expectedBaseSha
-            );
 
             const cleanCompletionTimes = [];
             for (const comment of issueComments) {
@@ -351,12 +371,7 @@ jobs:
               review.submitted_at >= latestReviewRequestAt &&
               review.state !== 'DISMISSED'
             );
-            const connectorCleanExactDiff = latestReviewRequestAt !== null &&
-              cleanCompletionTimes.some((completedAt) => completedAt >= latestReviewRequestAt);
 
-            let holdLabelPresent = pullRequest.labels.some(
-              ({name}) => name === 'do-not-auto-merge'
-            );
             const postComment = async (body) => {
               if (!(await identityStillCurrent())) return false;
               await github.rest.issues.createComment({
@@ -366,35 +381,24 @@ jobs:
               });
               return true;
             };
-            const ensureHoldLabel = async () => {
-              if (holdLabelPresent) return true;
-              if (!(await identityStillCurrent())) return false;
-              await github.rest.issues.addLabels({
-                ...context.repo,
-                issue_number: pullRequest.number,
-                labels: ['do-not-auto-merge'],
-              });
-              holdLabelPresent = true;
-              return true;
+            const noteForOwner = async (reason, message) => {
+              const alreadyNoted = markers.some(
+                ({type, head, base, reason: notedReason}) =>
+                  type === 'note' &&
+                  head === expectedHeadSha &&
+                  base === expectedBaseSha &&
+                  notedReason === reason
+              );
+              if (alreadyNoted) return true;
+              return postComment(
+                `${message}\n\n` +
+                `<!-- aletheia-codex-shepherd head=${expectedHeadSha} base=${expectedBaseSha} ` +
+                `kind=note reason=${reason} -->`
+              );
             };
-            const holdForOwner = async (reason, message) => {
-              if (!(await identityStillCurrent())) return false;
-              if (!exactDiffHalt) {
-                const posted = await postComment(
-                  `${message}\n\n` +
-                  `Codex Cloud repair is not authorized to push back to this repository yet, so ` +
-                  `the Shepherd fails closed instead of claiming an autonomous repair.\n\n` +
-                  `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} base=${expectedBaseSha} reason=${reason} -->`
-                );
-                if (!posted) return false;
-              }
-              return ensureHoldLabel();
-            };
-
-            if (exactDiffHalt && !(await ensureHoldLabel())) return;
 
             if (changedFiles.length !== pullRequest.changed_files) {
-              await holdForOwner(
+              await noteForOwner(
                 'file-list-incomplete',
                 `GitHub returned ${changedFiles.length} of ${pullRequest.changed_files} changed files ` +
                 `for exact review identity \`${expectedHeadSha}@${expectedBaseSha}\`; ` +
@@ -407,22 +411,16 @@ jobs:
               [filename, previous_filename].includes(shepherdPath)
             );
             if (changesShepherdAuthority) {
-              await holdForOwner(
+              await noteForOwner(
                 'shepherd-self-change',
                 `Codex Shepherd authority changed on exact review identity ` +
                 `\`${expectedHeadSha}@${expectedBaseSha}\`. This control-plane change ` +
-                `requires explicit owner merge and cannot resume through ordinary auto-merge.`
+                `requires explicit owner merge; existing auto-merge authority remains fail-closed.`
               );
-              return;
-            }
-
-            if (holdLabelPresent) {
-              core.info('do-not-auto-merge holds this pull request');
-              return;
             }
 
             if (exactDiffReviews.length !== 0) {
-              await holdForOwner(
+              await noteForOwner(
                 'review-finding',
                 `Codex reported findings on exact review identity ` +
                 `\`${expectedHeadSha}@${expectedBaseSha}\`. Owner disposition or a ` +
@@ -454,33 +452,4 @@ jobs:
               return;
             }
 
-            const latestCiRun = async () => {
-              const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
-                ...context.repo,
-                event: 'pull_request',
-                head_sha: expectedHeadSha,
-                per_page: 100,
-              });
-              return runs
-                .filter((run) => run.name === 'Aletheia CI')
-                .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))[0] || null;
-            };
-
-            if (connectorCleanExactDiff) {
-              const run = await latestCiRun();
-              if (
-                run &&
-                run.status === 'completed' &&
-                repairableCiConclusions.has(run.conclusion)
-              ) {
-                await holdForOwner(
-                  'ci-failure',
-                  `Aletheia CI run ${run.id} concluded \`${run.conclusion}\` on exact head ` +
-                  `\`${expectedHeadSha}\` after the current diff received a clean Codex review. ` +
-                  `A write-capable repair executor is required.`
-                );
-                return;
-              }
-            }
-
-            core.info(`Shepherd state converged from ${sourceEvent}; no further mutation is required`);
+            core.info(`Shepherd review state converged from ${sourceEvent}; no further mutation is required`);

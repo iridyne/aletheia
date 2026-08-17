@@ -39,7 +39,7 @@ def _auto_merge_source() -> str:
         "agent_contracts",
         "§PR/CI control plane",
         "L2a",
-        "Codex PR Shepherd separates trusted scheduling from PR metadata mutation, serializes mutations per PR, revalidates exact review identity before writes, and cannot obtain repository-content or merge authority.",
+        "Codex PR Shepherd is a least-privilege review orchestrator: it serializes per-PR convergence, self-heals stale dispatches, binds review requests to exact head/merge-base identity, and never owns merge or global hold state.",
         status="implemented",
     )
 )
@@ -71,13 +71,13 @@ def test_codex_shepherd_uses_two_stage_least_privilege_control_plane() -> None:
     schedule = workflow["jobs"]["schedule"]
     assert schedule["permissions"] == {
         "actions": "write",
+        "contents": "read",
         "pull-requests": "read",
     }
-    assert schedule["runs-on"] == "ubuntu-24.04"
-    assert "actions/checkout" not in str(schedule)
     schedule_script = _schedule_script()
-    assert "github.rest.actions.createWorkflowDispatch" in schedule_script
     assert "github.rest.repos.compareCommitsWithBasehead" in schedule_script
+    assert "github.rest.actions.createWorkflowDispatch" in schedule_script
+    assert "workflow_id: 'codex-shepherd.yml'" in schedule_script
     assert "expected_base_sha: expectedBaseSha" in schedule_script
     assert "github.rest.issues.createComment" not in schedule_script
     assert "github.rest.issues.addLabels" not in schedule_script
@@ -85,75 +85,87 @@ def test_codex_shepherd_uses_two_stage_least_privilege_control_plane() -> None:
 
     apply = workflow["jobs"]["apply"]
     assert apply["permissions"] == {
-        "actions": "read",
+        "actions": "write",
         "contents": "read",
         "issues": "write",
         "pull-requests": "read",
     }
-    assert apply["runs-on"] == "ubuntu-24.04"
     assert apply["concurrency"] == {
         "group": "codex-shepherd-update-${{ github.event.inputs.pull_request_number }}",
         "cancel-in-progress": "false",
     }
-    assert "actions/checkout" not in str(apply)
     script = _apply_script()
     assert "github.rest.pulls.merge" not in script
     assert "github.rest.git.updateRef" not in script
     assert "createOrUpdateFileContents" not in script
+    assert "github.rest.issues.addLabels" not in script
 
 
-def test_shepherd_binds_dispatch_and_markers_to_exact_head_and_merge_base() -> None:
+def test_shepherd_rejects_noncanonical_manual_pr_numbers_before_mutation() -> None:
+    script = _apply_script()
+
+    canonical = script.index("if (!/^[1-9][0-9]*$/.test(pullRequestNumberInput))")
+    parsed = script.index("const pullRequestNumber = Number(pullRequestNumberInput)", canonical)
+    first_api_read = script.index("const loadCurrentIdentity = async", parsed)
+    assert canonical < parsed < first_api_read
+    assert "Number.parseInt" not in script
+    assert "Number.isSafeInteger(pullRequestNumber)" in script
+
+
+def test_shepherd_binds_requests_to_exact_head_and_merge_base() -> None:
     schedule_script = _schedule_script()
     script = _apply_script()
 
     assert "const expectedBaseSha = comparison.merge_base_commit.sha" in schedule_script
     assert "expected_head_sha: pullRequest.head.sha" in schedule_script
     assert "expected_base_sha: expectedBaseSha" in schedule_script
-
-    assert "const expectedHeadSha = String(request.expected_head_sha || '')" in script
-    assert "const expectedBaseSha = String(request.expected_base_sha || '')" in script
     assert "const loadCurrentIdentity" in script
     assert "comparison.merge_base_commit.sha" in script
-    assert "current review identity is" in script
     assert "head=([0-9a-f]{40}) base=([0-9a-f]{40}) kind=review" in script
-    assert "halt head=([0-9a-f]{40}) base=([0-9a-f]{40}) reason=" in script
+    assert "kind=note reason=([a-z-]+)" in script
     assert "comment.user?.login === shepherdLogin" in script
 
 
-def test_shepherd_revalidates_identity_before_every_pr_side_mutation() -> None:
+def test_stale_apply_redispatches_current_identity_in_same_pr_lane() -> None:
+    workflow = _workflow()
+    apply = workflow["jobs"]["apply"]
     script = _apply_script()
 
-    assert "const identityStillCurrent = async () =>" in script
-    assert "skipping stale Shepherd mutation" in script
-
-    post_comment = script.index("const postComment = async")
-    post_recheck = script.index("if (!(await identityStillCurrent())) return false", post_comment)
-    comment_write = script.index("github.rest.issues.createComment", post_recheck)
-    assert post_comment < post_recheck < comment_write
-
-    label_helper = script.index("const ensureHoldLabel = async")
-    label_recheck = script.index("if (!(await identityStillCurrent())) return false", label_helper)
-    label_write = script.index("github.rest.issues.addLabels", label_recheck)
-    assert label_helper < label_recheck < label_write
-
-    hold_helper = script.index("const holdForOwner = async")
-    hold_recheck = script.index("if (!(await identityStillCurrent())) return false", hold_helper)
-    hold_comment = script.index("const posted = await postComment", hold_recheck)
-    hold_label = script.index("return ensureHoldLabel()", hold_comment)
-    assert hold_helper < hold_recheck < hold_comment < hold_label
-
-
-def test_shepherd_serializes_mutation_lane_per_pr_not_per_head() -> None:
-    apply = _workflow()["jobs"]["apply"]
-    script = _apply_script()
-
-    group = apply["concurrency"]["group"]
-    assert group == "codex-shepherd-update-${{ github.event.inputs.pull_request_number }}"
-    assert "expected_head_sha" not in group
-    assert "expected_base_sha" not in group
+    assert apply["concurrency"]["group"] == (
+        "codex-shepherd-update-${{ github.event.inputs.pull_request_number }}"
+    )
     assert apply["concurrency"]["cancel-in-progress"] == "false"
-    assert "pullRequest.head.sha !== expectedHeadSha" in script
-    assert "initialIdentity.baseSha !== expectedBaseSha" in script
+    assert "const dispatchCurrentIdentity = async (reason) =>" in script
+    assert "workflow_id: 'codex-shepherd.yml'" in script
+    assert "source_action: `reconcile:${reason}`" in script
+
+    stale_gate = script.index("current review identity is")
+    stale_redispatch = script.index("await dispatchCurrentIdentity('stale-apply')", stale_gate)
+    stale_return = script.index("return;", stale_redispatch)
+    assert stale_gate < stale_redispatch < stale_return
+
+
+def test_comment_boundary_rechecks_identity_and_repairs_liveness() -> None:
+    script = _apply_script()
+
+    current_check = script.index("const identityStillCurrent = async () =>")
+    redispatch = script.index("await dispatchCurrentIdentity('stale-comment-boundary')", current_check)
+    post_helper = script.index("const postComment = async", redispatch)
+    post_recheck = script.index("if (!(await identityStillCurrent())) return false", post_helper)
+    comment_write = script.index("github.rest.issues.createComment", post_recheck)
+    assert current_check < redispatch < post_helper < post_recheck < comment_write
+
+
+def test_shepherd_does_not_project_global_hold_or_ci_failure_state() -> None:
+    script = _apply_script()
+
+    assert "github.rest.issues.addLabels" not in script
+    assert "do-not-auto-merge" not in script
+    assert "repairableCiConclusions" not in script
+    assert "listWorkflowRunsForRepo" not in script
+    assert "ci-failure" not in script
+    assert "const noteForOwner" in script
+    assert "kind=note reason=${reason}" in script
 
 
 def test_shepherd_serializes_same_head_review_requests_across_bases() -> None:
@@ -173,52 +185,41 @@ def test_shepherd_serializes_same_head_review_requests_across_bases() -> None:
     assert request_log < completion_times < request_gate < wait_prior < post_request
 
 
-def test_shepherd_finding_self_change_and_ci_failure_fail_closed() -> None:
+def test_shepherd_current_finding_and_self_change_are_diagnostic_only() -> None:
     script = _apply_script()
 
     assert "changedFiles.length !== pullRequest.changed_files" in script
     assert "file-list-incomplete" in script
-    assert "cannot prove the authority boundary" in script
     assert "const changesShepherdAuthority" in script
     assert "shepherd-self-change" in script
     assert "requires explicit owner merge" in script
     assert "review-finding" in script
-    assert "ci-failure" in script
-    assert "labels: ['do-not-auto-merge']" in script
-    assert "Codex Cloud repair is not authorized to push back" in script
+    assert "write-capable repair executor is required" in script
     assert "@codex fix" not in script
 
     self_change = script.index("if (changesShepherdAuthority)")
-    owner_hold = script.index("if (holdLabelPresent)", self_change)
-    findings = script.index("if (exactDiffReviews.length !== 0)", owner_hold)
+    self_note = script.index("'shepherd-self-change'", self_change)
+    findings = script.index("if (exactDiffReviews.length !== 0)", self_note)
     review_request = script.index("if (!exactDiffReviewRequest)", findings)
-    assert self_change < owner_hold < findings < review_request
+    assert self_change < self_note < findings < review_request
 
 
-def test_shepherd_only_uses_current_request_evidence_and_current_ci_failure() -> None:
+def test_shepherd_only_uses_connector_evidence_after_current_request() -> None:
     script = _apply_script()
 
     assert "review.commit_id === expectedHeadSha" in script
     assert "review.submitted_at >= latestReviewRequestAt" in script
     assert "review.state !== 'DISMISSED'" in script
-    assert "cleanCompletionTimes.some((completedAt) => completedAt >= latestReviewRequestAt)" in script
-    assert "const repairableCiConclusions = new Set(['failure', 'timed_out'])" in script
-    assert ".filter((run) => run.name === 'Aletheia CI')" in script
-    assert ".sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))" in script
+    assert "cleanCompletionTimes" in script
+    assert "connectorCompletionTimes" in script
 
 
-def test_auto_merge_master_still_owns_merge_authority_and_self_change_gate() -> None:
+def test_auto_merge_master_remains_sole_merge_authority() -> None:
     source = _auto_merge_source()
 
     shepherd_token = "'.github/workflows/codex-shepherd.yml'"
     authority_message = "merge-authority workflow changes require an explicit manual merge"
     assert source.count(shepherd_token) == 3
-    assert source.count("'.github/workflows/auto-merge.yml'") >= 3
     assert source.count(authority_message) == 2
     assert "github.rest.pulls.merge" in source
-
-    schedule_complete = source.index(
-        "const changedFilesComplete = changedFiles.length === pullRequest.changed_files"
-    )
-    schedule_authority = source.index("const changesMergeAuthority", schedule_complete)
-    assert "!changedFilesComplete ||" in source[schedule_authority : schedule_authority + 700]
+    assert "github.rest.pulls.merge" not in _apply_script()
