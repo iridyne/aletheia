@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 from typing import Any
@@ -64,6 +64,7 @@ STAGE_ALLOCATION = {
     "paper_25": 0.25,
     "paper_50": 0.50,
 }
+EXPERIMENT_IDLE_AFTER = timedelta(hours=24)
 
 
 def _lifecycle_audit_payload(event: LearningLifecycleEvent) -> dict[str, Any]:
@@ -88,6 +89,7 @@ def _lifecycle_audit_payload(event: LearningLifecycleEvent) -> dict[str, Any]:
     }
 LIFECYCLE_ACTIONS = frozenset({
     "admit_trial", "promote_stage", "hold", "refreeze", "invalidate",
+    "retire_idle",
 })
 
 
@@ -951,7 +953,23 @@ def run_lifecycle_controller() -> dict[str, int]:
             # Contain the failure to the offending experiment. (issue #160)
             try:
                 epoch = current_policy_epoch(pid) or ""
-                results.append(process_lifecycle(experiment_id, current_policy_epoch=epoch))
+                idle = _is_experiment_idle(experiment_id)
+                if idle:
+                    # An idle experiment gets one final evidence pass before any
+                    # terminal mutation. Evaluation failure leaves it open.
+                    from aletheia.learning.contribution_runner import evaluate_experiment
+
+                    evaluate_experiment(experiment_id)
+                result = process_lifecycle(
+                    experiment_id, current_policy_epoch=epoch,
+                )
+                if idle and result.action == "hold":
+                    result = _retire_idle_experiment(
+                        experiment_id,
+                        policy_epoch=epoch,
+                        verdict_id=result.verdict_id,
+                    )
+                results.append(result)
             except Exception:
                 failed_experiments += 1
                 logger.warning(
@@ -964,8 +982,97 @@ def run_lifecycle_controller() -> dict[str, int]:
         "promoted": sum(result.action == "promote_stage" for result in results),
         "refrozen": sum(result.action in {"refreeze", "invalidate"} for result in results),
         "admitted": sum(result.action == "admit_trial" for result in results),
+        "retired_idle": sum(result.action == "retire_idle" for result in results),
         "failed_experiments": failed_experiments,
     }
+
+
+def _is_experiment_idle(
+    experiment_id: str, *, now: datetime | None = None,
+) -> bool:
+    row = get_db().execute(
+        "SELECT COALESCE(MAX(x.exposed_at), e.started_at, e.created_at) AS last_activity_at "
+        "FROM learning_experiments e LEFT JOIN learning_exposures x "
+        "ON x.experiment_id=e.experiment_id "
+        "WHERE e.experiment_id=? AND e.ended_at IS NULL GROUP BY e.experiment_id",
+        (experiment_id,),
+    ).fetchone()
+    if row is None or not row["last_activity_at"]:
+        return False
+    try:
+        last_activity = datetime.fromisoformat(
+            str(row["last_activity_at"]).replace("Z", "+00:00")
+        )
+        if last_activity.tzinfo is None:
+            last_activity = last_activity.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return (now or datetime.now(timezone.utc)) - last_activity >= EXPERIMENT_IDLE_AFTER
+
+
+def _retire_idle_experiment(
+    experiment_id: str,
+    *,
+    policy_epoch: str,
+    verdict_id: str | None,
+) -> LifecycleResult:
+    experiment_row = get_record("learning_experiments", experiment_id)
+    if experiment_row is None or experiment_row.get("ended_at") is not None:
+        return LifecycleResult(
+            "hold", "retire_idle", "experiment_not_open", experiment_id,
+            verdict_id=verdict_id,
+        )
+    experiment = LearningExperiment.model_validate(experiment_row)
+    hypothesis_row = get_record("learning_hypotheses", experiment.hypothesis_id)
+    if hypothesis_row is None:
+        return LifecycleResult(
+            "hold", "retire_idle", "hypothesis_not_found", experiment_id,
+            verdict_id=verdict_id,
+        )
+    verdict = (
+        get_record("learning_contribution_verdicts", verdict_id)
+        if verdict_id else None
+    )
+    measurement = str((verdict or {}).get("verdict") or "insufficient_data")
+    reason = (
+        "insufficient_data:idle_expired"
+        if measurement == "insufficient_data"
+        else f"idle_expired:final_evaluation:{measurement}"
+    )
+    now = _now()
+    event = LearningLifecycleEvent(
+        dedup_key=f"idle_expired:{experiment_id}",
+        hypothesis_id=experiment.hypothesis_id,
+        experiment_id=experiment_id,
+        verdict_id=verdict_id,
+        from_stage=experiment.stage,
+        action="retire_idle",
+        reason=reason,
+        policy_epoch=policy_epoch,
+        created_at=now,
+    )
+    with transaction():
+        if not insert_lifecycle_event(event):
+            return LifecycleResult(
+                "retire_idle", "retire_idle", "already_transitioned",
+                experiment_id, verdict_id=verdict_id,
+            )
+        db = get_db()
+        db.execute(
+            "UPDATE learning_experiments SET status='idle_expired', ended_at=? "
+            "WHERE experiment_id=? AND ended_at IS NULL",
+            (now, experiment_id),
+        )
+        db.execute(
+            "UPDATE learning_hypotheses SET status='idle_expired', updated_at=? "
+            "WHERE hypothesis_id=?",
+            (now, experiment.hypothesis_id),
+        )
+    _write_lifecycle_audit(event)
+    return LifecycleResult(
+        "retire_idle", "retire_idle", reason, experiment_id,
+        verdict_id=verdict_id,
+    )
 
 
 def _stage_allocation(stage: str) -> float:

@@ -33,11 +33,17 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
         "Paper authority binds activation and current-stage measurements to the same hypothesis, "
         "closed predecessor, declared horizon, and declared path.", status="implemented",
     ),
+    SpecClaim(
+        "LE-L06", "learning_evolution", "§7.2 idle retirement", "L2c",
+        "A measurement-supported experiment idle for 24 hours is final-evaluated before an "
+        "audited soft terminal state, and evaluation failure leaves it open.", status="implemented",
+    ),
 )
 def test_lifecycle_runtime_surface_exists():
     from aletheia.learning.authority import resolve_learning_authority
     from aletheia.learning.lifecycle import (
         admit_shadow_trial,
+        EXPERIMENT_IDLE_AFTER,
         inspect_learning_experiment,
         measurement_to_lifecycle_action,
         process_lifecycle,
@@ -48,3 +54,4 @@ def test_lifecycle_runtime_surface_exists():
     assert callable(admit_shadow_trial)
     assert callable(resolve_learning_authority)
     assert callable(inspect_learning_experiment)
+    assert EXPERIMENT_IDLE_AFTER.total_seconds() == 24 * 60 * 60
