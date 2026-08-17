@@ -73,6 +73,15 @@ function renderCleanModelSettings() {
 	);
 }
 
+function renderModelSettingsWithProvider() {
+	const client = cleanModelClient({ primary_api: EXISTING_PROFILE });
+	return renderToStaticMarkup(
+		<QueryClientProvider client={client}>
+			<ModelProvidersSection qc={client} />
+		</QueryClientProvider>,
+	);
+}
+
 function changeInput(input: HTMLInputElement, value: string) {
 	const setter = Object.getOwnPropertyDescriptor(
 		HTMLInputElement.prototype,
@@ -94,6 +103,28 @@ describe("ModelProvidersSection", () => {
 		expect(html).toContain(
 			"Configuration never enables a provider automatically.",
 		);
+	});
+
+	it("names provider switches and keeps the editor label outside its switch label", () => {
+		const html = renderModelSettingsWithProvider();
+		expect(html).toContain('aria-label="Enable Primary API"');
+
+		const client = cleanModelClient();
+		const editor = renderToStaticMarkup(
+			<QueryClientProvider client={client}>
+				<ApiProfileEditor
+					initial={draftFromProfile("primary_api", EXISTING_PROFILE)}
+					existing={EXISTING_PROFILE}
+					providerTypes={[API_TYPE]}
+					qc={client}
+					onClose={() => undefined}
+				/>
+			</QueryClientProvider>,
+		);
+
+		expect(editor).toContain("aria-labelledby=");
+		expect(editor).toContain("for=");
+		expect(editor).not.toContain('<label class="model-editor-enabled">');
 	});
 
 	it.each([

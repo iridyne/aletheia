@@ -39,4 +39,8 @@ describe('SignalsTab', () => {
     expect(html).toContain('Prediction observer')
     expect(html).toContain('No tickers — equity_observer will not run.')
   })
+
+  it('names each news-feed switch from its sibling feed identity', () => {
+    expect(SRC).toContain('aria-label={`Enable ${f.name}`}')
+  })
 })

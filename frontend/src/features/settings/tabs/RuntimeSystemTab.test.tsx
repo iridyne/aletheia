@@ -40,6 +40,7 @@ describe('RuntimeSystemTab', () => {
     expect(html).toContain('Historical Data')
     expect(html).toContain('Data Retention')
     expect(html).toContain('Export')
+    expect(html).toContain('Auto-update enabled')
     expect(SRC).toContain('<HistoricalDataCard settings={settings} qc={qc} onDirty={onDirty} />')
     expect(SRC).toContain('<RetentionCard settings={settings} qc={qc} onDirty={onDirty} />')
     expect(SRC).toContain('<DataExportCard />')
