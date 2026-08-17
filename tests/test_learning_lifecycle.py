@@ -2265,6 +2265,95 @@ def test_lifecycle_controller_isolates_a_failing_experiment(monkeypatch):
     assert result["experiments"] == 1
 
 
+def test_lifecycle_controller_final_evaluates_and_retires_idle_experiment(monkeypatch):
+    from aletheia.learning import contribution_runner, lifecycle
+    from aletheia.learning.ledger import get_record, insert_exposure
+    from aletheia.learning.models import LearningExposure
+    from aletheia.storage.sqlite import get_db
+
+    hypothesis, experiment = _experiment()
+    exposed_at = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+    assert insert_exposure(LearningExposure(
+        dedup_key="idle-exposure",
+        experiment_id=experiment.experiment_id,
+        hypothesis_id=hypothesis.hypothesis_id,
+        assignment="control",
+        consumer="universe_allocator",
+        consumer_stage="score",
+        path_id=hypothesis.path_id,
+        overlap_group=hypothesis.overlap_group,
+        concurrent_policy_epoch="epoch-a",
+        exposed_at=exposed_at,
+    ))
+    calls: list[str] = []
+
+    monkeypatch.setattr(lifecycle, "current_policy_epoch", lambda _path: "epoch-a")
+    monkeypatch.setattr(
+        contribution_runner,
+        "evaluate_experiment",
+        lambda experiment_id: calls.append(f"evaluate:{experiment_id}") or [],
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "process_lifecycle",
+        lambda experiment_id, *, current_policy_epoch: (
+            calls.append(f"process:{experiment_id}")
+            or lifecycle.LifecycleResult(
+                "hold", "hold", "no_current_stage_measurement", experiment_id,
+            )
+        ),
+    )
+
+    result = lifecycle.run_lifecycle_controller()
+
+    assert calls == [
+        f"evaluate:{experiment.experiment_id}",
+        f"process:{experiment.experiment_id}",
+    ]
+    assert result["retired_idle"] == 1
+    persisted = get_record("learning_experiments", experiment.experiment_id)
+    assert persisted["status"] == "idle_expired"
+    assert persisted["ended_at"] is not None
+    assert (
+        get_record("learning_hypotheses", hypothesis.hypothesis_id)["status"]
+        == "idle_expired"
+    )
+    event = get_db().execute(
+        "SELECT action, reason FROM learning_lifecycle_events WHERE experiment_id=?",
+        (experiment.experiment_id,),
+    ).fetchone()
+    assert tuple(event) == ("retire_idle", "insufficient_data:idle_expired")
+    assert lifecycle.run_lifecycle_controller()["retired_idle"] == 0
+
+    failed_hypothesis, failed_experiment = _experiment(
+        stage="paper_10", allocation=0.1,
+    )
+    assert insert_exposure(LearningExposure(
+        dedup_key="idle-exposure-evaluation-fails",
+        experiment_id=failed_experiment.experiment_id,
+        hypothesis_id=failed_hypothesis.hypothesis_id,
+        assignment="control",
+        consumer="universe_allocator",
+        consumer_stage="score",
+        path_id=failed_hypothesis.path_id,
+        overlap_group=failed_hypothesis.overlap_group,
+        concurrent_policy_epoch="epoch-a",
+        exposed_at=exposed_at,
+    ))
+    monkeypatch.setattr(
+        contribution_runner,
+        "evaluate_experiment",
+        lambda _experiment_id: (_ for _ in ()).throw(RuntimeError("unavailable")),
+    )
+
+    failed = lifecycle.run_lifecycle_controller()
+
+    assert failed["failed_experiments"] == 1
+    assert get_record(
+        "learning_experiments", failed_experiment.experiment_id,
+    )["ended_at"] is None
+
+
 def test_lifecycle_audit_failure_is_durable_and_reconciles(monkeypatch):
     from aletheia.files import jsonl
     from aletheia.learning import lifecycle

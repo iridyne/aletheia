@@ -36,10 +36,9 @@ from aletheia.learning.models import LearningExperiment, LearningExposure, Learn
 from aletheia.learning.registry import get_learning_path
 from aletheia.learning.policy_epochs import PolicyEpoch, build_policy_epoch
 
-# Hypothesis statuses that forbid opening a *new* experiment.  `refrozen` is
-# written by the lifecycle controller when it invalidates an experiment, and is
-# a durable verdict on the hypothesis rather than on that one experiment.
-REFROZEN_HYPOTHESIS_STATUSES = frozenset({"refrozen"})
+# Hypothesis statuses that forbid opening a *new* experiment. They are durable
+# terminal decisions on the hypothesis, not merely on one experiment row.
+TERMINAL_HYPOTHESIS_STATUSES = frozenset({"refrozen", "idle_expired"})
 
 
 @dataclass(frozen=True)
@@ -171,7 +170,7 @@ def _ensure_experiment(
 
     experiment_row = get_open_experiment(hypothesis.hypothesis_id)
     if experiment_row is None:
-        if hypothesis.status in REFROZEN_HYPOTHESIS_STATUSES:
+        if hypothesis.status in TERMINAL_HYPOTHESIS_STATUSES:
             _log.debug(
                 "refusing new experiment on %s hypothesis %s (path=%s)",
                 hypothesis.status, hypothesis.hypothesis_id, path_id,
@@ -449,11 +448,11 @@ def apply_numeric_treatment(
                 target_horizon=target_horizon, consumer=consumer,
             )
     if experiment is None:
-        # Refrozen hypothesis with nothing open: record no exposure and apply
-        # nothing.  Accruing further samples here would rebuild the evidence
-        # base for a hypothesis that has already been rejected.
+        # Terminal hypothesis with nothing open: record no exposure and apply
+        # nothing. Accruing further samples here would silently restart a
+        # completed lifecycle generation.
         return InfluenceDecision(
-            baseline_value, False, "unassigned", "hypothesis_refrozen",
+            baseline_value, False, "unassigned", f"hypothesis_{hypothesis.status}",
             hypothesis_id=hypothesis.hypothesis_id,
         )
     assignment = stable_assignment(experiment, assignment_key or candidate_key)

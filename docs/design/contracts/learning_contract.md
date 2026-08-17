@@ -214,6 +214,10 @@ loop contributes positively. Current behavior has these contract-relevant limita
 - experiment registration is not an observation start. The first durable exposure atomically and
   idempotently changes an open experiment from `registered` to `active`, and `started_at` is always
   repaired to the earliest durable exposure;
+- a measurement-supported experiment with no exposure for 24 hours receives one final evaluation
+  before lifecycle mutation. Evaluation failure leaves it open. If the ordinary verdict lifecycle
+  still holds, it closes as `idle_expired` with an auditable `insufficient_data:idle_expired` (or
+  final-verdict) reason; the same hypothesis cannot reopen on a scanner tick;
 - the evaluator persists positive/neutral/negative/insufficient/invalid monitoring verdicts and,
   when a frozen Paper cutoff is complete, at most one confirmatory verdict. It never mutates trading
   authority itself. A protected owner admission plus the separate lifecycle/authority and consumed
