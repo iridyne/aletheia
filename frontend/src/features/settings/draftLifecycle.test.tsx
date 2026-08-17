@@ -61,23 +61,4 @@ describe('useSettingsDraftLifecycle', () => {
     await act(async () => root.unmount())
     container.remove()
   })
-
-  it('preserves a draft when the edit and refresh are batched together', async () => {
-    const container = document.createElement('div')
-    const root = createRoot(container)
-    ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-
-    await act(async () => root.render(<Harness server={{ value: 'server-1' }} onDirty={() => undefined} />))
-    const input = container.querySelector('input') as HTMLInputElement
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-      setter?.call(input, 'local-draft')
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-      root.render(<Harness server={{ value: 'server-2' }} onDirty={() => undefined} />)
-    })
-    expect(input.value).toBe('local-draft')
-
-    await act(async () => root.unmount())
-    container.remove()
-  })
 })

@@ -16,19 +16,22 @@ export function useSettingsDraftLifecycle({
   serverKey: unknown
   adoptServer: () => void
 }) {
-  const dirtyRef = useRef(dirty)
+  const previousDirtyRef = useRef(dirty)
   const initializedRef = useRef(false)
   const adoptServerRef = useRef(adoptServer)
   const onDirtyRef = useRef(onDirty)
-  dirtyRef.current = dirty
   adoptServerRef.current = adoptServer
   onDirtyRef.current = onDirty
 
   useEffect(() => {
-    const shouldAdopt = !initializedRef.current || !dirtyRef.current
+    const shouldAdopt = !initializedRef.current || !previousDirtyRef.current
     initializedRef.current = true
     if (shouldAdopt) adoptServerRef.current()
   }, [serverKey])
+
+  useEffect(() => {
+    previousDirtyRef.current = dirty
+  }, [dirty])
 
   useEffect(() => {
     onDirtyRef.current?.(id, dirty)
