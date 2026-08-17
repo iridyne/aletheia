@@ -596,6 +596,7 @@ def _evaluate_state(state: dict, *, now_ms: int, detected_at: str) -> dict:
             trailing = None
         if isinstance(trailing, dict) and trailing.get("observation") == "completed_1m":
             from aletheia.config.loader import load_config
+            from aletheia.execution.close_convergence import has_unresolved_close_claim
             from aletheia.portfolio.position_manager import _maybe_update_trailing_stop
 
             position_for_bar = dict(position)
@@ -615,6 +616,7 @@ def _evaluate_state(state: dict, *, now_ms: int, detected_at: str) -> dict:
                     timezone.utc,
                 ).isoformat(),
                 protection_venue=str(state["venue"]),
+                sync_exchange=not has_unresolved_close_claim(position_for_bar),
             )
         repo.advance_position_protection_cursor(
             state["position_id"],

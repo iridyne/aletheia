@@ -29,6 +29,10 @@ from aletheia.exchanges.submission_errors import (
     is_ambiguous_submission_error as _is_ambiguous_submission_error,
 )
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
+from aletheia.execution.close_convergence import (
+    CLOSE_CLAIM_STATES,
+    has_unresolved_close_claim,
+)
 from aletheia.execution.post_commit_audit import write_post_commit_audit
 from aletheia.storage.models import Order
 from aletheia.storage.repositories import (
@@ -45,11 +49,7 @@ logger = logging.getLogger("aletheia.bitget_broker")
 # Retained as the public default for callers; private fill history supplies the
 # actual fee used for durable accounting.
 _LIVE_FEE_RATE = 0.0006
-_OPEN_CLOSE_STATES = {
-    "pending", "submitted", "partial", "partially_filled", "submission_unknown",
-    "submission_rejected", "materialization_missing", "position_absence_unverified",
-    "overfilled",
-}
+_OPEN_CLOSE_STATES = set(CLOSE_CLAIM_STATES)
 _RETRY_SUPPRESSING_ORDER_STATES = (
     "pending", "submitted", "partial", "partially_filled", "submission_unknown",
     "materialization_missing",
@@ -359,10 +359,7 @@ def _claim_close_order(
             raise ValueError(
                 f"position {position_id} is not open (status={row.get('status')})"
             )
-        if (
-            row.get("pending_close_order_id")
-            and row.get("pending_close_status") in _OPEN_CLOSE_STATES
-        ):
+        if has_unresolved_close_claim(row):
             return row, None, None
 
         requested_at = datetime.now(timezone.utc).isoformat()

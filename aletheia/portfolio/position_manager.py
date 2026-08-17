@@ -25,6 +25,12 @@ from aletheia.data.price_feed import (
     get_fresh_price_for_protective_close,
     protective_price_venue,
 )
+from aletheia.execution.close_convergence import (
+    CLOSE_CLAIM_STATES,
+    PENDING_CLOSE_STALE_HOURS,
+    has_unresolved_close_claim,
+    pending_close_age_hours,
+)
 from aletheia.storage.repositories import (
     PositionProtectionConflict,
     list_all_open_positions,
@@ -34,20 +40,15 @@ from aletheia.portfolio.pnl import close_position, _latest_price
 logger = logging.getLogger("aletheia.position_manager")
 
 _PAPER_MODES = {"paper_internal", "bitget_demo", "binance_testnet", "okx_demo"}
-_OPEN_CLOSE_STATES = {
-    "pending", "submitted", "partial", "partially_filled", "submission_unknown",
-    "submission_rejected", "materialization_missing", "position_absence_unverified",
-    "overfilled",
-}
-_PENDING_CLOSE_STALE_HOURS = 4
+_OPEN_CLOSE_STATES = set(CLOSE_CLAIM_STATES)
+_PENDING_CLOSE_STALE_HOURS = PENDING_CLOSE_STALE_HOURS
 
 
 def _pending_close_age_hours(requested_at: str | None) -> float | None:
-    requested = _parse_dt(requested_at)
-    if requested is None:
+    age_hours = pending_close_age_hours(requested_at)
+    if age_hours is None:
         return float("inf")  # unknown age must not suppress protection silently
-    age_hours = (datetime.now(timezone.utc) - requested).total_seconds() / 3600
-    return age_hours if age_hours >= 0 else float("inf")
+    return age_hours
 
 
 def _escalate_stale_pending_close(position: dict, age_hours: float) -> None:
@@ -591,6 +592,7 @@ def _maybe_update_trailing_stop(
     completed_bar: bool = False,
     effective_at: str | None = None,
     protection_venue: str | None = None,
+    sync_exchange: bool = True,
 ) -> bool:
     """Update stop_price for trailing stop and breakeven logic. Writes DB on change.
 
@@ -736,7 +738,7 @@ def _maybe_update_trailing_stop(
         # and (eventually) Binance also honour the trailed stop, not just Bitget.
         # `replace_exchange_protective_stop` re-checks exchange_tpsl_enabled +
         # mode gating internally so the trail path stays honest per broker.
-        if new_stop:
+        if new_stop and sync_exchange:
             try:
                 from aletheia.execution.stops import replace_exchange_protective_stop
                 replace_exchange_protective_stop(position["id"], float(new_stop))
@@ -1184,6 +1186,7 @@ def evaluate_open_positions() -> dict:
     market_exits = 0
     failed_close_count = 0
     errors: list[dict] = []
+    observations: list[dict] = []
     market_signal_wakes = 0
     catastrophic_exits = 0
     def record_error(position: dict, code: str, exc: Exception | None = None) -> None:
@@ -1197,6 +1200,14 @@ def evaluate_open_positions() -> dict:
             item["error_type"] = type(exc).__name__
             item["message"] = str(exc)[:200]
         errors.append(item)
+
+    def record_observation(position: dict, code: str) -> None:
+        observations.append({
+            "position_id": position["id"],
+            "symbol": position.get("symbol"),
+            "market_type": position.get("market_type"),
+            "code": code,
+        })
 
     # NOTE (P0 defuse, 2026-07-02): RuleSet exit signals no longer auto-close
     # positions. Exit authority is SL/TP/max_hold/System Operator only — a
@@ -1248,7 +1259,8 @@ def evaluate_open_positions() -> dict:
         if p.get("execution_mode") not in _PAPER_MODES:
             continue
         checked += 1
-        if p.get("pending_close_status") in _OPEN_CLOSE_STATES:
+        pending_close = has_unresolved_close_claim(p)
+        if pending_close:
             age_hours = _pending_close_age_hours(p.get("pending_close_requested_at"))
             if age_hours is not None and age_hours >= _PENDING_CLOSE_STALE_HOURS:
                 _escalate_stale_pending_close(p, age_hours)
@@ -1265,13 +1277,10 @@ def evaluate_open_positions() -> dict:
                 )
             else:
                 logger.info(
-                    "skip close for %s: pending close order %s status=%s",
+                    "observe protection for %s while close order %s status=%s is unresolved",
                     p["id"], p.get("pending_close_order_id"),
                     p.get("pending_close_status"),
                 )
-            # Never release an unresolved close claim or submit a replacement.
-            # The scheduler's read-only reconciliation job owns convergence.
-            continue
         try:
             price_venue = protective_price_venue(
                 p.get("execution_mode"),
@@ -1301,7 +1310,9 @@ def evaluate_open_positions() -> dict:
             )
             catastrophic_exits += 1
         else:
-            _maybe_update_trailing_stop(p, float(price), cfg)
+            _maybe_update_trailing_stop(
+                p, float(price), cfg, sync_exchange=not pending_close,
+            )
             decision = _decide_exit(p, float(price), cfg)
             # Horizon reached but not yet at the hard backstop → wake the Operator
             # for a must-answer decision instead of auto-closing (D3).
@@ -1407,6 +1418,18 @@ def evaluate_open_positions() -> dict:
 
         if decision is None:
             continue
+        if pending_close:
+            # Keep evaluating fresh marks and protective rules while the durable
+            # exchange claim converges, but never turn a second trigger into a
+            # second close request. The existing claim/reconciliation path owns
+            # the exchange side effect and its eventual truth.
+            record_observation(p, "pending_close_protection_waiting")
+            logger.warning(
+                "protective exit waiting for unresolved close claim: %s order=%s status=%s",
+                p["id"], p.get("pending_close_order_id"),
+                p.get("pending_close_status"),
+            )
+            continue
         reason, exit_price = decision
         try:
             # Route through the shared helper so the exchange leg is never skipped
@@ -1425,6 +1448,7 @@ def evaluate_open_positions() -> dict:
         "market_exits": market_exits,
         "failed_close_count": failed_close_count,
         "errors": errors,
+        "observations": observations,
         "market_signal_wakes": market_signal_wakes,
         "catastrophic_exits": catastrophic_exits,
     }

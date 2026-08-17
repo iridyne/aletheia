@@ -9,6 +9,7 @@ later human/operator action.
 import importlib
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -233,6 +234,175 @@ def test_position_manager_skips_positions_with_pending_exchange_close(tmp_path, 
     assert result["checked"] == 1
     assert result["closed"] == 0
     assert repo._select_one("positions", pos.id)["status"] == "open"
+
+
+def test_position_manager_keeps_observing_pending_close_without_resubmitting(
+    tmp_path, monkeypatch,
+):
+    """An unresolved exchange close must not disable protective observation."""
+    setup_env(tmp_path, monkeypatch)
+    pos = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=90.0,
+        execution_mode="bitget_demo",
+        stop_price=95.0,
+        pending_close_order_id="close-order-1",
+        pending_close_status="submission_unknown",
+        pending_close_requested_at=(
+            datetime.now(timezone.utc) - timedelta(minutes=1)
+        ).isoformat(),
+    )
+    repo.insert_position(pos)
+
+    import aletheia.portfolio.position_manager as pm
+
+    marks: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        pm,
+        "get_fresh_price_for_protective_close",
+        lambda symbol, market_type, *, venue: (
+            marks.append((symbol, market_type, venue)) or 90.0
+        ),
+    )
+    monkeypatch.setattr(pm, "_layer0_safety_exit", lambda *_args: None)
+    trailing_calls: list[dict] = []
+    monkeypatch.setattr(
+        pm,
+        "_maybe_update_trailing_stop",
+        lambda *_args, **kwargs: trailing_calls.append(kwargs) or False,
+    )
+    monkeypatch.setattr(
+        pm, "_decide_exit", lambda *_args: ("stop_loss", 90.0),
+    )
+    monkeypatch.setattr(
+        pm,
+        "close_position_routed",
+        lambda *args, **kwargs: pytest.fail(
+            "an unresolved close claim must suppress a second exchange submission"
+        ),
+    )
+
+    result = pm.evaluate_open_positions()
+
+    assert result["checked"] == 1
+    assert marks == [("BTC/USDT", "usdt_futures", "bitget")]
+    assert repo._select_one("positions", pos.id)["pending_close_status"] == (
+        "submission_unknown"
+    )
+    assert trailing_calls and trailing_calls[0]["sync_exchange"] is False
+    assert any(
+        observation["code"] == "pending_close_protection_waiting"
+        for observation in result["observations"]
+    )
+    assert all(
+        error["code"] != "pending_close_protection_waiting"
+        for error in result["errors"]
+    )
+
+
+@pytest.mark.parametrize(
+    "pending_status,expected_state,expected_owner_status,requires_reconciliation",
+    [
+        (None, "still_open", "still open", False),
+        ("error", "still_open", "still open", False),
+        ("pending", "close_claimed", "close claimed; awaiting submission", False),
+        ("submitted", "close_submitted", "close submitted", False),
+        ("partially_filled", "partial", "partial", False),
+        (
+            "submission_unknown",
+            "evidence_unavailable",
+            "evidence unavailable",
+            True,
+        ),
+        (
+            "materialization_missing",
+            "materialization_missing",
+            "materialization missing",
+            True,
+        ),
+        (
+            "position_absence_unverified",
+            "exchange_position_absent_verifying",
+            "exchange position absent; verifying",
+            True,
+        ),
+        (
+            "submission_rejected",
+            "manual_attention_required",
+            "manual attention required",
+            True,
+        ),
+    ],
+)
+def test_position_read_model_exposes_close_convergence_owner_truth(
+    tmp_path,
+    monkeypatch,
+    pending_status,
+    expected_state,
+    expected_owner_status,
+    requires_reconciliation,
+):
+    setup_env(tmp_path, monkeypatch)
+    pos = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=90.0,
+        execution_mode="bitget_demo",
+        pending_close_order_id="close-order-1" if pending_status else None,
+        pending_close_status=pending_status,
+        pending_close_requested_at=(
+            (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+            if pending_status
+            else None
+        ),
+    )
+    repo.insert_position(pos)
+
+    from aletheia.portfolio.pnl import position_realized_pnl_view
+
+    view = position_realized_pnl_view(repo._select_one("positions", pos.id))
+
+    assert view["close_convergence_state"] == expected_state
+    assert view["close_convergence_owner_status"] == expected_owner_status
+    assert view["close_convergence_requires_reconciliation"] is requires_reconciliation
+    assert "close_convergence_age_hours" in view
+
+
+def test_position_read_model_escalates_stale_close_claim_for_owner(
+    tmp_path, monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    pos = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=90.0,
+        execution_mode="bitget_demo",
+        pending_close_order_id="close-order-1",
+        pending_close_status="submitted",
+        pending_close_requested_at=(
+            datetime.now(timezone.utc) - timedelta(hours=5)
+        ).isoformat(),
+    )
+    repo.insert_position(pos)
+
+    from aletheia.portfolio.pnl import position_realized_pnl_view
+
+    view = position_realized_pnl_view(repo._select_one("positions", pos.id))
+
+    assert view["close_convergence_state"] == "close_submitted"
+    assert view["close_convergence_owner_status"] == "manual attention required"
+    assert view["close_convergence_requires_reconciliation"] is True
+    assert view["close_convergence_escalated"] is True
 
 
 def test_bitget_unconfirmed_close_keeps_existing_tpsl_bracket(tmp_path, monkeypatch):
