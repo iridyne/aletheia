@@ -253,7 +253,9 @@ export default function PnLZone({ bootstrap, unavailable = false }: { bootstrap?
   const uta = p?.uta_state
 
   // UTA unified equity takes priority when available and has multiple accounts
-  const utaEquity = uta?.sync_status === 'ok' && uta?.total_equity_usdt > 0 ? uta.total_equity_usdt : null
+  const utaEquity = uta && uta.sync_status === 'ok' && typeof uta.total_equity_usdt === 'number' && uta.total_equity_usdt > 0
+    ? uta.total_equity_usdt
+    : null
   const utaAccounts: UTAAccount[] = (uta?.accounts ?? []).map((account: OverviewUtaAccount) => ({
     broker_id: String(account.broker_id || 'unknown'),
     display_name: String(account.display_name || account.broker_id || 'Broker'),
