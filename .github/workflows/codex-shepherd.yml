@@ -361,14 +361,14 @@ jobs:
             ].sort();
             const requestHasCompletion = (requestMarker) =>
               connectorCompletionTimes.some((completedAt) =>
-                completedAt >= requestMarker.createdAt
+                completedAt > requestMarker.createdAt
               );
 
             const exactDiffReviews = latestReviewRequestAt === null ? [] : allReviews.filter((review) =>
               isConnectorLogin(review.user?.login) &&
               review.commit_id === expectedHeadSha &&
               review.submitted_at &&
-              review.submitted_at >= latestReviewRequestAt &&
+              review.submitted_at > latestReviewRequestAt &&
               review.state !== 'DISMISSED'
             );
 
