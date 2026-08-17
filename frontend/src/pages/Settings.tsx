@@ -186,6 +186,7 @@ export default function Settings() {
   const touchedControlsRef = useRef<Set<HTMLElement>>(new Set())
   const [isTouched, setIsTouched] = useState(false)
   const [preciseDirtyCount, setPreciseDirtyCount] = useState(0)
+  const [draftEpoch, setDraftEpoch] = useState(0)
   const registerDirty = (id: string, isDirty: boolean) => {
     if (isDirty) dirtyRef.current.add(id)
     else {
@@ -217,6 +218,13 @@ export default function Settings() {
     touchedRef.current = false
     setIsTouched(false)
     setPreciseDirtyCount(0)
+  }
+  const discardDrafts = () => {
+    clearDirty()
+    // Remount the active tab so every staged editor adopts the last server
+    // snapshot through its existing draft lifecycle. Immediate controls are
+    // already server-controlled and therefore settle to the same snapshot.
+    setDraftEpoch(epoch => epoch + 1)
   }
 
   useEffect(() => {
@@ -350,6 +358,13 @@ export default function Settings() {
     const el = e.target as HTMLElement
     if (el instanceof HTMLInputElement && el.type === 'number') el.select()
   }
+  // Stop blur-save editors from committing when focus moves to Discard. The
+  // capture phase runs before a child input's onBlur, while the button remains
+  // keyboard- and pointer-activatable normally.
+  const suppressDiscardBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget as HTMLElement | null
+    if (next?.dataset.settingsDiscard === 'true') e.stopPropagation()
+  }
 
   if (!status || !settings) return (
     <div className="skeleton" style={{ maxWidth: '600px', paddingTop: 'var(--space-6)' }}>
@@ -371,9 +386,19 @@ export default function Settings() {
 
       <SettingsSearch onPick={selectTab} />
 
+      {shouldBlockNavigation(dirtyRef.current.size, isTouched) && (
+        <div className="settings-draft-banner" role="status">
+          <span>Unsaved staged changes — Save them in their section or discard this draft.</span>
+          <button type="button" className="secondary" data-settings-discard="true" onClick={discardDrafts}>
+            Discard changes
+          </button>
+        </div>
+      )}
+
       <div
         className={`settings-shell ${isNavCollapsed ? 'is-collapsed' : ''}`}
         style={{ '--settings-nav-width': `${navWidth}px` } as React.CSSProperties}
+        onBlurCapture={suppressDiscardBlur}
         onFocus={handleNumericFocus}
         onInput={markTouched}
         onChange={markTouched}
@@ -414,7 +439,7 @@ export default function Settings() {
           aria-hidden="true"
           onPointerDown={onResizePointerDown}
         />
-        <div className="settings-panel">
+        <div className="settings-panel" key={draftEpoch}>
           {tab === 'agent'     && <AgentModelsTab        status={status} settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'execution' && <ExecutionTab          status={status} settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'risk'      && <RiskTab               settings={settings} qc={qc} onDirty={registerDirty} />}

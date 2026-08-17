@@ -174,6 +174,7 @@ function OverviewTab() {
           <div className="lens-brief-actions">
             <Switch
               checked={saveToProfile}
+              persistence="staged"
               onCheckedChange={setSaveToProfile}
               label="Save preferences to profile"
             />

@@ -195,24 +195,24 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
 
       <SettingsFeatureSection descriptor={LEARNING_SECTION}>
         <Row label="Autonomous learning" hint="When ON, agents run dreaming/research cycles unprompted. When OFF, only human-triggered runs execute.">
-          <Toggle checked={autoLearn} onChange={v => autoLearnMut.mutate(v)} disabled={autoLearnMut.isPending} />
+          <Toggle checked={autoLearn} persistence="immediate" onChange={v => autoLearnMut.mutate(v)} disabled={autoLearnMut.isPending} />
         </Row>
         <Row label="Bypass distress gate" hint="When ON, historical win-rate/PnL stats are hidden from the System Operator prompt so poor past performance cannot trigger self-protection. Use during demo/test phases only — disable before evaluating real results.">
-          <Toggle checked={bypassDistressGate} onChange={v => bypassDistressMut.mutate(v)} disabled={bypassDistressMut.isPending} />
+          <Toggle checked={bypassDistressGate} persistence="immediate" onChange={v => bypassDistressMut.mutate(v)} disabled={bypassDistressMut.isPending} />
         </Row>
         <Collapsible title="Paper Learning Experiments">
           <p className="hint mb-2">Measured Paper Learning capability defaults on. A Shadow experiment still has no influence until explicit owner admission, and Learning never affects live trading.</p>
           <Row label="Contribution measurement" hint="Evaluate already-recorded shadow exposures and outcomes. This does not grant any influence.">
-            <Toggle checked={contributionEvaluationEnabled} onChange={v => learningMut.mutate({ contribution_evaluation_enabled: v })} disabled={learningMut.isPending} />
+            <Toggle checked={contributionEvaluationEnabled} persistence="immediate" onChange={v => learningMut.mutate({ contribution_evaluation_enabled: v })} disabled={learningMut.isPending} />
           </Row>
           <Row label="Lifecycle automation" hint="Record stage recommendations and, only after owner admission and all safety gates, move one Paper experiment stage at a time. Default ON.">
-            <Toggle checked={lifecycleAutomationEnabled} onChange={v => {
+            <Toggle checked={lifecycleAutomationEnabled} persistence="immediate" onChange={v => {
               if (v && !confirm('Enable Paper-experiment lifecycle automation? Experiment influence still requires owner admission and every safety gate.')) return
               learningMut.mutate({ lifecycle_automation_enabled: v })
             }} disabled={learningMut.isPending} />
           </Row>
           <Row label="Paper influence" hint="Make the measured Paper path available to an explicitly admitted, fully gated experiment. Default ON; this never enables live trading.">
-            <Toggle checked={paperInfluenceEnabled} onChange={v => {
+            <Toggle checked={paperInfluenceEnabled} persistence="immediate" onChange={v => {
               if (v && !confirm('Enable paper Learning influence? Only explicitly allowlisted paths can use paper treatment.')) return
               learningMut.mutate({ paper_influence_enabled: v })
             }} disabled={learningMut.isPending} />
@@ -252,16 +252,16 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
             </div>
           </Row>
           <Row label="Auto-refreeze" hint="Immediately closes a paper experiment after a negative or invalid measurement verdict. Default ON.">
-            <Toggle checked={autoRefreeze} onChange={v => learningMut.mutate({ auto_refreeze: v })} disabled={learningMut.isPending} />
+            <Toggle checked={autoRefreeze} persistence="immediate" onChange={v => learningMut.mutate({ auto_refreeze: v })} disabled={learningMut.isPending} />
           </Row>
           <Row label="Evaluation interval (minutes)" hint="How often read-only measurement and lifecycle checks run. Default 60; allowed range 15–1440.">
-            <input type="number" min={15} max={1440} step={5} defaultValue={evaluationInterval} onBlur={e => {
+            <input type="number" min={15} max={1440} step={5} data-persistence="immediate" defaultValue={evaluationInterval} onBlur={e => {
               const v = Math.round(Number(e.currentTarget.value))
               if (Number.isFinite(v) && v >= 15 && v <= 1440 && v !== evaluationInterval) learningMut.mutate({ evaluation_interval_minutes: v })
             }} disabled={learningMut.isPending} className="w-24" />
           </Row>
           <Row label="Active-stage treatment allocation" hint="Maximum paper treatment share at the final stage. A control holdout is mandatory; hard maximum 90%.">
-            <input type="number" min={0.01} max={0.90} step={0.05} defaultValue={paperActiveAllocation} onBlur={e => {
+            <input type="number" min={0.01} max={0.90} step={0.05} data-persistence="immediate" defaultValue={paperActiveAllocation} onBlur={e => {
               const v = Number(e.currentTarget.value)
               if (Number.isFinite(v) && v > 0 && v <= 0.90 && v !== paperActiveAllocation) learningMut.mutate({ paper_active_allocation_pct: v })
             }} disabled={learningMut.isPending} className="w-24" />
@@ -275,6 +275,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           >
             <Toggle
               checked={guardCfg.enabled !== false}
+              persistence="immediate"
               onChange={v => guardMut.mutate({ enabled: v })}
               disabled={guardMut.isPending}
             />
@@ -285,6 +286,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           >
             <Toggle
               checked={guardCfg.enforce_in_paper_ranker !== false}
+              persistence="immediate"
               onChange={v => guardMut.mutate({ enforce_in_paper_ranker: v })}
               disabled={guardMut.isPending}
             />
@@ -316,6 +318,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           >
             <Toggle
               checked={controllerShadowEnabled}
+              persistence="immediate"
               onChange={v => controllerMut.mutate({ shadow_enabled: v })}
               disabled={controllerMut.isPending}
             />
@@ -330,6 +333,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
               max={168}
               step={1}
               defaultValue={controllerObserveHours}
+              data-persistence="immediate"
               onBlur={e => {
                 const v = parseInt(e.currentTarget.value, 10)
                 if (!Number.isFinite(v) || v < 1 || v > 168 || v === controllerObserveHours) return
@@ -349,6 +353,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
               max={500}
               step={1}
               defaultValue={controllerMinSamples}
+              data-persistence="immediate"
               onBlur={e => {
                 const v = parseInt(e.currentTarget.value, 10)
                 if (!Number.isFinite(v) || v < 5 || v > 500 || v === controllerMinSamples) return
@@ -363,10 +368,10 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
 
       <SettingsFeatureSection descriptor={REGIME_SECTION}>
         <Row label="Regime detection enabled" hint="When ON, regime detector classifies market conditions and injects bias into System Operator context.">
-          <Toggle checked={regimeCfg.enabled !== false} onChange={v => regimeMut.mutate({ enabled: v })} disabled={regimeMut.isPending} />
+          <Toggle checked={regimeCfg.enabled !== false} persistence="immediate" onChange={v => regimeMut.mutate({ enabled: v })} disabled={regimeMut.isPending} />
         </Row>
         <Row label="Short trades enabled" hint="Allow short direction trades when regime is bearish. Disable to restrict to long-only.">
-          <Toggle checked={regimeCfg.short_enabled !== false} onChange={v => regimeMut.mutate({ short_enabled: v })} disabled={regimeMut.isPending} />
+          <Toggle checked={regimeCfg.short_enabled !== false} persistence="immediate" onChange={v => regimeMut.mutate({ short_enabled: v })} disabled={regimeMut.isPending} />
         </Row>
         <Row label="Bias threshold" hint="Minimum score change required to flip regime bias (0.0–1.0). Higher = more stable, slower to react.">
           <input
@@ -393,6 +398,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
         >
           <Toggle
             checked={serenityEnabled}
+            persistence="immediate"
             onChange={v => serenityMut.mutate({ enabled: v })}
             disabled={serenityMut.isPending}
           />
@@ -403,6 +409,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
         >
           <Toggle
             checked={serenityAutoPromote}
+            persistence="immediate"
             onChange={v => {
               if (v && !confirm('Enable auto-promote? Themes that meet the threshold will be queued to the System Operator without human review.')) return
               serenityMut.mutate({ auto_promote: v })
@@ -420,6 +427,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
             max={100}
             step={1}
             defaultValue={serenityMinScore}
+            data-persistence="immediate"
             onBlur={e => {
               const v = parseInt(e.currentTarget.value, 10)
               if (!Number.isFinite(v) || v < 0 || v > 100 || v === serenityMinScore) return
@@ -439,6 +447,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
             max={50}
             step={0.1}
             defaultValue={serenityStopLossPct}
+            data-persistence="immediate"
             onBlur={e => {
               const v = parseFloat(e.currentTarget.value)
               if (!Number.isFinite(v) || v < 0.1 || v > 50 || v === serenityStopLossPct) return
@@ -458,6 +467,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
             max={365}
             step={1}
             defaultValue={serenityMaxHoldDays}
+            data-persistence="immediate"
             onBlur={e => {
               const v = parseInt(e.currentTarget.value, 10)
               if (!Number.isFinite(v) || v < 1 || v > 365 || v === serenityMaxHoldDays) return
@@ -476,6 +486,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
         >
           <Toggle
             checked={schedulerEnabled}
+            persistence="immediate"
             onChange={v => {
               if (!v && !confirm('Disable the scheduler? All agent jobs will stop firing automatically.')) return
               runtimeMut.mutate({ scheduler_enabled: v })
@@ -489,6 +500,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
         >
           <Toggle
             checked={operatorLoopEnabled}
+            persistence="immediate"
             onChange={v => {
               if (!v && !confirm('Disable the operator loop? Automated system governance will stop.')) return
               operatorMut.mutate({ loop_enabled: v })
@@ -502,6 +514,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
         >
           <Toggle
             checked={piDaemonEnabled}
+            persistence="immediate"
             onChange={v => {
               if (!v && !confirm('Disable the System Operator daemon? The agent will revert to 15-minute polling intervals.')) return
               piDaemonMut.mutate({ enabled: v })
@@ -515,6 +528,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
               <input
                 type="number" min={0} max={60} step={1}
                 defaultValue={piDaemon.debounce_sec ?? 8}
+                data-persistence="immediate"
                 className="w-20"
                 onBlur={e => {
                   const v = parseFloat(e.target.value)
@@ -526,6 +540,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
               <input
                 type="number" min={0} max={600} step={5}
                 defaultValue={piDaemon.cooldown_sec ?? 60}
+                data-persistence="immediate"
                 className="w-20"
                 onBlur={e => {
                   const v = parseFloat(e.target.value)
@@ -537,6 +552,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
               <input
                 type="number" min={60} max={3600} step={60}
                 defaultValue={piDaemon.heartbeat_sec ?? 300}
+                data-persistence="immediate"
                 className="w-20"
                 onBlur={e => {
                   const v = parseFloat(e.target.value)
@@ -588,6 +604,7 @@ function EconomicsSnapshotCard({ economics, qc }: { economics?: SettingsData['ec
       >
         <Toggle
           checked={economicsEnabled}
+          persistence="immediate"
           onChange={enabled => economicsMut.mutate({ enabled })}
           disabled={economicsMut.isPending}
         />
@@ -598,6 +615,7 @@ function EconomicsSnapshotCard({ economics, qc }: { economics?: SettingsData['ec
       >
         <Toggle
           checked={shadowEnabled}
+          persistence="immediate"
           onChange={budgets_shadow_enabled => economicsMut.mutate({ budgets_shadow_enabled })}
           disabled={!economicsEnabled || economicsMut.isPending}
         />
@@ -608,6 +626,7 @@ function EconomicsSnapshotCard({ economics, qc }: { economics?: SettingsData['ec
       >
         <Toggle
           checked={guardrailDetectionEnabled}
+          persistence="immediate"
           onChange={prompt_guardrail_detection_enabled => economicsMut.mutate({ prompt_guardrail_detection_enabled })}
           disabled={!economicsEnabled || economicsMut.isPending}
         />

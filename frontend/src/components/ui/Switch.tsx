@@ -1,5 +1,7 @@
-import type { InputHTMLAttributes } from 'react'
+import { useId, type InputHTMLAttributes } from 'react'
 import { useSettingsRowLabelId } from './SettingsRowLabelContext'
+
+export type SwitchPersistence = 'immediate' | 'staged'
 
 export function Switch({
   checked,
@@ -7,17 +9,22 @@ export function Switch({
   onChange,
   label,
   disabled,
+  persistence,
   'aria-label': explicitAriaLabel,
   'aria-labelledby': explicitAriaLabelledBy,
+  'aria-describedby': explicitAriaDescribedBy,
   ...props
 }: Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'checked' | 'onChange'> & {
   checked: boolean
+  /** Explicitly states whether the value is persisted by this interaction or by a later Save. */
+  persistence: SwitchPersistence
   onCheckedChange?: (checked: boolean) => void
   onChange?: (checked: boolean) => void
   label?: string
 }) {
   const setChecked = onCheckedChange ?? onChange
   const rowLabelId = useSettingsRowLabelId()
+  const stagedDescriptionId = useId()
 
   if (label !== undefined && !label.trim()) {
     throw new Error('Switch label must be non-empty; omit label inside a SettingsRow')
@@ -39,6 +46,11 @@ export function Switch({
   const ariaLabelledBy = label || explicitAriaLabel
     ? undefined
     : (explicitAriaLabelledBy || (named ? undefined : rowLabelId ?? undefined))
+  const staged = persistence === 'staged'
+  const ariaDescribedBy = [
+    explicitAriaDescribedBy,
+    staged ? stagedDescriptionId : undefined,
+  ].filter(Boolean).join(' ') || undefined
 
   // The wrapper stays a <label> even with no text: the input is
   // `pointer-events: none` and visually hidden, so label association is the only
@@ -46,19 +58,26 @@ export function Switch({
   // the input, which is what aria-labelledby above is for. Call sites must not
   // add a <label> of their own around this — pass `label` instead.
   return (
-    <label className="settings-toggle">
+    <label
+      className={`settings-toggle${staged ? ' settings-staged-toggle' : ''}`}
+      data-persistence={persistence}
+    >
       <input
         {...props}
         aria-label={ariaLabel}
         aria-labelledby={ariaLabelledBy}
-        className="settings-switch-input"
+        aria-describedby={ariaDescribedBy}
+        className={staged ? 'settings-staged-input' : 'settings-switch-input'}
+        data-persistence={persistence}
         type="checkbox"
         checked={checked}
         onChange={e => setChecked?.(e.target.checked)}
         disabled={disabled}
       />
-      <span className="settings-switch-track" aria-hidden="true"><span className="settings-switch-thumb" /></span>
+      {!staged && <span className="settings-switch-track" aria-hidden="true"><span className="settings-switch-thumb" /></span>}
       {label && <span className="settings-switch-text">{label}</span>}
+      {staged && <span className="settings-staged-badge" aria-hidden="true">draft</span>}
+      {staged && <span id={stagedDescriptionId} className="settings-staged-description">Draft value; save required.</span>}
     </label>
   )
 }

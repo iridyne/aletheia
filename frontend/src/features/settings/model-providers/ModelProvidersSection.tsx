@@ -392,6 +392,7 @@ export function ApiProfileEditor({
 						id={enabledToggleId}
 						aria-labelledby={enabledToggleLabelId}
 						checked={draft.enabled}
+						persistence="staged"
 						onCheckedChange={(value) => set("enabled", value)}
 					/>
 					<label id={enabledToggleLabelId} htmlFor={enabledToggleId}>Enable after verification</label>
@@ -524,6 +525,7 @@ function ApiProfiles({
 									<Status config={provider} health={profileHealth} />
 									<Switch
 										checked={provider.enabled}
+										persistence="immediate"
 										aria-label={`Enable ${provider.display_name || providerId}`}
 										onCheckedChange={(enabled) =>
 											update.mutate({ providerId, enabled })
@@ -700,6 +702,7 @@ function IntegrationCard({
 					<Status config={config} health={health} />
 					<Switch
 						checked={config?.enabled === true}
+						persistence="immediate"
 						aria-label={`Enable ${definition.label}`}
 						onCheckedChange={(enabled) => update.mutate({ enabled })}
 						disabled={update.isPending}

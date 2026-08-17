@@ -58,7 +58,22 @@ describe("Switch adopts the row label only when it has no name of its own", () =
 		// association is the only thing forwarding the click, so swapping the
 		// wrapper for a <span> would leave a switch that reads correctly and
 		// cannot be operated by mouse.
-		expect(SWITCH).toMatch(/<label className="settings-toggle">/);
+		expect(SWITCH).toMatch(/<label[\s\S]{0,120}settings-toggle/);
 		expect(SWITCH).toContain("settings-switch-input");
+	});
+
+	it("requires an explicit persistence mode and renders staged controls distinctly", () => {
+		expect(SWITCH).toContain("persistence: SwitchPersistence");
+		expect(SWITCH).toContain("data-persistence={persistence}");
+		expect(SWITCH).toContain("settings-staged-input");
+		expect(SWITCH).toContain("settings-staged-badge");
+		expect(SWITCH).toContain("aria-describedby={ariaDescribedBy}");
+		expect(SWITCH).toContain("settings-staged-description");
+		expect(SWITCH).toContain("!staged &&");
+	});
+
+	it("requires SwitchGrid callers to declare the same persistence mode", () => {
+		expect(SETTINGS_SECTION).toContain("persistence: SwitchPersistence");
+		expect(SETTINGS_SECTION).toContain("persistence={persistence}");
 	});
 });

@@ -49,3 +49,7 @@ identity, persistence, and retention boundary.
 The [Trading Mandate Contract](trading_mandate_contract.md) owns the single
 optional observe-only mandate's canonical identity, deterministic fit evidence,
 Proposal freeze, Position Replay exposure, and descriptive compliance reports.
+
+The [Settings Control Persistence Contract](settings_control_contract.md) owns
+the explicit immediate-versus-staged frontend control semantics and the checked-in
+Settings switch inventory.

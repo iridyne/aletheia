@@ -11,7 +11,7 @@ describe("rendered switch naming", () => {
 	it("associates a label-less switch with its enclosing SettingsRow", () => {
 		const html = renderToStaticMarkup(
 			<SettingsRow label="Prediction observer">
-				<Switch checked={false} />
+				<Switch checked={false} persistence="immediate" />
 			</SettingsRow>,
 		);
 		const labelId = html.match(/<div id="([^"]+)" class="settings-row-label">Prediction observer/)?.[1];
@@ -22,7 +22,7 @@ describe("rendered switch naming", () => {
 
 	it("keeps one explicit naming path when callers provide an aria label", () => {
 		const html = renderToStaticMarkup(
-			<Switch checked aria-label="Enable provider" aria-labelledby="stale-label" />,
+			<Switch checked persistence="immediate" aria-label="Enable provider" aria-labelledby="stale-label" />,
 		);
 		const input = checkboxMarkup(html);
 
@@ -32,7 +32,19 @@ describe("rendered switch naming", () => {
 
 	it("rejects an explicitly empty label instead of rendering an anonymous switch", () => {
 		expect(() =>
-			renderToStaticMarkup(<Switch checked label="" />),
+			renderToStaticMarkup(<Switch checked persistence="immediate" label="" />),
 		).toThrow("Switch label must be non-empty");
+	});
+
+	it("describes staged persistence to assistive technology", () => {
+		const html = renderToStaticMarkup(
+			<Switch checked={false} persistence="staged" aria-label="Enable feed" />,
+		);
+		const input = checkboxMarkup(html);
+		const descriptionId = html.match(/<span id="([^"]+)" class="settings-staged-description">/)?.[1];
+
+		expect(descriptionId).toBeTruthy();
+		expect(input).toContain(`aria-describedby="${descriptionId}"`);
+		expect(html).toContain("Draft value; save required.");
 	});
 });

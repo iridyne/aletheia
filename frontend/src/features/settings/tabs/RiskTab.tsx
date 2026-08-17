@@ -92,7 +92,7 @@ function EventTriggerCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   return (
     <div className="space-y-4">
-      <ToggleGrid fields={boolFields} vals={vals} set={setBool} />
+      <ToggleGrid fields={boolFields} vals={vals} set={setBool} persistence="staged" />
       <NumGrid fields={numFields} vals={vals} set={setNum} />
       <button onClick={() => save()} className="btn btn-primary btn-sm mt-2">Save Event Triggers</button>
       <SaveMsg msg={msg} />
@@ -196,7 +196,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         label="Enable Universe Scanner"
         hint="When on, dynamically discovers and scores USDT pairs each refresh cycle. When off, agents fall back to the static symbol list (BTC/ETH/SOL)."
       >
-        <Toggle checked={enabled} onChange={v => { setEnabled(v); setChanged(true); setMsg(null) }} />
+        <Toggle checked={enabled} persistence="staged" onChange={v => { setEnabled(v); setChanged(true); setMsg(null) }} />
       </Row>
       <div className="settings-field-grid">
         <label className="settings-field">
@@ -237,7 +237,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         <div className="settings-field">
           <span id={snapshotTtlLabelId}>Snapshot TTL</span>
           <div className="flex items-center gap-2">
-            <Toggle checked={snapshotTtlEnabled} aria-label="Enable snapshot TTL" onChange={v => { setSnapshotTtlEnabled(v); setChanged(true); setMsg(null) }} />
+            <Toggle checked={snapshotTtlEnabled} persistence="staged" aria-label="Enable snapshot TTL" onChange={v => { setSnapshotTtlEnabled(v); setChanged(true); setMsg(null) }} />
             <input type="number" min={1} max={72} step={1} value={snapshotTtlHours}
               aria-labelledby={snapshotTtlLabelId}
               disabled={!snapshotTtlEnabled}
@@ -650,7 +650,7 @@ export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' 
       <p className="hint">
         System Operator entry cost = matching account equity × this per-trade budget. For perpetual futures, final notional = cost × effective leverage; position, account-leverage, and stop-loss safety caps still apply.
       </p>
-      <ToggleGrid fields={RISK_POLICY_BOOLS} vals={vals} set={setBoolean} />
+      <ToggleGrid fields={RISK_POLICY_BOOLS} vals={vals} set={setBoolean} persistence="staged" />
       <p className="hint">
         {capitalSource === 'custom'
           ? `Daily-loss threshold: −${fmtNum(threshold)} USDT.`
@@ -819,7 +819,7 @@ function RiskCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       <NumGrid fields={RISK_FAMILY_GATE} vals={vals} set={set} errors={errors} />
       </Collapsible>
 
-      <ToggleGrid fields={RISK_BOOLS} vals={vals} set={set} />
+      <ToggleGrid fields={RISK_BOOLS} vals={vals} set={set} persistence="staged" />
 
       {/* Correlation guard thresholds — only shown when guard is enabled */}
       {vals.correlation_guard_enabled && (

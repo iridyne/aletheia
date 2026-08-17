@@ -81,7 +81,7 @@ function HealthCard({ settings, qc, onDirty }: { settings?: Record<string, unkno
 
 	return (
 		<div className="card mb-0">
-			<ToggleGrid fields={toggles} vals={vals} set={set} />
+			<ToggleGrid fields={toggles} vals={vals} set={set} persistence="staged" />
 			<NumGrid fields={fields} vals={vals} set={set} />
 			<div className="settings-action-row">
 				<button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
@@ -198,16 +198,16 @@ function WebhookCard({ settings, qc, onDirty }: { settings?: Record<string, unkn
 				</label>
 			</div>
 			<div className="settings-action-row settings-action-row-start">
-				<Toggle checked={enabled} label="Webhook delivery" onChange={(value) => { setEnabled(value); setMsg(null); }} />
+				<Toggle checked={enabled} persistence="staged" label="Webhook delivery" onChange={(value) => { setEnabled(value); setMsg(null); }} />
 			</div>
 			<div className="settings-action-row settings-action-row-start">
-				<Toggle checked={notifyAlerts} label="Alert events" onChange={(value) => { setNotifyAlerts(value); setMsg(null); }} />
+				<Toggle checked={notifyAlerts} persistence="staged" label="Alert events" onChange={(value) => { setNotifyAlerts(value); setMsg(null); }} />
 			</div>
 			<div className="settings-action-row settings-action-row-start">
-				<Toggle checked={notifyFills} label="Trade fill events" onChange={(value) => { setNotifyFills(value); setMsg(null); }} />
+				<Toggle checked={notifyFills} persistence="staged" label="Trade fill events" onChange={(value) => { setNotifyFills(value); setMsg(null); }} />
 			</div>
 			<div className="settings-action-row settings-action-row-start">
-				<Toggle checked={notifySummary} label="Daily summary event" onChange={(value) => { setNotifySummary(value); setMsg(null); }} />
+				<Toggle checked={notifySummary} persistence="staged" label="Daily summary event" onChange={(value) => { setNotifySummary(value); setMsg(null); }} />
 			</div>
 			<div className="settings-action-row">
 				<button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
