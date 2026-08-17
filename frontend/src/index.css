@@ -777,7 +777,11 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
    collapse toggle in the nav header still works to switch back to full
    labels on wider windows. */
 @media (max-width: 767px) {
-  .settings-nav {
+  /* Match the tablet guard's specificity for an expanded persisted nav. The
+     plain selector still covers the collapsed state, while the second selector
+     wins the !important cascade when both media queries match. */
+  .settings-nav,
+  .settings-nav:not(.is-collapsed) {
     width: 52px !important;
     flex-basis: 52px !important;
     align-items: center;
