@@ -23,68 +23,86 @@ private dashboard and Operator Shell packages and the stable native host also
 retain independent component versions unless they become separately shipped
 products.
 
-Ordinary Ready-for-review PRs accumulate after the last stable tag. They do not
-start Release Please or imply that Fedora should deploy. When the accumulated
-changes justify updating the operational instance, an operator explicitly runs
-the `Prepare and tag releases` workflow with `workflow_dispatch`. Release Please
-then computes one Ready-for-review release PR from the complete Conventional
-Commit history since the previous tag.
+Release preparation keeps the repository's operational-need batch gate. It does
+not run on every `master` push or on an unconditional timer. An owner selects
+`operational_need=true` in the `Prepare and tag releases` workflow when the
+accumulated Conventional Commit history needs a Runtime update; Release Please
+then computes one Ready-for-review release PR from the history since the
+previous tag. Ordinary `feat`, `fix`, and `perf` changes therefore accumulate
+instead of creating one product version per merge, and hidden `docs`, `ci`, and
+`chore` changes remain accumulated. From that one explicit release-intent
+selection onward, candidate CI, exact-head merge, immutable Tag/Release, and
+Paper-role deployment are unattended.
 
-A release batch is justified by an operational need to update a Runtime, a
-coherent behavior/evidence epoch, or a required migration or security fix.
-Documentation, CI maintenance, and low-urgency fixes normally accumulate. A
-merged issue or PR alone is not a reason to publish another product version.
+If an ordinary PR advances `master` while the release candidate is still open,
+`Refresh release candidate after master advances` observes the completed trusted
+auto-merge run, confirms that an active repository-owned `autorelease: pending`
+candidate has a stale branch merge-base, and dispatches a refresh authenticated
+to that workflow run. Release Please then updates the same candidate and
+re-runs exact-head CI; the refresh path cannot create a candidate without the
+owner's original release-intent gate.
+
 Release Please keeps its `autorelease: pending` marker on the generated PR and
-the workflow adds `do-not-auto-merge` while the candidate is unverified. Release
-Please explicitly dispatches the existing read-only CI workflow on the generated
+the workflow adds `do-not-auto-merge` while the candidate is unverified. It
+explicitly dispatches the existing read-only CI workflow on the generated
 branch because its `GITHUB_TOKEN` cannot trigger the normal pull-request event.
 After all required CI jobs succeed, a metadata-only job dispatches the exact
 candidate branch, SHA, and merge-base SHA to the trusted auto-merge workflow.
-If `master` advances, the candidate remains held until the operator reruns the
-manual workflow, which refreshes and re-verifies the batch. Merging the exact
-candidate emits a tag-only follow-up; that follow-up verifies the squash parent
-against the authorized base before creating the matching tag and metadata-only
-GitHub Release. It never opens the next release PR. Failed CI or identity checks
+The candidate is refreshed and re-verified automatically when `master` advances.
+Merging the exact candidate emits a tag-only follow-up; that follow-up verifies
+the squash parent against the authorized base before creating the matching
+immutable tag and metadata-only GitHub Release. Failed CI or identity checks
 leave the candidate untagged. The workflow does not publish a package, build an
-artifact, deploy a Runtime, or open an Observation window.
+artifact, deploy a Runtime, or open an Observation window; the Fedora Paper
+timer consumes the stable tag as a separate downstream gate.
 
 The workflow invokes the exact `release-please@17.6.0` CLI through the
 GitHub-owned Node setup Action. This preserves the repository's restrictive
 Action allowlist; it does not require a PAT or an allowlist exception for a
 third-party Action.
 
-## Operator release SOP
+## Release SOP（正常自动，故障手动恢复）
 
-Run this only when the accumulated changes justify a Runtime update or a new
-behavior/evidence epoch. Generating the candidate is one operator action;
-Release Please owns the version, changelog, candidate PR, and CI handoff:
+正常路径只保留一个显式发布意图动作：repository owner 在 GitHub Actions 运行
+`Prepare and tag releases` 并设置 `operational_need=true`。之后自动生成候选、
+运行精确 SHA CI、解除候选 hold 并合并、创建不可变 Tag/Release；配置为
+Paper 角色的 Fedora auto-update timer 再自动部署正式 Tag。无需手动指定
+版本，也无需登录 Fedora 执行 `git pull`。资格运行时不参加这条自动部署链，
+必须保持 owner 选定的固定 SHA。
+
+只有在确认 Runtime 更新确有 operational need 时才运行该批处理；失败或候选
+状态损坏时可用同一入口重试。CLI 形式为：
 
 ```sh
-gh workflow run release-please.yml --repo iridite/aletheia --ref master
+gh workflow run release-please.yml --repo iridite/aletheia --ref master \
+  -f operational_need=true
 ```
 
 The equivalent UI action is **Actions -> Prepare and tag releases -> Run
-workflow**, with `master` selected. Do not hand-edit a target version: the
-Conventional Commit history and `release-please-config.json` determine the next
-SemVer. In the current pre-1.0 policy, ordinary `feat`, `fix`, and `perf` release
-notes produce the next patch; an explicit breaking change produces the next
-minor version.
+workflow**, with `master` selected and `operational_need` checked. Do not
+hand-edit a target version: the Conventional Commit history and
+`release-please-config.json` determine the next SemVer. In the current pre-1.0
+policy, ordinary `feat`, `fix`, and `perf` release notes produce the next patch;
+an explicit breaking change produces the next minor version.
+
+The workflow rejects the release job for non-owner manual dispatches. A stale
+candidate caused by a later `master` merge is refreshed automatically while the
+candidate remains open; do not create a second release PR by hand.
 
 The release is complete only after the generated `autorelease: pending` PR is
 observed as merged, its matching immutable `vX.Y.Z` tag exists, and the GitHub
 Release exists. A queued or green CI run, an open or mergeable PR, or enabled
-auto-merge is not completion. Before the candidate merges, rerun the initial
-command if `master` advances or candidate preparation fails. After it merges,
-recover a failed tag/GitHub Release follow-up by rerunning that failed
-`repository_dispatch` workflow run in the Actions UI or with:
+auto-merge is not completion. Recover a failed tag/GitHub Release follow-up by
+rerunning that failed `repository_dispatch` workflow run in the Actions UI or
+with:
 
 ```sh
 gh run rerun <run-id> --repo iridite/aletheia
 ```
 
-Do not use the initial dispatch for post-merge recovery, bypass the candidate
-hold or exact-SHA CI, or tag the commit manually. Fedora deployment and
-Observation-window admission remain separate downstream gates.
+Do not bypass the candidate hold or exact-SHA CI, or tag the commit manually.
+Fedora Paper deployment and Observation-window admission remain separate
+downstream gates; deployment success does not open an Observation window.
 
 The bootstrap manifest remains at the last released product version (`0.5.0`).
 The first generated release PR promotes the version, changelog, and manifest

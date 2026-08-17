@@ -1,0 +1,147 @@
+name: Refresh release candidate after master advances
+
+on:
+  workflow_run:
+    workflows: [Queue pull requests for auto-merge]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    name: Refresh an active release candidate
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Dispatch refresh only for an active candidate after an ordinary merge
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
+        with:
+          retries: 3
+          script: |
+            const run = context.payload.workflow_run;
+            const startedAt = Date.parse(run.run_started_at || run.created_at);
+            if (!Number.isFinite(startedAt)) {
+              core.info('auto-merge run has no usable start time');
+              return;
+            }
+            const associatedPullRequestNumbers = new Set(
+              (run.pull_requests || []).map(({number}) => number),
+            );
+            const mergedPullRequests = await github.paginate(github.rest.pulls.list, {
+              ...context.repo,
+              state: 'closed',
+              base: 'master',
+              sort: 'updated',
+              direction: 'desc',
+              per_page: 100,
+            });
+            const ordinaryMerge = mergedPullRequests.find((pullRequest) =>
+              pullRequest.merged_at &&
+              pullRequest.base.ref === 'master' &&
+              !pullRequest.labels.some(({name}) => name === 'autorelease: pending') &&
+              (
+                associatedPullRequestNumbers.has(pullRequest.number) ||
+                (
+                  associatedPullRequestNumbers.size === 0 &&
+                  Date.parse(pullRequest.merged_at) >= startedAt
+                )
+              )
+            );
+            if (!ordinaryMerge) {
+              core.info('no ordinary master merge belongs to this auto-merge run');
+              return;
+            }
+            const openPullRequests = await github.paginate(github.rest.pulls.list, {
+              ...context.repo,
+              state: 'open',
+              base: 'master',
+              per_page: 100,
+            });
+            const trustedCandidate = async (pullRequest) => {
+              if (
+                pullRequest.user?.login !== 'github-actions[bot]' ||
+                !pullRequest.head.ref.startsWith('release-please--branches--master') ||
+                pullRequest.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
+                !pullRequest.labels.some(({name}) => name === 'autorelease: pending')
+              ) {
+                return false;
+              }
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                ...context.repo,
+                issue_number: pullRequest.number,
+                per_page: 100,
+              });
+              const intentMarker = /<!-- aletheia-release-intent run=(\d+) -->/;
+              for (const comment of comments) {
+                if (comment.user?.login !== 'github-actions[bot]') continue;
+                const match = String(comment.body || '').match(intentMarker);
+                if (!match) continue;
+                const intentRunId = Number.parseInt(match[1], 10);
+                if (!Number.isInteger(intentRunId) || intentRunId <= 0) continue;
+                try {
+                  const {data: intentRun} = await github.rest.actions.getWorkflowRun({
+                    ...context.repo,
+                    run_id: intentRunId,
+                  });
+                  if (
+                    intentRun.path === '.github/workflows/release-please.yml' &&
+                    intentRun.event === 'workflow_dispatch' &&
+                    intentRun.actor?.login === context.repo.owner &&
+                    intentRun.head_branch === 'master' &&
+                    (intentRun.status === 'in_progress' || intentRun.status === 'completed')
+                  ) {
+                    return true;
+                  }
+                } catch (error) {
+                  core.info(`ignoring invalid release-intent run ${intentRunId}: ${error}`);
+                }
+              }
+              return false;
+            };
+            let candidate = null;
+            for (const pullRequest of openPullRequests) {
+              if (await trustedCandidate(pullRequest)) {
+                candidate = pullRequest;
+                break;
+              }
+            }
+            if (!candidate) {
+              core.info('no owner-authorized active release candidate needs refresh');
+              return;
+            }
+            const {data: master} = await github.rest.repos.getBranch({
+              ...context.repo,
+              branch: 'master',
+            });
+            const comparison = await github.rest.repos.compareCommits({
+              ...context.repo,
+              base: candidate.head.sha,
+              head: master.commit.sha,
+            });
+            if (comparison.data.merge_base_commit.sha === master.commit.sha) {
+              core.info('release candidate base already matches master');
+              return;
+            }
+            await github.rest.repos.createDispatchEvent({
+              ...context.repo,
+              event_type: 'release_candidate_refresh',
+              client_payload: {
+                source_run_id: context.runId,
+                trigger_pull_request: ordinaryMerge.number,
+                merge_commit_sha: ordinaryMerge.merge_commit_sha,
+                candidate_number: candidate.number,
+                master_sha: master.commit.sha,
+                candidate_head_sha: candidate.head.sha,
+                merge_base_sha: comparison.data.merge_base_commit.sha,
+              },
+            });
+            core.info(
+              `requested refresh for release candidate #${candidate.number} after ` +
+              `ordinary PR #${ordinaryMerge.number} merged to master`,
+            );

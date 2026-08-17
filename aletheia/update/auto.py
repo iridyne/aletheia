@@ -46,6 +46,13 @@ _STATE_SCHEMA = 1
 _SYSTEMD_MARKER = "# Managed-By: Aletheia auto update"
 _UNIT_NAMES = ("aletheia-auto-update.service", "aletheia-auto-update.timer")
 _TRANSIENT_CANDIDATE_FAILURES = {"gateway_stop_failed"}
+_RUNTIME_ROLE_ENV = "ALETHEIA_RUNTIME_ROLE"
+_AUTO_DEPLOY_ROLE = "paper"
+_ROLE_MIGRATION_DETAIL = (
+    "Automatic deployment is pinned until this runtime is classified; "
+    "migrate an existing Paper timer with ALETHEIA_RUNTIME_ROLE=paper "
+    "aletheia update auto install."
+)
 
 
 class AutoUpdateError(RuntimeError):
@@ -402,6 +409,8 @@ def run() -> dict[str, Any]:
         return {"ok": False, "reason": "linux_source_checkout_required"}
     if not git_ops.is_repo():
         return {"ok": False, "reason": "source_checkout_required"}
+    if os.environ.get(_RUNTIME_ROLE_ENV, "").strip().lower() != _AUTO_DEPLOY_ROLE:
+        return {"ok": True, "reason": "qualification_runtime_pinned", "detail": _ROLE_MIGRATION_DETAIL}
 
     with _deployment_lock() as acquired:
         if not acquired:
@@ -566,21 +575,40 @@ def _unit_dir() -> Path:
     return Path.home() / ".config" / "systemd" / "user"
 
 
-def _units() -> dict[str, str]:
+def _units(*, data_dir: str | None = None) -> dict[str, str]:
     uv = _uv()
-    data_dir = os.environ.get("ALETHEIA_DATA_DIR", "").strip()
-    env = f"Environment=ALETHEIA_DATA_DIR={data_dir}\n" if data_dir else ""
+    if data_dir is None:
+        data_dir = os.environ.get("ALETHEIA_DATA_DIR", "").strip()
+    runtime_role = os.environ.get(_RUNTIME_ROLE_ENV, "").strip()
+    env = "".join(
+        f"Environment={name}={value}\n"
+        for name, value in (("ALETHEIA_DATA_DIR", data_dir), (_RUNTIME_ROLE_ENV, runtime_role))
+        if value
+    )
     service = (
         "[Unit]\nDescription=Aletheia release-tag Paper deployment\n" + _SYSTEMD_MARKER + "\n\n"
         "[Service]\nType=oneshot\n"
         f"WorkingDirectory={_PROJECT_ROOT}\n{env}ExecStart={uv} run aletheia update auto run\n"
     )
     timer = (
-        "[Unit]\nDescription=Check Aletheia release tags hourly\n" + _SYSTEMD_MARKER + "\n\n"
-        "[Timer]\nOnCalendar=hourly\nPersistent=true\nRandomizedDelaySec=10m\n"
+        "[Unit]\nDescription=Check Aletheia release tags every five minutes\n" + _SYSTEMD_MARKER + "\n\n"
+        "[Timer]\nOnBootSec=1min\nOnUnitInactiveSec=5min\nPersistent=true\nRandomizedDelaySec=30s\n"
         "Unit=aletheia-auto-update.service\n\n[Install]\nWantedBy=timers.target\n"
     )
     return {"aletheia-auto-update.service": service, "aletheia-auto-update.timer": timer}
+
+
+def _owned_unit_data_dir(path: Path) -> str:
+    """Read the generated data root so a role-only migration cannot drop it."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    prefix = "Environment=ALETHEIA_DATA_DIR="
+    for line in text.splitlines():
+        if line.startswith(prefix):
+            return line.removeprefix(prefix).strip()
+    return ""
 
 
 def _systemctl(*args: str) -> None:
@@ -592,14 +620,19 @@ def _systemctl(*args: str) -> None:
 def install() -> dict[str, Any]:
     if sys.platform != "linux" or not git_ops.is_repo():
         return {"ok": False, "reason": "linux_source_checkout_required"}
+    if os.environ.get(_RUNTIME_ROLE_ENV, "").strip().lower() != _AUTO_DEPLOY_ROLE:
+        return {"ok": False, "reason": "paper_runtime_role_required"}
     directory = _unit_dir()
     directory.mkdir(parents=True, exist_ok=True)
     try:
-        units = _units()
         for name in _UNIT_NAMES:
             path = directory / name
             if path.exists() and _SYSTEMD_MARKER not in path.read_text(encoding="utf-8", errors="replace"):
                 return {"ok": False, "reason": "systemd_unit_ownership_conflict", "detail": name}
+        data_dir = os.environ.get("ALETHEIA_DATA_DIR", "").strip()
+        if not data_dir:
+            data_dir = _owned_unit_data_dir(directory / "aletheia-auto-update.service")
+        units = _units(data_dir=data_dir or None)
     except AutoUpdateError as exc:
         return {"ok": False, "reason": exc.reason, "detail": exc.detail}
     for name, content in units.items():

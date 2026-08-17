@@ -11,7 +11,10 @@ update_app = typer.Typer(
     invoke_without_command=True,
     help="Update a source checkout end to end or manage packaged releases.",
 )
-auto_app = typer.Typer(no_args_is_help=True, help="Follow stable release tags on a Linux Paper source runtime.")
+auto_app = typer.Typer(
+    no_args_is_help=True,
+    help="Follow stable release tags on an explicitly opted-in Linux Paper runtime every five minutes.",
+)
 
 
 def _is_packaged() -> bool:
@@ -179,11 +182,13 @@ def auto_status(json_output: bool = typer.Option(False, "--json", help="Print ma
 
 @auto_app.command("run")
 def auto_run():
-    """Check once and deploy a newer stable release tag when every gate passes."""
+    """Check once and deploy a newer stable release tag on a Paper runtime."""
     from aletheia.update.auto import run
 
     result = run()
     typer.echo(result.get("reason", "unknown"))
+    if result.get("detail"):
+        typer.echo(f"  {result['detail']}")
     if not result.get("ok"):
         raise typer.Exit(1)
 
@@ -201,7 +206,7 @@ def auto_resume():
 
 @auto_app.command("install")
 def auto_install():
-    """Install and enable the hourly user-level systemd timer on Fedora."""
+    """Install the timer; set ALETHEIA_RUNTIME_ROLE=paper for auto-deployment."""
     from aletheia.update.auto import install
 
     result = install()

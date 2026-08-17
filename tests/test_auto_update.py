@@ -20,6 +20,7 @@ def _linux_source(monkeypatch):
     from aletheia.update import auto, git_ops
 
     monkeypatch.setattr(auto.sys, "platform", "linux")
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
     monkeypatch.setattr(git_ops, "is_repo", lambda: True)
     monkeypatch.setattr(git_ops, "fetch_release_tags", lambda: {"ok": True})
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
@@ -385,15 +386,33 @@ def test_systemd_units_are_user_timer_contract(monkeypatch):
 
     assert "Type=oneshot" in units["aletheia-auto-update.service"]
     assert "update auto run" in units["aletheia-auto-update.service"]
-    assert "OnCalendar=hourly" in units["aletheia-auto-update.timer"]
+    assert "OnBootSec=1min" in units["aletheia-auto-update.timer"]
+    assert "OnUnitInactiveSec=5min" in units["aletheia-auto-update.timer"]
     assert "Persistent=true" in units["aletheia-auto-update.timer"]
-    assert "RandomizedDelaySec=10m" in units["aletheia-auto-update.timer"]
+    assert "RandomizedDelaySec=30s" in units["aletheia-auto-update.timer"]
+
+
+def test_auto_update_requires_explicit_paper_runtime_role(monkeypatch):
+    import aletheia.update.auto as auto
+
+    monkeypatch.setattr(auto.sys, "platform", "linux")
+    monkeypatch.setattr(auto.git_ops, "is_repo", lambda: True)
+    monkeypatch.delenv("ALETHEIA_RUNTIME_ROLE", raising=False)
+    result = auto.run()
+    assert result["ok"] is True
+    assert result["reason"] == "qualification_runtime_pinned"
+    assert "migrate an existing Paper timer" in result["detail"]
+
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
+    monkeypatch.setattr(auto, "_uv", lambda: "/usr/bin/uv")
+    assert "Environment=ALETHEIA_RUNTIME_ROLE=paper" in auto._units()["aletheia-auto-update.service"]
 
 
 def test_systemd_install_and_owned_uninstall_are_idempotent(tmp_path, monkeypatch):
     from aletheia.update import auto, git_ops
 
     monkeypatch.setattr(auto.sys, "platform", "linux")
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
     monkeypatch.setattr(git_ops, "is_repo", lambda: True)
     monkeypatch.setattr(auto, "_unit_dir", lambda: tmp_path / "units")
     monkeypatch.setattr(auto, "_uv", lambda: "/usr/bin/uv")
@@ -413,6 +432,7 @@ def test_systemd_install_refuses_unowned_unit_and_uninstall_needs_no_uv(tmp_path
     from aletheia.update import auto, git_ops
 
     monkeypatch.setattr(auto.sys, "platform", "linux")
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
     monkeypatch.setattr(git_ops, "is_repo", lambda: True)
     unit_dir = tmp_path / "units"
     unit_dir.mkdir()
@@ -427,6 +447,48 @@ def test_systemd_install_refuses_unowned_unit_and_uninstall_needs_no_uv(tmp_path
     monkeypatch.setattr(auto, "_systemctl", lambda *args: None)
     monkeypatch.setattr(auto, "_uv", lambda: pytest.fail("uninstall must not resolve uv"))
     assert auto.uninstall()["reason"] == "uninstalled"
+
+
+def test_systemd_install_requires_paper_runtime_role(tmp_path, monkeypatch):
+    from aletheia.update import auto, git_ops
+
+    monkeypatch.setattr(auto.sys, "platform", "linux")
+    monkeypatch.delenv("ALETHEIA_RUNTIME_ROLE", raising=False)
+    monkeypatch.setattr(git_ops, "is_repo", lambda: True)
+    monkeypatch.setattr(auto, "_unit_dir", lambda: tmp_path / "units")
+
+    assert auto.install() == {"ok": False, "reason": "paper_runtime_role_required"}
+    assert not (tmp_path / "units").exists()
+
+
+def test_systemd_install_migrates_owned_legacy_timer(tmp_path, monkeypatch):
+    from aletheia.update import auto, git_ops
+
+    monkeypatch.setattr(auto.sys, "platform", "linux")
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
+    monkeypatch.delenv("ALETHEIA_DATA_DIR", raising=False)
+    monkeypatch.setattr(git_ops, "is_repo", lambda: True)
+    unit_dir = tmp_path / "units"
+    unit_dir.mkdir()
+    (unit_dir / "aletheia-auto-update.service").write_text(
+        auto._SYSTEMD_MARKER + "\nEnvironment=ALETHEIA_DATA_DIR=/srv/aletheia-data\nlegacy",
+        encoding="utf-8",
+    )
+    (unit_dir / "aletheia-auto-update.timer").write_text(
+        auto._SYSTEMD_MARKER + "\nlegacy", encoding="utf-8"
+    )
+    monkeypatch.setattr(auto, "_unit_dir", lambda: unit_dir)
+    monkeypatch.setattr(auto, "_uv", lambda: "/usr/bin/uv")
+    monkeypatch.setattr(auto, "_systemctl", lambda *args: None)
+
+    assert auto.install()["reason"] == "installed"
+    assert "Environment=ALETHEIA_RUNTIME_ROLE=paper" in (
+        unit_dir / "aletheia-auto-update.service"
+    ).read_text(encoding="utf-8")
+    assert "Environment=ALETHEIA_DATA_DIR=/srv/aletheia-data" in (
+        unit_dir / "aletheia-auto-update.service"
+    ).read_text(encoding="utf-8")
+    assert "OnUnitInactiveSec=5min" in (unit_dir / "aletheia-auto-update.timer").read_text(encoding="utf-8")
 
 
 def test_resume_audits_the_operator(tmp_path, monkeypatch):

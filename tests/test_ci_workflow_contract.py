@@ -10,6 +10,7 @@ WORKFLOW_PATH = WORKFLOW_DIR / "ci.yml"
 AUTO_MERGE_WORKFLOW_PATH = WORKFLOW_DIR / "auto-merge.yml"
 DELETE_MERGED_WORKFLOW_PATH = WORKFLOW_DIR / "delete-merged-branch.yml"
 RELEASE_WORKFLOW_PATH = WORKFLOW_DIR / "release-please.yml"
+REFRESH_RELEASE_WORKFLOW_PATH = WORKFLOW_DIR / "refresh-release-candidate.yml"
 PINNED_ACTION_SHA_LENGTH = 40
 GITHUB_SCRIPT_ACTION = "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
 SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
@@ -56,6 +57,7 @@ def test_only_expected_workflows_are_active() -> None:
         "ci.yml",
         "codex-shepherd.yml",
         "delete-merged-branch.yml",
+        "refresh-release-candidate.yml",
         "release-please.yml",
     ]
 
@@ -262,20 +264,32 @@ def test_third_party_actions_are_pinned_to_full_commit_shas() -> None:
     assert not failures, "Actions must use full immutable commit SHAs:\n" + "\n".join(failures)
 
 
-def test_release_please_is_metadata_only_and_human_gated() -> None:
+def test_release_please_is_metadata_only_and_operationally_gated() -> None:
     workflow = _release_workflow()
     triggers = workflow["on"]
 
     assert set(triggers) == {"repository_dispatch", "workflow_dispatch"}
-    assert triggers["repository_dispatch"]["types"] == ["release_candidate_merged"]
-    assert workflow["permissions"] == {"contents": "read"}
-    assert workflow["concurrency"] == {
-        "group": "release-please-master",
-        "cancel-in-progress": "false",
+    assert triggers["repository_dispatch"]["types"] == [
+        "release_candidate_merged",
+        "release_candidate_refresh",
+    ]
+    assert triggers["workflow_dispatch"]["inputs"]["operational_need"] == {
+        "description": "Release the accumulated batch because a Runtime update is needed",
+        "required": "true",
+        "type": "boolean",
+        "default": "false",
     }
+    assert workflow["permissions"] == {"contents": "read"}
+    assert "release-please-tag-" in workflow["concurrency"]["group"]
+    assert "release-please-prepare" in workflow["concurrency"]["group"]
+    assert workflow["concurrency"]["cancel-in-progress"] == "false"
 
     assert set(workflow["jobs"]) == {"release"}
     job = workflow["jobs"]["release"]
+    assert "github.event_name == 'repository_dispatch'" in job["if"]
+    assert "github.event.sender.login == 'github-actions[bot]'" in job["if"]
+    assert "inputs.operational_need == true" in job["if"]
+    assert "github.actor == github.repository_owner" in job["if"]
     assert job["runs-on"] == SELF_HOSTED
     assert job["timeout-minutes"] == "10"
     assert job["permissions"] == {
@@ -284,18 +298,36 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
         "issues": "write",
         "pull-requests": "write",
     }
-    assert len(job["steps"]) == 4
-    validate, node, release, dispatch = job["steps"]
-    assert validate["if"] == "github.event_name == 'repository_dispatch'"
+    assert len(job["steps"]) == 6
+    validate, refresh_validate, node, release, bind_intent, dispatch = job["steps"]
+    assert "github.event.action == 'release_candidate_merged'" in validate["if"]
     assert validate["uses"] == GITHUB_SCRIPT_ACTION
     validate_script = validate["with"]["script"]
     assert "run.merge_commit_sha" in validate_script
     assert "run.expected_base_sha" in validate_script
     assert "github.rest.repos.getCommit" in validate_script
     assert "commit.parents[0].sha !== run.expected_base_sha" in validate_script
+    assert refresh_validate["if"] == (
+        "github.event_name == 'repository_dispatch' && "
+        "github.event.action == 'release_candidate_refresh'"
+    )
+    refresh_script = refresh_validate["with"]["script"]
+    assert "getWorkflowRun" in refresh_script
+    assert "refresh-release-candidate.yml" in refresh_script
+    assert "sourceRun.status === 'in_progress'" in refresh_script
+    assert "release-intent run=" in refresh_script
+    assert "candidate.user?.login !== 'github-actions[bot]'" in refresh_script
+    assert "candidate.head.ref.startsWith('release-please--branches--master')" in refresh_script
+    assert "candidate.head.sha !== run.candidate_head_sha" in refresh_script
+    assert "compareCommits" in refresh_script
+    assert "refresh payload is stale" in refresh_script
+    assert "trigger.merge_commit_sha !== run.merge_commit_sha" in refresh_script
     assert node["uses"] == SETUP_NODE_ACTION
     assert node["with"] == {"node-version": "22"}
-    assert release["env"] == {"GITHUB_TOKEN": "${{ github.token }}"}
+    assert release["env"] == {
+        "GITHUB_TOKEN": "${{ github.token }}",
+        "RELEASE_EVENT": "${{ github.event.action }}",
+    }
     commands = release["run"]
     assert "set -euo pipefail" in commands
     assert "release-please@17.6.0" in commands
@@ -303,14 +335,20 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
     assert "sleep $((attempt * 5))" in commands
     assert "release_please github-release" in commands
     assert "release_please release-pr" in commands
-    assert 'if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]' in commands
+    assert 'if [ "$RELEASE_EVENT" = "release_candidate_merged" ]' in commands
     assert '--token="$GITHUB_TOKEN"' in commands
     assert '--repo-url="$GITHUB_REPOSITORY"' in commands
     assert "--target-branch=master" in commands
     assert "--config-file=release-please-config.json" in commands
     assert "--manifest-file=.release-please-manifest.json" in commands
+    assert bind_intent["if"] == "github.event_name == 'workflow_dispatch'"
+    bind_script = bind_intent["with"]["script"]
+    assert "aletheia-release-intent run=" in bind_script
+    assert "github-actions[bot]" in bind_script
+    assert "issues.createComment" in bind_script
     assert dispatch["uses"] == GITHUB_SCRIPT_ACTION
-    assert dispatch["if"] == "github.event_name == 'workflow_dispatch'"
+    assert "github.event_name != 'repository_dispatch'" in dispatch["if"]
+    assert "github.event.action == 'release_candidate_refresh'" in dispatch["if"]
     assert dispatch["with"]["retries"] == "3"
     assert "pulls.list" in dispatch["with"]["script"]
     assert "autorelease: pending" in dispatch["with"]["script"]
@@ -331,6 +369,44 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
     assert "deploy" not in source
     assert "publish" not in source
     assert "actions/checkout" not in source
+
+
+def test_release_candidate_refresh_only_dispatches_for_an_active_stale_candidate() -> None:
+    workflow = yaml.load(
+        REFRESH_RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    assert workflow["on"] == {
+        "workflow_run": {
+            "workflows": ["Queue pull requests for auto-merge"],
+            "types": ["completed"],
+        }
+    }
+    assert workflow["permissions"] == {"contents": "read"}
+    job = workflow["jobs"]["refresh"]
+    assert job["if"] == "github.event.workflow_run.conclusion == 'success'"
+    assert job["permissions"] == {
+        "actions": "read",
+        "contents": "write",
+        "issues": "read",
+        "pull-requests": "read",
+    }
+    script = job["steps"][0]["with"]["script"]
+    assert "pulls.list" in script
+    assert "autorelease: pending" in script
+    assert "merged_at" in script
+    assert "branch: 'master'" in script
+    assert "run.pull_requests" in script
+    assert "associatedPullRequestNumbers" in script
+    assert "associatedPullRequestNumbers.has(pullRequest.number)" in script
+    assert "compareCommits" in script
+    assert "merge_base_commit.sha === master.commit.sha" in script
+    assert "source_run_id: context.runId" in script
+    assert "candidate_head_sha: candidate.head.sha" in script
+    assert "merge_base_sha: comparison.data.merge_base_commit.sha" in script
+    assert "trustedCandidate" in script
+    assert "aletheia-release-intent run=" in script
+    assert "release_candidate_refresh" in script
 
 
 def test_secret_scanner_download_is_versioned_and_checksum_verified() -> None:
