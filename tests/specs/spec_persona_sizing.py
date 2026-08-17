@@ -586,7 +586,7 @@ def test_progressive_unlock_ladder(tmp_path, monkeypatch):
     assert effective_operator_decidable(roll, cfg) == {}, "distress must refreeze all unlocked params"
 
     settings_src = _PAPER_TRADING_SETTINGS.read_text(encoding="utf-8")
-    assert "only active entry parameters" in settings_src
+    assert "Only active entry parameters" in settings_src
     assert "historical or mismatched outcomes never count" in settings_src
     assert "the interval itself is never evidence" in settings_src
 
@@ -625,7 +625,7 @@ def test_progressive_rollout_identity_is_restart_safe_and_switching_refreezes(tm
     assert old and old[0] is not None and old[1] == "refrozen"
     assert conn.execute(
         "SELECT event_type FROM persona_rollout_events WHERE rollout_id=? "
-        "ORDER BY created_at DESC LIMIT 1",
+        "ORDER BY created_at DESC, rowid DESC LIMIT 1",
         (first["rollout_id"],),
     ).fetchone()[0] == "rollout_invalidated"
 
@@ -820,13 +820,14 @@ def test_advance_persona_rollout(tmp_path, monkeypatch):
     # Sizing on and progressive unlock enabled still needs scoped evidence.
     cfg.trading.persona_sizing_enabled = True
     cfg.trading.persona_progressive_unlock_enabled = True
+    cfg.trading.active_persona = "balanced"
     r = advance_persona_rollout()
     assert r["action"] == "hold"
     assert r["reason"] in {"insufficient_scoped_samples", "insufficient_market_days"}
     assert cfg.trading.persona_progressive_unlock_enabled is True
     assert cfg.trading.persona_learning_enabled is False
     assert cfg.trading.persona_pyramid_enabled is False
-    assert cfg.trading.active_persona == "conservative"
+    assert cfg.trading.active_persona == "balanced"
     assert saved == {}, "rollout safety probe must never persist config changes"
 
     # A legacy config with progressive unlock already on must not auto-enable Learning.

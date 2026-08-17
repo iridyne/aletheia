@@ -126,6 +126,14 @@ def build_sizing_context(
     # reward (dormant unless persona_learning_enabled + enough clean samples; bounded).
     if apply_learning:
         try:
+            from aletheia.learning.control import learning_influence_enabled
+
+            apply_learning = bool(learning_influence_enabled())
+        except Exception:
+            # Learning authority is fail-closed when its global gate is unavailable.
+            apply_learning = False
+    if apply_learning:
+        try:
             from aletheia.trading.sizing_policy import learned_appetite_adjustment
             adj = learned_appetite_adjustment(ctx.get("regime"), cfg)
             if adj:
