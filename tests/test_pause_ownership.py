@@ -186,6 +186,16 @@ def test_persisted_stale_release_never_resumes(tmp_path, monkeypatch) -> None:
     assert result.resumed is False
     assert result.remaining_owners == ("exchange_connectivity",)
     assert resumed == []
+    from aletheia.files.jsonl import read_jsonl
+
+    rejected = [
+        event
+        for event in read_jsonl("audit.jsonl")
+        if event.get("event_type") == "pause_owner_release_rejected"
+    ]
+    assert rejected
+    assert rejected[-1]["metadata"]["pause_owner"] == "exchange_connectivity"
+    assert rejected[-1]["metadata"]["requested_pause_generation"] == "outage-1"
 
 
 def test_scheduler_resume_failure_restores_owner_lease(tmp_path, monkeypatch) -> None:
@@ -451,3 +461,251 @@ def test_llm_resume_gate_still_resumes_after_releasing_final_owners(
     assert result["allowed"] is True
     assert load_config().runtime.pause_owners == {}
     fake_scheduler.resume.assert_called_once_with()
+
+
+def test_trading_brakes_are_durable_scoped_owners(tmp_path, monkeypatch) -> None:
+    _isolated_config(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config
+    from aletheia.risk import kill_switch
+
+    monkeypatch.setattr("aletheia.agent_runtime.scheduler.pause_scheduler", lambda *a, **k: None)
+    kill_switch.activate(reason="panic", actor="human", scope="global")
+
+    cfg = load_config()
+    lease = cfg.runtime.pause_owners["kill_switch"]
+    assert cfg.runtime.kill_switch_active is True
+    assert cfg.runtime.paused is True
+    assert lease.scope == "global"
+    assert lease.source == "dashboard"
+    assert lease.generation
+
+    kill_switch.deactivate(actor="human", scope="global")
+    cfg = load_config()
+    assert cfg.runtime.kill_switch_active is False
+    assert "kill_switch" not in cfg.runtime.pause_owners
+
+
+def test_brake_release_never_bypasses_another_owner(tmp_path, monkeypatch) -> None:
+    _isolated_config(tmp_path, monkeypatch)
+    from aletheia.agent_runtime.pause_ownership import acquire_pause, release_pause
+    from aletheia.config.loader import load_config
+    from aletheia.risk import kill_switch
+
+    monkeypatch.setattr("aletheia.agent_runtime.scheduler.pause_scheduler", lambda *a, **k: None)
+    resumed: list[bool] = []
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.resume_scheduler",
+        lambda: resumed.append(True) or True,
+    )
+    acquire_pause("manual", reason="operator pause", generation="manual-1")
+    kill_switch.activate(reason="panic", actor="human")
+    kill_switch.deactivate(actor="human")
+
+    cfg = load_config()
+    assert set(cfg.runtime.pause_owners) == {"manual"}
+    assert resumed == []
+
+    result = release_pause("manual", generation="manual-1", resume_when_clear=True)
+    assert result.released is True
+    assert result.resumed is True
+    assert resumed == [True]
+
+
+def test_resume_gate_honors_hard_brake_before_dependency_probe(tmp_path, monkeypatch) -> None:
+    _isolated_config(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import resume_gate
+    from aletheia.config.loader import load_config
+    from aletheia.risk import kill_switch
+
+    monkeypatch.setattr("aletheia.agent_runtime.scheduler.pause_scheduler", lambda *a, **k: None)
+    kill_switch.activate(reason="panic", actor="human")
+
+    async def _probe_must_not_run(_cfg, *, max_retries=None):
+        raise AssertionError("hard brake must block before probing")
+
+    monkeypatch.setattr(resume_gate, "probe_llm_providers_at_startup", _probe_must_not_run)
+    result = asyncio.run(
+        resume_gate.resume_if_llm_available(
+            actor="human",
+            source="dashboard",
+            max_retries=1,
+        )
+    )
+
+    assert result["allowed"] is False
+    assert result["reason"] == "trading_brake_active"
+    assert result["blockers"] == ["kill_switch"]
+    assert load_config().runtime.kill_switch_active is True
+
+
+def test_scheduler_resume_refuses_hard_brake_owner(tmp_path, monkeypatch) -> None:
+    _isolated_config(tmp_path, monkeypatch)
+    from apscheduler.schedulers.base import STATE_PAUSED
+
+    from aletheia.agent_runtime import scheduler
+    from aletheia.config.loader import save_config
+
+    cfg = AletheiaConfig()
+    cfg.runtime.acquire_pause(
+        "kill_switch",
+        reason="panic",
+        generation="brake-1",
+        source="dashboard",
+        scope="global",
+    )
+    save_config(cfg)
+    fake_scheduler = MagicMock()
+    fake_scheduler.state = STATE_PAUSED
+    monkeypatch.setattr(scheduler, "_scheduler", fake_scheduler)
+
+    assert scheduler.resume_scheduler() is False
+    fake_scheduler.resume.assert_not_called()
+
+
+def test_mode_brake_only_blocks_its_execution_pool() -> None:
+    from aletheia.agent_runtime.pause_ownership import active_pause_blocker_names
+
+    cfg = AletheiaConfig.model_validate(
+        {
+            "exchange": {"mode": "live"},
+            "runtime": {
+                "demo_brake_active": True,
+            },
+        }
+    )
+
+    assert cfg.runtime.paused is False
+    assert active_pause_blocker_names(cfg) == ()
+    cfg.exchange.mode = "demo"
+    cfg.runtime.set_pause_scope(cfg.exchange.mode)
+    assert cfg.runtime.paused is True
+    assert active_pause_blocker_names(cfg) == ("demo_brake",)
+
+
+def test_legacy_generationless_release_is_exact_not_a_newer_wildcard() -> None:
+    legacy = AletheiaConfig.model_validate({"runtime": {"paused": True}})
+    assert legacy.runtime.release_pause("manual", generation="") is True
+
+    current = RuntimeConfig()
+    current.acquire_pause("manual", reason="operator pause", generation="new-1")
+    assert current.release_pause("manual", generation="") is False
+    assert current.paused is True
+
+
+def test_kill_switch_activate_is_idempotent_and_final_release_resumes(
+    tmp_path, monkeypatch
+) -> None:
+    _isolated_config(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config
+    from aletheia.risk import kill_switch
+
+    resumed: list[bool] = []
+    monkeypatch.setattr("aletheia.agent_runtime.scheduler.pause_scheduler", lambda: None)
+    monkeypatch.setattr(
+        "aletheia.agent_runtime.scheduler.resume_scheduler",
+        lambda: resumed.append(True) or True,
+    )
+
+    kill_switch.activate(reason="first", actor="human")
+    first = load_config().runtime.pause_owners["kill_switch"]
+    kill_switch.activate(reason="second", actor="human")
+    second = load_config().runtime.pause_owners["kill_switch"]
+
+    assert (second.generation, second.acquired_at, second.reason) == (
+        first.generation,
+        first.acquired_at,
+        first.reason,
+    )
+    kill_switch.deactivate(actor="human")
+    assert load_config().runtime.pause_owners == {}
+    assert resumed == [True]
+
+
+def test_resume_initializes_then_releases_nonblocking_mode_brake(
+    tmp_path, monkeypatch
+) -> None:
+    _isolated_config(tmp_path, monkeypatch)
+    from apscheduler.schedulers.base import STATE_PAUSED
+
+    from aletheia.agent_runtime import scheduler
+    from aletheia.config.loader import save_config
+
+    cfg = AletheiaConfig()
+    cfg.exchange.mode = "live"
+    cfg.runtime.acquire_pause(
+        "demo_brake",
+        reason="demo panic",
+        generation="demo-1",
+        scope="demo",
+    )
+    save_config(cfg)
+
+    fake_scheduler = MagicMock()
+    fake_scheduler.state = STATE_PAUSED
+    monkeypatch.setattr(scheduler, "_scheduler", None)
+    monkeypatch.setattr(scheduler, "init_scheduler", lambda: setattr(scheduler, "_scheduler", fake_scheduler))
+    monkeypatch.setattr(scheduler, "_selectively_paused_jobs", {"paper_trader"})
+
+    assert scheduler.resume_scheduler() is True
+    fake_scheduler.resume.assert_called_once_with()
+    fake_scheduler.resume_job.assert_called_once_with("paper_trader")
+
+
+def test_legacy_brake_state_migrates_without_fabricating_generation() -> None:
+    cfg = AletheiaConfig.model_validate(
+        {"runtime": {"kill_switch_active": True, "demo_brake_active": True}}
+    )
+
+    assert set(cfg.runtime.pause_owners) == {"kill_switch", "demo_brake"}
+    assert cfg.runtime.pause_owners["kill_switch"].generation is None
+    assert cfg.runtime.pause_owners["demo_brake"].scope == "demo"
+
+
+def test_pause_owner_projection_reports_age_without_fabricating_legacy_time() -> None:
+    from aletheia.agent_runtime.pause_ownership import active_pause_owners
+    from aletheia.config.schema import PauseOwnerLease
+
+    cfg = AletheiaConfig()
+    cfg.runtime.acquire_pause(
+        "manual",
+        reason="operator pause",
+        generation="manual-1",
+        acquired_at="2020-01-01T00:00:00+00:00",
+        source="operator",
+    )
+    cfg.runtime.pause_owners["legacy"] = PauseOwnerLease(
+        reason="legacy pause", generation=None, acquired_at=None, source="legacy_config"
+    )
+
+    rows = {row["owner"]: row for row in active_pause_owners(cfg)}
+    assert rows["manual"]["age_seconds"] is not None
+    assert rows["manual"]["age_seconds"] >= 0
+    assert rows["legacy"]["age_seconds"] is None
+
+
+def test_resume_gate_probe_exception_is_durable_fail_closed(tmp_path, monkeypatch) -> None:
+    _isolated_config(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import resume_gate
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = AletheiaConfig()
+    cfg.health.startup_behavior_gate_enabled = False
+    cfg.health.require_llm_at_startup = True
+    cfg.runtime.acquire_pause("manual", reason="operator pause", generation="manual-1")
+    save_config(cfg)
+
+    async def _probe_raises(_cfg, *, max_retries=None):
+        raise RuntimeError("provider orchestration failed")
+
+    monkeypatch.setattr(resume_gate, "probe_llm_providers_at_startup", _probe_raises)
+    result = asyncio.run(
+        resume_gate.resume_if_llm_available(
+            actor="human",
+            source="dashboard",
+            max_retries=1,
+        )
+    )
+
+    assert result["allowed"] is False
+    assert result["reason"] == "llm_probe_exception"
+    assert set(load_config().runtime.pause_owners) == {"manual", "llm_startup_gate"}

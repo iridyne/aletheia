@@ -112,8 +112,28 @@ def clear_gate_state() -> None:
 
 
 def _gate_owns_pause() -> bool:
+    owns, _generation = _gate_pause_identity()
+    return owns
+
+
+def _gate_pause_identity() -> tuple[bool, str | None]:
+    """Return gate ownership and an exact release token, including orphan recovery."""
     state = read_gate_state()
-    return bool(state and state.get("paused_by_gate"))
+    if state is not None:
+        if not state.get("paused_by_gate"):
+            return False, None
+        generation = state.get("pause_generation")
+        return True, generation if generation is not None else ""
+
+    # A previous resume attempt could have created the durable owner before the
+    # gate-state file was written.  Treat only a startup-gate-sourced lease as
+    # auto-resumable; all other owners remain operator-owned and fail-closed.
+    from aletheia.config.loader import load_config
+
+    lease = load_config().runtime.pause_owners.get("startup_behavior_gate")
+    if lease is None or not lease.active or lease.source != "startup_behavior_gate":
+        return False, None
+    return True, lease.generation if lease.generation is not None else ""
 
 
 # --------------------------------------------------------------------------- #
@@ -502,7 +522,9 @@ def _persist_paused(paused: bool, *, generation: str | None = None):
             )
         return release_pause(
             STARTUP_BEHAVIOR_OWNER,
-            generation=generation,
+            # A missing gate-state generation is legacy/unknown and must not
+            # wildcard-release a newer startup blocker.
+            generation=generation if generation is not None else "",
             resume_when_clear=True,
             source="startup_behavior_gate",
         )
@@ -533,7 +555,12 @@ def _apply_block(verdict: dict, cfg) -> None:
     paused_by_gate = system_failed
 
     if system_failed:
-        pause_lease = _persist_paused(True)
+        existing = cfg.runtime.pause_owners.get("startup_behavior_gate")
+        pause_lease = (
+            existing
+            if existing is not None and existing.active
+            else _persist_paused(True)
+        )
         # Stop the PI daemon if it was started due to a race or an earlier state;
         # it must not process new AI decisions while the gate is blocked.
         try:
@@ -604,8 +631,8 @@ def _resume_from_gate(cause: str, *, generation: str | None = None):
     if not release.released:
         logger.info("startup gate: pause generation changed — staying paused")
         return release
-    if release.remaining_owners:
-        remaining = ", ".join(release.remaining_owners)
+    if release.blocking_owners:
+        remaining = ", ".join(release.blocking_owners)
         _audit(
             "startup_behavior_gate_released_paused",
             f"Startup behaviour gate cleared; trading remains paused by {remaining} ({cause})",
@@ -662,11 +689,11 @@ async def startup_behavior_gate(cfg=None) -> dict:
         return verdict
 
     if verdict["passed"] and not verdict["user_blocked"]:
-        if _gate_owns_pause():
-            state = read_gate_state() or {}
+        gate_owns_pause, gate_generation = _gate_pause_identity()
+        if gate_owns_pause:
             release = _resume_from_gate(
                 cause="startup_checks_clear",
-                generation=state.get("pause_generation"),
+                generation=gate_generation,
             )
             if release is not None and release.released:
                 clear_gate_state()
@@ -688,16 +715,19 @@ async def recheck_once() -> bool:
     from aletheia.config.loader import load_config
 
     cfg = load_config()
+    gate_owns_pause, gate_generation = _gate_pause_identity()
     if not cfg.runtime.paused:
         # Already resumed by other means — nothing gate-owned to hold.
-        if _gate_owns_pause():
+        if gate_owns_pause:
             clear_gate_state()
         return False
-    if not _gate_owns_pause():
+    if not gate_owns_pause:
         return False  # human-owned pause — never auto-resume
 
     state = read_gate_state() or {}
-    pause_generation = state.get("pause_generation")
+    pause_generation = state.get("pause_generation", gate_generation)
+    if pause_generation is None:
+        pause_generation = ""
     verdict = evaluate_startup_gate(cfg)
     if verdict["passed"] and not verdict["user_blocked"]:
         release = _resume_from_gate(

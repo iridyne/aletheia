@@ -725,16 +725,34 @@ def _probe_config_gates(report: Report) -> None:
     else:
         report.add("config.kill_switch", "ok", "kill_switch inactive")
 
-    if cfg.runtime.paused:
-        from aletheia.agent_runtime.pause_ownership import active_pause_owners
-
-        owners = active_pause_owners(cfg)
+    from aletheia.agent_runtime.pause_ownership import (
+        active_pause_blocker_names,
+        active_pause_owners,
+        pause_blocked_reason,
+    )
+    owners = active_pause_owners(cfg)
+    blockers = active_pause_blocker_names(cfg)
+    if cfg.runtime.paused or owners:
+        owner_rows = owners
         owner_text = ", ".join(
-            f"{row['owner']} ({row['reason']})" for row in owners
+            (
+                f"{row['owner']} ({row['reason']}) [generation={row['generation'] or 'unknown'}; "
+                f"age={row['age_seconds'] if row['age_seconds'] is not None else 'unknown'}s; "
+                f"source={row['source'] or 'unknown'}; scope={row['scope'] or 'behavior'}]"
+            )
+            for row in owner_rows
         ) or "unknown"
-        report.add("config.paused", "warn",
-                   f"runtime.paused=True — owners: {owner_text}; autonomous jobs suspended",
-                   "`aletheia gateway resume`")
+        blocked_text = ", ".join(blockers) or "none for current execution pool"
+        blocked_reason = pause_blocked_reason(cfg) or "none"
+        severity = "warn" if blockers else "info"
+        report.add(
+            "config.paused",
+            severity,
+            f"runtime.paused={cfg.runtime.paused} — owners: {owner_text}; "
+            f"resume blockers: {blocked_text}; reason={blocked_reason}",
+            "clear the owning condition, then use `aletheia gateway resume`"
+            if blockers else "use `aletheia gateway resume` to reconcile scheduler state",
+        )
 
 
 def _probe_credentials(report: Report) -> None:

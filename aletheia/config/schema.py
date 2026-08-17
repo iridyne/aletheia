@@ -6,7 +6,7 @@ import logging
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 _logger = logging.getLogger("aletheia.config")
 
@@ -55,9 +55,31 @@ class PauseOwnerLease(BaseModel):
     reason: str
     generation: str | None = None
     acquired_at: str | None = None
+    # ``source`` and ``scope`` keep the owner projection auditable without
+    # coupling it to a particular caller or exposing any credentials.
+    source: str | None = None
+    scope: Literal["global", "demo", "live"] | None = None
+    # Active leases are the entries in ``RuntimeConfig.pause_owners``.  The
+    # explicit bit makes the serialized contract self-describing for readers
+    # that do not know that map membership is the active-state signal.
+    active: bool = True
+
+
+BRAKE_FIELDS_BY_SCOPE = {
+    "global": "kill_switch_active",
+    "demo": "demo_brake_active",
+    "live": "live_brake_active",
+}
+BRAKE_OWNERS_BY_SCOPE = {
+    "global": "kill_switch",
+    "demo": "demo_brake",
+    "live": "live_brake",
+}
 
 
 class RuntimeConfig(BaseModel):
+    _pause_scope: Literal["demo", "live"] = PrivateAttr(default="demo")
+
     @model_validator(mode="before")
     @classmethod
     def migrate_legacy_pause_owner(cls, value):
@@ -84,18 +106,62 @@ class RuntimeConfig(BaseModel):
                     "generation": None,
                     "acquired_at": None,
                 }
+        # Brakes pre-date the durable owner model.  Lift their persisted
+        # booleans into explicit leases while preserving unknown legacy
+        # identity as unknown rather than inventing a generation.
+        for scope, field in BRAKE_FIELDS_BY_SCOPE.items():
+            owner = BRAKE_OWNERS_BY_SCOPE[scope]
+            if data.get(field) and owner not in owners:
+                owners[owner] = {
+                    "reason": f"legacy_{field}",
+                    "generation": data.get(f"{owner}_generation"),
+                    "acquired_at": data.get(f"{owner}_acquired_at"),
+                    "source": "legacy_config",
+                    "scope": scope,
+                    "active": True,
+                }
+        for owner, lease in list(owners.items()):
+            if isinstance(lease, Mapping):
+                legacy_lease = dict(lease)
+                if not legacy_lease.get("source"):
+                    legacy_lease["source"] = "legacy_config"
+                for scope, known_owner in BRAKE_OWNERS_BY_SCOPE.items():
+                    if owner == known_owner:
+                        legacy_lease.setdefault("scope", scope)
+                        break
+                owners[owner] = legacy_lease
         if owners:
             data["pause_owners"] = owners
-            data["paused"] = True
+            data["paused"] = any(
+                not isinstance(lease, Mapping) or lease.get("active", True)
+                for lease in owners.values()
+            )
         return data
 
     def __setattr__(self, name: str, value) -> None:
         if name == "paused" and "pause_owners" in self.__dict__:
             if bool(value):
-                if "manual" not in self.pause_owners:
+                if "manual" not in self.pause_owners or not self.pause_owners["manual"].active:
                     self.acquire_pause("manual", reason="manual_pause_assignment")
             else:
                 self.release_pause("manual")
+            return
+        if name in BRAKE_FIELDS_BY_SCOPE.values() and "pause_owners" in self.__dict__:
+            active = bool(value)
+            super().__setattr__(name, active)
+            scope = next(scope for scope, field in BRAKE_FIELDS_BY_SCOPE.items() if field == name)
+            owner = BRAKE_OWNERS_BY_SCOPE[scope]
+            current = self.pause_owners.get(owner)
+            if active and (current is None or not current.active):
+                self.acquire_pause(
+                    owner,
+                    reason=f"{scope}_trading_brake_active",
+                    source="runtime_config",
+                    scope=scope,
+                )
+            elif not active and current is not None:
+                self.release_pause(owner, generation=current.generation)
+            self._sync_pause_fields()
             return
         super().__setattr__(name, value)
 
@@ -106,8 +172,14 @@ class RuntimeConfig(BaseModel):
 
     def _sync_pause_fields(self) -> None:
         owners = self.pause_owners
-        connectivity = owners.get("exchange_connectivity")
-        super().__setattr__("paused", bool(owners))
+        active_owners = {owner: lease for owner, lease in owners.items() if lease.active}
+        effective_owners = {
+            owner: lease
+            for owner, lease in active_owners.items()
+            if lease.scope is None or lease.scope in {"global", self._pause_scope}
+        }
+        connectivity = active_owners.get("exchange_connectivity")
+        super().__setattr__("paused", bool(effective_owners))
         super().__setattr__("paused_by_connectivity", connectivity is not None)
         super().__setattr__(
             "connectivity_pause_generation",
@@ -117,6 +189,13 @@ class RuntimeConfig(BaseModel):
             "connectivity_pause_acquired_at",
             connectivity.acquired_at if connectivity is not None else None,
         )
+        for scope, field in BRAKE_FIELDS_BY_SCOPE.items():
+            super().__setattr__(field, BRAKE_OWNERS_BY_SCOPE[scope] in active_owners)
+
+    def set_pause_scope(self, scope: str | None) -> None:
+        """Keep the compatibility pause projection aligned with the active mode."""
+        object.__setattr__(self, "_pause_scope", "live" if scope == "live" else "demo")
+        self._sync_pause_fields()
 
     def acquire_pause(
         self,
@@ -125,12 +204,21 @@ class RuntimeConfig(BaseModel):
         reason: str,
         generation: str | None = None,
         acquired_at: str | None = None,
+        source: str | None = "runtime_config",
+        scope: Literal["global", "demo", "live"] | None = None,
     ) -> PauseOwnerLease:
         """Acquire or refresh one owner's lease without disturbing other owners."""
+        if scope is None:
+            for known_scope, known_owner in BRAKE_OWNERS_BY_SCOPE.items():
+                if owner == known_owner:
+                    scope = known_scope
+                    break
         lease = PauseOwnerLease(
             reason=reason,
             generation=generation or uuid4().hex,
             acquired_at=acquired_at or datetime.now(timezone.utc).isoformat(),
+            source=source,
+            scope=scope,
         )
         owners = dict(self.pause_owners)
         owners[owner] = lease
@@ -143,7 +231,10 @@ class RuntimeConfig(BaseModel):
         current = self.pause_owners.get(owner)
         if current is None:
             return False
-        if generation is not None and current.generation != generation:
+        if generation is not None and not (
+            current.generation == generation
+            or (generation == "" and current.generation is None)
+        ):
             return False
         owners = dict(self.pause_owners)
         del owners[owner]
@@ -1538,6 +1629,11 @@ class AletheiaConfig(BaseModel):
         if isinstance(value, Mapping):
             return TradingMandateConfig.model_validate(dict(value))
         return TradingMandateConfig(enabled=True, raw_value=value)
+
+    @model_validator(mode="after")
+    def _sync_runtime_pause_scope(self):
+        self.runtime.set_pause_scope(self.exchange.mode)
+        return self
 
     app: AppConfig = Field(default_factory=AppConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
