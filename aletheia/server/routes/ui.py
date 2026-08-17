@@ -228,9 +228,9 @@ def _project_overview_account(portfolio: dict, cfg) -> dict:
                 if isinstance(item, dict)
             ],
         }
-        if uta_errors:
-            # A fresh UTA cache can still be incomplete. Do not let a partial
-            # aggregate fall through to the account-value or unrealized tiles.
+        if sync_status != "ok":
+            # A UTA cache can be fresh yet incomplete (or otherwise unusable).
+            # Do not let a non-ok aggregate fall through to account-value tiles.
             for key in ("total_value_usdt", "account_equity_usdt", "exchange_equity_usdt", "unrealized_pnl"):
                 account[key] = None
             account["exchange_asset_breakdown"] = []
