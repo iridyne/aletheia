@@ -380,6 +380,48 @@ def test_ufc_status_projects_fixed_look_units_and_coverage(monkeypatch):
     assert result["path_id"] == "universe_family_calibration"
 
 
+def test_ufc_evaluator_failure_is_partial(monkeypatch):
+    import aletheia.cli.control_cmd as cmd_mod
+
+    projection = {
+        "availability": "partial",
+        "items": [
+            {
+                "path_id": "universe_family_calibration",
+                "availability": "available",
+                "current_identity": {
+                    "policy_epoch": "epoch-1",
+                    "target_horizon": "24h",
+                    "outcome_contract_version": "outcome/v1",
+                    "metric_version": "metric/v1",
+                    "statistical_unit": "assignment_unit",
+                    "behavior_contract_hash": "behavior-contract",
+                    "code_commit": "boot-sha",
+                },
+                "measurement": {"state": "insufficient_data", "coverage": {}},
+                "inference": {},
+                "samples": {},
+                "lifecycle": {},
+            }
+        ],
+        "path_states": [],
+        "operations": {
+            "availability": "partial",
+            "evaluator": None,
+        },
+    }
+    from aletheia.learning import read_models
+
+    monkeypatch.setattr(
+        read_models,
+        "build_learning_contribution_projection",
+        lambda limit=100: projection,
+    )
+    result = cmd_mod._ufc_status()
+    assert result["availability"] == "partial"
+    assert result["unavailable_reason"] == "evaluator_unavailable"
+
+
 def test_profit_loop_status_stays_collecting_before_cutoff(monkeypatch):
     import aletheia.cli.control_cmd as cmd_mod
 
@@ -408,6 +450,29 @@ def test_profit_loop_status_stays_collecting_before_cutoff(monkeypatch):
     assert result["artifact"]["status"] == "unavailable"
     assert result["fixed_result_hash"] is None
     assert "layer_winner" not in result
+
+
+def test_profit_loop_malformed_registration_fails_closed(monkeypatch):
+    import aletheia.cli.control_cmd as cmd_mod
+
+    result = cmd_mod._profit_loop_status(
+        {
+            "paths": [
+                {
+                    "path_id": "profit_loop_observability",
+                    "status": "open",
+                    "epoch_id": "profit-epoch",
+                    "started_at": "not-an-iso-time",
+                    "cutoff_at": "2099-08-17T00:00:00+00:00",
+                    "deploy_commit": "boot-sha",
+                    "behavior_fingerprint": "behavior-sha",
+                    "registry_hash": "registry-sha",
+                }
+            ]
+        }
+    )
+    assert result["status"] == "unavailable"
+    assert result["unavailable_reason"] == "malformed_profit_loop_registration"
 
 
 def test_malformed_profit_epoch_fails_closed():

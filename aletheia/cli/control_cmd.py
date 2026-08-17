@@ -109,20 +109,49 @@ def _runtime_session_status() -> dict[str, Any]:
         from aletheia.agent_runtime.runtime_session import current_session
 
         session = current_session()
-        source = "in_process"
-        if session is None:
-            from aletheia.storage.sqlite import get_db
+        if session is not None:
+            return {
+                "available": True,
+                "unavailable_reason": None,
+                "source": "in_process",
+                "verification": "current_process",
+                "verified_live_gateway": True,
+                "session_id": session.get("session_id"),
+                "runtime_id": session.get("runtime_id"),
+                "boot_sha": session.get("boot_commit"),
+                "behavior_fingerprint": session.get("behavior_fingerprint"),
+                "schema_version": session.get("schema_version"),
+                "execution_mode": session.get("execution_mode"),
+                "started_at": session.get("started_at"),
+                "durable": bool(session.get("durable", True)),
+            }
 
-            row = get_db().execute(
-                "SELECT * FROM runtime_sessions WHERE ended_at IS NULL "
-                "ORDER BY started_at DESC, rowid DESC LIMIT 1"
-            ).fetchone()
-            session = dict(row) if row is not None else None
-            source = "durable_db"
+        live_gateway = _gateway_running()
+        if live_gateway is not True:
+            return {
+                "available": False,
+                "unavailable_reason": (
+                    "gateway_process_state_unavailable"
+                    if live_gateway is None
+                    else "no_live_gateway_runtime_session"
+                ),
+                "session_id": None,
+                "runtime_id": None,
+                "boot_sha": None,
+                "behavior_fingerprint": None,
+            }
+
+        from aletheia.storage.sqlite import get_db
+
+        row = get_db().execute(
+            "SELECT * FROM runtime_sessions WHERE ended_at IS NULL "
+            "ORDER BY started_at DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+        session = dict(row) if row is not None else None
         if not session:
             return {
                 "available": False,
-                "unavailable_reason": "no_active_runtime_session",
+                "unavailable_reason": "runtime_session_not_persisted",
                 "session_id": None,
                 "runtime_id": None,
                 "boot_sha": None,
@@ -131,7 +160,9 @@ def _runtime_session_status() -> dict[str, Any]:
         return {
             "available": True,
             "unavailable_reason": None,
-            "source": source,
+            "source": "durable_db",
+            "verification": "gateway_pid",
+            "verified_live_gateway": True,
             "session_id": session.get("session_id"),
             "runtime_id": session.get("runtime_id"),
             "boot_sha": session.get("boot_commit"),
@@ -230,8 +261,21 @@ def _connectivity_snapshot() -> dict[str, Any]:
     """Project cached connectivity only; status must never probe an exchange."""
 
     try:
+        from aletheia.agent_runtime.runtime_session import current_session
         from aletheia.agent_runtime.connectivity import get_status
 
+        if current_session() is None:
+            return {
+                "available": False,
+                "reachable": None,
+                "state": "unknown",
+                "exchange": None,
+                "last_probe_at": None,
+                "consecutive_failures": None,
+                "consecutive_successes": None,
+                "source": "durable_pause_state_only",
+                "unavailable_reason": "connectivity_probe_process_local",
+            }
         state = get_status()
         probe = state.get("last_probe") or {}
         reachable = probe.get("reachable") if probe else None
@@ -239,7 +283,7 @@ def _connectivity_snapshot() -> dict[str, Any]:
             "available": bool(probe),
             "reachable": reachable,
             "state": (
-                "exchange_restored" if reachable is True
+                "reachable" if reachable is True
                 else "exchange_unreachable" if reachable is False
                 else "unknown"
             ),
@@ -247,6 +291,7 @@ def _connectivity_snapshot() -> dict[str, Any]:
             "last_probe_at": _iso_from_epoch(probe.get("ts")),
             "consecutive_failures": state.get("consecutive_failures"),
             "consecutive_successes": state.get("consecutive_successes"),
+            "source": "gateway_process",
             "unavailable_reason": None if probe else "no_cached_exchange_probe",
         }
     except Exception as exc:
@@ -258,6 +303,7 @@ def _connectivity_snapshot() -> dict[str, Any]:
             "last_probe_at": None,
             "consecutive_failures": None,
             "consecutive_successes": None,
+            "source": "gateway_process",
             "unavailable_reason": "connectivity_read_failed",
             "error": type(exc).__name__,
         }
@@ -292,10 +338,15 @@ def _open_policy_epochs(limit: int = 10) -> list[dict[str, Any]] | dict[str, Any
 
 def _evidence_epochs() -> dict[str, Any]:
     try:
+        from aletheia.storage.sqlite import get_db
         from aletheia.learning.evidence_epoch import evidence_epoch_summary
+
+        # Force missing/read-only DB state to remain explicit; the summary helper
+        # intentionally treats a failed epoch query as an empty historical view.
+        get_db().execute("SELECT 1")
         return evidence_epoch_summary()
-    except Exception:
-        return {"error": "unavailable"}
+    except Exception as exc:
+        return {"error": "evidence_epoch_read_failed", "error_type": type(exc).__name__}
 
 
 def _learning_authority() -> dict[str, Any]:
@@ -315,6 +366,60 @@ def _learning_authority() -> dict[str, Any]:
         return {"error": "unavailable"}
 
 
+def _durable_scheduler_snapshot(
+    session_start: str | None, gateway_running: bool | None
+) -> dict[str, Any]:
+    """Report durable scheduler evidence without reading CLI process globals."""
+
+    base = {
+        "available": True,
+        "source": "durable_agent_runs",
+        "running": None,
+        "state": "unknown",
+        "job_count": None,
+        "last_tick": None,
+        "last_activity_at": None,
+        "unavailable_reason": "scheduler_state_not_persisted",
+    }
+    if gateway_running is False:
+        base.update(
+            {
+                "running": False,
+                "state": "gateway_stopped",
+                "unavailable_reason": "gateway_stopped",
+            }
+        )
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        where = "trigger_type='scheduled'"
+        params: tuple[object, ...] = ()
+        if session_start:
+            where += " AND started_at >= ?"
+            params = (session_start,)
+        row = get_db().execute(
+            "SELECT agent_name, status, started_at, ended_at FROM agent_runs "
+            f"WHERE {where} ORDER BY COALESCE(ended_at, started_at) DESC, rowid DESC LIMIT 1",
+            params,
+        ).fetchone()
+        if row:
+            base["last_activity_at"] = row["ended_at"] or row["started_at"]
+            base["last_activity"] = {
+                "agent_name": row["agent_name"],
+                "status": row["status"],
+                "started_at": row["started_at"],
+                "ended_at": row["ended_at"],
+            }
+        return base
+    except Exception as exc:
+        return {
+            **base,
+            "available": False,
+            "unavailable_reason": "scheduler_health_read_failed",
+            "error": type(exc).__name__,
+        }
+
+
 def _runtime_continuity() -> dict[str, Any]:
     try:
         from aletheia.config.loader import load_config
@@ -328,20 +433,62 @@ def _runtime_continuity() -> dict[str, Any]:
             cfg = load_config(persist_migrations=False)
         except TypeError:
             cfg = load_config()
-        owners = active_pause_owners(cfg)
-        blockers = active_pause_blocker_names(cfg)
+        # Pause projection helpers synchronize the current behavior scope on
+        # the supplied config object. Use a deep copy so status remains read-only
+        # even when the loaded config contains a legacy scope.
+        try:
+            projection_cfg = cfg.model_copy(deep=True)
+        except AttributeError:
+            import copy
+
+            projection_cfg = copy.deepcopy(cfg)
+        owners = active_pause_owners(projection_cfg)
+        blockers = active_pause_blocker_names(projection_cfg)
         session = _runtime_session_status()
-        scheduler_state = scheduler.status_snapshot()
-        connectivity = _connectivity_snapshot()
-        observer = _observer_health_snapshot(session.get("started_at"))
         gateway = _gateway_running()
+        if session.get("source") == "in_process":
+            scheduler_state = scheduler.status_snapshot()
+            connectivity = _connectivity_snapshot()
+        else:
+            scheduler_state = _durable_scheduler_snapshot(
+                session.get("started_at"), gateway
+            )
+            connectivity = {
+                "available": False,
+                "reachable": None,
+                "state": "unknown",
+                "exchange": None,
+                "last_probe_at": None,
+                "consecutive_failures": None,
+                "consecutive_successes": None,
+                "source": "durable_pause_state_only",
+                "unavailable_reason": "connectivity_probe_process_local",
+            }
+            if any(
+                owner.get("owner") == "exchange_connectivity"
+                and owner.get("active") is True
+                for owner in owners
+                if isinstance(owner, dict)
+            ):
+                connectivity.update(
+                    {
+                        "available": True,
+                        "reachable": False,
+                        "state": "exchange_unreachable",
+                        "unavailable_reason": None,
+                    }
+                )
+        observer = _observer_health_snapshot(session.get("started_at"))
         jobs_resumed = (
             bool(
                 scheduler_state.get("running")
                 and not blockers
                 and not cfg.runtime.paused
             )
-            if scheduler_state.get("state") not in {None, "unknown"}
+            if scheduler_state.get("running") is True
+            else False
+            if scheduler_state.get("running") is False
+            and scheduler_state.get("state") not in {None, "unknown"}
             else None
         )
         return {
@@ -349,7 +496,7 @@ def _runtime_continuity() -> dict[str, Any]:
             "paused": cfg.runtime.paused,
             "pause_owners": owners,
             "pause_blockers": list(blockers),
-            "resume_blocked_reason": pause_blocked_reason(cfg),
+            "resume_blocked_reason": pause_blocked_reason(projection_cfg),
             "scheduler_resume_authority": {
                 "allowed": not blockers,
                 "blocked_by": list(blockers),
@@ -365,6 +512,7 @@ def _runtime_continuity() -> dict[str, Any]:
             "data_root": _data_root_identity(),
             "gateway": {
                 "running": gateway,
+                "source": "gateway_pid",
                 "unavailable_reason": "gateway_status_read_failed" if gateway is None else None,
             },
             "scheduler": scheduler_state,
@@ -375,7 +523,8 @@ def _runtime_continuity() -> dict[str, Any]:
                 if connectivity.get("reachable") is True else None,
                 "observer": observer.get("last_successful_at"),
                 "scheduler": scheduler_state.get("last_tick")
-                if scheduler_state.get("running") else None,
+                if scheduler_state.get("running")
+                else scheduler_state.get("last_activity_at"),
             },
             "health": {
                 "availability": "available" if observer.get("available") else "partial",
@@ -393,8 +542,10 @@ def _runtime_continuity() -> dict[str, Any]:
 
 def _gateway_running() -> bool | None:
     try:
-        from aletheia.gateway.pidfile import is_running
-        return is_running()
+        from aletheia.gateway.pidfile import _pid_alive, read_pid
+
+        pid = read_pid()
+        return bool(pid is not None and _pid_alive(pid))
     except Exception:
         return None
 
@@ -502,6 +653,14 @@ def _ufc_status() -> dict[str, Any]:
                     or "ufc_path_unavailable",
                 }
             )
+        elif state.get("availability") == "partial":
+            base.update(
+                {
+                    "availability": "partial",
+                    "unavailable_reason": state.get("unavailable_reason")
+                    or "ufc_path_partial",
+                }
+            )
         return base
 
     item = items[0]
@@ -518,8 +677,23 @@ def _ufc_status() -> dict[str, Any]:
         "current_consecutive_market_days"
     )
     lifecycle = _mapping(item.get("lifecycle"))
+    operations = _mapping(projection.get("operations"))
+    evaluator = operations.get("evaluator")
     item_availability = item.get("availability") or "unavailable"
-    if item_availability not in {"available", "partial"}:
+    projection_availability = projection.get("availability") or "available"
+    operations_availability = operations.get("availability") or "available"
+    availability_states = {
+        item_availability,
+        projection_availability,
+        operations_availability,
+    }
+    if any(state not in {"available", "partial"} for state in availability_states):
+        envelope_availability = "unavailable"
+    elif any(state == "partial" for state in availability_states) or evaluator is None:
+        envelope_availability = "partial"
+    else:
+        envelope_availability = "available"
+    if envelope_availability == "unavailable":
         status = "unavailable"
     elif any(
         not identity.get(field)
@@ -533,17 +707,19 @@ def _ufc_status() -> dict[str, Any]:
         status = "evaluated"
     else:
         status = "collecting"
-    operations = _mapping(projection.get("operations"))
-    evaluator = operations.get("evaluator")
+    if envelope_availability == "partial" and evaluator is None:
+        availability_reason = "evaluator_unavailable"
+    elif envelope_availability == "partial":
+        availability_reason = "ufc_projection_partial"
+    elif status == "unavailable":
+        availability_reason = "ufc_identity_unavailable"
+    else:
+        availability_reason = None
     return {
         **base,
         "status": status,
-        "availability": item_availability,
-        "unavailable_reason": (
-            "ufc_projection_partial" if item_availability == "partial"
-            else "ufc_identity_unavailable" if status == "unavailable"
-            else None
-        ),
+        "availability": envelope_availability,
+        "unavailable_reason": availability_reason,
         "experiment": {
             "experiment_id": item.get("experiment_id"),
             "hypothesis_id": item.get("hypothesis_id"),
@@ -845,11 +1021,26 @@ def _profit_loop_status(evidence: dict[str, Any] | None = None) -> dict[str, Any
             "unavailable_reason": "compiler_identity_unavailable",
             "error": type(exc).__name__,
         }
+    coverage_available = coverage.get("availability") == "available"
+    compiler_available = compiler.get("available") is True
+    if not coverage_available and not compiler_available:
+        section_availability = "unavailable"
+    elif not coverage_available or not compiler_available:
+        section_availability = "partial"
+    else:
+        section_availability = "available"
+    section_reason = (
+        coverage.get("unavailable_reason")
+        if not coverage_available
+        else compiler.get("unavailable_reason")
+        if not compiler_available
+        else None
+    )
     return {
         **base,
         "status": lifecycle_status,
-        "availability": "partial" if coverage.get("availability") != "available" else "available",
-        "unavailable_reason": coverage.get("unavailable_reason"),
+        "availability": section_availability,
+        "unavailable_reason": section_reason,
         "registration": {
             "epoch_id": entry.get("epoch_id"),
             "registered_at": entry.get("started_at"),
@@ -879,6 +1070,15 @@ def _profit_loop_status(evidence: dict[str, Any] | None = None) -> dict[str, Any
 
 
 def build_control_status() -> dict[str, Any]:
+    """Collect the control snapshot through one non-mutating DB boundary."""
+
+    from aletheia.storage.sqlite import readonly_db
+
+    with readonly_db(allow_missing=True):
+        return _build_control_status()
+
+
+def _build_control_status() -> dict[str, Any]:
     """Collect all governance-relevant state into one serializable dict."""
     deployed = _deployed_commit()
     disk = _disk_commit()

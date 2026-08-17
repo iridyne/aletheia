@@ -28,6 +28,7 @@ except ImportError:  # pragma: no cover - POSIX uses flock.
 # One connection per OS thread — eliminates "database is locked" / "no transaction is
 # active" races between APScheduler background threads and uvicorn async handlers.
 _local = threading.local()
+_readonly_local = threading.local()
 _connection_generation = 0
 _injected_db_path: Path | None = None
 _injected_db_active = False
@@ -607,20 +608,46 @@ def db_path() -> Path:
 
 
 @contextmanager
-def readonly_db():
+def readonly_db(*, allow_missing: bool = False):
     """Open the effective database without creation or write-oriented PRAGMAs.
 
     File-backed test injection follows the injected path. In-memory injection has
     no second connection to open, so it yields the existing test connection and
     deliberately leaves its lifecycle with the fixture.
+
+    ``allow_missing`` is used by read-only status surfaces: nested legacy readers
+    still receive ``FileNotFoundError`` from :func:`get_db` without creating a
+    database merely because a status command was requested.
     """
 
+    previous_connection = getattr(_readonly_local, "connection", None)
+    previous_block = getattr(_readonly_local, "block_missing", False)
+    if previous_connection is not None:
+        yield previous_connection
+        return
+
     if _injected_db_active and _injected_db_path is None:
-        yield get_db()
+        connection = get_db()
+        _readonly_local.connection = connection
+        _readonly_local.block_missing = False
+        try:
+            yield connection
+        finally:
+            _readonly_local.connection = previous_connection
+            _readonly_local.block_missing = previous_block
         return
 
     path = Path(_injected_db_path or db_path())
     if not path.is_file():
+        if allow_missing:
+            _readonly_local.connection = None
+            _readonly_local.block_missing = True
+            try:
+                yield None
+            finally:
+                _readonly_local.connection = previous_connection
+                _readonly_local.block_missing = previous_block
+            return
         raise FileNotFoundError(path)
     connection = sqlite3.connect(
         f"{path.resolve().as_uri()}?mode=ro",
@@ -628,13 +655,22 @@ def readonly_db():
         timeout=1.0,
     )
     connection.row_factory = sqlite3.Row
+    _readonly_local.connection = connection
+    _readonly_local.block_missing = False
     try:
         yield connection
     finally:
+        _readonly_local.connection = previous_connection
+        _readonly_local.block_missing = previous_block
         connection.close()
 
 
 def get_db() -> sqlite3.Connection:
+    readonly_connection = getattr(_readonly_local, "connection", None)
+    if readonly_connection is not None:
+        return readonly_connection
+    if getattr(_readonly_local, "block_missing", False):
+        raise FileNotFoundError(db_path())
     conn = getattr(_local, "conn", None)
     if conn is not None and getattr(_local, "generation", -1) != _connection_generation:
         conn.close()

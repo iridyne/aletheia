@@ -1074,6 +1074,7 @@ def build_position_path_observer_status(
     position_ids = [str(position["id"]) for position in positions]
     bucket_state = repo.get_position_path_bucket_state(position_ids)
     oldest_missing: tuple[int, str] | None = None
+    latest_expected: tuple[int, str] | None = None
     latest_materialized: tuple[int, str] | None = None
     expected_bucket_count = 0
     materialized_bucket_count = 0
@@ -1095,6 +1096,11 @@ def build_position_path_observer_status(
         expected_bucket_count += max(
             0, ((last_bucket_open_ms - first_bucket_open_ms) // _BUCKET_MS) + 1
         )
+        if (
+            last_bucket_open_ms >= first_bucket_open_ms
+            and (latest_expected is None or last_bucket_open_ms > latest_expected[0])
+        ):
+            latest_expected = (last_bucket_open_ms, position_id)
         materialized = {
             bucket_open_ms
             for bucket_open_ms in state["observed"]
@@ -1197,12 +1203,7 @@ def build_position_path_observer_status(
     return {
         "eligible_position_count": len(positions),
         "latest_completed_bucket_open_ms": latest_completed_bucket_open_ms,
-        "latest_expected_bucket": {
-            "bucket_open_ms": latest_completed_bucket_open_ms,
-            "bucket_open_at": datetime.fromtimestamp(
-                latest_completed_bucket_open_ms / 1000, tz=timezone.utc
-            ).isoformat(),
-        },
+        "latest_expected_bucket": _bucket_ref(latest_expected),
         "latest_materialized_bucket": _bucket_ref(latest_materialized),
         "oldest_missing_bucket": oldest_missing_bucket,
         "oldest_deferred_bucket": oldest_deferred_bucket,

@@ -1135,6 +1135,18 @@ def test_position_path_observer_status_exposes_recovery_and_24h_counts():
     assert status["unavailable_reason"] == "deferred_bucket_pending"
 
 
+def test_position_path_observer_status_does_not_fabricate_expected_bucket():
+    from aletheia.portfolio.position_path_observer import build_position_path_observer_status
+
+    status = build_position_path_observer_status(
+        now=datetime(2026, 8, 17, tzinfo=timezone.utc)
+    )
+
+    assert status["latest_expected_bucket"] is None
+    assert status["ordered_path_coverage"]["status"] == "empty"
+    assert status["ordered_path_coverage"]["expected_bucket_count"] == 0
+
+
 @pytest.mark.asyncio
 async def test_observer_skips_bar_that_crosses_position_entry(monkeypatch):
     from aletheia.data import ccxt_provider
