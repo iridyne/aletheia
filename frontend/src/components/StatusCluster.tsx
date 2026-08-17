@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import type { RealtimeStatus } from '../lib/useRealtimeUpdates'
 import type { ShellBootstrap } from '../api/boot'
 import { deriveMasterState } from '../lib/systemState'
+import { safeErrorText } from '../lib/mutationErrors'
 
 const StatusDiagnostics = lazy(() => import('./StatusDiagnostics'))
 const MODES = ['Observe', 'Paper', 'Full'] as const
@@ -37,12 +38,21 @@ export default function StatusCluster({
   const realtimeTone = realtime.state === 'connected' ? 'green' : realtime.state === 'disconnected' ? 'muted' : 'yellow'
   const pause = useMutation({
     mutationFn: paused ? api.resume : api.pause,
-    onSuccess: () => { setError(''); void qc.invalidateQueries({ queryKey: ['ui-shell-bootstrap'] }) },
-    onError: (e: Error) => setError(e.message || 'request failed'),
+    onMutate: () => setError(''),
+    onSuccess: async () => {
+      await qc.refetchQueries({ queryKey: ['ui-shell-bootstrap'] }, { throwOnError: true })
+      setError('')
+    },
+    onError: (e: Error) => setError(safeErrorText(e)),
   })
   const setMode = useMutation({
     mutationFn: (mode: string) => api.setPermissionMode(mode),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['ui-shell-bootstrap'] }),
+    onMutate: () => setError(''),
+    onSuccess: async () => {
+      await qc.refetchQueries({ queryKey: ['ui-shell-bootstrap'] }, { throwOnError: true })
+      setError('')
+    },
+    onError: (e: Error) => setError(safeErrorText(e)),
   })
   const nextMode = () => {
     const index = MODES.indexOf(permission as typeof MODES[number])

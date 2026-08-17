@@ -1,12 +1,13 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { ToastProvider } from './components/ui/Toast'
 import { ConfirmProvider } from './components/ui/ConfirmModal'
 import './index.css'
 import { initDevReload } from './dev-reload'
+import { reportMutationError } from './lib/mutationErrors'
 
 performance.mark('aletheia:boot-script-start')
 
@@ -18,6 +19,16 @@ window.addEventListener('vite:preloadError', (e) => {
 if (!import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEV_RELOAD === 'true') initDevReload()
 
 const queryClient = new QueryClient({
+  mutationCache: new MutationCache({
+    onError: (error, _variables, _context, mutation) => {
+      // Local inline/toast handlers remain the source of truth for trust paths.
+      // Mutations without one still need a visible failure instead of a rejected
+      // Promise that exists only in DevTools.
+      if (typeof mutation.options.onError !== 'function' && mutation.options.meta?.errorSurface !== 'inline') {
+        reportMutationError(error)
+      }
+    },
+  }),
   defaultOptions: {
     queries: {
       // staleTime:0 (default) + refetchOnMount:'always' means every page switch

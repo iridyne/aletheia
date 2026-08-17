@@ -466,6 +466,7 @@ function NetworkCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const mut = useMutation({
     mutationFn: (body: any) => api.updateNetworkConfig(body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    meta: { errorSurface: 'inline' },
   })
 
   const dirty = protocol !== (net.proxy_protocol || 'http')

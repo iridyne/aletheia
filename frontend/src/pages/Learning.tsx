@@ -704,6 +704,7 @@ export function KnowledgeTab() {
   }
   const countState = learningReadState(funnelQuery.isLoading, funnelQuery.isError, funnelQuery.data != null, !!funnelQuery.data && Object.keys(funnelQuery.data.query_errors).length > 0)
   const lessonAction = useMutation({
+    meta: { errorSurface: 'inline' },
     mutationFn: ({ lessonId, action }: { lessonId: string; action: 'accept' | 'reject' | 'archive' }) => {
       if (action === 'accept') return api.acceptLesson(lessonId)
       if (action === 'reject') return api.rejectLesson(lessonId)
@@ -717,6 +718,7 @@ export function KnowledgeTab() {
     },
   })
   const guardAction = useMutation({
+    meta: { errorSurface: 'inline' },
     mutationFn: (guardId: string) => api.promoteGuardCandidate(guardId),
     onSuccess: (updated: GuardRow) => {
       setSelectedGuard(updated)

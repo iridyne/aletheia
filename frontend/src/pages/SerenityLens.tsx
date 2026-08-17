@@ -149,6 +149,7 @@ function OverviewTab() {
       qc.invalidateQueries({ queryKey: ['serenity-runs'] })
       setBrief('')
     },
+    meta: { errorSurface: 'inline' },
   })
 
   const { data: status } = useQuery({

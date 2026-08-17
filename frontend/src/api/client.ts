@@ -2,6 +2,7 @@ import type { InfraEvent, KnowledgeItem, SystemStatus, ThesisLineageRecord } fro
 import type { GuardRow } from "../lib/guards";
 import type { MarketSnapshot, Opportunity, Position } from "../types";
 import type { SettingsResponse } from "./settings";
+import { safeErrorText } from "../lib/mutationErrors";
 
 const BASE = "/api";
 const REMOTE_CONTROL_TOKEN_KEY = "aletheia.remoteControlToken";
@@ -331,12 +332,12 @@ function formatApiErrorMessage(status: number, body: string): string {
 		const obj = JSON.parse(body);
 		const detail = obj.detail;
 		const formatted = formatErrorValue(detail);
-		if (formatted) return formatted;
+		if (formatted) return safeErrorText(formatted, `${status} error`);
 	} catch {
 		/* not JSON, fall through */
 	}
 	if (body.length > 80) return `${status} error`;
-	return body || `${status} error`;
+	return safeErrorText(body, `${status} error`);
 }
 
 export class ApiError extends Error {

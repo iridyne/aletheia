@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, createContext, useContext } from 'react'
+import { MUTATION_ERROR_EVENT } from '../../lib/mutationErrors'
 
 type ToastType = 'success' | 'error' | 'warning' | 'info'
 
@@ -32,6 +33,15 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const dismiss = useCallback((id: number) => {
     setToasts(prev => prev.filter(t => t.id !== id))
   }, [])
+
+  useEffect(() => {
+    const onMutationError = (event: Event) => {
+      const message = (event as CustomEvent<{ message?: string }>).detail?.message
+      toast('error', message || 'Action failed: request failed')
+    }
+    window.addEventListener(MUTATION_ERROR_EVENT, onMutationError)
+    return () => window.removeEventListener(MUTATION_ERROR_EVENT, onMutationError)
+  }, [toast])
 
   return (
     <ToastContext.Provider value={{ toast }}>

@@ -101,6 +101,7 @@ export default function Universe() {
   const refreshMutation = useMutation({
     mutationFn: () => api.post('/universe/refresh'),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['universe-current'] }),
+    meta: { errorSurface: 'inline' },
   })
 
   const members = data?.members ?? []

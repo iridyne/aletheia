@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import { humanize, fmtDelta, fmtPct, fmtSymbol } from '../lib/format'
 import { getOperatorDisplayStatus } from '../lib/systemState'
 import { positionFreshness, positionKeys } from '../lib/queryKeys'
+import { safeErrorText } from '../lib/mutationErrors'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, ListRowButton, StatusText, TableWrap, useToast } from '../components/ui'
 import type {
@@ -758,7 +759,7 @@ export default function CommandCenter() {
     },
     // Send failure preserves the typed input (no setInput('')) so the operator can retry,
     // and surfaces the error via toast — silent loss of a typed command is the worst case.
-    onError: (e: any) => toast('error', `Send failed: ${e?.message || 'request failed'}`),
+    onError: (e: any) => toast('error', `Send failed: ${safeErrorText(e?.message || e?.error)}`),
   })
   const activeBranchMut = useMutation({
     mutationFn: (sessionId: string) => api.setOperatorActiveBranch(sessionId),
@@ -799,27 +800,33 @@ export default function CommandCenter() {
   // (matches the pattern in App.tsx that already extracts extractResumeError).
   const pauseMut = useMutation({
     mutationFn: api.pauseOperator,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['status'] })
-      qc.invalidateQueries({ queryKey: ['operator-status'] })
+    onSuccess: async () => {
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ['status'] }, { throwOnError: true }),
+        qc.refetchQueries({ queryKey: ['operator-status'] }, { throwOnError: true }),
+      ])
     },
-    onError: (e: any) => toast('error', `Pause failed: ${e?.message || 'request failed'}`),
+    onError: (e: any) => toast('error', `Pause failed: ${safeErrorText(e?.message || e?.error)}`),
   })
   const resumeMut = useMutation({
     mutationFn: api.resumeOperator,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['status'] })
-      qc.invalidateQueries({ queryKey: ['operator-status'] })
+    onSuccess: async () => {
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ['status'] }, { throwOnError: true }),
+        qc.refetchQueries({ queryKey: ['operator-status'] }, { throwOnError: true }),
+      ])
     },
-    onError: (e: any) => toast('error', `Resume failed: ${e?.message || 'request failed'}`),
+    onError: (e: any) => toast('error', `Resume failed: ${safeErrorText(e?.message || e?.error)}`),
   })
   const wakeMut = useMutation({
     mutationFn: api.wakeOperator,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['status'] })
-      qc.invalidateQueries({ queryKey: ['operator-status'] })
+    onSuccess: async () => {
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ['status'] }, { throwOnError: true }),
+        qc.refetchQueries({ queryKey: ['operator-status'] }, { throwOnError: true }),
+      ])
     },
-    onError: (e: any) => toast('error', `Wake failed: ${e?.message || 'request failed'}`),
+    onError: (e: any) => toast('error', `Wake failed: ${safeErrorText(e?.message || e?.error)}`),
   })
   const runtimeCandidateMut = useMutation({
     mutationFn: () => {
@@ -884,6 +891,7 @@ export default function CommandCenter() {
           : runtimeRollbackMut.isPending
             ? 'rollback'
             : null
+  const operatorCommandPending = pauseMut.isPending || resumeMut.isPending || wakeMut.isPending
   const filterText = deferredHistoryFilter.trim().toLowerCase()
   const sessionMessages = sessionDetail?.messages || []
   const sessionCommands = sessionDetail?.commands || []
@@ -1058,9 +1066,9 @@ export default function CommandCenter() {
         role="Persistent operator workspace for command, diagnosis, session branching, and evidence-backed inspection."
         actions={
           <div className="flex gap-2">
-            <Button className="btn-control" onClick={() => pauseMut.mutate()} disabled={pauseMut.isPending}>Pause</Button>
-            <Button variant="secondary" className="btn-control secondary" onClick={() => resumeMut.mutate()} disabled={resumeMut.isPending}>Resume</Button>
-            <Button variant="secondary" className="btn-control secondary" onClick={() => wakeMut.mutate()} disabled={wakeMut.isPending}>Wake</Button>
+            <Button className="btn-control" onClick={() => pauseMut.mutate()} disabled={operatorCommandPending}>Pause</Button>
+            <Button variant="secondary" className="btn-control secondary" onClick={() => resumeMut.mutate()} disabled={operatorCommandPending}>Resume</Button>
+            <Button variant="secondary" className="btn-control secondary" onClick={() => wakeMut.mutate()} disabled={operatorCommandPending}>Wake</Button>
           </div>
         }
       />

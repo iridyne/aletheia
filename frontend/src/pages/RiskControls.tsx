@@ -8,10 +8,11 @@ import { fmtSigned, fmtNum, humanize, fmtSymbol } from '../lib/format'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
 import { deriveMasterState } from '../lib/systemState'
 import { positionFreshness, positionKeys } from '../lib/queryKeys'
+import { safeErrorText } from '../lib/mutationErrors'
 
 /** Extract a human-readable error from a fetch/mutation failure. */
 function errMsg(e: any): string {
-  return String(e?.message || e?.error || 'request failed')
+  return safeErrorText(e?.message || e?.error)
 }
 
 /**
@@ -29,10 +30,10 @@ function errMsg(e: any): string {
  */
 export default function RiskControls() {
   const qc = useQueryClient()
-  const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
+  const { data: status, isLoading: statusLoading, isError: statusError } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: riskStatus } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000 })
   const { data: boundaries } = useQuery({ queryKey: ['risk-boundaries'], queryFn: api.getRiskBoundaries })
-  const { data: killSwitch, isLoading: ksLoading } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
+  const { data: killSwitch, isLoading: ksLoading, isError: ksError } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
   const { data: portfolio, isLoading: portfolioLoading } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
   // Open positions supply the market type per symbol so the exposure list can render the
   // spot/derivative convention (perp → no slash, spot → slash) via fmtSymbol. We MUST wait
@@ -53,37 +54,61 @@ export default function RiskControls() {
   const [killErr, setKillErr] = useState('')
   const [schedErr, setSchedErr] = useState('')
 
+  const killSwitchAvailable = !ksLoading && !ksError && killSwitch != null
+  const statusAvailable = !statusLoading && !statusError && status != null
+
   const engageKill = useMutation({
     mutationFn: () => api.setKillSwitch(true, 'manual_engage'),
-    onSuccess: () => { setKillErr(''); qc.invalidateQueries({ queryKey: ['kill-switch'] }); qc.invalidateQueries({ queryKey: ['risk-status'] }) },
+    onMutate: () => setKillErr(''),
+    onSuccess: async (confirmed) => {
+      if (confirmed.active !== true) throw new Error('Kill switch engage was not confirmed by backend')
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ['kill-switch'] }, { throwOnError: true }),
+        qc.refetchQueries({ queryKey: ['risk-status'] }, { throwOnError: true }),
+      ])
+      setKillErr('')
+    },
     onError: (e: any) => setKillErr(errMsg(e)),
   })
   const releaseKill = useMutation({
     // confirm_release=true — the onClick confirm() dialog is the second confirmation.
     mutationFn: () => api.setKillSwitch(false, 'manual_release', true),
-    onSuccess: () => { setKillErr(''); qc.invalidateQueries({ queryKey: ['kill-switch'] }); qc.invalidateQueries({ queryKey: ['risk-status'] }) },
+    onMutate: () => setKillErr(''),
+    onSuccess: async (confirmed) => {
+      if (confirmed.active !== false) throw new Error('Kill switch release was not confirmed by backend')
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ['kill-switch'] }, { throwOnError: true }),
+        qc.refetchQueries({ queryKey: ['risk-status'] }, { throwOnError: true }),
+      ])
+      setKillErr('')
+    },
     onError: (e: any) => setKillErr(errMsg(e)),
   })
   const pauseMut = useMutation({
     mutationFn: api.pause,
-    onSuccess: () => { setSchedErr(''); qc.invalidateQueries({ queryKey: ['status'] }) },
+    onMutate: () => setSchedErr(''),
+    onSuccess: async () => { await qc.refetchQueries({ queryKey: ['status'] }, { throwOnError: true }); setSchedErr('') },
     onError: (e: any) => setSchedErr(errMsg(e)),
   })
   const resumeMut = useMutation({
     mutationFn: api.resume,
-    onSuccess: () => { setSchedErr(''); qc.invalidateQueries({ queryKey: ['status'] }) },
+    onMutate: () => setSchedErr(''),
+    onSuccess: async () => { await qc.refetchQueries({ queryKey: ['status'] }, { throwOnError: true }); setSchedErr('') },
     onError: (e: any) => setSchedErr(errMsg(e)),
   })
 
   const s = (status ?? {}) as any
-  const killed = !!killSwitch?.active
-  const paused = !!s.paused
-  const gatewayRunning = !!s.gateway_running
+  const killed = killSwitchAvailable && killSwitch?.active === true
+  const paused = statusAvailable && !!s.paused
+  const gatewayRunning = statusAvailable && !!s.gateway_running
+  const schedulerPending = pauseMut.isPending || resumeMut.isPending
   const violations = (riskStatus?.violations as string[]) || []
   const riskState = String(riskStatus?.status || 'unknown')
   const riskTone: StatusTone = riskState === 'blocked' ? 'red' : riskState === 'warning' ? 'yellow' : riskState === 'healthy' ? 'green' : 'blue'
 
-  const master = deriveMasterState({ gatewayRunning, killed, riskState, paused })
+  const master = !statusAvailable || !killSwitchAvailable
+    ? { word: 'NOT AVAILABLE', tone: 'blue' as const, detail: 'Authoritative runtime safety state is unavailable.' }
+    : deriveMasterState({ gatewayRunning, killed, riskState, paused })
 
   // Exposure: largest magnitude first; bars scale to the biggest absolute exposure.
   const exposureRaw = (portfolio as any)?.exposure_by_symbol as Record<string, number> | undefined
@@ -181,25 +206,28 @@ export default function RiskControls() {
                 <span className="risk-lever-label">Kill Switch</span>
                 {ksLoading
                   ? <span className="skeleton-bar-inline" />
-                  : <StatusText tone={killed ? 'red' : 'green'}>{killed ? 'ENGAGED' : 'INACTIVE'}</StatusText>}
+                  : killSwitchAvailable
+                    ? <StatusText tone={killed ? 'red' : 'green'}>{killed ? 'ENGAGED' : 'INACTIVE'}</StatusText>
+                    : <StatusText tone="yellow">NOT AVAILABLE</StatusText>}
               </div>
-              {!ksLoading && !killed && (
+              {killSwitchAvailable && !killed && (
                 <Button
                   variant="danger"
-                  disabled={engageKill.isPending}
+                  disabled={engageKill.isPending || releaseKill.isPending}
                   onClick={() => { if (confirm('Engage kill switch? All trading will halt immediately.')) engageKill.mutate() }}
                 >
                   Engage Kill Switch
                 </Button>
               )}
-              {!ksLoading && killed && (
+              {killSwitchAvailable && killed && (
                 <Button
-                  disabled={releaseKill.isPending}
+                  disabled={engageKill.isPending || releaseKill.isPending}
                   onClick={() => { if (confirm('Release Kill Switch? Trading will resume immediately.')) releaseKill.mutate() }}
                 >
                   Release Kill Switch
                 </Button>
               )}
+              {!killSwitchAvailable && !ksLoading && <div className="lever-err" role="alert">✗ Kill switch state unavailable; controls disabled.</div>}
               {killErr && <div className="lever-err" role="alert">✗ {killErr}</div>}
             </div>
 
@@ -207,14 +235,15 @@ export default function RiskControls() {
             <div className="risk-lever">
               <div className="risk-lever-head">
                 <span className="risk-lever-label">Scheduler</span>
-                <StatusText tone={paused ? 'yellow' : gatewayRunning ? 'green' : 'muted'}>
-                  {paused ? 'PAUSED' : gatewayRunning ? 'ACTIVE' : 'OFFLINE'}
+                <StatusText tone={!statusAvailable ? 'yellow' : paused ? 'yellow' : gatewayRunning ? 'green' : 'muted'}>
+                  {!statusAvailable ? 'NOT AVAILABLE' : paused ? 'PAUSED' : gatewayRunning ? 'ACTIVE' : 'OFFLINE'}
                 </StatusText>
               </div>
               <div className="risk-lever-actions">
-                <Button variant="secondary" onClick={() => pauseMut.mutate()} disabled={paused || !gatewayRunning || pauseMut.isPending}>Pause</Button>
-                <Button onClick={() => resumeMut.mutate()} disabled={!paused || resumeMut.isPending}>Resume</Button>
+                <Button variant="secondary" onClick={() => pauseMut.mutate()} disabled={!statusAvailable || paused || !gatewayRunning || schedulerPending}>Pause</Button>
+                <Button onClick={() => resumeMut.mutate()} disabled={!statusAvailable || !paused || schedulerPending}>Resume</Button>
               </div>
+              {!statusAvailable && !statusLoading && <div className="lever-err" role="alert">✗ Scheduler state unavailable; controls disabled.</div>}
               {schedErr && <div className="lever-err" role="alert">✗ {schedErr}</div>}
             </div>
           </div>
