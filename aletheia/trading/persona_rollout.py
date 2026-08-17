@@ -1094,19 +1094,18 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
     t = cfg.trading
     runtime = getattr(cfg, "runtime", None)
 
-    def _refreeze_all(reason: str) -> dict[str, Any]:
-        return {
-            "action": "refrozen",
-            "reason": reason,
-            "rollouts_refrozen": invalidate_persona_rollouts(reason=reason, now=now),
-        }
+    def _refreeze_all(reason: str, *, report_without_rollout: bool = False) -> dict[str, Any]:
+        count = invalidate_persona_rollouts(reason=reason, now=now)
+        if count or report_without_rollout:
+            return {"action": "refrozen", "reason": reason, "rollouts_refrozen": count}
+        return {"action": "hold", "reason": reason}
 
     if bool(getattr(runtime, "kill_switch_active", False)):
-        return _refreeze_all("account_distress")
+        return _refreeze_all("account_distress", report_without_rollout=True)
     from aletheia.trading.sizing_policy import in_distress
 
     if in_distress(cfg):
-        return _refreeze_all("account_distress")
+        return _refreeze_all("account_distress", report_without_rollout=True)
     try:
         from aletheia.learning.control import global_learning_refreeze_reason
 
