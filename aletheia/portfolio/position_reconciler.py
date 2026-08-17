@@ -98,6 +98,20 @@ def _key(
     return (canonical_symbol, normalized_market, normalized_direction)
 
 
+def _exchange_position_id(row: dict) -> str | None:
+    """Return a public venue Position id, never a local Position id."""
+    for field in (
+        "broker_position_id",
+        "position_id",
+        "exchange_position_id",
+        "remote_position_id",
+    ):
+        value = str(row.get(field) or "").strip()
+        if value:
+            return value
+    return None
+
+
 class PositionAdoptionIntegrityError(ValueError):
     """Typed, sanitized rejection for an incomplete exchange Position projection."""
 
@@ -803,7 +817,7 @@ def _reconciliation_identity(
             market_type=market_type,
             direction=direction,
         )
-    return {
+    identity = {
         "execution_mode": execution_mode,
         "broker_id": broker_id,
         "account_environment": account_mode,
@@ -812,6 +826,10 @@ def _reconciliation_identity(
         "market_type": market_type,
         "direction": direction,
     }
+    broker_position_id = _exchange_position_id(exchange_pos)
+    if broker_position_id:
+        identity["broker_position_id"] = broker_position_id
+    return identity
 
 
 def _position_exposure_field_category(position: dict) -> str | None:
@@ -1175,6 +1193,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         entry_price=entry_price,
         current_price=float(exchange_pos.get("mark_price") or 0) or None,
         unrealized_pnl=float(exchange_pos.get("unrealized_pnl") or 0),
+        unrealized_pnl_source="exchange_exact",
         execution_mode=execution_mode,
         leverage=leverage,
         proposal_id=proposal.id,

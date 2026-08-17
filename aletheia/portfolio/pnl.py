@@ -169,19 +169,100 @@ def _normalize_upnl_market_type(market_type: object) -> str | None:
     return None
 
 
-def _build_exchange_upnl_index() -> dict[tuple[str, str, str, str], float]:
-    """Build exact broker/instrument/direction exchange uPnL matches.
+def _remote_position_id(position: dict) -> str | None:
+    """Read the broker Position identity without treating local ids as venue ids."""
+    for field in (
+        "broker_position_id",
+        "position_id",
+        "exchange_position_id",
+        "remote_position_id",
+    ):
+        value = str(position.get(field) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _local_upnl_identity(position: dict) -> tuple[str, str | None, bool]:
+    """Return (account fingerprint, broker Position id, identity is usable)."""
+    execution_mode = str(position.get("execution_mode") or "")
+    account_environment = _account_environment(execution_mode)
+    try:
+        from aletheia.portfolio.disappearance_confirmation import (
+            logical_account_fingerprint,
+        )
+
+        default_fingerprint = logical_account_fingerprint(
+            broker_id=execution_mode,
+            account_environment=account_environment,
+            execution_mode=execution_mode,
+        )
+    except Exception:
+        default_fingerprint = ""
+
+    raw_identity = position.get("reconciliation_identity")
+    if not raw_identity:
+        return default_fingerprint, None, True
+    try:
+        identity = json.loads(raw_identity) if isinstance(raw_identity, str) else raw_identity
+    except (TypeError, json.JSONDecodeError):
+        return "", None, False
+    if not isinstance(identity, dict):
+        return "", None, False
+    for field, expected in (
+        ("execution_mode", execution_mode),
+        ("broker_id", execution_mode),
+        ("account_environment", account_environment),
+    ):
+        supplied = str(identity.get(field) or "").strip()
+        if supplied and supplied != expected:
+            return "", None, False
+    fingerprint = str(identity.get("account_fingerprint") or "").strip()
+    broker_position_id = next(
+        (
+            str(identity.get(field) or "").strip()
+            for field in (
+                "broker_position_id",
+                "exchange_position_id",
+                "remote_position_id",
+            )
+            if str(identity.get(field) or "").strip()
+        ),
+        None,
+    )
+    return (
+        fingerprint or default_fingerprint,
+        broker_position_id,
+        True,
+    )
+
+
+def _set_unique_upnl_value(
+    index: dict[tuple, float | None],
+    key: tuple,
+    rows: list[dict],
+) -> None:
+    """Store one value only when the identity group is provably unique."""
+    index[key] = rows[0]["unrealized_pnl"] if len(rows) == 1 else None
+
+
+def _build_exchange_upnl_index() -> dict[tuple, float | None]:
+    """Build exact broker/account/instrument/direction exchange uPnL matches.
 
     Legacy exchange caches lacking broker or market identity are deliberately
     not used for per-position PnL. Ambiguous duplicate records also fall back
     to the local estimate rather than selecting an arbitrary exposure.
+
+    The returned mapping keeps the historical four-tuple lookup for simple,
+    unscoped fixtures and adds five-/six-tuple keys for account fingerprints and
+    broker Position identities. ``None`` is an intentional ambiguity marker.
     """
     try:
         from aletheia.data.symbols import to_canonical
         from aletheia.portfolio import exchange_sync
         from aletheia.portfolio.uta.registry import available_brokers
 
-        candidates: dict[tuple[str, str, str, str], list[float]] = {}
+        candidates: dict[tuple[str, str, str, str], list[dict]] = {}
         exchange_broker_ids = frozenset(available_brokers())
         cached = exchange_sync.get_unified_cached_state()
         if exchange_sync.status_for(cached) != "ok":
@@ -189,6 +270,10 @@ def _build_exchange_upnl_index() -> dict[tuple[str, str, str, str], float]:
         for position in (cached or {}).get("positions") or []:
             symbol = to_canonical(position.get("symbol", ""))
             broker_id = str(position.get("broker_id") or "")
+            account_environment = str(
+                position.get("account_environment") or ""
+            ).strip()
+            expected_environment = _account_environment(broker_id)
             market_type = _normalize_upnl_market_type(position.get("market_type"))
             side = str(position.get("side") or "").lower()
             direction = "long" if side in ("long", "buy") else "short" if side in ("short", "sell") else None
@@ -196,21 +281,107 @@ def _build_exchange_upnl_index() -> dict[tuple[str, str, str, str], float]:
             if (
                 not symbol
                 or broker_id not in exchange_broker_ids
+                or (
+                    account_environment
+                    and expected_environment != "unknown"
+                    and account_environment != expected_environment
+                )
                 or market_type is None
                 or direction is None
                 or upnl is None
             ):
                 continue
-            candidates.setdefault(
-                (symbol, broker_id, market_type, direction), [],
-            ).append(float(upnl))
-        return {
-            match_key: values[0]
-            for match_key, values in candidates.items()
-            if len(values) == 1
-        }
+            try:
+                parsed_upnl = float(upnl)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(parsed_upnl):
+                continue
+            match_key = (symbol, broker_id, market_type, direction)
+            candidates.setdefault(match_key, []).append({
+                "unrealized_pnl": parsed_upnl,
+                "account_fingerprint": str(
+                    position.get("account_fingerprint") or ""
+                ).strip(),
+                "broker_position_id": _remote_position_id(position),
+            })
+
+        index: dict[tuple, float | None] = {}
+        for match_key, rows in candidates.items():
+            # A legacy row without a fingerprint can still use the historical
+            # base key. Once a fingerprint is supplied, only the scoped key is
+            # eligible; a mismatched account must not pass through the base key.
+            if len(rows) > 1:
+                index[match_key] = None
+            elif not rows[0]["account_fingerprint"]:
+                _set_unique_upnl_value(index, match_key, rows)
+
+            scoped: dict[str, list[dict]] = {}
+            for row in rows:
+                scoped.setdefault(row["account_fingerprint"], []).append(row)
+            for fingerprint, scoped_rows in scoped.items():
+                _set_unique_upnl_value(index, (*match_key, fingerprint), scoped_rows)
+
+            exact: dict[tuple[str, str], list[dict]] = {}
+            for row in rows:
+                position_id = row["broker_position_id"]
+                if position_id:
+                    exact.setdefault(
+                        (row["account_fingerprint"], position_id), [],
+                    ).append(row)
+            for (fingerprint, position_id), exact_rows in exact.items():
+                _set_unique_upnl_value(
+                    index,
+                    (*match_key, fingerprint, position_id),
+                    exact_rows,
+                )
+        return index
     except Exception:
         return {}
+
+
+def _index_has_base(index: dict[tuple, float | None], base: tuple) -> bool:
+    return any(key[:4] == base for key in index)
+
+
+def _select_exchange_upnl(
+    index: dict[tuple, float | None],
+    base: tuple[str, str, str, str],
+    *,
+    account_fingerprint: str,
+    broker_position_id: str | None,
+    local_match_count: int,
+    local_identity_match_count: int,
+) -> tuple[float | None, str]:
+    """Select one exchange value and return its owner-facing match status."""
+    if broker_position_id:
+        if local_identity_match_count != 1:
+            return (
+                None,
+                "ambiguous" if _index_has_base(index, base) else "unavailable",
+            )
+        for fingerprint in (account_fingerprint, ""):
+            key = (*base, fingerprint, broker_position_id)
+            if key in index:
+                value = index[key]
+                return value, "exchange_exact" if value is not None else "ambiguous"
+        return None, "ambiguous" if _index_has_base(index, base) else "unavailable"
+
+    if local_match_count != 1:
+        return (
+            None,
+            "ambiguous" if _index_has_base(index, base) else "unavailable",
+        )
+
+    for fingerprint in (account_fingerprint, ""):
+        key = (*base, fingerprint)
+        if key in index:
+            value = index[key]
+            return value, "exchange_exact" if value is not None else "ambiguous"
+    if base in index:
+        value = index[base]
+        return value, "exchange_exact" if value is not None else "ambiguous"
+    return None, "unavailable"
 
 
 def mark_positions_to_market(persist: bool = False) -> list[dict]:
@@ -233,6 +404,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
     # Position identity, one aggregate uPnL cannot be allocated independently to
     # multiple local Position rows that share the same current match key.
     local_match_counts: dict[tuple[str, str, str, str], int] = {}
+    local_identity_match_counts: dict[tuple[str, str, str, str, str, str], int] = {}
     for position in positions:
         execution_mode = str(position.get("execution_mode") or "")
         if execution_mode == "paper_internal":
@@ -249,6 +421,12 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
             norm_dir,
         )
         local_match_counts[match_key] = local_match_counts.get(match_key, 0) + 1
+        account_fingerprint, broker_position_id, identity_valid = _local_upnl_identity(position)
+        if identity_valid and broker_position_id:
+            identity_key = (*match_key, account_fingerprint, broker_position_id)
+            local_identity_match_counts[identity_key] = (
+                local_identity_match_counts.get(identity_key, 0) + 1
+            )
 
     updated = []
     for p in positions:
@@ -270,15 +448,23 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
             market_type,
             norm_dir,
         )
-        exc_val = (
-            exc_upnl_index.get(match_key)
-            if (
-                execution_mode != "paper_internal"
-                and market_type is not None
-                and local_match_counts.get(match_key) == 1
+        account_fingerprint, broker_position_id, identity_valid = _local_upnl_identity(p)
+        upnl_source = "local_estimate"
+        exc_val = None
+        if execution_mode != "paper_internal" and market_type is not None and identity_valid:
+            exc_val, upnl_source = _select_exchange_upnl(
+                exc_upnl_index,
+                match_key,
+                account_fingerprint=account_fingerprint,
+                broker_position_id=broker_position_id,
+                local_match_count=local_match_counts.get(match_key, 0),
+                local_identity_match_count=local_identity_match_counts.get(
+                    (*match_key, account_fingerprint, broker_position_id or ""),
+                    0,
+                ),
             )
-            else None
-        )
+        elif execution_mode != "paper_internal" and not identity_valid:
+            upnl_source = "unavailable"
         if exc_val is not None:
             upnl = exc_val
         elif direction in ("long", "buy"):
@@ -286,10 +472,16 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
         else:
             upnl = (entry - price) * qty
         if persist:
-            update_position(p["id"], current_price=price, unrealized_pnl=upnl)
+            update_position(
+                p["id"],
+                current_price=price,
+                unrealized_pnl=upnl,
+                unrealized_pnl_source=upnl_source,
+            )
         rec = dict(p)
         rec["current_price"] = price
         rec["unrealized_pnl"] = upnl
+        rec["unrealized_pnl_source"] = upnl_source
         updated.append(rec)
     return updated
 

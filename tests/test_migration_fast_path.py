@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 32)
+        f"aletheia-sqlite-v{version}" for version in range(2, 33)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v31"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v32"
     connection.close()
 
 
@@ -384,6 +384,25 @@ def test_persona_rollout_v31_is_additive_and_events_are_append_only():
         )
     with pytest.raises(sqlite3.IntegrityError):
         connection.execute("DELETE FROM persona_rollout_events WHERE event_id='e1'")
+    connection.close()
+
+
+def test_exchange_upnl_identity_v32_is_additive_and_idempotent():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.execute("CREATE TABLE positions (id TEXT PRIMARY KEY)")
+
+    migrations._apply_exchange_upnl_identity_v32(connection)
+    migrations._apply_exchange_upnl_identity_v32(connection)
+
+    columns = [row[1] for row in connection.execute("PRAGMA table_info(positions)")]
+    assert columns.count("unrealized_pnl_source") == 1
+    default = connection.execute(
+        "SELECT dflt_value FROM pragma_table_info('positions') "
+        "WHERE name='unrealized_pnl_source'"
+    ).fetchone()[0]
+    assert default == "'local_estimate'"
     connection.close()
 
 
@@ -650,10 +669,9 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         [
             (step.migration_id, step.checksum, step.schema_version)
             # Keep the v24 identity migration pending so it materializes the
-            # columns that the following v25 migration reads.  The new v31
-            # rollout step adds one more tail migration than this fixture had
-            # when the prefix was written.
-            for step in migrations._MIGRATIONS[:-8]
+            # columns that the following v25 migration reads. The current tail
+            # includes the v31 rollout and v32 uPnL identity migrations.
+            for step in migrations._MIGRATIONS[:-9]
         ],
     )
     connection.commit()
@@ -671,8 +689,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260817_0030_persona_rollout_v31",
-        "aletheia-sqlite-v31",
+        "20260817_0031_exchange_upnl_identity_v32",
+        "aletheia-sqlite-v32",
     )
     health_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(learning_job_health)")

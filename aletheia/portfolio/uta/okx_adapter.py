@@ -94,6 +94,8 @@ class OkxDemoAdapter:
                 unrealized_pnl=p.get("unrealized_pnl", 0),
                 leverage=leverage,
                 mark_price=p.get("mark_price", 0),
+                position_id=p.get("position_id"),
+                account_fingerprint=p.get("account_fingerprint"),
                 leverage_source=leverage_source,
             ))
         return result

@@ -237,6 +237,8 @@ async def test_unified_state_preserves_market_and_leverage_provenance(monkeypatc
             leverage=4,
             leverage_source="exchange_reported",
             market_type="usdt_futures",
+            position_id="okx-position-1",
+            account_fingerprint="sha256:okx-account",
         )],
     )
     monkeypatch.setattr(
@@ -249,6 +251,8 @@ async def test_unified_state_preserves_market_and_leverage_provenance(monkeypatc
     assert state.positions[0]["leverage"] == 4
     assert state.positions[0]["leverage_source"] == "exchange_reported"
     assert state.positions[0]["market_type"] == "usdt_futures"
+    assert state.positions[0]["position_id"] == "okx-position-1"
+    assert state.positions[0]["account_fingerprint"] == "sha256:okx-account"
 
 
 class _PositionClient:
