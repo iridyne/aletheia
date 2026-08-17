@@ -42,3 +42,10 @@ def test_overview_curve_distinguishes_live_mark_from_verified_realized() -> None
     assert "No verified strategy outcomes yet" in chart
     assert "raw_recorded_points" not in overview_chart
     assert "genuine_points" not in overview_chart
+
+
+def test_overview_curve_controls_stack_on_mobile() -> None:
+    css = (ROOT / "frontend/src/index.css").read_text(encoding="utf-8")
+
+    assert "@media (max-width: 767px)" in css
+    assert ".pnl-curve-header { align-items: stretch; flex-direction: column" in css

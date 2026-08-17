@@ -1625,6 +1625,13 @@ def expire_stale_queued_opportunities(max_age_minutes: int = 30) -> int:
 # --- Capital Events ---
 
 
+def _normalized_utc_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def insert_capital_event(event) -> None:
     _insert("capital_events", _to_payload_dict(event))
 
@@ -1639,13 +1646,22 @@ def list_capital_events_between(start_at: str, end_at: str) -> list[dict]:
         """
         SELECT *
         FROM capital_events
-        WHERE datetime(detected_at) > datetime(?)
+        WHERE datetime(detected_at) >= datetime(?)
           AND datetime(detected_at) <= datetime(?)
-        ORDER BY datetime(detected_at) ASC, id ASC
         """,
         (start_at, end_at),
     ).fetchall()
-    return [dict(row) for row in rows]
+    start = _normalized_utc_datetime(start_at)
+    end = _normalized_utc_datetime(end_at)
+    events = [
+        dict(row)
+        for row in rows
+        if start < _normalized_utc_datetime(row["detected_at"]) <= end
+    ]
+    return sorted(
+        events,
+        key=lambda row: (_normalized_utc_datetime(row["detected_at"]), row["id"]),
+    )
 
 
 def get_net_deposits() -> float:
@@ -1691,13 +1707,23 @@ def list_paper_cash_events_between(start_at: str, end_at: str) -> list[dict]:
             'initial_funding', 'manual_credit', 'manual_debit', 'manual_set_balance'
         )
           AND amount_usdt != 0
-          AND datetime(created_at) > datetime(?)
+          AND position_id IS NULL
+          AND datetime(created_at) >= datetime(?)
           AND datetime(created_at) <= datetime(?)
-        ORDER BY datetime(created_at) ASC, rowid ASC
         """,
         (start_at, end_at),
     ).fetchall()
-    return [dict(row) for row in rows]
+    start = _normalized_utc_datetime(start_at)
+    end = _normalized_utc_datetime(end_at)
+    events = [
+        dict(row)
+        for row in rows
+        if start < _normalized_utc_datetime(row["created_at"]) <= end
+    ]
+    return sorted(
+        events,
+        key=lambda row: (_normalized_utc_datetime(row["created_at"]), row["id"]),
+    )
 
 
 def get_paper_account_cash_balance() -> float:
