@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v32"
+SCHEMA_VERSION = "aletheia-sqlite-v33"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4770,6 +4770,23 @@ _EXCHANGE_UPNL_IDENTITY_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+# Observation Lab v1 (Issue #1072). The frozen-unit table lives in the Lab's
+# own SQLite file (``~/.aletheia/observation-lab/lab.db``, initialized by
+# ``aletheia.observation_lab.db``) — physical isolation from ``app.db`` is what
+# lets unrelated production schema changes miss the Lab entirely. This app.db
+# migration only adds the ``adapter_identity_hash`` column on the spec row so
+# the identity-vector invalidation check (owner review §4) has a place to
+# stash its hash.
+_OBSERVATION_LAB_FROZEN_UNITS_COLUMNS = (
+    ("adapter_identity_hash", "filter_shadow_experiments", "TEXT"),
+)
+_OBSERVATION_LAB_FROZEN_UNITS_CHECKSUM = hashlib.sha256(
+    (
+        repr(_OBSERVATION_LAB_FROZEN_UNITS_COLUMNS)
+        + "\nobservation_lab_frozen_units_v2"
+    ).encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -4869,6 +4886,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260817_0031_exchange_upnl_identity_v32": (
         "owner-facing exchange uPnL identity and fallback source"
+    ),
+    "20260817_0032_observation_lab_frozen_units_v33": (
+        "Observation Lab v1 POC: adapter identity hash + frozen first-exposure units"
     ),
 }
 
@@ -5109,6 +5129,22 @@ def _apply_exchange_upnl_identity_v32(db: sqlite3.Connection) -> None:
     """Persist the owner-facing source of each open-position uPnL mark."""
 
     for column, table, column_type in _EXCHANGE_UPNL_IDENTITY_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.execute("PRAGMA optimize")
+
+
+def _apply_observation_lab_frozen_units_v33(db: sqlite3.Connection) -> None:
+    """Add the Observation Lab identity-vector hash column on the spec row.
+
+    The frozen-unit table itself lives in ``lab.db`` (see
+    ``aletheia.observation_lab.db``); only the column addition touches
+    ``app.db`` because the spec is the identity anchor operators query.
+    """
+    for column, table, column_type in _OBSERVATION_LAB_FROZEN_UNITS_COLUMNS:
         existing = {
             str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
         }
@@ -5646,6 +5682,12 @@ _MIGRATIONS = (
         checksum=_EXCHANGE_UPNL_IDENTITY_CHECKSUM,
         schema_version="aletheia-sqlite-v32",
         apply=_apply_exchange_upnl_identity_v32,
+    ),
+    MigrationStep(
+        migration_id="20260817_0032_observation_lab_frozen_units_v33",
+        checksum=_OBSERVATION_LAB_FROZEN_UNITS_CHECKSUM,
+        schema_version="aletheia-sqlite-v33",
+        apply=_apply_observation_lab_frozen_units_v33,
     ),
 )
 

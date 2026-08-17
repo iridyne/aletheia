@@ -241,40 +241,16 @@ def build_ranker_confidence_replay(
         current_rank = _CONFIDENCE_LADDER.index(current_minimum)
         for alternative_rank in range(current_rank - 1, -1, -1):
             minimum = _CONFIDENCE_LADDER[alternative_rank]
-            admitted = []
-            for row in rejected_rows:
-                confidence = _confidence_value(
-                    _json_dict(row.get("input_snapshot")).get("confidence")
-                )
-                if confidence is None:
-                    invalid_inputs += 1
-                    continue
-                rank = _CONFIDENCE_LADDER.index(confidence)
-                if alternative_rank <= rank < current_rank:
-                    admitted.append(row)
-            metrics = _outcome_metrics(admitted)
-            shrunk = _shrunk_mean(metrics, prior_mean)
-            delta = _metric_delta(shrunk, current_metrics["raw_avg_net_pct"])
-            readiness = "insufficient_data"
-            if (
-                int(metrics["settled_n"]) >= sample_gate
-                and float(metrics["outcome_coverage"]) >= _MIN_COVERAGE
-                and shrunk is not None
-                and delta is not None
-            ):
-                readiness = (
-                    "ready_for_controlled_experiment"
-                    if shrunk > 0 and delta >= _MIN_EDGE_DELTA_PCT
-                    else "no_support"
-                )
-            alternatives.append({
-                "minimum_confidence": minimum,
-                "newly_admitted_candidates": len(admitted),
-                **metrics,
-                "shrunk_avg_net_pct": shrunk,
-                "delta_vs_current_pass_pct": delta,
-                "readiness": readiness,
-            })
+            alternative_row, invalid_delta = _score_ranker_alternative(
+                rejected_rows=rejected_rows,
+                current_metrics=current_metrics,
+                current_rank=current_rank,
+                alternative_minimum=minimum,
+                min_samples=sample_gate,
+                prior_mean=prior_mean,
+            )
+            invalid_inputs += invalid_delta
+            alternatives.append(alternative_row)
 
     return {
         "read_only": True,
@@ -304,6 +280,166 @@ def build_ranker_confidence_replay(
             "No confidence threshold or configuration is mutated.",
         ],
     }
+
+
+def _score_ranker_alternative(
+    *,
+    rejected_rows: list[dict[str, Any]],
+    current_metrics: dict[str, Any],
+    current_rank: int,
+    alternative_minimum: str,
+    min_samples: int,
+    prior_mean: float,
+) -> tuple[dict[str, Any], int]:
+    """Score one confidence-ladder alternative against a control cohort.
+
+    Shared by both the live replay path (:func:`build_ranker_confidence_replay`) and
+    the Observation Lab frozen-units path
+    (:func:`build_ranker_confidence_replay_from_frozen`). Same rejected rows and
+    control metrics → same alternative shape → same evaluator disposition.
+    """
+    alternative_rank = _CONFIDENCE_LADDER.index(alternative_minimum)
+    admitted: list[dict[str, Any]] = []
+    invalid_inputs = 0
+    for row in rejected_rows:
+        confidence = _confidence_value(
+            _json_dict(row.get("input_snapshot")).get("confidence")
+        )
+        if confidence is None:
+            invalid_inputs += 1
+            continue
+        rank = _CONFIDENCE_LADDER.index(confidence)
+        if alternative_rank <= rank < current_rank:
+            admitted.append(row)
+    metrics = _outcome_metrics(admitted)
+    shrunk = _shrunk_mean(metrics, prior_mean)
+    delta = _metric_delta(shrunk, current_metrics["raw_avg_net_pct"])
+    readiness = "insufficient_data"
+    if (
+        int(metrics["settled_n"]) >= min_samples
+        and float(metrics["outcome_coverage"]) >= _MIN_COVERAGE
+        and shrunk is not None
+        and delta is not None
+    ):
+        readiness = (
+            "ready_for_controlled_experiment"
+            if shrunk > 0 and delta >= _MIN_EDGE_DELTA_PCT
+            else "no_support"
+        )
+    return (
+        {
+            "minimum_confidence": alternative_minimum,
+            "newly_admitted_candidates": len(admitted),
+            **metrics,
+            "shrunk_avg_net_pct": shrunk,
+            "delta_vs_current_pass_pct": delta,
+            "readiness": readiness,
+        },
+        invalid_inputs,
+    )
+
+
+def build_ranker_confidence_replay_from_frozen(
+    *,
+    experiment_id: str,
+    horizon: str,
+    current_minimum_confidence: str,
+    treatment_minimum: str,
+    min_samples: int = 20,
+) -> dict[str, Any] | None:
+    """Rebuild ranker-confidence evaluation from Observation Lab frozen units.
+
+    Returns the same shape as :func:`build_ranker_confidence_replay` restricted
+    to the one alternative the experiment targets. Frozen units come from
+    ``lab.db``; outcomes are refetched from ``app.db`` (``filter_candidate_outcomes``)
+    and joined in-memory — outcomes settle AFTER first exposure by design, so
+    freezing the input snapshot alone is enough for equivalence.
+
+    Returns ``None`` if no frozen units exist yet — caller falls back to the
+    live replay so a freshly-registered experiment can still evaluate on its
+    first cycle.
+    """
+    from aletheia.observation_lab.units import list_frozen_units
+
+    control = _confidence_value(current_minimum_confidence)
+    treatment = _confidence_value(treatment_minimum)
+    if control is None or treatment is None:
+        return None
+    if _CONFIDENCE_LADDER.index(treatment) >= _CONFIDENCE_LADDER.index(control):
+        return None
+
+    frozen = list_frozen_units(experiment_id)
+    if not frozen:
+        return None
+
+    outcomes = _fetch_outcomes_for(
+        [row["outcome_candidate_key"] for row in frozen],
+        horizon=horizon,
+    )
+    hydrated: list[dict[str, Any]] = []
+    for unit in frozen:
+        outcome = outcomes.get(unit["outcome_candidate_key"]) or {}
+        hydrated.append({
+            "outcome_candidate_key": unit["outcome_candidate_key"],
+            "decision": unit["decision"],
+            "input_snapshot": unit["input_snapshot"],
+            "parameter_snapshot": unit["parameter_snapshot"],
+            "first_evaluated_at": unit["first_evaluated_at"],
+            "status": outcome.get("status"),
+            "net_return_pct": outcome.get("net_return_pct"),
+        })
+
+    passed_rows = [row for row in hydrated if row["decision"] == "passed"]
+    rejected_rows = [row for row in hydrated if row["decision"] == "rejected"]
+
+    current_metrics = _outcome_metrics(passed_rows)
+    prior_mean = float(current_metrics["raw_avg_net_pct"] or 0.0)
+    current_rank = _CONFIDENCE_LADDER.index(control)
+    alternative, _invalid = _score_ranker_alternative(
+        rejected_rows=rejected_rows,
+        current_metrics=current_metrics,
+        current_rank=current_rank,
+        alternative_minimum=treatment,
+        min_samples=max(1, int(min_samples)),
+        prior_mean=prior_mean,
+    )
+    return {
+        "read_only": True,
+        "gate_only": True,
+        "filter_name": "ranker_confidence_gate",
+        "source": "observation_lab_frozen_units",
+        "current_minimum_confidence": control,
+        "current_pass": current_metrics,
+        "alternatives": [alternative],
+    }
+
+
+def _fetch_outcomes_for(
+    keys: list[str], *, horizon: str
+) -> dict[str, dict[str, Any]]:
+    """Read canonical outcomes for a batch of candidates in one query.
+
+    Cross-DB join equivalent: frozen units live in ``lab.db`` and outcomes in
+    ``app.db``, so we can't do a SQL JOIN. Batching keeps this O(1) round-trip
+    rather than one per unit.
+    """
+    if not keys:
+        return {}
+    outcomes: dict[str, dict[str, Any]] = {}
+    # SQLite has a limit on parameters per statement (default 999). Chunk to be safe.
+    chunk = 500
+    for start in range(0, len(keys), chunk):
+        batch = keys[start:start + chunk]
+        placeholders = ", ".join(["?"] * len(batch))
+        rows = get_db().execute(
+            f"SELECT outcome_candidate_key, status, net_return_pct "
+            f"FROM filter_candidate_outcomes "
+            f"WHERE horizon = ? AND outcome_candidate_key IN ({placeholders})",
+            (horizon, *batch),
+        ).fetchall()
+        for row in rows:
+            outcomes[row["outcome_candidate_key"]] = dict(row)
+    return outcomes
 
 
 def build_observer_pre_filter_replay(

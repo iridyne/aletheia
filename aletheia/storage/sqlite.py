@@ -665,6 +665,32 @@ def readonly_db(*, allow_missing: bool = False):
         connection.close()
 
 
+def open_readonly_snapshot(path=None) -> sqlite3.Connection:
+    """Physical read-only handle on ``app.db`` (or an injected path).
+
+    Two defensive layers on top of a normal connect:
+
+    - ``mode=ro`` at the URI level — the SQLite driver refuses to open a WAL
+      writer lane, so any write attempt fails with ``OperationalError`` before
+      touching the file.
+    - ``PRAGMA query_only=ON`` — belt-and-suspenders for observability
+      (``EXPLAIN`` and read-side pragmas still work).
+
+    Callers must ``close()`` when done. Used by Observation Lab code paths that
+    read canonical facts but must never write, and by architecture tests that
+    prove the boundary is physical rather than conventional.
+    """
+    resolved = Path(path or _injected_db_path or db_path()).resolve()
+    conn = sqlite3.connect(
+        f"{resolved.as_uri()}?mode=ro",
+        uri=True,
+        timeout=1.0,
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only=ON")
+    return conn
+
+
 def get_db() -> sqlite3.Connection:
     readonly_connection = getattr(_readonly_local, "connection", None)
     if readonly_connection is not None:

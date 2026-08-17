@@ -29,7 +29,7 @@
 | L1 | 固定时点结果：预注册 horizon 的成本后结果 | keyed rows 由 canonical `filter_candidate_outcomes` 结算并投影；legacy 无键行保留 Position-close / stale resolver |
 | L2 | 描述性诊断：在可比 cohort 中的差异 | `counterfactual/calibration.py::build_calibration` |
 | L3 | 有界回放：固定历史、版本和参数，产出可检验假设 | `counterfactual/filter_replay.py` |
-| L4 | 前瞻实验：预登记分配、观察 gate | `counterfactual/filter_experiments.py` |
+| L4 | 前瞻实验：预登记分配、观察 gate | `counterfactual/filter_experiments.py`；`ranker_confidence_gate` 的运行时解耦见 [observation_lab_contract.md](observation_lab_contract.md) |
 | L5 | 人工治理 | 不在模块内。反事实证据供 owner 审阅，产生新 policy epoch 的决定不由模块发起。 |
 
 任何层级都不能跳过前一层；`L0/L1` 不足时的诚实结论是 `insufficient_evidence`，绝不是"放行"或"封锁"。
@@ -43,6 +43,7 @@
 - `storage.repositories.settle_linked_shadow_outcomes(...)` — 固定结果结算器在同一候选的 canonical `24h` `filter_candidate_outcomes` 成熟后，把完全相同的成本后结果投影到带 `outcome_candidate_key` 的 Shadow 行。
 - `counterfactual.trades.resolve_stale_shadows(min_age_hours, horizon_hours, limit, dry_run)` — 由 scheduler job `shadow_resolver`（interval=6h，见 [scheduler_contract.md](scheduler_contract.md)）调用。
 - `counterfactual.filter_experiments.register_replay_ready_experiments(replays)` — 由 `analytics.filter_controller` 在 shadow 观察周期调用。
+- `counterfactual.filter_experiments.capture_frozen_units_for(experiment)` — 由 `analytics.filter_controller` 在同一 cycle 里对已声明 adapter causal identity 的 Observation（当前只有 `ranker_confidence_gate`）冻结 first-exposure 单元；规则见 [observation_lab_contract.md](observation_lab_contract.md)。
 - `counterfactual.filter_experiments.evaluate_active_shadow_experiments()` — 由 `analytics.filter_controller` 定期评估收集中的实验。
 - `counterfactual.filter_experiments.build_filter_shadow_experiment_report(limit)` — 由 CLI / API 只读消费。
 - `counterfactual.calibration.build_calibration(days, symbols, policy_epoch_id)` — 由 `scripts/shadow_threshold_calibration.py` 与内部报告 API 调用。
@@ -134,4 +135,5 @@ Position 配对、frictionless requested-fill cost control。不同 estimand
 
 - Umbrella tracker：#497 (`[counterfactual][umbrella] Complete the L0-L5 counterfactual method ladder for the promoted module`)。
 - Phase 2 / L4 覆盖扩展：`filter_experiments.py` 目前只支持 `family_ttl`；扩展到其他 filter kind 的工作在 #497 Phase 2 checkbox 内。
+- Observation Lab v1（#1072）：`ranker_confidence_gate` 已解耦生产 `filter_version`；将 `family_ttl` / `observer_pre_filter` 迁到同一 adapter identity 模型属于 Phase 2，见 [observation_lab_contract.md](observation_lab_contract.md) §8。
 - Phase 3 / L5 反向联动：反事实证据 → policy epoch rotate 建议路径尚未存在，见 #497 Phase 3。

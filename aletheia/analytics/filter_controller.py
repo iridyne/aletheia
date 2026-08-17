@@ -760,22 +760,32 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
         "evaluated": 0, "ready_for_review": 0,
         "completed_no_support": 0, "invalidated": 0,
     }
+    frozen_units_captured = 0
     try:
         from aletheia.counterfactual.filter_replay import build_bounded_filter_replays
         from aletheia.counterfactual.filter_experiments import (
+            capture_frozen_units_for,
             evaluate_active_shadow_experiments,
             register_replay_ready_experiments,
         )
+        from aletheia.storage import repositories as _repo
 
         replays = build_bounded_filter_replays(recs, min_samples=min_samples)
         experiment_registration = register_replay_ready_experiments(replays)
+        # Observation Lab (Issue #1072): freeze first-exposure inputs so
+        # unrelated master iteration cannot retroactively contaminate a
+        # collecting cohort. ``capture_frozen_units_for`` self-filters — it
+        # short-circuits for adapters that don't declare causal identity.
+        for experiment in _repo.list_filter_shadow_experiments(status="collecting"):
+            frozen_units_captured += capture_frozen_units_for(experiment)
         experiment_evaluation = evaluate_active_shadow_experiments()
     except Exception as exc:  # pragma: no cover - defensive scheduler boundary
         logger.warning("filter_controller: shadow experiment cycle failed: %s", exc)
 
     logger.info(
-        "filter_controller observe: run=%s written=%d verdicts=%s experiments=%s/%s",
+        "filter_controller observe: run=%s written=%d verdicts=%s experiments=%s/%s frozen_units_new=%d",
         run_id, written, counts, experiment_registration, experiment_evaluation,
+        frozen_units_captured,
     )
     return {
         "run_id": run_id,

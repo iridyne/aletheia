@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 33)
+        f"aletheia-sqlite-v{version}" for version in range(2, 34)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v32"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v33"
     connection.close()
 
 
@@ -653,6 +653,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE runtime_sessions (session_id TEXT PRIMARY KEY);
         CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
         CREATE TABLE positions (id TEXT PRIMARY KEY);
+        CREATE TABLE filter_shadow_experiments (id TEXT PRIMARY KEY);
         INSERT INTO learning_experiments (experiment_id) VALUES ('legacy-experiment');
         INSERT INTO learning_contribution_verdicts
         VALUES ('legacy-positive', 'legacy-experiment');
@@ -670,8 +671,9 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
             (step.migration_id, step.checksum, step.schema_version)
             # Keep the v24 identity migration pending so it materializes the
             # columns that the following v25 migration reads. The current tail
-            # includes the v31 rollout and v32 uPnL identity migrations.
-            for step in migrations._MIGRATIONS[:-9]
+            # includes v31 (persona rollout), v32 (uPnL identity), and v33
+            # (Observation Lab frozen units).
+            for step in migrations._MIGRATIONS[:-10]
         ],
     )
     connection.commit()
@@ -689,8 +691,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260817_0031_exchange_upnl_identity_v32",
-        "aletheia-sqlite-v32",
+        "20260817_0032_observation_lab_frozen_units_v33",
+        "aletheia-sqlite-v33",
     )
     health_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(learning_job_health)")
