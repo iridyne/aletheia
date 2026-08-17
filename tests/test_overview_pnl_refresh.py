@@ -14,8 +14,11 @@ def test_overview_portfolio_and_curve_poll_at_status_cadence() -> None:
     assert "const OVERVIEW_PNL_REFRESH_MS = 10_000" in pnl_zone
     assert "refetchInterval: OVERVIEW_PNL_REFRESH_MS" in pnl_zone
     assert "AccountEquityChart" in pnl_zone
+    assert "PnLChart" in pnl_zone
+    assert "PnL Curves" in pnl_zone
     assert "getAccountEquityHistory" in chart
     assert "refetchInterval: 60_000" in chart
+    assert "rightPriceScale: { mode: PriceScaleMode.Logarithmic }" in chart
 
 
 def test_overview_explains_unavailable_realized_pnl() -> None:
@@ -29,7 +32,7 @@ def test_overview_explains_unavailable_realized_pnl() -> None:
 
 
 def test_overview_curve_distinguishes_live_mark_from_verified_realized() -> None:
-    """Raw/verified analysis remains separate from the single Overview curve."""
+    """Overview keeps account equity separate from verified strategy PnL."""
     chart = (ROOT / "frontend/src/charts/PnLChart.tsx").read_text(encoding="utf-8")
     overview_chart = (ROOT / "frontend/src/charts/AccountEquityChart.tsx").read_text(encoding="utf-8")
     client = (ROOT / "frontend/src/api/client.ts").read_text(encoding="utf-8")

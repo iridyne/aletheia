@@ -1542,10 +1542,31 @@ def get_account_equity_history(
     capital_flow_markers: list[dict] = []
     adjusted_points: list[dict] = []
     if points:
-        capital_events = repo.list_capital_events_between(
-            points[0]["time"],
-            points[-1]["time"],
-        )
+        if local_paper:
+            account_events = repo.list_paper_cash_events_between(
+                points[0]["time"], points[-1]["time"]
+            )
+            capital_events = [
+                {
+                    "id": event["id"],
+                    "detected_at": event["created_at"],
+                    "broker_id": "paper_internal",
+                    "event_type": (
+                        "deposit" if float(event["amount_usdt"]) > 0 else "withdraw"
+                    ),
+                    "amount_usdt": abs(float(event["amount_usdt"])),
+                    "signed_amount_usdt": float(event["amount_usdt"]),
+                    "change_type": event["action"],
+                    "balance_before_usdt": float(event["cash_balance_before_usdt"]),
+                    "balance_after_usdt": float(event["cash_balance_after_usdt"]),
+                    "note": event["note"],
+                }
+                for event in account_events
+            ]
+        else:
+            capital_events = repo.list_capital_events_between(
+                points[0]["time"], points[-1]["time"]
+            )
         event_index = 0
         cumulative_net_flow = 0.0
         for point in points:
@@ -1553,8 +1574,13 @@ def get_account_equity_history(
                 event_index < len(capital_events) and str(capital_events[event_index]["detected_at"]) <= point["time"]
             ):
                 event = capital_events[event_index]
-                signed_amount = float(event["amount_usdt"])
-                if event["event_type"] == "withdraw":
+                signed_amount = float(
+                    event.get("signed_amount_usdt") or event["amount_usdt"]
+                )
+                if (
+                    "signed_amount_usdt" not in event
+                    and event["event_type"] == "withdraw"
+                ):
                     signed_amount = -signed_amount
                 cumulative_net_flow += signed_amount
                 capital_flow_markers.append(
@@ -1565,6 +1591,10 @@ def get_account_equity_history(
                         "event_type": event["event_type"],
                         "amount_usdt": float(event["amount_usdt"]),
                         "signed_amount_usdt": round(signed_amount, 4),
+                        "change_type": event.get("change_type", event["event_type"]),
+                        "balance_before_usdt": event.get("balance_before_usdt"),
+                        "balance_after_usdt": event.get("balance_after_usdt"),
+                        "note": event.get("note", ""),
                     }
                 )
                 event_index += 1
@@ -1601,8 +1631,8 @@ def get_account_equity_history(
             "scope": "aggregate_tracked_account_equity",
             "baseline_at": points[0]["time"] if points else None,
             "note": (
-                "Raw equity minus deposits plus withdrawals detected after the "
-                "first visible snapshot. Verified trading PnL is unchanged."
+                "Raw equity minus audited cash or administrative balance changes "
+                "after the first visible snapshot. Verified trading PnL is unchanged."
             ),
         },
         "as_of": points[-1]["time"] if points else None,

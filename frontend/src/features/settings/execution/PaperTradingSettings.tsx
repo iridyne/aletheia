@@ -20,6 +20,7 @@ export function PaperAccountCard({ qc }: { qc: ReturnType<typeof useQueryClient>
     qc.invalidateQueries({ queryKey: ['paper-account'] })
     qc.invalidateQueries({ queryKey: positionKeys.all })
     qc.invalidateQueries({ queryKey: ['portfolio'] })
+    qc.invalidateQueries({ queryKey: ['account-equity-history'] })
   }
   const mutate = useMutation({
     mutationFn: ({ action, value }: { action: 'credit' | 'debit' | 'set'; value: number }) => {

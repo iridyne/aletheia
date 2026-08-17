@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react'
-import { createChart, type IChartApi, type Time } from 'lightweight-charts'
+import { createChart, PriceScaleMode, type Time } from 'lightweight-charts'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { chartTheme } from './theme'
-import { isoToEpochSeconds } from '../lib/format'
+import { fmtNum, fmtSigned, isoToEpochSeconds } from '../lib/format'
 
 interface Props {
   days?: number
@@ -12,7 +12,7 @@ interface Props {
 /** The Overview's single user-facing account-value series. */
 export default function AccountEquityChart({ days }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const chartRef = useRef<IChartApi | null>(null)
+  const tooltipRef = useRef<HTMLDivElement>(null)
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['account-equity-history', days],
     queryFn: ({ signal }) => api.getAccountEquityHistory(days, 500, signal),
@@ -31,7 +31,6 @@ export default function AccountEquityChart({ days }: Props) {
       return time === null ? null : { time: time as Time, value: point.adjusted_equity_usdt }
     })
     .filter((row): row is { time: Time; value: number } => row !== null)
-
   useEffect(() => {
     if (!containerRef.current || rows.length === 0) return
     const chart = createChart(containerRef.current, {
@@ -40,8 +39,8 @@ export default function AccountEquityChart({ days }: Props) {
       width: containerRef.current.clientWidth,
       height: 220,
       timeScale: { timeVisible: true },
+      rightPriceScale: { mode: PriceScaleMode.Logarithmic },
     })
-    chartRef.current = chart
     const series = chart.addLineSeries({ color: chartTheme.accountEquityRaw, lineWidth: 2 })
     const seen = new Set<number>()
     series.setData(rows.filter(row => {
@@ -58,15 +57,35 @@ export default function AccountEquityChart({ days }: Props) {
         if (!anchor) return null
         const deposit = event.event_type === 'deposit'
         return {
+          id: event.id,
           time: anchor.time,
           position: deposit ? 'belowBar' as const : 'aboveBar' as const,
           color: deposit ? chartTheme.capitalDeposit : chartTheme.capitalWithdrawal,
           shape: deposit ? 'arrowUp' as const : 'arrowDown' as const,
-          text: `${deposit ? 'Deposit' : 'Withdrawal'} ${event.amount_usdt.toFixed(2)}`,
+          size: 1,
         }
       })
       .filter((marker): marker is NonNullable<typeof marker> => marker !== null)
     series.setMarkers(markers)
+    const markerDetails = new Map((data?.capital_flow_markers ?? []).map(event => [event.id, event]))
+    chart.subscribeCrosshairMove(param => {
+      const tooltip = tooltipRef.current
+      const event = markerDetails.get(String(param.hoveredObjectId ?? ''))
+      if (!tooltip || !event || !param.point) {
+        if (tooltip) tooltip.style.display = 'none'
+        return
+      }
+      const label = event.change_type === 'manual_set_balance'
+        ? 'Balance set'
+        : event.signed_amount_usdt > 0 ? 'Balance increase' : 'Balance decrease'
+      const balance = event.balance_before_usdt == null || event.balance_after_usdt == null
+        ? ''
+        : `\n${fmtNum(event.balance_before_usdt)} → ${fmtNum(event.balance_after_usdt)} USDT`
+      tooltip.textContent = `${label}: ${fmtSigned(event.signed_amount_usdt)} USDT${balance}${event.note ? `\n${event.note}` : ''}`
+      tooltip.style.display = 'block'
+      tooltip.style.left = `${Math.max(8, Math.min(param.point.x + 12, containerRef.current!.clientWidth - 230))}px`
+      tooltip.style.top = `${Math.max(8, param.point.y - 54)}px`
+    })
     if ((data?.capital_flow_markers?.length ?? 0) > 0) {
       const adjustedSeries = chart.addLineSeries({ color: chartTheme.accountEquityAdjusted, lineWidth: 2 })
       const adjustedSeen = new Set<number>()
@@ -84,7 +103,7 @@ export default function AccountEquityChart({ days }: Props) {
     })
     resizeObserver.observe(containerRef.current)
     return () => { resizeObserver.disconnect(); chart.remove() }
-  }, [rows, adjustedRows, data?.capital_flow_markers?.length])
+  }, [rows, adjustedRows, data?.capital_flow_markers])
 
   if (isLoading) return <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.5 }}>Loading account equity...</div>
   if (isError) return (
@@ -101,7 +120,15 @@ export default function AccountEquityChart({ days }: Props) {
           Cyan: raw account equity · Green: cash-flow-adjusted equity
         </p>
       )}
-      <div ref={containerRef} style={{ width: '100%' }} />
+      <div style={{ position: 'relative' }}>
+        <div ref={containerRef} style={{ width: '100%' }} />
+        <div ref={tooltipRef} role="tooltip" style={{
+          display: 'none', position: 'absolute', zIndex: 2, width: 210,
+          padding: '8px 10px', border: `1px solid ${chartTheme.borderColor}`,
+          borderRadius: 6, background: '#0d1117', color: '#e6edf3',
+          fontSize: 12, lineHeight: 1.45, whiteSpace: 'pre-line', pointerEvents: 'none',
+        }} />
+      </div>
     </div>
   )
 }

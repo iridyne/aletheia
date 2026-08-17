@@ -304,6 +304,12 @@ def _audit_paper_account_change(action: str, before: dict, after: dict, note: st
     })
 
 
+def _invalidate_paper_account_views() -> None:
+    from aletheia.server.routes.data import invalidate_account_equity_history_cache
+
+    invalidate_account_equity_history_cache()
+
+
 @router.get("/paper-account")
 async def get_paper_account():
     def _read():
@@ -326,6 +332,7 @@ async def credit_paper_account(req: PaperAccountAdjustmentRequest):
             after = adjust_cash(req.amount_usdt, note=req.note)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+        _invalidate_paper_account_views()
         _audit_paper_account_change("credit", before, after, req.note)
         return after
     return await asyncio.to_thread(_credit)
@@ -344,6 +351,7 @@ async def debit_paper_account(req: PaperAccountAdjustmentRequest):
             after = adjust_cash(-req.amount_usdt, note=req.note)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+        _invalidate_paper_account_views()
         _audit_paper_account_change("debit", before, after, req.note)
         return after
     return await asyncio.to_thread(_debit)
@@ -359,6 +367,7 @@ async def set_paper_account_balance(req: PaperAccountSetBalanceRequest):
         from aletheia.portfolio.paper_account import set_cash_balance, get_paper_account as _get
         before = _get(event_limit=0)
         after = set_cash_balance(req.cash_balance_usdt, note=req.note)
+        _invalidate_paper_account_views()
         _audit_paper_account_change("set_balance", before, after, req.note)
         return after
     return await asyncio.to_thread(_set_balance)
