@@ -289,8 +289,6 @@ def _normalize_reconciliation(raw: Mapping[str, Any], delta_quote: float, delta_
         return None, "reconciliation_mode_invalid"
     if not group_id:
         return None, "reconciliation_identity_missing"
-    if not explicit and mode == "exclusive" and value.get("legacy") is True:
-        declared, component_quote, component_bp = delta_quote, delta_quote, delta_bp
     if declared is None or component_quote is None or component_bp is None:
         return None, "reconciliation_identity_missing"
     if not math.isclose(component_quote, delta_quote, rel_tol=1e-9, abs_tol=RECONCILIATION_TOLERANCE_QUOTE):
@@ -559,6 +557,10 @@ def _reconciliation_groups(
         declared = first["declared_total_quote"]
         layers = {layer for layer, _sample in entries}
         notionals = [sample.get("notional_quote") for _layer, sample in entries]
+        unit_scopes = {
+            str(sample.get("position_id") or sample.get("unit_id") or "").strip()
+            for _layer, sample in entries
+        }
         valid = True
         reason = None
         component_total: float | None = None
@@ -572,6 +574,8 @@ def _reconciliation_groups(
             valid, reason = False, "reconciliation_declared_total_mismatch"
         elif any(value is None or not math.isclose(float(value), float(notionals[0]), rel_tol=1e-9, abs_tol=RECONCILIATION_TOLERANCE_QUOTE) for value in notionals):
             valid, reason = False, "reconciliation_notional_mismatch"
+        elif mode == "residual" and len(unit_scopes) != 1:
+            valid, reason = False, "reconciliation_unit_scope_mismatch"
         elif mode == "exclusive" and len(entries) != 1:
             valid, reason = False, "exclusive_reconciliation_multiple_components"
         else:
@@ -591,6 +595,7 @@ def _reconciliation_groups(
             "mode": mode,
             "status": "reconciled" if valid else "unavailable",
             "layers": sorted(layers),
+            "unit_scopes": sorted(unit_scopes),
             "component_count": len(entries),
             "declared_total_quote": declared,
             "component_total_quote": component_total,
@@ -659,20 +664,18 @@ def _prepare_layers(
     reports, invalid_reconciliation = _reconciliation_groups(prepared)
     for group_id, reason in raw_reconciliation_errors.items():
         invalid_reconciliation.add(group_id)
-        reports.setdefault(
-            group_id,
-            {
-                "group_id": group_id,
-                "mode": "unknown",
-                "status": "unavailable",
-                "layers": [],
-                "component_count": 0,
-                "declared_total_quote": None,
-                "component_total_quote": None,
-                "residual_quote": None,
-                "reason": reason,
-            },
-        )
+        reports[group_id] = {
+            "group_id": group_id,
+            "mode": "unknown",
+            "status": "unavailable",
+            "layers": [],
+            "unit_scopes": [],
+            "component_count": 0,
+            "declared_total_quote": None,
+            "component_total_quote": None,
+            "residual_quote": None,
+            "reason": reason,
+        }
     # A cross-layer event is permitted only when every component explicitly
     # belongs to one valid residual reconciliation group.
     for conflict_values, declared_layers in ((harm_conflicts, harm_layers), (attribution_conflicts, attribution_layers)):

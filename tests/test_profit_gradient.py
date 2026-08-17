@@ -94,7 +94,9 @@ def _samples(
                 "reconciliation": {
                     "mode": "exclusive",
                     "group_id": f"{layer}:reconciliation:{index}",
-                    "legacy": True,
+                    "declared_total_quote": value_bp / 10.0,
+                    "component_quote": value_bp / 10.0,
+                    "component_bp": value_bp,
                 },
             }
         )
@@ -114,6 +116,26 @@ def _unique_clone(sample: dict, suffix: str) -> dict:
     if isinstance(clone.get("cost_evidence"), dict):
         clone["cost_evidence"]["cost_event_id"] = f"{clone['cost_evidence']['cost_event_id']}-{suffix}"
     return clone
+
+
+def _sync_reconciliation(sample: dict) -> None:
+    reconciliation = sample.get("reconciliation")
+    if not isinstance(reconciliation, dict):
+        return
+    quote = sample.get("paired_net_delta_quote")
+    bp = sample.get("paired_net_delta_bp")
+    if quote and bp and quote * bp > 0:
+        sample["notional_quote"] = abs(float(quote) / float(bp) * 10_000.0)
+    reconciliation["component_quote"] = quote
+    reconciliation["component_bp"] = bp
+    if reconciliation.get("mode") == "exclusive":
+        reconciliation["declared_total_quote"] = quote
+    cost_evidence = sample.get("cost_evidence")
+    if isinstance(cost_evidence, dict) and quote is not None:
+        cost_evidence["avoidable_extra_cost_quote"] = abs(float(quote))
+    execution_evidence = sample.get("execution_evidence")
+    if isinstance(execution_evidence, dict) and quote is not None:
+        execution_evidence["incremental_fill_loss_quote"] = abs(float(quote))
 
 
 def test_one_separated_layer_is_unique_winner_with_normalized_harm_units():
@@ -154,6 +176,7 @@ def test_cross_layer_harm_event_requires_explicit_residual_decomposition():
     selection = _samples("Selection", effect_bp=20.0, count=1, with_arms=False)[0]
     decision = _samples("Decision", effect_bp=30.0, count=1, with_arms=False)[0]
     decision["harm_event_id"] = selection["harm_event_id"]
+    decision["unit_id"] = selection["unit_id"]
     samples = {layer: [] for layer in gradient.LAYERS}
     samples["Selection"] = [selection]
     samples["Decision"] = [decision]
@@ -170,6 +193,7 @@ def test_residual_decomposition_reconciles_once_across_layers():
     selection = _samples("Selection", effect_bp=20.0, count=1, with_arms=False)[0]
     decision = _samples("Decision", effect_bp=30.0, count=1, with_arms=False)[0]
     decision["harm_event_id"] = selection["harm_event_id"]
+    decision["unit_id"] = selection["unit_id"]
     group = "residual:known-net-result"
     for sample, quote, bp in ((selection, 2.0, 20.0), (decision, 3.0, 30.0)):
         sample["reconciliation"] = {
@@ -247,6 +271,35 @@ def test_reconciliation_mapping_is_mandatory_at_the_selector_boundary():
     assert result["layers"]["Costs"]["eligible_sample_count"] == 39
 
 
+def test_legacy_exclusive_reconciliation_cannot_synthesize_components():
+    raw = _samples("Costs", effect_bp=10.0, count=1)[0]
+    raw["reconciliation"] = {
+        "mode": "exclusive",
+        "group_id": "legacy-group",
+        "legacy": True,
+    }
+
+    _normalized, exclusions, _raw_count = gradient._normalized_samples("Costs", [raw])
+
+    assert _normalized == []
+    assert exclusions == ["reconciliation_identity_missing"]
+
+
+def test_residual_reconciliation_requires_one_durable_unit_scope():
+    first = _prepared_reconciliation_sample("group", unit_id="selection-unit")
+    second = _prepared_reconciliation_sample("group", unit_id="decision-unit")
+
+    reports, invalid = gradient._reconciliation_groups(
+        {
+            "Selection": ([first], [], 1),
+            "Decision": ([second], [], 1),
+        }
+    )
+
+    assert reports["group"]["reason"] == "reconciliation_unit_scope_mismatch"
+    assert "group" in invalid
+
+
 def test_duplicate_harm_and_cost_events_are_visible_exclusions():
     samples = _seven_layers()
     samples["Costs"][1]["harm_event_id"] = samples["Costs"][0]["harm_event_id"]
@@ -318,6 +371,7 @@ def test_denominators_risk_rejects_and_concentration_are_hard_gates():
 
     concentrated = _seven_layers()
     concentrated["Costs"][5]["paired_net_delta_quote"] = 1_000.0
+    _sync_reconciliation(concentrated["Costs"][5])
     concentration_result = gradient.select_unique_max_direction(concentrated, evidence_context=_context())
     assert concentration_result["verdict"] == "no_unique_direction"
     assert "top1_concentration_above_25pct" in concentration_result["layers"]["Costs"]["gate_reasons"]
@@ -451,6 +505,7 @@ def test_prospective_randomized_thresholds_use_independent_cluster_counts():
         sample["arm"] = "control" if cluster % 2 == 0 else "treatment"
         sample["paired_net_delta_bp"] = 0.0 if sample["arm"] == "control" else 10.0
         sample["paired_net_delta_quote"] = sample["paired_net_delta_bp"] / 10.0
+        _sync_reconciliation(sample)
 
     result = gradient.select_unique_max_direction(samples, evidence_context=_context())
 
@@ -507,6 +562,7 @@ def test_prospective_randomized_rejects_unassigned_units():
 def test_conflicting_delta_units_are_excluded():
     samples = _seven_layers()
     samples["Costs"][5]["paired_net_delta_quote"] = -1.0
+    _sync_reconciliation(samples["Costs"][5])
 
     result = gradient.select_unique_max_direction(
         samples,
@@ -515,7 +571,7 @@ def test_conflicting_delta_units_are_excluded():
 
     costs = result["layers"]["Costs"]
     assert costs["independent_unit_count"] == 39
-    assert "paired_delta_sign_mismatch" in costs["gate_reasons"]
+    assert "paired_delta_units_mismatch" in costs["gate_reasons"]
     assert result["winner_layer"] is None
 
 
@@ -527,6 +583,7 @@ def test_asymmetric_zero_delta_units_are_excluded(bp, quote):
     samples = _seven_layers()
     samples["Costs"][0]["paired_net_delta_bp"] = bp
     samples["Costs"][0]["paired_net_delta_quote"] = quote
+    _sync_reconciliation(samples["Costs"][0])
 
     result = gradient.select_unique_max_direction(
         samples,
@@ -535,7 +592,7 @@ def test_asymmetric_zero_delta_units_are_excluded(bp, quote):
 
     costs = result["layers"]["Costs"]
     assert costs["independent_unit_count"] == 39
-    assert "paired_delta_zero_mismatch" in costs["gate_reasons"]
+    assert "paired_delta_units_mismatch" in costs["gate_reasons"]
     assert result["winner_layer"] is None
 
 
@@ -557,6 +614,7 @@ def test_randomized_temporal_effects_must_match_aggregate_direction():
             value = 10.0
         sample["paired_net_delta_bp"] = value
         sample["paired_net_delta_quote"] = value / 10.0
+        _sync_reconciliation(sample)
 
     result = gradient.select_unique_max_direction(samples, evidence_context=_context())
 
@@ -572,9 +630,11 @@ def test_randomized_effect_is_treatment_minus_control_not_pooled_mean():
         if sample["arm"] == "control":
             sample["paired_net_delta_bp"] = 100.0
             sample["paired_net_delta_quote"] = 10.0
+            _sync_reconciliation(sample)
         else:
             sample["paired_net_delta_bp"] = 110.0
             sample["paired_net_delta_quote"] = 11.0
+            _sync_reconciliation(sample)
 
     result = gradient.select_unique_max_direction(samples, evidence_context=_context())
 
@@ -739,6 +799,7 @@ def test_paired_quote_harm_must_match_positive_bp_direction():
     for sample in samples["Costs"][:10]:
         sample["paired_net_delta_bp"] = -1.0
         sample["paired_net_delta_quote"] = -10.0
+        _sync_reconciliation(sample)
 
     result = gradient.select_unique_max_direction(
         samples,
@@ -762,6 +823,7 @@ def test_randomized_quote_harm_uses_cluster_arm_contrast_not_row_sums():
         value = 100.0 if sample["arm"] == "control" else 110.0
         sample["paired_net_delta_bp"] = value
         sample["paired_net_delta_quote"] = value
+        _sync_reconciliation(sample)
 
     result = gradient.select_unique_max_direction(samples, evidence_context=_context())
 
@@ -786,6 +848,7 @@ def test_randomized_quote_harm_weights_heterogeneous_cluster_exposures(
     treatment["cluster_id"] = "day-treatment-large"
     treatment["paired_net_delta_bp"] = large_quote
     treatment["paired_net_delta_quote"] = large_quote
+    _sync_reconciliation(treatment)
     for index in range(99):
         extra = _unique_clone(treatment, f"treatment-large-{index + 1}")
         costs.append(extra)
@@ -794,9 +857,11 @@ def test_randomized_quote_harm_weights_heterogeneous_cluster_exposures(
         if sample["arm"] == "control":
             sample["paired_net_delta_bp"] = 0.0
             sample["paired_net_delta_quote"] = 0.0
+            _sync_reconciliation(sample)
         elif sample["cluster_id"] != "day-treatment-large":
             sample["paired_net_delta_bp"] = 110.0
             sample["paired_net_delta_quote"] = 10.0
+            _sync_reconciliation(sample)
 
     result = gradient.select_unique_max_direction(samples, evidence_context=_context())
 
@@ -813,9 +878,11 @@ def test_randomized_quote_concentration_centers_common_arm_baseline():
         if sample["arm"] == "control":
             sample["paired_net_delta_bp"] = 100.0
             sample["paired_net_delta_quote"] = 1_000.0
+            _sync_reconciliation(sample)
         else:
             sample["paired_net_delta_bp"] = 110.0
             sample["paired_net_delta_quote"] = 1_200.0 if index == 1 else 1_000.0
+            _sync_reconciliation(sample)
 
     result = gradient.select_unique_max_direction(samples, evidence_context=_context())
 
@@ -833,9 +900,11 @@ def test_randomized_quote_contrast_must_be_positive(treatment_quote):
         if sample["arm"] == "control":
             sample["paired_net_delta_bp"] = 100.0
             sample["paired_net_delta_quote"] = 1_000.0
+            _sync_reconciliation(sample)
         else:
             sample["paired_net_delta_bp"] = 110.0
             sample["paired_net_delta_quote"] = treatment_quote
+            _sync_reconciliation(sample)
 
     result = gradient.select_unique_max_direction(samples, evidence_context=_context())
 
@@ -876,6 +945,7 @@ def test_randomized_bootstrap_seed_ignores_quote_values():
     scaled = deepcopy(samples)
     for sample in scaled["Costs"]:
         sample["paired_net_delta_quote"] *= 10.0
+        _sync_reconciliation(sample)
 
     baseline_samples, _, _ = gradient._normalized_samples("Costs", samples["Costs"])
     scaled_samples, _, _ = gradient._normalized_samples("Costs", scaled["Costs"])
@@ -921,8 +991,10 @@ def test_randomized_quote_concentration_weights_exposure():
     for sample in costs:
         if sample["arm"] == "control":
             sample["paired_net_delta_quote"] = 0.0
+            _sync_reconciliation(sample)
         else:
             sample["paired_net_delta_quote"] = 10.0
+            _sync_reconciliation(sample)
     large = next(sample for sample in costs if sample["arm"] == "treatment")
     for index in range(99):
         extra = _unique_clone(large, f"exposure-{index}")
@@ -940,11 +1012,14 @@ def test_randomized_quote_metrics_weight_control_exposure():
     for sample in costs:
         if sample["arm"] == "treatment":
             sample["paired_net_delta_quote"] = 10.0
+            _sync_reconciliation(sample)
         else:
             sample["paired_net_delta_quote"] = 0.0
+            _sync_reconciliation(sample)
     large = next(sample for sample in costs if sample["arm"] == "control")
     large["paired_net_delta_bp"] = 15.0
     large["paired_net_delta_quote"] = 15.0
+    _sync_reconciliation(large)
     for index in range(99):
         extra = _unique_clone(large, f"control-exposure-{index}")
         costs.append(extra)
@@ -965,6 +1040,8 @@ def test_cluster_bootstrap_seed_ignores_cluster_labels():
     for index, sample in enumerate(samples):
         sample["cluster_id"] = f"cluster-{index // 2}"
         sample["paired_net_delta_bp"] = float(index + 1)
+        sample["paired_net_delta_quote"] = sample["paired_net_delta_bp"] / 10.0
+        _sync_reconciliation(sample)
 
     normalized, _, _ = gradient._normalized_samples("Costs", samples)
     renamed = deepcopy(normalized)
@@ -989,6 +1066,7 @@ def test_paired_bootstrap_seed_ignores_row_order_within_clusters():
         sample["cluster_id"] = f"cluster-{index // 2}"
         sample["paired_net_delta_bp"] = values[index // 2] + index % 2
         sample["paired_net_delta_quote"] = sample["paired_net_delta_bp"] / 10.0
+        _sync_reconciliation(sample)
 
     normalized, _, _ = gradient._normalized_samples("Costs", samples)
     reordered = list(reversed(normalized))
@@ -1004,6 +1082,7 @@ def test_paired_bootstrap_seed_ignores_cluster_labels():
     for index, sample in enumerate(samples):
         sample["paired_net_delta_bp"] = float(index + 1)
         sample["paired_net_delta_quote"] = sample["paired_net_delta_bp"] / 10.0
+        _sync_reconciliation(sample)
 
     normalized, _, _ = gradient._normalized_samples("Costs", samples)
     renamed = deepcopy(normalized)
@@ -1070,6 +1149,7 @@ def test_non_finite_aggregate_evidence_is_ineligible():
     for sample in samples["Costs"]:
         sample["paired_net_delta_bp"] = 1e308
         sample["paired_net_delta_quote"] = 1e308
+        _sync_reconciliation(sample)
 
     result = gradient.select_unique_max_direction(
         samples,
@@ -1100,9 +1180,11 @@ def test_temporal_sign_reversal_blocks_apparent_average_effect():
     for sample in costs[:20]:
         sample["paired_net_delta_bp"] = -6.0
         sample["paired_net_delta_quote"] = -0.6
+        _sync_reconciliation(sample)
     for sample in costs[20:]:
         sample["paired_net_delta_bp"] = 30.0
         sample["paired_net_delta_quote"] = 3.0
+        _sync_reconciliation(sample)
 
     result = gradient.select_unique_max_direction(samples, evidence_context=_context())
 
@@ -1324,8 +1406,18 @@ def test_contract_evidence_and_global_gates_cover_fail_closed_edges():
     assert "candidate_outcome_coverage_above_1.00" in gradient._global_gate(_context(candidate_outcome_coverage=1.1))[1]
 
 
-def _prepared_reconciliation_sample(group, *, mode="residual", declared=1.0, quote=0.5, bp=5.0, notional=1000.0):
+def _prepared_reconciliation_sample(
+    group,
+    *,
+    mode="residual",
+    declared=1.0,
+    quote=0.5,
+    bp=5.0,
+    notional=1000.0,
+    unit_id="unit",
+):
     return {
+        "unit_id": unit_id,
         "notional_quote": notional,
         "reconciliation": {
             "group_id": group,
@@ -1390,6 +1482,20 @@ def test_selector_reports_shape_conflicts_unknown_layers_and_supplied_total_mism
     prepared, *_ = gradient._prepare_layers({"Risk": [None]})
     assert "sample_not_object" in prepared["Risk"][1]
     assert gradient.select_unique_max_direction([], evidence_context=None)["global_gate_status"] == "ineligible"
+
+
+def test_malformed_raw_reconciliation_overwrites_valid_report():
+    sample = _samples("Costs", effect_bp=10.0, count=1)[0]
+    group_id = sample["reconciliation"]["group_id"]
+    sample["reconciliation"]["component_quote"] = 999.0
+
+    prepared, _harm, _cost, _attribution, reports = gradient._prepare_layers(
+        {"Costs": [sample]}
+    )
+
+    assert prepared["Costs"][0] == []
+    assert reports[group_id]["status"] == "unavailable"
+    assert reports[group_id]["reason"] == "reconciliation_component_quote_mismatch"
 
 
 def test_layer_result_marks_non_finite_aggregate_metrics(monkeypatch):

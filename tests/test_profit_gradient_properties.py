@@ -63,7 +63,11 @@ def _cost_rows(
             "arm": arm,
             "paired_net_delta_bp": bp,
             "paired_net_delta_quote": quote,
-            "notional_quote": 1000.0,
+            "notional_quote": (
+                abs(float(quote) / float(bp) * 10_000.0)
+                if bp and quote and bp * quote > 0
+                else 1000.0
+            ),
             "harm_event_id": f"cost-harm-{index}",
             "attribution_event_id": f"cost-attribution-{index}",
             "position_id": f"position-{index}",
@@ -82,7 +86,13 @@ def _cost_rows(
                 "cost_model_id": "cost-v1",
                 "avoidable_extra_cost_quote": abs(quote),
             },
-            "reconciliation": {"mode": "exclusive", "group_id": f"cost-rec:{index}", "legacy": True},
+            "reconciliation": {
+                "mode": "exclusive",
+                "group_id": f"cost-rec:{index}",
+                "declared_total_quote": quote,
+                "component_quote": quote,
+                "component_bp": bp,
+            },
         }
         for index, (bp, quote, arm) in enumerate(values)
     ]
@@ -93,6 +103,21 @@ def _normalized(rows: list[dict]) -> list[dict]:
     assert exclusions == []
     assert raw_count == len(samples)
     return samples
+
+
+def _sync_reconciliation(sample: dict) -> None:
+    reconciliation = sample["reconciliation"]
+    quote = sample["paired_net_delta_quote"]
+    bp = sample["paired_net_delta_bp"]
+    if quote and bp and quote * bp > 0:
+        sample["notional_quote"] = abs(float(quote) / float(bp) * 10_000.0)
+    reconciliation["component_quote"] = quote
+    reconciliation["component_bp"] = bp
+    if reconciliation["mode"] == "exclusive":
+        reconciliation["declared_total_quote"] = quote
+    cost_evidence = sample.get("cost_evidence")
+    if isinstance(cost_evidence, dict):
+        cost_evidence["avoidable_extra_cost_quote"] = abs(float(quote))
 
 
 def _select(costs: list[dict], method: str = "prospective_randomized") -> dict:
@@ -231,6 +256,7 @@ def test_positive_quote_scaling_preserves_bp_and_concentration(estimator, scale)
     scaled = deepcopy(samples)
     for sample in scaled:
         sample["paired_net_delta_quote"] *= scale
+        _sync_reconciliation(sample)
 
     baseline = estimator(samples, iterations=_BOOTSTRAP_ITERATIONS)
     changed = estimator(scaled, iterations=_BOOTSTRAP_ITERATIONS)
@@ -283,6 +309,7 @@ def test_positive_quote_scaling_preserves_selector_verdict(method, scale):
     scaled = deepcopy(rows)
     for sample in scaled:
         sample["paired_net_delta_quote"] *= scale
+        _sync_reconciliation(sample)
 
     baseline = _select(rows, method)
     changed = _select(scaled, method)
@@ -315,6 +342,7 @@ def test_randomized_centered_concentration_is_affine_invariant(translation, scal
         sample["paired_net_delta_quote"] = (
             sample["paired_net_delta_quote"] + translation
         ) * scale
+        _sync_reconciliation(sample)
 
     baseline = estimators.estimate_prospective_randomized(
         samples, iterations=_BOOTSTRAP_ITERATIONS
@@ -372,7 +400,13 @@ def test_equal_randomized_arm_cluster_means_cannot_confirm_a_winner(values):
                         "cost_model_id": "cost-v1",
                         "avoidable_extra_cost_quote": float(value) / 10.0,
                     },
-                    "reconciliation": {"mode": "exclusive", "group_id": f"equal-rec:{arm}:{index}", "legacy": True},
+                    "reconciliation": {
+                        "mode": "exclusive",
+                        "group_id": f"equal-rec:{arm}:{index}",
+                        "declared_total_quote": float(value) / 10.0,
+                        "component_quote": float(value) / 10.0,
+                        "component_bp": float(value),
+                    },
                 }
             )
 

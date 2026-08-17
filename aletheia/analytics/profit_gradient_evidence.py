@@ -39,12 +39,17 @@ from aletheia.storage.hashing import sha256_json
 from aletheia.storage.sqlite import readonly_db
 
 
-PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION = "profit_gradient_evidence/v1"
+LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION = "profit_gradient_evidence/v1"
+PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION = "profit_gradient_evidence/v2"
 _COMPILER_PRODUCER = {
     "module": "aletheia.analytics.profit_gradient_evidence",
     "contract_version": PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
     "source_mode": "database_read_only",
     "manual_layer_samples": False,
+}
+_LEGACY_COMPILER_PRODUCER = {
+    **_COMPILER_PRODUCER,
+    "contract_version": LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
 }
 _FIXED_CANDIDATE_HORIZON = "24h"
 _GRADIENT_COMPARISON_METHOD = "paired_same_unit"
@@ -1341,7 +1346,7 @@ def _pair_confirmatory_samples(
                 "paired_net_delta_bp": delta_bp,
                 "paired_net_delta_quote": delta_quote,
                 "pairing": "explicit_treatment_control_assignment_unit_pair",
-                "cost_applied_once": True,
+                "cost_applied_once": sample.get("cost_applied_once", True),
                 "harm_event_id": f"paired:{pair_id}:net",
                 "attribution_event_id": f"paired:{pair_id}:{str(sample.get('component') or 'layer')}",
                 "reconciliation": _exclusive_reconciliation(
@@ -1349,6 +1354,25 @@ def _pair_confirmatory_samples(
                 ),
             }
         )
+        if treatment.get("component") == "avoidable_extra_cost":
+            treatment_cost = treatment.get("cost_evidence")
+            control_cost = control.get("cost_evidence")
+            if isinstance(treatment_cost, Mapping) and isinstance(control_cost, Mapping):
+                treatment_extra = _finite(treatment_cost.get("avoidable_extra_cost_quote"), nonnegative=True)
+                control_extra = _finite(control_cost.get("avoidable_extra_cost_quote"), nonnegative=True)
+                if treatment_extra is not None and control_extra is not None:
+                    combined_cost = dict(treatment_cost)
+                    treatment_event = str(treatment_cost.get("cost_event_id") or "")
+                    control_event = str(control_cost.get("cost_event_id") or "")
+                    combined_cost.update(
+                        {
+                            "cost_event_id": f"{treatment_event}|{control_event}",
+                            "cost_event_ids": [treatment_event, control_event],
+                            "avoidable_extra_cost_quote": abs(treatment_extra - control_extra),
+                        }
+                    )
+                    sample["cost_evidence"] = combined_cost
+                    sample["cost_applied_once"] = treatment.get("cost_applied_once", True)
         paired.append(sample)
     return paired, excluded
 
@@ -1694,16 +1718,27 @@ def verify_profit_gradient_evidence(
     revalidate_sources: bool = False,
 ) -> tuple[bool, str | None]:
     """Verify an artifact; optionally rebuild its frozen sources for CLI trust."""
-    if payload.get("contract_version") != PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
+    contract_version = payload.get("contract_version")
+    if contract_version not in {
+        LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
+        PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
+    }:
         return False, "evidence_contract_version_mismatch"
-    if payload.get("producer") != _COMPILER_PRODUCER:
+    expected_producer = (
+        _COMPILER_PRODUCER
+        if contract_version == PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION
+        else _LEGACY_COMPILER_PRODUCER
+    )
+    if payload.get("producer") != expected_producer:
         return False, "evidence_producer_mismatch"
     if payload.get("read_only") is not True or payload.get("behavior_changed") is not False:
         return False, "evidence_authority_metadata_invalid"
     required = {
         "registration", "evidence_context", "layer_samples", "exclusion_waterfall",
-        "reconciliation", "source_hashes", "source_status", "exploratory_evidence", "inputs", "producer", "content_hash",
+        "source_hashes", "source_status", "exploratory_evidence", "inputs", "producer", "content_hash",
     }
+    if contract_version == PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
+        required.add("reconciliation")
     if not required <= set(payload):
         return False, "evidence_artifact_fields_missing"
     inputs = payload.get("inputs")
@@ -1712,18 +1747,22 @@ def verify_profit_gradient_evidence(
         for field in ("evidence_epoch_id", "cutoff_at", "cost_model_id")
     ):
         return False, "evidence_inputs_invalid"
-    for field in ("registration", "evidence_context", "exclusion_waterfall", "exploratory_evidence", "reconciliation"):
+    mapping_fields = ("registration", "evidence_context", "exclusion_waterfall", "exploratory_evidence")
+    if contract_version == PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
+        mapping_fields += ("reconciliation",)
+    for field in mapping_fields:
         if not isinstance(payload.get(field), Mapping):
             return False, f"evidence_{field}_invalid"
-    if payload["reconciliation"].get("contract_version") != RECONCILIATION_CONTRACT_VERSION:
-        return False, "evidence_reconciliation_contract_invalid"
     context = payload["evidence_context"]
-    if context.get("gradient_contract_version") != "profit_gradient/v3":
-        return False, "evidence_gradient_contract_invalid"
-    if context.get("reconciliation_contract_version") != RECONCILIATION_CONTRACT_VERSION:
-        return False, "evidence_reconciliation_contract_invalid"
-    if context.get("evidence_integrity") != "verified":
-        return False, "evidence_integrity_invalid"
+    if contract_version == PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
+        if payload["reconciliation"].get("contract_version") != RECONCILIATION_CONTRACT_VERSION:
+            return False, "evidence_reconciliation_contract_invalid"
+        if context.get("gradient_contract_version") != "profit_gradient/v3":
+            return False, "evidence_gradient_contract_invalid"
+        if context.get("reconciliation_contract_version") != RECONCILIATION_CONTRACT_VERSION:
+            return False, "evidence_reconciliation_contract_invalid"
+        if context.get("evidence_integrity") != "verified":
+            return False, "evidence_integrity_invalid"
     if not isinstance(payload["registration"].get("status"), str):
         return False, "evidence_registration_invalid"
     if "profit_loop_counterfactual" not in payload["exploratory_evidence"]:
@@ -1754,7 +1793,8 @@ def verify_profit_gradient_evidence(
     expected = _hash({key: value for key, value in payload.items() if key != "content_hash"})
     if supplied != expected:
         return False, "evidence_content_hash_mismatch"
-    if revalidate_sources:
+    # Historical v1 keeps frozen-hash integrity; only v2 has a shape-compatible rebuild.
+    if revalidate_sources and contract_version == PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION:
         try:
             rebuilt = build_profit_gradient_evidence(
                 evidence_epoch_id=str(inputs["evidence_epoch_id"]),
@@ -1774,7 +1814,7 @@ def build_profit_gradient_evidence(
     cutoff_at: str,
     cost_model_id: str,
 ) -> dict[str, Any]:
-    """Build the frozen ``profit_gradient_evidence/v1`` artifact.
+    """Build the frozen ``profit_gradient_evidence/v2`` artifact.
 
     All three inputs are identity selectors, not data.  Candidate samples and
     Position samples are derived from the database; there is no parameter for
@@ -1798,7 +1838,13 @@ def build_profit_gradient_evidence(
             "cost_model_id": cost_model_id,
         },
         "registration": _unavailable("database_unavailable", evidence_epoch_id=evidence_epoch_id),
-        "evidence_context": {},
+        "evidence_context": {
+            "gradient_contract_version": "profit_gradient/v3",
+            "evidence_integrity": "verified",
+            "reconciliation_contract_version": RECONCILIATION_CONTRACT_VERSION,
+            "reconciliation_tolerance_quote": RECONCILIATION_TOLERANCE_QUOTE,
+            "availability": "unavailable",
+        },
         "layer_samples": {layer: [] for layer in LAYERS},
         "reconciliation": {
             "contract_version": RECONCILIATION_CONTRACT_VERSION,
@@ -1938,6 +1984,7 @@ def build_profit_gradient_evidence(
 
 
 __all__ = [
+    "LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION",
     "PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION",
     "RECONCILIATION_CONTRACT_VERSION",
     "RECONCILIATION_TOLERANCE_QUOTE",

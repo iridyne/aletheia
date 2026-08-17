@@ -26,7 +26,7 @@ def test_compiler_emits_versioned_read_only_artifact_and_stable_hashes():
     )
 
     assert first == second
-    assert first["contract_version"] == "profit_gradient_evidence/v1"
+    assert first["contract_version"] == evidence.PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION
     assert first["read_only"] is True
     assert first["behavior_changed"] is False
     assert set(first["layer_samples"]) == set(evidence.LAYERS)
@@ -35,6 +35,26 @@ def test_compiler_emits_versioned_read_only_artifact_and_stable_hashes():
     assert len(first["content_hash"]) == 64
     assert first["source_hashes"]
     assert first["exclusion_waterfall"]["order"]
+    assert evidence.verify_profit_gradient_evidence(first, revalidate_sources=True) == (True, None)
+
+
+def test_historical_v1_artifact_keeps_hash_verification_without_new_selector_shape():
+    payload = evidence.build_profit_gradient_evidence(
+        evidence_epoch_id="missing-epoch",
+        cutoff_at="2026-08-14T00:00:00Z",
+        cost_model_id="missing-cost-model",
+    )
+    payload = dict(payload)
+    payload["contract_version"] = evidence.LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION
+    payload["producer"] = dict(evidence._LEGACY_COMPILER_PRODUCER)
+    payload.pop("reconciliation")
+    payload["evidence_context"] = {}
+    payload["content_hash"] = evidence._hash(
+        {key: value for key, value in payload.items() if key != "content_hash"}
+    )
+
+    assert evidence.verify_profit_gradient_evidence(payload, revalidate_sources=True) == (True, None)
+    assert payload["contract_version"] != evidence.PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION
 
 
 def test_compiler_does_not_write_database():
@@ -365,6 +385,79 @@ def test_pairing_rejects_unpaired_units_and_emits_one_contrast_per_arm():
     assert paired[0]["arm_counts"] == {"treatment": 1, "control": 1}
     assert paired[0]["paired_net_delta_bp"] == 100.0
     assert paired[0]["paired_net_delta_quote"] == 2.0
+
+
+def test_pairing_builds_cost_delta_from_both_arms_and_preserves_execution_metadata():
+    treatment_cost = {
+        "cost_event_id": "treatment-cost",
+        "avoidable": True,
+        "baseline_kind": "realizable_limit",
+        "baseline_id": "treatment-baseline",
+        "cost_model_id": "cost-v1",
+        "avoidable_extra_cost_quote": 5.0,
+    }
+    control_cost = {
+        **treatment_cost,
+        "cost_event_id": "control-cost",
+        "baseline_id": "control-baseline",
+        "avoidable_extra_cost_quote": 2.0,
+    }
+    cost_pair, excluded = evidence._pair_confirmatory_samples(
+        [
+            {
+                "unit_id": "treatment-cost-unit",
+                "pair_id": "cost-pair",
+                "arm": "treatment",
+                "component": "avoidable_extra_cost",
+                "notional_quote": 1000.0,
+                "arm_net_delta_bp": 50.0,
+                "arm_net_delta_quote": 5.0,
+                "cost_evidence": treatment_cost,
+                "cost_applied_once": False,
+            },
+            {
+                "unit_id": "control-cost-unit",
+                "pair_id": "cost-pair",
+                "arm": "control",
+                "component": "avoidable_extra_cost",
+                "notional_quote": 1000.0,
+                "arm_net_delta_bp": 20.0,
+                "arm_net_delta_quote": 2.0,
+                "cost_evidence": control_cost,
+            },
+        ]
+    )
+    execution_pair, execution_excluded = evidence._pair_confirmatory_samples(
+        [
+            {
+                "unit_id": "treatment-execution-unit",
+                "pair_id": "execution-pair",
+                "arm": "treatment",
+                "component": "fill_or_execution",
+                "notional_quote": 1000.0,
+                "arm_net_delta_bp": 20.0,
+                "arm_net_delta_quote": 2.0,
+                "cost_applied_once": False,
+            },
+            {
+                "unit_id": "control-execution-unit",
+                "pair_id": "execution-pair",
+                "arm": "control",
+                "component": "fill_or_execution",
+                "notional_quote": 1000.0,
+                "arm_net_delta_bp": 10.0,
+                "arm_net_delta_quote": 1.0,
+            },
+        ]
+    )
+
+    assert excluded == []
+    assert execution_excluded == []
+    assert cost_pair[0]["cost_evidence"]["avoidable_extra_cost_quote"] == 3.0
+    assert cost_pair[0]["cost_evidence"]["cost_event_id"] == "treatment-cost|control-cost"
+    assert cost_pair[0]["cost_evidence"]["cost_event_ids"] == ["treatment-cost", "control-cost"]
+    assert cost_pair[0]["cost_applied_once"] is False
+    assert execution_pair[0]["cost_applied_once"] is False
 
 
 def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_horizon_net_once():
