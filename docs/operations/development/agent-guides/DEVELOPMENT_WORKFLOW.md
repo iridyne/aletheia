@@ -80,7 +80,8 @@ uv run aletheia doctor
 - Owner/Agent runtime truth: `uv run aletheia control status --json` (the JSON
   snapshot is authoritative for Runtime identity, UFC, profit-loop, Position
   Path observer, and durable pause owners; it is read-only and may report
-  explicit `unavailable` reasons).
+  explicit `unavailable` reasons). The command uses SQLite `mode=ro`; a missing
+  database remains unavailable and is never created by inspection.
 - Full suite: PR CI proves its configured regression tiers. Run the complete
   suite only through the isolated Fedora process above; never run it on macOS
   or use Windows as a validation fallback.
