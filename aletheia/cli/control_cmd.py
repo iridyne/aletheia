@@ -279,14 +279,17 @@ def _connectivity_snapshot() -> dict[str, Any]:
         state = get_status()
         probe = state.get("last_probe") or {}
         reachable = probe.get("reachable") if probe else None
+        if reachable is True:
+            connectivity_state = "reachable"
+        elif reachable is False:
+            connectivity_state = "exchange_unreachable"
+        else:
+            connectivity_state = "unknown"
         return {
             "available": bool(probe),
             "reachable": reachable,
-            "state": (
-                "reachable" if reachable is True
-                else "exchange_unreachable" if reachable is False
-                else "unknown"
-            ),
+            # Reachability is not proof of a failure-to-success transition.
+            "state": connectivity_state,
             "exchange": probe.get("exchange"),
             "last_probe_at": _iso_from_epoch(probe.get("ts")),
             "consecutive_failures": state.get("consecutive_failures"),
