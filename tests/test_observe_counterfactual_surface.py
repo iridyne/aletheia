@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+from unittest.mock import patch
 
 from typer.testing import CliRunner
 
@@ -14,37 +15,44 @@ def _record_ranker_candidate(
     confidence: str,
     net_return_pct: float,
     minimum: str = "high",
+    code_commit: str = "runtime-sha-a",
 ) -> str:
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.storage.sqlite import get_db
 
-    record_filter_decision(
-        candidate_key=key,
-        candidate_kind="opportunity",
-        filter_name="ranker_confidence_gate",
-        stage="paper_ranker",
-        decision=decision,
-        reason_code="ranker_confidence_test",
-        symbol="BTC/USDT",
-        venue="okx",
-        market_type="perp",
-        direction="long",
-        scanner_family="mean_reversion",
-        entry_price_usd=100.0,
-        inputs={"confidence": confidence},
-        parameters={"minimum": minimum},
-        evaluated_at=evaluated_at.isoformat(),
-    )
+    with patch(
+        "aletheia.analytics.filter_evidence._boot_commit",
+        return_value=code_commit,
+    ):
+        record_filter_decision(
+            candidate_key=key,
+            candidate_kind="opportunity",
+            filter_name="ranker_confidence_gate",
+            stage="paper_ranker",
+            decision=decision,
+            reason_code="ranker_confidence_test",
+            symbol="BTC/USDT",
+            venue="okx",
+            market_type="perp",
+            direction="long",
+            scanner_family="mean_reversion",
+            entry_price_usd=100.0,
+            inputs={"confidence": confidence},
+            parameters={"minimum": minimum},
+            evaluated_at=evaluated_at.isoformat(),
+        )
     db = get_db()
     db.execute(
         "UPDATE filter_candidate_outcomes SET status='settled', settled_at=?, "
         "net_return_pct=? WHERE outcome_candidate_key=? AND horizon='4h'",
         (evaluated_at.isoformat(), net_return_pct, key),
     )
-    return str(db.execute(
-        "SELECT filter_version FROM filter_decisions WHERE candidate_key=?",
-        (key,),
-    ).fetchone()[0])
+    return str(
+        db.execute(
+            "SELECT filter_version FROM filter_decisions WHERE candidate_key=?",
+            (key,),
+        ).fetchone()[0]
+    )
 
 
 def _ready_ranker_replay(filter_version: str) -> dict:
@@ -59,10 +67,12 @@ def _ready_ranker_replay(filter_version: str) -> dict:
         "current_minimum_confidence": "high",
         "candidate_cap_reached": False,
         "min_samples": 20,
-        "alternatives": [{
-            "minimum_confidence": "medium",
-            "readiness": "ready_for_controlled_experiment",
-        }],
+        "alternatives": [
+            {
+                "minimum_confidence": "medium",
+                "readiness": "ready_for_controlled_experiment",
+            }
+        ],
     }
 
 
@@ -81,6 +91,7 @@ def test_ranker_observation_ignores_code_commit_provenance_changes():
         decision="passed",
         confidence="high",
         net_return_pct=0.0,
+        code_commit="runtime-sha-a",
     )
     assert register_replay_ready_experiments(
         [_ready_ranker_replay(version)], now=start
@@ -88,28 +99,33 @@ def test_ranker_observation_ignores_code_commit_provenance_changes():
 
     for index in range(20):
         observed_at = start + timedelta(minutes=index + 1)
-        _record_ranker_candidate(
+        runtime_sha = "runtime-sha-a" if index < 10 else "runtime-sha-b"
+        assert _record_ranker_candidate(
             key=f"opportunity:ranker-control-{index}",
             evaluated_at=observed_at,
             decision="passed",
             confidence="high",
             net_return_pct=0.0,
-        )
-        _record_ranker_candidate(
+            code_commit=runtime_sha,
+        ) == version
+        assert _record_ranker_candidate(
             key=f"opportunity:ranker-treatment-{index}",
             evaluated_at=observed_at,
             decision="rejected",
             confidence="medium",
             net_return_pct=0.4,
-        )
+            code_commit=runtime_sha,
+        ) == version
 
-    # code_commit is provenance, not filter causal identity. Simulate a runtime
-    # deployment without changing the frozen filter/parameter semantics.
-    get_db().execute(
-        "UPDATE filter_decisions SET code_commit='unrelated-new-runtime-sha' "
-        "WHERE datetime(evaluated_at) > datetime(?)",
-        (start.isoformat(),),
-    )
+    commits = {
+        row[0]
+        for row in get_db().execute(
+            "SELECT DISTINCT code_commit FROM filter_decisions "
+            "WHERE datetime(evaluated_at) > datetime(?)",
+            (start.isoformat(),),
+        ).fetchall()
+    }
+    assert commits == {"runtime-sha-a", "runtime-sha-b"}
 
     summary = evaluate_active_shadow_experiments(now=start + timedelta(hours=5))
     experiment = get_db().execute(
@@ -129,7 +145,9 @@ def test_ranker_observation_ignores_code_commit_provenance_changes():
 
 def test_observe_cli_projects_existing_filter_shadow_state():
     from aletheia.cli.observe_cmd import observe_app
-    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
+    from aletheia.counterfactual.filter_experiments import (
+        register_replay_ready_experiments,
+    )
     from aletheia.storage.sqlite import get_db
 
     start = datetime(2026, 8, 18, 1, 0, tzinfo=timezone.utc)
@@ -141,9 +159,9 @@ def test_observe_cli_projects_existing_filter_shadow_state():
         net_return_pct=0.0,
     )
     register_replay_ready_experiments([_ready_ranker_replay(version)], now=start)
-    experiment_id = str(get_db().execute(
-        "SELECT id FROM filter_shadow_experiments"
-    ).fetchone()[0])
+    experiment_id = str(
+        get_db().execute("SELECT id FROM filter_shadow_experiments").fetchone()[0]
+    )
 
     runner = CliRunner()
     listed = runner.invoke(observe_app, ["list"])
