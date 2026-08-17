@@ -36,6 +36,7 @@ from aletheia.cli.thesis import thesis_app
 from aletheia.cli.dev import dev_app
 from aletheia.cli.evidence_cmd import evidence_app
 from aletheia.cli.control_cmd import control_app
+from aletheia.cli.observe_cmd import observe_app
 
 app = typer.Typer(
     name="aletheia",
@@ -56,6 +57,7 @@ app.add_typer(data_app, name="data", help="Historical data management.")
 app.add_typer(exchange_app, name="exchange", help="Switch active exchange, mode, and view config.")
 app.add_typer(opportunity_app, name="opportunity", help="Analyze opportunity lifecycle and outcomes.")
 app.add_typer(thesis_app, name="thesis", help="Thesis lineage snapshots and record export.")
+app.add_typer(observe_app, name="observe", help="Observe-only counterfactual sidecar windows.")
 app.add_typer(alpha_app, name="alpha", help="Read-only alpha attribution audit.", hidden=True)
 app.add_typer(flow_app, name="flow", help="Deprecated alias for opportunity.", hidden=True)
 app.add_typer(funnel_app, name="funnel", help="Read-only trade funnel audit.", hidden=True)
