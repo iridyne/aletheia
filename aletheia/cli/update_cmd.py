@@ -11,7 +11,10 @@ update_app = typer.Typer(
     invoke_without_command=True,
     help="Update a source checkout end to end or manage packaged releases.",
 )
-auto_app = typer.Typer(no_args_is_help=True, help="Follow stable release tags on a Linux Paper source runtime.")
+auto_app = typer.Typer(
+    no_args_is_help=True,
+    help="Follow stable release tags on a Linux Paper source runtime every five minutes.",
+)
 
 
 def _is_packaged() -> bool:
@@ -201,7 +204,7 @@ def auto_resume():
 
 @auto_app.command("install")
 def auto_install():
-    """Install and enable the hourly user-level systemd timer on Fedora."""
+    """Install and enable the five-minute user-level systemd timer on Fedora."""
     from aletheia.update.auto import install
 
     result = install()

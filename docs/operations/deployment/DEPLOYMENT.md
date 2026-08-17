@@ -43,10 +43,26 @@ uv run aletheia data migrate
 uv run aletheia data capacity --deep --history 30
 ```
 
-## Fedora 运行实例：精确部署 SOP
+## Fedora 运行实例：自动部署与恢复 SOP
 
-Fedora 是当前长期运行实例；macOS 只用于开发和控制。合并 Ready PR 后，先确认并记录
-owner 选定的 `origin/master` HEAD（通常就是该 PR 的 merge SHA），再从 Mac 执行现有的一键更新入口：
+Fedora 是当前长期运行实例；macOS 只用于开发和控制。正常路径从
+`master` 上的 release-bearing 提交开始：
+
+1. `Prepare and tag releases` 在 `master` push 后自动生成候选 PR；候选分支运行精确
+   SHA CI，验证通过后由 trusted auto-merge 自动合并。
+2. 合并后的 follow-up 自动创建不可变 `vX.Y.Z` Tag 和 GitHub Release。
+3. Fedora 的 `aletheia-auto-update.timer` 每 5 分钟检查稳定 Tag，执行
+   `aletheia update auto run`；它只接受严格 SemVer，并执行精确 SHA、迁移、SQLite、
+   Smoke、Gateway 和 Paper/live-disabled 健康门禁。
+
+正常发布不需要手动登录 Fedora。以下命令只用于首次启用 timer、故障恢复或诊断：
+
+```sh
+ssh fedora 'cd /home/admin/aletheia && uv run aletheia update auto install'
+ssh fedora 'cd /home/admin/aletheia && uv run aletheia update auto status'
+```
+
+若自动部署连续失败，才使用 source-checkout 的应急一键更新入口：
 
 ```sh
 ssh fedora 'cd /home/admin/aletheia && uv run aletheia update'
@@ -55,7 +71,7 @@ ssh fedora 'cd /home/admin/aletheia && uv run aletheia update'
 这个 source-checkout 命令固定执行 fast-forward、按需依赖同步、把前端完整构建到
 staging 目录、Smoke、Gateway 重启以及启动期 Migration/SQLite 校验；不要再包一层部署脚本。
 `update --no-restart` 仅保留 source checkout 的应急控制；packaged runtime 的同一个裸命令自动走签名发布流程。
-完成后只做以下验收：
+完成自动或手动恢复后只做以下验收：
 
 1. Fedora `git rev-parse HEAD` 等于预期 merge SHA；
 2. `/api/status` 的 `boot_commit == current_commit ==` 预期 SHA；
@@ -71,26 +87,16 @@ eligible exposure 开新窗口。PR merge 本身不等于部署。
 
 ### 无人值守升级边界
 
-Fedora Paper Candidate 可以跟随正式 Release Tag；人保留的授权动作是发布正式
-`vX.Y.Z` Tag，而不是登录 Fedora 执行 `git pull`。只接受严格稳定 SemVer：
+Fedora Paper Candidate 只跟随正式 Release Tag；Release Please 自动创建正式
+`vX.Y.Z` Tag，人不登录 Fedora 执行 `git pull`。只接受严格稳定 SemVer：
 `v1.2.3` 可以部署，`v1.2.3-rc.1`、`-hold.1`、`-noauto.1` 和其他预发布 Tag
 一律忽略。下一个正式 Tag 会自然越过已忽略的预发布候选。
 
-普通 Ready PR 合并不会产生 Tag 或触发部署。只有出现实际运行更新需要时，才按
-[Release contract](MODULAR_MONOLITH_RELEASE.md) 人工运行 `Prepare and tag releases`，
-让累积变更形成一个受检批次；不要为每个单独修复发布版本。
-
-首次包含该能力的正式 Release 仍须按上面的人工 SOP 部署一次，然后仅在 Fedora 的
-source checkout 执行：
-
-```sh
-uv run aletheia update auto install
-uv run aletheia update auto status
-```
-
-安装的是两个用户级 systemd unit：每小时（`Persistent=true`，随机延迟最多 10 分钟）
-运行的 `aletheia-auto-update.timer`，以及它唤醒的 oneshot service。安装不会重启或
-改变 Gateway；卸载只删除自己带有 ownership marker 的 unit：
+Release-bearing 提交会自动启动完整链路；隐藏的 `docs`、`ci`、`chore` 提交只会
+累积，不会凭空发布版本。安装的是两个用户级 systemd unit：开机约 1 分钟首次运行，
+之后每 5 分钟（`Persistent=true`，随机延迟最多 30 秒）运行的
+`aletheia-auto-update.timer`，以及它唤醒的 oneshot service。安装不会重启或改变
+Gateway；卸载只删除自己带有 ownership marker 的 unit：
 
 ```sh
 uv run aletheia update auto uninstall

@@ -576,8 +576,8 @@ def _units() -> dict[str, str]:
         f"WorkingDirectory={_PROJECT_ROOT}\n{env}ExecStart={uv} run aletheia update auto run\n"
     )
     timer = (
-        "[Unit]\nDescription=Check Aletheia release tags hourly\n" + _SYSTEMD_MARKER + "\n\n"
-        "[Timer]\nOnCalendar=hourly\nPersistent=true\nRandomizedDelaySec=10m\n"
+        "[Unit]\nDescription=Check Aletheia release tags every five minutes\n" + _SYSTEMD_MARKER + "\n\n"
+        "[Timer]\nOnBootSec=1min\nOnUnitActiveSec=5min\nPersistent=true\nRandomizedDelaySec=30s\n"
         "Unit=aletheia-auto-update.service\n\n[Install]\nWantedBy=timers.target\n"
     )
     return {"aletheia-auto-update.service": service, "aletheia-auto-update.timer": timer}

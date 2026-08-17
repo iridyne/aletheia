@@ -262,11 +262,12 @@ def test_third_party_actions_are_pinned_to_full_commit_shas() -> None:
     assert not failures, "Actions must use full immutable commit SHAs:\n" + "\n".join(failures)
 
 
-def test_release_please_is_metadata_only_and_human_gated() -> None:
+def test_release_please_is_metadata_only_and_automatically_started() -> None:
     workflow = _release_workflow()
     triggers = workflow["on"]
 
-    assert set(triggers) == {"repository_dispatch", "workflow_dispatch"}
+    assert set(triggers) == {"push", "repository_dispatch", "workflow_dispatch"}
+    assert triggers["push"]["branches"] == ["master"]
     assert triggers["repository_dispatch"]["types"] == ["release_candidate_merged"]
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["concurrency"] == {
@@ -303,14 +304,14 @@ def test_release_please_is_metadata_only_and_human_gated() -> None:
     assert "sleep $((attempt * 5))" in commands
     assert "release_please github-release" in commands
     assert "release_please release-pr" in commands
-    assert 'if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]' in commands
+    assert 'if [ "$GITHUB_EVENT_NAME" = "repository_dispatch" ]' in commands
     assert '--token="$GITHUB_TOKEN"' in commands
     assert '--repo-url="$GITHUB_REPOSITORY"' in commands
     assert "--target-branch=master" in commands
     assert "--config-file=release-please-config.json" in commands
     assert "--manifest-file=.release-please-manifest.json" in commands
     assert dispatch["uses"] == GITHUB_SCRIPT_ACTION
-    assert dispatch["if"] == "github.event_name == 'workflow_dispatch'"
+    assert dispatch["if"] == "github.event_name != 'repository_dispatch'"
     assert dispatch["with"]["retries"] == "3"
     assert "pulls.list" in dispatch["with"]["script"]
     assert "autorelease: pending" in dispatch["with"]["script"]

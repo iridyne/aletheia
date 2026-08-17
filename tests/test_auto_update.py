@@ -385,9 +385,10 @@ def test_systemd_units_are_user_timer_contract(monkeypatch):
 
     assert "Type=oneshot" in units["aletheia-auto-update.service"]
     assert "update auto run" in units["aletheia-auto-update.service"]
-    assert "OnCalendar=hourly" in units["aletheia-auto-update.timer"]
+    assert "OnBootSec=1min" in units["aletheia-auto-update.timer"]
+    assert "OnUnitActiveSec=5min" in units["aletheia-auto-update.timer"]
     assert "Persistent=true" in units["aletheia-auto-update.timer"]
-    assert "RandomizedDelaySec=10m" in units["aletheia-auto-update.timer"]
+    assert "RandomizedDelaySec=30s" in units["aletheia-auto-update.timer"]
 
 
 def test_systemd_install_and_owned_uninstall_are_idempotent(tmp_path, monkeypatch):

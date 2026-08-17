@@ -60,9 +60,11 @@ uv run aletheia doctor
   ```
 
   A Worktree alone does not provide this isolation.
-- Ordinary Ready PRs accumulate until an operationally useful release batch is
-  needed; only then run `Prepare and tag releases`. See the
-  [release contract](../../deployment/MODULAR_MONOLITH_RELEASE.md).
+- A release-bearing commit merged to `master` automatically starts
+  `Prepare and tag releases`; candidate CI, exact-head auto-merge, immutable
+  Tag/Release creation, and Fedora tag polling continue without a release
+  operator. `workflow_dispatch` is recovery-only. See the [release
+  contract](../../deployment/MODULAR_MONOLITH_RELEASE.md).
 - When CI is pending, inspect checks, the registered runner/queue state, and any
   failing log once. Continue independent work and monitor non-blockingly at
   intervals up to 30 minutes; do not spend the work loop polling unchanged jobs.

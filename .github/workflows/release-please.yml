@@ -1,11 +1,14 @@
 name: Prepare and tag releases
 
 on:
+  push:
+    branches: [master]
   repository_dispatch:
-    # A manually-authorized release PR needs one trusted follow-up run after
-    # merge to create its tag and GitHub Release. Ordinary PR merges never
-    # dispatch this event; they accumulate until workflow_dispatch is used.
+    # A merged release candidate needs one trusted follow-up run to create its
+    # tag and GitHub Release. Normal release preparation starts on master push.
     types: [release_candidate_merged]
+  # Recovery entry point only. The normal path is fully automatic after a
+  # release-bearing commit reaches master.
   workflow_dispatch:
 
 permissions:
@@ -77,13 +80,13 @@ jobs:
               sleep $((attempt * 5))
             done
           }
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            release_please release-pr
-          else
+          if [ "$GITHUB_EVENT_NAME" = "repository_dispatch" ]; then
             release_please github-release
+          else
+            release_please release-pr
           fi
-      - name: Run CI for the release pull request
-        if: github.event_name == 'workflow_dispatch'
+      - name: Run CI for the pending release pull request
+        if: github.event_name != 'repository_dispatch'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
         with:
           retries: 3
