@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { api } from '../../../api/client'
 import {
@@ -104,6 +104,7 @@ function EventTriggerCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
 function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const universe = settings?.universe as any
+  const snapshotTtlLabelId = useId()
   const [enabled, setEnabled] = useState(false)
   const [refreshMin, setRefreshMin] = useState('10')
   const [maxCandidates, setMaxCandidates] = useState('30')
@@ -233,16 +234,17 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
           <input type="number" min={0} max={0.5} step={0.05} value={exploreRatio}
             onChange={e => { setExploreRatio(e.target.value); setChanged(true); setMsg(null) }} />
         </label>
-        <label className="settings-field">
-          <span>Snapshot TTL</span>
+        <div className="settings-field">
+          <span id={snapshotTtlLabelId}>Snapshot TTL</span>
           <div className="flex items-center gap-2">
             <Toggle checked={snapshotTtlEnabled} persistence="staged" aria-label="Enable snapshot TTL" onChange={v => { setSnapshotTtlEnabled(v); setChanged(true); setMsg(null) }} />
             <input type="number" min={1} max={72} step={1} value={snapshotTtlHours}
+              aria-labelledby={snapshotTtlLabelId}
               disabled={!snapshotTtlEnabled}
               onChange={e => { setSnapshotTtlHours(e.target.value); setChanged(true); setMsg(null) }} />
             <span className="hint m-0">hrs{!snapshotTtlEnabled ? ' (disabled — toggle on to edit)' : ''}</span>
           </div>
-        </label>
+        </div>
       </div>
       <div className="form-grid mb-3">
         <label>
