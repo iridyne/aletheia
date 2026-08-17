@@ -56,6 +56,8 @@ describe("Settings staged draft boundary", () => {
 		expect(SETTINGS_PAGE).toContain("Unsaved staged changes");
 		expect(SETTINGS_PAGE).toContain("Discard changes");
 		expect(SETTINGS_PAGE).toContain("setDraftEpoch(epoch => epoch + 1)");
+		expect(SETTINGS_PAGE).toContain('data-settings-discard="true"');
+		expect(SETTINGS_PAGE).toContain("onBlurCapture={suppressDiscardBlur}");
 	});
 });
 
@@ -69,6 +71,11 @@ describe("isFallbackDraftControl", () => {
 		expect(isFallbackDraftControl({ tagName: "SELECT" })).toBe(false);
 		expect(isFallbackDraftControl({ tagName: "INPUT", type: "checkbox" })).toBe(false);
 		expect(isFallbackDraftControl({ tagName: "INPUT", type: "radio" })).toBe(false);
+	});
+
+	it("leaves immediate blur-save fields to their mutation handlers", () => {
+		expect(isFallbackDraftControl({ tagName: "INPUT", type: "number", persistence: "immediate" })).toBe(false);
+		expect(isFallbackDraftControl({ tagName: "INPUT", type: "number", dataset: { persistence: "immediate" } })).toBe(false);
 	});
 });
 

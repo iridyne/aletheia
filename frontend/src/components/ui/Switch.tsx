@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes } from 'react'
+import { useId, type InputHTMLAttributes } from 'react'
 import { useSettingsRowLabelId } from './SettingsRowLabelContext'
 
 export type SwitchPersistence = 'immediate' | 'staged'
@@ -12,6 +12,7 @@ export function Switch({
   persistence,
   'aria-label': explicitAriaLabel,
   'aria-labelledby': explicitAriaLabelledBy,
+  'aria-describedby': explicitAriaDescribedBy,
   ...props
 }: Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'checked' | 'onChange'> & {
   checked: boolean
@@ -23,6 +24,7 @@ export function Switch({
 }) {
   const setChecked = onCheckedChange ?? onChange
   const rowLabelId = useSettingsRowLabelId()
+  const stagedDescriptionId = useId()
 
   if (label !== undefined && !label.trim()) {
     throw new Error('Switch label must be non-empty; omit label inside a SettingsRow')
@@ -44,13 +46,17 @@ export function Switch({
   const ariaLabelledBy = label || explicitAriaLabel
     ? undefined
     : (explicitAriaLabelledBy || (named ? undefined : rowLabelId ?? undefined))
+  const staged = persistence === 'staged'
+  const ariaDescribedBy = [
+    explicitAriaDescribedBy,
+    staged ? stagedDescriptionId : undefined,
+  ].filter(Boolean).join(' ') || undefined
 
   // The wrapper stays a <label> even with no text: the input is
   // `pointer-events: none` and visually hidden, so label association is the only
   // thing that forwards a click on the track. A text-less <label> does not name
   // the input, which is what aria-labelledby above is for. Call sites must not
   // add a <label> of their own around this — pass `label` instead.
-  const staged = persistence === 'staged'
   return (
     <label
       className={`settings-toggle${staged ? ' settings-staged-toggle' : ''}`}
@@ -60,6 +66,7 @@ export function Switch({
         {...props}
         aria-label={ariaLabel}
         aria-labelledby={ariaLabelledBy}
+        aria-describedby={ariaDescribedBy}
         className={staged ? 'settings-staged-input' : 'settings-switch-input'}
         data-persistence={persistence}
         type="checkbox"
@@ -70,6 +77,7 @@ export function Switch({
       {!staged && <span className="settings-switch-track" aria-hidden="true"><span className="settings-switch-thumb" /></span>}
       {label && <span className="settings-switch-text">{label}</span>}
       {staged && <span className="settings-staged-badge" aria-hidden="true">draft</span>}
+      {staged && <span id={stagedDescriptionId} className="settings-staged-description">Draft value; save required.</span>}
     </label>
   )
 }

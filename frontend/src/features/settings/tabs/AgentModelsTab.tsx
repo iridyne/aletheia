@@ -255,13 +255,13 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
             <Toggle checked={autoRefreeze} persistence="immediate" onChange={v => learningMut.mutate({ auto_refreeze: v })} disabled={learningMut.isPending} />
           </Row>
           <Row label="Evaluation interval (minutes)" hint="How often read-only measurement and lifecycle checks run. Default 60; allowed range 15–1440.">
-            <input type="number" min={15} max={1440} step={5} defaultValue={evaluationInterval} onBlur={e => {
+            <input type="number" min={15} max={1440} step={5} data-persistence="immediate" defaultValue={evaluationInterval} onBlur={e => {
               const v = Math.round(Number(e.currentTarget.value))
               if (Number.isFinite(v) && v >= 15 && v <= 1440 && v !== evaluationInterval) learningMut.mutate({ evaluation_interval_minutes: v })
             }} disabled={learningMut.isPending} className="w-24" />
           </Row>
           <Row label="Active-stage treatment allocation" hint="Maximum paper treatment share at the final stage. A control holdout is mandatory; hard maximum 90%.">
-            <input type="number" min={0.01} max={0.90} step={0.05} defaultValue={paperActiveAllocation} onBlur={e => {
+            <input type="number" min={0.01} max={0.90} step={0.05} data-persistence="immediate" defaultValue={paperActiveAllocation} onBlur={e => {
               const v = Number(e.currentTarget.value)
               if (Number.isFinite(v) && v > 0 && v <= 0.90 && v !== paperActiveAllocation) learningMut.mutate({ paper_active_allocation_pct: v })
             }} disabled={learningMut.isPending} className="w-24" />
@@ -333,6 +333,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
               max={168}
               step={1}
               defaultValue={controllerObserveHours}
+              data-persistence="immediate"
               onBlur={e => {
                 const v = parseInt(e.currentTarget.value, 10)
                 if (!Number.isFinite(v) || v < 1 || v > 168 || v === controllerObserveHours) return
@@ -352,6 +353,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
               max={500}
               step={1}
               defaultValue={controllerMinSamples}
+              data-persistence="immediate"
               onBlur={e => {
                 const v = parseInt(e.currentTarget.value, 10)
                 if (!Number.isFinite(v) || v < 5 || v > 500 || v === controllerMinSamples) return
@@ -425,6 +427,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
             max={100}
             step={1}
             defaultValue={serenityMinScore}
+            data-persistence="immediate"
             onBlur={e => {
               const v = parseInt(e.currentTarget.value, 10)
               if (!Number.isFinite(v) || v < 0 || v > 100 || v === serenityMinScore) return
@@ -444,6 +447,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
             max={50}
             step={0.1}
             defaultValue={serenityStopLossPct}
+            data-persistence="immediate"
             onBlur={e => {
               const v = parseFloat(e.currentTarget.value)
               if (!Number.isFinite(v) || v < 0.1 || v > 50 || v === serenityStopLossPct) return
@@ -463,6 +467,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
             max={365}
             step={1}
             defaultValue={serenityMaxHoldDays}
+            data-persistence="immediate"
             onBlur={e => {
               const v = parseInt(e.currentTarget.value, 10)
               if (!Number.isFinite(v) || v < 1 || v > 365 || v === serenityMaxHoldDays) return
@@ -523,6 +528,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
               <input
                 type="number" min={0} max={60} step={1}
                 defaultValue={piDaemon.debounce_sec ?? 8}
+                data-persistence="immediate"
                 className="w-20"
                 onBlur={e => {
                   const v = parseFloat(e.target.value)
@@ -534,6 +540,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
               <input
                 type="number" min={0} max={600} step={5}
                 defaultValue={piDaemon.cooldown_sec ?? 60}
+                data-persistence="immediate"
                 className="w-20"
                 onBlur={e => {
                   const v = parseFloat(e.target.value)
@@ -545,6 +552,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
               <input
                 type="number" min={60} max={3600} step={60}
                 defaultValue={piDaemon.heartbeat_sec ?? 300}
+                data-persistence="immediate"
                 className="w-20"
                 onBlur={e => {
                   const v = parseFloat(e.target.value)

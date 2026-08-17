@@ -67,6 +67,8 @@ describe("Switch adopts the row label only when it has no name of its own", () =
 		expect(SWITCH).toContain("data-persistence={persistence}");
 		expect(SWITCH).toContain("settings-staged-input");
 		expect(SWITCH).toContain("settings-staged-badge");
+		expect(SWITCH).toContain("aria-describedby={ariaDescribedBy}");
+		expect(SWITCH).toContain("settings-staged-description");
 		expect(SWITCH).toContain("!staged &&");
 	});
 

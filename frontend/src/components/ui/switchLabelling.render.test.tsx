@@ -35,4 +35,16 @@ describe("rendered switch naming", () => {
 			renderToStaticMarkup(<Switch checked persistence="immediate" label="" />),
 		).toThrow("Switch label must be non-empty");
 	});
+
+	it("describes staged persistence to assistive technology", () => {
+		const html = renderToStaticMarkup(
+			<Switch checked={false} persistence="staged" aria-label="Enable feed" />,
+		);
+		const input = checkboxMarkup(html);
+		const descriptionId = html.match(/<span id="([^"]+)" class="settings-staged-description">/)?.[1];
+
+		expect(descriptionId).toBeTruthy();
+		expect(input).toContain(`aria-describedby="${descriptionId}"`);
+		expect(html).toContain("Draft value; save required.");
+	});
 });

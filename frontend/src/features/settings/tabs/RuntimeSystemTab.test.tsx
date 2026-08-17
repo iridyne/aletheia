@@ -63,4 +63,11 @@ describe('RuntimeSystemTab', () => {
     expect(SRC).toContain("role={remoteTokenMessage.ok ? 'status' : 'alert'}")
     expect(SRC).toContain("text: result.ok ? 'Token saved in this browser.' : result.error")
   })
+
+  it('keeps immediate mutation errors isolated by source', () => {
+    expect(SRC).toContain("type ImmediateErrorSource = 'app' | 'runtime' | 'remote'")
+    expect(SRC).toContain("clearImmediateError('app')")
+    expect(SRC).toContain("clearImmediateError('runtime')")
+    expect(SRC).toContain("clearImmediateError('remote')")
+  })
 })

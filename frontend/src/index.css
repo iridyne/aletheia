@@ -947,6 +947,10 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   letter-spacing: 0.05em; border: 1px solid var(--border-2);
   border-radius: 999px; padding: 0.05rem 0.3rem;
 }
+.settings-staged-description {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 .settings-staged-toggle:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(34,211,238,0.12);

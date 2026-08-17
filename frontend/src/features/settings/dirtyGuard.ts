@@ -23,6 +23,8 @@ export interface ControlLike {
 	type?: string;
 	readOnly?: boolean;
 	disabled?: boolean;
+	persistence?: string;
+	dataset?: { persistence?: string };
 }
 
 /**
@@ -49,6 +51,7 @@ export function isUnsavedEdit(el: ControlLike | null | undefined): boolean {
  */
 export function isFallbackDraftControl(el: ControlLike | null | undefined): boolean {
 	if (!el || !isUnsavedEdit(el)) return false;
+	if (el.persistence === "immediate" || el.dataset?.persistence === "immediate") return false;
 	const tag = (el.tagName ?? "").toLowerCase();
 	return tag === "textarea" || (tag === "input" && el.type !== "checkbox" && el.type !== "radio");
 }

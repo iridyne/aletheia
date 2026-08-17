@@ -111,7 +111,22 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
   const remoteBindHosts = Array.isArray(remoteControl.bind_hosts) ? remoteControl.bind_hosts as string[] : []
   const [remoteToken, setRemoteToken] = useState('')
   const [remoteTokenMessage, setRemoteTokenMessage] = useState<{ ok: boolean; text: string } | null>(null)
-  const [immediateError, setImmediateError] = useState<string | null>(null)
+  type ImmediateErrorSource = 'app' | 'runtime' | 'remote'
+  const [immediateErrors, setImmediateErrors] = useState<Partial<Record<ImmediateErrorSource, string>>>({})
+  const reportImmediateError = (source: ImmediateErrorSource, label: string, error: any) => {
+    setImmediateErrors(current => ({ ...current, [source]: `${label}: ${error?.message || 'request failed'}` }))
+  }
+  const clearImmediateError = (source: ImmediateErrorSource) => {
+    setImmediateErrors(current => {
+      if (!(source in current)) return current
+      const next = { ...current }
+      delete next[source]
+      return next
+    })
+  }
+  const immediateError = Object.values(immediateErrors)
+    .filter((message): message is string => Boolean(message))
+    .join(' · ')
   const storeRemoteControlToken = () => {
     const result = api.setRemoteControlToken(remoteToken)
     setRemoteTokenMessage({
@@ -131,22 +146,22 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
 
   const appMut = useMutation({
     mutationFn: (body: any) => api.updateAppConfig(body),
-    onSuccess: () => { setImmediateError(null); qc.invalidateQueries({ queryKey: ['settings'] }) },
-    onError: (error: any) => setImmediateError(`App setting failed: ${error?.message || 'request failed'}`),
+    onSuccess: () => { clearImmediateError('app'); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onError: (error: any) => reportImmediateError('app', 'App setting failed', error),
   })
   const runtimeMut = useMutation({
     mutationFn: (body: any) => api.updateRuntimeConfig(body),
-    onSuccess: () => { setImmediateError(null); qc.invalidateQueries({ queryKey: ['settings'] }) },
-    onError: (error: any) => setImmediateError(`Runtime setting failed: ${error?.message || 'request failed'}`),
+    onSuccess: () => { clearImmediateError('runtime'); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onError: (error: any) => reportImmediateError('runtime', 'Runtime setting failed', error),
   })
   const remoteControlMut = useMutation({
     mutationFn: (body: { enabled?: boolean; bind_hosts?: string[]; require_token?: boolean; api_token?: string }) => api.updateRemoteControl(body),
     onSuccess: () => {
-      setImmediateError(null)
+      clearImmediateError('remote')
       if (remoteToken.trim()) storeRemoteControlToken()
       qc.invalidateQueries({ queryKey: ['settings'] })
     },
-    onError: (error: any) => setImmediateError(`Remote Control setting failed: ${error?.message || 'request failed'}`),
+    onError: (error: any) => reportImmediateError('remote', 'Remote Control setting failed', error),
   })
   const runtimePending = useRef(false)
   useSettingsDraftLifecycle({

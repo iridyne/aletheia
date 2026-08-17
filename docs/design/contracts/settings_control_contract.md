@@ -11,12 +11,17 @@ the callback or the surrounding component.
 
 An immediate control sends its mutation from the change handler. Its caller
 owns the pending and error state and must leave the last confirmed value
-visible until the mutation succeeds. A staged control changes only a local
-draft. It renders as a native checkbox with a distinct staged-control style,
-reports dirty state through the Settings draft lifecycle, and is applied by the
-section's existing Save action. Leaving a tab with a dirty draft uses the
-Settings shell's explicit discard confirmation; a failed Save leaves the draft
-dirty and the error visible.
+visible until the mutation succeeds; concurrent immediate mutation errors stay
+visible until their own source succeeds. A staged control changes only a local
+draft. It renders as a native checkbox with a distinct staged-control style and
+an accessible “draft; save required” description, reports dirty state through
+the Settings draft lifecycle, and is applied by the section's existing Save
+action. Leaving a tab with a dirty draft uses the Settings shell's explicit
+discard confirmation; a failed Save leaves the draft dirty and the error
+visible. Immediate blur-save number fields are marked as immediate so the
+shell's staged-draft fallback does not offer to discard an already-persisted
+mutation; the Settings shell suppresses focus-transfer blur before the Discard
+button's click.
 
 `SwitchGrid` requires the same persistence value and passes it to every switch
 it expands. It is currently used only by staged Settings editors. Its fields
