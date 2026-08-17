@@ -61,7 +61,7 @@ def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
         "actions": "read",
         "contents": "read",
         "issues": "write",
-        "pull-requests": "read",
+        "pull-requests": "write",
     }
     assert workflow["concurrency"]["cancel-in-progress"] == "false"
 
