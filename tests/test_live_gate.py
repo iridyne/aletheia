@@ -17,6 +17,37 @@ async def client(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    from aletheia.config.loader import load_config, save_config
+    import aletheia.trust.live_unlock as trust
+    from datetime import datetime, timedelta, timezone
+
+    cfg = load_config()
+    cfg.exchange.name = "bitget"
+    cfg.exchange.mode = "live"
+    cfg.risk.allowed_exchange = "bitget"
+    save_config(cfg)
+    monkeypatch.setattr(trust, "get_secret", lambda ref: f"test-secret:{ref}")
+    identity = trust.resolve_live_execution_identity(cfg)
+    now = datetime.now(timezone.utc)
+    evidence = {
+        **identity,
+        "ok": True,
+        "reason_code": "ok",
+        "account_fingerprint": "sha256:test-account",
+        "private_authenticated": True,
+        "account_readable": True,
+        "environment_verified": True,
+        "permission_status": "granted",
+        "completeness": "complete",
+        "fetched_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=300)).isoformat(),
+    }
+    evidence["evidence_binding"] = trust._evidence_binding(evidence)
+
+    async def _fake_preflight(_cfg):
+        return evidence
+
+    monkeypatch.setattr("aletheia.server.routes.live.run_live_preflight", _fake_preflight)
     reset_db()
     sq._db_conn = None
     import sqlite3
@@ -58,6 +89,43 @@ async def test_live_unlock_with_confirm(client):
     # Verify status reflects change
     resp = await client.get("/api/status")
     assert resp.json()["live_state"] == "live_limited"
+    assert resp.json()["operator_permission_mode"] == "Auto"
+
+
+@pytest.mark.anyio
+async def test_expired_live_evidence_revokes_state_and_records_reason(client):
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.storage.repositories import list_audit_events
+    import json
+
+    with patch("aletheia.analytics.go_live_scorecard.compute_scorecard") as sc:
+        sc.return_value = {"composite_score": 95.0, "traffic_light": "green", "blockers": []}
+        unlocked = await client.post(
+            "/api/settings/live-unlock",
+            json={"confirm": True, "acknowledge_first_unlock": True},
+        )
+    assert unlocked.status_code == 200
+
+    cfg = load_config()
+    cfg.live.unlock_evidence["expires_at"] = "2020-01-01T00:00:00+00:00"
+    save_config(cfg)
+
+    status = await client.get("/api/status")
+    data = status.json()
+    assert data["live_state"] == "live_disabled"
+    assert data["operator_permission_mode"] == "ReadOnly"
+    assert data["live_unlock"] == {
+        "evidence_status": "revoked",
+        "reason_code": "stale_unlock_evidence",
+        "audit_written": True,
+        "state_persisted": True,
+    }
+
+    event = next(
+        item for item in list_audit_events(limit=20)
+        if item["event_type"] == "live_unlock_revoked"
+    )
+    assert json.loads(event["after_state"])["state"] == "live_disabled"
 
 
 @pytest.mark.anyio

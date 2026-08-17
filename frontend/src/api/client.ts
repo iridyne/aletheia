@@ -1506,7 +1506,24 @@ export const api = {
 		),
 
 	// Live state
-	liveUnlock: () => post("/settings/live-unlock", { confirm: true }),
+	livePreflight: () =>
+		post<{
+			ok: boolean;
+			broker?: string;
+			execution_mode?: string;
+			account_environment?: string;
+			private_authenticated?: boolean;
+			public_reachability?: string;
+			account_readable?: boolean;
+			permission_status?: string;
+			reason_code?: string;
+			fetched_at?: string;
+			expires_at?: string;
+		}>("/settings/live-preflight", {}),
+	liveUnlock: () => post("/settings/live-unlock", {
+		confirm: true,
+		acknowledge_first_unlock: true,
+	}),
 	liveLock: () => post("/settings/live-lock"),
 
 	// Risk: boundaries display + kill switch + editable config

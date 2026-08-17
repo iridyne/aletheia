@@ -478,6 +478,22 @@ def _cached_available_balance_usdt(execution_mode: str) -> float | None:
             # authority itself.  Its absence cannot be replaced by config capital.
             return None
 
+    if _is_live(execution_mode):
+        try:
+            cfg = load_config()
+            from aletheia.config.exchanges import live_execution_mode_for_exchange
+            from aletheia.trust.live_unlock import evidence_matches_config
+
+            if (
+                live_execution_mode_for_exchange(cfg.exchange.name) == execution_mode
+                and cfg.live.state == "live_limited"
+            ):
+                valid, _ = evidence_matches_config(cfg, getattr(cfg.live, "unlock_evidence", None))
+                if not valid:
+                    return None
+        except Exception:
+            return None
+
     try:
         from aletheia.portfolio.exchange_sync import (
             get_cached_state,
@@ -890,6 +906,30 @@ def _evaluate_proposal_locked(
     live_state = cfg.live.state
     if proposal.execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited") and live_state != "live_limited":
         violations.append("live_disabled")
+
+    # A live proposal must use the broker whose private account was selected for
+    # the current configuration.  paper_internal remains self-contained for the
+    # existing paper-only path.
+    if proposal.execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited"):
+        from aletheia.config.exchanges import live_execution_mode_for_exchange
+
+        expected_live_mode = live_execution_mode_for_exchange(cfg.exchange.name)
+        if expected_live_mode is not None and proposal.execution_mode != expected_live_mode:
+            violations.append(
+                f"selected_exchange_mismatch:{proposal.execution_mode}!={expected_live_mode}"
+            )
+        elif expected_live_mode is not None and live_state == "live_limited":
+            from aletheia.trust.live_unlock import (
+                evidence_matches_config,
+                revoke_stale_live_unlock,
+            )
+
+            evidence_ok, evidence_reason = evidence_matches_config(
+                cfg, getattr(cfg.live, "unlock_evidence", None),
+            )
+            if not evidence_ok:
+                revoke_stale_live_unlock(cfg)
+                violations.append(f"live_identity_unverified:{evidence_reason}")
 
     # 4. Permission mode
     perm = cfg.agent.permission_mode
@@ -2209,6 +2249,21 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
             pass
         return None
 
+    if _is_live(execution_mode):
+        try:
+            from aletheia.config.exchanges import live_execution_mode_for_exchange
+            from aletheia.trust.live_unlock import evidence_matches_config
+
+            if (
+                live_execution_mode_for_exchange(cfg.exchange.name) == execution_mode
+                and cfg.live.state == "live_limited"
+            ):
+                valid, _ = evidence_matches_config(cfg, getattr(cfg.live, "unlock_evidence", None))
+                if not valid:
+                    return None
+        except Exception:
+            return None
+
     try:
         from aletheia.portfolio.exchange_sync import (
             get_cached_state,
@@ -2216,19 +2271,24 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
         )
 
         if _is_live(execution_mode):
+            # Live Risk sizing is bound to the exact broker account selected by
+            # the proposal.  Summing every live account would let a valid Bitget
+            # cache subsidise an OKX/Binance order.
             unified = get_unified_cached_state() or {}
-            live_equities = []
             if _external_account_cache_is_healthy(unified):
-                for account in unified.get("accounts") or []:
-                    if not _is_live(str(account.get("broker_id") or "")):
-                        continue
+                account = next(
+                    (
+                        item for item in (unified.get("accounts") or [])
+                        if item.get("broker_id") == execution_mode
+                    ),
+                    None,
+                )
+                if account is not None:
                     if not _external_account_row_is_healthy(account):
                         return None
                     value = float(account.get("equity_usdt"))
                     if math.isfinite(value) and value > 0:
-                        live_equities.append(value)
-            if live_equities:
-                return sum(live_equities)
+                        return value
             if execution_mode.startswith("bitget_"):
                 cached = get_cached_state("live") or {}
                 if not _external_account_cache_is_healthy(cached):

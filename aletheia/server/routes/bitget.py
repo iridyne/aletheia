@@ -13,6 +13,7 @@ from aletheia.config.secrets import set_secret, get_secret
 from aletheia.files.jsonl import write_audit
 from aletheia.exchanges.bitget.auth import build_headers
 from aletheia.exchanges.bitget.client import BitgetClient, BASE_URL
+from aletheia.trust.live_unlock import active_live_profile_conflict
 
 router = APIRouter(prefix="/api", tags=["bitget"])
 
@@ -45,6 +46,8 @@ class ExchangeCredentialsRequest(BaseModel):
 async def set_exchange_credentials(req: ExchangeCredentialsRequest):
     if req.profile not in ("demo", "live"):
         raise HTTPException(400, "profile must be 'demo' or 'live'")
+    if active_live_profile_conflict(load_config(), "bitget", req.profile):
+        raise HTTPException(409, "Cannot change the selected live credentials while live is unlocked")
 
     fields_set = []
     for field, value in (("api_key", req.api_key), ("api_secret", req.api_secret), ("passphrase", req.passphrase)):
@@ -154,6 +157,8 @@ class BinanceCredentialsRequest(BaseModel):
 async def set_binance_credentials(req: BinanceCredentialsRequest):
     if req.profile not in ("testnet", "live"):
         raise HTTPException(400, "profile must be 'testnet' or 'live'")
+    if active_live_profile_conflict(load_config(), "binance", req.profile):
+        raise HTTPException(409, "Cannot change the selected live credentials while live is unlocked")
 
     fields_set = []
     for field, value in (("api_key", req.api_key), ("api_secret", req.api_secret)):
@@ -292,6 +297,8 @@ class OkxCredentialsRequest(BaseModel):
 async def set_okx_credentials(req: OkxCredentialsRequest):
     if req.profile not in ("demo", "live"):
         raise HTTPException(400, "profile must be 'demo' or 'live'")
+    if active_live_profile_conflict(load_config(), "okx", req.profile):
+        raise HTTPException(409, "Cannot change the selected live credentials while live is unlocked")
 
     fields_set = []
     for field, value in (("api_key", req.api_key), ("api_secret", req.api_secret), ("passphrase", req.passphrase)):
@@ -394,6 +401,7 @@ async def uta_state():
     (first run before the scheduler has fired).
     Never blocks on a network call.
     """
+    from aletheia.config.loader import load_config
     from aletheia.portfolio.exchange_sync import (
         get_unified_cached_state, get_cached_state, status_for
     )
@@ -403,6 +411,20 @@ async def uta_state():
         age = unified.get("age_seconds")
         sync_status = "ok" if (age is not None and age <= 600) else "stale"
         return {**unified, "sync_status": sync_status}
+
+    # Fallback is valid only for the Bitget demo account that owns this legacy
+    # cache.  Never present it as the selected OKX/Binance account.
+    if load_config().exchange.paper_execution_mode != "bitget_demo":
+        return {
+            "total_equity_usdt": 0,
+            "total_available_usdt": 0,
+            "total_unrealized_pnl": 0,
+            "accounts": [],
+            "positions": [],
+            "errors": [],
+            "fetched_at": None,
+            "sync_status": "unconfigured",
+        }
 
     # Fallback: wrap the Bitget-only cache in the unified shape
     bitget = get_cached_state()

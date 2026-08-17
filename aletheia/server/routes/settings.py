@@ -31,6 +31,18 @@ def _notify_ranker_config_change() -> None:
         pass
 
 
+def _reject_live_identity_change(cfg, *, changed: bool) -> None:
+    """Keep an unlocked account bound to the exact selected configuration."""
+    if changed and getattr(cfg.live, "state", "") == "live_limited":
+        raise HTTPException(
+            409,
+            detail={
+                "error": "live_unlock_identity_conflict",
+                "message": "Lock live trading and re-run the selected-account preflight before changing its identity.",
+            },
+        )
+
+
 # --- Inline-secret redaction ---------------------------------------------------
 # Secrets must never leave the backend via a GET response, an echoed POST body,
 # or an audit record. `config.yaml` can hold credential-bearing fields (a proxy
@@ -490,6 +502,10 @@ async def set_exchange_markets(req: ExchangeMarketsRequest):
     cfg = load_config()
     old = cfg.exchange.model_dump(mode="json")
     next_paper_mode = req.paper_execution_mode or cfg.exchange.paper_execution_mode
+    _reject_live_identity_change(
+        cfg,
+        changed=(req.paper_execution_mode is not None and next_paper_mode != cfg.exchange.paper_execution_mode),
+    )
     from aletheia.config.exchange_alignment import exchange_alignment_for_values
     alignment = exchange_alignment_for_values(
         paper_execution_mode=next_paper_mode,
@@ -534,6 +550,18 @@ async def set_primary_exchange(req: PrimaryExchangeRequest):
         raise HTTPException(400, f"exchange_id must be one of: {sorted(valid)}")
 
     cfg = load_config()
+    desired_paper_mode = (
+        "paper_internal"
+        if eid == "paper_internal"
+        else _EXCHANGE_UNIFICATION_MAP[eid][1]
+    )
+    _reject_live_identity_change(
+        cfg,
+        changed=(
+            eid != str(cfg.exchange.name or "").lower()
+            or desired_paper_mode != cfg.exchange.paper_execution_mode
+        ),
+    )
     old = {
         "exchange.name": cfg.exchange.name,
         "exchange.paper_execution_mode": cfg.exchange.paper_execution_mode,
@@ -1374,6 +1402,7 @@ async def set_exchange_mode(req: ExchangeModeRequest):
         raise HTTPException(400, "Mode must be 'demo' or 'live'")
     cfg = load_config()
     old = cfg.exchange.mode
+    _reject_live_identity_change(cfg, changed=req.mode != old)
     cfg.exchange.mode = req.mode
     save_config(cfg)
     from aletheia.files.jsonl import write_audit

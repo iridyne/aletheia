@@ -27,6 +27,15 @@ def use(
     cfg = load_config()
     old_name = cfg.exchange.name
     old_mode = cfg.exchange.paper_execution_mode
+    desired_mode = "paper_internal" if eid == "paper_internal" else EXCHANGE_UNIFICATION_MAP[eid][1]
+    if cfg.live.state == "live_limited" and (
+        eid != str(old_name or "").lower() or desired_mode != old_mode
+    ):
+        typer.echo(
+            "Error: lock live trading and re-run the selected-account preflight before switching exchange.",
+            err=True,
+        )
+        raise typer.Exit(1)
 
     if eid == "paper_internal":
         cfg.exchange.paper_execution_mode = "paper_internal"
@@ -77,6 +86,12 @@ def mode(
 
     cfg = load_config()
     old = cfg.exchange.mode
+    if cfg.live.state == "live_limited" and val != old:
+        typer.echo(
+            "Error: lock live trading and re-run the selected-account preflight before changing mode.",
+            err=True,
+        )
+        raise typer.Exit(1)
     cfg.exchange.mode = val
     save_config(cfg)
 

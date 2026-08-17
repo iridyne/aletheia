@@ -42,11 +42,45 @@ def _setup_config(tmp_path, monkeypatch, state="live_disabled", first_done=False
     jsonl_mod._last_audit_hash = None
 
     cfg = AletheiaConfig()
+    cfg.exchange.name = "bitget"
+    cfg.exchange.mode = "live"
+    cfg.risk.allowed_exchange = "bitget"
     cfg.live.state = state
     cfg.live.first_live_confirmation_done = first_done
+
+    # The route now requires selected-account evidence.  Keep these legacy
+    # pipeline tests deterministic with a sanitized fake identity; dedicated
+    # issue-412 tests exercise the real adapter preflight separately.
+    import aletheia.trust.live_unlock as trust
+    from datetime import datetime, timedelta, timezone
+
+    monkeypatch.setattr(trust, "get_secret", lambda ref: f"test-secret:{ref}")
+    identity = trust.resolve_live_execution_identity(cfg)
+    now = datetime.now(timezone.utc)
+    evidence = {
+        **identity,
+        "ok": True,
+        "reason_code": "ok",
+        "account_fingerprint": "sha256:test-account",
+        "private_authenticated": True,
+        "account_readable": True,
+        "environment_verified": True,
+        "permission_status": "granted",
+        "completeness": "complete",
+        "fetched_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=300)).isoformat(),
+    }
+    evidence["evidence_binding"] = trust._evidence_binding(evidence)
+    if state == "live_limited":
+        cfg.live.unlock_evidence = evidence
     (tmp_path / "config.yaml").write_text(
         yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
     )
+
+    async def _fake_preflight(_cfg):
+        return evidence
+
+    monkeypatch.setattr("aletheia.server.routes.live.run_live_preflight", _fake_preflight)
 
     # D8-B02/C01 scorecard gate requires composite_score >= 70; fresh test DB
     # has no demo PnL.  Mock a passing scorecard so the unlock flow proceeds
@@ -271,20 +305,7 @@ def test_forbidden_intents_cover_level3_actions():
 def test_scorecard_gate_blocks_unlock_when_low(tmp_path, monkeypatch):
     """Negative-path end-to-end: scorecard gate MUST reject unlock when demo
     performance is below the composite_score ≥ 70 threshold."""
-    import yaml
-    import aletheia.config.loader as loader
-    from aletheia.config.schema import AletheiaConfig
-
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
-
-    cfg = AletheiaConfig()
-    cfg.live.state = "live_disabled"
-    cfg.live.first_live_confirmation_done = True
-    (tmp_path / "config.yaml").write_text(
-        yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
-    )
+    _setup_config(tmp_path, monkeypatch, state="live_disabled", first_done=True)
 
     # Simulate a failing scorecard (composite_score=34.2, red light, blockers).
     monkeypatch.setattr(

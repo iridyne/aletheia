@@ -68,7 +68,7 @@ export function ExecutionTab({ status, settings, qc, onDirty }: any) {
         <ExchangeMarketsRow settings={settings} qc={qc} onDirty={onDirty} />
         <div className="danger-zone">
           <div className="danger-zone-header">Danger Zone</div>
-          <LiveStateRow status={status} qc={qc} />
+          <LiveStateRow status={status} settings={settings} qc={qc} />
         </div>
       </SettingsFeatureSection>
 
@@ -235,8 +235,10 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: any) {
 // Live unlock warning wall — §4b of live_unlock_contract.md.
 // This is an experimental authority-state prerequisite, not proof that the
 // new-Proposal path can select a live execution mode (EX-04 / GitHub #418).
-function LiveUnlockWarningWall({ credError, onConfirm, onCancel }: {
+function LiveUnlockWarningWall({ credError, preflight, broker, onConfirm, onCancel }: {
   credError?: string
+  preflight?: any
+  broker?: string
   onConfirm: () => void
   onCancel: () => void
 }) {
@@ -259,46 +261,65 @@ function LiveUnlockWarningWall({ credError, onConfirm, onCancel }: {
         <li>当前自主 Proposal 仍使用 Paper execution mode 中选择的模拟执行通道</li>
         <li>只有未来独立完成并验证 live Proposal 路由后，真实资金风险才会出现</li>
       </ul>
+      <div className="settings-danger-list">
+        <div>目标账户：{broker || 'not available'} / {preflight?.account_environment || 'not available'}</div>
+        <div>公共可达性：{preflight?.public_reachability || '不作为授权证据'}</div>
+        <div>私有认证：{preflight?.private_authenticated ? '已验证' : '未验证'}</div>
+        <div>账户可读：{preflight?.account_readable ? '已验证' : '未验证'}</div>
+        <div>交易权限：{preflight?.permission_status || 'permission_unknown'}</div>
+      </div>
       {credError && (
         <p className="settings-danger-error">
           ⚠ 凭证预检失败：{credError}。建议先修复凭证再解锁。
         </p>
       )}
       <div className="settings-action-row settings-action-row-start">
-        <button onClick={onConfirm}>确认记录实验性权限状态</button>
+        <button onClick={onConfirm} disabled={!preflight?.ok}>确认记录实验性权限状态</button>
         <button className="secondary" onClick={onCancel}>取消</button>
       </div>
     </div>
   )
 }
 
-function LiveStateRow({ status, qc }: any) {
-  const unlock = useMutation({ mutationFn: api.liveUnlock, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
-  const lock = useMutation({ mutationFn: api.liveLock, onSuccess: () => qc.invalidateQueries({ queryKey: ['status'] }) })
-  const isDisabled = status.live_state === 'live_disabled'
+function LiveStateRow({ status, settings, qc }: any) {
+  const isDisabled = status.live_state === 'live_disabled' || status.live_state === 'disabled'
   const [warning, setWarning] = useState('')
   const [showWall, setShowWall] = useState(false)
   const [credError, setCredError] = useState<string | undefined>(undefined)
+  const [preflight, setPreflight] = useState<any | null>(null)
+  const broker = String((settings?.exchange as any)?.name || status.exchange || 'not available')
+  const refreshLiveState = () => {
+    qc.invalidateQueries({ queryKey: ['status'] })
+    qc.invalidateQueries({ queryKey: ['settings'] })
+  }
+  const unlock = useMutation({
+    mutationFn: api.liveUnlock,
+    onSuccess: refreshLiveState,
+    onError: (error: any) => setWarning(error?.message || 'Live unlock failed; re-run the selected-account preflight.'),
+  })
+  const lock = useMutation({ mutationFn: api.liveLock, onSuccess: refreshLiveState })
 
   const preflightUnlock = async () => {
     setWarning('')
     setCredError(undefined)
+    setPreflight(null)
     try {
-      const r = await api.testBitget('live')
-      if (!r.connected) {
-        setCredError(r.error || 'unknown')
+      const r = await api.livePreflight()
+      setPreflight(r)
+      if (!r.ok) {
+        setCredError(r.reason_code || 'live_preflight_failed')
       }
-    } catch {
-      // Intentional: credential pre-flight is advisory only. The backend enforces its
-      // own gate (state must be live_disabled + confirm=true). A network error here
-      // means we cannot verify credentials, but the user still sees the warning wall
-      // and can decide. The backend will catch any real credential issue when the
-      // first live order is attempted.
+    } catch (error: any) {
+      setCredError(error?.message || 'live_preflight_unavailable')
     }
     setShowWall(true)
   }
 
   const handleConfirmUnlock = () => {
+    if (!preflight?.ok) {
+      setWarning('Live unlock requires a successful selected-account preflight.')
+      return
+    }
     setShowWall(false)
     unlock.mutate()
   }
@@ -313,6 +334,8 @@ function LiveStateRow({ status, qc }: any) {
       {showWall && (
         <LiveUnlockWarningWall
           credError={credError}
+          preflight={preflight}
+          broker={preflight?.broker || broker}
           onConfirm={handleConfirmUnlock}
           onCancel={() => setShowWall(false)}
         />

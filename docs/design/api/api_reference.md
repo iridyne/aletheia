@@ -41,11 +41,12 @@
 
 ### Trust-boundary endpoints (extra requirements)
 
-These endpoints cross a [trust boundary](../../governance/policies/trust_and_change_control.md) and carry obligations beyond a normal route — each MUST write an audit event:
+These endpoints cross a [trust boundary](../../governance/policies/trust_and_change_control.md) and carry obligations beyond a normal route. Mutating endpoints MUST write an audit event; the read-only preflight must not mutate state:
 
 | Endpoint | Requirement | Contract |
 |----------|-------------|----------|
-| `POST /settings/live-unlock` | explicit `confirm=true`; first unlock needs `acknowledge_first_unlock` | [live_unlock_contract](../contracts/live_unlock_contract.md) |
+| `POST /settings/live-preflight` | private read-only preflight for the selected live broker; no raw credentials returned and no state mutation | [live_unlock_contract](../contracts/live_unlock_contract.md) |
+| `POST /settings/live-unlock` | explicit `confirm=true`; first unlock needs `acknowledge_first_unlock`; selected-account evidence and scorecard required | [live_unlock_contract](../contracts/live_unlock_contract.md) |
 | `POST /risk/kill-switch` | body `{"active": true\|false, "confirm_release"?: bool}`; human-only. **Engage** (`active=true`): no extra confirm. **Release** (`active=false`): requires `confirm_release=true` — else the route returns 422. | [risk_engine_contract §4](../contracts/risk_engine_contract.md) |
 | `POST /settings/exchange-credentials` (+ binance/okx) | write-only; GET never returns raw secret | trust §6.3 secrets |
 | `POST /settings/permission-mode` · `/risk` | writes audit; cannot grant `FORBIDDEN_INTENTS` | [live_unlock_contract §6](../contracts/live_unlock_contract.md) |
@@ -551,7 +552,8 @@ reconciled.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/settings/live-unlock` | Unlock live trading (requires `confirm=true`; first unlock also requires `acknowledge_first_unlock=true`; go-live scorecard must be >=70, green, and have no blockers) |
+| POST | `/settings/live-preflight` | Read-only private-account check for the selected live broker; returns sanitized identity, permission, and freshness evidence |
+| POST | `/settings/live-unlock` | Unlock live trading (requires `confirm=true`; first unlock also requires `acknowledge_first_unlock=true`; selected-account evidence and go-live scorecard must pass) |
 | POST | `/settings/live-lock` | Lock live trading back to `live_disabled` |
 
 ---

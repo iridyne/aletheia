@@ -814,6 +814,7 @@ app.add_middleware(JsonCompressionMiddleware, minimum_size=1024, compresslevel=6
 # explicit presence here serves as a checklist that they cannot accidentally be
 # moved to _PUBLIC_PATHS.
 _PROTECTED_PATHS = {
+    "/api/settings/live-preflight",
     "/api/settings/live-unlock",
     "/api/settings/live-lock",
     "/api/risk/kill-switch",
