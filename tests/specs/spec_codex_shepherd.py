@@ -82,6 +82,8 @@ def test_codex_shepherd_binds_callbacks_and_control_markers_to_trusted_identity(
     assert "context.payload.review.commit_id !== expectedHeadSha" in script
     assert "context.payload.workflow_run.head_sha !== expectedHeadSha" in script
     assert "const reviewedCommitPattern" in script
+    assert "const triagePattern" in script
+    assert "const trustedAssociations" in script
     assert "github.rest.repos.getCommit" in script
     assert "reviewedCommitSha !== expectedHeadSha" in script
     assert "review.commit_id === expectedHeadSha" in script
@@ -249,7 +251,8 @@ def test_codex_shepherd_callbacks_converge_from_current_finding_state() -> None:
     # GitHub concurrency can replace a pending run. Finding handling therefore
     # must be a current-state gate shared by every surviving callback, not an
     # exclusive pull_request_review event branch.
-    finding_gate = script.index("if (exactHeadReviews.length !== 0)")
+    finding_gate = script.index("if (exactHeadReviews.length !== 0 && !triageComplete)")
+    assert "!triageComplete" in script[finding_gate : finding_gate + 100]
     finding_hold = script.index("'review-finding'", finding_gate)
     clean_scan = script.index("let connectorCleanExactHead", finding_hold)
     review_request = script.index("!exactHeadReviewRequest", clean_scan)

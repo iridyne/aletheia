@@ -52,6 +52,8 @@ jobs:
               /<!-- aletheia-codex-shepherd head=([0-9a-f]{40}) kind=review -->/g;
             const haltMarkerPattern =
               /<!-- aletheia-codex-shepherd halt head=([0-9a-f]{40}) reason=([a-z-]+) -->/g;
+            const triagePattern = /^\/codex-triage ([0-9a-f]{40}) (clean|complete)$/;
+            const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
             const reviewedCommitPattern = /Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i;
             const repairableCiConclusions = new Set(['failure', 'timed_out']);
 
@@ -163,6 +165,20 @@ jobs:
               review.submitted_at &&
               review.state !== 'DISMISSED'
             );
+            const latestReviewAt = exactHeadReviews
+              .map((review) => review.submitted_at)
+              .sort()
+              .at(-1);
+            const triageComplete = Boolean(latestReviewAt) && issueComments.some((comment) => {
+              if (!trustedAssociations.has(comment.author_association)) return false;
+              const [command] = String(comment.body || '').replace(/\r/g, '').split('\n');
+              const match = command.trim().match(triagePattern);
+              return (
+                match?.[1] === expectedHeadSha &&
+                match[2] === 'complete' &&
+                comment.created_at >= latestReviewAt
+              );
+            });
 
             // Only GitHub Actions may create Shepherd control markers. PR participants
             // must not be able to suppress a review or forge a terminal hold by prose.
@@ -259,7 +275,7 @@ jobs:
 
             // Event delivery is not a queue: concurrency can replace a pending callback.
             // Therefore every surviving callback converges from current exact-head reviews.
-            if (exactHeadReviews.length !== 0) {
+            if (exactHeadReviews.length !== 0 && !triageComplete) {
               await holdForOwner(
                 'review-finding',
                 `Codex reported exact-head review findings on \`${expectedHeadSha}\`. ` +
