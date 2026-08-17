@@ -972,12 +972,21 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
 
     cfg = load_config()
     t = cfg.trading
+    runtime = getattr(cfg, "runtime", None)
+    if bool(getattr(runtime, "kill_switch_active", False)):
+        refrozen_count = invalidate_persona_rollouts(
+            reason="account_distress", now=now
+        )
+        return {
+            "action": "refrozen",
+            "reason": "account_distress",
+            "rollouts_refrozen": refrozen_count,
+        }
     if not getattr(t, "persona_auto_advance_enabled", False):
         return {"action": "disabled", "reason": "persona_auto_advance_enabled=False"}
     agent = getattr(cfg, "agent", None)
     if agent is not None and not bool(getattr(agent, "autonomous_learning", True)):
         return {"action": "hold", "reason": "autonomous_learning_disabled"}
-    runtime = getattr(cfg, "runtime", None)
     if runtime is not None and bool(getattr(runtime, "paused", False)):
         return {"action": "hold", "reason": "runtime_paused"}
     if not t.persona_sizing_enabled:
@@ -987,7 +996,7 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
 
     from aletheia.trading.sizing_policy import in_distress
 
-    if bool(getattr(runtime, "kill_switch_active", False)) or in_distress(cfg):
+    if in_distress(cfg):
         refrozen_count = invalidate_persona_rollouts(
             reason="account_distress", now=now
         )
