@@ -717,10 +717,7 @@ function RiskPolicyProfiles({ risk, qc, onDirty }: { risk: RiskPolicyProfilesDat
 }
 
 function RiskCard({ settings, qc, onDirty }: SettingsDirtyProps) {
-  type RiskSettings = Partial<SettingsRiskConfig> & Record<string, unknown> & {
-    demo?: RiskPolicyDraft
-    live?: RiskPolicyDraft
-  }
+  type RiskSettings = Partial<SettingsRiskConfig> & Record<string, unknown> & RiskPolicyProfilesData
   const risk = settings?.risk as RiskSettings | undefined
   const [vals, setVals] = useState<Record<string, unknown>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -768,7 +765,7 @@ function RiskCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   })
 
   if (!risk) return null
-  if (risk.demo && risk.live) return <RiskPolicyProfiles risk={{ demo: risk.demo, live: risk.live }} qc={qc} onDirty={onDirty} />
+  if (risk.demo && risk.live) return <RiskPolicyProfiles risk={risk} qc={qc} onDirty={onDirty} />
 
   return (
     <div className="card mb-0">
