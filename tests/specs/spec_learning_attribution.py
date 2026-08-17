@@ -242,7 +242,7 @@ async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch
     assert hypothesis_row["target_horizon"] == "4h"
     assert hypothesis_row["source_type"] == "guard_candidate"
     assert json.loads(hypothesis_row["scope_json"]) == {
-        "applies_to": {"scanner_family": ["momentum"], "symbol": ["BTCUSDT"]},
+        "applies_to": {"scanner_family": ["momentum"], "symbol": ["btcusdt"]},
         "guard_id": routed["guard_id"],
     }
     assert json.loads(hypothesis_row["action_json"]) == {

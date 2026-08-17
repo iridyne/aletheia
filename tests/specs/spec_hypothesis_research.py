@@ -12,7 +12,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
 @spec_claim(SpecClaim(
-    "LE-B21", "learning_evolution", "§9.8 hypothesis research evidence", "L2b",
+    "LE-B32", "learning_evolution", "§9.8 hypothesis research evidence", "L2b",
     "Explicit research-ready Learning hypotheses require exact source and outcome "
     "identities, one scoped explanation, bounded alternatives, recorded or explicitly "
     "missing T0 context, and a future falsification condition.",
@@ -60,7 +60,7 @@ def test_research_evidence_contract_rejects_incomplete_or_unbounded_payloads():
 
 
 @spec_claim(SpecClaim(
-    "LE-B22", "learning_evolution", "§9.8 missing-context gate", "L2b",
+    "LE-B33", "learning_evolution", "§9.8 missing-context gate", "L2b",
     "Unavailable exact T0 evidence remains explicit and returns insufficient_context "
     "without calling the red-team reviewer or persisting a guard candidate, hypothesis, "
     "experiment, exposure, verdict, or consumer value.",
@@ -131,7 +131,7 @@ async def test_missing_t0_context_fails_closed_without_research_or_authority(mon
 
 
 @spec_claim(SpecClaim(
-    "LE-B23", "learning_evolution", "§9.8 causal red-team replay", "L2c",
+    "LE-B34", "learning_evolution", "§9.8 causal red-team replay", "L2c",
     "A deterministic exact closed-trade replay bounds shadow counterfactuals to three "
     "and narrows a broad repeated-loss learned-guard claim to recorded risk-off and OI "
     "context before persisting one idempotent proposed hypothesis only.",

@@ -188,6 +188,7 @@ the Contract spec.
 | `evaluation.technical_context.control` | `market_observer.market_read` | `v1` | `structured` | `none` |
 | `evaluation.technical_context.treatment` | `market_observer.market_read` | `v1` | `structured` | `none` |
 | `insight_synthesizer.insight` | `insight_synthesizer.insight` | `v1` | `text` | `none` |
+| `learning.hypothesis_causal_red_team` | `learning.hypothesis_causal_red_team` | `v1` | `structured` | `none` |
 | `lesson_reviewer.judge` | `lesson_reviewer.judge` | `v1` | `structured` | `none` |
 | `market_observer.market_read` | `market_observer.market_read` | `v1` | `structured` | `none` |
 | `news_analyzer.analysis` | `news_analyzer.analysis` | `v1` | `structured` | `none` |
