@@ -1,20 +1,27 @@
 """Minimal machine control plane: `aletheia control status`.
 
-Surfaces master/deployed SHA, active hypotheses, policy epochs, authority,
-and window continuity in one command — so issues like #470/#657 never need
-manually maintained dynamic values in governance documents.
+Surfaces deployment/runtime identity, UFC and profit-loop evidence anchors,
+Position Path recovery, pause ownership, authority, and window continuity in
+one command — so issues like #470/#657/#985 never need manually maintained
+dynamic values in governance documents.
 
 All reads are offline-safe: the command works without a running Gateway.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import typer
 
 control_app = typer.Typer(no_args_is_help=True, help="Machine governance control plane.")
+
+CONTROL_STATUS_SCHEMA_VERSION = "control_status/v1"
+_UFC_PATH_ID = "universe_family_calibration"
+_PROFIT_LOOP_PATH_ID = "profit_loop_observability"
 
 
 def _disk_commit() -> str:
@@ -74,7 +81,11 @@ def _cfg_commit() -> str:
     """Return the last recorded commit SHA from config."""
     try:
         from aletheia.config.loader import load_config
-        return load_config().update.current_commit or ""
+        try:
+            cfg = load_config(persist_migrations=False)
+        except TypeError:
+            cfg = load_config()
+        return cfg.update.current_commit or ""
     except Exception:
         return ""
 
@@ -91,6 +102,216 @@ def _auto_deploy_commit() -> str:
         return ""
 
 
+def _runtime_session_status() -> dict[str, Any]:
+    """Project the active Runtime Session without manufacturing identity."""
+
+    try:
+        from aletheia.agent_runtime.runtime_session import current_session
+
+        session = current_session()
+        if session is not None:
+            return {
+                "available": True,
+                "unavailable_reason": None,
+                "source": "in_process",
+                "verification": "current_process",
+                "verified_live_gateway": True,
+                "session_id": session.get("session_id"),
+                "runtime_id": session.get("runtime_id"),
+                "boot_sha": session.get("boot_commit"),
+                "behavior_fingerprint": session.get("behavior_fingerprint"),
+                "schema_version": session.get("schema_version"),
+                "execution_mode": session.get("execution_mode"),
+                "started_at": session.get("started_at"),
+                "durable": bool(session.get("durable", True)),
+            }
+
+        live_gateway = _gateway_running()
+        if live_gateway is not True:
+            return {
+                "available": False,
+                "unavailable_reason": (
+                    "gateway_process_state_unavailable"
+                    if live_gateway is None
+                    else "no_live_gateway_runtime_session"
+                ),
+                "session_id": None,
+                "runtime_id": None,
+                "boot_sha": None,
+                "behavior_fingerprint": None,
+            }
+
+        from aletheia.storage.sqlite import get_db
+
+        row = get_db().execute(
+            "SELECT * FROM runtime_sessions WHERE ended_at IS NULL "
+            "ORDER BY started_at DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+        session = dict(row) if row is not None else None
+        if not session:
+            return {
+                "available": False,
+                "unavailable_reason": "runtime_session_not_persisted",
+                "session_id": None,
+                "runtime_id": None,
+                "boot_sha": None,
+                "behavior_fingerprint": None,
+            }
+        return {
+            "available": True,
+            "unavailable_reason": None,
+            "source": "durable_db",
+            "verification": "gateway_pid",
+            "verified_live_gateway": True,
+            "session_id": session.get("session_id"),
+            "runtime_id": session.get("runtime_id"),
+            "boot_sha": session.get("boot_commit"),
+            "behavior_fingerprint": session.get("behavior_fingerprint"),
+            "schema_version": session.get("schema_version"),
+            "execution_mode": session.get("execution_mode"),
+            "started_at": session.get("started_at"),
+            "durable": bool(session.get("durable", True)),
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "unavailable_reason": "runtime_session_read_failed",
+            "error": type(exc).__name__,
+            "session_id": None,
+            "runtime_id": None,
+            "boot_sha": None,
+            "behavior_fingerprint": None,
+        }
+
+
+def _data_root_identity() -> dict[str, Any]:
+    """Expose only a stable, non-secret identity for the selected data root."""
+
+    try:
+        from aletheia.config.loader import get_data_dir, is_preview_mode
+
+        root = Path(get_data_dir()).expanduser().resolve()
+        digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()
+        return {
+            "available": True,
+            "identity": f"sha256:{digest}",
+            "mode": "preview" if is_preview_mode() else "primary",
+            "unavailable_reason": None,
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "identity": None,
+            "mode": None,
+            "unavailable_reason": "data_root_read_failed",
+            "error": type(exc).__name__,
+        }
+
+
+def _iso_from_epoch(value: object) -> str | None:
+    try:
+        return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _observer_health_snapshot(session_start: str | None) -> dict[str, Any]:
+    """Read Observer run completion timestamps; Opportunity creation is not a heartbeat."""
+
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        db = get_db()
+        params: tuple[object, ...] = (session_start,) if session_start else ()
+        where = " AND started_at >= ?" if session_start else ""
+        latest = db.execute(
+            "SELECT status, started_at, ended_at FROM agent_runs "
+            "WHERE agent_name='market_observer'" + where
+            + " ORDER BY started_at DESC, rowid DESC LIMIT 1",
+            params,
+        ).fetchone()
+        successful = db.execute(
+            "SELECT started_at, ended_at FROM agent_runs "
+            "WHERE agent_name='market_observer'" + where
+            + " AND status='completed' AND ended_at IS NOT NULL "
+            "ORDER BY ended_at DESC, rowid DESC LIMIT 1",
+            params,
+        ).fetchone()
+        return {
+            "available": True,
+            "latest_status": latest["status"] if latest else None,
+            "latest_started_at": latest["started_at"] if latest else None,
+            "latest_ended_at": latest["ended_at"] if latest else None,
+            "last_successful_at": successful["ended_at"] if successful else None,
+            "unavailable_reason": None,
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "latest_status": None,
+            "latest_started_at": None,
+            "latest_ended_at": None,
+            "last_successful_at": None,
+            "unavailable_reason": "observer_health_read_failed",
+            "error": type(exc).__name__,
+        }
+
+
+def _connectivity_snapshot() -> dict[str, Any]:
+    """Project cached connectivity only; status must never probe an exchange."""
+
+    try:
+        from aletheia.agent_runtime.runtime_session import current_session
+        from aletheia.agent_runtime.connectivity import get_status
+
+        if current_session() is None:
+            return {
+                "available": False,
+                "reachable": None,
+                "state": "unknown",
+                "exchange": None,
+                "last_probe_at": None,
+                "consecutive_failures": None,
+                "consecutive_successes": None,
+                "source": "durable_pause_state_only",
+                "unavailable_reason": "connectivity_probe_process_local",
+            }
+        state = get_status()
+        probe = state.get("last_probe") or {}
+        reachable = probe.get("reachable") if probe else None
+        if reachable is True:
+            connectivity_state = "reachable"
+        elif reachable is False:
+            connectivity_state = "exchange_unreachable"
+        else:
+            connectivity_state = "unknown"
+        return {
+            "available": bool(probe),
+            "reachable": reachable,
+            # Reachability is not proof of a failure-to-success transition.
+            "state": connectivity_state,
+            "exchange": probe.get("exchange"),
+            "last_probe_at": _iso_from_epoch(probe.get("ts")),
+            "consecutive_failures": state.get("consecutive_failures"),
+            "consecutive_successes": state.get("consecutive_successes"),
+            "source": "gateway_process",
+            "unavailable_reason": None if probe else "no_cached_exchange_probe",
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "reachable": None,
+            "state": "unknown",
+            "exchange": None,
+            "last_probe_at": None,
+            "consecutive_failures": None,
+            "consecutive_successes": None,
+            "source": "gateway_process",
+            "unavailable_reason": "connectivity_read_failed",
+            "error": type(exc).__name__,
+        }
+
+
 def _open_experiments() -> dict[str, Any]:
     try:
         from aletheia.learning.ledger import list_open_experiments
@@ -100,7 +321,7 @@ def _open_experiments() -> dict[str, Any]:
         return {"available": False, "items": [], "error": type(exc).__name__}
 
 
-def _open_policy_epochs(limit: int = 10) -> list[dict[str, Any]]:
+def _open_policy_epochs(limit: int = 10) -> list[dict[str, Any]] | dict[str, Any]:
     try:
         from aletheia.storage.sqlite import get_db
         rows = get_db().execute(
@@ -110,16 +331,30 @@ def _open_policy_epochs(limit: int = 10) -> list[dict[str, Any]]:
             (limit,),
         ).fetchall()
         return [dict(row) for row in rows]
-    except Exception:
-        return []
+    except Exception as exc:
+        return {
+            "available": False,
+            "items": [],
+            "error": type(exc).__name__,
+        }
 
 
 def _evidence_epochs() -> dict[str, Any]:
     try:
+        from aletheia.storage.sqlite import get_db
         from aletheia.learning.evidence_epoch import evidence_epoch_summary
+
+        # Force missing/read-only DB state to remain explicit; the summary helper
+        # intentionally treats a failed epoch query as an empty historical view.
+        db = get_db()
+        if db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='learning_policy_epochs'"
+        ).fetchone() is None:
+            raise RuntimeError("missing_learning_policy_epochs_table")
         return evidence_epoch_summary()
-    except Exception:
-        return {"error": "unavailable"}
+    except Exception as exc:
+        return {"error": "evidence_epoch_read_failed", "error_type": type(exc).__name__}
 
 
 def _learning_authority() -> dict[str, Any]:
@@ -139,23 +374,137 @@ def _learning_authority() -> dict[str, Any]:
         return {"error": "unavailable"}
 
 
+def _durable_scheduler_snapshot(
+    session_start: str | None, gateway_running: bool | None
+) -> dict[str, Any]:
+    """Report durable scheduler evidence without reading CLI process globals."""
+
+    base = {
+        "available": True,
+        "source": "durable_agent_runs",
+        "running": None,
+        "state": "unknown",
+        "job_count": None,
+        "last_tick": None,
+        "last_activity_at": None,
+        "unavailable_reason": "scheduler_state_not_persisted",
+    }
+    if gateway_running is False:
+        base.update(
+            {
+                "running": False,
+                "state": "gateway_stopped",
+                "unavailable_reason": "gateway_stopped",
+            }
+        )
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        where = "trigger_type='scheduled'"
+        params: tuple[object, ...] = ()
+        if session_start:
+            where += " AND started_at >= ?"
+            params = (session_start,)
+        row = get_db().execute(
+            "SELECT agent_name, status, started_at, ended_at FROM agent_runs "
+            f"WHERE {where} ORDER BY COALESCE(ended_at, started_at) DESC, rowid DESC LIMIT 1",
+            params,
+        ).fetchone()
+        if row:
+            base["last_activity_at"] = row["ended_at"] or row["started_at"]
+            base["last_activity"] = {
+                "agent_name": row["agent_name"],
+                "status": row["status"],
+                "started_at": row["started_at"],
+                "ended_at": row["ended_at"],
+            }
+        return base
+    except Exception as exc:
+        return {
+            **base,
+            "available": False,
+            "unavailable_reason": "scheduler_health_read_failed",
+            "error": type(exc).__name__,
+        }
+
+
 def _runtime_continuity() -> dict[str, Any]:
     try:
         from aletheia.config.loader import load_config
+        from aletheia.agent_runtime import scheduler
         from aletheia.agent_runtime.pause_ownership import (
             active_pause_blocker_names,
             active_pause_owners,
             pause_blocked_reason,
         )
-        cfg = load_config()
-        owners = active_pause_owners(cfg)
-        blockers = active_pause_blocker_names(cfg)
+        try:
+            cfg = load_config(persist_migrations=False)
+        except TypeError:
+            cfg = load_config()
+        # Pause projection helpers synchronize the current behavior scope on
+        # the supplied config object. Use a deep copy so status remains read-only
+        # even when the loaded config contains a legacy scope.
+        try:
+            projection_cfg = cfg.model_copy(deep=True)
+        except AttributeError:
+            import copy
+
+            projection_cfg = copy.deepcopy(cfg)
+        owners = active_pause_owners(projection_cfg)
+        blockers = active_pause_blocker_names(projection_cfg)
+        session = _runtime_session_status()
+        gateway = _gateway_running()
+        if session.get("source") == "in_process":
+            scheduler_state = scheduler.status_snapshot()
+            connectivity = _connectivity_snapshot()
+        else:
+            scheduler_state = _durable_scheduler_snapshot(
+                session.get("started_at"), gateway
+            )
+            connectivity = {
+                "available": False,
+                "reachable": None,
+                "state": "unknown",
+                "exchange": None,
+                "last_probe_at": None,
+                "consecutive_failures": None,
+                "consecutive_successes": None,
+                "source": "durable_pause_state_only",
+                "unavailable_reason": "connectivity_probe_process_local",
+            }
+            if any(
+                owner.get("owner") == "exchange_connectivity"
+                and owner.get("active") is True
+                for owner in owners
+                if isinstance(owner, dict)
+            ):
+                connectivity.update(
+                    {
+                        "available": True,
+                        "reachable": False,
+                        "state": "exchange_unreachable",
+                        "unavailable_reason": None,
+                    }
+                )
+        observer = _observer_health_snapshot(session.get("started_at"))
+        jobs_resumed = (
+            bool(
+                scheduler_state.get("running")
+                and not blockers
+                and not cfg.runtime.paused
+            )
+            if scheduler_state.get("running") is True
+            else False
+            if scheduler_state.get("running") is False
+            and scheduler_state.get("state") not in {None, "unknown"}
+            else None
+        )
         return {
             "enabled": cfg.runtime.runtime_continuity_enabled,
             "paused": cfg.runtime.paused,
             "pause_owners": owners,
             "pause_blockers": list(blockers),
-            "resume_blocked_reason": pause_blocked_reason(cfg),
+            "resume_blocked_reason": pause_blocked_reason(projection_cfg),
             "scheduler_resume_authority": {
                 "allowed": not blockers,
                 "blocked_by": list(blockers),
@@ -164,15 +513,47 @@ def _runtime_continuity() -> dict[str, Any]:
             "kill_switch_active": cfg.runtime.kill_switch_active,
             "demo_brake_active": cfg.runtime.demo_brake_active,
             "live_brake_active": cfg.runtime.live_brake_active,
+            "runtime_session": session,
+            "runtime_session_id": session.get("session_id"),
+            "runtime_id": session.get("runtime_id"),
+            "boot_sha": session.get("boot_sha"),
+            "data_root": _data_root_identity(),
+            "gateway": {
+                "running": gateway,
+                "source": "gateway_pid",
+                "unavailable_reason": "gateway_status_read_failed" if gateway is None else None,
+            },
+            "scheduler": scheduler_state,
+            "exchange": connectivity,
+            "behavioral_jobs_resumed": jobs_resumed,
+            "last_healthy_at": {
+                "exchange": connectivity.get("last_probe_at")
+                if connectivity.get("reachable") is True else None,
+                "observer": observer.get("last_successful_at"),
+                "scheduler": scheduler_state.get("last_tick")
+                if scheduler_state.get("running")
+                else scheduler_state.get("last_activity_at"),
+            },
+            "health": {
+                "availability": "available" if observer.get("available") else "partial",
+                "observer": observer,
+                "unavailable_reason": observer.get("unavailable_reason"),
+            },
         }
     except Exception:
-        return {"error": "unavailable"}
+        return {
+            "availability": "unavailable",
+            "unavailable_reason": "runtime_continuity_read_failed",
+            "error": "unavailable",
+        }
 
 
 def _gateway_running() -> bool | None:
     try:
-        from aletheia.gateway.pidfile import is_running
-        return is_running()
+        from aletheia.gateway.pidfile import _pid_alive, read_pid
+
+        pid = read_pid()
+        return bool(pid is not None and _pid_alive(pid))
     except Exception:
         return None
 
@@ -191,13 +572,545 @@ def _position_path_observer_status() -> dict[str, Any]:
             "available": False,
             "error": type(exc).__name__,
             "oldest_missing_bucket": None,
+            "oldest_deferred_bucket": None,
             "deferred_bucket_count": None,
             "observer_lag": None,
             "last_24h": None,
+            "recent_counts": None,
+            "ordered_path_coverage": None,
+            "unavailable_reason": "position_path_observer_read_failed",
         }
 
 
+def _ufc_status() -> dict[str, Any]:
+    """Expose the one UFC measured path without merging it with profit-loop state."""
+
+    base = {
+        "schema_version": "ufc_control_status/v1",
+        "path_id": _UFC_PATH_ID,
+        "status": "not_registered",
+        "availability": "available",
+        "unavailable_reason": "no_active_experiment",
+        "experiment": None,
+        "identity": None,
+        "assignment": None,
+        "coverage": None,
+        "fixed_look": None,
+        "verdict": None,
+        "integrity": None,
+        "evaluator": None,
+        "freshness": None,
+        "authority": None,
+        "projection_schema_version": None,
+    }
+    try:
+        from aletheia.learning.read_models import build_learning_contribution_projection
+
+        projection = build_learning_contribution_projection(limit=20)
+    except Exception as exc:
+        return {
+            **base,
+            "status": "unavailable",
+            "availability": "unavailable",
+            "unavailable_reason": "learning_projection_read_failed",
+            "error": type(exc).__name__,
+        }
+
+    if not isinstance(projection, dict):
+        return {
+            **base,
+            "status": "unavailable",
+            "availability": "unavailable",
+            "unavailable_reason": "learning_projection_malformed",
+        }
+    base["projection_schema_version"] = projection.get("schema_version")
+    raw_items = projection.get("items", [])
+    raw_path_states = projection.get("path_states", [])
+    if not isinstance(raw_items, list) or not isinstance(raw_path_states, list):
+        return {
+            **base,
+            "status": "unavailable",
+            "availability": "unavailable",
+            "unavailable_reason": "learning_projection_malformed",
+        }
+    items = [
+        item for item in raw_items
+        if isinstance(item, dict) and item.get("path_id") == _UFC_PATH_ID
+    ]
+    if len(items) > 1:
+        return {
+            **base,
+            "status": "unavailable",
+            "availability": "unavailable",
+            "unavailable_reason": "multiple_active_ufc_paths",
+        }
+    if not items:
+        state = next(
+            (
+                state for state in raw_path_states
+                if isinstance(state, dict) and state.get("path_id") == _UFC_PATH_ID
+            ),
+            {},
+        )
+        projection_availability = projection.get("availability")
+        projection_reason = projection.get("unavailable_reason")
+        if state.get("availability") == "unavailable":
+            base.update(
+                {
+                    "status": "unavailable",
+                    "availability": "unavailable",
+                    "unavailable_reason": state.get("unavailable_reason")
+                    or "ufc_path_unavailable",
+                }
+            )
+        elif state.get("availability") == "partial":
+            base.update(
+                {
+                    "availability": "partial",
+                    "unavailable_reason": state.get("unavailable_reason")
+                    or "ufc_path_partial",
+                }
+            )
+        elif projection_availability == "unavailable":
+            base.update(
+                {
+                    "status": "unavailable",
+                    "availability": "unavailable",
+                    "unavailable_reason": projection_reason
+                    or "learning_projection_unavailable",
+                }
+            )
+        elif projection_availability == "partial":
+            base.update(
+                {
+                    "status": (
+                        "unavailable"
+                        if projection_reason == "operations_projection_failed"
+                        else base["status"]
+                    ),
+                    "availability": "partial",
+                    "unavailable_reason": projection_reason
+                    or "learning_projection_partial",
+                }
+            )
+        return base
+
+    item = items[0]
+
+    def _mapping(value: object) -> dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+    measurement = _mapping(item.get("measurement"))
+    identity = _mapping(item.get("current_identity"))
+    inference = _mapping(item.get("inference"))
+    samples = _mapping(item.get("samples"))
+    coverage = dict(_mapping(measurement.get("coverage")))
+    coverage["current_consecutive_eligible_utc_days"] = coverage.get(
+        "current_consecutive_market_days"
+    )
+    lifecycle = _mapping(item.get("lifecycle"))
+    operations = _mapping(projection.get("operations"))
+    evaluator = operations.get("evaluator")
+    item_availability = item.get("availability") or "unavailable"
+    projection_availability = projection.get("availability") or "available"
+    operations_availability = operations.get("availability") or "available"
+    availability_states = {
+        item_availability,
+        projection_availability,
+        operations_availability,
+    }
+    if any(state not in {"available", "partial"} for state in availability_states):
+        envelope_availability = "unavailable"
+    elif any(state == "partial" for state in availability_states) or evaluator is None:
+        envelope_availability = "partial"
+    else:
+        envelope_availability = "available"
+    if envelope_availability == "unavailable":
+        status = "unavailable"
+    elif any(
+        not identity.get(field)
+        for field in (
+            "policy_epoch", "target_horizon", "outcome_contract_version",
+            "metric_version", "statistical_unit", "behavior_contract_hash", "code_commit",
+        )
+    ):
+        status = "unavailable"
+    elif measurement.get("evaluated_at") and measurement.get("state"):
+        status = "evaluated"
+    else:
+        status = "collecting"
+    if envelope_availability == "partial" and evaluator is None:
+        availability_reason = "evaluator_unavailable"
+    elif envelope_availability == "partial":
+        availability_reason = "ufc_projection_partial"
+    elif status == "unavailable":
+        availability_reason = "ufc_identity_unavailable"
+    else:
+        availability_reason = None
+    return {
+        **base,
+        "status": status,
+        "availability": envelope_availability,
+        "unavailable_reason": availability_reason,
+        "experiment": {
+            "experiment_id": item.get("experiment_id"),
+            "hypothesis_id": item.get("hypothesis_id"),
+            "stage": item.get("stage"),
+            "status": item.get("experiment_status"),
+        },
+        "identity": identity,
+        "assignment": {
+            "horizon": identity.get("target_horizon"),
+            "statistical_unit": identity.get("statistical_unit"),
+            "allocation_pct": item.get("allocation_pct"),
+            "complete_treatment_units": samples.get("treatment_assignment_units"),
+            "complete_control_units": samples.get("control_assignment_units"),
+            "complete_units": samples.get("complete_assignment_units"),
+            "actual_intervention_units": samples.get(
+                "actual_intervention_treatment_units"
+            ),
+            "exposed_actual_intervention_units": samples.get(
+                "exposed_actual_intervention_treatment_units"
+            ),
+            "required_per_arm": samples.get("required_per_arm"),
+        },
+        "coverage": coverage,
+        "fixed_look": {
+            **inference,
+            "measurement_state": measurement.get("state"),
+            "evaluated_at": measurement.get("evaluated_at"),
+        },
+        "verdict": {
+            key: measurement.get(key)
+            for key in (
+                "state", "reason", "baseline", "observed", "delta",
+                "confidence_low", "confidence_high", "evaluated_at",
+                "window_start", "window_end", "inference_role", "authority_eligible",
+            )
+        },
+        "integrity": item.get("integrity"),
+        "evaluator": evaluator,
+        "freshness": item.get("data_freshness"),
+        "authority": {
+            "eligible": lifecycle.get("authority_enabled"),
+            "block_reason": lifecycle.get("authority_block_reason"),
+            "mutation_available": lifecycle.get("mutation_available"),
+        },
+        # Keep the already versioned read model available for exact consumers;
+        # the surrounding fields are the stable control-status projection.
+        "projection": item,
+    }
+
+
+def _profit_loop_coverage(
+    *, registration_at: str | None = None, cutoff_at: str | None = None
+) -> dict[str, Any]:
+    """Read epoch-bounded candidate/Position/path/economics counts without evaluation."""
+
+    try:
+        from aletheia.analytics.candidate_facts import build_candidate_facts
+        from aletheia.storage.sqlite import readonly_db
+
+        start = str(registration_at or "0001-01-01T00:00:00+00:00")
+        end = str(cutoff_at or datetime.now(timezone.utc).isoformat())
+        try:
+            lower = datetime.fromisoformat(start.replace("Z", "+00:00"))
+            upper = datetime.fromisoformat(end.replace("Z", "+00:00"))
+            if lower.tzinfo is None or upper.tzinfo is None or lower > upper:
+                raise ValueError
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("invalid_profit_loop_window") from exc
+        start = lower.isoformat()
+        end = upper.isoformat()
+
+        def _parse_timestamp(value: object) -> datetime | None:
+            if value is None:
+                return None
+            try:
+                timestamp = datetime.fromisoformat(
+                    str(value).replace("Z", "+00:00")
+                )
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=timezone.utc)
+                return timestamp
+            except (TypeError, ValueError, OverflowError):
+                return None
+
+        with readonly_db() as db:
+            candidates = build_candidate_facts(
+                horizon="24h", as_of_at=end, db=db
+            )
+            facts = candidates.get("facts")
+            if not isinstance(facts, list):
+                raise RuntimeError("malformed_candidate_facts")
+            window_facts = []
+            candidate_unknown = 0
+            for fact in facts:
+                if not isinstance(fact, dict):
+                    candidate_unknown += 1
+                    continue
+                timestamp = _parse_timestamp(fact.get("event_at"))
+                if timestamp is None:
+                    candidate_unknown += 1
+                elif lower <= timestamp <= upper:
+                    window_facts.append(fact)
+            window_settled = sum(
+                1
+                for fact in window_facts
+                if isinstance(fact.get("fixed_horizon_outcome"), dict)
+                and fact["fixed_horizon_outcome"].get("status") == "settled"
+            )
+            table_exists = {
+                table: db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                ).fetchone()
+                is not None
+                for table in ("positions", "position_path_observations")
+            }
+            if not all(table_exists.values()):
+                missing = next(table for table, exists in table_exists.items() if not exists)
+                raise RuntimeError(f"missing_{missing}_table")
+            position_counts = db.execute(
+                "SELECT COUNT(*) AS total, "
+                "SUM(CASE WHEN status='closed' THEN 1 ELSE 0 END) AS closed, "
+                "SUM(CASE WHEN status='open' THEN 1 ELSE 0 END) AS open, "
+                "SUM(CASE WHEN status='closed' AND realized_pnl IS NOT NULL THEN 1 ELSE 0 END) AS economics "
+                "FROM positions WHERE status IN ('open','closed') "
+                "AND datetime(opened_at) >= datetime(?) "
+                "AND datetime(opened_at) <= datetime(?)",
+                (start, end),
+            ).fetchone()
+            path_counts = db.execute(
+                "SELECT COUNT(*) AS observations, COUNT(DISTINCT position_id) AS positions, "
+                "SUM(CASE WHEN evidence_status='available' THEN 1 ELSE 0 END) AS available, "
+                "SUM(CASE WHEN evidence_status='unavailable' THEN 1 ELSE 0 END) AS unavailable "
+                "FROM position_path_observations "
+                "WHERE datetime(observed_at) >= datetime(?) "
+                "AND datetime(observed_at) <= datetime(?)",
+                (start, end),
+            ).fetchone()
+        position_counts = dict(position_counts or {})
+        path_counts = dict(path_counts or {})
+        candidate_count = len(window_facts)
+        settled_count = window_settled
+        return {
+            "availability": "available",
+            "unavailable_reason": None,
+            "candidate": {
+                "availability": "available",
+                "units": candidate_count,
+                "settled_outcome_units": settled_count,
+                "outcome_coverage": candidates.get("outcome_coverage"),
+                "unavailable_units": candidates.get("unavailable_count", 0),
+                "unknown_timestamp_units": candidate_unknown,
+            },
+            "position": {
+                "availability": "available",
+                "units": int(position_counts.get("total") or 0),
+                "open_units": int(position_counts.get("open") or 0),
+                "closed_units": int(position_counts.get("closed") or 0),
+            },
+            "path": {
+                "availability": "available",
+                "observations": int(path_counts.get("observations") or 0),
+                "positions": int(path_counts.get("positions") or 0),
+                "available_observations": int(path_counts.get("available") or 0),
+                "unavailable_observations": int(path_counts.get("unavailable") or 0),
+            },
+            "economics": {
+                "availability": "available",
+                "closed_positions": int(position_counts.get("closed") or 0),
+                "cost_aware_closed_positions": int(position_counts.get("economics") or 0),
+            },
+        }
+    except Exception as exc:
+        return {
+            "availability": "unavailable",
+            "unavailable_reason": "profit_loop_coverage_read_failed",
+            "error": type(exc).__name__,
+            "candidate": None,
+            "position": None,
+            "path": None,
+            "economics": None,
+        }
+
+
+def _profit_loop_status(evidence: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Project the registered profit-loop epoch; never compile or select a winner."""
+
+    base = {
+        "schema_version": "profit_loop_control_status/v1",
+        "path_id": _PROFIT_LOOP_PATH_ID,
+        "status": "not_registered",
+        "availability": "available",
+        "unavailable_reason": None,
+        "registration": None,
+        "identity": None,
+        "coverage": None,
+        "compiler": None,
+        "artifact": None,
+        "fixed_result_hash": None,
+    }
+    evidence = evidence if isinstance(evidence, dict) else _evidence_epochs()
+    if "error" in evidence:
+        return {
+            **base,
+            "status": "unavailable",
+            "availability": "unavailable",
+            "unavailable_reason": "evidence_epoch_read_failed",
+        }
+    raw_paths = evidence.get("paths", [])
+    if not isinstance(raw_paths, list):
+        return {
+            **base,
+            "status": "unavailable",
+            "availability": "unavailable",
+            "unavailable_reason": "malformed_evidence_epoch_paths",
+        }
+    entry = next(
+        (
+            path for path in raw_paths
+            if isinstance(path, dict) and path.get("path_id") == _PROFIT_LOOP_PATH_ID
+        ),
+        None,
+    )
+    if entry is None or entry.get("status") == "not_registered":
+        base["unavailable_reason"] = "profit_loop_not_registered"
+        return base
+    if entry.get("status") != "open":
+        return {
+            **base,
+            "status": "unavailable",
+            "availability": "unavailable",
+            "unavailable_reason": "malformed_profit_loop_epoch",
+        }
+    required_identity = (
+        "epoch_id", "started_at", "deploy_commit", "behavior_fingerprint", "registry_hash"
+    )
+    if any(not entry.get(field) for field in required_identity):
+        return {
+            **base,
+            "status": "unavailable",
+            "availability": "unavailable",
+            "unavailable_reason": "malformed_profit_loop_identity",
+        }
+    started_at = entry.get("started_at")
+    try:
+        registered = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+        if registered.tzinfo is None:
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        return {
+            **base,
+            "status": "unavailable",
+            "availability": "unavailable",
+            "unavailable_reason": "malformed_profit_loop_registration",
+        }
+    cutoff_at = entry.get("cutoff_at")
+    try:
+        cutoff = datetime.fromisoformat(str(cutoff_at).replace("Z", "+00:00"))
+        if cutoff.tzinfo is None:
+            raise ValueError
+        if registered > cutoff:
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        return {
+            **base,
+            "status": "unavailable",
+            "availability": "unavailable",
+            "unavailable_reason": "malformed_profit_loop_cutoff",
+        }
+    now = datetime.now(timezone.utc)
+    lifecycle_status = "collecting" if now < cutoff else "cutoff_reached"
+    coverage = _profit_loop_coverage(
+        registration_at=registered.isoformat(), cutoff_at=cutoff.isoformat()
+    )
+    if not isinstance(coverage, dict):
+        coverage = {
+            "availability": "unavailable",
+            "unavailable_reason": "malformed_profit_loop_coverage",
+        }
+    try:
+        from aletheia.analytics.profit_gradient_evidence import (
+            PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
+        )
+        import aletheia.analytics.profit_gradient_evidence as compiler_module
+
+        compiler_source_hash = hashlib.sha256(
+            Path(compiler_module.__file__).read_bytes()
+        ).hexdigest()
+        compiler = {
+            "contract_version": PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
+            "source_hash": f"sha256:{compiler_source_hash}",
+            "available": True,
+        }
+    except Exception as exc:
+        compiler = {
+            "contract_version": None,
+            "source_hash": None,
+            "available": False,
+            "unavailable_reason": "compiler_identity_unavailable",
+            "error": type(exc).__name__,
+        }
+    coverage_available = coverage.get("availability") == "available"
+    compiler_available = compiler.get("available") is True
+    if not coverage_available and not compiler_available:
+        section_availability = "unavailable"
+    elif not coverage_available or not compiler_available:
+        section_availability = "partial"
+    else:
+        section_availability = "available"
+    section_reason = (
+        coverage.get("unavailable_reason")
+        if not coverage_available
+        else compiler.get("unavailable_reason")
+        if not compiler_available
+        else None
+    )
+    return {
+        **base,
+        "status": lifecycle_status,
+        "availability": section_availability,
+        "unavailable_reason": section_reason,
+        "registration": {
+            "epoch_id": entry.get("epoch_id"),
+            "registered_at": entry.get("started_at"),
+            "cutoff_at": cutoff.isoformat(),
+            "duration_days": 30,
+            "assignment_unit": "position_id",
+            "stopping_rule": "single_locked_retrospective_evaluation_after_fixed_cutoff_no_optional_stopping",
+        },
+        "identity": {
+            "runtime_boot_sha": entry.get("deploy_commit"),
+            "behavior_fingerprint": entry.get("behavior_fingerprint"),
+            "registry_hash": entry.get("registry_hash"),
+            "behavior_contract": "profit_loop_counterfactual/v1",
+        },
+        "coverage": coverage,
+        "compiler": compiler,
+        "artifact": {
+            "status": "unavailable",
+            "contract_version": compiler.get("contract_version"),
+            "content_hash": None,
+            "unavailable_reason": "artifact_not_persisted_by_contract",
+        },
+        # Result hashes and layer winners are intentionally absent until an
+        # operator supplies a cutoff-verified artifact to the inspect CLI.
+        "fixed_result_hash": None,
+    }
+
+
 def build_control_status() -> dict[str, Any]:
+    """Collect the control snapshot through one non-mutating DB boundary."""
+
+    from aletheia.storage.sqlite import readonly_db
+
+    with readonly_db(allow_missing=True):
+        return _build_control_status()
+
+
+def _build_control_status() -> dict[str, Any]:
     """Collect all governance-relevant state into one serializable dict."""
     deployed = _deployed_commit()
     disk = _disk_commit()
@@ -247,8 +1160,25 @@ def build_control_status() -> dict[str, Any]:
 
     # Active hypotheses / open experiments
     experiment_result = _open_experiments()
+    if not isinstance(experiment_result, dict):
+        experiment_result = {
+            "available": False,
+            "items": [],
+            "error": "malformed_experiment_projection",
+        }
+    if not isinstance(experiment_result.get("items"), list):
+        experiment_result = {
+            **experiment_result,
+            "available": False,
+            "items": [],
+            "error": "malformed_experiment_projection",
+        }
     active_hypotheses: list[dict[str, Any]] = []
     for exp in experiment_result["items"]:
+        if not isinstance(exp, dict):
+            experiment_result["available"] = False
+            experiment_result["error"] = "malformed_experiment_row"
+            continue
         active_hypotheses.append({
             "experiment_id": exp.get("experiment_id"),
             "hypothesis_id": exp.get("hypothesis_id"),
@@ -260,8 +1190,28 @@ def build_control_status() -> dict[str, Any]:
 
     # Policy epochs (most recent open)
     raw_epochs = _open_policy_epochs(limit=8)
+    if isinstance(raw_epochs, dict):
+        policy_epochs_available = bool(raw_epochs.get("available"))
+        policy_epochs_error = raw_epochs.get("error")
+        epoch_rows = raw_epochs.get("items")
+        if not isinstance(epoch_rows, list):
+            policy_epochs_available = False
+            policy_epochs_error = "malformed_policy_epoch_projection"
+            epoch_rows = []
+    elif isinstance(raw_epochs, list):
+        policy_epochs_available = True
+        policy_epochs_error = None
+        epoch_rows = raw_epochs
+    else:
+        policy_epochs_available = False
+        policy_epochs_error = "malformed_policy_epoch_projection"
+        epoch_rows = []
     open_epochs: list[dict[str, Any]] = []
-    for row in raw_epochs:
+    for row in epoch_rows:
+        if not isinstance(row, dict):
+            policy_epochs_available = False
+            policy_epochs_error = "malformed_policy_epoch_row"
+            continue
         open_epochs.append({
             "epoch_id": row.get("epoch_id"),
             "epoch_kind": row.get("epoch_kind"),
@@ -270,22 +1220,78 @@ def build_control_status() -> dict[str, Any]:
 
     # Evidence epochs (trailing + entry)
     evidence = _evidence_epochs()
+    if not isinstance(evidence, dict):
+        evidence = {"error": "malformed_evidence_projection"}
     authority = _learning_authority()
+    if not isinstance(authority, dict):
+        authority = {"error": "malformed_authority_projection"}
     continuity = _runtime_continuity()
+    if not isinstance(continuity, dict):
+        continuity = {
+            "availability": "unavailable",
+            "unavailable_reason": "malformed_runtime_projection",
+        }
     gateway = _gateway_running()
     position_path = _position_path_observer_status()
+    if not isinstance(position_path, dict):
+        position_path = {
+            "available": False,
+            "unavailable_reason": "malformed_position_path_projection",
+        }
+    ufc = _ufc_status()
+    if not isinstance(ufc, dict):
+        ufc = {
+            "status": "unavailable",
+            "availability": "unavailable",
+            "unavailable_reason": "malformed_ufc_projection",
+        }
+    profit_loop = _profit_loop_status(evidence)
+    if not isinstance(profit_loop, dict):
+        profit_loop = {
+            "status": "unavailable",
+            "availability": "unavailable",
+            "unavailable_reason": "malformed_profit_loop_projection",
+        }
 
     return {
+        "schema_version": CONTROL_STATUS_SCHEMA_VERSION,
         "as_of": datetime.now(timezone.utc).isoformat(),
         "sha": sha_section,
+        "deployment": {
+            "running_sha": deployed or None,
+            "disk_sha": disk or None,
+            "cached_master_sha": master or None,
+            "recorded_sha": recorded_sha or None,
+            "recorded_source": recorded_source,
+            "running_matches_recorded": sha_section["deployed_matches_recorded"],
+            "running_matches_master": sha_section["deployed_matches_master"],
+        },
         "gateway_running": gateway,
         "runtime": continuity,
+        "safety": {
+            "kill_switch_active": continuity.get("kill_switch_active"),
+            "pause_owners": continuity.get("pause_owners"),
+            "pause_blockers": continuity.get("pause_blockers"),
+            "blocked_reason": continuity.get("resume_blocked_reason"),
+            "exchange_restored": (
+                True
+                if (continuity.get("exchange") or {}).get("state") == "exchange_restored"
+                else False
+                if (continuity.get("exchange") or {}).get("state") == "exchange_unreachable"
+                else None
+            ),
+            "behavioral_jobs_resumed": continuity.get("behavioral_jobs_resumed"),
+        },
         "position_path_observer": position_path,
+        "ufc": ufc,
+        "profit_loop": profit_loop,
         "authority": authority,
         "active_experiments": active_hypotheses,
         "active_experiments_available": experiment_result["available"],
         "active_experiments_error": experiment_result.get("error"),
         "open_policy_epochs": open_epochs,
+        "open_policy_epochs_available": policy_epochs_available,
+        "open_policy_epochs_error": policy_epochs_error,
         "evidence_epochs": evidence,
         "window_continuity": {
             "evidence_anchored": evidence.get("all_anchored", False),
@@ -302,9 +1308,8 @@ def status(
 ):
     """Show the machine governance control-plane snapshot.
 
-    Reports master/deployed SHA, active hypotheses, policy epochs, authority
-    state, and observation window continuity — eliminating the need for
-    manually maintained dynamic values in issue trackers (e.g. #470, #657).
+    Reports the versioned machine snapshot used by Agents and Issues. ``--json``
+    is authoritative; human output is a concise rendering of the same fields.
     """
     data = build_control_status()
 
@@ -373,6 +1378,49 @@ def status(
             f"skipped={counts.get('skipped', 'not_available')}"
         )
 
+    # ─── Measured UFC path ──────────────────────────────────────────────────
+    typer.echo("╠═ UFC (measured Learning path) ════════════════════════╣")
+    ufc = data.get("ufc", {})
+    typer.echo(
+        f"  Status: {ufc.get('status', 'unknown')}  "
+        f"availability={ufc.get('availability', 'unknown')}"
+    )
+    assignment = ufc.get("assignment") or {}
+    typer.echo(
+        "  Units: treatment="
+        f"{assignment.get('complete_treatment_units', 'not_available')} "
+        "control="
+        f"{assignment.get('complete_control_units', 'not_available')} "
+        "actual_intervention="
+        f"{assignment.get('actual_intervention_units', 'not_available')}"
+    )
+    coverage = ufc.get("coverage") or {}
+    typer.echo(
+        "  Eligible UTC days: "
+        f"{coverage.get('current_consecutive_eligible_utc_days', 'not_available')}"
+    )
+
+    # ─── Profit-loop evidence anchor ────────────────────────────────────────
+    typer.echo("╠═ Profit Loop (separate evidence anchor) ═════════════╣")
+    profit_loop = data.get("profit_loop", {})
+    registration = profit_loop.get("registration") or {}
+    profit_coverage = profit_loop.get("coverage") or {}
+    typer.echo(
+        f"  Status: {profit_loop.get('status', 'unknown')}  "
+        f"epoch={str(registration.get('epoch_id') or 'not_registered')[:16]}"
+    )
+    typer.echo(
+        "  Cutoff: "
+        f"{registration.get('cutoff_at', 'not_available')}  "
+        f"artifact={((profit_loop.get('artifact') or {}).get('status') or 'not_available')}"
+    )
+    typer.echo(
+        "  Coverage: "
+        f"candidate={((profit_coverage.get('candidate') or {}).get('units', 'not_available'))} "
+        f"position={((profit_coverage.get('position') or {}).get('units', 'not_available'))} "
+        f"path={((profit_coverage.get('path') or {}).get('observations', 'not_available'))}"
+    )
+
     # ─── Authority ─────────────────────────────────────────────────────────
     typer.echo("╠═ Authority ══════════════════════════════════════════╣")
     if "error" in authority:
@@ -420,7 +1468,12 @@ def status(
     if verbose:
         typer.echo("╠═ Open Policy Epochs ═════════════════════════════════╣")
         epochs = data.get("open_policy_epochs", [])
-        if not epochs:
+        if not data.get("open_policy_epochs_available", True):
+            typer.echo(
+                "  (not available — "
+                f"{data.get('open_policy_epochs_error') or 'query failed'})"
+            )
+        elif not epochs:
             typer.echo("  (none)")
         else:
             for ep in epochs:

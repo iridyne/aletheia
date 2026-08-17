@@ -311,7 +311,11 @@ def get_status() -> dict:
     try:
         from aletheia.config.loader import load_config
 
-        interval_sec = int(load_config().health.exchange_probe_interval_sec)
+        try:
+            cfg = load_config(persist_migrations=False)
+        except TypeError:
+            cfg = load_config()
+        interval_sec = int(cfg.health.exchange_probe_interval_sec)
     except Exception:
         interval_sec = 60
     stale_after_sec = max(30, interval_sec * 3)

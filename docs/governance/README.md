@@ -24,3 +24,7 @@ For bug investigation and integrity audits, use the
 ## Agent Rule
 
 Governance outranks plans, research, and status docs. If a task conflicts with governance, stop and ask unless the user explicitly approves the boundary change.
+
+For current machine-readable Runtime, UFC, profit-loop, observer, and pause-owner
+facts in an Issue or review, use `uv run aletheia control status --json`; do not
+copy dynamic values into governance prose.
