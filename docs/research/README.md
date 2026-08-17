@@ -19,6 +19,9 @@ Research files are evidence, audits, and explorations. They can guide work but d
 
 ## Current audit entry points
 
+- [OKX order-book continuity audit — 2026-08-17](audits/OKX_ORDERBOOK_CONTINUITY_AUDIT_2026-08-17.md)
+  records the #1002 repository-wide scope check against OKX's checksum
+  deprecation and the active REST-only snapshot boundary.
 - [Vergex platform analysis process evidence — 2026-08-11](trading-strategy/VERGEX_PLATFORM_ANALYSIS_PROCESS_2026-08-11.md)
   records the source-bundle inventory, safety boundary, capability decomposition,
   evidence classification, multi-temporal method, and algorithm-fidelity review.
