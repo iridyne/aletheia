@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { api } from '../../../api/client'
 import {
@@ -9,6 +9,7 @@ import {
 } from '../../../components/ui'
 import { listToCsv, parseCsvList } from '../csvList'
 import { executionExchangeFromPaperMode } from '../execution/exchangeMode'
+import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
 
 export const MARKET_DATA_SECTION = {
@@ -58,19 +59,6 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
   const [confirmExchangeDivergence, setConfirmExchangeDivergence] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  useEffect(() => {
-    setPrimary(md.ccxt_exchange || 'binance')
-    setFallback(md.ccxt_fallback || 'bybit')
-    setCacheTtl(md.ohlcv_cache_ttl_min ?? 10)
-    setYfinance(!!md.enable_yfinance_macro)
-    setLongShortRatio(md.enable_long_short_ratio ?? true)
-    setHistoryHours(md.derivatives_history_hours ?? 24)
-    setStocks(listToCsv(md.observed_stocks))
-    setStockTokens(listToCsv(md.observed_stock_tokens))
-    setPredMarkets(listToCsv(md.observed_prediction_markets))
-    setConfirmExchangeDivergence(false)
-  }, [settings])
-
   const executionExchange = executionExchangeFromPaperMode(
     String(exchangeSettings.paper_execution_mode || ''),
     String(exchangeSettings.name || ''),
@@ -106,7 +94,24 @@ function MarketDataCard({ settings, qc, onDirty }: any) {
     || stockTokens !== listToCsv(md.observed_stock_tokens)
     || predMarkets !== listToCsv(md.observed_prediction_markets)
 
-  useEffect(() => { onDirty?.('market-data', dirty) }, [dirty])
+  useSettingsDraftLifecycle({
+    id: 'market-data',
+    dirty,
+    onDirty,
+    serverKey: settings,
+    adoptServer: () => {
+      setPrimary(md.ccxt_exchange || 'binance')
+      setFallback(md.ccxt_fallback || 'bybit')
+      setCacheTtl(md.ohlcv_cache_ttl_min ?? 10)
+      setYfinance(!!md.enable_yfinance_macro)
+      setLongShortRatio(md.enable_long_short_ratio ?? true)
+      setHistoryHours(md.derivatives_history_hours ?? 24)
+      setStocks(listToCsv(md.observed_stocks))
+      setStockTokens(listToCsv(md.observed_stock_tokens))
+      setPredMarkets(listToCsv(md.observed_prediction_markets))
+      setConfirmExchangeDivergence(false)
+    },
+  })
 
   return (
     <>
@@ -184,14 +189,6 @@ function MacroSignalsCard({ settings, qc, onDirty }: any) {
   const [defillama, setDefillama] = useState(md.enable_defillama ?? true)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  useEffect(() => {
-    setFearGreed(md.enable_fear_greed ?? true)
-    setCgTop(md.enable_coingecko_top ?? true)
-    setCgTopN(md.coingecko_top_n ?? 100)
-    setHyperliquid(md.enable_hyperliquid ?? true)
-    setDefillama(md.enable_defillama ?? true)
-  }, [settings])
-
   const mut = useMutation({
     mutationFn: () => api.updateMarketDataConfig({
       enable_fear_greed: fearGreed,
@@ -210,7 +207,19 @@ function MacroSignalsCard({ settings, qc, onDirty }: any) {
     || hyperliquid !== (md.enable_hyperliquid ?? true)
     || defillama !== (md.enable_defillama ?? true)
 
-  useEffect(() => { onDirty?.('macro-signals', dirty) }, [dirty])
+  useSettingsDraftLifecycle({
+    id: 'macro-signals',
+    dirty,
+    onDirty,
+    serverKey: settings,
+    adoptServer: () => {
+      setFearGreed(md.enable_fear_greed ?? true)
+      setCgTop(md.enable_coingecko_top ?? true)
+      setCgTopN(md.coingecko_top_n ?? 100)
+      setHyperliquid(md.enable_hyperliquid ?? true)
+      setDefillama(md.enable_defillama ?? true)
+    },
+  })
 
   return (
     <>
@@ -277,13 +286,11 @@ function PredictionToggleCard({ qc }: { qc: any }) {
 
 // ─── Equities ───
 
-function EquitiesCard({ settings, qc }: any) {
+function EquitiesCard({ settings, qc, onDirty }: any) {
   const serverTickers: string[] = settings?.market_data?.observed_equities ?? []
   const [draft, setDraft] = useState<string[]>(serverTickers)
   const [input, setInput] = useState('')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  useEffect(() => { setDraft(serverTickers) }, [settings])
 
   const mut = useMutation({
     mutationFn: () => api.updateEquities(draft),
@@ -299,6 +306,14 @@ function EquitiesCard({ settings, qc }: any) {
   const remove = (t: string) => { setDraft(prev => prev.filter(x => x !== t)); setMsg(null) }
 
   const dirty = JSON.stringify(draft.slice().sort()) !== JSON.stringify(serverTickers.slice().sort())
+
+  useSettingsDraftLifecycle({
+    id: 'equities',
+    dirty,
+    onDirty,
+    serverKey: settings,
+    adoptServer: () => setDraft(serverTickers),
+  })
 
   return (
     <div className="card" style={{ marginBottom: 0 }}>
@@ -338,19 +353,12 @@ function EquitiesCard({ settings, qc }: any) {
 
 // ─── News Feeds config ───
 
-function NewsFeedsCard({ settings, qc }: any) {
+function NewsFeedsCard({ settings, qc, onDirty }: any) {
   const news = settings?.news as any
   const [enabled, setEnabled] = useState(true)
   const [interval, setInterval_] = useState(15)
   const [feeds, setFeeds] = useState<any[]>([])
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  useEffect(() => {
-    if (!news) return
-    setEnabled(news.enabled ?? true)
-    setInterval_(news.fetch_interval_minutes ?? 15)
-    setFeeds(news.feeds ?? [])
-  }, [settings])
 
   const mut = useMutation({
     mutationFn: () => api.updateNewsConfig({
@@ -360,6 +368,25 @@ function NewsFeedsCard({ settings, qc }: any) {
     }),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+
+  const dirty = !!news && (
+    enabled !== (news.enabled ?? true)
+    || interval !== (news.fetch_interval_minutes ?? 15)
+    || JSON.stringify(feeds) !== JSON.stringify(news.feeds ?? [])
+  )
+
+  useSettingsDraftLifecycle({
+    id: 'news-feeds',
+    dirty,
+    onDirty,
+    serverKey: settings,
+    adoptServer: () => {
+      if (!news) return
+      setEnabled(news.enabled ?? true)
+      setInterval_(news.fetch_interval_minutes ?? 15)
+      setFeeds(news.feeds ?? [])
+    },
   })
 
   const toggleFeed = (idx: number) => {
@@ -418,7 +445,7 @@ export function SignalsTab({ settings, qc, onDirty }: any) {
       </SettingsFeatureSection>
 
       <SettingsFeatureSection descriptor={NEWS_FEEDS_SECTION}>
-        <NewsFeedsCard settings={settings} qc={qc} />
+        <NewsFeedsCard settings={settings} qc={qc} onDirty={onDirty} />
       </SettingsFeatureSection>
 
       <SettingsFeatureSection descriptor={PREDICTION_MARKETS_SECTION}>
@@ -426,7 +453,7 @@ export function SignalsTab({ settings, qc, onDirty }: any) {
       </SettingsFeatureSection>
 
       <SettingsFeatureSection descriptor={EQUITIES_SECTION}>
-        <EquitiesCard settings={settings} qc={qc} />
+        <EquitiesCard settings={settings} qc={qc} onDirty={onDirty} />
       </SettingsFeatureSection>
     </div>
   )

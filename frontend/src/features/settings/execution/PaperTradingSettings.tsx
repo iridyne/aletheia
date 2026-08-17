@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../api/client'
 import { positionKeys } from '../../../lib/queryKeys'
@@ -8,10 +8,11 @@ import {
   SettingsRow as Row,
   Switch as Toggle,
 } from '../../../components/ui'
+import { useSettingsDraftLifecycle } from '../draftLifecycle'
 
 const CONFIDENCE_LEVELS = ['high', 'medium', 'speculative'] as const
 
-export function PaperAccountCard({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
+export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQueryClient>; onDirty?: (id: string, isDirty: boolean) => void }) {
   const { data: account, isLoading } = useQuery({ queryKey: ['paper-account'], queryFn: api.getPaperAccount })
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
@@ -38,6 +39,13 @@ export function PaperAccountCard({ qc }: { qc: ReturnType<typeof useQueryClient>
   })
   const value = Number(amount)
   const valid = Number.isFinite(value) && value >= 0
+  useSettingsDraftLifecycle({
+    id: 'paper-account',
+    dirty: amount !== '' || note !== '',
+    onDirty,
+    serverKey: undefined,
+    adoptServer: () => undefined,
+  })
 
   if (isLoading) return <p className="hint">Loading local paper account…</p>
   return (
@@ -101,7 +109,7 @@ export function PaperAccountCard({ qc }: { qc: ReturnType<typeof useQueryClient>
   )
 }
 
-export function CapitalEventsCard() {
+export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty: boolean) => void }) {
   const qc = useQueryClient()
   const { data: events = [] } = useQuery({ queryKey: ['capital-events'], queryFn: api.getCapitalEvents })
   const { data: netData } = useQuery({ queryKey: ['capital-net-deposits'], queryFn: api.getNetDeposits })
@@ -124,6 +132,8 @@ export function CapitalEventsCard() {
       qc.invalidateQueries({ queryKey: ['account-equity-history'] })
       setAmount('')
       setNote('')
+      setBrokerId('')
+      setEventType('deposit')
       setMsg('Recorded')
       setTimeout(() => setMsg(null), 3000)
     },
@@ -131,6 +141,13 @@ export function CapitalEventsCard() {
   })
 
   const netDeposits = netData?.net_deposits_usdt ?? 0
+  useSettingsDraftLifecycle({
+    id: 'capital-events',
+    dirty: brokerId !== '' || eventType !== 'deposit' || amount !== '' || note !== '',
+    onDirty,
+    serverKey: undefined,
+    adoptServer: () => undefined,
+  })
 
   return (
     <div>
@@ -201,42 +218,6 @@ export function TradingParamsCard({ settings, qc, onDirty }: any) {
   const [personaAutoAdvance, setPersonaAutoAdvance] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  useEffect(() => {
-    if (!trading) return
-    setStopLoss(String(trading.default_stop_loss_pct ?? 2))
-    setTakeProfit(String(trading.default_take_profit_pct ?? 4))
-    setHoldHours(String(trading.max_position_hold_hours ?? 72))
-    setSlippageBps(String(trading.slippage_bps ?? 5))
-    setExecutionFeePct(String(trading.execution_fee_pct ?? 0.1))
-    setConfidence(trading.min_confidence_to_trade ?? 'medium')
-    setAutoAdopt(trading.auto_adopt_enabled !== false)
-    setTrailEnabled(!!trading.trail_enabled)
-    setExchangeTpslEnabled(!!trading.exchange_tpsl_enabled)
-    const mae = trading.market_aware_exits || {}
-    setMaeEnabled(!!mae.enabled)
-    setMaeUrgentScore(String(mae.urgent_exit_score ?? 80))
-    setMaeTightenScore(String(mae.tighten_stop_score ?? 60))
-    setMaeCollapseScore(String(mae.confidence_collapse_score ?? 30))
-    setMaeTightenAtrMult(String(mae.tighten_atr_mult ?? 0.8))
-    setTrailAtrMult(String(trading.trail_atr_mult ?? 1.5))
-    setTrailPct(String(trading.trail_pct ?? 1.0))
-    setBreakevenTriggerPct(String(trading.breakeven_trigger_pct ?? 1.5))
-    setVolSizingEnabled(trading.vol_sizing_enabled !== false)
-    setDefaultNotional(String(trading.default_notional_usdt ?? 25))
-    setVolRiskUsdt(String(trading.vol_target_risk_usdt ?? 25))
-    setVolTargetPct(String(trading.vol_target_pct ?? 1.5))
-    setVolKellyCap(String(trading.vol_kelly_cap_fraction ?? 0.25))
-    setPersonaEnabled(!!trading.persona_sizing_enabled)
-    setActivePersona(trading.active_persona ?? 'conservative')
-    setPersonaLearningEnabled(!!trading.persona_learning_enabled)
-    setPersonaLearningMinSamples(String(trading.persona_learning_min_samples ?? 15))
-    setPersonaUnlockEnabled(!!trading.persona_progressive_unlock_enabled)
-    setPersonaUnlockStep(String(trading.persona_unlock_step_samples ?? 25))
-    setPersonaPyramidEnabled(!!trading.persona_pyramid_enabled)
-    setPersonaPyramidTrigger(String(trading.persona_pyramid_add_trigger_pct ?? 1.0))
-    setPersonaAutoAdvance(!!trading.persona_auto_advance_enabled)
-  }, [settings])
-
   const mut = useMutation({
     mutationFn: () => api.updateTradingConfig({
       default_stop_loss_pct: parseFloat(stopLoss),
@@ -276,8 +257,80 @@ export function TradingParamsCard({ settings, qc, onDirty }: any) {
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
-  const dirty = !!trading && (stopLoss !== String(trading.default_stop_loss_pct ?? 2) || takeProfit !== String(trading.default_take_profit_pct ?? 4) || holdHours !== String(trading.max_position_hold_hours ?? 72) || slippageBps !== String(trading.slippage_bps ?? 5) || executionFeePct !== String(trading.execution_fee_pct ?? 0.1) || confidence !== (trading.min_confidence_to_trade ?? 'medium') || autoAdopt !== (trading.auto_adopt_enabled !== false) || trailEnabled !== !!trading.trail_enabled)
-  useEffect(() => { onDirty?.('trading-params', dirty) }, [dirty])
+  const mae = trading?.market_aware_exits || {}
+  const dirty = !!trading && (
+    stopLoss !== String(trading.default_stop_loss_pct ?? 2)
+    || takeProfit !== String(trading.default_take_profit_pct ?? 4)
+    || holdHours !== String(trading.max_position_hold_hours ?? 72)
+    || slippageBps !== String(trading.slippage_bps ?? 5)
+    || executionFeePct !== String(trading.execution_fee_pct ?? 0.1)
+    || confidence !== (trading.min_confidence_to_trade ?? 'medium')
+    || autoAdopt !== (trading.auto_adopt_enabled !== false)
+    || trailEnabled !== !!trading.trail_enabled
+    || exchangeTpslEnabled !== !!trading.exchange_tpsl_enabled
+    || trailAtrMult !== String(trading.trail_atr_mult ?? 1.5)
+    || trailPct !== String(trading.trail_pct ?? 1.0)
+    || breakevenTriggerPct !== String(trading.breakeven_trigger_pct ?? 1.5)
+    || volSizingEnabled !== (trading.vol_sizing_enabled !== false)
+    || defaultNotional !== String(trading.default_notional_usdt ?? 25)
+    || volRiskUsdt !== String(trading.vol_target_risk_usdt ?? 25)
+    || volTargetPct !== String(trading.vol_target_pct ?? 1.5)
+    || volKellyCap !== String(trading.vol_kelly_cap_fraction ?? 0.25)
+    || personaEnabled !== !!trading.persona_sizing_enabled
+    || activePersona !== (trading.active_persona ?? 'conservative')
+    || personaLearningEnabled !== !!trading.persona_learning_enabled
+    || personaLearningMinSamples !== String(trading.persona_learning_min_samples ?? 15)
+    || personaUnlockEnabled !== !!trading.persona_progressive_unlock_enabled
+    || personaUnlockStep !== String(trading.persona_unlock_step_samples ?? 25)
+    || personaPyramidEnabled !== !!trading.persona_pyramid_enabled
+    || personaPyramidTrigger !== String(trading.persona_pyramid_add_trigger_pct ?? 1.0)
+    || personaAutoAdvance !== !!trading.persona_auto_advance_enabled
+    || maeEnabled !== !!mae.enabled
+    || maeUrgentScore !== String(mae.urgent_exit_score ?? 80)
+    || maeTightenScore !== String(mae.tighten_stop_score ?? 60)
+    || maeCollapseScore !== String(mae.confidence_collapse_score ?? 30)
+    || maeTightenAtrMult !== String(mae.tighten_atr_mult ?? 0.8)
+  )
+  useSettingsDraftLifecycle({
+    id: 'trading-params',
+    dirty,
+    onDirty,
+    serverKey: settings,
+    adoptServer: () => {
+      if (!trading) return
+      setStopLoss(String(trading.default_stop_loss_pct ?? 2))
+      setTakeProfit(String(trading.default_take_profit_pct ?? 4))
+      setHoldHours(String(trading.max_position_hold_hours ?? 72))
+      setSlippageBps(String(trading.slippage_bps ?? 5))
+      setExecutionFeePct(String(trading.execution_fee_pct ?? 0.1))
+      setConfidence(trading.min_confidence_to_trade ?? 'medium')
+      setAutoAdopt(trading.auto_adopt_enabled !== false)
+      setTrailEnabled(!!trading.trail_enabled)
+      setExchangeTpslEnabled(!!trading.exchange_tpsl_enabled)
+      setMaeEnabled(!!mae.enabled)
+      setMaeUrgentScore(String(mae.urgent_exit_score ?? 80))
+      setMaeTightenScore(String(mae.tighten_stop_score ?? 60))
+      setMaeCollapseScore(String(mae.confidence_collapse_score ?? 30))
+      setMaeTightenAtrMult(String(mae.tighten_atr_mult ?? 0.8))
+      setTrailAtrMult(String(trading.trail_atr_mult ?? 1.5))
+      setTrailPct(String(trading.trail_pct ?? 1.0))
+      setBreakevenTriggerPct(String(trading.breakeven_trigger_pct ?? 1.5))
+      setVolSizingEnabled(trading.vol_sizing_enabled !== false)
+      setDefaultNotional(String(trading.default_notional_usdt ?? 25))
+      setVolRiskUsdt(String(trading.vol_target_risk_usdt ?? 25))
+      setVolTargetPct(String(trading.vol_target_pct ?? 1.5))
+      setVolKellyCap(String(trading.vol_kelly_cap_fraction ?? 0.25))
+      setPersonaEnabled(!!trading.persona_sizing_enabled)
+      setActivePersona(trading.active_persona ?? 'conservative')
+      setPersonaLearningEnabled(!!trading.persona_learning_enabled)
+      setPersonaLearningMinSamples(String(trading.persona_learning_min_samples ?? 15))
+      setPersonaUnlockEnabled(!!trading.persona_progressive_unlock_enabled)
+      setPersonaUnlockStep(String(trading.persona_unlock_step_samples ?? 25))
+      setPersonaPyramidEnabled(!!trading.persona_pyramid_enabled)
+      setPersonaPyramidTrigger(String(trading.persona_pyramid_add_trigger_pct ?? 1.0))
+      setPersonaAutoAdvance(!!trading.persona_auto_advance_enabled)
+    },
+  })
 
   if (!trading) return null
 

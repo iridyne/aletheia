@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
-import { isUnsavedEdit, shouldBlockNavigation } from '../features/settings/dirtyGuard'
+import { hasUncontrolledDraft, isUnsavedEdit, shouldBlockNavigation } from '../features/settings/dirtyGuard'
 import { MODEL_PROVIDERS_SECTION } from '../features/settings/model-providers/modelProviderState'
 import { HEALTH_MONITORING_SECTION, WEBHOOK_SECTION } from '../features/settings/health/healthState'
 import { HealthNotificationsTab } from '../features/settings/tabs/HealthNotificationsTab'
@@ -182,24 +182,41 @@ export default function Settings() {
     return parseTab(searchParams.get('tab')) ?? 'agent'
   })
   const dirtyRef = useRef<Set<string>>(new Set())
+  const touchedRef = useRef(false)
+  const touchedControlsRef = useRef<Set<HTMLElement>>(new Set())
+  const [isTouched, setIsTouched] = useState(false)
+  const [preciseDirtyCount, setPreciseDirtyCount] = useState(0)
   const registerDirty = (id: string, isDirty: boolean) => {
     if (isDirty) dirtyRef.current.add(id)
-    else dirtyRef.current.delete(id)
+    else {
+      dirtyRef.current.delete(id)
+      if (dirtyRef.current.size === 0) {
+        const fallbackDraftRemains = [...touchedControlsRef.current].some(hasUncontrolledDraft)
+        if (!fallbackDraftRemains) {
+          touchedControlsRef.current.clear()
+          touchedRef.current = false
+          setIsTouched(false)
+        }
+      }
+    }
+    setPreciseDirtyCount(dirtyRef.current.size)
   }
-  // Delegated fallback for the 26 sections that do not call registerDirty.
+  // Delegated fallback for editors that do not expose precise local state.
   // See features/settings/dirtyGuard.ts for why this is a shell-level listener.
-  const touchedRef = useRef(false)
-  const [isTouched, setIsTouched] = useState(false)
   const markTouched = (e: React.FormEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement | null
+    if (!isUnsavedEdit(target)) return
+    if (target) touchedControlsRef.current.add(target)
     if (touchedRef.current) return
-    if (!isUnsavedEdit(e.target as HTMLElement | null)) return
     touchedRef.current = true
     setIsTouched(true)   // state (not just ref) so the beforeunload effect re-runs
   }
   const clearDirty = () => {
     dirtyRef.current.clear()
+    touchedControlsRef.current.clear()
     touchedRef.current = false
     setIsTouched(false)
+    setPreciseDirtyCount(0)
   }
 
   useEffect(() => {
@@ -284,14 +301,17 @@ export default function Settings() {
     return () => window.clearTimeout(timer)
   }, [searchParams, tab, settings])
 
-  // A settings refetch acknowledges the delegated shell fallback because it is
-  // the only save signal available to sections without precise dirty reporting.
-  // Precise section dirtiness must survive: a sibling card can cause this same
-  // refetch while that section still has an unsaved draft.
+  // A settings refetch is only a save acknowledgement for the delegated
+  // fallback when no browser-managed draft remains. Uncontrolled inputs keep
+  // their DOM value across React renders, so a sibling save must not clear the
+  // warning while that value still differs from its server default.
   const lastSettledRef = useRef(settingsUpdatedAt)
   useEffect(() => {
     if (settingsUpdatedAt === lastSettledRef.current) return
     lastSettledRef.current = settingsUpdatedAt
+    const fallbackDraftRemains = [...touchedControlsRef.current].some(hasUncontrolledDraft)
+    if (fallbackDraftRemains) return
+    touchedControlsRef.current.clear()
     touchedRef.current = false
     setIsTouched(false)
   }, [settingsUpdatedAt])
@@ -304,7 +324,7 @@ export default function Settings() {
     const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault()
     window.addEventListener('beforeunload', onBeforeUnload)
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
-  }, [isTouched])
+  }, [isTouched, preciseDirtyCount])
 
   // `slug` is set when navigation came from a search result, so the deep-link
   // effect above can scroll to that section instead of leaving the operator at
@@ -395,11 +415,11 @@ export default function Settings() {
           onPointerDown={onResizePointerDown}
         />
         <div className="settings-panel">
-          {tab === 'agent'     && <AgentModelsTab        status={status} settings={settings} qc={qc} />}
+          {tab === 'agent'     && <AgentModelsTab        status={status} settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'execution' && <ExecutionTab          status={status} settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'risk'      && <RiskTab               settings={settings} qc={qc} onDirty={registerDirty} />}
-          {tab === 'health'    && <HealthNotificationsTab settings={settings} qc={qc} />}
-          {tab === 'runtime'   && <RuntimeSystemTab      status={status} settings={settings} qc={qc} />}
+          {tab === 'health'    && <HealthNotificationsTab settings={settings} qc={qc} onDirty={registerDirty} />}
+          {tab === 'runtime'   && <RuntimeSystemTab      status={status} settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'signals'   && <SignalsTab            settings={settings} qc={qc} onDirty={registerDirty} />}
           {tab === 'advanced'  && <AdvancedTab           settings={settings} />}
         </div>

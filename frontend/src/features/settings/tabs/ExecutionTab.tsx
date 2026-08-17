@@ -9,6 +9,7 @@ import {
 } from '../../../components/ui'
 import { humanize } from '../../../lib/format'
 import { executionExchangeFromPaperMode } from '../execution/exchangeMode'
+import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import { CapitalEventsCard, PaperAccountCard, TradingParamsCard } from '../execution/PaperTradingSettings'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
 
@@ -60,7 +61,7 @@ export function ExecutionTab({ status, settings, qc, onDirty }: any) {
       )}
       <SettingsFeatureSection descriptor={EXCHANGE_CONNECTION_SECTION}>
         <PrimaryExchangeCard settings={settings} qc={qc} />
-        <ExchangeConnectionCard qc={qc} />
+        <ExchangeConnectionCard qc={qc} onDirty={onDirty} />
       </SettingsFeatureSection>
 
       <SettingsFeatureSection descriptor={TRADING_MODE_SECTION}>
@@ -77,12 +78,12 @@ export function ExecutionTab({ status, settings, qc, onDirty }: any) {
       </SettingsFeatureSection>
 
       <SettingsFeatureSection descriptor={CAPITAL_EVENTS_SECTION}>
-        <CapitalEventsCard />
+        <CapitalEventsCard onDirty={onDirty} />
       </SettingsFeatureSection>
 
       {String((settings?.exchange as any)?.paper_execution_mode) === 'paper_internal' && (
         <SettingsFeatureSection descriptor={PAPER_ACCOUNT_SECTION}>
-          <PaperAccountCard qc={qc} />
+          <PaperAccountCard qc={qc} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}
 
@@ -170,13 +171,6 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: any) {
   const [confirmExchangeDivergence, setConfirmExchangeDivergence] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  useEffect(() => {
-    setSpot(!!markets.spot)
-    setFutures(!!markets.usdt_futures)
-    setPaperMode(serverPaperMode)
-    setConfirmExchangeDivergence(false)
-  }, [settings])
-
   const dataExchange = String((settings?.market_data as any)?.ccxt_exchange || '')
   const executionExchange = executionExchangeFromPaperMode(
     paperMode, String((settings?.exchange as any)?.name || ''),
@@ -199,7 +193,18 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: any) {
   const dirty = spot !== !!markets.spot || futures !== !!markets.usdt_futures
     || paperMode !== serverPaperMode
 
-  useEffect(() => { onDirty?.('exchange-markets', dirty) }, [dirty])
+  useSettingsDraftLifecycle({
+    id: 'exchange-markets',
+    dirty,
+    onDirty,
+    serverKey: settings,
+    adoptServer: () => {
+      setSpot(!!markets.spot)
+      setFutures(!!markets.usdt_futures)
+      setPaperMode(serverPaperMode)
+      setConfirmExchangeDivergence(false)
+    },
+  })
 
   return (
     <>
@@ -357,7 +362,7 @@ const EXCHANGE_CONFIG = [
 
 type ExchangeId = typeof EXCHANGE_CONFIG[number]['id']
 
-function ExchangeConnectionCard({ qc }: any) {
+function ExchangeConnectionCard({ qc, onDirty }: any) {
   const [exchange, setExchange] = useState<ExchangeId>('bitget')
   const exCfg = EXCHANGE_CONFIG.find(e => e.id === exchange)!
   const [profile, setProfile] = useState<string>(exCfg.profiles[0])
@@ -495,6 +500,13 @@ function ExchangeConnectionCard({ qc }: any) {
   })
 
   const dirty = exCfg.hasPassphrase ? !!(apiKey || apiSecret || passphrase) : !!(apiKey || apiSecret)
+  useSettingsDraftLifecycle({
+    id: 'exchange-credentials',
+    dirty,
+    onDirty,
+    serverKey: undefined,
+    adoptServer: () => undefined,
+  })
 
   return (
     <div className="card mb-0">

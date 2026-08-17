@@ -1,11 +1,10 @@
 /**
  * Unsaved-edit detection for the Settings shell.
  *
- * Why this is delegated rather than per-section: the previous approach required
- * every section to call `onDirty(...)` itself, and only 5 of 31 sections ever
- * did — so 26 sections silently discarded operator edits on tab switch (#631).
- * Hand-wiring 26 more call sites would reproduce the same failure mode the
- * next time a section is added.
+ * Why this is delegated rather than per-section: not every Settings editor has
+ * precise local dirty state, and a new section must not silently opt out of the
+ * navigation guard. Hand-wiring every call site would reproduce that failure
+ * mode the next time a section is added.
  *
  * Instead the shell listens for change events bubbling out of the settings
  * panel, exactly like the existing delegated `handleNumericFocus`. One handler
@@ -40,6 +39,39 @@ export function isUnsavedEdit(el: ControlLike | null | undefined): boolean {
 	// type="search" is only used by SettingsSearch (Settings.tsx:416).
 	if (tag === "input" && el.type === "search") return false;
 	return true;
+}
+
+/**
+ * Whether an event target still contains a browser-managed draft after a
+ * settings refetch. This is only the delegated fallback path; controlled
+ * editors report exact dirtiness through `registerDirty`.
+ */
+export function hasUncontrolledDraft(el: ControlLike | null | undefined): boolean {
+	if (!el || el.disabled || el.readOnly) return false;
+	const tag = (el.tagName ?? "").toLowerCase();
+	if (tag === "input") {
+		const input = el as ControlLike & {
+			checked?: boolean;
+			defaultChecked?: boolean;
+			value?: string;
+			defaultValue?: string;
+		};
+		if (input.type === "checkbox" || input.type === "radio") {
+			return input.checked !== input.defaultChecked;
+		}
+		return input.value !== input.defaultValue;
+	}
+	if (tag === "textarea") {
+		const textarea = el as ControlLike & { value?: string; defaultValue?: string };
+		return textarea.value !== textarea.defaultValue;
+	}
+	if (tag === "select") {
+		const select = el as ControlLike & {
+			options?: ArrayLike<{ selected: boolean; defaultSelected: boolean }>;
+		};
+		return Array.from(select.options ?? []).some(option => option.selected !== option.defaultSelected);
+	}
+	return false;
 }
 
 /**

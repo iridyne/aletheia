@@ -41,7 +41,7 @@ describe('AgentModelsTab', () => {
     expect(html).toContain('Regime detection enabled')
     expect(html).toContain('Serenity Lens enabled')
     expect(html).toContain('Scheduler enabled')
-    expect(SRC).toContain('<ModelProvidersSection qc={qc} />')
+    expect(SRC).toContain('<ModelProvidersSection qc={qc} onDirty={onDirty} />')
     expect(html).toContain('Inference Admission')
     expect(html).toContain('Enable economics harness')
   })
