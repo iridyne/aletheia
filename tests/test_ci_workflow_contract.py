@@ -314,6 +314,7 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
     refresh_script = refresh_validate["with"]["script"]
     assert "getWorkflowRun" in refresh_script
     assert "refresh-release-candidate.yml" in refresh_script
+    assert "sourceRun.status === 'in_progress'" in refresh_script
     assert "candidate.head.sha !== run.candidate_head_sha" in refresh_script
     assert "compareCommits" in refresh_script
     assert "merge_base_commit.sha !== run.merge_base_sha" in refresh_script
@@ -382,6 +383,9 @@ def test_release_candidate_refresh_only_dispatches_for_an_active_stale_candidate
     assert "autorelease: pending" in script
     assert "merged_at" in script
     assert "branch: 'master'" in script
+    assert "run.pull_requests" in script
+    assert "associatedPullRequestNumbers" in script
+    assert "associatedPullRequestNumbers.has(pullRequest.number)" in script
     assert "compareCommits" in script
     assert "merge_base_commit.sha === master.commit.sha" in script
     assert "source_run_id: context.runId" in script

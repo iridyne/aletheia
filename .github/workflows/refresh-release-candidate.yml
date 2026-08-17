@@ -28,6 +28,9 @@ jobs:
               core.info('auto-merge run has no usable start time');
               return;
             }
+            const associatedPullRequestNumbers = new Set(
+              (run.pull_requests || []).map(({number}) => number),
+            );
             const mergedPullRequests = await github.paginate(github.rest.pulls.list, {
               ...context.repo,
               state: 'closed',
@@ -38,9 +41,15 @@ jobs:
             });
             const ordinaryMerge = mergedPullRequests.find((pullRequest) =>
               pullRequest.merged_at &&
-              Date.parse(pullRequest.merged_at) >= startedAt &&
               pullRequest.base.ref === 'master' &&
-              !pullRequest.labels.some(({name}) => name === 'autorelease: pending')
+              !pullRequest.labels.some(({name}) => name === 'autorelease: pending') &&
+              (
+                associatedPullRequestNumbers.has(pullRequest.number) ||
+                (
+                  associatedPullRequestNumbers.size === 0 &&
+                  Date.parse(pullRequest.merged_at) >= startedAt
+                )
+              )
             );
             if (!ordinaryMerge) {
               core.info('no ordinary master merge belongs to this auto-merge run');

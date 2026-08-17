@@ -116,7 +116,10 @@ jobs:
               sourceRun.path !== '.github/workflows/refresh-release-candidate.yml' ||
               sourceRun.event !== 'workflow_run' ||
               sourceRun.head_branch !== 'master' ||
-              sourceRun.conclusion !== 'success'
+              !(
+                sourceRun.status === 'in_progress' ||
+                (sourceRun.status === 'completed' && sourceRun.conclusion === 'success')
+              )
             ) {
               throw new Error('refresh dispatch did not originate from the trusted refresh workflow');
             }
