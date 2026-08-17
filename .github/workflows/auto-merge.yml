@@ -363,7 +363,12 @@ jobs:
               throw new Error('expected release base SHA must be a 40-character lowercase Git object ID');
             }
 
-            const pullRequestQuery = `query($owner: String!, $repo: String!, $number: Int!) {
+            const pullRequestQuery = `query(
+              $owner: String!,
+              $repo: String!,
+              $number: Int!,
+              $closingIssuesAfter: String,
+            ) {
               repository(owner: $owner, name: $repo) {
                 pullRequest(number: $number) {
                   id
@@ -383,17 +388,67 @@ jobs:
                       createdAt
                     }
                   }
+                  closingIssuesReferences(first: 100, after: $closingIssuesAfter) {
+                    nodes {
+                      number
+                      state
+                      repository { nameWithOwner }
+                    }
+                    pageInfo { hasNextPage endCursor }
+                  }
                   mergeCommit { oid }
                   mergedBy { login }
                 }
               }
             }`;
             const fetchPullRequest = async () => {
-              const result = await github.graphql(pullRequestQuery, {
-                ...context.repo,
-                number: pullRequestNumber,
-              });
-              return result.repository.pullRequest;
+              let closingIssuesAfter = null;
+              let pullRequest = null;
+              const closingIssues = [];
+              while (true) {
+                const result = await github.graphql(pullRequestQuery, {
+                  ...context.repo,
+                  number: pullRequestNumber,
+                  closingIssuesAfter,
+                });
+                const page = result.repository.pullRequest;
+                if (!page) return null;
+                if (!pullRequest) pullRequest = page;
+                closingIssues.push(...page.closingIssuesReferences.nodes);
+                const {hasNextPage, endCursor} = page.closingIssuesReferences.pageInfo;
+                if (!hasNextPage) break;
+                closingIssuesAfter = endCursor;
+              }
+              pullRequest.closingIssuesReferences.nodes = closingIssues;
+              return pullRequest;
+            };
+            const closeLinkedIssues = async (pullRequest) => {
+              const repositoryName = `${context.repo.owner}/${context.repo.repo}`;
+              const failures = [];
+              for (const issue of pullRequest?.closingIssuesReferences?.nodes || []) {
+                if (issue.repository?.nameWithOwner !== repositoryName || issue.state !== 'OPEN') {
+                  continue;
+                }
+                try {
+                  await github.rest.issues.update({
+                    ...context.repo,
+                    issue_number: issue.number,
+                    state: 'closed',
+                    state_reason: 'completed',
+                  });
+                  core.info(`closed linked issue #${issue.number} after bot merge`);
+                } catch (error) {
+                  failures.push(issue.number);
+                  core.warning(`could not close linked issue #${issue.number}: ${error}`);
+                }
+              }
+              if (failures.length > 0) {
+                core.warning(
+                  `linked issue cleanup incomplete for #${failures.join(', #')}; ` +
+                  'a later auto-merge update can retry the idempotent close',
+                );
+              }
+              return failures;
             };
             const dispatchRelease = async (pullRequest, mergeCommitSha) => {
               if (!releaseAfterMerge) return;
@@ -434,7 +489,15 @@ jobs:
 
             if (!releaseAfterMerge) {
               const pullRequest = await fetchPullRequest();
-              if (!pullRequest || pullRequest.state !== 'OPEN') {
+              if (!pullRequest) {
+                core.info('pull request is no longer open; no auto-merge update needed');
+                return;
+              }
+              if (pullRequest.state === 'MERGED') {
+                await closeLinkedIssues(pullRequest);
+                return;
+              }
+              if (pullRequest.state !== 'OPEN') {
                 core.info('pull request is no longer open; no auto-merge update needed');
                 return;
               }
@@ -601,6 +664,7 @@ jobs:
                   `GitHub declined protected merge: ${mergeResult.data.message || 'unknown reason'}`,
                 );
               }
+              await closeLinkedIssues(pullRequest);
               return;
             }
 
@@ -613,7 +677,9 @@ jobs:
                 return;
               }
               if (pullRequest.state === 'MERGED') {
+                const cleanupPromise = closeLinkedIssues(pullRequest);
                 await dispatchRelease(pullRequest, pullRequest.mergeCommit?.oid);
+                await cleanupPromise;
                 return;
               }
               if (pullRequest.state !== 'OPEN') {
@@ -687,10 +753,12 @@ jobs:
                     `GitHub declined protected merge: ${mergeResult.data.message || 'unknown reason'}`,
                   );
                 }
+                const cleanupPromise = closeLinkedIssues(pullRequest);
                 await dispatchRelease(
                   {...pullRequest, mergedBy: {login: 'github-actions[bot]'}},
                   mergeResult.data.sha,
                 );
+                await cleanupPromise;
                 return;
               }
               if (pullRequest.autoMergeRequest) {
