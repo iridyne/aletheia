@@ -36,8 +36,8 @@ describe('useSettingsDraftLifecycle', () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
       setter?.call(input, 'local-draft')
       input.dispatchEvent(new Event('input', { bubbles: true }))
-      root.render(<Harness server={{ value: 'server-2' }} onDirty={() => undefined} />)
     })
+    await act(async () => root.render(<Harness server={{ value: 'server-2' }} onDirty={() => undefined} />))
     expect(input.value).toBe('local-draft')
 
     const save = container.querySelector('button') as HTMLButtonElement
