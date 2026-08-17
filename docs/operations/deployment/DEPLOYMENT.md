@@ -45,21 +45,24 @@ uv run aletheia data capacity --deep --history 30
 
 ## Fedora 运行实例：自动部署与恢复 SOP
 
-Fedora 是当前长期运行实例；macOS 只用于开发和控制。正常路径从
-`master` 上的 release-bearing 提交开始：
+Fedora 是当前长期运行实例；macOS 只用于开发和控制。正常路径由每日定时
+批处理驱动，合并到 `master` 的 release-bearing 提交会在下一批进入：
 
-1. `Prepare and tag releases` 在 `master` push 后自动生成候选 PR；候选分支运行精确
-   SHA CI，验证通过后由 trusted auto-merge 自动合并。
+1. `Prepare and tag releases` 每日自动生成一个候选 PR；候选分支运行精确 SHA CI，
+   验证通过后由 trusted auto-merge 自动合并。普通 release-bearing PR 不会各自产生
+   一个产品版本。
 2. 合并后的 follow-up 自动创建不可变 `vX.Y.Z` Tag 和 GitHub Release。
-3. Fedora 的 `aletheia-auto-update.timer` 每 5 分钟检查稳定 Tag，执行
-   `aletheia update auto run`；它只接受严格 SemVer，并执行精确 SHA、迁移、SQLite、
-   Smoke、Gateway 和 Paper/live-disabled 健康门禁。
+3. 只有明确配置为 `paper` 角色的 Fedora source runtime 才由
+   `aletheia-auto-update.timer` 每 5 分钟检查稳定 Tag，执行 `aletheia update auto run`；
+   它只接受严格 SemVer，并执行精确 SHA、迁移、SQLite、Smoke、Gateway 和
+   Paper/live-disabled 健康门禁。qualification runtime 默认锁定，不随正式 Tag 自动改变。
 
 正常发布不需要手动登录 Fedora。以下命令只用于首次启用 timer、故障恢复或诊断：
 
 ```sh
-ssh fedora 'cd /home/admin/aletheia && uv run aletheia update auto install'
-ssh fedora 'cd /home/admin/aletheia && uv run aletheia update auto status'
+# 仅在明确的非 qualification Paper runtime 上执行一次安装
+ssh fedora 'cd /home/admin/aletheia && ALETHEIA_RUNTIME_ROLE=paper uv run aletheia update auto install'
+ssh fedora 'cd /home/admin/aletheia && ALETHEIA_RUNTIME_ROLE=paper uv run aletheia update auto status'
 ```
 
 若自动部署连续失败，才使用 source-checkout 的应急一键更新入口：
@@ -92,11 +95,13 @@ Fedora Paper Candidate 只跟随正式 Release Tag；Release Please 自动创建
 `v1.2.3` 可以部署，`v1.2.3-rc.1`、`-hold.1`、`-noauto.1` 和其他预发布 Tag
 一律忽略。下一个正式 Tag 会自然越过已忽略的预发布候选。
 
-Release-bearing 提交会自动启动完整链路；隐藏的 `docs`、`ci`、`chore` 提交只会
-累积，不会凭空发布版本。安装的是两个用户级 systemd unit：开机约 1 分钟首次运行，
-之后每 5 分钟（`Persistent=true`，随机延迟最多 30 秒）运行的
-`aletheia-auto-update.timer`，以及它唤醒的 oneshot service。安装不会重启或改变
-Gateway；卸载只删除自己带有 ownership marker 的 unit：
+每日定时任务启动完整 release 批处理；隐藏的 `docs`、`ci`、`chore` 提交只会累积，
+不会凭空发布版本。只有 `ALETHEIA_RUNTIME_ROLE=paper` 写入 systemd unit 的 Paper
+runtime 才安装两个用户级 systemd unit：开机约 1 分钟首次运行，之后每 5 分钟
+（`Persistent=true`，随机延迟最多 30 秒）运行的 `aletheia-auto-update.timer`，以及它
+唤醒的 oneshot service。缺少该角色的 runtime 每次安全跳过部署，因此 qualification
+runtime 保持固定。安装不会重启或改变 Gateway；卸载只删除自己带有 ownership marker 的
+unit：
 
 ```sh
 uv run aletheia update auto uninstall

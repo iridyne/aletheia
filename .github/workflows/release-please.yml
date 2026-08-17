@@ -1,21 +1,28 @@
 name: Prepare and tag releases
 
 on:
-  push:
-    branches: [master]
+  schedule:
+    # Release-bearing merges are batched once per day; hidden docs/CI/chore
+    # commits remain accumulated without a release operator.
+    - cron: "17 2 * * *"
   repository_dispatch:
     # A merged release candidate needs one trusted follow-up run to create its
-    # tag and GitHub Release. Normal release preparation starts on master push.
+    # tag and GitHub Release. This event is intentionally separate from the
+    # scheduled release-preparation batch.
     types: [release_candidate_merged]
-  # Recovery entry point only. The normal path is fully automatic after a
-  # release-bearing commit reaches master.
+  # Recovery entry point only. Normal preparation is scheduled and unattended.
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-please-master
+  group: >-
+    ${{
+      github.event_name == 'repository_dispatch' &&
+      format('release-please-tag-{0}', github.event.client_payload.merge_commit_sha) ||
+      'release-please-prepare'
+    }}
   cancel-in-progress: false
 
 jobs:

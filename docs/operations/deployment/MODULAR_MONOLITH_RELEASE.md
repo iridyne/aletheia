@@ -23,11 +23,12 @@ private dashboard and Operator Shell packages and the stable native host also
 retain independent component versions unless they become separately shipped
 products.
 
-Every push to `master` starts the release-preparation workflow. Release Please
-computes one Ready-for-review release PR from the complete Conventional Commit
-history since the previous tag; hidden `docs`, `ci`, and `chore` changes simply
-accumulate until a release-bearing commit exists. `workflow_dispatch` remains a
-recovery entry point, not a normal release step.
+The scheduled `Prepare and tag releases` workflow runs once per day and computes
+one Ready-for-review release PR from the complete Conventional Commit history
+since the previous tag. This is an unattended batch: ordinary `feat`, `fix`, and
+`perf` changes are accumulated into one release instead of creating one product
+version per merge; hidden `docs`, `ci`, and `chore` changes remain accumulated.
+`workflow_dispatch` remains a recovery entry point, not a normal release step.
 
 Release Please keeps its `autorelease: pending` marker on the generated PR and
 the workflow adds `do-not-auto-merge` while the candidate is unverified. It
@@ -51,12 +52,13 @@ third-party Action.
 ## Release SOP（正常自动，故障手动恢复）
 
 正常路径只有一个开发动作：合并经过审查的 release-bearing PR 到
-`master`。之后由 GitHub Actions 自动生成候选、运行精确 SHA CI、解除候选
-hold 并合并、创建不可变 Tag/Release；Fedora 的 auto-update timer 再自动
-部署正式 Tag。无需手动指定版本，也无需登录 Fedora 执行 `git pull`。
+`master`。每日定时批处理会自动生成候选、运行精确 SHA CI、解除候选 hold
+并合并、创建不可变 Tag/Release；配置为 Paper 角色的 Fedora auto-update
+timer 再自动部署正式 Tag。无需手动指定版本，也无需登录 Fedora 执行
+`git pull`。资格运行时不参加这条自动部署链，必须保持 owner 选定的固定 SHA。
 
-仅在自动触发器或候选状态损坏时使用恢复入口。它仍由 Release Please 计算
-版本、变更日志和候选 PR：
+仅在定时任务失败或候选状态损坏时使用恢复入口。它仍由 Release Please
+计算版本、变更日志和候选 PR：
 
 ```sh
 gh workflow run release-please.yml --repo iridite/aletheia --ref master
@@ -81,8 +83,8 @@ gh run rerun <run-id> --repo iridite/aletheia
 ```
 
 Do not bypass the candidate hold or exact-SHA CI, or tag the commit manually.
-Fedora deployment and Observation-window admission remain separate downstream
-gates; deployment success does not open an Observation window.
+Fedora Paper deployment and Observation-window admission remain separate
+downstream gates; deployment success does not open an Observation window.
 
 The bootstrap manifest remains at the last released product version (`0.5.0`).
 The first generated release PR promotes the version, changelog, and manifest

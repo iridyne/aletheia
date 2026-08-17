@@ -262,18 +262,17 @@ def test_third_party_actions_are_pinned_to_full_commit_shas() -> None:
     assert not failures, "Actions must use full immutable commit SHAs:\n" + "\n".join(failures)
 
 
-def test_release_please_is_metadata_only_and_automatically_started() -> None:
+def test_release_please_is_metadata_only_and_batch_scheduled() -> None:
     workflow = _release_workflow()
     triggers = workflow["on"]
 
-    assert set(triggers) == {"push", "repository_dispatch", "workflow_dispatch"}
-    assert triggers["push"]["branches"] == ["master"]
+    assert set(triggers) == {"schedule", "repository_dispatch", "workflow_dispatch"}
+    assert triggers["schedule"] == [{"cron": "17 2 * * *"}]
     assert triggers["repository_dispatch"]["types"] == ["release_candidate_merged"]
     assert workflow["permissions"] == {"contents": "read"}
-    assert workflow["concurrency"] == {
-        "group": "release-please-master",
-        "cancel-in-progress": "false",
-    }
+    assert "release-please-tag-" in workflow["concurrency"]["group"]
+    assert "release-please-prepare" in workflow["concurrency"]["group"]
+    assert workflow["concurrency"]["cancel-in-progress"] == "false"
 
     assert set(workflow["jobs"]) == {"release"}
     job = workflow["jobs"]["release"]

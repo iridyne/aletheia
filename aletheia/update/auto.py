@@ -46,6 +46,8 @@ _STATE_SCHEMA = 1
 _SYSTEMD_MARKER = "# Managed-By: Aletheia auto update"
 _UNIT_NAMES = ("aletheia-auto-update.service", "aletheia-auto-update.timer")
 _TRANSIENT_CANDIDATE_FAILURES = {"gateway_stop_failed"}
+_RUNTIME_ROLE_ENV = "ALETHEIA_RUNTIME_ROLE"
+_AUTO_DEPLOY_ROLE = "paper"
 
 
 class AutoUpdateError(RuntimeError):
@@ -402,6 +404,8 @@ def run() -> dict[str, Any]:
         return {"ok": False, "reason": "linux_source_checkout_required"}
     if not git_ops.is_repo():
         return {"ok": False, "reason": "source_checkout_required"}
+    if os.environ.get(_RUNTIME_ROLE_ENV, "").strip().lower() != _AUTO_DEPLOY_ROLE:
+        return {"ok": True, "reason": "qualification_runtime_pinned"}
 
     with _deployment_lock() as acquired:
         if not acquired:
@@ -569,7 +573,12 @@ def _unit_dir() -> Path:
 def _units() -> dict[str, str]:
     uv = _uv()
     data_dir = os.environ.get("ALETHEIA_DATA_DIR", "").strip()
-    env = f"Environment=ALETHEIA_DATA_DIR={data_dir}\n" if data_dir else ""
+    runtime_role = os.environ.get(_RUNTIME_ROLE_ENV, "").strip()
+    env = "".join(
+        f"Environment={name}={value}\n"
+        for name, value in (("ALETHEIA_DATA_DIR", data_dir), (_RUNTIME_ROLE_ENV, runtime_role))
+        if value
+    )
     service = (
         "[Unit]\nDescription=Aletheia release-tag Paper deployment\n" + _SYSTEMD_MARKER + "\n\n"
         "[Service]\nType=oneshot\n"

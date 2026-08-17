@@ -20,6 +20,7 @@ def _linux_source(monkeypatch):
     from aletheia.update import auto, git_ops
 
     monkeypatch.setattr(auto.sys, "platform", "linux")
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
     monkeypatch.setattr(git_ops, "is_repo", lambda: True)
     monkeypatch.setattr(git_ops, "fetch_release_tags", lambda: {"ok": True})
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
@@ -389,6 +390,19 @@ def test_systemd_units_are_user_timer_contract(monkeypatch):
     assert "OnUnitActiveSec=5min" in units["aletheia-auto-update.timer"]
     assert "Persistent=true" in units["aletheia-auto-update.timer"]
     assert "RandomizedDelaySec=30s" in units["aletheia-auto-update.timer"]
+
+
+def test_auto_update_requires_explicit_paper_runtime_role(monkeypatch):
+    import aletheia.update.auto as auto
+
+    monkeypatch.setattr(auto.sys, "platform", "linux")
+    monkeypatch.setattr(auto.git_ops, "is_repo", lambda: True)
+    monkeypatch.delenv("ALETHEIA_RUNTIME_ROLE", raising=False)
+    assert auto.run() == {"ok": True, "reason": "qualification_runtime_pinned"}
+
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
+    monkeypatch.setattr(auto, "_uv", lambda: "/usr/bin/uv")
+    assert "Environment=ALETHEIA_RUNTIME_ROLE=paper" in auto._units()["aletheia-auto-update.service"]
 
 
 def test_systemd_install_and_owned_uninstall_are_idempotent(tmp_path, monkeypatch):
