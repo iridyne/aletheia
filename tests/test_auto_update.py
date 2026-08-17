@@ -409,6 +409,7 @@ def test_systemd_install_and_owned_uninstall_are_idempotent(tmp_path, monkeypatc
     from aletheia.update import auto, git_ops
 
     monkeypatch.setattr(auto.sys, "platform", "linux")
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
     monkeypatch.setattr(git_ops, "is_repo", lambda: True)
     monkeypatch.setattr(auto, "_unit_dir", lambda: tmp_path / "units")
     monkeypatch.setattr(auto, "_uv", lambda: "/usr/bin/uv")
@@ -428,6 +429,7 @@ def test_systemd_install_refuses_unowned_unit_and_uninstall_needs_no_uv(tmp_path
     from aletheia.update import auto, git_ops
 
     monkeypatch.setattr(auto.sys, "platform", "linux")
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ROLE", "paper")
     monkeypatch.setattr(git_ops, "is_repo", lambda: True)
     unit_dir = tmp_path / "units"
     unit_dir.mkdir()
@@ -442,6 +444,18 @@ def test_systemd_install_refuses_unowned_unit_and_uninstall_needs_no_uv(tmp_path
     monkeypatch.setattr(auto, "_systemctl", lambda *args: None)
     monkeypatch.setattr(auto, "_uv", lambda: pytest.fail("uninstall must not resolve uv"))
     assert auto.uninstall()["reason"] == "uninstalled"
+
+
+def test_systemd_install_requires_paper_runtime_role(tmp_path, monkeypatch):
+    from aletheia.update import auto, git_ops
+
+    monkeypatch.setattr(auto.sys, "platform", "linux")
+    monkeypatch.delenv("ALETHEIA_RUNTIME_ROLE", raising=False)
+    monkeypatch.setattr(git_ops, "is_repo", lambda: True)
+    monkeypatch.setattr(auto, "_unit_dir", lambda: tmp_path / "units")
+
+    assert auto.install() == {"ok": False, "reason": "paper_runtime_role_required"}
+    assert not (tmp_path / "units").exists()
 
 
 def test_resume_audits_the_operator(tmp_path, monkeypatch):

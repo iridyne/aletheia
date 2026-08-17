@@ -601,6 +601,8 @@ def _systemctl(*args: str) -> None:
 def install() -> dict[str, Any]:
     if sys.platform != "linux" or not git_ops.is_repo():
         return {"ok": False, "reason": "linux_source_checkout_required"}
+    if os.environ.get(_RUNTIME_ROLE_ENV, "").strip().lower() != _AUTO_DEPLOY_ROLE:
+        return {"ok": False, "reason": "paper_runtime_role_required"}
     directory = _unit_dir()
     directory.mkdir(parents=True, exist_ok=True)
     try:
