@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
-import { hasUncontrolledDraft, isUnsavedEdit, shouldBlockNavigation } from '../features/settings/dirtyGuard'
+import { hasUncontrolledDraft, isFallbackDraftControl, shouldBlockNavigation } from '../features/settings/dirtyGuard'
 import { MODEL_PROVIDERS_SECTION } from '../features/settings/model-providers/modelProviderState'
 import { HEALTH_MONITORING_SECTION, WEBHOOK_SECTION } from '../features/settings/health/healthState'
 import { HealthNotificationsTab } from '../features/settings/tabs/HealthNotificationsTab'
@@ -205,7 +205,7 @@ export default function Settings() {
   // See features/settings/dirtyGuard.ts for why this is a shell-level listener.
   const markTouched = (e: React.FormEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement | null
-    if (!isUnsavedEdit(target)) return
+    if (!isFallbackDraftControl(target)) return
     if (target) touchedControlsRef.current.add(target)
     if (touchedRef.current) return
     touchedRef.current = true

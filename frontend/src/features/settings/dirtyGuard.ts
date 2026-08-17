@@ -42,6 +42,18 @@ export function isUnsavedEdit(el: ControlLike | null | undefined): boolean {
 }
 
 /**
+ * Whether the shell should retain this control for its browser-managed draft
+ * fallback. Settings selects and checkboxes are controlled; their DOM defaults
+ * do not move with React's `value`/`checked`, so precise lifecycle reporting or
+ * immediate-save handling must own those controls instead.
+ */
+export function isFallbackDraftControl(el: ControlLike | null | undefined): boolean {
+	if (!el || !isUnsavedEdit(el)) return false;
+	const tag = (el.tagName ?? "").toLowerCase();
+	return tag === "textarea" || (tag === "input" && el.type !== "checkbox" && el.type !== "radio");
+}
+
+/**
  * Whether an event target still contains a browser-managed draft after a
  * settings refetch. This is only the delegated fallback path; controlled
  * editors report exact dirtiness through `registerDirty`.

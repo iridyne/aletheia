@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasUncontrolledDraft, isUnsavedEdit, shouldBlockNavigation } from "./dirtyGuard";
+import { hasUncontrolledDraft, isFallbackDraftControl, isUnsavedEdit, shouldBlockNavigation } from "./dirtyGuard";
 
 describe("isUnsavedEdit", () => {
 	it("treats a text input as an edit", () => {
@@ -47,6 +47,19 @@ describe("shouldBlockNavigation", () => {
 
 	it("does not block a clean tab", () => {
 		expect(shouldBlockNavigation(0, false)).toBe(false);
+	});
+});
+
+describe("isFallbackDraftControl", () => {
+	it("keeps browser-managed text controls in the shell fallback", () => {
+		expect(isFallbackDraftControl({ tagName: "INPUT", type: "number" })).toBe(true);
+		expect(isFallbackDraftControl({ tagName: "TEXTAREA" })).toBe(true);
+	});
+
+	it("leaves controlled select and boolean controls to their own lifecycle", () => {
+		expect(isFallbackDraftControl({ tagName: "SELECT" })).toBe(false);
+		expect(isFallbackDraftControl({ tagName: "INPUT", type: "checkbox" })).toBe(false);
+		expect(isFallbackDraftControl({ tagName: "INPUT", type: "radio" })).toBe(false);
 	});
 });
 
