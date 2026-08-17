@@ -1001,9 +1001,6 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
             cfg, reason="invalid_rollout_status", state=state
         )
         return {"action": "refrozen", "reason": "invalid_rollout_status", "rollout": frozen}
-    if state.get("status") in {"refrozen", "completed"}:
-        return {"action": "hold", "reason": state.get("reason") or state.get("status"), "rollout": state}
-
     try:
         from aletheia.learning.control import global_learning_refreeze_reason
 
@@ -1034,6 +1031,9 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
             "reason": "reconcile_thrash_state_unavailable",
             "rollout": frozen,
         }
+
+    if state.get("status") in {"refrozen", "completed"}:
+        return {"action": "hold", "reason": state.get("reason") or state.get("status"), "rollout": state}
 
     evidence = _evidence(state)
     if not evidence.get("available"):
