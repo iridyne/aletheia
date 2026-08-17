@@ -42,6 +42,7 @@ describe('useSettingsDraftLifecycle', () => {
 
     const save = container.querySelector('button') as HTMLButtonElement
     await act(async () => save.click())
+    await act(async () => root.render(<Harness server={{ value: 'server-2' }} onDirty={() => undefined} />))
     await act(async () => root.render(<Harness server={{ value: 'server-3' }} onDirty={() => undefined} />))
     expect(input.value).toBe('server-3')
 
