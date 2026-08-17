@@ -2753,6 +2753,11 @@ button.market-instrument-group-title { font-family: inherit; }
 .time-range-btn { padding: 4px 10px; font-size: 0.7rem; font-weight: 500; border: none; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; transition: background 0.12s, color 0.12s; }
 .time-range-btn:hover { color: var(--text); }
 .time-range-btn.active { background: var(--accent-dim); color: var(--text); }
+@media (max-width: 767px) {
+  .pnl-curve-header { align-items: stretch; flex-direction: column; gap: 6px; }
+  .pnl-curve-header .time-range-selector { width: 100%; }
+  .pnl-curve-header .time-range-btn { flex: 1; min-width: 0; padding-inline: 4px; }
+}
 
 /* ---------- Segmented toggle (feed mode switch) ---------- */
 .seg-toggle {

@@ -1639,9 +1639,9 @@ def list_capital_events_between(start_at: str, end_at: str) -> list[dict]:
         """
         SELECT *
         FROM capital_events
-        WHERE datetime(detected_at) > datetime(?)
-          AND datetime(detected_at) <= datetime(?)
-        ORDER BY datetime(detected_at) ASC, id ASC
+        WHERE julianday(detected_at) > julianday(?)
+          AND julianday(detected_at) <= julianday(?)
+        ORDER BY julianday(detected_at) ASC, id ASC
         """,
         (start_at, end_at),
     ).fetchall()
@@ -1691,9 +1691,10 @@ def list_paper_cash_events_between(start_at: str, end_at: str) -> list[dict]:
             'initial_funding', 'manual_credit', 'manual_debit', 'manual_set_balance'
         )
           AND amount_usdt != 0
-          AND datetime(created_at) > datetime(?)
-          AND datetime(created_at) <= datetime(?)
-        ORDER BY datetime(created_at) ASC, rowid ASC
+          AND position_id IS NULL
+          AND julianday(created_at) > julianday(?)
+          AND julianday(created_at) <= julianday(?)
+        ORDER BY julianday(created_at) ASC, rowid ASC
         """,
         (start_at, end_at),
     ).fetchall()
