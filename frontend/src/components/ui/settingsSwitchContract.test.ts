@@ -21,9 +21,11 @@ describe('Settings switch persistence contract', () => {
     expect(SWITCH_SITES).toHaveLength(65)
     expect(SWITCH_SITES.every(site => /\bpersistence\s*=/.test(site))).toBe(true)
     const modes = SWITCH_SITES.map(site => site.match(/\bpersistence\s*=\s*"(immediate|staged)"/)?.[1])
-    expect(modes).not.toContain(undefined)
+    // SwitchGrid forwards its caller's mode instead of hard-coding one.
+    expect(modes.filter(mode => mode === undefined)).toHaveLength(1)
+    expect(SWITCH_SITES.filter(site => /persistence=\{persistence\}/.test(site))).toHaveLength(1)
     expect(modes.filter(mode => mode === 'immediate')).toHaveLength(28)
-    expect(modes.filter(mode => mode === 'staged')).toHaveLength(37)
+    expect(modes.filter(mode => mode === 'staged')).toHaveLength(36)
   })
 
   it('keeps staged switches inside a draft boundary', () => {
