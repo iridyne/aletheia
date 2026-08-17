@@ -711,6 +711,37 @@ jobs:
                 );
                 return;
               }
+
+              // Revalidate authority at the actual merge boundary. Head SHA alone is
+              // not sufficient because a same-head retarget can change the diff.
+              const {data: mergeBoundaryMetadata} = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: pullRequestNumber,
+              });
+              if (
+                mergeBoundaryMetadata.state !== 'open' ||
+                mergeBoundaryMetadata.base.ref !== 'master' ||
+                mergeBoundaryMetadata.draft ||
+                mergeBoundaryMetadata.head.sha !== expectedHeadSha ||
+                mergeBoundaryMetadata.labels.some(({name}) => name === 'do-not-auto-merge')
+              ) {
+                core.info('pull request changed at exact-diff merge boundary');
+                return;
+              }
+              const {data: mergeBoundaryComparison} = await github.rest.repos.compareCommitsWithBasehead({
+                ...context.repo,
+                basehead: `${mergeBoundaryMetadata.base.sha}...${mergeBoundaryMetadata.head.sha}`,
+              });
+              const mergeBoundaryBaseSha = mergeBoundaryComparison.merge_base_commit.sha;
+              if (mergeBoundaryBaseSha !== expectedBaseSha) {
+                core.info(
+                  `pull request merge base changed at merge boundary from ${expectedBaseSha} ` +
+                  `to ${mergeBoundaryBaseSha}; dispatching current exact-diff authorization`,
+                );
+                await dispatchCurrentUpdate();
+                return;
+              }
+
               const mergeResult = await github.rest.pulls.merge({
                 ...context.repo,
                 pull_number: pullRequestNumber,
