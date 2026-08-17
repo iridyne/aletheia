@@ -268,10 +268,15 @@ def test_position_manager_keeps_observing_pending_close_without_resubmitting(
             marks.append((symbol, market_type, venue)) or 90.0
         ),
     )
+    monkeypatch.setattr(pm, "_layer0_safety_exit", lambda *_args: None)
+    trailing_calls: list[dict] = []
     monkeypatch.setattr(
         pm,
-        "_layer0_safety_exit",
-        lambda _position, _price, _cfg: ("stop_loss", 90.0),
+        "_maybe_update_trailing_stop",
+        lambda *_args, **kwargs: trailing_calls.append(kwargs) or False,
+    )
+    monkeypatch.setattr(
+        pm, "_decide_exit", lambda *_args: ("stop_loss", 90.0),
     )
     monkeypatch.setattr(
         pm,
@@ -288,8 +293,13 @@ def test_position_manager_keeps_observing_pending_close_without_resubmitting(
     assert repo._select_one("positions", pos.id)["pending_close_status"] == (
         "submission_unknown"
     )
+    assert trailing_calls and trailing_calls[0]["sync_exchange"] is False
     assert any(
-        error["code"] == "pending_close_protection_waiting"
+        observation["code"] == "pending_close_protection_waiting"
+        for observation in result["observations"]
+    )
+    assert all(
+        error["code"] != "pending_close_protection_waiting"
         for error in result["errors"]
     )
 
