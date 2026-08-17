@@ -1378,12 +1378,7 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
     }
 
 
-_VALID_OUTCOMES: frozenset[str] = frozenset({
-    "trade", "operator_skip", "operator_watch",
-    "portfolio_guard_reject",
-    "user_reject", "auto_reject", "reject_unknown",
-    "conviction_gate_defer",
-})
+_VALID_OUTCOMES: frozenset[str] = frozenset(_DECISION_COUNT_KEYS)
 
 
 @router.get("/operator-decisions")
@@ -1395,9 +1390,8 @@ def get_operator_decisions(
 ):
     """Recent operator decisions — the "final-stage" companion to the Funnel card.
 
-    Merges three sources into one time-ordered list so the Blotter can surface
-    not only pending / accepted proposals but also every kind of rejection that
-    happened after a candidate reached the operator:
+    Merges terminal decision and rejection sources into one time-ordered list
+    for the Blotter's Candidate Ledger:
 
     - `operator_skip`: pi_decisions.action = 'skip' and no portfolio guard fired —
       the LLM operator saw an executable candidate and decided not to trade
@@ -1409,9 +1403,6 @@ def get_operator_decisions(
       (#330).
     - `trade`: pi_decisions.action IN ('trade','flip','scale_in') — operator
       chose to trade; a proposal typically follows.
-    - `conviction_defer`: operator_conviction_gate rejected after LLM approved —
-      conviction below minimum threshold; opportunity re-queued for a later
-      evaluation. Sourced from filter_decisions (no pi_decisions row). (issue #327)
     - `user_reject`: trade_proposals.status='rejected' with matching
       audit_events row actor='human', source='dashboard' — a human pressed
       Reject in the dashboard before execution began.
@@ -1419,9 +1410,9 @@ def get_operator_decisions(
       audit_events row actor='system', source='execution_gateway' — pre-flight/risk
       auto-rejected before execution.
     - `reject_unknown`: rejected Proposal with missing or inconsistent audit actor/source.
-    - `conviction_defer`: LLM produced action='trade' but conviction was below the
-      minimum threshold — operator_conviction_gate fired, no proposal created, candidate
-      re-queued for evaluation after a material context change (#327).
+    Non-terminal conviction deferrals are lifecycle facts, not Candidate Ledger
+    rows. They remain available through the opportunity trace, keyed by the
+    exact opportunity and evaluation-event id.
 
     The reject timestamp defines window membership when available. Counts cover the
     full window before the display list is truncated, and a rejection supersedes the
@@ -1639,114 +1630,10 @@ def get_operator_decisions(
         )
     ]
 
-    # conviction gate deferrals — LLM said trade but conviction was below minimum.
-    # These never produce a pi_decisions row (DL-S47 non-terminal defer), so the
-    # operator-decisions API was previously blind to them. Fixes #327: source from
-    # filter_decisions where the conviction gate rejected AFTER the action assessment
-    # passed, identified by matching candidate_key + evaluated_at across both rows.
-    import json as _json
-    conv_rows = list(db.execute(
-        "SELECT fd.opportunity_id, fd.symbol, fd.direction, fd.market_type, "
-        "fd.evaluated_at, fd.reason_code, fd.input_snapshot, "
-        "julianday(fd.evaluated_at) AS sort_instant "
-        "FROM filter_decisions fd "
-        "JOIN filter_decisions fd2 ON fd2.candidate_key = fd.candidate_key "
-        "  AND fd2.evaluated_at = fd.evaluated_at "
-        "  AND fd2.filter_name = 'operator_action_assessment' "
-        "  AND fd2.decision = 'passed' "
-        "WHERE fd.filter_name = 'operator_conviction_gate' "
-        "AND fd.decision = 'rejected' "
-        "AND julianday(fd.evaluated_at) >= julianday(?) "
-        "AND julianday(fd.evaluated_at) <= julianday(?) "
-        "ORDER BY julianday(fd.evaluated_at) DESC, fd.rowid DESC",
-        (window_start, window_end),
-    ))
-    terminal_opportunity_ids = {
-        item["opportunity_id"] for item in pi_items + reject_items
-        if item["opportunity_id"]
-    }
-    conv_items: list[dict] = []
-    for r in conv_rows:
-        opp_id = r["opportunity_id"]
-        # Suppress if the opportunity already has a terminal decision in this window.
-        if opp_id and opp_id in terminal_opportunity_ids:
-            continue
-        try:
-            inputs = _json.loads(r["input_snapshot"] or "{}")
-            conviction_val = inputs.get("conviction")
-        except Exception:
-            conviction_val = None
-        conv_items.append({
-            "opportunity_id": opp_id,
-            "proposal_id": None,
-            "decision_id": None,
-            "symbol": r["symbol"],
-            "direction": r["direction"],
-            "market_type": r["market_type"],
-            "decided_at": r["evaluated_at"],
-            "outcome": "conviction_gate_defer",
-            "action": "conviction_gate_defer",
-            "conviction": conviction_val,
-            "one_line_reason": (
-                f"conviction_below_minimum (conviction: {conviction_val})"
-                if conviction_val is not None
-                else "conviction_below_minimum"
-            ),
-            "_sort_instant": float(r["sort_instant"] or 0),
-        })
-
-    # conviction_deferred: operator_decision_deferred_low_conviction events from
-    # operator_evaluation_events (#327 follow-up — low-conviction defer via evaluation loop).
-    defer_rows = []
-    try:
-        defer_rows = list(db.execute(
-            "SELECT id, queue_snapshot_json, created_at, "
-            "julianday(created_at) AS sort_instant "
-            "FROM operator_evaluation_events "
-            "WHERE event_kind='operator_decision_deferred_low_conviction' "
-            "AND julianday(created_at) >= julianday(?) "
-            "AND julianday(created_at) <= julianday(?) "
-            "ORDER BY julianday(created_at) DESC, rowid DESC",
-            (window_start, window_end),
-        ))
-    except Exception:
-        pass
-    terminal_opportunity_ids_for_defer = {
-        item["opportunity_id"] for item in pi_items + reject_items + conv_items
-        if item.get("opportunity_id")
-    }
-    defer_items: list[dict] = []
-    for r in defer_rows:
-        try:
-            snapshot = _json.loads(r["queue_snapshot_json"] or "{}")
-        except Exception:
-            snapshot = {}
-        opp_id = snapshot.get("opportunity_id")
-        defer_reason = snapshot.get("defer_reason")
-        if opp_id and opp_id in terminal_opportunity_ids_for_defer:
-            continue
-        defer_items.append({
-            "opportunity_id": opp_id,
-            "proposal_id": None,
-            "decision_id": r["id"],
-            "symbol": None,
-            "direction": None,
-            "market_type": None,
-            "decided_at": r["created_at"],
-            "outcome": "conviction_deferred",
-            "action": "conviction_deferred",
-            "conviction": None,
-            "one_line_reason": defer_reason,
-            "_sort_instant": float(r["sort_instant"] or 0),
-        })
-
-    all_items = pi_items + reject_items + conv_items + defer_items
+    all_items = pi_items + reject_items
     all_items.sort(key=lambda x: float(x.get("_sort_instant") or 0), reverse=True)
 
-    counts = {"trade": 0, "operator_skip": 0, "operator_watch": 0,
-              "portfolio_guard_reject": 0,
-              "user_reject": 0, "auto_reject": 0, "reject_unknown": 0,
-              "conviction_gate_defer": 0, "conviction_deferred": 0}
+    counts = {key: 0 for key in _DECISION_COUNT_KEYS}
     for it in all_items:
         oc = it.get("outcome")
         if oc in counts:

@@ -1542,9 +1542,8 @@ export const api = {
 			};
 			fills: number;
 		}>(`/analytics/pipeline-funnel?hours=${hours}`),
-	// Recent operator decisions — final-stage companion to the funnel.
-	// Merges pi_decisions (trade/skip/watch/flip/scale_in) with rejected
-	// trade_proposals (user vs auto reject distinguished via audit_events).
+	// Recent terminal operator decisions — Candidate Ledger projection.
+	// Non-terminal conviction deferrals remain in the opportunity trace.
 	//
 	// Optional `outcome` / `symbol` filters are applied server-side AFTER the
 	// full-window counts are computed — so counts and total_count never lie
@@ -1573,6 +1572,7 @@ export const api = {
 				trade: number;
 				operator_skip: number;
 				operator_watch: number;
+				portfolio_guard_reject: number;
 				user_reject: number;
 				auto_reject: number;
 				reject_unknown: number;
@@ -1591,6 +1591,7 @@ export const api = {
 					| "trade"
 					| "operator_skip"
 					| "operator_watch"
+					| "portfolio_guard_reject"
 					| "user_reject"
 					| "auto_reject"
 					| "reject_unknown";

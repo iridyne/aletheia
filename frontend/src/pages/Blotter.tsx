@@ -139,7 +139,7 @@ function StatusTokenStrip() {
     const filledToday = decisions?.counts?.trade ?? 0
     const c = decisions?.counts
     const rejected24h = c
-      ? (c.operator_skip ?? 0) + (c.user_reject ?? 0) + (c.auto_reject ?? 0) + (c.reject_unknown ?? 0)
+      ? (c.operator_skip ?? 0) + (c.portfolio_guard_reject ?? 0) + (c.user_reject ?? 0) + (c.auto_reject ?? 0) + (c.reject_unknown ?? 0)
       : 0
     return { staged, awaitingSignoff, working, filledToday, rejected24h }
   }, [funnel, proposals, decisions])
@@ -488,13 +488,14 @@ function SignoffPanel() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Compact table-friendly labels (Bloomberg style: short tokens, mixed case).
-const OUTCOME_ORDER = ['trade', 'operator_skip', 'operator_watch', 'user_reject', 'auto_reject', 'reject_unknown'] as const
+const OUTCOME_ORDER = ['trade', 'operator_skip', 'operator_watch', 'portfolio_guard_reject', 'user_reject', 'auto_reject', 'reject_unknown'] as const
 type Outcome = typeof OUTCOME_ORDER[number]
 
 const OUTCOME_LABEL: Record<Outcome, string> = {
   trade: 'Filled',
   operator_skip: 'Op Skip',
   operator_watch: 'Watch',
+  portfolio_guard_reject: 'Guard Reject',
   user_reject: 'User Reject',
   auto_reject: 'Auto Reject',
   reject_unknown: 'Reject (?)',
@@ -504,6 +505,7 @@ const OUTCOME_TONE: Record<Outcome, 'green' | 'yellow' | 'red' | 'muted'> = {
   trade: 'green',
   operator_skip: 'muted',
   operator_watch: 'yellow',
+  portfolio_guard_reject: 'red',
   user_reject: 'red',
   auto_reject: 'red',
   reject_unknown: 'yellow',

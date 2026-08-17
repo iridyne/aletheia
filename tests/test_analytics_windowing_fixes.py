@@ -670,14 +670,16 @@ def test_learning_contribution_verdict_db_error_surfaces_error_not_zero(tmp_path
 
 
 # ---------------------------------------------------------------------------
-# #327 — conviction_defer decisions visible in operator-decisions API
+# #1054 — conviction deferrals stay out of the terminal operator-decisions API
 # ---------------------------------------------------------------------------
 
 
-def test_conviction_defer_appears_in_operator_decisions(tmp_path, monkeypatch):
-    """#327: conviction gate deferrals must appear as outcome='conviction_gate_defer'
-    in get_operator_decisions. Sourced from paired filter_decisions rows:
-    operator_action_assessment=passed + operator_conviction_gate=rejected."""
+def test_conviction_defer_evidence_stays_out_of_terminal_operator_decisions(tmp_path, monkeypatch):
+    """#1054: paired conviction-gate evidence is non-terminal lifecycle data.
+
+    It remains persisted in filter_decisions but does not become a Candidate
+    Ledger row or inflate terminal counts.
+    """
     import json
     from datetime import datetime, timezone
 
@@ -711,14 +713,20 @@ def test_conviction_defer_appears_in_operator_decisions(tmp_path, monkeypatch):
 
     result = get_operator_decisions(hours=24, limit=50)
 
-    assert result["counts"]["conviction_gate_defer"] == 1
-    defer_items = [it for it in result["items"] if it["outcome"] == "conviction_gate_defer"]
-    assert len(defer_items) == 1
-    item = defer_items[0]
-    assert item["opportunity_id"] == opp_id
-    assert item["symbol"] == "ETH/USDT"
-    assert item["direction"] == "long"
-    assert item["market_type"] == "usdt_futures"
+    assert result["counts"] == {
+        "trade": 0,
+        "operator_skip": 0,
+        "operator_watch": 0,
+        "portfolio_guard_reject": 0,
+        "user_reject": 0,
+        "auto_reject": 0,
+        "reject_unknown": 0,
+    }
+    assert result["total_count"] == 0
+    assert result["items"] == []
+    assert conn.execute(
+        "SELECT COUNT(*) FROM filter_decisions WHERE opportunity_id=?", (opp_id,)
+    ).fetchone()[0] == 2
 
 
 # ---------------------------------------------------------------------------

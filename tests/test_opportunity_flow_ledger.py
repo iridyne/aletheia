@@ -405,6 +405,10 @@ def test_opportunity_flow_surfaces_persisted_operator_defer_without_making_it_te
 
     trace = trace_opportunity_flow("opp-deferred")
 
+    assert trace["opportunity_id"] == "opp-deferred"
+    assert trace["symbol"] == "BTC/USDT"
+    assert trace["direction"] == "long"
+    assert trace["market"] == "usdt_futures"
     assert trace["final_state"] == "pending"
     assert trace["final_stage"] == "operator_deferred"
     deferred = [event for event in trace["timeline"] if event["stage"] == "operator_deferred"]

@@ -206,7 +206,7 @@ on real data once backend fills the parked gaps.
    that had accumulated on the Cockpit right rail (EntryStatusCard, HumanApprovalCard,
    OpportunityFunnelCard, DecisionHistoryCard). Three regions: five-column uppercase
    status-token strip → full-width **Candidate Ledger** (Bloomberg blotter — every
-   terminal outcome as a sibling row; six-facet outcome filter with server-side push-down,
+   terminal outcome as a sibling row; seven-facet outcome filter with server-side push-down,
    client-side side/search filters) → **Candidates** (7/12) + **Awaiting Sign-off** (5/12)
    band with inline Approve/Reject actions and click-to-open trace drawer. Overview keeps
    a 1-row Blotter summary strip (Staged / Awaiting / Filled today / Rejected 24h) with

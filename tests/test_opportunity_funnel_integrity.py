@@ -1317,8 +1317,6 @@ def test_operator_decisions_classifies_unknown_uses_rejection_time_and_counts_fu
         "user_reject": 1,
         "auto_reject": 1,
         "reject_unknown": 1,
-        "conviction_gate_defer": 0,
-        "conviction_deferred": 0,
     }
     assert len(data["items"]) == 2
     assert data["total_count"] == 5
@@ -1326,27 +1324,33 @@ def test_operator_decisions_classifies_unknown_uses_rejection_time_and_counts_fu
     assert data["counts"]["user_reject"] == 1  # old proposal, recent rejection audit
 
 
-def test_operator_decisions_surfaces_conviction_deferred_outcome(tmp_path, monkeypatch):
-    import json as _json
+def test_operator_decisions_excludes_non_terminal_deferrals_but_trace_preserves_identity(
+    tmp_path, monkeypatch
+):
     conn = _setup_db(tmp_path, monkeypatch)
     now = datetime.now(timezone.utc)
     recent = (now - timedelta(minutes=10)).isoformat()
     old = (now - timedelta(days=2)).isoformat()
     _insert_opportunity(conn, "defer-opp", status="open", created_at=recent)
-    conn.execute(
-        "INSERT INTO operator_evaluation_events "
-        "(id,dedup_key,event_kind,trigger,pending_unresolved_total,"
-        "pending_visible_count,queue_snapshot_json,data_health_json,created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (
-            "defer-evt-1", "dk-1",
-            "operator_decision_deferred_low_conviction",
-            "scheduled", 1, 1,
-            _json.dumps({"opportunity_id": "defer-opp", "defer_reason": "operator_low_conviction"}),
-            "{}",
-            recent,
-        ),
-    )
+    for index in range(3):
+        conn.execute(
+            "INSERT INTO operator_evaluation_events "
+            "(id,dedup_key,event_kind,trigger,pending_unresolved_total,"
+            "pending_visible_count,queue_snapshot_json,data_health_json,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                f"defer-evt-{index + 1}", f"dk-{index + 1}",
+                "operator_decision_deferred_low_conviction",
+                "scheduled", 1, 1,
+                json.dumps({
+                    "opportunity_id": "defer-opp",
+                    "defer_reason": "operator_low_conviction",
+                    "defer_until": "2099-01-01T00:00:00+00:00",
+                }),
+                "{}",
+                recent,
+            ),
+        )
     # Old event outside window — should NOT appear
     _insert_opportunity(conn, "old-defer-opp", status="open", created_at=old)
     conn.execute(
@@ -1355,10 +1359,10 @@ def test_operator_decisions_surfaces_conviction_deferred_outcome(tmp_path, monke
         "pending_visible_count,queue_snapshot_json,data_health_json,created_at) "
         "VALUES (?,?,?,?,?,?,?,?,?)",
         (
-            "defer-evt-2", "dk-2",
+            "defer-evt-old", "dk-old",
             "operator_decision_deferred_low_conviction",
             "scheduled", 1, 1,
-            _json.dumps({"opportunity_id": "old-defer-opp", "defer_reason": "operator_low_conviction"}),
+            json.dumps({"opportunity_id": "old-defer-opp", "defer_reason": "operator_low_conviction"}),
             "{}",
             old,
         ),
@@ -1366,17 +1370,119 @@ def test_operator_decisions_surfaces_conviction_deferred_outcome(tmp_path, monke
     conn.commit()
 
     from aletheia.server.routes.analytics import get_operator_decisions
+    from aletheia.analytics.opportunity_flow import trace_opportunity_flow
 
     data = get_operator_decisions(hours=24, limit=50)
-    assert data["counts"]["conviction_deferred"] == 1
-    defer_items = [it for it in data["items"] if it["outcome"] == "conviction_deferred"]
-    assert len(defer_items) == 1
-    it = defer_items[0]
-    assert it["decision_id"] == "defer-evt-1"
-    assert it["opportunity_id"] == "defer-opp"
-    assert it["one_line_reason"] == "operator_low_conviction"
-    assert it["conviction"] is None
-    assert it["proposal_id"] is None
+    assert data["counts"] == {
+        "trade": 0,
+        "operator_skip": 0,
+        "operator_watch": 0,
+        "portfolio_guard_reject": 0,
+        "user_reject": 0,
+        "auto_reject": 0,
+        "reject_unknown": 0,
+    }
+    assert data["total_count"] == 0
+    assert data["matched_count"] == 0
+    assert data["items"] == []
+    filtered = get_operator_decisions(hours=24, limit=50, outcome="conviction_deferred")
+    assert filtered["matched_count"] == 0
+    assert filtered["items"] == []
+
+    trace = trace_opportunity_flow("defer-opp")
+    assert trace["opportunity_id"] == "defer-opp"
+    assert trace["symbol"] == "defer-opp/USDT"
+    assert trace["direction"] == "long"
+    assert trace["market"] == "spot"
+    deferred = [event for event in trace["timeline"] if event["stage"] == "operator_deferred"]
+    assert len(deferred) == 3
+    assert {event["details"]["event_id"] for event in deferred} == {
+        "defer-evt-1", "defer-evt-2", "defer-evt-3",
+    }
+    assert all("decision_id" not in event["details"] for event in deferred)
+
+    conn.execute(
+        "INSERT INTO pi_decisions "
+        "(id,created_at,symbol,direction,market_type,action,opportunity_id,signal_source) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "terminal-skip", recent, "defer-opp/USDT", "long", "spot", "skip",
+            "defer-opp", "market_observer",
+        ),
+    )
+    conn.commit()
+
+    data = get_operator_decisions(hours=24, limit=50)
+    assert data["total_count"] == 1
+    assert data["counts"]["operator_skip"] == 1
+    assert len(data["items"]) == 1
+    assert data["items"][0]["decision_id"] == "terminal-skip"
+    assert all(item["outcome"] != "conviction_deferred" for item in data["items"])
+
+    trace = trace_opportunity_flow("defer-opp")
+    assert len([event for event in trace["timeline"] if event["stage"] == "operator_deferred"]) == 3
+    assert any(
+        event["stage"] == "operator_skip" and event["details"]["decision_id"] == "terminal-skip"
+        for event in trace["timeline"]
+    )
+
+
+def test_operator_decisions_terminal_taxonomy_and_filters_stay_in_sync(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc).isoformat()
+
+    for decision_id, action, symbol in (
+        ("terminal-trade", "trade", "BTC/USDT"),
+        ("terminal-skip", "skip", "ETH/USDT"),
+        ("terminal-watch", "watch", "SOL/USDT"),
+        ("terminal-guard", "portfolio_guard_skip", "XRP/USDT"),
+    ):
+        conn.execute(
+            "INSERT INTO pi_decisions "
+            "(id,created_at,symbol,direction,market_type,action,opportunity_id,signal_source) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (
+                decision_id, now, symbol, "long", "spot", action,
+                decision_id, "market_observer",
+            ),
+        )
+
+    for outcome, proposal_id, actor, source in (
+        ("user_reject", "terminal-user-reject", "human", "dashboard"),
+        ("auto_reject", "terminal-auto-reject", "system", "execution_gateway"),
+        ("reject_unknown", "terminal-unknown-reject", "worker", "unknown"),
+    ):
+        _insert_proposal(conn, proposal_id, proposal_id, created_at=now, status="rejected")
+        _insert_audit(
+            conn, f"audit-{proposal_id}", proposal_id,
+            actor=actor, source=source, timestamp=now,
+        )
+    conn.commit()
+
+    from aletheia.server.routes.analytics import get_operator_decisions
+
+    terminal_outcomes = (
+        "trade", "operator_skip", "operator_watch", "portfolio_guard_reject",
+        "user_reject", "auto_reject", "reject_unknown",
+    )
+    data = get_operator_decisions(hours=24, limit=50)
+    assert set(data["counts"]) == set(terminal_outcomes)
+    assert data["total_count"] == len(terminal_outcomes)
+    assert all(data["counts"][outcome] == 1 for outcome in terminal_outcomes)
+
+    for outcome in terminal_outcomes:
+        filtered = get_operator_decisions(hours=24, limit=50, outcome=outcome)
+        assert filtered["total_count"] == len(terminal_outcomes)
+        assert filtered["matched_count"] == 1
+        assert len(filtered["items"]) == 1
+        assert filtered["items"][0]["outcome"] == outcome
+
+    unsupported = get_operator_decisions(
+        hours=24, limit=50, outcome="conviction_deferred"
+    )
+    assert unsupported["total_count"] == len(terminal_outcomes)
+    assert unsupported["matched_count"] == 0
+    assert unsupported["items"] == []
 
 
 def test_operator_decisions_preserve_history_with_policy_and_runtime_attribution(
