@@ -63,7 +63,9 @@ uv run aletheia doctor
 - `Prepare and tag releases` runs only after an owner selects the explicit
   `operational_need` input for an accumulated batch; candidate CI, exact-head
   auto-merge, immutable Tag/Release creation, and Paper-role Fedora tag polling
-  then continue without further release operations. Qualification runtimes
+  then continue without further release operations. An active candidate is
+  automatically refreshed and re-verified when an ordinary PR advances
+  `master`; qualification runtimes
   remain pinned unless an owner explicitly selects a deployment. See the
   [release contract](../../deployment/MODULAR_MONOLITH_RELEASE.md).
 - When CI is pending, inspect checks, the registered runner/queue state, and any

@@ -10,6 +10,7 @@ WORKFLOW_PATH = WORKFLOW_DIR / "ci.yml"
 AUTO_MERGE_WORKFLOW_PATH = WORKFLOW_DIR / "auto-merge.yml"
 DELETE_MERGED_WORKFLOW_PATH = WORKFLOW_DIR / "delete-merged-branch.yml"
 RELEASE_WORKFLOW_PATH = WORKFLOW_DIR / "release-please.yml"
+REFRESH_RELEASE_WORKFLOW_PATH = WORKFLOW_DIR / "refresh-release-candidate.yml"
 PINNED_ACTION_SHA_LENGTH = 40
 GITHUB_SCRIPT_ACTION = "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd"
 SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
@@ -56,6 +57,7 @@ def test_only_expected_workflows_are_active() -> None:
         "ci.yml",
         "codex-shepherd.yml",
         "delete-merged-branch.yml",
+        "refresh-release-candidate.yml",
         "release-please.yml",
     ]
 
@@ -267,7 +269,10 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
     triggers = workflow["on"]
 
     assert set(triggers) == {"repository_dispatch", "workflow_dispatch"}
-    assert triggers["repository_dispatch"]["types"] == ["release_candidate_merged"]
+    assert triggers["repository_dispatch"]["types"] == [
+        "release_candidate_merged",
+        "release_candidate_refresh",
+    ]
     assert triggers["workflow_dispatch"]["inputs"]["operational_need"] == {
         "description": "Release the accumulated batch because a Runtime update is needed",
         "required": "true",
@@ -283,6 +288,7 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
     job = workflow["jobs"]["release"]
     assert "github.event_name == 'repository_dispatch'" in job["if"]
     assert "inputs.operational_need == true" in job["if"]
+    assert "github.actor == github.repository_owner" in job["if"]
     assert job["runs-on"] == SELF_HOSTED
     assert job["timeout-minutes"] == "10"
     assert job["permissions"] == {
@@ -293,7 +299,7 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
     }
     assert len(job["steps"]) == 4
     validate, node, release, dispatch = job["steps"]
-    assert validate["if"] == "github.event_name == 'repository_dispatch'"
+    assert "github.event.action == 'release_candidate_merged'" in validate["if"]
     assert validate["uses"] == GITHUB_SCRIPT_ACTION
     validate_script = validate["with"]["script"]
     assert "run.merge_commit_sha" in validate_script
@@ -302,7 +308,10 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
     assert "commit.parents[0].sha !== run.expected_base_sha" in validate_script
     assert node["uses"] == SETUP_NODE_ACTION
     assert node["with"] == {"node-version": "22"}
-    assert release["env"] == {"GITHUB_TOKEN": "${{ github.token }}"}
+    assert release["env"] == {
+        "GITHUB_TOKEN": "${{ github.token }}",
+        "RELEASE_EVENT": "${{ github.event.action }}",
+    }
     commands = release["run"]
     assert "set -euo pipefail" in commands
     assert "release-please@17.6.0" in commands
@@ -310,14 +319,15 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
     assert "sleep $((attempt * 5))" in commands
     assert "release_please github-release" in commands
     assert "release_please release-pr" in commands
-    assert 'if [ "$GITHUB_EVENT_NAME" = "repository_dispatch" ]' in commands
+    assert 'if [ "$RELEASE_EVENT" = "release_candidate_merged" ]' in commands
     assert '--token="$GITHUB_TOKEN"' in commands
     assert '--repo-url="$GITHUB_REPOSITORY"' in commands
     assert "--target-branch=master" in commands
     assert "--config-file=release-please-config.json" in commands
     assert "--manifest-file=.release-please-manifest.json" in commands
     assert dispatch["uses"] == GITHUB_SCRIPT_ACTION
-    assert dispatch["if"] == "github.event_name != 'repository_dispatch'"
+    assert "github.event_name != 'repository_dispatch'" in dispatch["if"]
+    assert "github.event.action == 'release_candidate_refresh'" in dispatch["if"]
     assert dispatch["with"]["retries"] == "3"
     assert "pulls.list" in dispatch["with"]["script"]
     assert "autorelease: pending" in dispatch["with"]["script"]
@@ -338,6 +348,29 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
     assert "deploy" not in source
     assert "publish" not in source
     assert "actions/checkout" not in source
+
+
+def test_release_candidate_refresh_only_dispatches_for_an_active_stale_candidate() -> None:
+    workflow = yaml.load(
+        REFRESH_RELEASE_WORKFLOW_PATH.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    assert workflow["on"] == {
+        "workflow_run": {
+            "workflows": ["Queue pull requests for auto-merge"],
+            "types": ["completed"],
+        }
+    }
+    assert workflow["permissions"] == {"contents": "read"}
+    job = workflow["jobs"]["refresh"]
+    assert job["if"] == "github.event.workflow_run.conclusion == 'success'"
+    assert job["permissions"] == {"contents": "write", "pull-requests": "read"}
+    script = job["steps"][0]["with"]["script"]
+    assert "pulls.list" in script
+    assert "autorelease: pending" in script
+    assert "merged_at" in script
+    assert "branch: 'master'" in script
+    assert "release_candidate_refresh" in script
 
 
 def test_secret_scanner_download_is_versioned_and_checksum_verified() -> None:

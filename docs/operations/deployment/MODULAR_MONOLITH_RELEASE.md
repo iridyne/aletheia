@@ -34,6 +34,13 @@ instead of creating one product version per merge, and hidden `docs`, `ci`, and
 selection onward, candidate CI, exact-head merge, immutable Tag/Release, and
 Paper-role deployment are unattended.
 
+If an ordinary PR advances `master` while the release candidate is still open,
+`Refresh release candidate after master advances` observes the completed trusted
+auto-merge run, confirms that an active `autorelease: pending` candidate exists,
+and dispatches a refresh. Release Please then updates the same candidate and
+re-runs exact-head CI; the refresh path cannot create a candidate without the
+owner's original release-intent gate.
+
 Release Please keeps its `autorelease: pending` marker on the generated PR and
 the workflow adds `do-not-auto-merge` while the candidate is unverified. It
 explicitly dispatches the existing read-only CI workflow on the generated
@@ -55,7 +62,7 @@ third-party Action.
 
 ## Release SOP（正常自动，故障手动恢复）
 
-正常路径只保留一个显式发布意图动作：owner 在 GitHub Actions 运行
+正常路径只保留一个显式发布意图动作：repository owner 在 GitHub Actions 运行
 `Prepare and tag releases` 并设置 `operational_need=true`。之后自动生成候选、
 运行精确 SHA CI、解除候选 hold 并合并、创建不可变 Tag/Release；配置为
 Paper 角色的 Fedora auto-update timer 再自动部署正式 Tag。无需手动指定
@@ -76,6 +83,10 @@ hand-edit a target version: the Conventional Commit history and
 `release-please-config.json` determine the next SemVer. In the current pre-1.0
 policy, ordinary `feat`, `fix`, and `perf` release notes produce the next patch;
 an explicit breaking change produces the next minor version.
+
+The workflow rejects the release job for non-owner manual dispatches. A stale
+candidate caused by a later `master` merge is refreshed automatically while the
+candidate remains open; do not create a second release PR by hand.
 
 The release is complete only after the generated `autorelease: pending` PR is
 observed as merged, its matching immutable `vX.Y.Z` tag exists, and the GitHub

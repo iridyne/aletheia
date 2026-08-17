@@ -5,7 +5,7 @@ on:
     # A merged release candidate needs one trusted follow-up run to create its
     # tag and GitHub Release. This event is intentionally separate from the
     # owner-gated release-preparation batch.
-    types: [release_candidate_merged]
+    types: [release_candidate_merged, release_candidate_refresh]
   # The only preparation trigger is an explicit owner release-intent gate. Once
   # it is selected, candidate CI, merge, tag, and the downstream Runtime update
   # remain unattended.
@@ -24,6 +24,7 @@ concurrency:
   group: >-
     ${{
       github.event_name == 'repository_dispatch' &&
+      github.event.action == 'release_candidate_merged' &&
       format('release-please-tag-{0}', github.event.client_payload.merge_commit_sha) ||
       'release-please-prepare'
     }}
@@ -34,7 +35,10 @@ jobs:
     name: Maintain release pull request and tag approved releases
     if: >-
       github.event_name == 'repository_dispatch' ||
-      inputs.operational_need == true
+      (
+        inputs.operational_need == true &&
+        github.actor == github.repository_owner
+      )
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 10
     permissions:
@@ -44,7 +48,9 @@ jobs:
       pull-requests: write
     steps:
       - name: Validate the authorized release merge
-        if: github.event_name == 'repository_dispatch'
+        if: >-
+          github.event_name == 'repository_dispatch' &&
+          github.event.action == 'release_candidate_merged'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
         with:
           retries: 3
@@ -76,6 +82,7 @@ jobs:
       - name: Maintain releases and the release pull request
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_EVENT: ${{ github.event.action }}
         run: |
           set -euo pipefail
           release_please() {
@@ -94,13 +101,15 @@ jobs:
               sleep $((attempt * 5))
             done
           }
-          if [ "$GITHUB_EVENT_NAME" = "repository_dispatch" ]; then
+          if [ "$RELEASE_EVENT" = "release_candidate_merged" ]; then
             release_please github-release
           else
             release_please release-pr
           fi
       - name: Run CI for the pending release pull request
-        if: github.event_name != 'repository_dispatch'
+        if: >-
+          github.event_name != 'repository_dispatch' ||
+          github.event.action == 'release_candidate_refresh'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
         with:
           retries: 3

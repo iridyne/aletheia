@@ -1,0 +1,83 @@
+name: Refresh release candidate after master advances
+
+on:
+  workflow_run:
+    workflows: [Queue pull requests for auto-merge]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    name: Refresh an active release candidate
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Dispatch refresh only for an active candidate after an ordinary merge
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
+        with:
+          retries: 3
+          script: |
+            const run = context.payload.workflow_run;
+            const startedAt = Date.parse(run.run_started_at || run.created_at);
+            if (!Number.isFinite(startedAt)) {
+              core.info('auto-merge run has no usable start time');
+              return;
+            }
+            const mergedPullRequests = await github.paginate(github.rest.pulls.list, {
+              ...context.repo,
+              state: 'closed',
+              base: 'master',
+              sort: 'updated',
+              direction: 'desc',
+              per_page: 100,
+            });
+            const ordinaryMerge = mergedPullRequests.find((pullRequest) =>
+              pullRequest.merged_at &&
+              Date.parse(pullRequest.merged_at) >= startedAt &&
+              pullRequest.base.ref === 'master' &&
+              !pullRequest.labels.some(({name}) => name === 'autorelease: pending')
+            );
+            if (!ordinaryMerge) {
+              core.info('no ordinary master merge belongs to this auto-merge run');
+              return;
+            }
+            const openPullRequests = await github.paginate(github.rest.pulls.list, {
+              ...context.repo,
+              state: 'open',
+              base: 'master',
+              per_page: 100,
+            });
+            const candidate = openPullRequests.find((pullRequest) =>
+              pullRequest.head.repo?.full_name === `${context.repo.owner}/${context.repo.repo}` &&
+              pullRequest.labels.some(({name}) => name === 'autorelease: pending')
+            );
+            if (!candidate) {
+              core.info('no active release candidate needs refresh');
+              return;
+            }
+            const {data: master} = await github.rest.repos.getBranch({
+              ...context.repo,
+              branch: 'master',
+            });
+            if (candidate.base.sha === master.commit.sha) {
+              core.info('release candidate base already matches master');
+              return;
+            }
+            await github.rest.repos.createDispatchEvent({
+              ...context.repo,
+              event_type: 'release_candidate_refresh',
+              client_payload: {
+                trigger_pull_request: ordinaryMerge.number,
+                merge_commit_sha: ordinaryMerge.merge_commit_sha,
+                candidate_number: candidate.number,
+              },
+            });
+            core.info(
+              `requested refresh for release candidate #${candidate.number} after ` +
+              `ordinary PR #${ordinaryMerge.number} merged to master`,
+            );
