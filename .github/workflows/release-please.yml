@@ -131,30 +131,68 @@ jobs:
             if (
               candidate.state !== 'open' ||
               candidate.base.ref !== 'master' ||
+              candidate.user?.login !== 'github-actions[bot]' ||
+              !candidate.head.ref.startsWith('release-please--branches--master') ||
               candidate.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
-              candidate.head.sha !== run.candidate_head_sha ||
               !candidate.labels.some(({name}) => name === 'autorelease: pending')
             ) {
-              throw new Error('refresh candidate is not the active repository-owned release candidate');
+              throw new Error('refresh candidate is not the owner-authorized Release Please candidate');
+            }
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: candidate.number,
+              per_page: 100,
+            });
+            const intentMarker = /<!-- aletheia-release-intent run=(\d+) -->/;
+            let ownerIntent = false;
+            for (const comment of comments) {
+              if (comment.user?.login !== 'github-actions[bot]') continue;
+              const match = String(comment.body || '').match(intentMarker);
+              if (!match) continue;
+              const intentRunId = Number.parseInt(match[1], 10);
+              if (!Number.isInteger(intentRunId) || intentRunId <= 0) continue;
+              try {
+                const {data: intentRun} = await github.rest.actions.getWorkflowRun({
+                  ...context.repo,
+                  run_id: intentRunId,
+                });
+                if (
+                  intentRun.path === '.github/workflows/release-please.yml' &&
+                  intentRun.event === 'workflow_dispatch' &&
+                  intentRun.actor?.login === context.repo.owner &&
+                  intentRun.head_branch === 'master' &&
+                  (
+                    intentRun.status === 'in_progress' ||
+                    intentRun.status === 'completed'
+                  )
+                ) {
+                  ownerIntent = true;
+                  break;
+                }
+              } catch (error) {
+                core.info(`ignoring invalid release-intent run ${intentRunId}: ${error}`);
+              }
+            }
+            if (!ownerIntent) {
+              throw new Error('refresh candidate has no owner-authorized release-intent marker');
             }
 
             const {data: master} = await github.rest.repos.getBranch({
               ...context.repo,
               branch: 'master',
             });
-            if (master.commit.sha !== run.master_sha) {
-              throw new Error('master advanced after the refresh request; re-run the trusted refresh');
-            }
             const comparison = await github.rest.repos.compareCommits({
               ...context.repo,
               base: candidate.head.sha,
               head: master.commit.sha,
             });
             if (
-              comparison.data.merge_base_commit.sha !== run.merge_base_sha ||
-              comparison.data.merge_base_commit.sha === master.commit.sha
+              candidate.head.sha !== run.candidate_head_sha ||
+              master.commit.sha !== run.master_sha ||
+              comparison.data.merge_base_commit.sha !== run.merge_base_sha
             ) {
-              throw new Error('refresh candidate is not the expected stale branch');
+              core.info('refresh payload is stale; continuing with the current candidate/master relationship');
             }
 
             const {data: trigger} = await github.rest.pulls.get({
@@ -204,6 +242,43 @@ jobs:
           else
             release_please release-pr
           fi
+      - name: Bind the release candidate to owner intent
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
+        with:
+          retries: 3
+          script: |
+            const {data: pullRequests} = await github.rest.pulls.list({
+              ...context.repo,
+              state: 'open',
+              base: 'master',
+            });
+            const candidate = pullRequests.find((pullRequest) =>
+              pullRequest.user?.login === 'github-actions[bot]' &&
+              pullRequest.head.ref.startsWith('release-please--branches--master') &&
+              pullRequest.labels.some(({name}) => name === 'autorelease: pending')
+            );
+            if (!candidate) {
+              core.info('release preparation produced no active candidate');
+              return;
+            }
+            const marker = `<!-- aletheia-release-intent run=${context.runId} -->`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: candidate.number,
+              per_page: 100,
+            });
+            if (comments.some(({user, body}) =>
+              user?.login === 'github-actions[bot]' && String(body || '').includes(marker)
+            )) {
+              core.info(`release candidate #${candidate.number} already carries this owner intent`);
+              return;
+            }
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: candidate.number,
+              body: `Owner-authorized release preparation run ${context.runId} bound this candidate.\n\n${marker}`,
+            });
       - name: Run CI for the pending release pull request
         if: >-
           github.event_name != 'repository_dispatch' ||

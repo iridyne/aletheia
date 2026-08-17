@@ -469,14 +469,22 @@ def test_systemd_install_migrates_owned_legacy_timer(tmp_path, monkeypatch):
     monkeypatch.setattr(git_ops, "is_repo", lambda: True)
     unit_dir = tmp_path / "units"
     unit_dir.mkdir()
-    for name in auto._UNIT_NAMES:
-        (unit_dir / name).write_text(auto._SYSTEMD_MARKER + "\nlegacy", encoding="utf-8")
+    (unit_dir / "aletheia-auto-update.service").write_text(
+        auto._SYSTEMD_MARKER + "\nEnvironment=ALETHEIA_DATA_DIR=/srv/aletheia-data\nlegacy",
+        encoding="utf-8",
+    )
+    (unit_dir / "aletheia-auto-update.timer").write_text(
+        auto._SYSTEMD_MARKER + "\nlegacy", encoding="utf-8"
+    )
     monkeypatch.setattr(auto, "_unit_dir", lambda: unit_dir)
     monkeypatch.setattr(auto, "_uv", lambda: "/usr/bin/uv")
     monkeypatch.setattr(auto, "_systemctl", lambda *args: None)
 
     assert auto.install()["reason"] == "installed"
     assert "Environment=ALETHEIA_RUNTIME_ROLE=paper" in (
+        unit_dir / "aletheia-auto-update.service"
+    ).read_text(encoding="utf-8")
+    assert "Environment=ALETHEIA_DATA_DIR=/srv/aletheia-data" in (
         unit_dir / "aletheia-auto-update.service"
     ).read_text(encoding="utf-8")
     assert "OnUnitInactiveSec=5min" in (unit_dir / "aletheia-auto-update.timer").read_text(encoding="utf-8")

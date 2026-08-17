@@ -575,9 +575,10 @@ def _unit_dir() -> Path:
     return Path.home() / ".config" / "systemd" / "user"
 
 
-def _units() -> dict[str, str]:
+def _units(*, data_dir: str | None = None) -> dict[str, str]:
     uv = _uv()
-    data_dir = os.environ.get("ALETHEIA_DATA_DIR", "").strip()
+    if data_dir is None:
+        data_dir = os.environ.get("ALETHEIA_DATA_DIR", "").strip()
     runtime_role = os.environ.get(_RUNTIME_ROLE_ENV, "").strip()
     env = "".join(
         f"Environment={name}={value}\n"
@@ -597,6 +598,19 @@ def _units() -> dict[str, str]:
     return {"aletheia-auto-update.service": service, "aletheia-auto-update.timer": timer}
 
 
+def _owned_unit_data_dir(path: Path) -> str:
+    """Read the generated data root so a role-only migration cannot drop it."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    prefix = "Environment=ALETHEIA_DATA_DIR="
+    for line in text.splitlines():
+        if line.startswith(prefix):
+            return line.removeprefix(prefix).strip()
+    return ""
+
+
 def _systemctl(*args: str) -> None:
     result = subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True)
     if result.returncode:
@@ -611,11 +625,14 @@ def install() -> dict[str, Any]:
     directory = _unit_dir()
     directory.mkdir(parents=True, exist_ok=True)
     try:
-        units = _units()
         for name in _UNIT_NAMES:
             path = directory / name
             if path.exists() and _SYSTEMD_MARKER not in path.read_text(encoding="utf-8", errors="replace"):
                 return {"ok": False, "reason": "systemd_unit_ownership_conflict", "detail": name}
+        data_dir = os.environ.get("ALETHEIA_DATA_DIR", "").strip()
+        if not data_dir:
+            data_dir = _owned_unit_data_dir(directory / "aletheia-auto-update.service")
+        units = _units(data_dir=data_dir or None)
     except AutoUpdateError as exc:
         return {"ok": False, "reason": exc.reason, "detail": exc.detail}
     for name, content in units.items():

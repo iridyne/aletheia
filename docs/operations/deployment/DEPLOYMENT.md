@@ -116,6 +116,10 @@ ALETHEIA_RUNTIME_ROLE=paper uv run aletheia update auto install
 ALETHEIA_RUNTIME_ROLE=paper uv run aletheia update auto status
 ```
 
+如果迁移命令没有同时设置 `ALETHEIA_DATA_DIR`，Aletheia 会从自己管理的旧
+service unit 读取并保留原有数据根；不会静默切回 `~/.aletheia`。非 Aletheia
+所有的 unit 仍按 ownership marker 拒绝覆盖。
+
 安装不会重启或改变 Gateway；如需移除旧 timer，仍只删除自己带 ownership marker 的 unit：
 
 ```sh

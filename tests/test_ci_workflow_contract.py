@@ -298,8 +298,8 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
         "issues": "write",
         "pull-requests": "write",
     }
-    assert len(job["steps"]) == 5
-    validate, refresh_validate, node, release, dispatch = job["steps"]
+    assert len(job["steps"]) == 6
+    validate, refresh_validate, node, release, bind_intent, dispatch = job["steps"]
     assert "github.event.action == 'release_candidate_merged'" in validate["if"]
     assert validate["uses"] == GITHUB_SCRIPT_ACTION
     validate_script = validate["with"]["script"]
@@ -315,9 +315,12 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
     assert "getWorkflowRun" in refresh_script
     assert "refresh-release-candidate.yml" in refresh_script
     assert "sourceRun.status === 'in_progress'" in refresh_script
+    assert "release-intent run=" in refresh_script
+    assert "candidate.user?.login !== 'github-actions[bot]'" in refresh_script
+    assert "candidate.head.ref.startsWith('release-please--branches--master')" in refresh_script
     assert "candidate.head.sha !== run.candidate_head_sha" in refresh_script
     assert "compareCommits" in refresh_script
-    assert "merge_base_commit.sha !== run.merge_base_sha" in refresh_script
+    assert "refresh payload is stale" in refresh_script
     assert "trigger.merge_commit_sha !== run.merge_commit_sha" in refresh_script
     assert node["uses"] == SETUP_NODE_ACTION
     assert node["with"] == {"node-version": "22"}
@@ -338,6 +341,11 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
     assert "--target-branch=master" in commands
     assert "--config-file=release-please-config.json" in commands
     assert "--manifest-file=.release-please-manifest.json" in commands
+    assert bind_intent["if"] == "github.event_name == 'workflow_dispatch'"
+    bind_script = bind_intent["with"]["script"]
+    assert "aletheia-release-intent run=" in bind_script
+    assert "github-actions[bot]" in bind_script
+    assert "issues.createComment" in bind_script
     assert dispatch["uses"] == GITHUB_SCRIPT_ACTION
     assert "github.event_name != 'repository_dispatch'" in dispatch["if"]
     assert "github.event.action == 'release_candidate_refresh'" in dispatch["if"]
@@ -377,7 +385,12 @@ def test_release_candidate_refresh_only_dispatches_for_an_active_stale_candidate
     assert workflow["permissions"] == {"contents": "read"}
     job = workflow["jobs"]["refresh"]
     assert job["if"] == "github.event.workflow_run.conclusion == 'success'"
-    assert job["permissions"] == {"contents": "write", "pull-requests": "read"}
+    assert job["permissions"] == {
+        "actions": "read",
+        "contents": "write",
+        "issues": "read",
+        "pull-requests": "read",
+    }
     script = job["steps"][0]["with"]["script"]
     assert "pulls.list" in script
     assert "autorelease: pending" in script
@@ -391,6 +404,8 @@ def test_release_candidate_refresh_only_dispatches_for_an_active_stale_candidate
     assert "source_run_id: context.runId" in script
     assert "candidate_head_sha: candidate.head.sha" in script
     assert "merge_base_sha: comparison.data.merge_base_commit.sha" in script
+    assert "trustedCandidate" in script
+    assert "aletheia-release-intent run=" in script
     assert "release_candidate_refresh" in script
 
 

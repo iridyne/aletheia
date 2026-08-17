@@ -14,7 +14,9 @@ jobs:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       contents: write
+      issues: read
       pull-requests: read
     steps:
       - name: Dispatch refresh only for an active candidate after an ordinary merge
@@ -61,12 +63,56 @@ jobs:
               base: 'master',
               per_page: 100,
             });
-            const candidate = openPullRequests.find((pullRequest) =>
-              pullRequest.head.repo?.full_name === `${context.repo.owner}/${context.repo.repo}` &&
-              pullRequest.labels.some(({name}) => name === 'autorelease: pending')
-            );
+            const trustedCandidate = async (pullRequest) => {
+              if (
+                pullRequest.user?.login !== 'github-actions[bot]' ||
+                !pullRequest.head.ref.startsWith('release-please--branches--master') ||
+                pullRequest.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
+                !pullRequest.labels.some(({name}) => name === 'autorelease: pending')
+              ) {
+                return false;
+              }
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                ...context.repo,
+                issue_number: pullRequest.number,
+                per_page: 100,
+              });
+              const intentMarker = /<!-- aletheia-release-intent run=(\d+) -->/;
+              for (const comment of comments) {
+                if (comment.user?.login !== 'github-actions[bot]') continue;
+                const match = String(comment.body || '').match(intentMarker);
+                if (!match) continue;
+                const intentRunId = Number.parseInt(match[1], 10);
+                if (!Number.isInteger(intentRunId) || intentRunId <= 0) continue;
+                try {
+                  const {data: intentRun} = await github.rest.actions.getWorkflowRun({
+                    ...context.repo,
+                    run_id: intentRunId,
+                  });
+                  if (
+                    intentRun.path === '.github/workflows/release-please.yml' &&
+                    intentRun.event === 'workflow_dispatch' &&
+                    intentRun.actor?.login === context.repo.owner &&
+                    intentRun.head_branch === 'master' &&
+                    (intentRun.status === 'in_progress' || intentRun.status === 'completed')
+                  ) {
+                    return true;
+                  }
+                } catch (error) {
+                  core.info(`ignoring invalid release-intent run ${intentRunId}: ${error}`);
+                }
+              }
+              return false;
+            };
+            let candidate = null;
+            for (const pullRequest of openPullRequests) {
+              if (await trustedCandidate(pullRequest)) {
+                candidate = pullRequest;
+                break;
+              }
+            }
             if (!candidate) {
-              core.info('no active release candidate needs refresh');
+              core.info('no owner-authorized active release candidate needs refresh');
               return;
             }
             const {data: master} = await github.rest.repos.getBranch({

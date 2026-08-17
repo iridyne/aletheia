@@ -251,10 +251,12 @@ timer) with `ALETHEIA_RUNTIME_ROLE=paper uv run aletheia update auto install`,
 inspect it with `update auto status`, and use `update auto resume` only after
 resolving a global recovery hold. A timer without the explicit role is kept
 pinned and reports the migration reason; it is never guessed to be Paper. The
-timer ignores prerelease tags, pins the selected Tag SHA, requires a clean
-fast-forward-only `master`, Paper mode, Live off, and healthy Gateway/provider/
-settlement baselines, and rolls back activation failures. The complete gates
-and failure policy are authoritative in
+role-only migration preserves an existing Aletheia-managed `ALETHEIA_DATA_DIR`
+from the service unit when the shell does not export one. The timer ignores
+prerelease tags, pins the selected Tag SHA, requires a clean fast-forward-only
+`master`, Paper mode, Live off, and healthy Gateway/provider/
+settlement baselines, and rolls back activation failures. The complete gates and
+failure policy are authoritative in
 [`DEPLOYMENT.md`](../deployment/DEPLOYMENT.md#无人值守升级边界).
 
 ## 10. Health & observability
