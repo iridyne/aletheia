@@ -1193,6 +1193,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         entry_price=entry_price,
         current_price=float(exchange_pos.get("mark_price") or 0) or None,
         unrealized_pnl=float(exchange_pos.get("unrealized_pnl") or 0),
+        unrealized_pnl_source="exchange_exact",
         execution_mode=execution_mode,
         leverage=leverage,
         proposal_id=proposal.id,

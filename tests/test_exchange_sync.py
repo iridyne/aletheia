@@ -349,6 +349,7 @@ def test_adopted_positions_carry_synthetic_chain(tmp_path, monkeypatch):
     assert prop["source"] == "adopted"
     assert pos["proposal_id"] == prop["id"]
     assert pos["order_id"] == order["id"]
+    assert pos["unrealized_pnl_source"] == "exchange_exact"
     # Honest mapping: demo account → bitget_demo (so position_manager auto-manages it).
     assert pos["execution_mode"] == "bitget_demo"
     # Entry/qty come from the exchange truth, not fabricated.

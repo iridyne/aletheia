@@ -351,9 +351,15 @@ def _select_exchange_upnl(
     account_fingerprint: str,
     broker_position_id: str | None,
     local_match_count: int,
+    local_identity_match_count: int,
 ) -> tuple[float | None, str]:
     """Select one exchange value and return its owner-facing match status."""
     if broker_position_id:
+        if local_identity_match_count != 1:
+            return (
+                None,
+                "ambiguous" if _index_has_base(index, base) else "unavailable",
+            )
         for fingerprint in (account_fingerprint, ""):
             key = (*base, fingerprint, broker_position_id)
             if key in index:
@@ -398,6 +404,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
     # Position identity, one aggregate uPnL cannot be allocated independently to
     # multiple local Position rows that share the same current match key.
     local_match_counts: dict[tuple[str, str, str, str], int] = {}
+    local_identity_match_counts: dict[tuple[str, str, str, str, str, str], int] = {}
     for position in positions:
         execution_mode = str(position.get("execution_mode") or "")
         if execution_mode == "paper_internal":
@@ -414,6 +421,12 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
             norm_dir,
         )
         local_match_counts[match_key] = local_match_counts.get(match_key, 0) + 1
+        account_fingerprint, broker_position_id, identity_valid = _local_upnl_identity(position)
+        if identity_valid and broker_position_id:
+            identity_key = (*match_key, account_fingerprint, broker_position_id)
+            local_identity_match_counts[identity_key] = (
+                local_identity_match_counts.get(identity_key, 0) + 1
+            )
 
     updated = []
     for p in positions:
@@ -445,6 +458,10 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
                 account_fingerprint=account_fingerprint,
                 broker_position_id=broker_position_id,
                 local_match_count=local_match_counts.get(match_key, 0),
+                local_identity_match_count=local_identity_match_counts.get(
+                    (*match_key, account_fingerprint, broker_position_id or ""),
+                    0,
+                ),
             )
         elif execution_mode != "paper_internal" and not identity_valid:
             upnl_source = "unavailable"

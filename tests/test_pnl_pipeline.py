@@ -388,6 +388,56 @@ def test_exchange_position_identity_disambiguates_same_instrument_rows(
     assert marked["upnl-position-b"]["unrealized_pnl_source"] == "exchange_exact"
 
 
+def test_duplicate_local_broker_position_identity_falls_back(
+    db, monkeypatch,
+):
+    """Duplicate local rows cannot both adopt one exact venue uPnL value."""
+    from aletheia.portfolio import exchange_sync, pnl
+    from aletheia.portfolio.disappearance_confirmation import logical_account_fingerprint
+
+    account_fingerprint = logical_account_fingerprint(
+        broker_id="okx_demo",
+        account_environment="demo",
+        execution_mode="okx_demo",
+    )
+    for position_id, entry_price in (("upnl-duplicate-a", 100.0), ("upnl-duplicate-b", 120.0)):
+        repo.insert_position(Position(
+            id=position_id,
+            symbol="BTC/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            quantity=1.0,
+            entry_price=entry_price,
+            execution_mode="okx_demo",
+            reconciliation_identity=json.dumps({
+                "account_fingerprint": account_fingerprint,
+                "broker_position_id": "venue-duplicate",
+            }),
+        ))
+    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "age_seconds": 0.0,
+        "positions": [{
+            "broker_id": "okx_demo",
+            "account_fingerprint": account_fingerprint,
+            "position_id": "venue-duplicate",
+            "symbol": "BTC/USDT",
+            "market_type": "usdt_futures",
+            "side": "long",
+            "unrealized_pnl": 777.0,
+        }],
+    })
+
+    marked = {
+        row["id"]: row for row in pnl.mark_positions_to_market(persist=True)
+    }
+
+    assert marked["upnl-duplicate-a"]["unrealized_pnl"] == 10.0
+    assert marked["upnl-duplicate-a"]["unrealized_pnl_source"] == "ambiguous"
+    assert marked["upnl-duplicate-b"]["unrealized_pnl"] == -10.0
+    assert marked["upnl-duplicate-b"]["unrealized_pnl_source"] == "ambiguous"
+
+
 def test_exchange_exact_short_does_not_inherit_long_upnl(
     db, monkeypatch,
 ):
