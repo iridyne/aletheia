@@ -127,7 +127,9 @@ def test_learning_settings_uses_registry_backed_path_checkboxes():
     settings = (
         root / "frontend/src/features/settings/tabs/AgentModelsTab.tsx"
     ).read_text(encoding="utf-8")
-    client = (root / "frontend/src/api/client.ts").read_text(encoding="utf-8")
+    generated_settings = (
+        root / "frontend/src/api/generated/settings.d.ts"
+    ).read_text(encoding="utf-8")
     start = settings.index('label="Allowed paper paths"')
     end = settings.index('label="Auto-refreeze"', start)
     section = settings[start:end]
@@ -138,8 +140,8 @@ def test_learning_settings_uses_registry_backed_path_checkboxes():
     assert "Measurement unwired" in section
     assert "Authority unwired" in section
     assert ".split(',')" not in section
-    assert "consumer_unwired" in client
-    assert "measurement_unwired" in client
+    assert "consumer_unwired" in generated_settings
+    assert "measurement_unwired" in generated_settings
 
 
 @spec_claim(
