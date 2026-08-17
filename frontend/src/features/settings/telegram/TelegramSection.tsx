@@ -263,6 +263,7 @@ export function TelegramSection({
 				<div className="settings-action-row settings-action-row-start">
 					<Toggle
 						checked={enabled}
+						persistence="staged"
 						label="Telegram delivery"
 						onChange={(value) => {
 							setEnabled(value);
@@ -273,6 +274,7 @@ export function TelegramSection({
 				<div className="settings-action-row settings-action-row-start">
 					<Toggle
 						checked={notifyFills}
+						persistence="staged"
 						label="Trade fill notifications"
 						onChange={(value) => {
 							setNotifyFills(value);
@@ -283,6 +285,7 @@ export function TelegramSection({
 				<div className="settings-action-row settings-action-row-start">
 					<Toggle
 						checked={notifySummary}
+						persistence="staged"
 						label={`Daily PnL summary (${summaryHourLabel.padStart(2, "0")}:00 CST)`}
 						onChange={(value) => {
 							setNotifySummary(value);
@@ -316,6 +319,7 @@ export function TelegramSection({
 				<div className="settings-action-row settings-action-row-start">
 					<Toggle
 						checked={dndEnabled}
+						persistence="staged"
 						label="Do-not-disturb (suppress info alerts)"
 						onChange={(value) => {
 							setDndEnabled(value);

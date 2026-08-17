@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hasUncontrolledDraft, isFallbackDraftControl, isUnsavedEdit, shouldBlockNavigation } from "./dirtyGuard";
+import SETTINGS_PAGE from "../../pages/Settings.tsx?raw";
 
 describe("isUnsavedEdit", () => {
 	it("treats a text input as an edit", () => {
@@ -47,6 +48,14 @@ describe("shouldBlockNavigation", () => {
 
 	it("does not block a clean tab", () => {
 		expect(shouldBlockNavigation(0, false)).toBe(false);
+	});
+});
+
+describe("Settings staged draft boundary", () => {
+	it("exposes a visible discard action that remounts the active draft", () => {
+		expect(SETTINGS_PAGE).toContain("Unsaved staged changes");
+		expect(SETTINGS_PAGE).toContain("Discard changes");
+		expect(SETTINGS_PAGE).toContain("setDraftEpoch(epoch => epoch + 1)");
 	});
 });
 

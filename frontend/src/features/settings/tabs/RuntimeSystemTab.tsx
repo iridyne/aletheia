@@ -96,7 +96,7 @@ function HistoricalDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   return (
     <div className="space-y-4">
-      <ToggleGrid fields={boolFields} vals={vals} set={setBool} />
+      <ToggleGrid fields={boolFields} vals={vals} set={setBool} persistence="staged" />
       <NumGrid fields={numFields} vals={vals} set={setNum} />
       <button onClick={() => save()} className="btn btn-primary btn-sm mt-2">Save Historical Data</button>
       <SaveMsg msg={msg} />
@@ -111,6 +111,7 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
   const remoteBindHosts = Array.isArray(remoteControl.bind_hosts) ? remoteControl.bind_hosts as string[] : []
   const [remoteToken, setRemoteToken] = useState('')
   const [remoteTokenMessage, setRemoteTokenMessage] = useState<{ ok: boolean; text: string } | null>(null)
+  const [immediateError, setImmediateError] = useState<string | null>(null)
   const storeRemoteControlToken = () => {
     const result = api.setRemoteControlToken(remoteToken)
     setRemoteTokenMessage({
@@ -130,18 +131,22 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
 
   const appMut = useMutation({
     mutationFn: (body: any) => api.updateAppConfig(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { setImmediateError(null); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onError: (error: any) => setImmediateError(`App setting failed: ${error?.message || 'request failed'}`),
   })
   const runtimeMut = useMutation({
     mutationFn: (body: any) => api.updateRuntimeConfig(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] }),
+    onSuccess: () => { setImmediateError(null); qc.invalidateQueries({ queryKey: ['settings'] }) },
+    onError: (error: any) => setImmediateError(`Runtime setting failed: ${error?.message || 'request failed'}`),
   })
   const remoteControlMut = useMutation({
     mutationFn: (body: { enabled?: boolean; bind_hosts?: string[]; require_token?: boolean; api_token?: string }) => api.updateRemoteControl(body),
     onSuccess: () => {
+      setImmediateError(null)
       if (remoteToken.trim()) storeRemoteControlToken()
       qc.invalidateQueries({ queryKey: ['settings'] })
     },
+    onError: (error: any) => setImmediateError(`Remote Control setting failed: ${error?.message || 'request failed'}`),
   })
   const runtimePending = useRef(false)
   useSettingsDraftLifecycle({
@@ -161,6 +166,7 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
 
   return (
     <>
+      {immediateError && <div className="settings-save-msg err" role="alert">{immediateError}</div>}
       <Row label="App name" hint="Read-only product identity from config.yaml.">
         <span className="mono text-sm">{app.name || 'Aletheia Trading OS'}</span>
       </Row>
@@ -185,6 +191,7 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
       <Row label="Remote Control" hint="Allow HTTP API control over selected EasyTier or LAN adapter addresses. It is off by default and requires a gateway restart after changes.">
         <Toggle
           checked={!!remoteControl.enabled}
+          persistence="immediate"
           onChange={enabled => remoteControlMut.mutate({ enabled })}
           disabled={remoteControlMut.isPending || (!remoteControl.enabled && remoteBindHosts.length === 0)}
         />
@@ -216,6 +223,7 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
       <Row label="Remote Control Token" hint="Optional owner-token protection for every private API. Turn it on only after entering a Token; Cloudflare Tunnel always requires a Token.">
         <Toggle
           checked={!!remoteControl.require_token}
+          persistence="immediate"
           onChange={require_token => remoteControlMut.mutate({
             require_token,
             ...(remoteToken.trim() ? { api_token: remoteToken.trim() } : {}),
@@ -249,7 +257,7 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
         <span className="mono text-sm">{runtime.gateway_mode || 'background'}</span>
       </Row>
       <Row label="Auto-open browser" hint="Open the dashboard in a browser tab automatically when the gateway starts.">
-        <Toggle checked={autoBrowser} onChange={v => appMut.mutate({ auto_open_browser: v })} disabled={appMut.isPending} />
+        <Toggle checked={autoBrowser} persistence="immediate" onChange={v => appMut.mutate({ auto_open_browser: v })} disabled={appMut.isPending} />
       </Row>
       <Row label="Cumulative PnL mode" hint="Full cumulative: every range shows the same all-time curve, the end point never changes. Window relative: each range re-accumulates from 0, so 7D shows only what was earned in the last 7 days.">
         <select
@@ -263,19 +271,19 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
         </select>
       </Row>
       <Row label="Git versioning of data" hint="When enabled, knowledge, playbooks, and reports are committed to git automatically for history and rollback.">
-        <Toggle checked={gitEnabled} onChange={v => {
+        <Toggle checked={gitEnabled} persistence="immediate" onChange={v => {
           if (!v && !confirm('Disable git versioning? Knowledge, playbooks, and reports will no longer be committed.')) return
           safeRuntimeMut({ git_enabled: v })
         }} disabled={runtimeMut.isPending} />
       </Row>
       <Row label="Auto-reload Python changes" hint="Development convenience for hot-reloading backend code. Turn off before a controlled live run.">
-        <Toggle checked={runtime.auto_reload !== false} onChange={v => {
+        <Toggle checked={runtime.auto_reload !== false} persistence="immediate" onChange={v => {
           if (v && !confirm('Enable auto-reload? Code changes will hot-reload mid-run. Disable before controlled live sessions.')) return
           safeRuntimeMut({ auto_reload: v })
         }} disabled={runtimeMut.isPending} />
       </Row>
       <Row label="Runtime continuity" hint="Experimental: enables shadow gateway staging for zero-disruption upgrades. When off, updates use legacy restart.">
-        <Toggle checked={!!runtime.runtime_continuity_enabled} onChange={v => safeRuntimeMut({ runtime_continuity_enabled: v })} disabled={runtimeMut.isPending} />
+        <Toggle checked={!!runtime.runtime_continuity_enabled} persistence="immediate" onChange={v => safeRuntimeMut({ runtime_continuity_enabled: v })} disabled={runtimeMut.isPending} />
       </Row>
       {!!runtime.runtime_continuity_enabled && (
         <>
@@ -414,7 +422,7 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
       {/* Config */}
       <div className="flex items-center gap-2 mb-3">
-        <Toggle checked={enabled} label="Auto-update enabled" onChange={v => { setEnabled(v); setCfgMsg(null) }} />
+        <Toggle checked={enabled} persistence="staged" label="Auto-update enabled" onChange={v => { setEnabled(v); setCfgMsg(null) }} />
       </div>
       <div className="form-grid mb-3">
         <label>
@@ -524,7 +532,7 @@ function NetworkCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         />
       </Row>
       <Row label="Enforce (fail-closed)" hint="Require ALL outbound traffic to go through the proxy. If the proxy is unreachable, requests fail and trading auto-pauses instead of silently connecting direct and leaking your real IP. Recommended for production.">
-        <Toggle checked={enforce} onCheckedChange={setEnforce} label={enforce ? 'Strict — proxy required' : 'Off — direct fallback allowed'} />
+        <Toggle checked={enforce} persistence="staged" onCheckedChange={setEnforce} label={enforce ? 'Strict — proxy required' : 'Off — direct fallback allowed'} />
       </Row>
       <Row label="No Proxy" hint="Comma-separated hosts to bypass. Loopback (127.0.0.1, localhost, ::1) is always bypassed automatically.">
         <input

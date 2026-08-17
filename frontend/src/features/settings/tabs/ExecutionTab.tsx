@@ -210,8 +210,8 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
   return (
     <>
       <Row label="Enabled markets" hint="Which Bitget market types agents can place orders in. At least one must be enabled.">
-        <Toggle checked={spot} label="Spot" onChange={v => { setSpot(v); setMsg(null) }} />
-        <Toggle checked={futures} label="USDT Futures" onChange={v => { setFutures(v); setMsg(null) }} />
+        <Toggle checked={spot} persistence="staged" label="Spot" onChange={v => { setSpot(v); setMsg(null) }} />
+        <Toggle checked={futures} persistence="staged" label="USDT Futures" onChange={v => { setFutures(v); setMsg(null) }} />
       </Row>
       <Row label="Paper execution mode" hint="Where autonomous paper orders execute. okx_demo = OKX simulated trading (broad coverage); binance_testnet = Binance Futures Testnet (556 pairs); bitget_demo = Bitget demo API (42 pairs); paper_internal = local simulator (no exchange).">
         <select value={paperMode} onChange={e => { setPaperMode(e.target.value); setConfirmExchangeDivergence(false); setMsg(null) }} className="w-auto">
@@ -223,6 +223,7 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
         {createsDivergence && (
           <Toggle
             checked={confirmExchangeDivergence}
+            persistence="staged"
             onChange={setConfirmExchangeDivergence}
             label={`Confirm ${executionExchange} execution with ${dataExchange} market data`}
           />

@@ -1,6 +1,6 @@
 import { type ReactNode, useId, useState } from 'react'
 import { SettingsRowLabelContext } from './SettingsRowLabelContext'
-import { Switch } from './Switch'
+import { Switch, type SwitchPersistence } from './Switch'
 
 export interface NumField {
   key: string
@@ -147,10 +147,13 @@ export function SwitchGrid({
   fields,
   vals,
   set,
+  persistence,
 }: {
   fields: readonly BoolField[]
   vals: Record<string, unknown>
   set: (key: string, value: boolean) => void
+  /** Grid controls must declare the same persistence contract as each switch. */
+  persistence: SwitchPersistence
 }) {
   return (
     <div className="settings-toggle-grid">
@@ -159,6 +162,7 @@ export function SwitchGrid({
           key={f.key}
           checked={!!vals[f.key]}
           label={f.label}
+          persistence={persistence}
           onCheckedChange={v => set(f.key, v)}
         />
       ))}

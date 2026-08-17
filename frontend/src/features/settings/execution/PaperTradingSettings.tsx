@@ -378,6 +378,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
       <div className="settings-inline-note">
         <Toggle
           checked={autoAdopt}
+          persistence="staged"
           label="Auto-adopt external demo positions into local management"
           onChange={v => { setAutoAdopt(v); setMsg(null) }}
         />
@@ -390,6 +391,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
         <div className="settings-inline-note">
           <Toggle
             checked={trailEnabled}
+            persistence="staged"
             label="Trailing stop + breakeven move (paper positions)"
             onChange={v => { setTrailEnabled(v); setMsg(null) }}
           />
@@ -421,6 +423,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
         <div className="settings-inline-note">
           <Toggle
             checked={volSizingEnabled}
+            persistence="staged"
             label="Volatility-target sizing (ATR-normalized)"
             onChange={v => { setVolSizingEnabled(v); setMsg(null) }}
           />
@@ -459,6 +462,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
         <div className="settings-inline-note">
           <Toggle
             checked={exchangeTpslEnabled}
+            persistence="staged"
             label="Exchange-native TPSL bracket (Bitget demo/live)"
             onChange={v => { setExchangeTpslEnabled(v); setMsg(null) }}
           />
@@ -472,6 +476,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
         <div className="settings-inline-note">
           <Toggle
             checked={personaEnabled}
+            persistence="staged"
             label="Persona-based sizing (动态 sizing 蓝本)"
             onChange={v => { setPersonaEnabled(v); setMsg(null) }}
           />
@@ -515,6 +520,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
             <div className="mt-2">
               <Toggle
                 checked={personaLearningEnabled}
+                persistence="staged"
                 label="Persona learning (按 regime 干净窗奖励学习 sizing)"
                 onChange={v => { setPersonaLearningEnabled(v); setMsg(null) }}
               />
@@ -535,6 +541,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
             <div className="mt-2">
               <Toggle
                 checked={personaUnlockEnabled}
+                persistence="staged"
                 label="Progressive unlock (逐个解冻 operator-decidable 参数)"
                 onChange={v => { setPersonaUnlockEnabled(v); setMsg(null) }}
               />
@@ -556,6 +563,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
               <div className="mt-2">
                 <Toggle
                   checked={personaAutoAdvance}
+                  persistence="staged"
                   label="Auto-advance rollout (evidence-gated)"
                   onChange={v => { setPersonaAutoAdvance(v); setMsg(null) }}
                 />
@@ -590,6 +598,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
             <div className="mt-2">
               <Toggle
                 checked={personaPyramidEnabled}
+                persistence="staged"
                 disabled={!personaPyramidEnabled}
                 label="Pyramid add-on policy helper (no runtime trigger)"
                 onChange={v => { if (!v) setPersonaPyramidEnabled(false); setMsg(null) }}
@@ -616,6 +625,7 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
         <div className="settings-inline-note">
           <Toggle
             checked={maeEnabled}
+            persistence="staged"
             label="Market-aware review (urgent exit / tighten stop suggestions)"
             onChange={v => { setMaeEnabled(v); setMsg(null) }}
           />
