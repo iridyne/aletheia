@@ -36,8 +36,9 @@ Paper-role deployment are unattended.
 
 If an ordinary PR advances `master` while the release candidate is still open,
 `Refresh release candidate after master advances` observes the completed trusted
-auto-merge run, confirms that an active `autorelease: pending` candidate exists,
-and dispatches a refresh. Release Please then updates the same candidate and
+auto-merge run, confirms that an active repository-owned `autorelease: pending`
+candidate has a stale branch merge-base, and dispatches a refresh authenticated
+to that workflow run. Release Please then updates the same candidate and
 re-runs exact-head CI; the refresh path cannot create a candidate without the
 owner's original release-intent gate.
 

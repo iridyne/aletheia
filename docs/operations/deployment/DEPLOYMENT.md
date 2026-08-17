@@ -59,8 +59,8 @@ Actions 批处理，合并到 `master` 的 release-bearing 提交才会进入该
    Paper/live-disabled 健康门禁。qualification runtime 默认锁定，不随正式 Tag 自动改变。
 
 候选 PR 打开后若普通 PR 又推进了 `master`，可信的 refresh workflow 会在已有候选存在时
-自动更新并重新验证同一个候选；没有 owner 先前的 `operational_need=true` 意图时不会凭空
-创建发布候选。
+以真实 branch merge-base 判断候选是否过期，并用自身 workflow run 身份认证后自动更新并
+重新验证同一个候选；没有 owner 先前的 `operational_need=true` 意图时不会凭空创建发布候选。
 
 正常发布不需要手动登录 Fedora。以下命令只用于首次启用 timer、故障恢复或诊断：
 
