@@ -64,7 +64,12 @@ jobs:
               ...context.repo,
               branch: 'master',
             });
-            if (candidate.base.sha === master.commit.sha) {
+            const comparison = await github.rest.repos.compareCommits({
+              ...context.repo,
+              base: candidate.head.sha,
+              head: master.commit.sha,
+            });
+            if (comparison.data.merge_base_commit.sha === master.commit.sha) {
               core.info('release candidate base already matches master');
               return;
             }
@@ -72,9 +77,13 @@ jobs:
               ...context.repo,
               event_type: 'release_candidate_refresh',
               client_payload: {
+                source_run_id: context.runId,
                 trigger_pull_request: ordinaryMerge.number,
                 merge_commit_sha: ordinaryMerge.merge_commit_sha,
                 candidate_number: candidate.number,
+                master_sha: master.commit.sha,
+                candidate_head_sha: candidate.head.sha,
+                merge_base_sha: comparison.data.merge_base_commit.sha,
               },
             });
             core.info(

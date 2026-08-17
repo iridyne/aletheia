@@ -34,7 +34,10 @@ jobs:
   release:
     name: Maintain release pull request and tag approved releases
     if: >-
-      github.event_name == 'repository_dispatch' ||
+      (
+        github.event_name == 'repository_dispatch' &&
+        github.event.sender.login == 'github-actions[bot]'
+      ) ||
       (
         inputs.operational_need == true &&
         github.actor == github.repository_owner
@@ -71,6 +74,98 @@ jobs:
               commit.parents[0].sha !== run.expected_base_sha
             ) {
               throw new Error('release merge contains commits outside the authorized batch');
+            }
+      - name: Validate the trusted release candidate refresh
+        if: >-
+          github.event_name == 'repository_dispatch' &&
+          github.event.action == 'release_candidate_refresh'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
+        with:
+          retries: 3
+          script: |
+            const run = context.payload.client_payload || {};
+            const sourceRunId = Number.parseInt(run.source_run_id, 10);
+            const candidateNumber = Number.parseInt(run.candidate_number, 10);
+            const triggerPullRequest = Number.parseInt(run.trigger_pull_request, 10);
+            const shaFields = [
+              ['master_sha', run.master_sha],
+              ['candidate_head_sha', run.candidate_head_sha],
+              ['merge_base_sha', run.merge_base_sha],
+              ['merge_commit_sha', run.merge_commit_sha],
+            ];
+            if (!Number.isInteger(sourceRunId) || sourceRunId <= 0) {
+              throw new Error('refresh source workflow run must be a positive integer');
+            }
+            for (const [name, sha] of shaFields) {
+              if (!/^[0-9a-f]{40}$/.test(sha || '')) {
+                throw new Error(`${name} must be a 40-character lowercase Git object ID`);
+              }
+            }
+            if (!Number.isInteger(candidateNumber) || candidateNumber <= 0) {
+              throw new Error('refresh candidate number must be a positive integer');
+            }
+            if (!Number.isInteger(triggerPullRequest) || triggerPullRequest <= 0) {
+              throw new Error('refresh trigger pull request must be a positive integer');
+            }
+
+            const {data: sourceRun} = await github.rest.actions.getWorkflowRun({
+              ...context.repo,
+              run_id: sourceRunId,
+            });
+            if (
+              sourceRun.path !== '.github/workflows/refresh-release-candidate.yml' ||
+              sourceRun.event !== 'workflow_run' ||
+              sourceRun.head_branch !== 'master' ||
+              sourceRun.conclusion !== 'success'
+            ) {
+              throw new Error('refresh dispatch did not originate from the trusted refresh workflow');
+            }
+
+            const {data: candidate} = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: candidateNumber,
+            });
+            if (
+              candidate.state !== 'open' ||
+              candidate.base.ref !== 'master' ||
+              candidate.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}` ||
+              candidate.head.sha !== run.candidate_head_sha ||
+              !candidate.labels.some(({name}) => name === 'autorelease: pending')
+            ) {
+              throw new Error('refresh candidate is not the active repository-owned release candidate');
+            }
+
+            const {data: master} = await github.rest.repos.getBranch({
+              ...context.repo,
+              branch: 'master',
+            });
+            if (master.commit.sha !== run.master_sha) {
+              throw new Error('master advanced after the refresh request; re-run the trusted refresh');
+            }
+            const comparison = await github.rest.repos.compareCommits({
+              ...context.repo,
+              base: candidate.head.sha,
+              head: master.commit.sha,
+            });
+            if (
+              comparison.data.merge_base_commit.sha !== run.merge_base_sha ||
+              comparison.data.merge_base_commit.sha === master.commit.sha
+            ) {
+              throw new Error('refresh candidate is not the expected stale branch');
+            }
+
+            const {data: trigger} = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: triggerPullRequest,
+            });
+            if (
+              trigger.state !== 'closed' ||
+              !trigger.merged_at ||
+              trigger.base.ref !== 'master' ||
+              trigger.merge_commit_sha !== run.merge_commit_sha ||
+              trigger.labels.some(({name}) => name === 'autorelease: pending')
+            ) {
+              throw new Error('refresh trigger is not the ordinary merged master pull request');
             }
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7

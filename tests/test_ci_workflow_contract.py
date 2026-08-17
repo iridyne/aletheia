@@ -287,6 +287,7 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
     assert set(workflow["jobs"]) == {"release"}
     job = workflow["jobs"]["release"]
     assert "github.event_name == 'repository_dispatch'" in job["if"]
+    assert "github.event.sender.login == 'github-actions[bot]'" in job["if"]
     assert "inputs.operational_need == true" in job["if"]
     assert "github.actor == github.repository_owner" in job["if"]
     assert job["runs-on"] == SELF_HOSTED
@@ -297,8 +298,8 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
         "issues": "write",
         "pull-requests": "write",
     }
-    assert len(job["steps"]) == 4
-    validate, node, release, dispatch = job["steps"]
+    assert len(job["steps"]) == 5
+    validate, refresh_validate, node, release, dispatch = job["steps"]
     assert "github.event.action == 'release_candidate_merged'" in validate["if"]
     assert validate["uses"] == GITHUB_SCRIPT_ACTION
     validate_script = validate["with"]["script"]
@@ -306,6 +307,17 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
     assert "run.expected_base_sha" in validate_script
     assert "github.rest.repos.getCommit" in validate_script
     assert "commit.parents[0].sha !== run.expected_base_sha" in validate_script
+    assert refresh_validate["if"] == (
+        "github.event_name == 'repository_dispatch' && "
+        "github.event.action == 'release_candidate_refresh'"
+    )
+    refresh_script = refresh_validate["with"]["script"]
+    assert "getWorkflowRun" in refresh_script
+    assert "refresh-release-candidate.yml" in refresh_script
+    assert "candidate.head.sha !== run.candidate_head_sha" in refresh_script
+    assert "compareCommits" in refresh_script
+    assert "merge_base_commit.sha !== run.merge_base_sha" in refresh_script
+    assert "trigger.merge_commit_sha !== run.merge_commit_sha" in refresh_script
     assert node["uses"] == SETUP_NODE_ACTION
     assert node["with"] == {"node-version": "22"}
     assert release["env"] == {
@@ -370,6 +382,11 @@ def test_release_candidate_refresh_only_dispatches_for_an_active_stale_candidate
     assert "autorelease: pending" in script
     assert "merged_at" in script
     assert "branch: 'master'" in script
+    assert "compareCommits" in script
+    assert "merge_base_commit.sha === master.commit.sha" in script
+    assert "source_run_id: context.runId" in script
+    assert "candidate_head_sha: candidate.head.sha" in script
+    assert "merge_base_sha: comparison.data.merge_base_commit.sha" in script
     assert "release_candidate_refresh" in script
 
 
