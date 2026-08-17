@@ -73,7 +73,7 @@ def test_ordinary_auto_merge_authority_is_bound_to_current_head_and_merge_base()
         "cancel-in-progress": "true",
     }
     assert "const dispatchCurrentUpdate" in update_script
-    assert update_script.count("await dispatchCurrentUpdate();") == 2
+    assert update_script.count("await dispatchCurrentUpdate();") == 3
     assert "currentMetadata.head.sha" in update_script
     assert "expected_base_sha: currentMergeBaseSha" in update_script
 
@@ -149,3 +149,44 @@ def test_codex_review_clean_and_triage_evidence_must_postdate_latest_current_req
     assert review_pagination < request_time
     assert comment_pagination < request_time
     assert request_time < chain_validation < no_findings_gate < clean_gate < findings_triage < merge_state_gate
+
+
+def test_auto_merge_revalidates_exact_diff_immediately_before_merge() -> None:
+    update_script = _workflow()["jobs"]["update"]["steps"][0]["with"]["script"]
+
+    merge_state_gate = update_script.index("if (pullRequest.mergeStateStatus !== 'CLEAN')")
+    boundary_metadata = update_script.index(
+        "const {data: mergeBoundaryMetadata} = await github.rest.pulls.get", merge_state_gate
+    )
+    boundary_hold = update_script.index(
+        "mergeBoundaryMetadata.labels.some(({name}) => name === 'do-not-auto-merge')",
+        boundary_metadata,
+    )
+    boundary_compare = update_script.index(
+        "const {data: mergeBoundaryComparison} = await github.rest.repos.compareCommitsWithBasehead",
+        boundary_hold,
+    )
+    boundary_base = update_script.index(
+        "const mergeBoundaryBaseSha = mergeBoundaryComparison.merge_base_commit.sha",
+        boundary_compare,
+    )
+    boundary_mismatch = update_script.index(
+        "if (mergeBoundaryBaseSha !== expectedBaseSha)", boundary_base
+    )
+    redispatch = update_script.index("await dispatchCurrentUpdate();", boundary_mismatch)
+    merge_call = update_script.index("const mergeResult = await github.rest.pulls.merge", redispatch)
+
+    assert "mergeBoundaryMetadata.state !== 'open'" in update_script[boundary_metadata:boundary_compare]
+    assert "mergeBoundaryMetadata.base.ref !== 'master'" in update_script[boundary_metadata:boundary_compare]
+    assert "mergeBoundaryMetadata.draft" in update_script[boundary_metadata:boundary_compare]
+    assert "mergeBoundaryMetadata.head.sha !== expectedHeadSha" in update_script[boundary_metadata:boundary_compare]
+    assert (
+        merge_state_gate
+        < boundary_metadata
+        < boundary_hold
+        < boundary_compare
+        < boundary_base
+        < boundary_mismatch
+        < redispatch
+        < merge_call
+    )
