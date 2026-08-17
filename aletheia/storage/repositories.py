@@ -1681,6 +1681,25 @@ def list_paper_account_events(limit: int = 50) -> list[dict]:
     return _select_all("paper_account_events", order="created_at DESC, rowid DESC", limit=limit)
 
 
+def list_paper_cash_events_between(start_at: str, end_at: str) -> list[dict]:
+    """Return administrative local-paper cash changes inside a snapshot window."""
+    rows = get_db().execute(
+        """
+        SELECT *
+        FROM paper_account_events
+        WHERE action IN (
+            'initial_funding', 'manual_credit', 'manual_debit', 'manual_set_balance'
+        )
+          AND amount_usdt != 0
+          AND datetime(created_at) > datetime(?)
+          AND datetime(created_at) <= datetime(?)
+        ORDER BY datetime(created_at) ASC, rowid ASC
+        """,
+        (start_at, end_at),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_paper_account_cash_balance() -> float:
     db = get_db()
     row = db.execute("SELECT COALESCE(SUM(amount_usdt), 0) AS cash FROM paper_account_events").fetchone()

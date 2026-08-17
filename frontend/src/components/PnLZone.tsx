@@ -7,11 +7,12 @@ import { fmtNum, fmtSigned, fmtCompactSigned, fmtSymbol } from '../lib/format'
 // Legacy local-paper contract is surfaced by AccountSnapshot: execution_target === 'local_paper'.
 
 const AccountEquityChart = lazy(() => import('../charts/AccountEquityChart'))
+const PnLChart = lazy(() => import('../charts/PnLChart'))
 // Bootstrap refresh replaces the old portfolio query cadence:
 // const OVERVIEW_PNL_REFRESH_MS = 10_000
 // refetchInterval: OVERVIEW_PNL_REFRESH_MS
 
-function DeferredEquityChart({ days }: { days?: number }) {
+function DeferredCurve({ days, kind }: { days?: number; kind: 'equity' | 'pnl' }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(false)
   useEffect(() => {
@@ -29,7 +30,9 @@ function DeferredEquityChart({ days }: { days?: number }) {
   return (
     <div ref={hostRef} style={{ minHeight: 220 }}>
       {visible
-        ? <Suspense fallback={<div className="chart-placeholder" role="status">Chart loads…</div>}><AccountEquityChart days={days} /></Suspense>
+        ? <Suspense fallback={<div className="chart-placeholder" role="status">Chart loads…</div>}>
+            {kind === 'equity' ? <AccountEquityChart days={days} /> : <PnLChart days={days} />}
+          </Suspense>
         : <div className="chart-placeholder" role="status">Chart loads when visible.</div>}
     </div>
   )
@@ -225,6 +228,7 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
   const navigate = useNavigate()
   const [hovered, setHovered] = useState(false)
   const [rangeDays, setRangeDays] = useState<number | undefined>(30)
+  const [curveKind, setCurveKind] = useState<'equity' | 'pnl'>('equity')
 
   const portfolio = bootstrap?.account
   const exchangeMode = String((portfolio as any)?.exchange_mode || 'demo')
@@ -369,15 +373,32 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
         </div>
       </div>
 
-      {/* One account-equity curve.  Raw and verified PnL cohorts live in Analytics. */}
+      {/* Account equity and verified PnL remain distinct projections with one shared window. */}
       <div className="card pnl-curve">
         <div className="pnl-curve-header">
-          <h3>Account Equity</h3>
+          <div className="time-range-selector" aria-label="Curve type">
+            {([
+              { label: 'Account Equity', kind: 'equity' },
+              { label: 'PnL Curves', kind: 'pnl' },
+            ] as const).map(option => (
+              <button
+                type="button"
+                key={option.kind}
+                className={`time-range-btn${curveKind === option.kind ? ' active' : ''}`}
+                aria-pressed={curveKind === option.kind}
+                onClick={() => setCurveKind(option.kind)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
           <div className="time-range-selector">
             {([{ label: '7D', days: 7 }, { label: '30D', days: 30 }, { label: '90D', days: 90 }, { label: 'All', days: undefined }] as const).map(opt => (
               <button
+                type="button"
                 key={opt.label}
                 className={`time-range-btn${rangeDays === opt.days ? ' active' : ''}`}
+                aria-pressed={rangeDays === opt.days}
                 onClick={() => setRangeDays(opt.days)}
               >
                 {opt.label}
@@ -385,7 +406,7 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
             ))}
           </div>
         </div>
-        <DeferredEquityChart days={rangeDays} />
+        <DeferredCurve days={rangeDays} kind={curveKind} />
       </div>
     </div>
   )

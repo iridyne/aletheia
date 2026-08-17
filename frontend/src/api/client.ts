@@ -3014,6 +3014,16 @@ export interface AccountEquityHistory {
 		event_type: "deposit" | "withdraw";
 		amount_usdt: number;
 		signed_amount_usdt: number;
+		change_type:
+			| "deposit"
+			| "withdraw"
+			| "initial_funding"
+			| "manual_credit"
+			| "manual_debit"
+			| "manual_set_balance";
+		balance_before_usdt: number | null;
+		balance_after_usdt: number | null;
+		note: string;
 	}[];
 	adjustment: {
 		state: "available" | "unavailable";
