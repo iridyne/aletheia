@@ -2,12 +2,17 @@
 
 import asyncio
 from concurrent.futures import Future
+from datetime import datetime, timezone
 import logging
 import threading
 import time
 
 from aletheia.config.loader import load_config, save_config
-from aletheia.model_provider.base import ModelProvider, ModelHealth
+from aletheia.model_provider.base import (
+    MODEL_HEALTH_STALE_AFTER_SECONDS,
+    ModelHealth,
+    ModelProvider,
+)
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
 from aletheia.model_provider.databricks import DatabricksProvider
@@ -36,7 +41,7 @@ _MODEL_DIRECTORY_TTL_SEC = 15 * 60
 _model_directory_cache: dict[str, tuple[float, list[dict]]] = {}
 _model_directory_inflight: dict[str, Future[list[dict]]] = {}
 _model_directory_lock = threading.Lock()
-_HEALTH_TTL_SEC = 30.0
+_HEALTH_TTL_SEC = MODEL_HEALTH_STALE_AFTER_SECONDS
 _health_cache: tuple[float, list[ModelHealth]] | None = None
 _health_inflight: Future[list[ModelHealth]] | None = None
 _health_lock = threading.Lock()
@@ -503,19 +508,47 @@ async def clear_cache_async() -> None:
         await provider.aclose()
 
 
-_HTTP_TYPES = {"openai_compatible", "anthropic_compatible", "databricks", "anthropic_native", "openai_native"}
-_DEFAULT_URLS = {"http://localhost:8000/v1", "http://localhost:8001", ""}
-
-
 async def healthcheck_all(*, force: bool = False) -> list[ModelHealth]:
-    """Return a 30-second cached, cross-loop single-flight health snapshot."""
+    """Return a cached, cross-loop single-flight health snapshot."""
+
+    results, _cached = await healthcheck_all_with_metadata(force=force)
+    return results
+
+
+def _health_observed_at() -> str:
+    """Return the UTC completion time for one provider observation."""
+
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _unobserved_health(provider: str, *, error: str) -> ModelHealth:
+    """Represent a configured provider that was intentionally not probed."""
+
+    return ModelHealth(
+        provider=provider,
+        available=False,
+        error=error,
+        freshness="unknown",
+        stale_after_seconds=_HEALTH_TTL_SEC,
+    )
+
+
+async def healthcheck_all_with_metadata(
+    *, force: bool = False
+) -> tuple[list[ModelHealth], bool]:
+    """Return model health plus whether the response came from the TTL cache.
+
+    The list API remains the compatibility surface. The metadata variant is used
+    by the HTTP contract so clients can distinguish a fresh probe from a cached
+    response without maintaining a local receipt-time clock.
+    """
 
     global _health_cache, _health_inflight
     now = time.monotonic()
     leader = False
     with _health_lock:
         if not force and _health_cache is not None and _health_cache[0] > now:
-            return list(_health_cache[1])
+            return list(_health_cache[1]), True
         inflight = _health_inflight
         if inflight is None:
             inflight = Future()
@@ -523,14 +556,14 @@ async def healthcheck_all(*, force: bool = False) -> list[ModelHealth]:
             leader = True
 
     if not leader:
-        return list(await asyncio.wrap_future(inflight))
+        return list(await asyncio.wrap_future(inflight)), False
 
     try:
         results = await _refresh_health_all()
         with _health_lock:
             _health_cache = (time.monotonic() + _HEALTH_TTL_SEC, results)
         inflight.set_result(results)
-        return list(results)
+        return list(results), False
     except asyncio.CancelledError:
         inflight.set_exception(RuntimeError("model health refresh cancelled"))
         raise
@@ -545,22 +578,20 @@ async def healthcheck_all(*, force: bool = False) -> list[ModelHealth]:
 
 async def _refresh_health_all() -> list[ModelHealth]:
     cfg = load_config()
+    results: list[ModelHealth] = []
     tasks: list = []
     for name, pcfg in cfg.models.providers.items():
         if not pcfg.enabled:
+            # Keep disabled profiles visible without invoking their provider.
+            results.append(_unobserved_health(name, error="disabled"))
             continue
-        ptype = pcfg.type or name
-        if ptype in _HTTP_TYPES:
-            has_credential = bool(pcfg.api_key_secret_ref) or (
-                pcfg.auth_type == "oauth" and bool(pcfg.oauth_token_ref)
-            )
-            is_default_url = (pcfg.workspace_url or pcfg.base_url) in _DEFAULT_URLS
-            if not has_credential and is_default_url:
-                continue
+        # Enabled is the operator's probe decision. Keyless local endpoints are
+        # valid, so credential/URL heuristics must not turn a configured profile
+        # into an unobserved row.
         tasks.append(_safe_healthcheck(name))
-    if not tasks:
-        return []
-    return list(await asyncio.gather(*tasks))
+    if tasks:
+        results.extend(await asyncio.gather(*tasks))
+    return results
 
 
 async def _safe_healthcheck(name: str) -> ModelHealth:
@@ -571,9 +602,20 @@ async def _safe_healthcheck(name: str) -> ModelHealth:
 
         health = await inference_broker.run_auxiliary(provider.healthcheck)
         health.provider = name
+        health.observed_at = _health_observed_at()
+        health.age_seconds = None
+        health.freshness = "unknown"
+        health.cached = False
+        health.stale_after_seconds = _HEALTH_TTL_SEC
         return health
     except Exception as e:
-        return ModelHealth(provider=name, available=False, error=str(e))
+        return ModelHealth(
+            provider=name,
+            available=False,
+            error=str(e),
+            observed_at=_health_observed_at(),
+            stale_after_seconds=_HEALTH_TTL_SEC,
+        )
 
 
 def get_provider_for_tier(tier: str | None) -> str:

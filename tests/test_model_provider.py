@@ -204,6 +204,43 @@ async def test_model_health_cache_is_single_flight(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_healthcheck_all_probes_enabled_keyless_local_provider(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
+    monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
+
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+
+    cfg = load_config()
+    cfg.models.providers["openai_compatible"] = ProviderConfig(
+        type="openai_compatible",
+        base_url="http://localhost:8000/v1",
+        model="local-model",
+        enabled=True,
+    )
+    save_config(cfg)
+    calls = 0
+
+    async def healthy(self):
+        nonlocal calls
+        calls += 1
+        return ModelHealth(provider="openai_compatible", available=True, model=self.model)
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", healthy)
+    clear_cache()
+    results = await healthcheck_all(force=True)
+
+    assert calls == 1
+    assert results[0].available is True
+    assert results[0].observed_at is not None
+    clear_cache()
+
+
+@pytest.mark.anyio
 async def test_codex_healthcheck_disabled():
     provider = CodexCLIProvider(enabled=False)
     health = await provider.healthcheck()

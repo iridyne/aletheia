@@ -147,6 +147,10 @@ class StreamChunk:
     usage: dict[str, int] | None = None
 
 
+MODEL_HEALTH_STALE_AFTER_SECONDS = 30.0
+ModelHealthFreshness = Literal["fresh", "stale", "unknown"]
+
+
 @dataclass
 class ModelHealth:
     provider: str
@@ -155,6 +159,13 @@ class ModelHealth:
     error: str | None = None
     models: list[str] = field(default_factory=list)
     model_metadata: list[dict] = field(default_factory=list)
+    # These fields are populated by the router, which owns the probe/cache
+    # boundary. Provider implementations need not maintain a second clock.
+    observed_at: str | None = None
+    age_seconds: float | None = None
+    freshness: ModelHealthFreshness = "unknown"
+    cached: bool = False
+    stale_after_seconds: float = MODEL_HEALTH_STALE_AFTER_SECONDS
 
 
 class ModelProvider:

@@ -417,7 +417,7 @@ reconciled.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/model` | Sanitized current model config: stable profile IDs, display names, categories, enabled state, write-only credential status, and independent Default/Deep/Fast role assignments. Never returns API keys or OAuth tokens. |
-| GET | `/model/health` | Per-profile health status; disabled profiles are reported without being invoked. |
+| GET | `/model/health` | Per-profile health status; disabled profiles are reported without being invoked, while every enabled profile is probed (including keyless local endpoints). Each row includes `observed_at` (nullable UTC probe completion), `age_seconds`, `freshness` (`fresh`/`stale`/`unknown`), `cached`, and the server-owned `stale_after_seconds` policy (currently 30). `unknown` means no valid observation; it is never a successful health result. |
 | GET | `/model/broker` | Provider admission policy plus sanitized queue/concurrency/wait metrics. |
 | POST | `/model/ping` | Ping a configured, enabled profile by stable ID. |
 | GET | `/model/provider-types` | Registry-backed API, CLI, and OAuth integration definitions, supported protocols, and singleton metadata. |

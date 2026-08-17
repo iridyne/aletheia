@@ -287,6 +287,99 @@ async def test_model_health_endpoint(client):
 
 
 @pytest.mark.anyio
+async def test_model_health_unknown_profile_is_explicit(client):
+    await client.post(
+        "/api/settings/model",
+        json={"provider": "openai_compatible", "enabled": False},
+    )
+
+    response = await client.get("/api/model/health")
+    assert response.status_code == 200
+    entry = next(item for item in response.json() if item["provider"] == "openai_compatible")
+    assert entry["available"] is False
+    assert entry["observed_at"] is None
+    assert entry["age_seconds"] is None
+    assert entry["freshness"] == "unknown"
+    assert entry["cached"] is False
+    assert entry["stale_after_seconds"] == 30.0
+
+
+@pytest.mark.anyio
+async def test_model_health_reports_probe_and_cache_state(client, monkeypatch):
+    from datetime import datetime, timezone
+
+    from aletheia.model_provider.base import ModelHealth
+    import aletheia.model_provider.router as router
+
+    observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    async def fake_refresh():
+        return [
+            ModelHealth(
+                provider="fake",
+                available=True,
+                model="model-a",
+                observed_at=observed_at,
+            ),
+            ModelHealth(
+                provider="failed",
+                available=False,
+                error="probe failed",
+                observed_at=observed_at,
+            ),
+        ]
+
+    monkeypatch.setattr(router, "_refresh_health_all", fake_refresh)
+    router.invalidate_health_cache()
+
+    first = await client.get("/api/model/health")
+    second = await client.get("/api/model/health")
+    assert first.json()[0]["freshness"] == "fresh"
+    assert first.json()[0]["cached"] is False
+    assert first.json()[0]["age_seconds"] is not None
+    assert second.json()[0]["cached"] is True
+    assert second.json()[0]["observed_at"] == observed_at
+    assert second.json()[1]["available"] is False
+    assert second.json()[1]["freshness"] == "fresh"
+
+
+def test_model_health_openapi_exposes_observation_contract():
+    from aletheia.server.app import app
+
+    response = app.openapi()["paths"]["/api/model/health"]["get"]["responses"]["200"]
+    schema = response["content"]["application/json"]["schema"]
+    assert schema["type"] == "array"
+    assert schema["items"] == {"$ref": "#/components/schemas/ModelHealthRecord"}
+    properties = app.openapi()["components"]["schemas"]["ModelHealthRecord"]["properties"]
+    assert {"observed_at", "age_seconds", "freshness", "cached", "stale_after_seconds"} <= set(properties)
+
+
+def test_model_health_freshness_boundary_is_server_owned():
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from aletheia.server.routes.model import _model_health_record
+
+    now = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    stale = SimpleNamespace(
+        provider="fake",
+        available=True,
+        observed_at=(now - timedelta(seconds=30.001)).isoformat(),
+        stale_after_seconds=30.0,
+    )
+    fresh = SimpleNamespace(
+        provider="fake",
+        available=True,
+        observed_at=(now - timedelta(seconds=30)).isoformat(),
+        stale_after_seconds=30.0,
+    )
+
+    assert _model_health_record(stale, cached=True, now=now).freshness == "stale"
+    assert _model_health_record(fresh, cached=True, now=now).freshness == "fresh"
+    assert _model_health_record(SimpleNamespace(provider="fake"), cached=False, now=now).freshness == "unknown"
+
+
+@pytest.mark.anyio
 async def test_universe_settings_are_visible_and_persisted(client):
     resp = await client.get("/api/settings")
     assert resp.status_code == 200

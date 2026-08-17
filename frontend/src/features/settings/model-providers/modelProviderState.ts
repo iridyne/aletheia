@@ -42,11 +42,24 @@ export function providerStatus(
 	health: ModelHealthView | undefined,
 ): { tone: "muted" | "green" | "yellow" | "red"; label: string } {
 	if (!config?.enabled) return { tone: "muted", label: "disabled" };
-	if (health?.available) return { tone: "green", label: "available" };
 	if (config.kind === "oauth" && !config.oauth.configured) {
 		return { tone: "yellow", label: "authentication required" };
 	}
 	if (!health) return { tone: "yellow", label: "checking" };
+	if (health.freshness !== "fresh") {
+		if (health.freshness === "stale")
+			return { tone: "yellow", label: "stale" };
+		if (health.error === "not_installed")
+			return { tone: "yellow", label: "not installed" };
+		if (
+			health.error === "not_logged_in" ||
+			health.error === "no_configured_models"
+		) {
+			return { tone: "yellow", label: "authentication required" };
+		}
+		return { tone: "yellow", label: "unknown" };
+	}
+	if (health.available) return { tone: "green", label: "available" };
 	if (health.error === "not_installed")
 		return { tone: "yellow", label: "not installed" };
 	if (
