@@ -262,13 +262,18 @@ def test_third_party_actions_are_pinned_to_full_commit_shas() -> None:
     assert not failures, "Actions must use full immutable commit SHAs:\n" + "\n".join(failures)
 
 
-def test_release_please_is_metadata_only_and_batch_scheduled() -> None:
+def test_release_please_is_metadata_only_and_operationally_gated() -> None:
     workflow = _release_workflow()
     triggers = workflow["on"]
 
-    assert set(triggers) == {"schedule", "repository_dispatch", "workflow_dispatch"}
-    assert triggers["schedule"] == [{"cron": "17 2 * * *"}]
+    assert set(triggers) == {"repository_dispatch", "workflow_dispatch"}
     assert triggers["repository_dispatch"]["types"] == ["release_candidate_merged"]
+    assert triggers["workflow_dispatch"]["inputs"]["operational_need"] == {
+        "description": "Release the accumulated batch because a Runtime update is needed",
+        "required": "true",
+        "type": "boolean",
+        "default": "false",
+    }
     assert workflow["permissions"] == {"contents": "read"}
     assert "release-please-tag-" in workflow["concurrency"]["group"]
     assert "release-please-prepare" in workflow["concurrency"]["group"]
@@ -276,6 +281,8 @@ def test_release_please_is_metadata_only_and_batch_scheduled() -> None:
 
     assert set(workflow["jobs"]) == {"release"}
     job = workflow["jobs"]["release"]
+    assert "github.event_name == 'repository_dispatch'" in job["if"]
+    assert "inputs.operational_need == true" in job["if"]
     assert job["runs-on"] == SELF_HOSTED
     assert job["timeout-minutes"] == "10"
     assert job["permissions"] == {

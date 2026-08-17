@@ -1,17 +1,21 @@
 name: Prepare and tag releases
 
 on:
-  schedule:
-    # Release-bearing merges are batched once per day; hidden docs/CI/chore
-    # commits remain accumulated without a release operator.
-    - cron: "17 2 * * *"
   repository_dispatch:
     # A merged release candidate needs one trusted follow-up run to create its
     # tag and GitHub Release. This event is intentionally separate from the
-    # scheduled release-preparation batch.
+    # owner-gated release-preparation batch.
     types: [release_candidate_merged]
-  # Recovery entry point only. Normal preparation is scheduled and unattended.
+  # The only preparation trigger is an explicit owner release-intent gate. Once
+  # it is selected, candidate CI, merge, tag, and the downstream Runtime update
+  # remain unattended.
   workflow_dispatch:
+    inputs:
+      operational_need:
+        description: Release the accumulated batch because a Runtime update is needed
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -28,6 +32,9 @@ concurrency:
 jobs:
   release:
     name: Maintain release pull request and tag approved releases
+    if: >-
+      github.event_name == 'repository_dispatch' ||
+      inputs.operational_need == true
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 10
     permissions:

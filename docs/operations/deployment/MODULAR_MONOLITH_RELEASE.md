@@ -23,12 +23,16 @@ private dashboard and Operator Shell packages and the stable native host also
 retain independent component versions unless they become separately shipped
 products.
 
-The scheduled `Prepare and tag releases` workflow runs once per day and computes
-one Ready-for-review release PR from the complete Conventional Commit history
-since the previous tag. This is an unattended batch: ordinary `feat`, `fix`, and
-`perf` changes are accumulated into one release instead of creating one product
-version per merge; hidden `docs`, `ci`, and `chore` changes remain accumulated.
-`workflow_dispatch` remains a recovery entry point, not a normal release step.
+Release preparation keeps the repository's operational-need batch gate. It does
+not run on every `master` push or on an unconditional timer. An owner selects
+`operational_need=true` in the `Prepare and tag releases` workflow when the
+accumulated Conventional Commit history needs a Runtime update; Release Please
+then computes one Ready-for-review release PR from the history since the
+previous tag. Ordinary `feat`, `fix`, and `perf` changes therefore accumulate
+instead of creating one product version per merge, and hidden `docs`, `ci`, and
+`chore` changes remain accumulated. From that one explicit release-intent
+selection onward, candidate CI, exact-head merge, immutable Tag/Release, and
+Paper-role deployment are unattended.
 
 Release Please keeps its `autorelease: pending` marker on the generated PR and
 the workflow adds `do-not-auto-merge` while the candidate is unverified. It
@@ -51,25 +55,27 @@ third-party Action.
 
 ## Release SOP（正常自动，故障手动恢复）
 
-正常路径只有一个开发动作：合并经过审查的 release-bearing PR 到
-`master`。每日定时批处理会自动生成候选、运行精确 SHA CI、解除候选 hold
-并合并、创建不可变 Tag/Release；配置为 Paper 角色的 Fedora auto-update
-timer 再自动部署正式 Tag。无需手动指定版本，也无需登录 Fedora 执行
-`git pull`。资格运行时不参加这条自动部署链，必须保持 owner 选定的固定 SHA。
+正常路径只保留一个显式发布意图动作：owner 在 GitHub Actions 运行
+`Prepare and tag releases` 并设置 `operational_need=true`。之后自动生成候选、
+运行精确 SHA CI、解除候选 hold 并合并、创建不可变 Tag/Release；配置为
+Paper 角色的 Fedora auto-update timer 再自动部署正式 Tag。无需手动指定
+版本，也无需登录 Fedora 执行 `git pull`。资格运行时不参加这条自动部署链，
+必须保持 owner 选定的固定 SHA。
 
-仅在定时任务失败或候选状态损坏时使用恢复入口。它仍由 Release Please
-计算版本、变更日志和候选 PR：
+只有在确认 Runtime 更新确有 operational need 时才运行该批处理；失败或候选
+状态损坏时可用同一入口重试。CLI 形式为：
 
 ```sh
-gh workflow run release-please.yml --repo iridite/aletheia --ref master
+gh workflow run release-please.yml --repo iridite/aletheia --ref master \
+  -f operational_need=true
 ```
 
 The equivalent UI action is **Actions -> Prepare and tag releases -> Run
-workflow**, with `master` selected. Do not hand-edit a target version: the
-Conventional Commit history and `release-please-config.json` determine the next
-SemVer. In the current pre-1.0 policy, ordinary `feat`, `fix`, and `perf` release
-notes produce the next patch; an explicit breaking change produces the next
-minor version.
+workflow**, with `master` selected and `operational_need` checked. Do not
+hand-edit a target version: the Conventional Commit history and
+`release-please-config.json` determine the next SemVer. In the current pre-1.0
+policy, ordinary `feat`, `fix`, and `perf` release notes produce the next patch;
+an explicit breaking change produces the next minor version.
 
 The release is complete only after the generated `autorelease: pending` PR is
 observed as merged, its matching immutable `vX.Y.Z` tag exists, and the GitHub

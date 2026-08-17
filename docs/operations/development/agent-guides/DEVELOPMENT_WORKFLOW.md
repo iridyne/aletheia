@@ -60,12 +60,12 @@ uv run aletheia doctor
   ```
 
   A Worktree alone does not provide this isolation.
-- The scheduled `Prepare and tag releases` batch accumulates release-bearing
-  commits merged to `master`; candidate CI, exact-head auto-merge, immutable
-  Tag/Release creation, and Paper-role Fedora tag polling continue without a
-  release operator. `workflow_dispatch` is recovery-only, and qualification
-  runtimes remain pinned unless an owner explicitly selects a deployment. See
-  the [release contract](../../deployment/MODULAR_MONOLITH_RELEASE.md).
+- `Prepare and tag releases` runs only after an owner selects the explicit
+  `operational_need` input for an accumulated batch; candidate CI, exact-head
+  auto-merge, immutable Tag/Release creation, and Paper-role Fedora tag polling
+  then continue without further release operations. Qualification runtimes
+  remain pinned unless an owner explicitly selects a deployment. See the
+  [release contract](../../deployment/MODULAR_MONOLITH_RELEASE.md).
 - When CI is pending, inspect checks, the registered runner/queue state, and any
   failing log once. Continue independent work and monitor non-blockingly at
   intervals up to 30 minutes; do not spend the work loop polling unchanged jobs.

@@ -187,6 +187,8 @@ def auto_run():
 
     result = run()
     typer.echo(result.get("reason", "unknown"))
+    if result.get("detail"):
+        typer.echo(f"  {result['detail']}")
     if not result.get("ok"):
         raise typer.Exit(1)
 

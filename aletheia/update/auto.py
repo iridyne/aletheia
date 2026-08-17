@@ -48,6 +48,11 @@ _UNIT_NAMES = ("aletheia-auto-update.service", "aletheia-auto-update.timer")
 _TRANSIENT_CANDIDATE_FAILURES = {"gateway_stop_failed"}
 _RUNTIME_ROLE_ENV = "ALETHEIA_RUNTIME_ROLE"
 _AUTO_DEPLOY_ROLE = "paper"
+_ROLE_MIGRATION_DETAIL = (
+    "Automatic deployment is pinned until this runtime is classified; "
+    "migrate an existing Paper timer with ALETHEIA_RUNTIME_ROLE=paper "
+    "aletheia update auto install."
+)
 
 
 class AutoUpdateError(RuntimeError):
@@ -405,7 +410,7 @@ def run() -> dict[str, Any]:
     if not git_ops.is_repo():
         return {"ok": False, "reason": "source_checkout_required"}
     if os.environ.get(_RUNTIME_ROLE_ENV, "").strip().lower() != _AUTO_DEPLOY_ROLE:
-        return {"ok": True, "reason": "qualification_runtime_pinned"}
+        return {"ok": True, "reason": "qualification_runtime_pinned", "detail": _ROLE_MIGRATION_DETAIL}
 
     with _deployment_lock() as acquired:
         if not acquired:
@@ -586,7 +591,7 @@ def _units() -> dict[str, str]:
     )
     timer = (
         "[Unit]\nDescription=Check Aletheia release tags every five minutes\n" + _SYSTEMD_MARKER + "\n\n"
-        "[Timer]\nOnBootSec=1min\nOnUnitActiveSec=5min\nPersistent=true\nRandomizedDelaySec=30s\n"
+        "[Timer]\nOnBootSec=1min\nOnUnitInactiveSec=5min\nPersistent=true\nRandomizedDelaySec=30s\n"
         "Unit=aletheia-auto-update.service\n\n[Install]\nWantedBy=timers.target\n"
     )
     return {"aletheia-auto-update.service": service, "aletheia-auto-update.timer": timer}
