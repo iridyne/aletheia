@@ -8,6 +8,7 @@ import { Button, Card, Meter, StatusText } from '../components/ui'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
 import { humanize } from '../lib/format'
 import { api, type GoLiveScorecard } from '../api/client'
+import type { MarketDataCoverageReport } from '../types'
 
 // The feed receives the compact bootstrap projection: <AgentFeed /> remains
 // the canonical layout contract while the prop avoids three cold REST lists.
@@ -34,6 +35,7 @@ export function operatorMutationError(action: string, error: unknown): string {
 // role="alert"
 
 export default function Overview() {
+  const [diagnosticsReady, setDiagnosticsReady] = useState(false)
   const shell = useQuery({
     queryKey: ['ui-shell-bootstrap'],
     queryFn: ({ signal }) => bootApi.getShellBootstrap({ signal }),
@@ -45,6 +47,18 @@ export default function Overview() {
     queryFn: ({ signal }) => bootApi.getOverviewBootstrap({ signal }),
     staleTime: 5_000,
     refetchInterval: 15_000,
+  })
+  useEffect(() => {
+    // Keep table scans out of first paint; the System row stays deferred until then.
+    const timer = window.setTimeout(() => setDiagnosticsReady(true), 600)
+    return () => window.clearTimeout(timer)
+  }, [])
+  const dataCoverage = useQuery({
+    queryKey: ['market-data-coverage'],
+    queryFn: api.getDataCoverage,
+    enabled: diagnosticsReady,
+    staleTime: 28_000,
+    refetchInterval: 30_000,
   })
   const overviewMarked = useRef(false)
 
@@ -65,7 +79,12 @@ export default function Overview() {
         <AgentFeed bootstrap={overview.data} />
         <div className="cockpit-rail">
           <RiskCard shell={shell.data} />
-          <SystemCard shell={shell.data} coverage={overview.data?.coverage} />
+          <SystemCard
+            shell={shell.data}
+            coverage={dataCoverage.data}
+            coverageLoading={diagnosticsReady && dataCoverage.isPending}
+            coverageError={!!dataCoverage.error}
+          />
           <GoLiveScoreCard />
         </div>
       </div>
@@ -97,7 +116,17 @@ function RiskCard({ shell }: { shell?: ShellBootstrap }) {
   )
 }
 
-function SystemCard({ shell, coverage }: { shell?: ShellBootstrap; coverage?: OverviewBootstrap['coverage'] }) {
+function SystemCard({
+  shell,
+  coverage,
+  coverageLoading = false,
+  coverageError = false,
+}: {
+  shell?: ShellBootstrap
+  coverage?: MarketDataCoverageReport
+  coverageLoading?: boolean
+  coverageError?: boolean
+}) {
   const navigate = useNavigate()
   const scheduler = shell?.scheduler
   const runtime = shell?.runtime
@@ -109,13 +138,22 @@ function SystemCard({ shell, coverage }: { shell?: ShellBootstrap; coverage?: Ov
     : exchangeDiverged
       ? `${exchange?.execution_exchange || 'unknown'} exec · ${exchange?.data_exchange || 'unknown'} data`
       : exchange?.execution_exchange || exchange?.data_exchange || 'not available'
-  const coverageAvailable = coverage?.availability === 'available'
+  const coverageLight = coverageError
+    ? 'yellow'
+    : coverage
+    ? coverage.status === 'healthy' ? 'green' : coverage.status === 'empty' ? 'muted' : 'yellow'
+    : coverageLoading ? 'yellow' : 'muted'
+  const coverageValue = coverageError
+    ? 'not available'
+    : coverage
+    ? `${coverage.fresh_count}/${coverage.domain_count} current`
+    : coverageLoading ? 'loading' : 'deferred'
   const rows = [
     ['Gateway', shell?.gateway?.running ? 'green' : shell ? 'red' : 'muted', shell ? (shell.gateway?.paused ? 'paused' : 'running') : 'not available'],
     ['Scheduler', scheduler?.running ? 'green' : scheduler ? 'yellow' : 'muted', scheduler?.state || 'not available'],
     ['Connectivity', shell?.connectivity?.state === 'reachable' ? 'green' : 'muted', shell?.connectivity?.state || 'deferred'],
     ['Exchange', exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted', exchangeLabel],
-    ['Data coverage', coverageAvailable ? 'green' : coverage ? 'yellow' : 'muted', coverageAvailable ? 'available' : coverage ? 'not available' : 'deferred'],
+    ['Data coverage', coverageLight, coverageValue],
     ['Live', shell?.live?.enabled ? 'yellow' : 'muted', humanize(shell?.live?.state || 'not available')],
     ['Runtime', runtime?.boot_commit ? runtime.boot_commit.slice(0, 12) : 'not available', runtime?.mode || 'not available'],
   ]

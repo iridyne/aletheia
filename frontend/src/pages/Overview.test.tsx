@@ -22,4 +22,13 @@ describe('Overview operator mutation truthfulness', () => {
     expect(SRC.match(/onMutate: \(\) => setGatewayCommandError\(''\)/g)).toHaveLength(2)
     expect(SRC).not.toContain("qc.setQueryData(['status']")
   })
+
+  it('loads persisted data coverage after the bootstrap diagnostics delay', () => {
+    expect(SRC).toContain("const [diagnosticsReady, setDiagnosticsReady] = useState(false)")
+    expect(SRC).toContain('setDiagnosticsReady(true), 600')
+    expect(SRC).toContain("queryKey: ['market-data-coverage']")
+    expect(SRC).toContain('enabled: diagnosticsReady')
+    expect(SRC).toContain('coverage={dataCoverage.data}')
+    expect(SRC).toContain("? `${coverage.fresh_count}/${coverage.domain_count} current`")
+  })
 })
