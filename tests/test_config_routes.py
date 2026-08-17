@@ -441,7 +441,7 @@ async def test_model_profile_verification_persists_and_config_change_invalidates
     created = await client.post(
         "/api/settings/model-profiles",
         json={
-            "profile_id": "primary_api",
+            "profile_id": "openai_compatible",
             "display_name": "Primary API",
             "type": "openai_compatible",
             "base_url": "http://model.test/v1",
@@ -456,19 +456,21 @@ async def test_model_profile_verification_persists_and_config_change_invalidates
     assert verification["verification_identity"]
 
     healthy_response = await client.get("/api/model/health")
-    entry = next(item for item in healthy_response.json() if item["provider"] == "primary_api")
+    entry = next(
+        item for item in healthy_response.json() if item["provider"] == "openai_compatible"
+    )
     assert entry["reachable"] is True
     assert entry["verified"] is True
     assert entry["state"] == "verified"
 
     changed = await client.post(
         "/api/settings/model",
-        json={"provider": "primary_api", "base_url": "http://other.test/v1"},
+        json={"provider": "openai_compatible", "base_url": "http://other.test/v1"},
     )
     assert changed.status_code == 200, changed.text
     after_change = await client.get("/api/model/health")
     changed_entry = next(
-        item for item in after_change.json() if item["provider"] == "primary_api"
+        item for item in after_change.json() if item["provider"] == "openai_compatible"
     )
     assert changed_entry["reachable"] is True
     assert changed_entry["verified"] is None
