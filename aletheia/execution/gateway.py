@@ -1408,7 +1408,12 @@ def _execute_proposal(
             # trade_school=proposal.trade_school on this live dispatch path.
             from aletheia.config.exchanges import live_execution_mode_for_exchange
 
-            expected_live_mode = live_execution_mode_for_exchange(cfg.exchange.name)
+            selected_exchange = getattr(getattr(cfg, "exchange", None), "name", None)
+            expected_live_mode = (
+                live_execution_mode_for_exchange(selected_exchange)
+                if selected_exchange
+                else None
+            )
             if expected_live_mode is not None and allowed_mode != expected_live_mode:
                 update_trade_proposal(proposal.id, status="rejected")
                 write_audit({
