@@ -6,8 +6,8 @@ import { createRoot } from 'react-dom/client'
 import { describe, expect, it } from 'vitest'
 import { useSettingsDraftLifecycle } from './draftLifecycle'
 
-function Harness({ server, onDirty }: { server: { value: string }; onDirty?: (id: string, dirty: boolean) => void }) {
-  const [draft, setDraft] = useState(server.value)
+function Harness({ server, initial = server.value, onDirty }: { server: { value: string }; initial?: string; onDirty?: (id: string, dirty: boolean) => void }) {
+  const [draft, setDraft] = useState(initial)
   const dirty = draft !== server.value
   useSettingsDraftLifecycle({
     id: 'probe',
@@ -25,6 +25,18 @@ function Harness({ server, onDirty }: { server: { value: string }; onDirty?: (id
 }
 
 describe('useSettingsDraftLifecycle', () => {
+  it('adopts the initial server state before tracking user edits', async () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+    await act(async () => root.render(<Harness server={{ value: 'server-1' }} initial="default-draft" onDirty={() => undefined} />))
+    expect((container.querySelector('input') as HTMLInputElement).value).toBe('server-1')
+
+    await act(async () => root.unmount())
+    container.remove()
+  })
+
   it('preserves dirty drafts across unrelated server refreshes and adopts clean state', async () => {
     const container = document.createElement('div')
     const root = createRoot(container)
