@@ -652,6 +652,8 @@ def _ufc_status() -> dict[str, Any]:
             ),
             {},
         )
+        projection_availability = projection.get("availability")
+        projection_reason = projection.get("unavailable_reason")
         if state.get("availability") == "unavailable":
             base.update(
                 {
@@ -667,6 +669,28 @@ def _ufc_status() -> dict[str, Any]:
                     "availability": "partial",
                     "unavailable_reason": state.get("unavailable_reason")
                     or "ufc_path_partial",
+                }
+            )
+        elif projection_availability == "unavailable":
+            base.update(
+                {
+                    "status": "unavailable",
+                    "availability": "unavailable",
+                    "unavailable_reason": projection_reason
+                    or "learning_projection_unavailable",
+                }
+            )
+        elif projection_availability == "partial":
+            base.update(
+                {
+                    "status": (
+                        "unavailable"
+                        if projection_reason == "operations_projection_failed"
+                        else base["status"]
+                    ),
+                    "availability": "partial",
+                    "unavailable_reason": projection_reason
+                    or "learning_projection_partial",
                 }
             )
         return base
