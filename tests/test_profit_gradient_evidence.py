@@ -130,6 +130,7 @@ def _execution_fact(*, residual_within_tolerance: bool = True) -> dict:
             "entry_fee": 0.0,
             "exit_fee": 0.0,
             "funding_cost": 0.0,
+            "gross_pnl": 10.0,
             "net_pnl": 9.0,
         },
         "stages": {
@@ -194,9 +195,39 @@ def test_position_assignment_precedes_entry_and_execution_chain_is_validated(mon
         epoch_id="epoch-1",
     )
 
-    assert cost_reason is None and cost_sample is not None
+    assert cost_sample is None
+    assert cost_reason == "cost_not_actionable"
     assert execution_reason is None and execution_sample is not None
-    assert observed == [datetime(2026, 8, 13, tzinfo=timezone.utc)] * 2
+    assert observed == [datetime(2026, 8, 13, tzinfo=timezone.utc)]
+
+
+def test_execution_delta_excludes_settled_fees_and_costs_need_an_alternative(monkeypatch):
+    monkeypatch.setattr(evidence, "_paired_position_cost", lambda *_: ({}, None))
+    monkeypatch.setattr(
+        evidence,
+        "_position_assignment",
+        lambda *_args, **_kwargs: ("treatment", "cluster-1", "pair-1", "policy-1", "commit-1", None),
+    )
+    fact = _execution_fact()
+    fact["economics"].update({"gross_pnl": 8.0, "net_pnl": 7.0, "entry_fee": 0.4, "exit_fee": 0.4, "funding_cost": 0.2})
+    execution, reason = evidence._position_execution_sample(
+        sqlite3.connect(":memory:"), fact,
+        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cost_model_id="paper-execution-reference/v1", epoch_id="epoch-1",
+    )
+    cost, cost_reason = evidence._position_cost_sample(
+        sqlite3.connect(":memory:"), fact,
+        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cost_model_id="paper-execution-reference/v1", epoch_id="epoch-1",
+    )
+
+    assert reason is None and execution is not None
+    assert execution["paired_net_delta_quote"] == 2.0
+    assert execution["cost_applied_once"] is False
+    assert execution["execution_evidence"]["fees_excluded"] is True
+    assert cost is None and cost_reason == "cost_not_actionable"
 
 
 def test_execution_sample_rejects_invalid_fill_chain(monkeypatch):
@@ -418,7 +449,7 @@ def test_cli_rejects_rehashed_fabricated_sources(tmp_path):
     result = runner.invoke(inspect_app, ["profit-gradient", "--evidence", str(path), "--json"])
 
     assert result.exit_code != 0
-    assert "evidence_source_revalidation_mismatch" in result.output
+    assert "evidence_gradient_contract_invalid" in result.output
 
 
 def test_compiled_artifact_hash_rejects_tampering():
@@ -433,7 +464,7 @@ def test_compiled_artifact_hash_rejects_tampering():
     verified, reason = evidence.verify_profit_gradient_evidence(tampered)
 
     assert verified is False
-    assert reason == "evidence_content_hash_mismatch"
+    assert reason == "evidence_gradient_contract_invalid"
 
 
 def test_profit_gradient_evidence_cli_writes_compiler_artifact(tmp_path, monkeypatch):
@@ -449,8 +480,17 @@ def test_profit_gradient_evidence_cli_writes_compiler_artifact(tmp_path, monkeyp
             "manual_layer_samples": False,
         },
         "registration": {"status": "unavailable", "reason": "test"},
-        "evidence_context": {},
+        "evidence_context": {
+            "gradient_contract_version": "profit_gradient/v3",
+            "evidence_integrity": "verified",
+            "reconciliation_contract_version": evidence.RECONCILIATION_CONTRACT_VERSION,
+        },
         "layer_samples": {layer: [] for layer in evidence.LAYERS},
+        "reconciliation": {
+            "contract_version": evidence.RECONCILIATION_CONTRACT_VERSION,
+            "tolerance_quote": evidence.RECONCILIATION_TOLERANCE_QUOTE,
+            "status": "requires_selector_evaluation",
+        },
         "exclusion_waterfall": {},
         "source_hashes": {
             "evidence_epoch": "a" * 64,

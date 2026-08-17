@@ -182,6 +182,28 @@ If its deltas are adapted into gradient evidence, the adapter must declare
 `paired_same_unit` and preserve the frozen Position, cost, epoch, cluster,
 time, and concentration identities.
 
+### Ownership and reconciliation (`profit_gradient/reconciliation/v1`)
+
+Every admitted sample carries a machine-checkable component, ownership stage,
+stage window, positive quote notional, harm/attribution identities, evidence
+references, and a reconciliation declaration. `exclusive` declarations contain
+one component and reconcile its quote delta exactly to the declared total.
+`residual` declarations may contain several components, including components in
+different layers, but all components must share one unit scope and sum exactly
+to the declared total and its basis-point equivalent within
+`1e-8` quote units. A shared harm or attribution event across layers is rejected
+unless this residual contract proves that decomposition; a shared cost event is
+always rejected. Missing or malformed ownership, alternative-cost, execution
+isolation, or reconciliation evidence is unavailable/ineligible and never
+converted to zero.
+
+Execution uses gross fill/routing deviation against a compatible execution
+alternative; fees and funding are explicitly excluded. Costs are admitted only
+when a persisted, realizable alternative identifies an avoidable extra cost and
+its cost event/model identity. A production gross-minus-net ledger by itself is
+not an actionable Costs comparison, so it remains unavailable rather than being
+counted beside Execution.
+
 ## Invariants and trust boundaries
 
 - Replay never selects a latest related record as a fallback. Every causal join
@@ -194,7 +216,9 @@ time, and concentration identities.
 - MFE and MAE are bounded at zero; same-bar Stop/TP order remains ambiguous and
   uses pessimistic bounds.
 - Gross-to-net reconciliation deducts entry fee, exit fee, funding, and
-  slippage exactly once.
+  slippage exactly once in settled economics; attribution layers must then use
+  either one exclusive component or an explicit residual decomposition, never
+  the same fee/cost delta twice.
 - Hypothesis state reads only the completed prefix supplied by its caller.
   Missing machine-evaluable inputs return `not_evaluable`.
 - The counterfactual registry is finite and locked. Its formal scope is

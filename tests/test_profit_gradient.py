@@ -11,6 +11,9 @@ import aletheia.analytics.profit_gradient_estimators as estimators
 
 def _context(**overrides) -> dict:
     context = {
+        "gradient_contract_version": "profit_gradient/v3",
+        "evidence_integrity": "verified",
+        "reconciliation_contract_version": gradient.RECONCILIATION_CONTRACT_VERSION,
         "behavior_fingerprints": ["behavior-v1"],
         "policy_epochs": ["policy-v1"],
         "market_data_epochs": ["market-v1"],
@@ -55,6 +58,43 @@ def _samples(
                 "arm": arm,
                 "paired_net_delta_bp": value_bp,
                 "paired_net_delta_quote": value_bp / 10.0,
+                "notional_quote": 1000.0,
+                "harm_event_id": f"{layer}:harm:{index}",
+                "attribution_event_id": f"{layer}:attr:{index}",
+                "position_id": f"position-{layer}-{index}" if fact_unit == "position_fact" else None,
+                "component": gradient._LAYER_COMPONENTS[layer],
+                "ownership": (
+                    {"stage": layer.lower(), "loss_component": gradient._LAYER_COMPONENTS[layer]}
+                    if layer in {"Selection", "Decision", "Risk"}
+                    else {"stage": "holding", "state": "horizon_expired", "authorization": "none", "loss_component": "post_boundary_hold"}
+                    if layer == "Holding"
+                    else {"stage": "exit", "thesis": "valid", "continued_hold": "reasonable", "failure": "protection_geometry", "loss_component": "protection_or_target_geometry"}
+                    if layer == "Exit"
+                    else {"stage": "execution", "decision": "exit_authorized", "loss_component": "fill_or_execution"}
+                    if layer == "Execution"
+                    else {"stage": "costs", "loss_component": "avoidable_extra_cost"}
+                ),
+                "stage_window": {"start_at": started.isoformat(), "end_at": (started + timedelta(hours=index + 1)).isoformat()},
+                "evidence_refs": [f"fixture:{layer}:{index}"],
+                "execution_evidence": {
+                    "fees_excluded": True,
+                    "funding_excluded": True,
+                    "baseline_id": f"baseline:{layer}:{index}",
+                    "incremental_fill_loss_quote": abs(value_bp / 10.0),
+                } if layer == "Execution" else None,
+                "cost_evidence": {
+                    "cost_event_id": f"cost-event:{layer}:{index}",
+                    "avoidable": True,
+                    "baseline_kind": "realizable_limit",
+                    "baseline_id": f"baseline:{layer}:{index}",
+                    "cost_model_id": "cost-v1",
+                    "avoidable_extra_cost_quote": abs(value_bp / 10.0),
+                } if layer == "Costs" else None,
+                "reconciliation": {
+                    "mode": "exclusive",
+                    "group_id": f"{layer}:reconciliation:{index}",
+                    "legacy": True,
+                },
             }
         )
     return samples
@@ -62,6 +102,17 @@ def _samples(
 
 def _seven_layers(*, winner: str = "Costs") -> dict[str, list[dict]]:
     return {layer: _samples(layer, effect_bp=10.0 if layer == winner else 1.0) for layer in gradient.LAYERS}
+
+
+def _unique_clone(sample: dict, suffix: str) -> dict:
+    clone = deepcopy(sample)
+    clone["unit_id"] = f"{clone['unit_id']}-{suffix}"
+    clone["harm_event_id"] = f"{clone['harm_event_id']}-{suffix}"
+    clone["attribution_event_id"] = f"{clone['attribution_event_id']}-{suffix}"
+    clone["reconciliation"]["group_id"] = f"{clone['reconciliation']['group_id']}-{suffix}"
+    if isinstance(clone.get("cost_evidence"), dict):
+        clone["cost_evidence"]["cost_event_id"] = f"{clone['cost_evidence']['cost_event_id']}-{suffix}"
+    return clone
 
 
 def test_one_separated_layer_is_unique_winner_with_normalized_harm_units():
@@ -96,6 +147,130 @@ def test_one_separated_layer_is_unique_winner_with_normalized_harm_units():
     assert costs["harm_quote"] == pytest.approx(20.0)
     assert costs["harm_quote_per_100_candidates"] == pytest.approx(20.0)
     assert costs["harm_quote_per_capital_day"] == pytest.approx(1.0)
+
+
+def test_cross_layer_harm_event_requires_explicit_residual_decomposition():
+    selection = _samples("Selection", effect_bp=20.0, count=1, with_arms=False)[0]
+    decision = _samples("Decision", effect_bp=30.0, count=1, with_arms=False)[0]
+    decision["harm_event_id"] = selection["harm_event_id"]
+    samples = {layer: [] for layer in gradient.LAYERS}
+    samples["Selection"] = [selection]
+    samples["Decision"] = [decision]
+
+    result = gradient.select_unique_max_direction(samples, evidence_context=_context(comparison_method="paired_same_unit"))
+
+    assert result["attribution_integrity"] == "ineligible"
+    assert result["cross_layer_harm_event_count"] == 1
+    assert "cross_layer_harm_event" in result["global_gate_reasons"]
+    assert result["residual"]["status"] == "unresolved"
+
+
+def test_residual_decomposition_reconciles_once_across_layers():
+    selection = _samples("Selection", effect_bp=20.0, count=1, with_arms=False)[0]
+    decision = _samples("Decision", effect_bp=30.0, count=1, with_arms=False)[0]
+    decision["harm_event_id"] = selection["harm_event_id"]
+    group = "residual:known-net-result"
+    for sample, quote, bp in ((selection, 2.0, 20.0), (decision, 3.0, 30.0)):
+        sample["reconciliation"] = {
+            "mode": "residual",
+            "group_id": group,
+            "declared_total_quote": 5.0,
+            "component_quote": quote,
+            "component_bp": bp,
+        }
+    samples = {layer: [] for layer in gradient.LAYERS}
+    samples["Selection"] = [selection]
+    samples["Decision"] = [decision]
+
+    result = gradient.select_unique_max_direction(
+        samples,
+        evidence_context=_context(comparison_method="paired_same_unit"),
+    )
+
+    assert result["cross_layer_harm_event_count"] == 0
+    assert result["reconciliation"]["status"] == "reconciled"
+    assert result["reconciliation"]["declared_total_quote"] == pytest.approx(5.0)
+    assert result["residual"] == {
+        "status": "reconciled",
+        "cross_layer_harm_event_count": 0,
+        "cross_layer_cost_event_count": 0,
+        "economic_amount": 5.0,
+        "reason": None,
+    }
+
+
+def test_residual_reconciliation_perturbation_is_unavailable():
+    selection = _samples("Selection", effect_bp=20.0, count=1)[0]
+    decision = _samples("Decision", effect_bp=30.0, count=1)[0]
+    decision["harm_event_id"] = selection["harm_event_id"]
+    for sample, quote, bp in ((selection, 2.0, 20.0), (decision, 3.0, 30.0)):
+        sample["reconciliation"] = {
+            "mode": "residual",
+            "group_id": "residual:perturbed",
+            "declared_total_quote": 5.0,
+            "component_quote": quote,
+            "component_bp": bp,
+        }
+    decision["reconciliation"]["component_quote"] = 3.1
+    samples = {layer: [] for layer in gradient.LAYERS}
+    samples["Selection"] = [selection]
+    samples["Decision"] = [decision]
+
+    result = gradient.select_unique_max_direction(
+        samples,
+        evidence_context=_context(comparison_method="paired_same_unit"),
+    )
+
+    assert result["attribution_integrity"] == "ineligible"
+    assert "cross_layer_harm_event" in result["global_gate_reasons"]
+    assert "reconciliation_mismatch" in result["global_gate_reasons"]
+
+
+def test_missing_ownership_is_ineligible_even_with_valid_numeric_delta():
+    samples = _seven_layers()
+    samples["Holding"][0].pop("ownership")
+
+    result = gradient.select_unique_max_direction(samples, evidence_context=_context())
+
+    assert result["layers"]["Holding"]["eligible_sample_count"] == 39
+    assert "ownership_evidence_missing" in result["layers"]["Holding"]["gate_reasons"]
+
+
+def test_reconciliation_mapping_is_mandatory_at_the_selector_boundary():
+    samples = _seven_layers()
+    samples["Costs"][0].pop("reconciliation")
+
+    result = gradient.select_unique_max_direction(samples, evidence_context=_context())
+
+    assert "reconciliation_mapping_missing" in result["layers"]["Costs"]["gate_reasons"]
+    assert result["layers"]["Costs"]["eligible_sample_count"] == 39
+
+
+def test_duplicate_harm_and_cost_events_are_visible_exclusions():
+    samples = _seven_layers()
+    samples["Costs"][1]["harm_event_id"] = samples["Costs"][0]["harm_event_id"]
+    samples["Costs"][2]["cost_evidence"]["cost_event_id"] = samples["Costs"][0]["cost_evidence"]["cost_event_id"]
+
+    result = gradient.select_unique_max_direction(samples, evidence_context=_context())
+
+    reasons = result["layers"]["Costs"]["gate_reasons"]
+    assert "duplicate_harm_event" in reasons
+    assert "duplicate_cost_event" in reasons
+
+
+def test_execution_and_cost_cannot_share_a_cost_event():
+    execution = _samples("Execution", effect_bp=10.0, count=1, with_arms=False)[0]
+    costs = _samples("Costs", effect_bp=10.0, count=1, with_arms=False)[0]
+    execution["execution_evidence"]["cost_event_id"] = "shared-cost"
+    costs["cost_evidence"]["cost_event_id"] = "shared-cost"
+    samples = {layer: [] for layer in gradient.LAYERS}
+    samples["Execution"] = [execution]
+    samples["Costs"] = [costs]
+
+    result = gradient.select_unique_max_direction(samples, evidence_context=_context(comparison_method="paired_same_unit"))
+
+    assert result["cross_layer_cost_event_count"] == 1
+    assert "cross_layer_cost_event" in result["global_gate_reasons"]
 
 
 def test_multiple_eligible_layers_or_nonseparated_intervals_have_no_winner():
@@ -176,6 +351,9 @@ def test_paired_effect_is_unit_weighted_not_cluster_weighted():
     for index, sample in enumerate(large_cluster):
         sample["unit_id"] = f"Costs-large-{index}"
         sample["cluster_id"] = "large-cluster"
+        sample["harm_event_id"] = f"Costs:large-harm:{index}"
+        sample["attribution_event_id"] = f"Costs:large-attr:{index}"
+        sample["cost_evidence"]["cost_event_id"] = f"cost-event:large:{index}"
 
     normalized, exclusions, _ = gradient._normalized_samples(
         "Costs", [*samples, *large_cluster]
@@ -308,6 +486,10 @@ def test_prospective_randomized_rejects_unassigned_units():
     unassigned = _samples("Costs", effect_bp=10.0, count=1)[0]
     unassigned["unit_id"] = "Costs-unassigned"
     unassigned["arm"] = ""
+    unassigned["harm_event_id"] = "Costs:harm:unassigned"
+    unassigned["attribution_event_id"] = "Costs:attr:unassigned"
+    unassigned["cost_evidence"]["cost_event_id"] = "cost-event:unassigned"
+    unassigned["reconciliation"]["group_id"] = "Costs:reconciliation:unassigned"
     samples["Costs"].append(unassigned)
 
     result = gradient.select_unique_max_direction(
@@ -573,8 +755,7 @@ def test_randomized_quote_harm_uses_cluster_arm_contrast_not_row_sums():
     samples = _seven_layers()
     costs = samples["Costs"]
     for index in range(10):
-        extra = deepcopy(costs[index * 2])
-        extra["unit_id"] = f"Costs-extra-{index}"
+        extra = _unique_clone(costs[index * 2], f"extra-{index}")
         costs.append(extra)
     for sample in costs:
         value = 100.0 if sample["arm"] == "control" else 110.0
@@ -605,8 +786,7 @@ def test_randomized_quote_harm_weights_heterogeneous_cluster_exposures(
     treatment["paired_net_delta_bp"] = large_quote
     treatment["paired_net_delta_quote"] = large_quote
     for index in range(99):
-        extra = deepcopy(treatment)
-        extra["unit_id"] = f"Costs-treatment-large-{index + 1}"
+        extra = _unique_clone(treatment, f"treatment-large-{index + 1}")
         costs.append(extra)
 
     for sample in costs:
@@ -667,8 +847,7 @@ def test_randomized_quote_rates_scale_with_treatment_cluster_exposure():
     samples = _seven_layers()
     doubled = deepcopy(samples)
     for index, sample in enumerate(samples["Costs"]):
-        extra = deepcopy(sample)
-        extra["unit_id"] = f"Costs-copy-{index}"
+        extra = _unique_clone(sample, f"copy-{index}")
         extra["cluster_id"] = f"{sample['cluster_id']}-copy"
         doubled["Costs"].append(extra)
 
@@ -745,8 +924,7 @@ def test_randomized_quote_concentration_weights_exposure():
             sample["paired_net_delta_quote"] = 10.0
     large = next(sample for sample in costs if sample["arm"] == "treatment")
     for index in range(99):
-        extra = deepcopy(large)
-        extra["unit_id"] = f"Costs-exposure-{index}"
+        extra = _unique_clone(large, f"exposure-{index}")
         costs.append(extra)
 
     result = gradient.select_unique_max_direction(samples, evidence_context=_context())
@@ -767,8 +945,7 @@ def test_randomized_quote_metrics_weight_control_exposure():
     large["paired_net_delta_bp"] = 15.0
     large["paired_net_delta_quote"] = 15.0
     for index in range(99):
-        extra = deepcopy(large)
-        extra["unit_id"] = f"Costs-control-exposure-{index}"
+        extra = _unique_clone(large, f"control-exposure-{index}")
         costs.append(extra)
 
     normalized, _, _ = gradient._normalized_samples("Costs", costs)

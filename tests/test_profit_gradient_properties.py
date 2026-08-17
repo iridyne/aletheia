@@ -21,6 +21,9 @@ _ESTIMATORS = (
 
 def _context(method: str = "prospective_randomized") -> dict:
     return {
+        "gradient_contract_version": "profit_gradient/v3",
+        "evidence_integrity": "verified",
+        "reconciliation_contract_version": gradient.RECONCILIATION_CONTRACT_VERSION,
         "behavior_fingerprints": ["behavior-v1"],
         "policy_epochs": ["policy-v1"],
         "market_data_epochs": ["market-v1"],
@@ -60,6 +63,26 @@ def _cost_rows(
             "arm": arm,
             "paired_net_delta_bp": bp,
             "paired_net_delta_quote": quote,
+            "notional_quote": 1000.0,
+            "harm_event_id": f"cost-harm-{index}",
+            "attribution_event_id": f"cost-attribution-{index}",
+            "position_id": f"position-{index}",
+            "component": "avoidable_extra_cost",
+            "ownership": {"stage": "costs", "loss_component": "avoidable_extra_cost"},
+            "stage_window": {
+                "start_at": started.isoformat(),
+                "end_at": (started + timedelta(hours=index + 1)).isoformat(),
+            },
+            "evidence_refs": [f"fixture:cost:{index}"],
+            "cost_evidence": {
+                "cost_event_id": f"cost-event:{index}",
+                "avoidable": True,
+                "baseline_kind": "realizable_limit",
+                "baseline_id": f"baseline:{index}",
+                "cost_model_id": "cost-v1",
+                "avoidable_extra_cost_quote": abs(quote),
+            },
+            "reconciliation": {"mode": "exclusive", "group_id": f"cost-rec:{index}", "legacy": True},
         }
         for index, (bp, quote, arm) in enumerate(values)
     ]
@@ -330,6 +353,26 @@ def test_equal_randomized_arm_cluster_means_cannot_confirm_a_winner(values):
                     "arm": arm,
                     "paired_net_delta_bp": float(value),
                     "paired_net_delta_quote": float(value) / 10.0,
+                    "notional_quote": 1000.0,
+                    "harm_event_id": f"equal-harm-{arm}-{index}",
+                    "attribution_event_id": f"equal-attr-{arm}-{index}",
+                    "position_id": f"equal-position-{arm}-{index}",
+                    "component": "avoidable_extra_cost",
+                    "ownership": {"stage": "costs", "loss_component": "avoidable_extra_cost"},
+                    "stage_window": {
+                        "start_at": started.isoformat(),
+                        "end_at": (started + timedelta(hours=index * 2 + arm_index + 1)).isoformat(),
+                    },
+                    "evidence_refs": [f"fixture:equal:{arm}:{index}"],
+                    "cost_evidence": {
+                        "cost_event_id": f"equal-cost:{arm}:{index}",
+                        "avoidable": True,
+                        "baseline_kind": "realizable_limit",
+                        "baseline_id": f"equal-baseline:{arm}:{index}",
+                        "cost_model_id": "cost-v1",
+                        "avoidable_extra_cost_quote": float(value) / 10.0,
+                    },
+                    "reconciliation": {"mode": "exclusive", "group_id": f"equal-rec:{arm}:{index}", "legacy": True},
                 }
             )
 
