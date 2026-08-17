@@ -12,8 +12,8 @@ guarantees the module docstring makes:
 1. **Determinism.** Same effective values → same epoch hash, regardless
    of dict insertion order, nested-dict order, or list-vs-tuple in
    ``affected_path_ids``.
-2. **Secret exclusion.** Any key whose lowered name contains one of the
-   documented secret fragments is stripped before hashing, so credential
+2. **Secret exclusion.** Any key whose case/separator-normalized name contains
+   one of the documented secret fragments is stripped before hashing, so credential
    leaks into config never propagate into audit rows.
 3. **code_commit exclusion at top level.** A rebuild of an identical
    policy must not rotate the epoch (issue explicitly fixed in the
@@ -27,8 +27,11 @@ change → invalidate + apply_immediately.
 
 from __future__ import annotations
 
+import json
+
 from hypothesis import given, settings, strategies as st
 
+from aletheia.config.secrets import is_secret_key, normalize_secret_key
 from aletheia.learning.policy_epochs import (
     PolicyEpoch,
     _SECRET_FRAGMENTS,
@@ -60,7 +63,7 @@ def _values(max_size: int = 6) -> st.SearchStrategy[dict[str, object]]:
         ),  # lowercase ascii
         min_size=1,
         max_size=8,
-    ).filter(lambda k: not any(frag in k for frag in _SECRET_FRAGMENTS))
+    ).filter(lambda k: not is_secret_key(k))
     return st.dictionaries(key, _leaf, max_size=max_size)
 
 
@@ -144,15 +147,15 @@ def test_epoch_hash_ignores_secret_shaped_keys(
     redaction. The poisoned key contains the sampled fragment plus
     benign padding that must NOT contain any other fragment; otherwise a
     single generic suffix like ``_secret`` masks the removal of specific
-    fragments (``api_key``, ``private_key``, ...), and the test could
+    fragments (``apikey``, ``privatekey``, ...), and the test could
     pass even when a credential-shaped field would leak into audit rows.
     """
     # Benign padding whose lowercase form contains no fragment.
     filler = "myapp"
     for other in _SECRET_FRAGMENTS:
-        assert other not in filler.lower(), "padding must not shadow a fragment"
+        assert other not in normalize_secret_key(filler), "padding must not shadow a fragment"
     # Skip cases where the fragment collides with a real key in ``base``.
-    if any(fragment in k.lower() for k in base):
+    if any(fragment in normalize_secret_key(k) for k in base):
         return
     poisoned_key = f"{filler}_{fragment}_"
     poisoned = {**base, poisoned_key: secret_value}
@@ -164,6 +167,41 @@ def test_epoch_hash_ignores_secret_shaped_keys(
     )
     assert clean_epoch.epoch_hash == poisoned_epoch.epoch_hash
     assert poisoned_key not in poisoned_epoch.effective_values
+
+
+@given(
+    base=st.sampled_from(("api_key", "private_key")),
+    separator=st.sampled_from(("", "_", "-", ".", " ")),
+    casing=st.sampled_from(("lower", "upper", "title")),
+)
+@settings(max_examples=30, deadline=None)
+def test_epoch_strips_case_and_separator_variants(
+    base: str, separator: str, casing: str
+) -> None:
+    """API/private-key spellings cannot enter persisted epoch JSON or hashes."""
+    parts = base.split("_")
+    key = separator.join(parts)
+    if casing == "upper":
+        key = key.upper()
+    elif casing == "title":
+        key = separator.join(part.title() for part in parts)
+
+    sentinel = "issue-1010-sentinel"
+    epoch = build_policy_epoch(
+        "test_kind",
+        {
+            "nested": {
+                "mapping": {key: sentinel},
+                "list": [{key: sentinel}, {"safe": "value"}],
+            }
+        },
+        affected_path_ids=(),
+        safety_required=False,
+    )
+    assert key not in epoch.effective_values["nested"]["mapping"]
+    assert key not in epoch.effective_values["nested"]["list"][0]
+    assert epoch.effective_values["nested"]["list"][1]["safe"] == "value"
+    assert sentinel not in json.dumps(epoch.effective_values, sort_keys=True)
 
 
 # --------------------------------------------------------------------------- #

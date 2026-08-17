@@ -19,8 +19,8 @@ four pure primitives whose invariants line coverage cannot see:
    insertion order — must produce the same digest. This is what makes
    the evidence hash stable across builds.
 
-4. **``_redact`` scrubs secret-shaped keys at every depth.** Any string
-   key whose lowered form contains one of the documented fragments must
+4. **``_redact`` scrubs secret-shaped keys at every depth.** Any key whose
+   case/separator-normalized form contains one of the documented fragments must
    be replaced with ``"[redacted]"``, whether it appears at the top
    level, inside a nested dict, or inside a list of dicts. This is the
    audit-safety invariant of the evidence pipeline.
@@ -33,12 +33,14 @@ four pure primitives whose invariants line coverage cannot see:
 
 from __future__ import annotations
 
+import json
 import math
 from datetime import datetime, timezone
 
 import pytest
 from hypothesis import given, settings, strategies as st
 
+from aletheia.config.secrets import is_secret_key
 from aletheia.analytics.profit_gradient_evidence import (
     _SECRET_FRAGMENTS,
     _epoch_hash,
@@ -72,7 +74,7 @@ def _effective_values() -> st.SearchStrategy[dict]:
         max_size=8,
     ).filter(
         lambda k: k != "code_commit"
-        and not any(frag in k for frag in _SECRET_FRAGMENTS)
+        and not is_secret_key(k)
     )
     return st.dictionaries(key, _scalar, max_size=6)
 
@@ -276,43 +278,38 @@ def test_redact_scrubs_secret_shaped_keys_at_any_depth(
 
 
 def test_redact_is_case_insensitive_on_fragment_match() -> None:
-    """Fragments are matched against ``key.lower()``, so casing does not
-    affect the check. Underscore-separated forms are the documented
-    contract; camelCase forms are NOT currently redacted because the
-    fragment strings themselves contain underscores. See the follow-up
-    below.
-    """
+    """Casing does not affect the shared secret-key classifier."""
     for key in ("API_KEY", "api_key", "my_api_key", "MY_TOKEN", "TOKEN"):
         result = _redact({key: "s3cret"})
         assert result[key] == "[redacted]", key
 
 
-def test_redact_camelcase_gap_is_documented() -> None:
-    """Locks the *current* behaviour so a future PR that adds camelCase
-    coverage to the redactor breaks this test and forces an intentional
-    update.
+@given(
+    base=st.sampled_from(("api_key", "private_key")),
+    separator=st.sampled_from(("", "_", "-", ".", " ")),
+    casing=st.sampled_from(("lower", "upper", "title")),
+)
+@settings(max_examples=30, deadline=None)
+def test_redact_scrubs_case_and_separator_variants(
+    base: str, separator: str, casing: str
+) -> None:
+    """API/private-key spellings cannot leak a sentinel into JSON evidence."""
+    parts = base.split("_")
+    key = separator.join(parts)
+    if casing == "upper":
+        key = key.upper()
+    elif casing == "title":
+        key = separator.join(part.title() for part in parts)
 
-    Fragments without an underscore (``token``, ``secret``, ``credential``,
-    ``passphrase``) already match anywhere as a substring, so
-    ``ApiToken`` and ``MySecret`` ARE redacted today. Fragments WITH an
-    underscore (``api_key``, ``private_key``) are NOT matched against
-    camelCase forms like ``ApiKey`` or ``PrivateKey`` because ``k.lower()``
-    is ``apikey`` and ``privatekey`` — the underscore is not there.
+    redacted = _redact({"nested": [{key: "issue-1010-sentinel"}]})
+    assert redacted["nested"][0][key] == "[redacted]"
+    assert "issue-1010-sentinel" not in json.dumps(redacted, sort_keys=True)
 
-    ponytail: known gap in _SECRET_FRAGMENTS; upgrade by adding
-    underscore-stripped variants (``apikey``, ``privatekey``) or
-    switching the check to a regex. Both this module and
-    ``learning.policy_epochs`` share the list, so a fix must land in
-    both places.
-    """
-    leaked = _redact(
-        {"ApiKey": "s3cret", "PrivateKey": "s3cret", "ApiToken": "s3cret"}
-    )
-    # The gap: underscore-form fragments miss camelCase keys.
-    assert leaked["ApiKey"] == "s3cret"
-    assert leaked["PrivateKey"] == "s3cret"
-    # The already-working case: bare-fragment ``token`` matches as substring.
-    assert leaked["ApiToken"] == "[redacted]"
+
+@pytest.mark.parametrize("key", ("key", "monkey", "keyboard", "key_name"))
+def test_redact_does_not_treat_key_alone_as_secret(key: str) -> None:
+    value = "ordinary-value"
+    assert _redact({key: value})[key] == value
 
 
 # --------------------------------------------------------------------------- #

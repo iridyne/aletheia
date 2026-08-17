@@ -2,7 +2,37 @@
 
 from unittest.mock import patch
 import pytest  # pyright: ignore[reportMissingImports]
-from aletheia.config.secrets import delete_secret, get_secret, redact, set_secret
+from aletheia.config.secrets import (
+    delete_secret,
+    get_secret,
+    is_secret_key,
+    redact,
+    set_secret,
+)
+
+
+@pytest.mark.parametrize(
+    "key",
+    (
+        "ApiKey",
+        "apiKey",
+        "APIKey",
+        "api_key",
+        "api-key",
+        "PrivateKey",
+        "privateKey",
+        "private_key",
+        "token",
+        "passphrase",
+    ),
+)
+def test_secret_key_classifier_normalizes_case_and_separators(key: str) -> None:
+    assert is_secret_key(key)
+
+
+@pytest.mark.parametrize("key", ("key", "monkey", "keyboard", "key_name"))
+def test_secret_key_classifier_does_not_match_key_alone(key: str) -> None:
+    assert not is_secret_key(key)
 
 
 def test_redact_log_text_covers_bare_secret_and_access_headers():

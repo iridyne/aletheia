@@ -116,17 +116,15 @@ Hypothesis form, the invariants a wrong answer would violate:
 Each property test was validated by mutation: a plausible bug in the
 corresponding module makes at least one property fail.
 
-### Known residual gap (out of scope for the coverage PR)
+### Secret-key normalization contract
 
-`_SECRET_FRAGMENTS` in both `analytics/profit_gradient_evidence.py` and
-`learning/policy_epochs.py` uses underscore-separated fragments
-(`api_key`, `private_key`). The lowercase match does not catch
-camelCase keys like `ApiKey` or `PrivateKey`; those leak into the audit
-trail today. Bare fragments (`token`, `secret`, `credential`,
-`passphrase`) match as substrings and DO catch camelCase forms. See
-`test_redact_camelcase_gap_is_documented` — the test locks the current
-gap so a fix will trip it and force an intentional update in both
-files.
+Both trust-boundary modules consume `aletheia.config.secrets.is_secret_key`.
+It case-folds keys and removes separators before matching the canonical
+fragments, so `ApiKey`, `apiKey`, `APIKey`, `api_key`, and `api-key` (and the
+equivalent private-key forms) are redacted recursively. The contract does not
+classify `key` by itself as secret. Property tests in both boundary suites
+assert that sentinel values do not survive serialized evidence or policy-epoch
+JSON.
 
 ### When to add more invariants
 
