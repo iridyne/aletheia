@@ -1095,12 +1095,17 @@ def build_position_path_observer_status(
         expected_bucket_count += max(
             0, ((last_bucket_open_ms - first_bucket_open_ms) // _BUCKET_MS) + 1
         )
-        expected_buckets = set(
-            range(first_bucket_open_ms, last_bucket_open_ms + 1, _BUCKET_MS)
-        )
-        materialized = state["observed"] & expected_buckets
+        materialized = {
+            bucket_open_ms
+            for bucket_open_ms in state["observed"]
+            if first_bucket_open_ms <= bucket_open_ms <= last_bucket_open_ms
+        }
         materialized_bucket_count += len(materialized)
-        deferred_bucket_count += len(state["deferred"] & expected_buckets)
+        deferred_bucket_count += sum(
+            1
+            for bucket_open_ms in state["deferred"]
+            if first_bucket_open_ms <= bucket_open_ms <= last_bucket_open_ms
+        )
         if materialized:
             newest = max(materialized)
             if latest_materialized is None or newest > latest_materialized[0]:
