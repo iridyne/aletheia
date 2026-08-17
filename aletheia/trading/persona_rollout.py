@@ -1001,6 +1001,12 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
             cfg, reason="invalid_rollout_status", state=state
         )
         return {"action": "refrozen", "reason": "invalid_rollout_status", "rollout": frozen}
+    from aletheia.trading.sizing_policy import in_distress
+
+    if in_distress(cfg):
+        frozen = refreeze_persona_rollout(cfg, reason="account_distress", state=state)
+        return {"action": "refrozen", "reason": "account_distress", "rollout": frozen}
+
     try:
         from aletheia.learning.control import global_learning_refreeze_reason
 
@@ -1010,12 +1016,6 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
     if health_reason:
         frozen = refreeze_persona_rollout(cfg, reason=health_reason, state=state)
         return {"action": "refrozen", "reason": health_reason, "rollout": frozen}
-
-    from aletheia.trading.sizing_policy import in_distress
-
-    if in_distress(cfg):
-        frozen = refreeze_persona_rollout(cfg, reason="account_distress", state=state)
-        return {"action": "refrozen", "reason": "account_distress", "rollout": frozen}
     try:
         from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
 
