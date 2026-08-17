@@ -81,7 +81,11 @@ def _cfg_commit() -> str:
     """Return the last recorded commit SHA from config."""
     try:
         from aletheia.config.loader import load_config
-        return load_config(persist_migrations=False).update.current_commit or ""
+        try:
+            cfg = load_config(persist_migrations=False)
+        except TypeError:
+            cfg = load_config()
+        return cfg.update.current_commit or ""
     except Exception:
         return ""
 
@@ -320,7 +324,10 @@ def _runtime_continuity() -> dict[str, Any]:
             active_pause_owners,
             pause_blocked_reason,
         )
-        cfg = load_config(persist_migrations=False)
+        try:
+            cfg = load_config(persist_migrations=False)
+        except TypeError:
+            cfg = load_config()
         owners = active_pause_owners(cfg)
         blockers = active_pause_blocker_names(cfg)
         session = _runtime_session_status()

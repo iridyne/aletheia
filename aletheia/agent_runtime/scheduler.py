@@ -2107,7 +2107,13 @@ def status_snapshot() -> dict:
     does not show "active" when init failed or the scheduler is paused.
     """
     try:
-        enabled = bool(load_config(persist_migrations=False).runtime.scheduler_enabled)
+        try:
+            cfg = load_config(persist_migrations=False)
+        except TypeError:
+            # Keep lightweight test doubles/older adapters compatible while the
+            # production loader remains explicitly non-mutating.
+            cfg = load_config()
+        enabled = bool(cfg.runtime.scheduler_enabled)
     except Exception:
         enabled = None
     if _scheduler is None:
