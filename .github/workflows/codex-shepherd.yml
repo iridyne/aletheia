@@ -280,20 +280,53 @@ jobs:
               }
               return found;
             });
-            const currentReviewRequests = markers.filter(
-              ({type, head, base}) =>
-                type === 'review' && head === expectedHeadSha && base === expectedBaseSha
-            );
-            const latestReviewRequestAt = currentReviewRequests
-              .map(({createdAt}) => createdAt)
-              .filter(Boolean)
-              .sort()
-              .at(-1) || null;
+            const sameHeadReviewRequests = markers
+              .filter(({type, head, createdAt}) =>
+                type === 'review' && head === expectedHeadSha && Boolean(createdAt)
+              )
+              .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+            const latestSameHeadReviewRequest = sameHeadReviewRequests.at(-1) || null;
+            const latestReviewRequestAt = (
+              latestSameHeadReviewRequest?.base === expectedBaseSha
+            ) ? latestSameHeadReviewRequest.createdAt : null;
             const exactHeadReviewRequest = latestReviewRequestAt !== null;
             const exactHeadHalt = markers.some(
               ({type, head, base}) =>
                 type === 'halt' && head === expectedHeadSha && base === expectedBaseSha
             );
+
+            const cleanCompletionTimes = [];
+            for (const comment of issueComments) {
+              if (
+                !isConnectorLogin(comment.user?.login) ||
+                !comment.created_at ||
+                !/Didn't find any major issues\./i.test(String(comment.body || ''))
+              ) {
+                continue;
+              }
+              const reviewedCommitSha = await resolveReviewedCommitSha(comment.body);
+              if (reviewedCommitSha === expectedHeadSha) {
+                cleanCompletionTimes.push(comment.created_at);
+              }
+            }
+            const formalReviewCompletionTimes = allReviews
+              .filter((review) =>
+                isConnectorLogin(review.user?.login) &&
+                review.commit_id === expectedHeadSha &&
+                review.submitted_at &&
+                review.state !== 'DISMISSED'
+              )
+              .map((review) => review.submitted_at);
+            const connectorCompletionTimes = [
+              ...formalReviewCompletionTimes,
+              ...cleanCompletionTimes,
+            ].sort();
+            const requestHasCompletion = (requestMarker, beforeAt = null) =>
+              connectorCompletionTimes.some((completedAt) =>
+                completedAt >= requestMarker.createdAt &&
+                (beforeAt === null || completedAt < beforeAt)
+              );
+
             const exactHeadReviews = latestReviewRequestAt === null ? [] : allReviews.filter((review) =>
               isConnectorLogin(review.user?.login) &&
               review.commit_id === expectedHeadSha &&
@@ -301,6 +334,8 @@ jobs:
               review.submitted_at >= latestReviewRequestAt &&
               review.state !== 'DISMISSED'
             );
+            const connectorCleanExactHead = latestReviewRequestAt !== null &&
+              cleanCompletionTimes.some((completedAt) => completedAt >= latestReviewRequestAt);
 
             const postComment = async (body) => {
               await github.rest.issues.createComment({
@@ -354,8 +389,8 @@ jobs:
               if (!exactHeadHalt) {
                 await postComment(
                   `Codex Shepherd authority changed on exact review identity ` +
-                  `\`${expectedHeadSha}@${expectedBaseSha}\`. This control-plane change requires ` +
-                  `explicit owner merge and cannot resume through ordinary auto-merge.\n\n` +
+                  `\`${expectedHeadSha}@${expectedBaseSha}\`. This control-plane change ` +
+                  `requires explicit owner merge and cannot resume through ordinary auto-merge.\n\n` +
                   `<!-- aletheia-codex-shepherd halt head=${expectedHeadSha} base=${expectedBaseSha} reason=shepherd-self-change -->`
                 );
               }
@@ -378,26 +413,18 @@ jobs:
               return;
             }
 
-            let connectorCleanExactHead = false;
-            if (latestReviewRequestAt !== null) {
-              for (const comment of issueComments) {
-                if (
-                  !isConnectorLogin(comment.user?.login) ||
-                  !comment.created_at ||
-                  comment.created_at < latestReviewRequestAt ||
-                  !/Didn't find any major issues\./i.test(String(comment.body || ''))
-                ) {
-                  continue;
-                }
-                const reviewedCommitSha = await resolveReviewedCommitSha(comment.body);
-                if (reviewedCommitSha === expectedHeadSha) {
-                  connectorCleanExactHead = true;
-                  break;
-                }
+            if (!exactHeadReviewRequest) {
+              if (
+                latestSameHeadReviewRequest &&
+                !requestHasCompletion(latestSameHeadReviewRequest)
+              ) {
+                core.info(
+                  `waiting for prior same-head Codex request ` +
+                  `${latestSameHeadReviewRequest.head}@${latestSameHeadReviewRequest.base} ` +
+                  `before requesting ${expectedHeadSha}@${expectedBaseSha}`,
+                );
+                return;
               }
-            }
-
-            if (!exactHeadReviewRequest && !connectorCleanExactHead) {
               await postComment(
                 `@codex review\n\n` +
                 `Please review exact head \`${expectedHeadSha}\` against merge base ` +
