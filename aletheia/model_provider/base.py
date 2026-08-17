@@ -140,6 +140,15 @@ class ModelResponse:
     raw: Any = None
 
 
+class ProviderResponseError(RuntimeError):
+    """HTTP 200 body that is not a usable chat completion.
+
+    SenseNova GLM-5.2 has returned 200 JSON without `choices`, which previously
+    became an uncaught KeyError and aborted the fallback chain. This error is
+    transient: the request should try the next configured model.
+    """
+
+
 @dataclass
 class StreamChunk:
     content: str

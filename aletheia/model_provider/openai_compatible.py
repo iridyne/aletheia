@@ -11,6 +11,7 @@ from aletheia.model_provider.base import (
     ModelProvider,
     ModelRequest,
     ModelResponse,
+    ProviderResponseError,
     StructuredModelRequest,
     model_json_schema_payload,
 )
@@ -34,6 +35,30 @@ def _extract_text_content(raw) -> str:
         # callers treat it as an incomplete/empty response rather than raw JSON.
         return ""
     return str(raw) if raw else ""
+
+
+def _extract_chat_completion_text(data: object) -> str:
+    """Read chat-completion text from an OpenAI-shaped JSON body.
+
+    SenseNova GLM-5.2 has returned HTTP 200 JSON without ``choices``. Raising
+    ``ProviderResponseError`` lets request-level fallback try the next model
+    instead of aborting the chain on a raw KeyError.
+    """
+    if not isinstance(data, dict):
+        raise ProviderResponseError("openai_chat_response_not_object")
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ProviderResponseError("openai_chat_missing_choices")
+    choice = choices[0]
+    if not isinstance(choice, dict):
+        raise ProviderResponseError("openai_chat_invalid_choice")
+    message = choice.get("message")
+    if isinstance(message, dict):
+        return _extract_text_content(message.get("content"))
+    text = choice.get("text")
+    if isinstance(text, str) and text:
+        return text
+    raise ProviderResponseError("openai_chat_missing_message")
 
 
 def _reasoning_effort_is_unsupported(response: httpx.Response) -> bool:
@@ -120,9 +145,7 @@ class OpenAICompatibleProvider(ModelProvider):
             )
         _raise_without_secrets(resp)
         data = resp.json()
-        choice = data["choices"][0]
-        raw_content = choice["message"]["content"]
-        content = _extract_text_content(raw_content)
+        content = _extract_chat_completion_text(data)
         return ModelResponse(
             content=content,
             model=data.get("model", self.model),

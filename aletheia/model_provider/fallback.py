@@ -2,7 +2,8 @@
 
 This module does not mutate provider config or secrets. It only retries the
 current request with alternate models when the primary model reports a
-transient capacity/rate-limit failure (429/502/503/504, "at capacity", etc.).
+transient failure (400/404/408/429/500/502/503/504, missing chat ``choices``,
+"at capacity", etc.).
 """
 
 from __future__ import annotations
@@ -18,7 +19,12 @@ import httpx
 
 from aletheia.config.loader import load_config
 from aletheia.infra.events import emit_infra_event
-from aletheia.model_provider.base import ModelProvider, ModelRequest, ModelResponse
+from aletheia.model_provider.base import (
+    ModelProvider,
+    ModelRequest,
+    ModelResponse,
+    ProviderResponseError,
+)
 from aletheia.model_provider.broker import (
     InferenceBrokerClosed,
     InferenceBrokerError,
@@ -32,7 +38,7 @@ from aletheia.model_provider import router as provider_router
 
 logger = logging.getLogger("aletheia.model_provider.fallback")
 
-_TRANSIENT_STATUS_CODES = {429, 502, 503, 504}
+_TRANSIENT_STATUS_CODES = {400, 404, 408, 429, 500, 502, 503, 504}
 _TRANSIENT_TRANSPORT_ERRORS = (
     httpx.NetworkError,
     httpx.RemoteProtocolError,
@@ -93,6 +99,8 @@ class ModelHealthState:
 
 def is_transient_model_error(exc: BaseException) -> bool:
     """True for model failures worth retrying on another model."""
+    if isinstance(exc, ProviderResponseError):
+        return True
     if isinstance(exc, _TRANSIENT_TRANSPORT_ERRORS):
         return True
     status = getattr(getattr(exc, "response", None), "status_code", None)
