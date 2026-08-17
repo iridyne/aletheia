@@ -383,6 +383,13 @@ jobs:
                       createdAt
                     }
                   }
+                  closingIssuesReferences(first: 100) {
+                    nodes {
+                      number
+                      state
+                      repository { nameWithOwner }
+                    }
+                  }
                   mergeCommit { oid }
                   mergedBy { login }
                 }
@@ -394,6 +401,21 @@ jobs:
                 number: pullRequestNumber,
               });
               return result.repository.pullRequest;
+            };
+            const closeLinkedIssues = async (pullRequest) => {
+              const repositoryName = `${context.repo.owner}/${context.repo.repo}`;
+              for (const issue of pullRequest?.closingIssuesReferences?.nodes || []) {
+                if (issue.repository?.nameWithOwner !== repositoryName || issue.state !== 'OPEN') {
+                  continue;
+                }
+                await github.rest.issues.update({
+                  ...context.repo,
+                  issue_number: issue.number,
+                  state: 'closed',
+                  state_reason: 'completed',
+                });
+                core.info(`closed linked issue #${issue.number} after bot merge`);
+              }
             };
             const dispatchRelease = async (pullRequest, mergeCommitSha) => {
               if (!releaseAfterMerge) return;
@@ -601,6 +623,7 @@ jobs:
                   `GitHub declined protected merge: ${mergeResult.data.message || 'unknown reason'}`,
                 );
               }
+              await closeLinkedIssues(await fetchPullRequest());
               return;
             }
 
@@ -613,6 +636,7 @@ jobs:
                 return;
               }
               if (pullRequest.state === 'MERGED') {
+                await closeLinkedIssues(pullRequest);
                 await dispatchRelease(pullRequest, pullRequest.mergeCommit?.oid);
                 return;
               }
@@ -687,6 +711,7 @@ jobs:
                     `GitHub declined protected merge: ${mergeResult.data.message || 'unknown reason'}`,
                   );
                 }
+                await closeLinkedIssues(await fetchPullRequest());
                 await dispatchRelease(
                   {...pullRequest, mergedBy: {login: 'github-actions[bot]'}},
                   mergeResult.data.sha,
