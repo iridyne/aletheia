@@ -39,7 +39,7 @@ def _auto_merge_source() -> str:
         "agent_contracts",
         "§PR/CI control plane",
         "L2a",
-        "Codex PR Shepherd separates trigger-facing workflow dispatch from PR-side metadata mutation, binds review state to the exact head/merge-base diff, serializes same-head review requests across bases, and does not obtain repository-content or merge authority.",
+        "Codex PR Shepherd separates trigger-facing dispatch from PR-side mutation, binds review state to the exact head/merge-base diff, serializes every base revision for one PR head, and does not obtain repository-content or merge authority.",
         status="implemented",
     )
 )
@@ -103,11 +103,11 @@ def test_codex_shepherd_uses_actions_dispatch_without_contents_write() -> None:
         "pull-requests": "read",
     }
     assert apply["runs-on"] == "ubuntu-24.04"
-    assert apply["concurrency"]["cancel-in-progress"] == "true"
+    assert apply["concurrency"]["cancel-in-progress"] == "false"
     concurrency_group = apply["concurrency"]["group"]
     assert "github.event.inputs.pull_request_number" in concurrency_group
     assert "github.event.inputs.expected_head_sha" in concurrency_group
-    assert "github.event.inputs.expected_base_sha" in concurrency_group
+    assert "github.event.inputs.expected_base_sha" not in concurrency_group
     assert "actions/checkout" not in str(apply)
     apply_script = _apply_script()
     assert "github.rest.issues.createComment" in apply_script
@@ -117,7 +117,7 @@ def test_codex_shepherd_uses_actions_dispatch_without_contents_write() -> None:
     assert "github.rest.git.updateRef" not in apply_script
 
 
-def test_shepherd_workflow_dispatch_is_exact_diff_bound() -> None:
+def test_shepherd_workflow_dispatch_is_exact_diff_bound_and_stale_base_convergent() -> None:
     schedule_script = _schedule_script()
     apply_script = _apply_script()
 
@@ -132,15 +132,17 @@ def test_shepherd_workflow_dispatch_is_exact_diff_bound() -> None:
     assert "pull_request_number: String(pullRequest.number)" in schedule_script
 
     assert "const request = context.payload.inputs || {}" in apply_script
-    assert "const expectedBaseSha = String(request.expected_base_sha || '')" in apply_script
+    assert "let expectedBaseSha = String(request.expected_base_sha || '')" in apply_script
     assert "expected head SHA must be a 40-character lowercase Git object ID" in apply_script
     assert "expected merge-base SHA must be a 40-character lowercase Git object ID" in apply_script
     assert "unsupported Shepherd source event" in apply_script
     assert "github.rest.repos.compareCommitsWithBasehead" in apply_script
     assert "const currentBaseSha = comparison.merge_base_commit.sha" in apply_script
-    assert "pullRequest.head.sha !== expectedHeadSha ||" in apply_script
-    assert "currentBaseSha !== expectedBaseSha" in apply_script
-    assert "Shepherd request for ${expectedHeadSha}@${expectedBaseSha} is stale" in apply_script
+    assert "if (pullRequest.head.sha !== expectedHeadSha)" in apply_script
+    assert "Shepherd request for head ${expectedHeadSha} is stale" in apply_script
+    assert "if (currentBaseSha !== expectedBaseSha)" in apply_script
+    assert "converging the current base in the same head-serialized lane" in apply_script
+    assert "expectedBaseSha = currentBaseSha" in apply_script
     assert "pullRequest.base.ref !== 'master'" in apply_script
     assert "pullRequest.draft" in apply_script
     assert "pullRequest.head.repo?.full_name" in apply_script
@@ -148,8 +150,13 @@ def test_shepherd_workflow_dispatch_is_exact_diff_bound() -> None:
 
 
 def test_codex_shepherd_serializes_same_head_requests_across_bases() -> None:
+    workflow = _workflow()
+    apply = workflow["jobs"]["apply"]
     script = _apply_script()
 
+    assert apply["concurrency"]["cancel-in-progress"] == "false"
+    assert "expected_head_sha" in apply["concurrency"]["group"]
+    assert "expected_base_sha" not in apply["concurrency"]["group"]
     assert "const sameHeadReviewRequests" in script
     assert "const latestSameHeadReviewRequest" in script
     assert "latestSameHeadReviewRequest?.base === expectedBaseSha" in script
@@ -162,8 +169,19 @@ def test_codex_shepherd_serializes_same_head_requests_across_bases() -> None:
     completion_check = script.index("const requestHasCompletion", completion_times)
     current_request_gate = script.index("if (!exactHeadReviewRequest)", completion_check)
     wait_prior = script.index("!requestHasCompletion(latestSameHeadReviewRequest)", current_request_gate)
-    post_current = script.index("await postComment(", wait_prior)
-    assert request_log < completion_times < completion_check < current_request_gate < wait_prior < post_current
+    marker_boundary = script.index("const {data: markerBoundaryPullRequest}", wait_prior)
+    marker_base = script.index("const markerBoundaryBaseSha", marker_boundary)
+    post_current = script.index("await postComment(", marker_base)
+    assert (
+        request_log
+        < completion_times
+        < completion_check
+        < current_request_gate
+        < wait_prior
+        < marker_boundary
+        < marker_base
+        < post_current
+    )
 
 
 def test_codex_shepherd_binds_current_evidence_to_latest_exact_diff_request() -> None:
@@ -306,13 +324,15 @@ def test_codex_shepherd_requests_retargeted_and_resumed_exact_diffs_without_repa
     assert "const exactHeadReviewRequest" in script
     assert "if (!exactHeadReviewRequest)" in script
     assert "requestHasCompletion(latestSameHeadReviewRequest)" in script
+    assert "markerBoundaryPullRequest" in script
+    assert "markerBoundaryBaseSha !== expectedBaseSha" in script
     assert "@codex fix" not in script
     assert "Codex Cloud repair is not authorized to push back" in script
     assert "review-finding" in script
     assert "ci-failure" in script
 
 
-def test_codex_shepherd_callbacks_converge_without_cross_diff_cancellation() -> None:
+def test_codex_shepherd_callbacks_converge_without_cross_base_cancellation() -> None:
     script = _apply_script()
     apply = _workflow()["jobs"]["apply"]
 
@@ -322,11 +342,12 @@ def test_codex_shepherd_callbacks_converge_without_cross_diff_cancellation() -> 
     assert finding_gate < finding_hold < request_gate
 
     concurrency_group = apply["concurrency"]["group"]
-    assert apply["concurrency"]["cancel-in-progress"] == "true"
+    assert apply["concurrency"]["cancel-in-progress"] == "false"
     assert "expected_head_sha" in concurrency_group
-    assert "expected_base_sha" in concurrency_group
-    assert "pullRequest.head.sha !== expectedHeadSha ||" in script
-    assert "currentBaseSha !== expectedBaseSha" in script
+    assert "expected_base_sha" not in concurrency_group
+    assert "if (pullRequest.head.sha !== expectedHeadSha)" in script
+    assert "if (currentBaseSha !== expectedBaseSha)" in script
+    assert "expectedBaseSha = currentBaseSha" in script
 
 
 def test_codex_shepherd_reconciles_current_actionable_ci_before_completion() -> None:
