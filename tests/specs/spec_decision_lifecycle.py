@@ -9,6 +9,7 @@ Claim prefix: DL
 """
 
 import dataclasses
+import json
 from pathlib import Path
 
 import pytest
@@ -5599,15 +5600,14 @@ def test_admission_slot_reoccupied_after_defer_expires(tmp_path, monkeypatch):
 
 @spec_claim(
     SpecClaim(
-        "DL-S59", "decision_lifecycle_contract", "§2.3 defer widens carrier lifecycle", "L2b",
-        "When _record_deferred_context_observation persists a defer event, the "
-        "underlying Opportunity's valid_until is CAS'd forward to at least "
-        "defer_until + margin so the promised second Operator look is inside the "
-        "Opportunity's lifecycle. Never shortens an existing later deadline.",
+        "DL-S59", "decision_lifecycle_contract", "§2.3 defer attention deadline", "L2b",
+        "When _record_deferred_context_observation persists a defer event, its "
+        "defer_until is capped at the source Opportunity.valid_until and the "
+        "market validity row is never extended.",
         status="implemented",
     ),
 )
-def test_defer_extends_valid_until_forward_only(tmp_path, monkeypatch):
+def test_defer_caps_valid_until_without_extending(tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
 
     from tests.test_entry_logic import setup_env
@@ -5675,13 +5675,9 @@ def test_defer_extends_valid_until_forward_only(tmp_path, monkeypatch):
         window_minutes=120,
     )
 
-    # valid_until now covers the full defer window + 300s margin.
-    expected_min = now + timedelta(minutes=120, seconds=300)
     row = get_opportunity("opp-widen")
     actual = datetime.fromisoformat(row["valid_until"])
-    assert actual >= expected_min - timedelta(seconds=1), (
-        f"valid_until must extend past defer_deadline + 300s; got {actual!r}"
-    )
+    assert actual == datetime.fromisoformat(short_valid_until)
 
     # A second defer with a LATER window must not roll valid_until backward
     # if the carrier already has a longer horizon.
@@ -5712,10 +5708,9 @@ def test_defer_extends_valid_until_forward_only(tmp_path, monkeypatch):
         reason="operator_low_conviction",
         window_minutes=120,
     )
-    # New defer_deadline is later_now + 120min, so valid_until slides further forward.
-    second_expected_min = later_now + timedelta(minutes=120, seconds=300)
+    # A later attention window still cannot move market validity.
     second_row = get_opportunity("opp-widen")
-    assert datetime.fromisoformat(second_row["valid_until"]) >= second_expected_min - timedelta(seconds=1)
+    assert datetime.fromisoformat(second_row["valid_until"]) == datetime.fromisoformat(short_valid_until)
 
 
 @spec_claim(
@@ -5755,7 +5750,9 @@ def test_signal_cooldown_scoped_by_signal_source(tmp_path, monkeypatch):
     # Default caller (market_observer) must NOT see Serenity's pair.
     assert _recent_signal_pairs() == set()
     # Serenity's own producer view still sees it.
-    assert _recent_signal_pairs(signal_source="serenity") == {("BTC/USDT", "long")}
+    assert _recent_signal_pairs(signal_source="serenity") == {
+        ("BTC/USDT", "long", "spot")
+    }
 
 
 @spec_claim(
@@ -5811,14 +5808,14 @@ def test_operator_already_evaluated_bounded_by_24h(tmp_path, monkeypatch):
 
 @spec_claim(
     SpecClaim(
-        "DL-S62", "decision_lifecycle_contract", "§2.3 defer ttl guard", "L2b",
-        "When defer_deadline exceeds an opportunity's valid_until and the forward-only "
-        "extend is a no-op (opportunity already terminal), a defer_exceeds_opportunity_ttl "
-        "warning is emitted and a FilterDecision is appended for auditability.",
+        "DL-S62", "decision_lifecycle_contract", "§2.3 expired defer cannot rearm", "L2b",
+        "When an opportunity is already past valid_until, a persisted defer deadline is "
+        "capped at that past source boundary; no validity extension or ttl warning can "
+        "re-arm the carrier.",
         status="implemented",
     ),
 )
-def test_defer_ttl_guard_emits_warning_when_extend_is_noop(tmp_path, monkeypatch):
+def test_expired_defer_is_capped_without_rearm_warning(tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
 
     from tests.test_entry_logic import setup_env
@@ -5853,40 +5850,26 @@ def test_defer_ttl_guard_emits_warning_when_extend_is_noop(tmp_path, monkeypatch
         },
     }
 
-    import logging
-    warnings: list[dict] = []
+    from aletheia.agent_shell.commands import _record_deferred_context_observation
 
-    class _CapturingHandler(logging.Handler):
-        def emit(self, record):
-            if record.getMessage() == "defer_exceeds_opportunity_ttl":
-                warnings.append(vars(record))
-
-    handler = _CapturingHandler()
-    logging.getLogger("aletheia.agent_shell.commands").addHandler(handler)
-    try:
-        from aletheia.agent_shell.commands import _record_deferred_context_observation
-
-        _record_deferred_context_observation(
-            ctx,
-            context_fingerprint="fp-test",
-            opportunity_id="opp-expired-defer",
-            policy_epoch_id="epoch-test",
-            trigger="test",
-            reason="unchanged_context",
-            window_minutes=120,
-        )
-    finally:
-        logging.getLogger("aletheia.agent_shell.commands").removeHandler(handler)
-
-    assert len(warnings) == 1, "Expected one defer_exceeds_opportunity_ttl warning"
+    event = _record_deferred_context_observation(
+        ctx,
+        context_fingerprint="fp-test",
+        opportunity_id="opp-expired-defer",
+        policy_epoch_id="epoch-test",
+        trigger="test",
+        reason="unchanged_context",
+        window_minutes=120,
+    )
+    snapshot = json.loads(event["queue_snapshot_json"])
+    assert snapshot["defer_until"] == expired_valid_until
 
     rows = db.execute(
         "SELECT filter_name, reason_code FROM filter_decisions "
         "WHERE opportunity_id = ? AND reason_code = 'defer_exceeds_opportunity_ttl'",
         ("opp-expired-defer",),
     ).fetchall()
-    assert len(rows) == 1, "Expected one filter_decision with reason_code=defer_exceeds_opportunity_ttl"
-    assert rows[0]["filter_name"] == "defer_ttl_guard"
+    assert rows == []
 
 
 @spec_claim(

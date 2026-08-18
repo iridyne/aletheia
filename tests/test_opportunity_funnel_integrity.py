@@ -453,7 +453,7 @@ def test_requeued_generation_remains_visible_after_older_queue_eviction(
 
     from aletheia.agents.paper_trader import _active_signal_setups
 
-    assert ("BTC/USDT", "long", "momentum") in _active_signal_setups()
+    assert ("BTC/USDT", "long", "spot", "momentum") in _active_signal_setups()
 
 
 def test_expired_requeued_generation_ignores_older_queue_eviction(
@@ -580,7 +580,7 @@ def test_active_queued_setup_blocks_duplicate_signal_after_cooldown_window(
     )
 
     active = _active_signal_setups()
-    assert ("BTC/USDT", "short", "momentum") in active
+    assert ("BTC/USDT", "short", "spot", "momentum") in active
     plan = _plan_signal_batch(
         [
             {
@@ -638,20 +638,8 @@ def test_old_carrier_with_future_valid_until_passes_preflight_and_atomic_claim(
     assert _pending_claim_authority_failure(decision) is None
 
 
-def test_defer_extends_opportunity_valid_until_forward_only(tmp_path, monkeypatch):
-    """Operator defer authoritatively widens Opportunity.valid_until forward.
-
-    Before: ``_record_deferred_context_observation`` truncated ``defer_deadline``
-    down to a shorter ``Opportunity.valid_until`` (``defer_deadline_basis`` set
-    to ``opportunity_valid_until``). That silently converted "defer 120min" into
-    "expire at valid_until"; the promised second Operator look never happened.
-
-    After: ``defer_deadline`` is ``window_start + window_minutes`` unconditionally,
-    and the underlying Opportunity's ``valid_until`` is CAS'd forward to
-    ``defer_deadline + _DEFER_VALID_UNTIL_MARGIN_SEC`` (300s) so the promised
-    re-evaluation is guaranteed to happen inside the Opportunity's lifecycle.
-    See ``docs/archive/legacy/issues/audits/CANDIDATES_ADMISSION_GAP_AUDIT_2026-07-20.md``.
-    """
+def test_defer_caps_attention_deadline_without_extending_validity(tmp_path, monkeypatch):
+    """Defer timing is capped by, and never extends, market validity."""
     conn = _setup_db(tmp_path, monkeypatch)
     now = datetime.now(timezone.utc)
     short_valid_until = (now + timedelta(minutes=20)).isoformat()
@@ -694,28 +682,24 @@ def test_defer_extends_opportunity_valid_until_forward_only(tmp_path, monkeypatc
     )
 
     snapshot = json.loads(event["queue_snapshot_json"])
-    expected_defer_deadline = now + timedelta(minutes=120)
-    # defer_until is now the full 120-min window, no longer capped by valid_until.
-    assert snapshot["defer_deadline_basis"] == "unchanged_context_window"
-    assert datetime.fromisoformat(snapshot["defer_until"]) == expected_defer_deadline
-    # Opportunity.valid_until CAS'd forward to defer_deadline + 300s margin.
-    expected_valid_until = expected_defer_deadline + timedelta(seconds=300)
+    assert snapshot["defer_deadline_basis"] == "opportunity_valid_until"
+    assert datetime.fromisoformat(snapshot["defer_until"]) == datetime.fromisoformat(short_valid_until)
     row = conn.execute(
         "SELECT valid_until FROM opportunities WHERE id=?", ("defer-extend",)
     ).fetchone()
-    assert datetime.fromisoformat(row["valid_until"]) == expected_valid_until
-    # Event insert and valid_until extension committed atomically.
+    assert row["valid_until"] == short_valid_until
+    # Event insert remains durable and atomic.
     assert conn.execute(
         "SELECT COUNT(*) FROM operator_evaluation_events WHERE id=?", (event["id"],)
     ).fetchone()[0] == 1
 
 
-def test_defer_valid_until_extension_is_monotonic_forward_only(tmp_path, monkeypatch):
-    """A defer never shortens an Opportunity's existing later ``valid_until``.
+def test_defer_never_changes_an_existing_later_validity(tmp_path, monkeypatch):
+    """A defer never changes an Opportunity's existing later ``valid_until``.
 
     If a downstream mechanism (e.g. universe reuse via ``refresh_active_snapshot_ttls``)
-    has already pushed ``valid_until`` past ``defer_deadline + margin``, the
-    defer must leave it alone.
+    has already pushed ``valid_until`` past the attention deadline, the defer
+    must leave it alone.
     """
     conn = _setup_db(tmp_path, monkeypatch)
     now = datetime.now(timezone.utc)

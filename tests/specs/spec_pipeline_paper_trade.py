@@ -380,7 +380,7 @@ def test_paper_trader_marks_opportunity_consumed(tmp_path, monkeypatch):
 
 
 def test_paper_trader_skips_recent_duplicate_signal_pair(tmp_path, monkeypatch):
-    """Do not keep re-emitting the same symbol/direction into the PI queue."""
+    """Do not keep re-emitting the same physical instrument/direction into the PI queue."""
     conn = _setup_db(tmp_path, monkeypatch)
 
     monkeypatch.setattr(
@@ -1078,7 +1078,7 @@ def test_signal_batch_plan_priority_replacement_no_eviction_when_equal_or_lower(
         "§2 opposing direction dedup",
         "L2b",
         "When a long candidate is already in the queue for a symbol, a short candidate "
-        "for the same symbol is rejected with opposing_direction_queued, preventing both "
+        "for the same physical instrument is rejected with opposing_direction_queued, preventing both "
         "sides from consuming evaluation slots simultaneously.",
         status="implemented",
     ),
@@ -1093,7 +1093,7 @@ def test_signal_batch_plan_opposing_direction_rejected_when_same_symbol_queued()
         "scanner_family": "momentum",
         "trade_score": 75,
     }
-    # Long is already in the active queue for the same symbol
+    # Long is already in the active queue for the same physical instrument
     plan = _plan_signal_batch(
         [short_candidate],
         open_symbols=set(),
@@ -1103,6 +1103,28 @@ def test_signal_batch_plan_opposing_direction_rejected_when_same_symbol_queued()
 
     assert plan.selected == []
     assert plan.decisions["opp-short"] == ("opposing_direction_queued", "rejected")
+
+
+def test_signal_batch_plan_keeps_spot_and_perp_ownership_domains_distinct():
+    from aletheia.agents.paper_trader import _plan_signal_batch
+
+    perp_candidate = {
+        "opportunity_id": "opp-perp",
+        "symbol": "BTC/USDT",
+        "market_type": "usdt_futures",
+        "direction": "long",
+        "scanner_family": "momentum",
+        "trade_score": 75,
+    }
+    plan = _plan_signal_batch(
+        [perp_candidate],
+        open_symbols=set(),
+        recent_signal_pairs=set(),
+        active_signal_setups={("BTC/USDT", "long", "spot", "momentum")},
+    )
+
+    assert plan.selected == [perp_candidate]
+    assert plan.decisions["opp-perp"] == ("signal_batch_limit", "passed")
 
 
 @spec_claim(

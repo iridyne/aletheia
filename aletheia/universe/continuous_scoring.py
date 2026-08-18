@@ -243,7 +243,7 @@ _FEATURES: Mapping[str, RawFeatureDeclaration] = {
         "price_path",
         ("MOM-02", "MR-03", "VOL-06", "DER-03", "DER-04", "DER-05", "EVT-05", "SH-01", "ALLOC-03b", "ALLOC-04"),
         0.0,
-        23.75,
+        20.0,
         "percent",
     ),
     "return_24h": RawFeatureDeclaration("price_path", ("MOM-10", "MR-04", "SH-02a", "SH-02b"), 0.0, 10.15, "percent"),
@@ -580,13 +580,19 @@ def _score_mean_reversion(feat: Mapping[str, object]) -> ComponentScore:
             evidence.append(_evidence(curve_id, key, None, None, 0.0, observed=False))
             continue
         transformed = transform(raw)
-        contribution = _curve(transformed, anchors)
+        raw_contribution = _curve(transformed, anchors)
+        is_directional_value = raw != 50 if key.startswith("rsi_") else raw != 0
+        evidence_direction = direction_from(raw) if is_directional_value else None
+        if direction is None and raw_contribution > 0 and evidence_direction:
+            direction = evidence_direction
+        contribution = (
+            raw_contribution
+            if evidence_direction is None or direction is None or evidence_direction == direction
+            else 0.0
+        )
         evidence.append(_evidence(curve_id, key, raw, transformed, contribution))
         point += contribution
         pessimistic += contribution
-        is_directional_value = raw != 50 if key.startswith("rsi_") else raw != 0
-        if direction is None and contribution > 0 and is_directional_value:
-            direction = direction_from(raw)
     if direction is None:
         return _finalize("mean_reversion", None, 0.0, 0.0, evidence)
 
@@ -714,6 +720,13 @@ def _derivatives_oi_activation(
     current_direction: str | None,
 ) -> tuple[float, str | None]:
     if current_direction is not None:
+        # Rising OI with a price move is directional evidence. Do not let an
+        # opposing move add to a side selected by funding; falling OI remains
+        # non-directional and keeps the existing activation.
+        if oi_delta is not None and oi_delta > 0 and price_return:
+            price_direction = "long" if price_return > 0 else "short"
+            if price_direction != current_direction:
+                return 0.0, current_direction
         return 1.0, current_direction
     if oi_delta is None or price_return is None or oi_delta <= 0:
         return 0.0, None
@@ -851,6 +864,8 @@ def _score_derivatives(feat: Mapping[str, object]) -> ComponentScore:
     pessimistic += oi_contribution * oi_activation
 
     divergence, divergence_direction = _derivatives_divergence(oi_delta, price_return)
+    if direction is not None and divergence_direction not in (None, direction):
+        divergence = 0.0
     evidence.append(
         _evidence(
             "DER-04",

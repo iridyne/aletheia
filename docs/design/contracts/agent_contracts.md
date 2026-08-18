@@ -208,8 +208,8 @@ durably queued and independently retried by `outcome_hook_replay`.
 - **Carrier continuity** (`DL-INV-25`, `DL-S52..54`): Universe snapshot supersede expires only still-open
   analytical generations. Once `signal_pending` commits, the queued source remains
   Operator authority until its own `valid_until` or a terminal decision. A fixed
-  30-minute queue age is legacy fallback only. New generations of the same
-  symbol/direction/scanner-family record `active_operator_carrier` instead of
+  30-minute queue age is legacy fallback only. New generations of the same physical
+  symbol/market/direction/scanner-family record `active_operator_carrier` instead of
   creating another pending carrier.
 - **TTL soft filter** (`paper_trader_ranker._ttl_soft_penalty_factor`): a carrier
   past its `valid_until` is no longer hard-rejected. Its `trade_score` is

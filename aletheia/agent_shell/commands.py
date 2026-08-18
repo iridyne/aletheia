@@ -1746,13 +1746,6 @@ def _record_no_evaluable_candidate_observation(
     ))
 
 
-# Buffer added to defer_until when extending Opportunity.valid_until forward.
-# The PI daemon now wakes from the durable defer deadline itself; these 300s are
-# bounded evaluation/queue slack so the expiry sweep cannot consume the carrier
-# while the promised second look is running.
-_DEFER_VALID_UNTIL_MARGIN_SEC = 300
-
-
 def _deferred_context_dedup_key(
     context_fingerprint: str,
     *,
@@ -1858,6 +1851,12 @@ def _existing_deferred_context_observation(
             "    OR json_extract(queue_snapshot_json, '$.defer_reason') LIKE "
             "             'direct_skip_not_confirmed%'"
             ") "
+            "AND EXISTS ("
+            " SELECT 1 FROM opportunities source "
+            " WHERE source.id=json_extract(operator_evaluation_events.queue_snapshot_json,'$.opportunity_id') "
+            " AND source.status IN ('open','queued') "
+            " AND (source.valid_until IS NULL OR datetime(source.valid_until)>datetime('now'))"
+            ") "
             "ORDER BY created_at DESC LIMIT 1",
             (symbol, _nd(direction), _nm(market_type), material_fingerprint, now_iso),
         ).fetchone()
@@ -1874,6 +1873,12 @@ def _existing_deferred_context_observation(
             "             ('operator_low_conviction', 'debate_not_confirmed') "
             "    OR json_extract(queue_snapshot_json, '$.defer_reason') LIKE "
             "             'direct_skip_not_confirmed%'"
+            ") "
+            "AND EXISTS ("
+            " SELECT 1 FROM opportunities source "
+            " WHERE source.id=json_extract(operator_evaluation_events.queue_snapshot_json,'$.opportunity_id') "
+            " AND source.status IN ('open','queued') "
+            " AND (source.valid_until IS NULL OR datetime(source.valid_until)>datetime('now'))"
             ") "
             "ORDER BY created_at DESC LIMIT 1",
             (opportunity_id, now_iso),
@@ -1901,6 +1906,12 @@ def _existing_deferred_context_observation(
         f"WHERE dedup_key IN ({placeholders}) "
         f"AND event_kind LIKE 'operator_decision_deferred_%' "
         "AND json_extract(queue_snapshot_json, '$.defer_until')>? "
+        "AND EXISTS ("
+        " SELECT 1 FROM opportunities source "
+        " WHERE source.id=json_extract(operator_evaluation_events.queue_snapshot_json,'$.opportunity_id') "
+        " AND source.status IN ('open','queued') "
+        " AND (source.valid_until IS NULL OR datetime(source.valid_until)>datetime('now'))"
+        ") "
         "ORDER BY created_at DESC LIMIT 1",
         (*keys, now_iso),
     ).fetchone()
@@ -1924,19 +1935,13 @@ def _record_deferred_context_observation(
     distinguish the several defer causes (unchanged context, low conviction,
     debate-not-confirmed, missing candidate technical facts).
 
-    Defer is the authoritative signal for "candidate remains worth another
-    Operator look at ``defer_until``". This function therefore extends the
-    underlying Opportunity's ``valid_until`` forward to at least
-    ``defer_until + _DEFER_VALID_UNTIL_MARGIN_SEC`` so the promised re-evaluation
-    is guaranteed inside the Opportunity's lifecycle. The event insert and the
-    ``valid_until`` extension commit atomically.
+    ``Opportunity.valid_until`` is the market/setup validity boundary; the
+    append-only event's ``defer_until`` is only the next Operator attention time.
+    Cap the retry deadline to source validity and never extend the source row.
+    This keeps scheduler/API recovery from resurrecting an expired carrier.
     """
     from aletheia.storage.models import OperatorEvaluationEvent
-    from aletheia.storage.repositories import (
-        extend_opportunity_valid_until_forward_only,
-        record_operator_evaluation_event,
-        transaction,
-    )
+    from aletheia.storage.repositories import record_operator_evaluation_event, transaction
 
     queue = (ctx.get("layer2") or {}).get("pending_queue") or {}
     dedup_key, window_start = _deferred_context_dedup_key(
@@ -1958,10 +1963,29 @@ def _record_deferred_context_observation(
         ),
         None,
     )
+    sel = selected or {}
+    source_valid_until = sel.get("valid_until")
+    if source_valid_until is None:
+        from aletheia.storage.sqlite import get_db
+
+        row = get_db().execute(
+            "SELECT valid_until FROM opportunities WHERE id=?",
+            (opportunity_id,),
+        ).fetchone()
+        source_valid_until = row["valid_until"] if row is not None else None
     defer_until = defer_deadline.isoformat()
-    extended_valid_until = (
-        defer_deadline + timedelta(seconds=_DEFER_VALID_UNTIL_MARGIN_SEC)
-    ).isoformat()
+    if source_valid_until:
+        try:
+            source_deadline = datetime.fromisoformat(
+                str(source_valid_until).replace("Z", "+00:00")
+            )
+            if source_deadline < defer_deadline:
+                defer_until = str(source_valid_until)
+                defer_deadline_basis = "opportunity_valid_until"
+        except (TypeError, ValueError):
+            # Queue admission and preflight fail closed on an invalid source
+            # deadline; do not invent a replacement validity value here.
+            pass
     # #321: persist the symbol-level material fingerprint + normalized identity so
     # emit-source suppression and the symbol-level LLM fast-path can recognize
     # "same setup, market unchanged" across the fresh opportunity_id that universe
@@ -1973,7 +1997,6 @@ def _record_deferred_context_observation(
         _normalize_market_type,
     )
     material_fingerprint = material_fingerprint_from_candidate_ctx(ctx, opportunity_id)
-    sel = selected or {}
     snapshot = {
         "context_fingerprint": context_fingerprint,
         "material_fingerprint": material_fingerprint,
@@ -1995,14 +2018,7 @@ def _record_deferred_context_observation(
         "overflow_count": int(queue.get("overflow_count") or 0),
         "oldest_at": queue.get("oldest_at"),
     }
-    # Extending valid_until FIRST inside the same transaction guarantees the
-    # event insert observes the widened lifecycle. If either write fails the
-    # whole defer record rolls back, avoiding a half-recorded state where the
-    # Opportunity's valid_until moves but no defer event exists (or vice versa).
     with transaction(immediate=True):
-        extend_rows_updated = extend_opportunity_valid_until_forward_only(
-            opportunity_id, extended_valid_until
-        )
         event_row = record_operator_evaluation_event(OperatorEvaluationEvent(
             dedup_key=dedup_key,
             event_kind=event_kind,
@@ -2016,53 +2032,6 @@ def _record_deferred_context_observation(
             data_health_json="{}",
             policy_epoch_id=policy_epoch_id,
         ))
-    # GAP-4 defense-in-depth: if extend was a no-op AND defer_deadline still
-    # exceeds the opportunity's valid_until, the Opportunity is likely terminal
-    # (expired between context build and this write). Emit a WARN and a
-    # filter_decision so the failure mode is auditable without being silent.
-    if extend_rows_updated == 0:
-        from aletheia.storage.sqlite import get_db as _get_db
-
-        opp_row = _get_db().execute(
-            "SELECT valid_until, status FROM opportunities WHERE id = ?",
-            (opportunity_id,),
-        ).fetchone()
-        if opp_row is not None:
-            opp_valid_until = opp_row["valid_until"] or ""
-            if defer_deadline.isoformat() > opp_valid_until:
-                from aletheia.storage.models import FilterDecision
-                from aletheia.storage.repositories import insert_filter_decision as _ins_fd
-
-                logger.warning(
-                    "defer_exceeds_opportunity_ttl",
-                    extra={
-                        "opportunity_id": opportunity_id,
-                        "defer_deadline": defer_deadline.isoformat(),
-                        "opportunity_valid_until": opp_valid_until,
-                        "opportunity_status": opp_row["status"],
-                        "defer_reason": reason,
-                        "event_kind": event_kind,
-                    },
-                )
-                _ins_fd(FilterDecision(
-                    dedup_key=f"defer_exceeds_ttl:{opportunity_id}:{defer_until}",
-                    candidate_key=f"opportunity:{opportunity_id}",
-                    candidate_kind="opportunity",
-                    opportunity_id=opportunity_id,
-                    symbol=str((selected or {}).get("symbol") or "unknown"),
-                    market_type=str((selected or {}).get("market_type") or "spot"),
-                    direction=(selected or {}).get("direction"),
-                    filter_name="defer_ttl_guard",
-                    stage="operator_defer",
-                    decision="warning",
-                    reason_code="defer_exceeds_opportunity_ttl",
-                    reason_detail=json.dumps({
-                        "defer_deadline": defer_deadline.isoformat(),
-                        "opportunity_valid_until": opp_valid_until,
-                        "opportunity_status": opp_row["status"],
-                    }, sort_keys=True, separators=(",", ":")),
-                    filter_version="defer_ttl_guard:v1",
-                ))
     # Layer-1 observability: the defer path was silent until this log line.
     # Payload fields are read-only and every one already exists in `snapshot`
     # or `selected`; no new state is introduced. reason_class is derived by
@@ -2086,7 +2055,7 @@ def _record_deferred_context_observation(
             "defer_until": defer_until,
             "defer_deadline_basis": defer_deadline_basis,
             "policy_epoch_id": policy_epoch_id,
-            "extended_valid_until": extended_valid_until,
+            "opportunity_valid_until": source_valid_until,
         },
     )
     return event_row

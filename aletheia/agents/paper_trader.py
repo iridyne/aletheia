@@ -49,6 +49,17 @@ _PENDING_SIGNAL_MAX_AGE_MINUTES = 30
 _PENDING_SIGNAL_QUEUE_CAPACITY = 5
 
 
+def _market_identity(value: object) -> str:
+    """Canonical market identity used by queue ownership and cooldowns."""
+    raw = str(value or "spot").strip().lower() or "spot"
+    try:
+        from aletheia.trading.instruments import instrument_market_to_db_market
+
+        return instrument_market_to_db_market(raw)
+    except Exception:
+        return raw
+
+
 @dataclass
 class SignalBatchPlan:
     selected: list[dict]
@@ -146,36 +157,41 @@ def _get_strategy_paper_trade_count(strategy_id: str | None) -> int:
 def _recent_signal_pairs(
     window_minutes: int = _RECENT_SIGNAL_COOLDOWN_MINUTES,
     signal_source: str = "market_observer",
-) -> set[tuple[str, str]]:
-    """Pairs handed to the System Operator inside the fixed cooldown window.
+) -> set[tuple[str, str, str]]:
+    """Exact market identities handed to the System Operator in the cooldown.
 
     Scoped to a single producer namespace (default ``market_observer``) so a
     Serenity signal_pending row does not pollute market_observer's cooldown for
-    the same (symbol, direction). ``_active_signal_setups`` already uses this
+    the same (symbol, direction, market). ``_active_signal_setups`` uses the same
     scoping; the earlier signal_source-blind cooldown was a historical mismatch.
     """
     try:
         from aletheia.storage.sqlite import get_db
         cutoff = (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).isoformat()
         rows = get_db().execute(
-            "SELECT symbol, direction FROM pi_decisions "
+            "SELECT symbol, direction, COALESCE(market_type,'spot') AS market_type "
+            "FROM pi_decisions "
             "WHERE action='signal_pending' AND datetime(created_at)>=datetime(?) "
             "AND symbol IS NOT NULL AND direction IS NOT NULL "
             "AND COALESCE(signal_source, 'market_observer')=?",
             (cutoff, signal_source or "market_observer"),
         ).fetchall()
-        return {(r["symbol"], r["direction"]) for r in rows}
+        return {
+            (r["symbol"], r["direction"], _market_identity(r["market_type"]))
+            for r in rows
+        }
     except Exception:
         return set()
 
 
-def _active_signal_setups() -> set[tuple[str, str, str]]:
+def _active_signal_setups() -> set[tuple[str, str, str, str]]:
     """Setup identities already owned by a live Operator queue carrier."""
     try:
         from aletheia.storage.sqlite import get_db
 
         rows = get_db().execute(
-            "SELECT DISTINCT p.symbol,p.direction,COALESCE(o.scanner_family,'') "
+            "SELECT DISTINCT p.symbol,p.direction,COALESCE(p.market_type,o.market,'spot'),"
+            "COALESCE(o.scanner_family,'') "
             "FROM pi_decisions p JOIN opportunities o ON o.id=p.opportunity_id "
             "WHERE p.action='signal_pending' "
             "AND COALESCE(p.signal_source, 'market_observer')='market_observer' "
@@ -203,7 +219,12 @@ def _active_signal_setups() -> set[tuple[str, str, str]]:
             ")"
         ).fetchall()
         return {
-            (str(row[0]), str(row[1]), str(row[2] or ""))
+            (
+                str(row[0]),
+                str(row[1]),
+                _market_identity(row[2]),
+                str(row[3] or ""),
+            )
             for row in rows
             if row[0] and row[1]
         }
@@ -248,29 +269,19 @@ def _operator_evaluated_opportunity_ids(
 
 
 def _select_signal_candidates(candidates: list[dict], limit: int = 3) -> list[dict]:
-    """Pick a compact signal batch without duplicate symbols or pairs.
-
-    Dedup is intentionally symbol-only (not market_type-aware): per spec
-    OD-S01 (spec_market_type_dedup.py, commit db3c3f8), directional analysis is
-    instrument-agnostic and the upstream pipeline already emits at most one
-    instrument per canonical symbol (auto→perp). Adding a market_type key here
-    would re-enable the same-symbol spot+perp double-observation OD-S01 removed.
-    (Bug-review #10 reclassified as won't-fix / design-consistent.)
-    """
+    """Pick a compact signal batch without duplicate physical instruments."""
     selected: list[dict] = []
-    seen_symbols: set[str] = set()
-    seen_pairs: set[tuple[str, str]] = set()
+    seen_instruments: set[tuple[str, str]] = set()
     for candidate in candidates:
         sym = candidate.get("symbol")
         direction = candidate.get("direction")
         if not sym or not direction:
             continue
-        pair = (sym, direction)
-        if sym in seen_symbols or pair in seen_pairs:
+        instrument = (sym, _market_identity(candidate.get("market_type") or candidate.get("market")))
+        if instrument in seen_instruments:
             continue
         selected.append(candidate)
-        seen_symbols.add(sym)
-        seen_pairs.add(pair)
+        seen_instruments.add(instrument)
         if len(selected) >= limit:
             break
     return selected
@@ -279,9 +290,9 @@ def _select_signal_candidates(candidates: list[dict], limit: int = 3) -> list[di
 def _plan_signal_batch(
     candidates: list[dict],
     *,
-    open_symbols: set[str],
-    recent_signal_pairs: set[tuple[str, str]],
-    active_signal_setups: set[tuple[str, str, str]] | None = None,
+    open_symbols: set,
+    recent_signal_pairs: set,
+    active_signal_setups: set | None = None,
     operator_evaluated_opportunity_ids: set[str] | None = None,
     limit: int = 3,
     available_queue_slots: int | None = None,
@@ -298,13 +309,27 @@ def _plan_signal_batch(
     selected: list[dict] = []
     decisions: dict[str, tuple[str, str]] = {}
     evictions: list[str] = []
-    seen_symbols: set[str] = set()
+    seen_instruments: set[tuple[str, str]] = set()
     evaluated_ids = operator_evaluated_opportunity_ids or set()
     active_setups = active_signal_setups or set()
-    # Symbol-level index used to catch opposing-direction carriers: if LONG is
-    # already in the queue, SHORT for the same symbol is rejected too, and vice
-    # versa.  Extracted once here rather than scanning the full set per candidate.
-    active_symbols: set[str] = {s for (s, _, _) in active_setups}
+    # Instrument-level index catches opposing-direction carriers without
+    # collapsing spot and derivatives that share a canonical symbol.
+    active_instruments: set[tuple[str, str]] = set()
+    normalized_setups: set[tuple[str, str, str, str]] = set()
+    for setup in active_setups:
+        if len(setup) == 4:
+            symbol_key, side_key, market_key, family_key = setup
+        else:  # compatibility for callers carrying the pre-market tuple shape
+            symbol_key, side_key, family_key = setup
+            market_key = "spot"
+        normalized = (
+            str(symbol_key),
+            str(side_key),
+            _market_identity(market_key),
+            str(family_key or ""),
+        )
+        normalized_setups.add(normalized)
+        active_instruments.add((normalized[0], normalized[2]))
     # Mutable view of current queue for priority-replacement bookkeeping.
     # Sorted ascending by conviction so index 0 is always the weakest occupant.
     queue_occupants: list[dict] = sorted(current_queue or [], key=lambda x: x["conviction"])
@@ -314,24 +339,32 @@ def _plan_signal_batch(
         direction = candidate.get("direction")
         if not opp_id or not symbol or not direction:
             continue
+        market_type = _market_identity(
+            candidate.get("market_type") or candidate.get("market")
+        )
+        instrument = (symbol, market_type)
         if opp_id in evaluated_ids:
             decisions[opp_id] = ("operator_already_evaluated", "rejected")
             continue
-        if symbol in seen_symbols:
+        if instrument in seen_instruments:
             decisions[opp_id] = ("duplicate_symbol", "rejected")
             continue
-        seen_symbols.add(symbol)
-        if symbol in open_symbols:
+        seen_instruments.add(instrument)
+        if instrument in open_symbols or symbol in open_symbols:
             decisions[opp_id] = ("open_position_duplicate", "rejected")
             continue
-        if symbol in active_symbols:
+        if instrument in active_instruments:
             scanner_family_str = str(candidate.get("scanner_family") or "")
-            if (symbol, direction, scanner_family_str) in active_setups:
+            setup = (symbol, direction, market_type, scanner_family_str)
+            if setup in normalized_setups:
                 decisions[opp_id] = ("active_operator_carrier", "rejected")
             else:
                 decisions[opp_id] = ("opposing_direction_queued", "rejected")
             continue
-        if (symbol, direction) in recent_signal_pairs:
+        if (
+            (symbol, direction, market_type) in recent_signal_pairs
+            or (symbol, direction) in recent_signal_pairs
+        ):
             decisions[opp_id] = ("signal_cooldown", "rejected")
             continue
         slots_limit = max(available_queue_slots, 0) if available_queue_slots is not None else None
@@ -399,8 +432,13 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     except Exception as exc:
         logger.warning("terminal pending carrier cleanup unavailable: %s", exc)
 
-    # Snapshot of currently open symbols — used to skip redundant signal writes.
-    open_symbols: set[str] = {p["symbol"] for p in list_all_open_positions()}
+    # Snapshot of currently open physical instruments — spot and derivatives
+    # sharing a canonical symbol remain distinct ownership domains.
+    open_symbols = {
+        (p["symbol"], _market_identity(p.get("market_type") or p.get("market")))
+        for p in list_all_open_positions()
+        if p.get("symbol")
+    }
     recent_signal_pairs = _recent_signal_pairs()
     active_signal_setups = _active_signal_setups()
     # Position C (2026-07-02): Path A (RuleSet-driven signals) was removed with the
@@ -642,7 +680,15 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                 outputs.append(f"skip_stale_plan:{candidate.get('symbol')}")
                 continue
             if direction:
-                recent_signal_pairs.add((sym, direction))
+                recent_signal_pairs.add(
+                    (
+                        sym,
+                        direction,
+                        _market_identity(
+                            candidate.get("market_type") or candidate.get("market")
+                        ),
+                    )
+                )
             artifact_refs.append({"artifact_type": "pi_decision", "artifact_id": pi_dec.id})
             signals_written += 1
             emitted_candidates.append(candidate)

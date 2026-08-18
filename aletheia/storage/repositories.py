@@ -759,7 +759,10 @@ def find_live_opportunity_by_symbol_direction(
     if market:
         sql += " AND market = ?"
         params.append(market)
-    sql += " ORDER BY created_at DESC, rowid DESC LIMIT 1"
+    # A queued carrier owns admission even if a newer analytical open
+    # generation exists during snapshot publication. Prefer that durable owner
+    # so replacement cannot silently bypass it.
+    sql += " ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END, created_at DESC, rowid DESC LIMIT 1"
     row = db.execute(sql, params).fetchone()
     return dict(row) if row else None
 
@@ -1357,6 +1360,12 @@ def latest_direct_skip_defer_for_setup(
         "AND json_extract(queue_snapshot_json,'$.direction') = ? "
         "AND json_extract(queue_snapshot_json,'$.market_type') = ? "
         "AND created_at >= ? "
+        "AND EXISTS ("
+        " SELECT 1 FROM opportunities source "
+        " WHERE source.id=json_extract(operator_evaluation_events.queue_snapshot_json,'$.opportunity_id') "
+        " AND source.status IN ('open','queued') "
+        " AND (source.valid_until IS NULL OR datetime(source.valid_until)>datetime('now'))"
+        ") "
         "ORDER BY created_at DESC LIMIT 1",
         (symbol, direction, market_type, cutoff),
     ).fetchone()
@@ -1403,25 +1412,6 @@ def latest_skip_validation_for_setup(
         return json.loads(row["queue_snapshot_json"])
     except (TypeError, ValueError, json.JSONDecodeError):
         return None
-
-
-def extend_opportunity_valid_until_forward_only(
-    opportunity_id: str, new_valid_until_iso: str
-) -> int:
-    """Slide an Opportunity's valid_until forward if the new deadline is later.
-
-    Idempotent-forward: never shortens an existing later deadline. Only touches
-    ``status IN ('open','queued')`` — expired/reviewed rows stay terminal.
-
-    Returns the number of rows updated (0 if the new deadline is not later).
-    """
-    result = execute_write(
-        "UPDATE opportunities SET valid_until = ? "
-        "WHERE id = ? AND status IN ('open','queued') "
-        "AND (valid_until IS NULL OR valid_until < ?)",
-        (new_valid_until_iso, opportunity_id, new_valid_until_iso),
-    )
-    return int(result.rowcount or 0)
 
 
 def _expire_opportunity_rows_with_ttl_evidence(

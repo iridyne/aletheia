@@ -1063,6 +1063,7 @@ class UniverseService:
                     inserted_members, snap.id, scored_features=scored,
                     regime=current_regime,
                     short_enabled=cfg.regime.short_enabled,
+                    allow_open_replacement=True,
                 )
                 repo.expire_universe_snapshots(market_type, except_id=snap.id)
                 # Cascade: end only unclaimed open analytical generations whose

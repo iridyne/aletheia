@@ -182,41 +182,53 @@ def score_mean_reversion(feat: dict) -> tuple[float, list[str], str | None]:
     # 1h RSI extremes can be single-candle noise; 4h RSI extremes carry more weight.
     if rsi_4h is not None:
         if rsi_4h >= 75:
-            score += 15.0
+            evidence_direction = "short"
             if direction is None:
-                direction = "short"
-            reasons.append(f"4h RSI {rsi_4h:.0f} overbought")
+                direction = evidence_direction
+            if direction == evidence_direction:
+                score += 15.0
+                reasons.append(f"4h RSI {rsi_4h:.0f} overbought")
         elif rsi_4h <= 25:
-            score += 15.0
+            evidence_direction = "long"
             if direction is None:
-                direction = "long"
-            reasons.append(f"4h RSI {rsi_4h:.0f} oversold")
+                direction = evidence_direction
+            if direction == evidence_direction:
+                score += 15.0
+                reasons.append(f"4h RSI {rsi_4h:.0f} oversold")
 
     # === Overextended returns ===
     if ret_4h is not None:
         if ret_4h > 8.0:
-            score += 25.0
+            evidence_direction = "short"
             if direction is None:
-                direction = "short"
-            reasons.append(f"4h overextended +{ret_4h:.1f}%")
+                direction = evidence_direction
+            if direction == evidence_direction:
+                score += 25.0
+                reasons.append(f"4h overextended +{ret_4h:.1f}%")
         elif ret_4h < -8.0:
-            score += 25.0
+            evidence_direction = "long"
             if direction is None:
-                direction = "long"
-            reasons.append(f"4h overextended {ret_4h:.1f}%")
+                direction = evidence_direction
+            if direction == evidence_direction:
+                score += 25.0
+                reasons.append(f"4h overextended {ret_4h:.1f}%")
 
     # === 24h extension ===
     if ret_24h is not None:
         if ret_24h > 12.0:
-            score += 15.0
+            evidence_direction = "short"
             if direction is None:
-                direction = "short"
-            reasons.append(f"24h extended +{ret_24h:.1f}%")
+                direction = evidence_direction
+            if direction == evidence_direction:
+                score += 15.0
+                reasons.append(f"24h extended +{ret_24h:.1f}%")
         elif ret_24h < -12.0:
-            score += 15.0
+            evidence_direction = "long"
             if direction is None:
-                direction = "long"
-            reasons.append(f"24h extended {ret_24h:.1f}%")
+                direction = evidence_direction
+            if direction == evidence_direction:
+                score += 15.0
+                reasons.append(f"24h extended {ret_24h:.1f}%")
 
     # === Volume exhaustion confirmation ===
     if vol_ratio is not None and vol_ratio < 0.7:
@@ -362,19 +374,24 @@ def score_derivatives(feat: dict) -> tuple[float, list[str], str | None]:
     # down = new shorts. Funding-implied positioning still takes precedence; a
     # falling-OI (deleveraging) move stays direction-ambiguous and only scores.
     if oi_delta is not None:
-        if abs(oi_delta) > 20:
-            score += 30.0
-            reasons.append(f"OI delta {oi_delta:+.0f}%")
-        elif abs(oi_delta) > 10:
-            score += 20.0
-            reasons.append(f"OI delta {oi_delta:+.0f}%")
-        if direction is None and oi_delta > 10 and ret is not None:
+        oi_direction = None
+        if oi_delta > 10 and ret is not None:
             if ret > 0.5:
-                direction = "long"
-                reasons.append("OI build-up, price up")
+                oi_direction = "long"
             elif ret < -0.5:
-                direction = "short"
-                reasons.append("OI build-up, price down")
+                oi_direction = "short"
+        if direction is None and oi_direction:
+            direction = oi_direction
+        oi_score = 30.0 if abs(oi_delta) > 20 else 20.0 if abs(oi_delta) > 10 else 0.0
+        if oi_direction is None or direction == oi_direction:
+            score += oi_score
+            if oi_score:
+                reasons.append(f"OI delta {oi_delta:+.0f}%")
+        if oi_direction and direction == oi_direction:
+            reasons.append(
+                "OI build-up, price up" if oi_direction == "long"
+                else "OI build-up, price down"
+            )
 
     # OI/price divergence: hidden accumulation or weak-rally distribution signal.
     # oi_price_divergence = +1: OI rising while price falling → absorption/accumulation
@@ -383,16 +400,23 @@ def score_derivatives(feat: dict) -> tuple[float, list[str], str | None]:
     # dwindling conviction; likely to reverse → short.
     oi_divergence = feat.get("oi_price_divergence")
     if oi_divergence is not None:
+        divergence_direction = (
+            "long" if oi_divergence == 1
+            else "short" if oi_divergence == -1
+            else None
+        )
         if oi_divergence == 1:
-            score += 15.0
             if direction is None:
-                direction = "long"
-            reasons.append("OI↑/price↓ accumulation divergence")
+                direction = divergence_direction
+            if direction == divergence_direction:
+                score += 15.0
+                reasons.append("OI↑/price↓ accumulation divergence")
         elif oi_divergence == -1:
-            score += 15.0
             if direction is None:
-                direction = "short"
-            reasons.append("OI↓/price↑ weak-rally divergence")
+                direction = divergence_direction
+            if direction == divergence_direction:
+                score += 15.0
+                reasons.append("OI↓/price↑ weak-rally divergence")
 
     # Fallback when no derivatives data
     if funding is None and oi_delta is None:

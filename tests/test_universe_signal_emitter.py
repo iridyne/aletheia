@@ -527,3 +527,114 @@ class TestEmitDeterministicOpportunities:
                 "AND reason_code='opportunity_emitted'",
                 ("member-emission-atomic",),
             ).fetchone()[0] == 0
+
+
+def _persist_emitter_snapshot(repo, snapshot_id: str, member_id: str) -> dict:
+    from aletheia.storage.models import UniverseMember, UniverseSnapshot
+
+    repo.insert_universe_snapshot(
+        UniverseSnapshot(id=snapshot_id, market_type="spot", universe_size=1)
+    )
+    member = UniverseMember(
+        id=member_id,
+        snapshot_id=snapshot_id,
+        asset_id=f"asset-{member_id}",
+        symbol="BTC/USDT",
+        market_type="spot",
+        rank=1,
+        total_score=75.0,
+        scanner_family="momentum",
+        scanner_direction="long",
+        expires_at="2099-01-01T00:00:00+00:00",
+    )
+    repo.insert_universe_member(member)
+    return member.model_dump()
+
+
+def test_publication_replaces_open_generation_before_snapshot_cascade(
+    tmp_path, monkeypatch
+):
+    """A real replacement leaves one active owner after old snapshot cascade."""
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(
+        "aletheia.universe.signal_emitter.has_fresh_market_snapshot",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.signal_emitter.lookup_factor_signal",
+        lambda *_args, **_kwargs: {"status": "watch"},
+    )
+    feature = _make_feat("BTC/USDT", market_type="spot")
+    first_member = _persist_emitter_snapshot(repo, "snap-integrity-1", "member-integrity-1")
+    assert emit_deterministic_opportunities(
+        [first_member], "snap-integrity-1", [feature]
+    ) == 1
+
+    second_member = _persist_emitter_snapshot(repo, "snap-integrity-2", "member-integrity-2")
+    assert emit_deterministic_opportunities(
+        [second_member], "snap-integrity-2", [feature], allow_open_replacement=True
+    ) == 1
+
+    repo.expire_universe_snapshots("spot", except_id="snap-integrity-2")
+    assert repo.expire_opportunities_from_superseded_snapshots("spot") == 1
+    rows = get_db().execute(
+        "SELECT universe_snapshot_id,status FROM opportunities "
+        "WHERE symbol='BTC/USDT' AND market='spot' ORDER BY created_at,rowid"
+    ).fetchall()
+    assert [(row["universe_snapshot_id"], row["status"]) for row in rows] == [
+        ("snap-integrity-1", "expired"),
+        ("snap-integrity-2", "open"),
+    ]
+
+
+def test_queued_material_identity_suppresses_unchanged_and_reopens_changed_setup(
+    tmp_path, monkeypatch
+):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    monkeypatch.setattr(
+        "aletheia.universe.signal_emitter.has_fresh_market_snapshot",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.signal_emitter.lookup_factor_signal",
+        lambda *_args, **_kwargs: {"status": "watch"},
+    )
+    first_member = _persist_emitter_snapshot(repo, "snap-material-1", "member-material-1")
+    feature = _make_feat("BTC/USDT", market_type="spot")
+    assert emit_deterministic_opportunities(
+        [first_member], "snap-material-1", [feature]
+    ) == 1
+    get_db().execute(
+        "UPDATE opportunities SET status='queued' WHERE universe_snapshot_id=?",
+        ("snap-material-1",),
+    )
+    get_db().commit()
+
+    unchanged_member = _persist_emitter_snapshot(repo, "snap-material-2", "member-material-2")
+    assert emit_deterministic_opportunities(
+        [unchanged_member], "snap-material-2", [feature]
+    ) == 0
+
+    changed_member = _persist_emitter_snapshot(repo, "snap-material-3", "member-material-3")
+    changed = _make_feat("BTC/USDT", market_type="spot", return_4h=9.0)
+    assert emit_deterministic_opportunities(
+        [changed_member], "snap-material-3", [changed]
+    ) == 1
+    rows = get_db().execute(
+        "SELECT universe_snapshot_id,status FROM opportunities "
+        "WHERE symbol='BTC/USDT' AND market='spot' ORDER BY created_at,rowid"
+    ).fetchall()
+    assert [(row["universe_snapshot_id"], row["status"]) for row in rows] == [
+        ("snap-material-1", "queued"),
+        ("snap-material-3", "open"),
+    ]

@@ -674,8 +674,9 @@ def _compute_trade_score(
     if universe_member:
         score += 25 * _clip_norm(universe_member.get("total_score") or 0, 0, 100)
         score += 10 * _clip_norm(universe_member.get("tradability_score") or 0, 0, 100)
-        score -= float(universe_member.get("late_entry_penalty") or 0)
-        score -= float(universe_member.get("crowding_risk") or 0)
+        # Universe allocator owns the economic deductions for late entry and
+        # crowding inside ``total_score``. Keep the typed fields for guards and
+        # attribution, but do not subtract the same quantities a second time.
 
     # P0-3: Factor feedback — IC-proxy continuous weighting (replaces discrete ±5/±20 jumps)
     # Retrospective statistics are diagnostic. Only the prospective experiment
@@ -755,14 +756,12 @@ def _compute_trade_score(
             risk_flags = rf
 
     for flag in risk_flags:
-        if flag == "late_entry":
-            score -= 15
-        elif flag == "crowded":
-            score -= 10
-        elif flag == "wide_spread":
-            score -= 10
-        else:
-            score -= 5
+        # These flags are projections of allocator-owned late/crowding/spread
+        # economics. They remain available to hard guards and audit context;
+        # applying another numeric penalty here double-counts the same fact.
+        if flag in {"late_entry", "crowded", "wide_spread"}:
+            continue
+        score -= 5
 
     memo_delta = _memo_scoring(opp.get("symbol"), direction, regime)
     score += _authorized_ranker_delta(
