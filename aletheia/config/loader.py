@@ -155,6 +155,26 @@ _OPERATOR_MODE_MIGRATION = {
     "Full": "Auto",
 }
 
+
+def _enforce_single_operator_authority(cfg: AletheiaConfig) -> bool:
+    """Disable the legacy Python governance loop while operator-shell owns Apex.
+
+    ``operator.enabled`` selects the long-lived TS operator-shell.  The older
+    Python ``pi_operator_loop`` is still wired through the Scheduler and can
+    mutate trading policy when ``operator.loop_enabled`` is true.  Allowing both
+    flags at once therefore creates two independent system-level authorities.
+
+    Keep the legacy loop as an explicit fallback only: an owner must first turn
+    off operator-shell and then enable the legacy loop.  Returning ``True`` lets
+    persisted configs migrate once instead of rediscovering the conflict every
+    four-hour scheduler tick.
+    """
+    if cfg.operator.enabled and cfg.operator.loop_enabled:
+        cfg.operator.loop_enabled = False
+        return True
+    return False
+
+
 # ─── In-memory config cache ───────────────────────────────────────────────────
 # Avoids repeated disk reads on every API request.  TTL = 5 s; invalidated
 # immediately by save_config() so mutations are always reflected.
@@ -204,6 +224,8 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
         if cfg.operator.permission_mode in _OPERATOR_MODE_MIGRATION:
             cfg.operator.permission_mode = _OPERATOR_MODE_MIGRATION[cfg.operator.permission_mode]
             changed = True
+        if _enforce_single_operator_authority(cfg):
+            changed = True
         if changed and persist_migrations:
             save_config(cfg)
         if changed and not persist_migrations:
@@ -211,6 +233,7 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
         _config_cache = (time.monotonic(), CONFIG_PATH, cfg)
         return cfg.model_copy(deep=True)
     cfg = AletheiaConfig()
+    _enforce_single_operator_authority(cfg)
     _config_cache = (time.monotonic(), CONFIG_PATH, cfg)
     return cfg.model_copy(deep=True)
 
@@ -285,6 +308,7 @@ def bootstrap() -> AletheiaConfig:
         logging.getLogger("aletheia.config").warning("bootstrap: seed_playbooks failed: %s", e)
     if not CONFIG_PATH.exists():
         cfg = AletheiaConfig()
+        _enforce_single_operator_authority(cfg)
         save_config(cfg)
         return cfg
     return load_config()
