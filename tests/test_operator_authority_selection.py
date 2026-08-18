@@ -123,18 +123,38 @@ def test_default_runtime_selects_operator_shell_as_only_owner(monkeypatch, tmp_p
     assert cfg.operator.loop_enabled is False
 
 
-def test_save_config_rejects_dual_operator_authority(monkeypatch, tmp_path) -> None:
+def test_new_default_config_save_normalizes_to_operator_shell_only(
+    monkeypatch, tmp_path,
+) -> None:
+    _isolate_loader(monkeypatch, tmp_path)
+    cfg = AletheiaConfig()
+    assert cfg.operator.enabled is True
+    assert cfg.operator.loop_enabled is True
+
+    loader.save_config(cfg)
+
+    assert cfg.operator.loop_enabled is False
+    persisted = yaml.safe_load(loader.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert persisted["operator"]["enabled"] is True
+    assert persisted["operator"]["loop_enabled"] is False
+
+
+def test_existing_shell_owner_rejects_reenabling_legacy_loop(monkeypatch, tmp_path) -> None:
     _isolate_loader(monkeypatch, tmp_path)
     cfg = AletheiaConfig()
     cfg.operator.enabled = True
-    cfg.operator.loop_enabled = True
+    cfg.operator.loop_enabled = False
+    loader.save_config(cfg)
 
+    cfg.operator.loop_enabled = True
     with pytest.raises(HTTPException) as exc_info:
         loader.save_config(cfg)
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail["error"] == "operator_authority_conflict"
-    assert not loader.CONFIG_PATH.exists()
+    persisted = yaml.safe_load(loader.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert persisted["operator"]["enabled"] is True
+    assert persisted["operator"]["loop_enabled"] is False
 
 
 def test_save_config_rejects_hot_legacy_handoff_while_shell_process_is_active(
@@ -150,5 +170,5 @@ def test_save_config_rejects_hot_legacy_handoff_while_shell_process_is_active(
         loader.save_config(cfg)
 
     assert exc_info.value.status_code == 409
-    assert "gateway restart" in exc_info.value.detail["message"]
+    assert "still running" in exc_info.value.detail["message"]
     assert not loader.CONFIG_PATH.exists()
