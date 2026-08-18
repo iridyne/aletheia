@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { positionFreshness, positionKeys } from '../lib/queryKeys'
 import type { Order, Position, TradeProposal } from '../types'
 import { fmtSymbol } from '../lib/format'
+import { parseDecisionRationale } from '../lib/decisionReasoning'
 
 /**
  * Causal-chain inspector (WEBUI_PAGE_MAP.md — cross-cutting, lives in Trades & Positions).
@@ -67,16 +68,8 @@ function asRecord(value: unknown): JsonRecord | null {
 }
 
 function parseEntryParameters(proposal: TradeProposal | null): JsonRecord | null {
-  const rationale = proposal?.agent_rationale
-  if (!rationale) return null
-  const separator = rationale.indexOf('\n---\n')
-  if (separator < 0) return null
-  try {
-    const meta = asRecord(JSON.parse(rationale.slice(separator + 5)))
-    return asRecord(meta?.entry_parameters)
-  } catch {
-    return null
-  }
+  const { meta } = parseDecisionRationale(proposal?.agent_rationale)
+  return asRecord(meta?.entry_parameters)
 }
 
 function parseExitReasoning(position: Position | null): JsonRecord | null {
@@ -181,9 +174,11 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
   const entryParameters = parseEntryParameters(proposal)
   const exitReasoning = parseExitReasoning(resolvedPosition)
 
-  const rationaleText = proposal?.agent_rationale
-    ? (() => { const i = proposal.agent_rationale.indexOf('\n---\n'); const t = i > 0 ? proposal.agent_rationale.slice(0, i) : proposal.agent_rationale; return t.length > 350 ? t.slice(0, 350) + '…' : t })()
-    : null
+  const rationaleText = (() => {
+    const { thesis } = parseDecisionRationale(proposal?.agent_rationale)
+    if (!thesis) return null
+    return thesis.length > 350 ? thesis.slice(0, 350) + '…' : thesis
+  })()
 
   return (
     <div className="causal-chain">
