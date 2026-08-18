@@ -32,15 +32,20 @@ import type {
   StrategySummary,
 } from './schemas.js'
 import { gatewayRequestFailureMessage } from './gateway_errors.js'
+import { applyOperatorServiceHeader } from './service_auth.js'
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers)
+  if (!headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+  applyOperatorServiceHeader(headers)
   const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-    },
     ...init,
+    headers,
   })
   if (!response.ok) {
+    // Keep the synthetic service credential out of diagnostic/error payloads.
     throw new Error(await gatewayRequestFailureMessage(url, init, response))
   }
   return response.json() as Promise<T>
