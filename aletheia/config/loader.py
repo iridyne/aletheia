@@ -236,10 +236,6 @@ def _audit_operator_authority_migration(
 
 def _raise_operator_authority_conflict(reason: str) -> None:
     """Reject a write that could make both System Operator owners effective."""
-    # ``save_config`` is also used by CLI/runtime code.  Import lazily so the
-    # configuration module does not take a server dependency on ordinary paths;
-    # FastAPI callers receive a truthful 409 rather than a successful-looking
-    # settings response that is silently reverted later.
     try:
         from fastapi import HTTPException
     except ImportError as exc:  # pragma: no cover - FastAPI is a core dependency
@@ -250,11 +246,27 @@ def _raise_operator_authority_conflict(reason: str) -> None:
             "error": "operator_authority_conflict",
             "message": reason,
             "required_action": (
-                "Keep operator-shell enabled and the legacy loop disabled, or "
-                "disable operator-shell, restart the gateway so its process exits, "
-                "then enable the legacy fallback."
+                "Keep operator-shell enabled and the legacy loop disabled. "
+                "The legacy implementation remains a compatibility/simulation fallback, "
+                "not a hot-switchable second owner."
             ),
         },
+    )
+
+
+def _persisted_operator_shell_owner_selected() -> bool:
+    """Return whether the durable config already chose shell-only ownership."""
+    if not CONFIG_PATH.exists():
+        return False
+    try:
+        raw = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    operator = raw.get("operator")
+    if not isinstance(operator, dict):
+        return False
+    return bool(operator.get("enabled", True)) and not bool(
+        operator.get("loop_enabled", True)
     )
 
 
@@ -336,7 +348,7 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
                     reason=authority_reason,
                 )
         if _apply_runtime_operator_authority(cfg):
-            # Runtime-only projection; do not overwrite a staged fallback on disk.
+            # Runtime-only projection; do not overwrite a legacy fallback on disk.
             pass
         if changed and not persist_migrations:
             return cfg.model_copy(deep=True)
@@ -358,9 +370,14 @@ def _save_config_locked(
     _invalidate_config_cache()
     ensure_data_dirs()
     if cfg.operator.enabled and cfg.operator.loop_enabled:
-        _raise_operator_authority_conflict(
-            "operator-shell and the legacy Python Operator loop cannot both be enabled"
-        )
+        if not allow_operator_handoff and _persisted_operator_shell_owner_selected():
+            _raise_operator_authority_conflict(
+                "operator-shell is the persisted System Operator owner; the legacy Python loop cannot be enabled concurrently"
+            )
+        # New/default config construction still carries the historical schema
+        # default loop_enabled=True. Normalize that compatibility default to the
+        # shell-only product default instead of turning ordinary saves into 409s.
+        cfg.operator.loop_enabled = False
     if (
         not allow_operator_handoff
         and not cfg.operator.enabled
@@ -368,7 +385,7 @@ def _save_config_locked(
         and operator_shell_process_active()
     ):
         _raise_operator_authority_conflict(
-            "The operator-shell process is still running; legacy fallback activation requires a gateway restart"
+            "The operator-shell process is still running; legacy fallback cannot become effective until that process is gone"
         )
     cfg.runtime.set_pause_scope(cfg.exchange.mode)
     data = cfg.model_dump(mode="json")
