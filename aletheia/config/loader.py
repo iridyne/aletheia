@@ -242,6 +242,7 @@ def _save_config_locked(cfg: AletheiaConfig) -> None:
     """Persist config while the process-wide config write lock is held."""
     _invalidate_config_cache()
     ensure_data_dirs()
+    _enforce_single_operator_authority(cfg)
     cfg.runtime.set_pause_scope(cfg.exchange.mode)
     data = cfg.model_dump(mode="json")
     content = yaml.dump(data, default_flow_style=False, sort_keys=False)
