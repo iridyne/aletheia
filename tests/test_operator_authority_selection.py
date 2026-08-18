@@ -72,3 +72,17 @@ def test_default_runtime_selects_operator_shell_as_only_owner(monkeypatch, tmp_p
 
     assert cfg.operator.enabled is True
     assert cfg.operator.loop_enabled is False
+
+
+def test_save_config_cannot_persist_dual_operator_authority(monkeypatch, tmp_path) -> None:
+    _isolate_loader(monkeypatch, tmp_path)
+    cfg = AletheiaConfig()
+    cfg.operator.enabled = True
+    cfg.operator.loop_enabled = True
+
+    loader.save_config(cfg)
+
+    assert cfg.operator.loop_enabled is False
+    persisted = yaml.safe_load(loader.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert persisted["operator"]["enabled"] is True
+    assert persisted["operator"]["loop_enabled"] is False
