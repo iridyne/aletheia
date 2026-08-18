@@ -254,6 +254,15 @@ def record_candidate_refresh_failure(
     )
 
 
+def _wake_event_kind(defer_reason: str) -> str:
+    """Classify the wake by the exact defer reason it resolved."""
+    if defer_reason.startswith("candidate_entry_mark_"):
+        return "mark_refresh_wake"
+    if defer_reason.startswith("candidate_technical_"):
+        return "feature_refresh_wake"
+    return "data_refresh_wake"
+
+
 def wake_pending_candidate_defers(
     *,
     defer_reasons: Iterable[str],
@@ -263,10 +272,11 @@ def wake_pending_candidate_defers(
 ) -> bool:
     """Wake once when refreshed facts exactly match a live data defer.
 
-    Returns True only when `notify_pi_daemon` actually delivered the wake, and
-    always records a durable audit event (delivered or undelivered) so the
-    refresh→wake→re-evaluation chain is reconstructable across process
-    boundaries. See #1096 acceptance for the recovery contract.
+    A single call may cover multiple candidates; `notify_pi_daemon` is fired
+    once, and every matched opportunity receives its own durable audit row so
+    the refresh → wake → re-evaluation correlation is preserved per candidate.
+    Returns True only when the daemon was running AND the notify scheduling
+    accepted AND every matched opportunity's audit row persisted. See #1096.
     """
     reasons = {str(reason) for reason in defer_reasons if reason}
     assets = {str(asset_id) for asset_id in asset_ids if asset_id}
@@ -275,6 +285,7 @@ def wake_pending_candidate_defers(
         return False
     now_iso = datetime.now(timezone.utc).isoformat()
     db = repo.get_db()
+    matches: list[dict] = []
     for fact in list_pending_candidate_facts():
         if fact["identity_status"] != "exact":
             continue
@@ -303,18 +314,33 @@ def wake_pending_candidate_defers(
         ).fetchone()
         if event is None or str(event["reason"] or "") not in reasons:
             continue
-        from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+        matches.append({
+            "instrument": identity,
+            "opportunity_id": str(fact["opportunity_id"] or ""),
+            "defer_reason": str(event["reason"] or ""),
+        })
+    if not matches:
+        return False
 
-        delivered = bool(notify_pi_daemon(source=source))
-        _record_wake_transition(
-            instrument=identity,
-            opportunity_id=str(fact["opportunity_id"] or ""),
-            defer_reason=str(event["reason"] or ""),
+    from aletheia.agent_runtime.pi_daemon import is_daemon_running, notify_pi_daemon
+
+    scheduled = bool(notify_pi_daemon(source=source))
+    # `notify_pi_daemon` returns True as long as the coroutine was scheduled;
+    # a crashed/absent daemon still accepts the callback but will never run it.
+    # Treat delivery as scheduling AND daemon liveness.
+    delivered = scheduled and is_daemon_running()
+
+    all_audits_ok = True
+    for match in matches:
+        recorded = _record_wake_transition(
+            instrument=match["instrument"],
+            opportunity_id=match["opportunity_id"],
+            defer_reason=match["defer_reason"],
             wake_source=source,
             delivered=delivered,
         )
-        return delivered
-    return False
+        all_audits_ok = all_audits_ok and recorded
+    return delivered and all_audits_ok
 
 
 def _record_wake_transition(
@@ -324,10 +350,11 @@ def _record_wake_transition(
     defer_reason: str,
     wake_source: str,
     delivered: bool,
-) -> None:
-    """Durably record refresh → wake correlation for #996-style acceptance."""
+) -> bool:
+    """Durably record refresh → wake correlation. Returns True iff persisted."""
     from aletheia.storage.models import AuditEvent
 
+    kind = _wake_event_kind(defer_reason)
     payload = {
         "instrument": instrument,
         "opportunity_id": opportunity_id,
@@ -340,20 +367,50 @@ def _record_wake_transition(
             actor="candidate_market_facts",
             source="pending_candidate_recovery",
             event_type=(
-                "mark_refresh_wake_delivered" if delivered
-                else "mark_refresh_wake_undelivered"
+                f"{kind}_delivered" if delivered else f"{kind}_undelivered"
             ),
             entity_type="opportunity",
             entity_id=opportunity_id or None,
             after_state=json.dumps(payload, sort_keys=True),
             message=(
-                f"exact mark refresh wake for {instrument} "
+                f"{kind.replace('_', ' ')} for {instrument} "
                 f"(defer={defer_reason}, source={wake_source}) "
                 f"{'delivered' if delivered else 'undelivered'}"
             ),
         ))
-    except Exception:
-        logger.debug("wake audit event failed for %s", instrument, exc_info=True)
+        return True
+    except Exception as exc:
+        # A dropped audit row breaks the cross-process recovery-evidence
+        # contract, so surface it via a durable critical infra event and
+        # signal the failure to the caller instead of swallowing it.
+        logger.warning(
+            "wake audit persistence failed for %s: %s",
+            instrument, exc, exc_info=True,
+        )
+        try:
+            from aletheia.infra.events import emit_infra_event
+
+            emit_infra_event(
+                severity="critical",
+                source="candidate_market_facts",
+                code=f"{kind}_persistence_failed",
+                entity_id=opportunity_id or instrument,
+                message=(
+                    f"recovery evidence dropped for {instrument} "
+                    f"(defer={defer_reason}, source={wake_source}): "
+                    f"{type(exc).__name__}"
+                ),
+                metadata={
+                    "instrument": instrument,
+                    "defer_reason": defer_reason,
+                    "wake_source": wake_source,
+                    "delivered": delivered,
+                },
+                dedupe_sec=300,
+            )
+        except Exception:
+            logger.debug("infra event emit also failed", exc_info=True)
+        return False
 
 
 def _recent_failure(
@@ -517,6 +574,7 @@ def build_pending_candidate_market_report(
         from aletheia.data.price_feed import (
             get_fresh_mark_for_protective_close,
             get_latest_exact_market_snapshot,
+            instrument_refresh_attempted,
             process_owns_price_cache,
         )
 
@@ -544,7 +602,15 @@ def build_pending_candidate_market_report(
         elif failure and str(failure.get("component") or "") == "price_mark":
             mark_state = "mark_refresh_failed"
             mark_reason = "candidate_entry_mark_refresh_failed"
-        elif not process_owns_price_cache():
+        elif not (
+            process_owns_price_cache()
+            and instrument_refresh_attempted(
+                instrument.exchange, instrument.symbol, instrument.market_type,
+            )
+        ):
+            # Cache authority is per-instrument: an observer process, or a
+            # Gateway process that has not yet cycled through this exact
+            # instrument, cannot authoritatively call the mark unavailable.
             mark_state = "mark_state_unobservable"
             mark_reason = "candidate_entry_mark_state_unobservable"
         elif latest_mark is not None:

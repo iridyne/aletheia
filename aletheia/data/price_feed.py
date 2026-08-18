@@ -36,11 +36,22 @@ _cache_lock = threading.Lock()
 # CLI processes never call that function, so their empty `_instrument_price_cache`
 # is not authoritative evidence that the Gateway lacks a fresh mark.
 _price_cache_owner_process: bool = False
+# Exact instruments this process has actually attempted to refresh (success OR
+# failure). Cache authority is per-instrument, not per-process: a candidate
+# admitted mid-cycle is still unobservable until its first refresh attempt.
+_instrument_refresh_attempted: set[tuple[str, str, str]] = set()
 
 
 def process_owns_price_cache() -> bool:
     """True in the process that populates the exact fast mark cache."""
     return _price_cache_owner_process
+
+
+def instrument_refresh_attempted(
+    exchange: str, symbol: str, market_type: str,
+) -> bool:
+    """True after this exact instrument has been through one refresh attempt."""
+    return (exchange, symbol, market_type) in _instrument_refresh_attempted
 
 _STALE_THRESHOLD_SEC = 90.0
 _PROTECTIVE_DB_MAX_AGE_SEC = 120.0
@@ -436,6 +447,9 @@ async def refresh_watched_prices() -> dict:
             try:
                 for instrument in group:
                     sym = instrument.symbol
+                    _instrument_refresh_attempted.add(
+                        (instrument.exchange, sym, instrument.market_type),
+                    )
                     try:
                         ticker = require_exact_ticker_venue(
                             await provider.get_ticker(instrument), venue,
