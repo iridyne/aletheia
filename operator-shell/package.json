@@ -7,7 +7,7 @@
     "start": "node node_modules/tsx/dist/cli.mjs src/index.ts",
     "heartbeat-once": "node node_modules/tsx/dist/cli.mjs src/index.ts --once",
     "build": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test tests/operator_loop.test.ts"
+    "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "tsx": "^4.20.3",
