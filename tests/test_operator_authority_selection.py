@@ -65,6 +65,21 @@ def test_load_config_preserves_explicit_legacy_fallback(monkeypatch, tmp_path) -
     assert cfg.operator.loop_enabled is True
 
 
+def test_pre_shell_config_without_operator_section_keeps_legacy_owner(monkeypatch, tmp_path) -> None:
+    _isolate_loader(monkeypatch, tmp_path)
+    raw = AletheiaConfig().model_dump(mode="json")
+    raw.pop("operator")
+    loader.CONFIG_PATH.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    cfg = loader.load_config()
+
+    assert cfg.operator.enabled is False
+    assert cfg.operator.loop_enabled is True
+    persisted = yaml.safe_load(loader.CONFIG_PATH.read_text(encoding="utf-8"))
+    assert persisted["operator"]["enabled"] is False
+    assert persisted["operator"]["loop_enabled"] is True
+
+
 def test_default_runtime_selects_operator_shell_as_only_owner(monkeypatch, tmp_path) -> None:
     _isolate_loader(monkeypatch, tmp_path)
 
