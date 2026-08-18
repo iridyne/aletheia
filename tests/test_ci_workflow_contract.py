@@ -76,6 +76,7 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
         "review-core",
         "review-coverage",
         "review-node",
+        "review-operator-shell-windows",
         "review-native",
         "review",
         "unit",
@@ -235,6 +236,7 @@ def test_review_optional_surfaces_are_job_gated_before_runner_allocation() -> No
         "review-core",
         "review-coverage",
         "review-node",
+        "review-operator-shell-windows",
         "review-native",
     ]
     assert "always()" in gate["if"]
@@ -485,6 +487,7 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
         "review-core",
         "review-coverage",
         "review-node",
+        "review-operator-shell-windows",
         "review-native",
     ]
     assert unit_job["name"] == "Python unit"
