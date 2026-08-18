@@ -216,6 +216,7 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
             return cfg.model_copy(deep=True)
     if CONFIG_PATH.exists():
         raw = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        operator_section_present = isinstance(raw.get("operator"), dict)
         cfg = AletheiaConfig.model_validate(raw)
         changed = False
         if cfg.agent.permission_mode in _MODE_MIGRATION:
@@ -224,7 +225,13 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
         if cfg.operator.permission_mode in _OPERATOR_MODE_MIGRATION:
             cfg.operator.permission_mode = _OPERATOR_MODE_MIGRATION[cfg.operator.permission_mode]
             changed = True
-        if _enforce_single_operator_authority(cfg):
+        if not operator_section_present:
+            # Configs written before operator-shell existed implicitly belong to
+            # the legacy Python supervisor.  Preserve that owner rather than
+            # silently enabling a second one during schema-default expansion.
+            cfg.operator.enabled = False
+            changed = True
+        elif _enforce_single_operator_authority(cfg):
             changed = True
         if changed and persist_migrations:
             save_config(cfg)
