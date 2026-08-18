@@ -32,6 +32,27 @@ _price_cache: dict[str, dict] = {}
 _instrument_price_cache: dict[tuple[str, str, str], dict] = {}
 _cache_lock = threading.Lock()
 
+# Flipped once `refresh_watched_prices()` has run in this process. Read-only
+# CLI processes never call that function, so their empty `_instrument_price_cache`
+# is not authoritative evidence that the Gateway lacks a fresh mark.
+_price_cache_owner_process: bool = False
+# Exact instruments this process has actually attempted to refresh (success OR
+# failure). Cache authority is per-instrument, not per-process: a candidate
+# admitted mid-cycle is still unobservable until its first refresh attempt.
+_instrument_refresh_attempted: set[tuple[str, str, str]] = set()
+
+
+def process_owns_price_cache() -> bool:
+    """True in the process that populates the exact fast mark cache."""
+    return _price_cache_owner_process
+
+
+def instrument_refresh_attempted(
+    exchange: str, symbol: str, market_type: str,
+) -> bool:
+    """True after this exact instrument has been through one refresh attempt."""
+    return (exchange, symbol, market_type) in _instrument_refresh_attempted
+
 _STALE_THRESHOLD_SEC = 90.0
 _PROTECTIVE_DB_MAX_AGE_SEC = 120.0
 _UNIVERSE_TICK_EVERY = 3  # universe members refresh every N ticks
@@ -379,6 +400,9 @@ async def refresh_watched_prices() -> dict:
     watched set is small so serial is acceptable; switch to a provider batch call
     if it grows. Never raises — errors are logged and cache entries left stale.
     """
+    global _price_cache_owner_process
+    _price_cache_owner_process = True
+
     instruments = get_watched_instruments()
     if not instruments:
         return {"refreshed": 0, "symbols": [], "errors": []}
@@ -423,6 +447,9 @@ async def refresh_watched_prices() -> dict:
             try:
                 for instrument in group:
                     sym = instrument.symbol
+                    _instrument_refresh_attempted.add(
+                        (instrument.exchange, sym, instrument.market_type),
+                    )
                     try:
                         ticker = require_exact_ticker_venue(
                             await provider.get_ticker(instrument), venue,
