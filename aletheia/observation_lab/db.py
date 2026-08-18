@@ -36,6 +36,28 @@ _LAB_SCHEMA_SQL = (
     ");"
     "CREATE INDEX IF NOT EXISTS idx_frozen_units_experiment "
     "ON filter_shadow_frozen_units(experiment_id, first_evaluated_at);"
+    # UFC shadow-equivalence adoption (Issue #1072 Packet 1).
+    # One row per equivalence pass per (observation_id, cohort_key). Append-only:
+    # a mismatch never overwrites a prior match; a subsequent match records a
+    # new row so we retain the full history for causal audit.
+    "CREATE TABLE IF NOT EXISTS ufc_shadow_equivalence ("
+    "id TEXT PRIMARY KEY,"
+    "observation_id TEXT NOT NULL,"       # ufc:<exp_id>:<policy_epoch>:<fixed_look_gen>
+    "experiment_id TEXT NOT NULL,"
+    "cohort_key TEXT NOT NULL,"           # hypothesis_id + policy_epoch
+    "checked_at TEXT NOT NULL,"
+    "matched INTEGER NOT NULL CHECK (matched IN (0, 1)),"
+    "mismatch_field TEXT,"                # NULL when matched=1
+    "learning_verdict TEXT,"              # observed learning verdict string
+    "recomputed_verdict TEXT,"
+    "learning_treatment_n INTEGER,"
+    "recomputed_treatment_n INTEGER,"
+    "learning_control_n INTEGER,"
+    "recomputed_control_n INTEGER,"
+    "notes TEXT"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_ufc_shadow_equivalence_obs "
+    "ON ufc_shadow_equivalence(observation_id, checked_at DESC);"
 )
 
 

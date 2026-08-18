@@ -19,3 +19,8 @@ from aletheia.observation_lab.units import (  # noqa: F401
     insert_frozen_units,
     list_frozen_units,
 )
+from aletheia.observation_lab.ufc_shadow import (  # noqa: F401
+    UFC_PATH_ID,
+    latest_equivalence_record,
+    run_ufc_shadow_equivalence_pass,
+)
