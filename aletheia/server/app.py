@@ -860,9 +860,9 @@ _PROTECTED_PATHS = {
 # is enabled. The operator-shell internal writer endpoints (`/api/operator/internal/*`)
 # had no auth guard at all — a tunneled caller could write heartbeats, tasks,
 # messages, events, artifacts, and repair decisions impersonating the operator.
-# These are LEGITIMATE for the local TypeScript bridge (loopback), so we don't
-# strictly forbid them; we require the same tunnel token the trust-boundary
-# routes require when public exposure is on.
+# These are LEGITIMATE for the supervised TypeScript bridge, but owner auth and
+# local service auth remain distinct identities. Service auth is accepted only on
+# the bounded Operator route set declared in server/operator_service_auth.py.
 _PROTECTED_PATH_PREFIXES = ("/api/operator/internal/",)
 
 _PROTECTED_MUTATION_PATHS = (
@@ -900,22 +900,21 @@ _PUBLIC_PATHS = frozenset(
 
 @app.middleware("http")
 async def _tunnel_auth_guard(request, call_next):
-    """Enforce owner authentication for all private API/infra routes when tunnel is active.
+    """Enforce owner or scoped Operator-service auth for private API routes.
 
     Policy (tunnel.enabled=True or remote_control.require_token=True):
       - Paths in _PUBLIC_PATHS are always accessible anonymously (minimal liveness).
-      - Every other /api/* and /_infra/* route requires a valid X-Aletheia-Token header,
-        including all GET/read endpoints. Read access exposes positions, strategy
-        reasoning, agent output, and research data that are as sensitive as mutations.
-      - A missing remote_control_api_token (or legacy tunnel_api_token) secret
-        fails closed with 401; unauthenticated callers cannot reach a private route.
+      - The supervised Operator Shell may authenticate with its independent
+        service credential, but only for the explicit route/method allowlist in
+        server/operator_service_auth.py. Service auth never sets owner-auth flags.
+      - Every other /api/* and /_infra/* route requires a valid X-Aletheia-Token
+        owner header, including reads.
+      - A missing owner token fails closed for owner-facing routes; it does not
+        disable a correctly authenticated local Operator service request.
     Policy (Remote Control enabled without require_token):
       - Private-network API access remains unauthenticated for MVP convenience.
     Policy (both modes disabled):
       - No authentication required; local-first frictionless access is preserved.
-
-    Successful authentication sets both request-state flags so existing audited
-    routes continue to attribute authenticated owner actions correctly.
     """
     path = request.url.path
     _is_private = (path.startswith("/api/") or path.startswith("/_infra/")) and path not in _PUBLIC_PATHS
@@ -930,6 +929,14 @@ async def _tunnel_auth_guard(request, call_next):
             getattr(remote_control, "enabled", False) and getattr(remote_control, "require_token", False)
         )
         if tunnel_enabled or remote_token_required:
+            from aletheia.server.operator_service_auth import (
+                operator_service_request_authenticated,
+            )
+
+            if operator_service_request_authenticated(request):
+                request.state.operator_service_authenticated = True
+                return await call_next(request)
+
             from aletheia.config.secrets import get_secret
             from fastapi.responses import JSONResponse
 
