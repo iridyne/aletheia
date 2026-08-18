@@ -361,12 +361,12 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         name="active_operator_carrier",
         stage="paper_trader_selection",
         reason_codes=("active_operator_carrier", "opposing_direction_queued"),
-        current_value="one unresolved carrier per symbol (any direction)",
+        current_value="one unresolved carrier per physical instrument (any direction)",
         note="A newer snapshot generation remains analysis evidence but cannot create a "
              "second queue carrier while the same setup is already awaiting Operator. "
              "opposing_direction_queued fires when the opposing direction (long vs short) "
-             "is already in the queue — prevents both sides of the same symbol from "
-             "consuming evaluation slots simultaneously.",
+             "is already in the queue — prevents both sides of the same physical "
+             "instrument from consuming evaluation slots simultaneously.",
         authority_class="attention_ranking",
     ),
     _report_only_gate(
@@ -388,8 +388,9 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         name="duplicate_symbol",
         stage="paper_trader_selection",
         reason_codes=("duplicate_symbol",),
-        current_value="one ranked thesis per symbol per cycle",
-        note="In-cycle deduplication boundary; the next distinct symbol backfills the slot.",
+        current_value="one ranked thesis per physical instrument per cycle",
+        note="In-cycle physical-instrument deduplication boundary; the next distinct "
+             "instrument backfills the slot.",
         feedback_source="forward_return",
         feedback_ready=True,
         authority_class="attention_ranking",
@@ -398,7 +399,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         name="open_position_duplicate",
         stage="paper_trader_selection",
         reason_codes=("open_position_duplicate",),
-        current_value="one open position per symbol",
+        current_value="one open position per physical instrument",
         note="Portfolio-state conflict, not a quality threshold. Lower ranks backfill the slot.",
         feedback_source="forward_return",
         feedback_ready=True,

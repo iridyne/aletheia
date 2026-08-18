@@ -1063,6 +1063,7 @@ class UniverseService:
                     inserted_members, snap.id, scored_features=scored,
                     regime=current_regime,
                     short_enabled=cfg.regime.short_enabled,
+                    allow_open_replacement=True,
                 )
                 repo.expire_universe_snapshots(market_type, except_id=snap.id)
                 # Cascade: end only unclaimed open analytical generations whose
@@ -1072,17 +1073,15 @@ class UniverseService:
                 # naturally at the family-TTL cliff; now they need explicit
                 # cleanup or the pool grows unboundedly (see
                 # repositories.expire_opportunities_from_superseded_snapshots).
-                try:
-                    cascaded = repo.expire_opportunities_from_superseded_snapshots(market_type)
-                    if cascaded:
-                        logger.info(
-                            "Universe refresh: cascaded expiry — %d open generation(s) "
-                            "from superseded snapshots marked expired",
-                            cascaded,
-                        )
-                except Exception as _e:
-                    logger.warning(
-                        "Universe refresh: cascade expiry failed (non-fatal): %s", _e,
+                # This is part of the publication unit: leaving the old open
+                # generation beside its replacement would create two rankable
+                # owners. Any evidence/CAS failure must roll the unit back.
+                cascaded = repo.expire_opportunities_from_superseded_snapshots(market_type)
+                if cascaded:
+                    logger.info(
+                        "Universe refresh: cascaded expiry — %d open generation(s) "
+                        "from superseded snapshots marked expired",
+                        cascaded,
                     )
 
             # Selection is evidence only after the snapshot and Opportunity handoff

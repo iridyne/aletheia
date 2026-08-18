@@ -167,14 +167,12 @@ Direct skip 在 `system_operator_skip_remediation/b1.5` 下必须经过一次有
 rank ordering、账户权益或单笔近期亏损都没有 adverse authority。两次输出仍是信息不足或无效时，
 写 `operator_evaluation_events(event_kind=operator_decision_deferred_unchanged_context)` 并保持 pending；
 同一 policy epoch、同一候选的物质上下文 fingerprint 在 120 分钟窗口内未变化时不再调用模型；
-每条 defer 的 `defer_until` 就是完整的 120 分钟窗口本身，Operator 判 defer 即隐式断言
-"候选在窗口末仍值得再看一次"——因此 defer 事件同一事务中把 Opportunity 的 `valid_until`
-CAS 前向延长到 `defer_until + 300s`（`extend_opportunity_valid_until_forward_only`），
-PI daemon 必须把仍未兑现的耐久 `defer_until` 作为独立 wake deadline；持续的新 signal、heartbeat
-相位和进程重启都不得推迟或遗忘该 deadline，且新 Operator 观察、终局 PiDecision 或 Opportunity
-过期后不得重挂。额外 300 秒只提供评估与队列处理余量，从而保证承诺的第二次评估落在
-Opportunity 生命周期内。已延长的 `valid_until` 不得被后续 defer 缩短，
-也不得被 `expire_stale_queued_opportunities` 静默 `ttl_expired`。defer 不阻塞同批下一候选。每次模型调用只能暴露一个 pending carrier 及其技术/Opportunity/B2 证据，
+每条 defer 的 `defer_until` 是独立的 Operator attention deadline，但不得晚于来源
+Opportunity 的 `valid_until`。defer 事件绝不修改 `valid_until`；PI daemon 必须把仍未兑现的
+耐久 `defer_until` 作为独立 wake deadline，持续的新 signal、heartbeat 相位和进程重启都不得
+推迟或遗忘该 deadline，且新 Operator 观察、终局 PiDecision 或 Opportunity 过期后不得重挂。
+过期载体只能按其市场有效期失去 admission/recovery 资格，不能由 scheduler/API resurrect。
+defer 不阻塞同批下一候选。每次模型调用只能暴露一个 pending carrier 及其技术/Opportunity/B2 证据，
 不得暴露 analysis-only preview 或另一 pending 候选作为判词依据。fingerprint 排除
 Opportunity id/时间戳等载体 churn，但包含 instrument、方向、scanner thesis、rank priority、B2 状态、
 实际 B2 `n_total/n_net/coverage/avg/shrunk/verdict`、候选技术特征与 market regime；这些字段变化会重新开放评估。
@@ -183,7 +181,7 @@ Opportunity id/时间戳等载体 churn，但包含 instrument、方向、scanne
 `PiDecision` 自身保存 `symbol / direction / market_type / opportunity_id / signal_source`;
 `_attach_opportunity_context` 必须把 `pending_signals` 中 `market_observer` 与 `serenity` 两类载体
 都视为有效归因来源,并按 `opportunity_id` 回填来源字段,不得只消费 Serenity 载体。对
-`market_observer` 载体,队列中的精确编号优先于仅靠相同 symbol/direction 匹配到的另一条开放机会;
+`market_observer` 载体,队列中的精确编号优先于仅靠相同 symbol/direction/market 匹配到的另一条开放机会;
 Opportunity 最终动作只认 pending 权限，因此精确 Serenity pending 与仅用于分析的 Layer1 同时匹配时，
 由前者提供身份。portfolio review 只按明确 `position_id` 使用独立持仓权限。
 
@@ -260,7 +258,7 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 - **DL-INV-22 候选技术事实不被展示窗口截断**:全局特征展示上限不得决定精确 pending 候选是否有技术事实；必须按 `asset_id` 定向补齐，缺失/不完整/过期则在推理前 defer。
 - **DL-INV-23 新事实立即重开**:新精确 feature snapshot 必须改变候选 material fingerprint 并唤醒 Operator；不得让已有 neutral defer 吞掉新事实直到固定 heartbeat。
 - **DL-INV-24 判词旁路禁止**(2026-07-18 · policy_epoch `system_operator_skip_remediation` v1.5):SIDEWAYS/中性 50/50 regime、neutral funding、单笔近期结果、账户 equity、可选遥测缺失(如 OI delta)、Ranker rank_priority 数值等既不得作为 direct skip 授权(DL-INV-21 已锁),也不得通过 debate/conviction gate 通道降低 candidate conviction。conviction 只能来自候选特定证据(技术结构、funding/OI 信号、catalyst context);上述维度只能出现在 `bear_case` / `risk_factors` 作为顾虑,不能进入决定开仓与否的数值。违反本项在诊断里表现为 `direct_skip_not_confirmed` 或 `operator_low_conviction / debate_not_confirmed` 的诡异重复,均按 defer 处理。
-- **DL-INV-25 分析代次与工作载体分离**:Universe snapshot supersede 只能终结 `open` 分析代次；已写 `signal_pending` 的 `queued` 载体保留不可变的来源 snapshot/member id，并以自身 `valid_until` 继续到 Operator 终局。同 `symbol + direction + scanner_family` 已有活跃载体时，新代次记录 `active_operator_carrier`，不得重复入队；这里沿用既有 symbol-level spot/perp 排他规则。
+- **DL-INV-25 分析代次与工作载体分离**:Universe snapshot supersede 只能终结 `open` 分析代次；已写 `signal_pending` 的 `queued` 载体保留不可变的来源 snapshot/member id，并以自身 `valid_until` 继续到 Operator 终局。同一物理 `symbol + market + direction + scanner_family` 已有活跃载体时，新代次记录 `active_operator_carrier`，不得重复入队；spot 与 perp（以及其规范化别名）是不同的 ownership domain。
 - **DL-INV-26 Producer 身份不可被 enrichment 改写**:若 Opportunity 由 `universe_scanner` 创建，其 `direction_bias`、`confidence`、`confidence_score`、`thesis`、`valid_until` 与 identity 保持原 producer 语义。Market Observer 的方向、置信、理由与 observations 只能写入 namespaced `metadata.observer_assessment`；方向相反时必须显式标 `direction_conflict`，不能把同一 scanner carrier 静默翻成反向交易，也不能混合 LLM confidence 与 scanner composite score。
 - **DL-INV-27 Universe producer authority**:Universe-linked crypto Opportunity 只能由 deterministic `signal_emitter` 创建。Observer 仅分析同 snapshot/member/instrument 的 open carrier，且该 carrier 必须同时匹配 immutable T0 与 `filter_decisions(opportunity_emission, signal_emitter, passed)`；缺失、冲突、历史 `source_agent=market_observer` 均 fail closed。Ranker 执行主检查，Proposal preflight 对遗留 queued carrier 重查；其他独立 producer 不受此 Universe 契约扩张。
 - **DL-INV-28 Producer rejection 不是 Operator outcome**:queued carrier 的 immutable producer admission 已确定拒绝时，只写 producer eligibility rejection 并转为 `signal_queue_evicted`；不得生成 `operator_action_assessment`、outcome seed 或 B2 cohort 成员。producer attestation 暂时不可用时保持 typed unavailable 和可重试载体。
@@ -307,7 +305,7 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 | `DL-S51` | L2b | Layer 1 技术快照经 asset identity 解析，不把不同 instrument 压成空 symbol |
 | `DL-S52` | L2b | snapshot supersede 只原子终结 open generations 并写唯一 evidence；queued carrier 保持可见，证据失败回滚 |
 | `DL-S53` | L2b | queued market carrier 以 Opportunity `valid_until` 为权威；30min 仅是无可解析 deadline 的 legacy fallback，preflight/claim 使用同一语义 |
-| `DL-S54` | L2b | 同 symbol+direction+scanner_family 的 active queued carrier 在 30min 后仍阻止重复 enqueue，并记录 `active_operator_carrier` 而非 cooldown |
+| `DL-S54` | L2b | 同一物理 symbol+market+direction+scanner_family 的 active queued carrier 在 30min 后仍阻止重复 enqueue，并记录 `active_operator_carrier` 而非 cooldown |
 | `DL-S55` | L2b | Operator defer 的写入和历史 read projection 均以 carrier `valid_until` 为上限，不承诺 expiry 后 retry |
 | `DL-S56` | L2b | global retention 不在刚过 `valid_until` 时终结 open generation；Ranker family soft/hard TTL 保持唯一决策权 |
 | `DL-S37` | L2b | 模型评估期间 `valid_until` 过期时，Proposal preflight 原子写 expired 与唯一 TTL 拒绝事实，零 Proposal |

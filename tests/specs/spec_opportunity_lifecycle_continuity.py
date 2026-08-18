@@ -68,7 +68,7 @@ def test_queued_carrier_uses_source_valid_until_across_consumers(tmp_path, monke
         _DL,
         "§2.3 active carrier admission identity",
         "L2b",
-        "An unresolved symbol+direction+scanner-family carrier owns its setup beyond "
+        "An unresolved physical symbol+market+direction+scanner-family carrier owns its setup beyond "
         "the 30-minute signal cooldown and records active_operator_carrier instead of "
         "enqueuing a duplicate generation.",
         status="implemented",
@@ -84,21 +84,19 @@ def test_active_carrier_remains_distinct_from_signal_cooldown(tmp_path, monkeypa
     SpecClaim(
         "DL-S55",
         _DL,
-        "§2.3 defer authoritatively extends Opportunity lifecycle",
+        "§2.3 defer attention is bounded by Opportunity validity",
         "L2b",
-        "Operator defer is the authoritative signal that a candidate remains worth a "
-        "second look at defer_until; the underlying Opportunity's valid_until is "
-        "extended forward-only (never shortened) so the promised re-evaluation is "
-        "guaranteed inside the Opportunity's lifecycle. Defer never silently loses "
-        "its window to a shorter emission-time TTL.",
+        "Operator defer persists an independent attention deadline capped at the "
+        "source Opportunity's valid_until; it never extends market/setup validity "
+        "or resurrects an expired carrier.",
         status="implemented",
     )
 )
-def test_operator_defer_extends_carrier_lifecycle(tmp_path, monkeypatch):
-    lifecycle_regressions.test_defer_extends_opportunity_valid_until_forward_only(
+def test_operator_defer_respects_carrier_validity(tmp_path, monkeypatch):
+    lifecycle_regressions.test_defer_caps_attention_deadline_without_extending_validity(
         _case_dir(tmp_path, "extend"), monkeypatch
     )
-    lifecycle_regressions.test_defer_valid_until_extension_is_monotonic_forward_only(
+    lifecycle_regressions.test_defer_never_changes_an_existing_later_validity(
         _case_dir(tmp_path, "monotonic"), monkeypatch
     )
     lifecycle_regressions.test_opportunity_funnel_explains_current_operator_defer(

@@ -1,5 +1,5 @@
 {
-  "contract": "universe-step-score-golden/v1",
+  "contract": "universe-step-score-golden/v2",
   "coverage": {
     "edge_case_count": 16,
     "real_vector_count": 6,
@@ -310,7 +310,7 @@
         "all_scores": {
           "derivatives": 60.0,
           "event": 25.0,
-          "mean_reversion": 55.0,
+          "mean_reversion": 40.0,
           "momentum": 15.0,
           "short_bias": 0.0,
           "volatility": 21.0
@@ -558,7 +558,7 @@
       "source_family": "volatility"
     }
   ],
-  "scorer_behavior_version": "universe-step-v1",
+  "scorer_behavior_version": "universe-step-v2",
   "threshold_probes": [
     {
       "base_overrides": {},

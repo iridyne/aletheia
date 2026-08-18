@@ -318,7 +318,7 @@ shadow treatment 各自达到 20 个完整净结果和 70% 覆盖后才判定；
 1. 按分数从高到低遍历；
 2. 同一 `opportunity_id` 已有最终 Operator 决策则记 `operator_already_evaluated=rejected`，不重复入队；
 3. 已持仓则记 `open_position_duplicate=rejected`，继续看下一个；
-4. 同 `symbol + direction + scanner_family` 已有未完成 queued carrier，则记 `active_operator_carrier=rejected`，继续看下一个；它表示复用既有工作载体，不得伪装成 30min cooldown，并沿用既有 symbol-level spot/perp 排他规则；
+4. 同一物理 `symbol + market + direction + scanner_family` 已有未完成 queued carrier，则记 `active_operator_carrier=rejected`，继续看下一个；它表示复用既有工作载体，不得伪装成 30min cooldown；spot 与 perp（及规范化别名）不可互相占用；
 5. 冷却中则记 `signal_cooldown=rejected`，继续看下一个；
 6. 未满 limit 则放行；已满后其余候选记 `signal_batch_limit=rejected`。
 

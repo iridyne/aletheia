@@ -190,11 +190,21 @@ def test_symbol_level_defer_reader_uses_material_fingerprint(tmp_path, monkeypat
     """The existing B1.6 consumer, not a generic prompt cache, owns re-eval suppression."""
     from tests.test_entry_logic import setup_env
     from aletheia.storage.sqlite import get_db
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.repositories import insert_opportunity
 
     setup_env(tmp_path, monkeypatch)
     db = get_db()
     now = "2999-01-01T00:00:00+00:00"
+    insert_opportunity(Opportunity(
+        id="fresh-carrier",
+        symbol="CHZ/USDT",
+        market="usdt_futures",
+        direction_bias="short",
+        valid_until=now,
+    ))
     snapshot = {
+        "opportunity_id": "fresh-carrier",
         "symbol": "CHZ/USDT",
         "direction": "short",
         "market_type": "perp",

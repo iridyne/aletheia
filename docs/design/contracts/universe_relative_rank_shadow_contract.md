@@ -4,7 +4,7 @@ Status: current for `universe-relative-rank-shadow-v1`.
 
 ## Authority boundary
 
-`universe-step-v1` remains the only authority that publishes Universe members
+`universe-step-v2` remains the only authority that publishes Universe members
 and Opportunities. Relative Rank is observation-only: it cannot mutate Paper,
 Risk, Execution, Learning, allocator configuration, or production scoring.
 `promotion_eligible` is always false.
@@ -16,7 +16,7 @@ Their evidence must not be pooled.
 ## Input contract
 
 The candidate consumes the same point-in-time coarse-survivor feature snapshot
-as Step-v1. Every eligible record requires observed positive quote volume,
+as Step-v2. Every eligible record requires observed positive quote volume,
 spread, depth at 10 bps, freshness, a valid pessimistic family, and direction.
 Spread or depth missingness never receives a neutral score.
 
@@ -41,7 +41,7 @@ rank. The frozen score is:
 
 One scanner run is one cluster and is assigned 50/50 by a deterministic hash:
 
-- control: Step-v1 selection;
+- control: Step-v2 selection;
 - treatment: Relative Rank selection through the unchanged fine filters,
   spot/perp dedupe, quotas, explore/exploit, and `max_candidates` allocator.
 

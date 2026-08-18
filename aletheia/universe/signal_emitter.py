@@ -24,7 +24,6 @@ from aletheia.storage.repositories import (
     find_opportunity_by_symbol_snapshot,
     insert_opportunity_once_by_snapshot,
 )
-from aletheia.storage.sqlite import get_db
 from aletheia.trading.instruments import instrument_market_to_db_market
 from aletheia.analytics.factor_feedback import lookup_factor_signal
 from aletheia.analytics.filter_evidence import atomic_opportunity_evidence
@@ -34,22 +33,26 @@ from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
 logger = logging.getLogger("aletheia.universe.signal_emitter")
 
 
-def _find_live_universe_signal(symbol: str, direction: str, db_market: str) -> dict | None:
-    """Return the first live open universe_scanner signal for this symbol+direction+market.
+def _opportunity_material_fingerprint(opportunity: dict) -> str | None:
+    """Read the durable setup identity written by the emitter.
 
-    A live signal is status='open' with valid_until still in the future (or absent).
-    Used to suppress cross-snapshot flooding when the same symbol+direction emits
-    faster than its own TTL. (#326)
+    Legacy rows have no fingerprint. Treating those as an unknown material setup
+    keeps the duplicate guard fail-closed until a fresh generation carries the
+    explicit identity.
     """
-    row = get_db().execute(
-        "SELECT * FROM opportunities "
-        "WHERE symbol = ? AND direction_bias = ? AND market = ? "
-        "AND source_agent = 'universe_scanner' AND status = 'open' "
-        "AND (valid_until IS NULL OR valid_until > datetime('now')) "
-        "ORDER BY created_at DESC LIMIT 1",
-        (symbol, direction, db_market),
-    ).fetchone()
-    return dict(row) if row else None
+    raw_metadata = opportunity.get("metadata")
+    if not raw_metadata:
+        return None
+    try:
+        metadata = json.loads(raw_metadata) if isinstance(raw_metadata, str) else raw_metadata
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    value = metadata.get("material_fingerprint") if isinstance(metadata, dict) else None
+    if value:
+        return str(value)
+    manifest = metadata.get("evidence_manifest") if isinstance(metadata, dict) else None
+    t0 = manifest.get("t0") if isinstance(manifest, dict) else None
+    return str(t0.get("material_fingerprint")) if isinstance(t0, dict) and t0.get("material_fingerprint") else None
 
 
 # Only emit for members that scored high enough to be worth trading
@@ -68,7 +71,12 @@ _OPPORTUNITY_EVIDENCE_VERSION = "opportunity-information-integrity-v1"
 
 
 def _trigger_evidence_manifest(
-    *, member: dict, feature: dict, snapshot_id: str, direction: str,
+    *,
+    member: dict,
+    feature: dict,
+    snapshot_id: str,
+    direction: str,
+    material_fingerprint: str | None = None,
 ) -> dict:
     """Capture the bounded scanner trigger before any Observer enrichment."""
     reasons = [str(reason)[:160] for reason in (feature.get("reasons") or [])[:5]]
@@ -85,6 +93,7 @@ def _trigger_evidence_manifest(
             "market_type": member.get("market_type"),
             "scanner_family": member.get("scanner_family"),
             "direction": direction,
+            "material_fingerprint": material_fingerprint,
             "total_score": member.get("total_score"),
             "entry_price_usd": member.get("entry_price_usd"),
             "valid_until": member.get("expires_at"),
@@ -191,6 +200,7 @@ def emit_deterministic_opportunities(
     linked_strategy_id: str | None = None,
     regime=None,
     short_enabled: bool = True,
+    allow_open_replacement: bool = False,
 ) -> int:
     """Generate one deterministic Opportunity per eligible high-scoring universe member.
 
@@ -203,6 +213,10 @@ def emit_deterministic_opportunities(
         linked_strategy_id: optional strategy to attach.
         regime: MarketRegime instance (or None). When provided, signals whose
                 direction conflicts with regime bias are filtered out.
+        allow_open_replacement: publication callers may replace an open
+                analytical generation while its parent snapshot is still active.
+                Queued carriers remain protected; standalone callers retain the
+                cross-snapshot anti-flood guard.
 
     Returns:
         Number of opportunities created.
@@ -244,6 +258,10 @@ def emit_deterministic_opportunities(
         from aletheia.storage.repositories import (
             latest_direct_skip_defer_for_setup as _emit_latest_skip,
         )
+
+    from aletheia.agent_shell.trading_context import (
+        material_fingerprint_from_features as _material_fingerprint,
+    )
 
     for member_index, m in enumerate(members):
         symbol = m.get("symbol", "")
@@ -401,16 +419,24 @@ def emit_deterministic_opportunities(
             )
             continue
 
-        # Cross-snapshot live-duplicate guard (#326): suppress emission when a live
-        # (open/queued, non-expired) opportunity for the same symbol+direction already
-        # exists. The per-snapshot dedup below only covers the current refresh cycle;
-        # without this check, a fast-signalling symbol emits a new slot-stealing
-        # candidate every 10 min even while prior ones are still pending evaluation.
-        live_dup = find_live_opportunity_by_symbol_direction(
-            symbol, direction,
-            market=instrument_market_to_db_market(market_type),
+        current_material_fingerprint = _material_fingerprint(
+            symbol=symbol,
+            direction=direction,
+            market_type=market_type,
+            scanner_family=family,
+            features=feat,
+            regime=regime.state if regime else None,
         )
-        if live_dup:
+
+        # Per-snapshot identity is authoritative before any cross-snapshot
+        # suppression. A retry for the same selected member must reuse the
+        # existing lifecycle row, regardless of another live carrier.
+        db_market = instrument_market_to_db_market(market_type)
+        existing = find_opportunity_by_symbol_snapshot(
+            symbol, snapshot_id,
+            market=db_market,
+        )
+        if existing:
             _record_emission_decision(
                 member=m,
                 snapshot_id=snapshot_id,
@@ -419,17 +445,57 @@ def emit_deterministic_opportunities(
                 market_type=market_type,
                 total_score=total_score,
                 short_enabled=short_enabled,
-                decision="rejected",
-                reason_code="live_duplicate_suppressed",
+                decision="passed",
+                reason_code="existing_opportunity_reused",
                 direction=direction,
+                opportunity_id=existing.get("id"),
                 regime_tag=regime.state if regime else None,
-                inputs={
-                    "live_opportunity_id": live_dup.get("id"),
-                    "live_opportunity_status": live_dup.get("status"),
-                    "live_valid_until": live_dup.get("valid_until"),
-                },
+                inputs={"existing_status": existing.get("status")},
             )
             continue
+
+        # Cross-snapshot live-duplicate guard (#326). An open row may be replaced
+        # only inside the atomic publication that is about to supersede its parent
+        # snapshot; otherwise it remains the anti-flood owner. Queued carriers are
+        # always protected for an unchanged material setup, while a material change
+        # gets a new generation without mutating the older queue carrier.
+        live_dup = find_live_opportunity_by_symbol_direction(
+            symbol, direction, market=db_market,
+        )
+        if live_dup:
+            live_material_fingerprint = _opportunity_material_fingerprint(live_dup)
+            same_material = (
+                not live_material_fingerprint
+                or live_material_fingerprint == current_material_fingerprint
+            )
+            live_status = str(live_dup.get("status") or "")
+            suppress_live_duplicate = (
+                same_material
+                and not (live_status == "open" and allow_open_replacement)
+            )
+            if suppress_live_duplicate:
+                _record_emission_decision(
+                    member=m,
+                    snapshot_id=snapshot_id,
+                    member_index=member_index,
+                    symbol=symbol,
+                    market_type=market_type,
+                    total_score=total_score,
+                    short_enabled=short_enabled,
+                    decision="rejected",
+                    reason_code="live_duplicate_suppressed",
+                    direction=direction,
+                    regime_tag=regime.state if regime else None,
+                    inputs={
+                        "live_opportunity_id": live_dup.get("id"),
+                        "live_opportunity_status": live_status,
+                        "live_valid_until": live_dup.get("valid_until"),
+                        "material_fingerprint": current_material_fingerprint,
+                        "live_material_fingerprint": live_material_fingerprint,
+                        "material_match": same_material,
+                    },
+                )
+                continue
 
         # Emit-source active-defer suppression (#321). See the hoisted setup above.
         if _emit_defer_suppression:
@@ -467,60 +533,6 @@ def emit_deterministic_opportunities(
                         },
                     )
                     continue
-
-        # De-duplicate across the whole lifecycle. A reviewed opportunity remains
-        # the identity owner for this member/snapshot and must not be recreated by
-        # a retry or a delayed producer. Same symbol on a different market remains
-        # a distinct candidate. OD-S02 locks.
-        db_market = instrument_market_to_db_market(market_type)
-        existing = find_opportunity_by_symbol_snapshot(
-            symbol, snapshot_id,
-            market=db_market,
-        )
-        if existing:
-            _record_emission_decision(
-                member=m,
-                snapshot_id=snapshot_id,
-                member_index=member_index,
-                symbol=symbol,
-                market_type=market_type,
-                total_score=total_score,
-                short_enabled=short_enabled,
-                decision="passed",
-                reason_code="existing_opportunity_reused",
-                direction=direction,
-                opportunity_id=existing.get("id"),
-                regime_tag=regime.state if regime else None,
-                inputs={"existing_status": existing.get("status")},
-            )
-            continue
-
-        # Cross-snapshot dedup: suppress a new signal if a live open signal from
-        # this scanner already exists for the same symbol+direction+market. Some
-        # symbols (e.g. derivatives with 240-min TTL) emit every ~10 min and pack
-        # the admission queue with 18-24 self-competing candidates. (#326)
-        live_signal = _find_live_universe_signal(symbol, direction, db_market)
-        if live_signal:
-            _record_emission_decision(
-                member=m,
-                snapshot_id=snapshot_id,
-                member_index=member_index,
-                symbol=symbol,
-                market_type=market_type,
-                total_score=total_score,
-                short_enabled=short_enabled,
-                decision="passed",
-                reason_code="live_signal_exists",
-                direction=direction,
-                opportunity_id=live_signal.get("id"),
-                regime_tag=regime.state if regime else None,
-                inputs={
-                    "live_snapshot_id": live_signal.get("universe_snapshot_id"),
-                    "live_valid_until": live_signal.get("valid_until"),
-                    "live_status": live_signal.get("status"),
-                },
-            )
-            continue
 
         # Feature retention may reuse a <30-minute row during ordinary refreshes.
         # A newly emitted Opportunity is a new evidence boundary, so its T0 must
@@ -567,7 +579,9 @@ def emit_deterministic_opportunities(
                     feature=feat,
                     snapshot_id=snapshot_id,
                     direction=direction,
+                    material_fingerprint=current_material_fingerprint,
                 ),
+                "material_fingerprint": current_material_fingerprint,
             }, sort_keys=True),
             execution_eligible=_exec_eligible,
             universe_snapshot_id=snapshot_id,

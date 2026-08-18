@@ -350,3 +350,27 @@ def test_run_all_scanners_prefers_directional():
     # No scanner can produce direction with these neutral values
     # So score should be 0 or very low
     assert result["opportunity_score"] == 0 or result["scanner_direction"] is None
+
+
+def test_mean_reversion_does_not_score_opposing_return_for_selected_side():
+    score, reasons, direction = score_mean_reversion(
+        _base_feat(rsi_14=80.0, return_4h=-12.0)
+    )
+    assert direction == "short"
+    assert score == 35.0
+    assert all("overextended" not in reason for reason in reasons)
+
+
+def test_derivatives_does_not_score_opposing_oi_or_divergence_for_selected_side():
+    score, reasons, direction = score_derivatives(
+        _base_feat(
+            funding_rate=-0.001,
+            oi_delta_1h=25.0,
+            return_1h=-2.0,
+            oi_price_divergence=-1,
+        )
+    )
+    assert direction == "long"
+    assert score == 40.0
+    assert all("OI delta" not in reason for reason in reasons)
+    assert all("divergence" not in reason for reason in reasons)

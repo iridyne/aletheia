@@ -395,7 +395,7 @@ def test_interactions_are_not_labelled_as_independent_additive_votes() -> None:
 
 
 def test_influence_budgets_match_frozen_step_boundary_envelope() -> None:
-    """Budgets are frozen step-v1 evidence, not tuned to new outputs."""
+    """Budgets are frozen step-v2 evidence, not tuned to new outputs."""
 
     import json
 
@@ -405,7 +405,7 @@ def test_influence_budgets_match_frozen_step_boundary_envelope() -> None:
     from aletheia.universe.scanners import run_all_scanners
 
     fixture = json.loads(
-        (Path(__file__).parent / "fixtures" / "universe_step_score_v1.json").read_text(encoding="utf-8")
+        (Path(__file__).parent / "fixtures" / "universe_step_score_v2.json").read_text(encoding="utf-8")
     )
     values_by_feature: dict[str, set[float]] = {}
     for group in fixture["threshold_probes"]:
@@ -609,3 +609,35 @@ def test_explicit_policy_rejects_invalid_denominators() -> None:
         ContinuousScoringPolicy(min_volume_24h_usdt=0.0)
     with pytest.raises(ValueError):
         ContinuousScoringPolicy(min_depth_10bps_usd=math.inf)
+
+
+def test_continuous_mean_reversion_keeps_opposing_core_out_of_directional_score() -> None:
+    result = scoring._score_mean_reversion(
+        _complete_candidate(rsi_14=80.0, return_4h=-12.0)
+    )
+    assert result.direction == "short"
+    assert result.point_score == 35.0
+    assert next(item for item in result.evidence if item.curve_id == "MR-03").point_value == 0.0
+
+
+def test_continuous_derivatives_keeps_opposing_interactions_out_of_directional_score() -> None:
+    result = scoring._score_derivatives(
+        _complete_candidate(
+            funding_rate=-0.001,
+            oi_delta_1h=25.0,
+            return_1h=-2.0,
+        )
+    )
+    assert result.direction == "long"
+    assert next(item for item in result.evidence if item.curve_id == "DER-03").point_value == 0.0
+
+
+def test_continuous_derivatives_ignores_subthreshold_noise_for_oi_conflict() -> None:
+    baseline = scoring._score_derivatives(
+        _complete_candidate(funding_rate=-0.001, oi_delta_1h=25.0, return_1h=None)
+    )
+    noisy = scoring._score_derivatives(
+        _complete_candidate(funding_rate=-0.001, oi_delta_1h=25.0, return_1h=-0.01)
+    )
+    assert noisy.direction == baseline.direction == "long"
+    assert noisy.point_score == baseline.point_score
