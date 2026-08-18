@@ -217,6 +217,9 @@ def test_kill_switch_suppresses_config_patches_emits_notify(e2e_db, monkeypatch,
     cfg = load_config()
     cfg.runtime.paused = False
     cfg.runtime.kill_switch_active = True
+    # This test's subject is the legacy Python governance loop itself, so select
+    # that fallback owner explicitly rather than inheriting production defaults.
+    cfg.operator.enabled = False
     cfg.operator.loop_enabled = True
     cfg.trading.min_confidence_to_trade = "high"
     save_config(cfg)
