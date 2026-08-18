@@ -15,6 +15,13 @@ from datetime import datetime, timezone
 
 from aletheia.config.loader import get_data_dir
 from aletheia.gateway.network import local_frontdoor_host
+from aletheia.operator_service_identity import (
+    OPERATOR_SERVICE_ENV,
+    OPERATOR_SERVICE_HEADER,
+    current_operator_service_token,
+    ensure_operator_service_token,
+    rotate_operator_service_token,
+)
 
 CREATE_NO_WINDOW = 0x08000000
 
@@ -85,9 +92,10 @@ def _build_operator_shell_env(
     runtime_id: str | None = None,
     runtime_mode: str = "current",
     runtime_state: str = "current",
+    service_token: str | None = None,
 ) -> dict[str, str]:
     effective_runtime_id = runtime_id or _current_runtime_id()
-    return {
+    env = {
         "ALETHEIA_GATEWAY_BASE_URL": f"http://{local_frontdoor_host()}:{cfg.app.dashboard_port}",
         "ALETHEIA_OPERATOR_PERMISSION_MODE": cfg.operator.permission_mode,
         "ALETHEIA_OPERATOR_HEARTBEAT_SEC": str(cfg.operator.heartbeat_interval_sec),
@@ -96,6 +104,18 @@ def _build_operator_shell_env(
         "ALETHEIA_RUNTIME_MODE": runtime_mode,
         "ALETHEIA_RUNTIME_STATE": runtime_state,
     }
+    if service_token:
+        env[OPERATOR_SERVICE_ENV] = service_token
+    return env
+
+
+def _operator_service_auth_required(cfg) -> bool:
+    tunnel_enabled = bool(getattr(getattr(cfg, "tunnel", None), "enabled", False))
+    remote_control = getattr(cfg, "remote_control", None)
+    return tunnel_enabled or bool(
+        getattr(remote_control, "enabled", False)
+        and getattr(remote_control, "require_token", False)
+    )
 
 
 def operator_shell_log_path() -> Path:
@@ -433,6 +453,12 @@ def spawn_operator_shell(
     def _spawn_new():
         log_path = operator_shell_log_path()
         log_path.parent.mkdir(parents=True, exist_ok=True)
+        # A normal long-lived shell gets a fresh service token each time it is
+        # actually respawned. Shadow/once shells share the current token so they
+        # cannot invalidate the live shell while running concurrently.
+        service_token = (
+            ensure_operator_service_token() if once else rotate_operator_service_token()
+        )
         env = os.environ.copy()
         env.update(
             _build_operator_shell_env(
@@ -440,6 +466,7 @@ def spawn_operator_shell(
                 runtime_id=runtime_id,
                 runtime_mode=runtime_mode,
                 runtime_state=runtime_state,
+                service_token=service_token,
             )
         )
         if once:
@@ -461,9 +488,21 @@ def spawn_operator_shell(
             existing_pid = _read_operator_shell_pid()
             if existing_pid is not None:
                 if _pid_exists(existing_pid) and _operator_shell_process_matches(existing_pid, cmd):
-                    _cleanup_unmanaged_operator_shells(keep_pid=existing_pid)
-                    return ExistingOperatorShellProcess(existing_pid, cmd)
-                _clear_operator_shell_pid(expected_pid=existing_pid)
+                    if not _operator_service_auth_required(cfg):
+                        _cleanup_unmanaged_operator_shells(keep_pid=existing_pid)
+                        return ExistingOperatorShellProcess(existing_pid, cmd)
+                    # Under owner-auth, an orphaned/adopted Node process may have
+                    # been started before service identity existed or with an old
+                    # rotated token. Restart it so current credentials are proven.
+                    try:
+                        from aletheia.gateway.pidfile import kill_pid_tree
+
+                        kill_pid_tree(existing_pid)
+                    except Exception:
+                        pass
+                    _clear_operator_shell_pid(expected_pid=existing_pid)
+                else:
+                    _clear_operator_shell_pid(expected_pid=existing_pid)
 
             _cleanup_unmanaged_operator_shells()
             proc = _spawn_new()
@@ -523,11 +562,15 @@ def _post_operator_heartbeat(cfg, payload: dict) -> bool:
     try:
         url = f"http://{_connect_host(local_frontdoor_host())}:{cfg.app.dashboard_port}/api/operator/internal/heartbeat"
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        service_token = current_operator_service_token()
+        if service_token:
+            headers[OPERATOR_SERVICE_HEADER] = service_token
         request = urllib.request.Request(
             url,
             data=data,
             method="POST",
-            headers={"Content-Type": "application/json"},
+            headers=headers,
         )
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         with opener.open(request, timeout=2.0) as response:
