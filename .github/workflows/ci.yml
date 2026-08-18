@@ -307,6 +307,27 @@ jobs:
           npm test
           npm run build
 
+  review-operator-shell-windows:
+    name: Review Operator Shell (Windows)
+    needs: review-core
+    if: ${{ needs.review-core.outputs.operator == 'true' }}
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+
+      - name: Check Operator Shell
+        working-directory: operator-shell
+        run: |
+          npm ci
+          npm test
+
   review-native:
     name: Review native host
     needs: review-core
@@ -349,7 +370,7 @@ jobs:
 
   review:
     name: Review checks
-    needs: [review-core, review-coverage, review-node, review-native]
+    needs: [review-core, review-coverage, review-node, review-operator-shell-windows, review-native]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -359,6 +380,7 @@ jobs:
           CORE_RESULT: ${{ needs.review-core.result }}
           COVERAGE_RESULT: ${{ needs.review-coverage.result }}
           NODE_RESULT: ${{ needs.review-node.result }}
+          OPERATOR_WINDOWS_RESULT: ${{ needs.review-operator-shell-windows.result }}
           NATIVE_RESULT: ${{ needs.review-native.result }}
         shell: bash
         run: |
@@ -370,6 +392,7 @@ jobs:
           for pair in \
             "coverage:$COVERAGE_RESULT" \
             "node:$NODE_RESULT" \
+            "operator-windows:$OPERATOR_WINDOWS_RESULT" \
             "native:$NATIVE_RESULT"; do
             name="${pair%%:*}"
             result="${pair#*:}"
