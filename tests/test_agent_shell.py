@@ -1092,6 +1092,68 @@ async def test_horizon_mutation_acknowledges_only_the_effective_target(
 
 
 @pytest.mark.asyncio
+async def test_horizon_due_stop_only_adjustment_is_rejected_without_extension(
+    tmp_path, monkeypatch
+):
+    """adjust_position without new_horizon_hours on a horizon_due wake must not complete."""
+    _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.commands import review_portfolio_state
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import _select_one, insert_position
+
+    target = Position(
+        id="horizon-stop-only-target",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="paper_internal",
+    )
+    insert_position(target)
+    monkeypatch.setattr(
+        "aletheia.agent_shell.context.build_app_context",
+        lambda sections=None: {"risk": {"max_open_positions_demo": 3, "kill_switch": False}},
+    )
+
+    async def stop_only(_system, _user, *, schema, **_kwargs):
+        return ({
+            "action": "adjust_position",
+            "target_position_id": target.id,
+            "new_stop_price": 95.0,
+            "reasoning": "tighten stop but no horizon extension",
+        }, None)
+
+    adjust_calls = []
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", stop_only)
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_mark_for_protective_close",
+        lambda symbol, market_type, *, venue: _review_mark(
+            venue=venue, symbol=symbol, market_type=market_type
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.portfolio.position_manager.apply_operator_adjustment",
+        lambda position_id, **kwargs: adjust_calls.append((position_id, kwargs)) or {"updated": True},
+    )
+
+    result = await review_portfolio_state({
+        "trigger": "horizon_due",
+        "wake_batches": [{
+            "position_id": target.id,
+            "events": [{"kind": "horizon_due", "priority": 1, "payload": {}}],
+        }],
+    })
+
+    assert result["action"] == "adjust_position"
+    assert result.get("adjust_position_error") == "horizon_extension_required"
+    assert result["review_completed"] is False
+    assert "horizon_reviews_acknowledged" not in result
+    assert not adjust_calls  # no mutation reached apply_operator_adjustment
+    assert _select_one("positions", target.id)["horizon_wake_sent_at"] is None
+
+
+@pytest.mark.asyncio
 async def test_horizon_due_close_can_reach_execution_when_review_mark_is_unavailable(
     tmp_path, monkeypatch
 ):
