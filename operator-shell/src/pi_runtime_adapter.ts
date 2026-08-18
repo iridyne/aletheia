@@ -1,5 +1,6 @@
 import type { BackendGatewayClient } from './schemas.js'
 import { gatewayRequestFailureMessage } from './gateway_errors.js'
+import { applyOperatorServiceHeader } from './service_auth.js'
 
 export interface PiSessionRequest {
   goal: string
@@ -50,9 +51,13 @@ export class PiRuntimeAdapter {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }
+    const requestHeaders = applyOperatorServiceHeader(new Headers(init.headers))
 
     try {
-      const response = await fetch(url, init)
+      const response = await fetch(url, {
+        ...init,
+        headers: requestHeaders,
+      })
 
       if (!response.ok) {
         return {
@@ -60,6 +65,8 @@ export class PiRuntimeAdapter {
           turnsUsed: 0,
           commandsExecuted: [],
           finalAnswer: null,
+          // Use the credential-free init for diagnostics so the service secret
+          // can never enter an error message or persisted task result.
           error: await gatewayRequestFailureMessage(url, init, response),
         }
       }
