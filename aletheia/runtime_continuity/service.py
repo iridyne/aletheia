@@ -199,6 +199,11 @@ class RuntimeContinuityService:
         return event_id
 
     def _apply_activation(self, activation: dict, *, actor: str, cause: str) -> None:
+        """Attempt Frontdoor route switch.
+
+        Raises RuntimeTransitionError on failure; does NOT commit — caller commits
+        all pending writes atomically after this returns successfully.
+        """
         if activation.get("strategy") != "frontdoor_route_switch":
             return
         try:
@@ -210,26 +215,16 @@ class RuntimeContinuityService:
                 backend_pid=activation.get("backend_pid"),
                 reason=f"runtime_{activation.get('action') or 'activate'}",
             )
-            self._record_event(
-                runtime_id=str(activation["runtime_id"]),
-                event_type="frontdoor_route_switched",
-                phase="activation",
-                actor=actor,
-                cause=cause,
-                payload=activation,
-            )
-            self._db().commit()
-        except Exception as exc:  # noqa: BLE001 - transition already committed
-            self._record_event(
-                runtime_id=str(activation.get("runtime_id") or ""),
-                event_type="frontdoor_route_switch_failed",
-                phase="activation",
-                severity="error",
-                actor=actor,
-                cause=cause,
-                payload={**activation, "error": str(exc)},
-            )
-            self._db().commit()
+        except Exception as exc:
+            raise RuntimeTransitionError(f"frontdoor_route_switch_failed:{exc}") from exc
+        self._record_event(
+            runtime_id=str(activation["runtime_id"]),
+            event_type="frontdoor_route_switched",
+            phase="activation",
+            actor=actor,
+            cause=cause,
+            payload=activation,
+        )
 
     def _current_runtime(self) -> dict | None:
         row = self._db().execute(
@@ -804,6 +799,13 @@ class RuntimeContinuityService:
             activation = _activation_plan(runtime_id=runtime_id, action="promote", runtime=runtime)
             promoted_metadata = dict(runtime.get("metadata") or {})
             promoted_metadata["activation"] = activation
+
+            # Attempt Frontdoor activation BEFORE any registry DB writes.
+            # If this raises, no DB state has changed — no split-brain is possible.
+            # ponytail: crash-after-route-write still leaves DB/Frontdoor split; full two-phase intent needed for that
+            self._apply_activation(activation, actor=actor, cause=cause)
+
+            # Activation succeeded (or no-op for supervisor_respawn): persist the state transition.
             db.execute(
                 """
                 INSERT INTO runtime_checkpoints (
@@ -842,7 +844,6 @@ class RuntimeContinuityService:
             )
             self.release_lock("promote", token, actor=actor)
             db.commit()
-            self._apply_activation(activation, actor=actor, cause=cause)
             return {
                 **self.status(),
                 "current": self._runtime(runtime_id),
@@ -903,6 +904,13 @@ class RuntimeContinuityService:
             target_metadata = dict((target or {}).get("metadata") or {})
             activation = _activation_plan(runtime_id=target_runtime_id, action="rollback", runtime=target)
             target_metadata["activation"] = activation
+
+            # Attempt Frontdoor activation BEFORE any registry DB writes.
+            # If this raises, no DB state has changed — no split-brain is possible.
+            # ponytail: crash-after-route-write still leaves DB/Frontdoor split; full two-phase intent needed for that
+            self._apply_activation(activation, actor=actor, cause=cause)
+
+            # Activation succeeded (or no-op for supervisor_respawn): persist the state transition.
             if current is not None:
                 db.execute(
                     "UPDATE runtime_registry SET state = ?, rolled_back_at = ?, updated_at = ? "
@@ -938,7 +946,6 @@ class RuntimeContinuityService:
             except Exception:
                 pass
             db.commit()
-            self._apply_activation(activation, actor=actor, cause=cause)
             return {
                 **self.status(),
                 "current": self._runtime(target_runtime_id),

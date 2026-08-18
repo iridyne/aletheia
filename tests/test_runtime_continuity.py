@@ -222,6 +222,157 @@ def test_runtime_service_candidate_shadow_promote_and_rollback(tmp_path, monkeyp
     assert "runtime_rolled_back" in event_types
 
 
+def _make_ready_candidate(svc, *, suffix="abc123"):
+    """Helper: prepare → shadow → validate a candidate, return the validated record."""
+    candidate = svc.prepare_candidate(
+        actor="test",
+        cause="setup",
+        code_version="v2",
+        config_version="cfg2",
+        schema_version="schema1",
+        build_git_sha=suffix,
+        release_bundle_hash=suffix,
+    )
+    shadow = svc.start_shadow(candidate["runtime_id"], actor="test", cause="setup")
+    return svc.validate_shadow(shadow["runtime_id"], actor="test", cause="setup")
+
+
+def _fail_write(**_kw):
+    raise OSError("disk full")
+
+
+def test_promote_route_write_failure_leaves_no_split_brain(tmp_path, monkeypatch):
+    """#1105: promote() must not durably commit CURRENT when Frontdoor write fails."""
+    import aletheia.storage.sqlite as sq
+    setup_env(tmp_path, monkeypatch)
+
+    import aletheia.runtime_continuity.service as svc_mod
+    from aletheia.runtime_continuity.service import RuntimeContinuityService, RuntimeTransitionError
+
+    def fake_launcher(runtime):
+        return {"attempted": True, "started": True, "pid": 9001, "host": "127.0.0.1", "port": 8900, "base_url": "http://127.0.0.1:8900"}
+
+    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher)
+    ready = _make_ready_candidate(svc, suffix="split1")
+
+    monkeypatch.setattr(svc_mod, "write_frontdoor_route", _fail_write)
+
+    with pytest.raises(RuntimeTransitionError, match="frontdoor_route_switch_failed"):
+        svc.promote(ready["runtime_id"], actor="test", cause="fail-test")
+
+    # DB must not have committed the candidate as CURRENT
+    row = sq._db_conn.execute(
+        "SELECT state FROM runtime_registry WHERE runtime_id = ?", (ready["runtime_id"],)
+    ).fetchone()
+    assert row["state"] == "ready_to_promote", "candidate must not be marked CURRENT after failed activation"
+
+    # Old runtime must still be CURRENT, not DRAINING
+    current_row = sq._db_conn.execute(
+        "SELECT state FROM runtime_registry WHERE runtime_id = 'runtime-local-current'"
+    ).fetchone()
+    assert current_row["state"] == "current", "old runtime must remain CURRENT after failed activation"
+
+    # Checkpoint must not have been created
+    cp = sq._db_conn.execute(
+        "SELECT * FROM runtime_checkpoints WHERE checkpoint_type = 'pre_promote'"
+    ).fetchone()
+    assert cp is None, "pre_promote checkpoint must not be persisted after failed activation"
+
+
+def test_rollback_route_write_failure_preserves_checkpoint(tmp_path, monkeypatch):
+    """#1105: rollback() must not consume the checkpoint or mark target CURRENT when Frontdoor write fails.
+
+    Requires two promotions so the rollback target (runtime A) has a gateway_process,
+    making the rollback activation use frontdoor_route_switch strategy.
+    """
+    import aletheia.storage.sqlite as sq
+    setup_env(tmp_path, monkeypatch)
+
+    import aletheia.runtime_continuity.service as svc_mod
+    from aletheia.runtime_continuity.service import RuntimeContinuityService, RuntimeTransitionError
+
+    ports = iter([8951, 8952])
+
+    def fake_launcher(runtime):
+        port = next(ports)
+        return {"attempted": True, "started": True, "pid": 9000 + port, "host": "127.0.0.1", "port": port, "base_url": f"http://127.0.0.1:{port}"}
+
+    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher)
+
+    # Promote runtime A → A has gateway_process.base_url
+    ready_a = _make_ready_candidate(svc, suffix="rba01")
+    promoted_a = svc.promote(ready_a["runtime_id"], actor="test", cause="setup-a")
+    assert promoted_a["current"]["runtime_id"] == ready_a["runtime_id"]
+
+    # Promote runtime B → checkpoint now points back to A
+    ready_b = _make_ready_candidate(svc, suffix="rba02")
+    promoted_b = svc.promote(ready_b["runtime_id"], actor="test", cause="setup-b")
+    assert promoted_b["current"]["runtime_id"] == ready_b["runtime_id"]
+
+    # Rollback target = A, which has gateway_process → frontdoor_route_switch strategy
+    # Break the Frontdoor write so rollback activation fails
+    monkeypatch.setattr(svc_mod, "write_frontdoor_route", _fail_write)
+
+    with pytest.raises(RuntimeTransitionError, match="frontdoor_route_switch_failed"):
+        svc.rollback(actor="test", cause="fail-rollback")
+
+    # B must still be CURRENT
+    b_row = sq._db_conn.execute(
+        "SELECT state FROM runtime_registry WHERE runtime_id = ?", (ready_b["runtime_id"],)
+    ).fetchone()
+    assert b_row["state"] == "current", "runtime B must still be CURRENT after failed rollback"
+
+    # A must remain DRAINING (not restored to CURRENT)
+    a_row = sq._db_conn.execute(
+        "SELECT state FROM runtime_registry WHERE runtime_id = ?", (ready_a["runtime_id"],)
+    ).fetchone()
+    assert a_row["state"] == "draining", "runtime A must remain DRAINING — not restored as CURRENT"
+
+    # Checkpoint must still be available (not consumed)
+    cp = sq._db_conn.execute(
+        "SELECT status FROM runtime_checkpoints WHERE checkpoint_type = 'pre_promote' ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()
+    assert cp["status"] == "available", "checkpoint must remain available after failed rollback"
+
+
+def test_promote_activation_failure_raises_transition_error(tmp_path, monkeypatch):
+    """#1105: promote() raises RuntimeTransitionError (→ API 409) when Frontdoor write fails."""
+    setup_env(tmp_path, monkeypatch)
+
+    import aletheia.runtime_continuity.service as svc_mod
+    from aletheia.runtime_continuity.service import RuntimeContinuityService, RuntimeTransitionError
+
+    def fake_launcher(runtime):
+        return {"attempted": True, "started": True, "pid": 9003, "host": "127.0.0.1", "port": 8902, "base_url": "http://127.0.0.1:8902"}
+
+    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher)
+    ready = _make_ready_candidate(svc, suffix="api409")
+
+    monkeypatch.setattr(svc_mod, "write_frontdoor_route", _fail_write)
+
+    with pytest.raises(RuntimeTransitionError, match="frontdoor_route_switch_failed"):
+        svc.promote(ready["runtime_id"], actor="test", cause="api-test")
+
+
+def test_successful_promote_route_readback_matches_current_runtime_id(tmp_path, monkeypatch):
+    """#1105: after successful promote, read_frontdoor_route().runtime_id == current_runtime_id()."""
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.gateway.frontdoor_route import read_frontdoor_route
+    from aletheia.runtime_continuity.service import RuntimeContinuityService
+
+    def fake_launcher(runtime):
+        return {"attempted": True, "started": True, "pid": 9004, "host": "127.0.0.1", "port": 8903, "base_url": "http://127.0.0.1:8903"}
+
+    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher)
+    ready = _make_ready_candidate(svc, suffix="readback")
+    svc.promote(ready["runtime_id"], actor="test", cause="readback-test")
+
+    route = read_frontdoor_route()
+    assert route is not None
+    assert route["runtime_id"] == svc.current_runtime_id()
+
+
 def test_runtime_service_rejects_lock_conflicts(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
