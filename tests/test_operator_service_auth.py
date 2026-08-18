@@ -28,7 +28,10 @@ def test_operator_service_route_allowlist_is_bounded():
     assert not operator_service_route_allowed("GET", "/api/settings")
 
 
-def test_service_token_authenticates_internal_heartbeat_under_owner_auth(monkeypatch):
+def test_service_token_authenticates_internal_heartbeat_under_owner_auth(
+    monkeypatch,
+    api_only_runtime,
+):
     import aletheia.config.secrets as secret_store
     import aletheia.server.app as app_module
     import aletheia.server.operator_service_auth as service_auth
