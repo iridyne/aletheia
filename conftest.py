@@ -13,15 +13,21 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _legacy_python_operator_suite_uses_explicit_fallback(request, monkeypatch):
-    """Run the legacy PI Operator test module under the legacy-owner contract.
+    """Run legacy PI Operator tests under the explicit fallback-owner contract.
 
-    ``tests/test_operator_loop.py`` validates the retired Python governance loop
-    itself. Production now selects ``operator-shell`` as the sole System Operator
-    by default, so that legacy test module must explicitly exercise the fallback
-    ownership mode instead of inheriting production defaults.
+    Production now selects ``operator-shell`` as the sole System Operator by
+    default. Tests whose subject is specifically the retired Python governance
+    loop must therefore opt into its fallback ownership mode instead of
+    inheriting production defaults.
     """
     path = str(getattr(request.node, "path", "")).replace("\\", "/")
-    if not path.endswith("tests/test_operator_loop.py"):
+    node_name = str(getattr(request.node, "name", ""))
+    tests_legacy_module = path.endswith("tests/test_operator_loop.py")
+    tests_legacy_kill_switch_e2e = (
+        path.endswith("tests/e2e/test_pipeline_failure_paths.py")
+        and node_name == "test_kill_switch_suppresses_config_patches_emits_notify"
+    )
+    if not (tests_legacy_module or tests_legacy_kill_switch_e2e):
         return
 
     import aletheia.config.loader as loader
