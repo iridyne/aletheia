@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 import sqlite3
 
 
@@ -201,6 +202,7 @@ def test_candidate_report_requires_fresh_feature_ohlcv_and_exact_mark(
         assert report["status"] == "complete"
         assert report["complete_count"] == 1
         assert report["items"][0]["reasons"] == []
+        assert report["items"][0]["entry_mark"]["state"] == "mark_available"
     finally:
         with price_feed._cache_lock:
             price_feed._instrument_price_cache.pop(
@@ -223,15 +225,198 @@ def test_candidate_report_names_missing_ohlcv_and_mark(tmp_path, monkeypatch):
     )
     conn.commit()
 
+    from aletheia.data import price_feed
     from aletheia.data.candidate_market_facts import (
         build_pending_candidate_market_report,
     )
+
+    # Simulate the Gateway process: it owns the fast cache, so a cache miss for
+    # this instrument authoritatively means "no fresh mark", not "unobservable".
+    monkeypatch.setattr(price_feed, "_price_cache_owner_process", True)
 
     item = build_pending_candidate_market_report(now=now)["items"][0]
     assert item["availability"] == "partial"
     assert "candidate_ohlcv_1h_unavailable" in item["reasons"]
     assert "candidate_ohlcv_4h_unavailable" in item["reasons"]
     assert "candidate_entry_mark_unavailable" in item["reasons"]
+    assert item["entry_mark"]["state"] == "mark_unavailable"
+
+
+def test_observer_process_reports_unobservable_not_unavailable(
+    tmp_path, monkeypatch,
+):
+    """CLI/read-only process must not fabricate `candidate_entry_mark_unavailable`.
+
+    Regression for #1096: `_instrument_price_cache` is process-local, so an empty
+    module cache in an observer process is not authoritative evidence that the
+    Gateway lacked a fresh exact mark. The report must expose that ambiguity
+    with `mark_state_unobservable` rather than collapse it into `mark_unavailable`.
+    """
+    conn = _setup_db(tmp_path, monkeypatch)
+    _seed_candidate(
+        conn, suffix="observer", venue="binance", symbol="DOGE/USDT",
+        physical_market="perp",
+    )
+    now = datetime.now(timezone.utc)
+    conn.execute(
+        "INSERT INTO universe_feature_snapshots "
+        "(id, asset_id, ts, rsi_14, return_1h, return_4h, return_24h, "
+        " data_freshness_sec) "
+        "VALUES ('feature-observer', 'asset-observer', ?, 55, 0.1, 0.2, 0.3, 30)",
+        (now.isoformat(),),
+    )
+    for timeframe in ("1h", "4h"):
+        conn.execute(
+            "INSERT INTO market_ohlcv "
+            "(exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume) "
+            "VALUES ('binance', 'DOGE/USDT', 'perp', ?, ?, 100, 101, 99, 100, 10)",
+            (timeframe, int((now - timedelta(minutes=5)).timestamp() * 1000)),
+        )
+    conn.commit()
+
+    from aletheia.data import price_feed
+    from aletheia.data.candidate_market_facts import (
+        build_pending_candidate_market_report,
+    )
+
+    # Model the observer process: `_instrument_price_cache` is empty because
+    # that cache lives in the Gateway process, and `_price_cache_owner_process`
+    # is False because `refresh_watched_prices()` never ran here.
+    with price_feed._cache_lock:
+        price_feed._instrument_price_cache.clear()
+    monkeypatch.setattr(price_feed, "_price_cache_owner_process", False)
+
+    item = build_pending_candidate_market_report(now=now)["items"][0]
+    assert item["entry_mark"]["state"] == "mark_state_unobservable"
+    assert item["failure_category"] == "mark_state_unobservable"
+    assert "candidate_entry_mark_state_unobservable" in item["reasons"]
+    assert "candidate_entry_mark_unavailable" not in item["reasons"]
+
+
+def test_wake_pending_candidate_defers_records_durable_evidence(
+    tmp_path, monkeypatch,
+):
+    """Successful refresh→wake transition must leave a durable audit trail.
+
+    Regression for #1096: the acceptance chain (exact refresh → wake → Operator
+    re-evaluation) has to be reconstructable from a separate read-only process
+    after the fact.  `notify_pi_daemon` alone lives only in the Gateway's event
+    loop; without a durable event, a doctor recheck cannot prove that a wake
+    was actually delivered.
+    """
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    _seed_candidate(
+        conn, suffix="wake", venue="binance", symbol="TIA/USDT",
+        physical_market="perp",
+    )
+    conn.execute(
+        "INSERT INTO operator_evaluation_events "
+        "(id, dedup_key, event_kind, trigger, pending_unresolved_total, "
+        " pending_visible_count, pending_oldest_created_at, queue_snapshot_json, "
+        " data_health_json, policy_epoch_id, created_at) "
+        "VALUES ('ev-wake', 'dedup-wake', "
+        "        'operator_decision_deferred_unchanged_context', 'signal', 1, 1, "
+        "        ?, ?, '{}', 'epoch-a', ?)",
+        (
+            (now - timedelta(minutes=1)).isoformat(),
+            json.dumps({
+                "opportunity_id": "opp-wake",
+                "defer_reason": "candidate_entry_mark_unavailable",
+                "defer_until": (now + timedelta(minutes=30)).isoformat(),
+            }),
+            (now - timedelta(minutes=1)).isoformat(),
+        ),
+    )
+    conn.commit()
+
+    import aletheia.agent_runtime.pi_daemon as pi_daemon
+
+    monkeypatch.setattr(
+        pi_daemon,
+        "notify_pi_daemon",
+        lambda source=None, event=None: True,
+    )
+
+    from aletheia.data.candidate_market_facts import wake_pending_candidate_defers
+    from aletheia.data.symbols import InstrumentId
+
+    delivered = wake_pending_candidate_defers(
+        instruments=[InstrumentId.from_parts("binance", "TIA/USDT", "perp")],
+        defer_reasons={"candidate_entry_mark_unavailable"},
+        source="candidate_entry_mark_refreshed",
+    )
+    assert delivered is True
+
+    audit = conn.execute(
+        "SELECT event_type, entity_id, after_state, source "
+        "FROM audit_events WHERE source='pending_candidate_recovery'"
+    ).fetchall()
+    assert len(audit) == 1
+    row = audit[0]
+    assert row["event_type"] == "mark_refresh_wake_delivered"
+    assert row["entity_id"] == "opp-wake"
+    payload = json.loads(row["after_state"])
+    assert payload["instrument"] == "binance:TIA/USDT:perp"
+    assert payload["defer_reason"] == "candidate_entry_mark_unavailable"
+    assert payload["wake_source"] == "candidate_entry_mark_refreshed"
+    assert payload["delivered"] is True
+
+
+def test_wake_pending_candidate_defers_records_undelivered_when_daemon_down(
+    tmp_path, monkeypatch,
+):
+    """A wake attempt that the daemon could not receive must remain visible."""
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    _seed_candidate(
+        conn, suffix="down", venue="binance", symbol="SUI/USDT",
+        physical_market="perp",
+    )
+    conn.execute(
+        "INSERT INTO operator_evaluation_events "
+        "(id, dedup_key, event_kind, trigger, pending_unresolved_total, "
+        " pending_visible_count, pending_oldest_created_at, queue_snapshot_json, "
+        " data_health_json, policy_epoch_id, created_at) "
+        "VALUES ('ev-down', 'dedup-down', "
+        "        'operator_decision_deferred_unchanged_context', 'signal', 1, 1, "
+        "        ?, ?, '{}', 'epoch-a', ?)",
+        (
+            (now - timedelta(minutes=1)).isoformat(),
+            json.dumps({
+                "opportunity_id": "opp-down",
+                "defer_reason": "candidate_entry_mark_unavailable",
+                "defer_until": (now + timedelta(minutes=30)).isoformat(),
+            }),
+            (now - timedelta(minutes=1)).isoformat(),
+        ),
+    )
+    conn.commit()
+
+    import aletheia.agent_runtime.pi_daemon as pi_daemon
+
+    monkeypatch.setattr(
+        pi_daemon,
+        "notify_pi_daemon",
+        lambda source=None, event=None: False,
+    )
+
+    from aletheia.data.candidate_market_facts import wake_pending_candidate_defers
+    from aletheia.data.symbols import InstrumentId
+
+    delivered = wake_pending_candidate_defers(
+        instruments=[InstrumentId.from_parts("binance", "SUI/USDT", "perp")],
+        defer_reasons={"candidate_entry_mark_unavailable"},
+        source="candidate_entry_mark_refreshed",
+    )
+    assert delivered is False
+
+    row = conn.execute(
+        "SELECT event_type FROM audit_events "
+        "WHERE source='pending_candidate_recovery' AND entity_id='opp-down'"
+    ).fetchone()
+    assert row is not None
+    assert row["event_type"] == "mark_refresh_wake_undelivered"
 
 
 def test_candidate_report_all_unavailable_is_not_partial(monkeypatch):

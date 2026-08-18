@@ -32,6 +32,16 @@ _price_cache: dict[str, dict] = {}
 _instrument_price_cache: dict[tuple[str, str, str], dict] = {}
 _cache_lock = threading.Lock()
 
+# Flipped once `refresh_watched_prices()` has run in this process. Read-only
+# CLI processes never call that function, so their empty `_instrument_price_cache`
+# is not authoritative evidence that the Gateway lacks a fresh mark.
+_price_cache_owner_process: bool = False
+
+
+def process_owns_price_cache() -> bool:
+    """True in the process that populates the exact fast mark cache."""
+    return _price_cache_owner_process
+
 _STALE_THRESHOLD_SEC = 90.0
 _PROTECTIVE_DB_MAX_AGE_SEC = 120.0
 _UNIVERSE_TICK_EVERY = 3  # universe members refresh every N ticks
@@ -379,6 +389,9 @@ async def refresh_watched_prices() -> dict:
     watched set is small so serial is acceptable; switch to a provider batch call
     if it grows. Never raises — errors are logged and cache entries left stale.
     """
+    global _price_cache_owner_process
+    _price_cache_owner_process = True
+
     instruments = get_watched_instruments()
     if not instruments:
         return {"refreshed": 0, "symbols": [], "errors": []}

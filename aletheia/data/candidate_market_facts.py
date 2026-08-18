@@ -5,11 +5,14 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 from typing import Iterable
 
 from aletheia.data.symbols import InstrumentId, to_canonical
 from aletheia.storage import repositories as repo
 
+
+logger = logging.getLogger("aletheia.candidate_market_facts")
 
 _LEGACY_PENDING_MAX_AGE_MINUTES = 30
 CANDIDATE_OHLCV_MAX_AGE_SEC = {"1h": 2 * 60 * 60, "4h": 8 * 60 * 60}
@@ -258,7 +261,13 @@ def wake_pending_candidate_defers(
     asset_ids: Iterable[str] = (),
     instruments: Iterable[InstrumentId] = (),
 ) -> bool:
-    """Wake once when refreshed facts exactly match a live data defer."""
+    """Wake once when refreshed facts exactly match a live data defer.
+
+    Returns True only when `notify_pi_daemon` actually delivered the wake, and
+    always records a durable audit event (delivered or undelivered) so the
+    refresh→wake→re-evaluation chain is reconstructable across process
+    boundaries. See #1096 acceptance for the recovery contract.
+    """
     reasons = {str(reason) for reason in defer_reasons if reason}
     assets = {str(asset_id) for asset_id in asset_ids if asset_id}
     identities = {str(instrument) for instrument in instruments}
@@ -296,9 +305,55 @@ def wake_pending_candidate_defers(
             continue
         from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
 
-        notify_pi_daemon(source=source)
-        return True
+        delivered = bool(notify_pi_daemon(source=source))
+        _record_wake_transition(
+            instrument=identity,
+            opportunity_id=str(fact["opportunity_id"] or ""),
+            defer_reason=str(event["reason"] or ""),
+            wake_source=source,
+            delivered=delivered,
+        )
+        return delivered
     return False
+
+
+def _record_wake_transition(
+    *,
+    instrument: str,
+    opportunity_id: str,
+    defer_reason: str,
+    wake_source: str,
+    delivered: bool,
+) -> None:
+    """Durably record refresh → wake correlation for #996-style acceptance."""
+    from aletheia.storage.models import AuditEvent
+
+    payload = {
+        "instrument": instrument,
+        "opportunity_id": opportunity_id,
+        "defer_reason": defer_reason,
+        "wake_source": wake_source,
+        "delivered": delivered,
+    }
+    try:
+        repo.insert_audit_event(AuditEvent(
+            actor="candidate_market_facts",
+            source="pending_candidate_recovery",
+            event_type=(
+                "mark_refresh_wake_delivered" if delivered
+                else "mark_refresh_wake_undelivered"
+            ),
+            entity_type="opportunity",
+            entity_id=opportunity_id or None,
+            after_state=json.dumps(payload, sort_keys=True),
+            message=(
+                f"exact mark refresh wake for {instrument} "
+                f"(defer={defer_reason}, source={wake_source}) "
+                f"{'delivered' if delivered else 'undelivered'}"
+            ),
+        ))
+    except Exception:
+        logger.debug("wake audit event failed for %s", instrument, exc_info=True)
 
 
 def _recent_failure(
@@ -462,6 +517,7 @@ def build_pending_candidate_market_report(
         from aletheia.data.price_feed import (
             get_fresh_mark_for_protective_close,
             get_latest_exact_market_snapshot,
+            process_owns_price_cache,
         )
 
         latest_mark = get_latest_exact_market_snapshot(
@@ -473,10 +529,35 @@ def build_pending_candidate_market_report(
         mark_at = _parse_utc(
             (fresh_mark or {}).get("observed_at") or (latest_mark or {}).get("snapshot_at")
         )
-        if fresh_mark is None:
-            reasons.append("candidate_entry_mark_unavailable")
+        failure = _recent_failure(
+            str(instrument), feature_at=feature_at, mark_at=mark_at,
+        )
+        if failure:
+            item["latest_refresh_failure"] = failure
+
+        # Truthful typed state — a read-only observer with no Gateway visibility
+        # must not report `candidate_entry_mark_unavailable` merely because its
+        # own module cache is empty. See docs/issues #1096.
+        if fresh_mark is not None:
+            mark_state = "mark_available"
+            mark_reason = None
+        elif failure and str(failure.get("component") or "") == "price_mark":
+            mark_state = "mark_refresh_failed"
+            mark_reason = "candidate_entry_mark_refresh_failed"
+        elif not process_owns_price_cache():
+            mark_state = "mark_state_unobservable"
+            mark_reason = "candidate_entry_mark_state_unobservable"
+        elif latest_mark is not None:
+            mark_state = "mark_stale"
+            mark_reason = "candidate_entry_mark_stale"
+        else:
+            mark_state = "mark_unavailable"
+            mark_reason = "candidate_entry_mark_unavailable"
+        if mark_reason:
+            reasons.append(mark_reason)
         item["entry_mark"] = {
             "status": "available" if fresh_mark is not None else "unavailable",
+            "state": mark_state,
             "snapshot_id": (latest_mark or {}).get("id"),
             "observed_at": (
                 (fresh_mark or {}).get("observed_at")
@@ -487,26 +568,22 @@ def build_pending_candidate_market_report(
                 if mark_at is not None else None
             ),
             "source": (fresh_mark or {}).get("source"),
-            "rejection_reason": (
-                None if fresh_mark is not None else "candidate_entry_mark_unavailable"
-            ),
+            "rejection_reason": mark_reason,
         }
-
-        failure = _recent_failure(
-            str(instrument), feature_at=feature_at, mark_at=mark_at,
-        )
-        if failure:
-            item["latest_refresh_failure"] = failure
 
         if any(reason.startswith("candidate_feature_venue") for reason in reasons):
             category = "scheduling_not_covered"
-        elif failure and failure.get("reason") == "upstream_quote_unavailable":
+        elif mark_state == "mark_refresh_failed":
             category = "upstream_quote_unavailable"
         elif any(reason.startswith("candidate_ohlcv_") for reason in reasons):
             category = "ohlcv_not_updated"
         elif technical_reason:
             category = "feature_not_updated"
-        elif fresh_mark is None:
+        elif mark_state == "mark_state_unobservable":
+            category = "mark_state_unobservable"
+        elif mark_state == "mark_stale":
+            category = "mark_stale"
+        elif mark_state == "mark_unavailable":
             category = "mark_not_updated"
         else:
             category = None
