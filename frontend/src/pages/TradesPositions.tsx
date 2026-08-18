@@ -18,6 +18,8 @@ import {
 import AccountSnapshot from "../components/AccountSnapshot";
 import CausalChain from "../components/CausalChain";
 import PageHeader from "../components/PageHeader";
+import { PositionActions } from "../components/PositionActions";
+import { PositionDecisionSummary } from "../components/PositionDecisionSummary";
 import Tabs from "../components/Tabs";
 import ThesisText from "../components/ThesisText";
 import {
@@ -770,6 +772,7 @@ function PositionDetail({
 }) {
 	return (
 		<>
+			<PositionActions position={position} />
 			<DrawerSection label="Position">
 				<DrawerField
 					label="Symbol"
@@ -870,9 +873,7 @@ function PositionDetail({
 			)}
 			{position.decision_reasoning && (
 				<DrawerSection label="AI Decision">
-					<pre className="decision-reasoning">
-						{position.decision_reasoning}
-					</pre>
+					<PositionDecisionSummary position={position} />
 				</DrawerSection>
 			)}
 			<DrawerSection label="Metadata">
