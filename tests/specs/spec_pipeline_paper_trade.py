@@ -1127,6 +1127,14 @@ def test_signal_batch_plan_keeps_spot_and_perp_ownership_domains_distinct():
     assert plan.decisions["opp-perp"] == ("signal_batch_limit", "passed")
 
 
+def test_market_identity_normalizes_supported_derivatives_aliases():
+    from aletheia.agents.paper_trader import _market_identity
+
+    assert {_market_identity(value) for value in ("perp", "swap", "futures", "usdt_futures")} == {
+        "usdt_futures"
+    }
+
+
 @spec_claim(
     SpecClaim(
         "PL-PT-12",

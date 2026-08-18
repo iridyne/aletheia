@@ -630,3 +630,14 @@ def test_continuous_derivatives_keeps_opposing_interactions_out_of_directional_s
     )
     assert result.direction == "long"
     assert next(item for item in result.evidence if item.curve_id == "DER-03").point_value == 0.0
+
+
+def test_continuous_derivatives_ignores_subthreshold_noise_for_oi_conflict() -> None:
+    baseline = scoring._score_derivatives(
+        _complete_candidate(funding_rate=-0.001, oi_delta_1h=25.0, return_1h=None)
+    )
+    noisy = scoring._score_derivatives(
+        _complete_candidate(funding_rate=-0.001, oi_delta_1h=25.0, return_1h=-0.01)
+    )
+    assert noisy.direction == baseline.direction == "long"
+    assert noisy.point_score == baseline.point_score

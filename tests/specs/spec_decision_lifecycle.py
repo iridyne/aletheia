@@ -5755,6 +5755,38 @@ def test_signal_cooldown_scoped_by_signal_source(tmp_path, monkeypatch):
     }
 
 
+def test_legacy_signal_cooldown_recovers_market_from_source_opportunity(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import close_db, get_db
+    close_db()
+    run_migrations()
+
+    now = datetime.now(timezone.utc).isoformat()
+    get_db().execute(
+        "INSERT INTO opportunities "
+        "(id,symbol,market,direction_bias,confidence,status,asset_class,created_at) "
+        "VALUES ('opp-legacy-futures','BTC/USDT','usdt_futures','long','high','reviewed','crypto',?)",
+        (now,),
+    )
+    get_db().execute(
+        "INSERT INTO pi_decisions "
+        "(id,symbol,direction,market_type,action,opportunity_id,signal_source,created_at) "
+        "VALUES ('pi-legacy-futures','BTC/USDT','long',NULL,'signal_pending',"
+        "'opp-legacy-futures','market_observer',?)",
+        (now,),
+    )
+    get_db().commit()
+
+    from aletheia.agents.paper_trader import _recent_signal_pairs
+
+    assert _recent_signal_pairs() == {("BTC/USDT", "long", "usdt_futures")}
+
+
 @spec_claim(
     SpecClaim(
         "DL-S61", "decision_lifecycle_contract", "§2.3 evaluated set bounded", "L2b",

@@ -52,12 +52,9 @@ _PENDING_SIGNAL_QUEUE_CAPACITY = 5
 def _market_identity(value: object) -> str:
     """Canonical market identity used by queue ownership and cooldowns."""
     raw = str(value or "spot").strip().lower() or "spot"
-    try:
-        from aletheia.trading.instruments import instrument_market_to_db_market
-
-        return instrument_market_to_db_market(raw)
-    except Exception:
-        return raw
+    if raw in {"perp", "swap", "futures", "usdt_futures"}:
+        return "usdt_futures"
+    return raw
 
 
 @dataclass
@@ -169,10 +166,11 @@ def _recent_signal_pairs(
         from aletheia.storage.sqlite import get_db
         cutoff = (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).isoformat()
         rows = get_db().execute(
-            "SELECT symbol, direction, COALESCE(market_type,'spot') AS market_type "
-            "FROM pi_decisions "
-            "WHERE action='signal_pending' AND datetime(created_at)>=datetime(?) "
-            "AND symbol IS NOT NULL AND direction IS NOT NULL "
+            "SELECT p.symbol, p.direction, "
+            "COALESCE(p.market_type,o.market,'spot') AS market_type "
+            "FROM pi_decisions p LEFT JOIN opportunities o ON o.id=p.opportunity_id "
+            "WHERE p.action='signal_pending' AND datetime(p.created_at)>=datetime(?) "
+            "AND p.symbol IS NOT NULL AND p.direction IS NOT NULL "
             "AND COALESCE(signal_source, 'market_observer')=?",
             (cutoff, signal_source or "market_observer"),
         ).fetchall()

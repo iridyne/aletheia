@@ -724,8 +724,16 @@ def _derivatives_oi_activation(
         # opposing move add to a side selected by funding; falling OI remains
         # non-directional and keeps the existing activation.
         if oi_delta is not None and oi_delta > 0 and price_return:
+            oi_activation = _curve(oi_delta, ((5.0, 0.0), (10.0, 1.0)))
+            price_activation = _curve(
+                abs(price_return), ((0.25, 0.0), (0.5, 1.0))
+            )
             price_direction = "long" if price_return > 0 else "short"
-            if price_direction != current_direction:
+            if (
+                oi_activation > 0
+                and price_activation > 0
+                and price_direction != current_direction
+            ):
                 return 0.0, current_direction
         return 1.0, current_direction
     if oi_delta is None or price_return is None or oi_delta <= 0:
