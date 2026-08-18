@@ -42,7 +42,7 @@ def test_service_token_authenticates_internal_heartbeat_under_owner_auth(
         "get_secret",
         lambda key: "owner-token" if key == "remote_control_api_token" else None,
     )
-    monkeypatch.setattr(service_auth, "current_operator_service_token", lambda: "service-token")
+    monkeypatch.setattr(service_auth, "is_valid_operator_service_token", lambda t: t == "service-token")
 
     client = TestClient(app_module.app)
     response = client.post(
@@ -72,7 +72,7 @@ def test_service_token_cannot_authorize_owner_facing_mutation(monkeypatch):
         "get_secret",
         lambda key: "owner-token" if key == "remote_control_api_token" else None,
     )
-    monkeypatch.setattr(service_auth, "current_operator_service_token", lambda: "service-token")
+    monkeypatch.setattr(service_auth, "is_valid_operator_service_token", lambda t: t == "service-token")
 
     client = TestClient(app_module.app)
     response = client.post(
@@ -94,7 +94,7 @@ def test_external_request_without_owner_or_service_identity_still_fails(monkeypa
         "get_secret",
         lambda key: "owner-token" if key == "remote_control_api_token" else None,
     )
-    monkeypatch.setattr(service_auth, "current_operator_service_token", lambda: "service-token")
+    monkeypatch.setattr(service_auth, "is_valid_operator_service_token", lambda t: t == "service-token")
 
     client = TestClient(app_module.app)
     response = client.post(
@@ -131,3 +131,89 @@ def test_operator_shell_env_receives_service_token_without_owner_token():
     assert env[OPERATOR_SERVICE_ENV] == "service-token"
     assert "remote_control_api_token" not in env
     assert "X-Aletheia-Token" not in env
+
+
+# ---------------------------------------------------------------------------
+# Per-process credential lifecycle (issue #1106)
+# ---------------------------------------------------------------------------
+
+def _reset_token_registry(monkeypatch):
+    import aletheia.operator_service_identity as osi
+    monkeypatch.setattr(osi, "_active_session_tokens", set())
+    monkeypatch.setattr(osi, "_live_shell_token", None)
+
+
+def _mock_secret_store(monkeypatch):
+    import aletheia.config.secrets as secrets_mod
+    store: dict = {}
+    monkeypatch.setattr(secrets_mod, "get_secret", lambda k: store.get(k))
+    monkeypatch.setattr(secrets_mod, "set_secret", lambda k, v: store.update({k: v}))
+    return store
+
+
+def test_shadow_token_remains_valid_after_live_shell_rotation(monkeypatch):
+    import aletheia.operator_service_identity as osi
+    _reset_token_registry(monkeypatch)
+    _mock_secret_store(monkeypatch)
+
+    shadow_token = osi.issue_session_token()
+    live_token = osi.rotate_operator_service_token()
+
+    assert osi.is_valid_operator_service_token(shadow_token), "shadow invalidated by live rotation"
+    assert osi.is_valid_operator_service_token(live_token), "live token must be valid"
+
+
+def test_revoked_shadow_token_is_rejected(monkeypatch):
+    import aletheia.operator_service_identity as osi
+    _reset_token_registry(monkeypatch)
+    _mock_secret_store(monkeypatch)
+
+    shadow_token = osi.issue_session_token()
+    live_token = osi.rotate_operator_service_token()
+
+    osi.revoke_session_token(shadow_token)
+    assert not osi.is_valid_operator_service_token(shadow_token), "revoked token must be rejected"
+    assert osi.is_valid_operator_service_token(live_token), "live token must survive shadow revocation"
+
+
+def test_shadow_startup_does_not_invalidate_live_shell(monkeypatch):
+    import aletheia.operator_service_identity as osi
+    _reset_token_registry(monkeypatch)
+    _mock_secret_store(monkeypatch)
+
+    live_token = osi.rotate_operator_service_token()
+    _shadow_token = osi.issue_session_token()
+
+    assert osi.is_valid_operator_service_token(live_token), "shadow startup must not invalidate live token"
+
+
+def test_live_respawn_does_not_invalidate_active_shadow(monkeypatch):
+    import aletheia.operator_service_identity as osi
+    _reset_token_registry(monkeypatch)
+    _mock_secret_store(monkeypatch)
+
+    shadow_token = osi.issue_session_token()
+    _first_live = osi.rotate_operator_service_token()
+    _second_live = osi.rotate_operator_service_token()  # simulate a second respawn
+
+    assert osi.is_valid_operator_service_token(shadow_token), "shadow invalidated by live respawn"
+    assert not osi.is_valid_operator_service_token(_first_live), "old live token must be rotated away"
+    assert osi.is_valid_operator_service_token(_second_live)
+
+
+def test_multiple_shadow_runs_have_independent_credentials(monkeypatch):
+    import aletheia.operator_service_identity as osi
+    _reset_token_registry(monkeypatch)
+    _mock_secret_store(monkeypatch)
+
+    tokens = [osi.issue_session_token() for _ in range(3)]
+
+    # All three are independently valid
+    for t in tokens:
+        assert osi.is_valid_operator_service_token(t)
+
+    # Revoking one does not affect the others
+    osi.revoke_session_token(tokens[1])
+    assert osi.is_valid_operator_service_token(tokens[0])
+    assert not osi.is_valid_operator_service_token(tokens[1])
+    assert osi.is_valid_operator_service_token(tokens[2])

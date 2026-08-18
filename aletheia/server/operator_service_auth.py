@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import hmac
-
 from aletheia.operator_service_identity import (
     OPERATOR_SERVICE_HEADER,
-    current_operator_service_token,
+    is_valid_operator_service_token,
 )
 
 # Read-only state actually consumed by operator-shell/src/backend_client.ts.
@@ -60,8 +58,5 @@ def operator_service_request_authenticated(request) -> bool:
     if not operator_service_route_allowed(request.method, path):
         return False
 
-    expected = current_operator_service_token()
-    if not expected:
-        return False
     presented = request.headers.get(OPERATOR_SERVICE_HEADER, "")
-    return bool(presented) and hmac.compare_digest(presented, expected)
+    return bool(presented) and is_valid_operator_service_token(presented)
