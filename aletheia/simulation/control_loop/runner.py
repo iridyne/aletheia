@@ -102,6 +102,11 @@ class ControlLoopHarness:
         cfg = AletheiaConfig()
         cfg.runtime.paused = False
         cfg.runtime.kill_switch_active = kill_switch
+        # This harness intentionally exercises the retired Python governance
+        # implementation in isolation. Select that legacy owner explicitly so
+        # the production single-Operator invariant does not turn the simulation
+        # into an operator-shell test by accident.
+        cfg.operator.enabled = False
         cfg.operator.loop_enabled = True
         cfg.agent.permission_mode = "Paper"
         cfg.exchange.paper_execution_mode = "paper_internal"
@@ -157,7 +162,10 @@ class ControlLoopHarness:
             },
             "agent": {"permission_mode": cfg.agent.permission_mode},
             "exchange": {"paper_execution_mode": cfg.exchange.paper_execution_mode},
-            "operator": {"loop_enabled": cfg.operator.loop_enabled},
+            "operator": {
+                "enabled": cfg.operator.enabled,
+                "loop_enabled": cfg.operator.loop_enabled,
+            },
             "trading": {
                 "min_confidence_to_trade": cfg.trading.min_confidence_to_trade,
                 "default_stop_loss_pct": cfg.trading.default_stop_loss_pct,
