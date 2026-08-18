@@ -381,7 +381,7 @@ Ranker 的 `limit=50` 只限制进入打分/入队选择的执行短名单，不
 6. 已完成：只读 filter feedback 使用分层收缩净期望，未达样本门只显示证据不足。
 7. 已完成：ranker 历史漏斗和 proposal submission 原因直接来自已落库证据；无目标市场价格返回稳定失败原因，不再静默 `None`。
 8. 已完成：反馈统计按真实 stage 分组并展示事发参数；同名同参数关卡跨阶段不再因幂等键碰撞丢证据。
-9. 已完成：可回放单调阈值的前瞻 shadow 登记、严格起始边界、固定停止门和版本失效保护；只观察，不自动应用。
+9. 已完成：可回放单调阈值的前瞻 shadow 登记、严格起始边界、固定停止门和版本失效保护；只观察，不自动应用。`ranker_confidence_gate` 的版本失效保护自 #1072 起改为 adapter-declared causal identity vector — 无关 `filter_version` 变化不再重置 cohort，详见 [observation_lab_contract.md](observation_lab_contract.md)。
 10. 已完成：Universe 已选成员在机会生成阶段逐个保存终态；同一 snapshot、symbol、market 的已评估机会仍占有原身份，迟到的 Observer 不再重复创建或事后改写。
 11. 待独立实验：合并方向刹车、修改 ranker 权重/经济门和任何自动调参。
 12. 已完成：Ranker 白名单漏项与黑名单命中不再静默 `return None`；拒绝事实与终态原子提交，且独立有界拒绝工作集不会被 top-N 执行上限截掉。

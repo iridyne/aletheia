@@ -30,7 +30,9 @@ from aletheia.counterfactual.filter_replay import (
     build_family_ttl_replay,
     build_observer_pre_filter_replay,
     build_ranker_confidence_replay,
+    build_ranker_confidence_replay_from_frozen,
 )
+from aletheia.observation_lab import units as lab_units
 from aletheia.storage import repositories as repo
 from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
@@ -41,6 +43,52 @@ from aletheia.storage.sqlite import get_db
 # own stricter gates (0.80 coverage, 0.25 edge delta, 200 samples).
 _MIN_COVERAGE = 0.70
 _MIN_EDGE_DELTA_PCT = 0.05
+
+
+# Adapter-specific causal identity vectors (Issue #1072 owner review §4).
+#
+# Each entry declares the semantic contract a Source Adapter actually consumes.
+# Only fields listed here can trigger ``adapter_causal_identity_changed``
+# invalidation — an unrelated ``filter_version`` bump in production does NOT.
+# Bumping any version string here is a deliberate act that new-cohorts every
+# collecting experiment; historical evaluations remain unchanged (append-only).
+#
+# Owner review §4: "v1 禁止通过 Git diff、路径分类、LLM 判断或全局 dependency graph
+# 自动推断 comparability" — nothing here is inferred from the codebase; every
+# field is a hand-declared contract.
+_ADAPTER_CAUSAL_IDENTITY: dict[str, dict[str, Any]] = {
+    "ranker_confidence_gate": {
+        "adapter_id": "ranker_confidence_gate",
+        "adapter_version": "v1",
+        "cohort_semantics_version": "prospective_first_exposure/v1",
+        "evaluator_version": "shrunk_mean_edge_delta/v1",
+        "outcome_contract": "filter_candidate_outcomes/net_return_pct",
+        "input_schema": (
+            "input_snapshot.confidence",
+            "parameter_snapshot.minimum",
+        ),
+    },
+    # Phase 2 (Issue #1072 §"Phase 2 — only after POC success"): ``family_ttl``
+    # and ``observer_pre_filter`` remain on the legacy ``_production_version_changed``
+    # invalidation until the ranker POC is validated in the field. Adding them
+    # here without also porting their multi-horizon / bootstrap evaluators to
+    # frozen units would silently change their invalidation semantics, which is
+    # what the owner review explicitly warned against.
+}
+
+# Adapters whose ``_ranker_rebuild``-style path can consume frozen units.
+# Kept separate from ``_ADAPTER_CAUSAL_IDENTITY`` on purpose — future work can
+# declare an identity vector for a new adapter without also committing to the
+# rebuild-from-frozen refactor in the same change.
+_FROZEN_REBUILD_ADAPTERS: frozenset[str] = frozenset({"ranker_confidence_gate"})
+
+
+def _adapter_causal_identity_hash(filter_name: str) -> str | None:
+    """Hex-digest hash of the adapter's declared causal identity vector."""
+    identity = _ADAPTER_CAUSAL_IDENTITY.get(filter_name)
+    if identity is None:
+        return None
+    return hashlib.sha256(_json(identity).encode("utf-8")).hexdigest()
 
 
 def register_replay_ready_experiments(
@@ -103,6 +151,8 @@ def register_replay_ready_experiments(
             "source_replay": _json(replay),
             # This hard database constraint makes the observe-only boundary explicit.
             "production_mutation_allowed": 0,
+            # None for adapters that opt out of Lab identity semantics (Phase 2 migration).
+            "adapter_identity_hash": _adapter_causal_identity_hash(scope["filter_name"]),
         }
         if repo.insert_filter_shadow_experiment(record):
             summary["registered"] += 1
@@ -123,17 +173,18 @@ def evaluate_active_shadow_experiments(
         "invalidated": 0,
     }
     for experiment in repo.list_filter_shadow_experiments(status="collecting"):
-        if _production_version_changed(experiment):
+        invalidation = _invalidation_for(experiment)
+        if invalidation is not None:
+            reason_code, note = invalidation
             disposition = "invalidated"
             evaluation = _empty_evaluation(
-                experiment, timestamp, disposition,
-                note="Production filter version changed after experiment start.",
+                experiment, timestamp, disposition, note=note,
             )
             update = {
                 "status": disposition,
                 "last_evaluated_at": timestamp,
                 "completed_at": timestamp,
-                "invalidation_reason": "production_filter_version_changed",
+                "invalidation_reason": reason_code,
             }
         else:
             evaluation, disposition = _evaluate_one(experiment, timestamp)
@@ -147,6 +198,183 @@ def evaluate_active_shadow_experiments(
         if disposition != "collecting":
             summary[disposition] += 1
     return summary
+
+
+def register_observation_from_spec(
+    spec: dict[str, Any], *, now: datetime | None = None
+) -> str:
+    """Register one Observation from a hand-authored spec dict.
+
+    Complement to :func:`register_replay_ready_experiments` for the
+    ``aletheia observe register <spec.yaml>`` CLI: bypasses the "recommendation
+    → alternative selection" path so operators can register cohorts the
+    automated controller wouldn't nominate. Same durable identity fields, same
+    ``production_mutation_allowed=0`` boundary, same adapter causal identity
+    hash — Lab treatment is uniform regardless of registration source.
+
+    Raises ``ValueError`` on missing scope fields or when a matching cohort
+    already exists (identical scope + control + treatment).
+    """
+    required = (
+        "filter_name", "stage", "scanner_family", "direction",
+        "market_type", "horizon", "control", "treatment",
+    )
+    missing = [key for key in required if not spec.get(key)]
+    if missing:
+        raise ValueError(f"spec is missing required field(s): {missing}")
+
+    timestamp = _iso(now)
+    scope = {
+        "filter_name": str(spec["filter_name"]),
+        "filter_version": str(spec.get("filter_version") or ""),
+        "stage": str(spec["stage"]),
+        "scanner_family": str(spec["scanner_family"]),
+        "direction": str(spec["direction"]).lower(),
+        "market_type": str(spec["market_type"]).lower(),
+        "horizon": str(spec["horizon"]),
+    }
+    control = _json(spec["control"])
+    treatment = _json(spec["treatment"])
+    experiment_key = _experiment_key(scope, control, treatment)
+    record = {
+        "id": uuid.uuid4().hex,
+        "experiment_key": experiment_key,
+        "created_at": timestamp,
+        "started_at": timestamp,
+        **scope,
+        "control_parameter": control,
+        "treatment_parameter": treatment,
+        "assignment_policy": str(
+            spec.get("assignment_policy") or "prospective_first_exposure"
+        ),
+        "status": "collecting",
+        "min_samples": max(1, int(spec.get("min_samples") or 20)),
+        "min_coverage": float(spec.get("min_coverage") or _MIN_COVERAGE),
+        "min_edge_delta_pct": float(
+            spec.get("min_edge_delta_pct") or _MIN_EDGE_DELTA_PCT
+        ),
+        "source_replay": _json(spec.get("source_replay") or spec),
+        "production_mutation_allowed": 0,
+        "adapter_identity_hash": _adapter_causal_identity_hash(scope["filter_name"]),
+    }
+    if not repo.insert_filter_shadow_experiment(record):
+        raise ValueError(
+            f"observation with identical scope + treatment already exists "
+            f"(experiment_key={experiment_key})"
+        )
+    return record["id"]
+
+
+def evaluate_one_experiment(
+    experiment_id: str, *, now: datetime | None = None
+) -> dict[str, Any]:
+    """Run one evaluation pass restricted to a single experiment id.
+
+    Same semantics as :func:`evaluate_active_shadow_experiments` — including
+    the adapter causal identity invalidation check — but targeted, so an
+    operator can force a fresh evaluation snapshot without waiting for the
+    controller cycle. Used by the ``aletheia observe evaluate`` CLI.
+    """
+    target: dict[str, Any] | None = None
+    for row in repo.list_filter_shadow_experiments(limit=1000):
+        if row["id"] == experiment_id:
+            target = row
+            break
+    if target is None:
+        raise ValueError(f"unknown observation id: {experiment_id}")
+    timestamp = _iso(now)
+    invalidation = _invalidation_for(target)
+    if invalidation is not None:
+        reason_code, note = invalidation
+        disposition = "invalidated"
+        evaluation = _empty_evaluation(target, timestamp, disposition, note=note)
+        update = {
+            "status": disposition,
+            "last_evaluated_at": timestamp,
+            "completed_at": timestamp,
+            "invalidation_reason": reason_code,
+        }
+    else:
+        evaluation, disposition = _evaluate_one(target, timestamp)
+        update = {"status": disposition, "last_evaluated_at": timestamp}
+        if disposition != "collecting":
+            update["completed_at"] = timestamp
+    with transaction():
+        repo.insert_filter_shadow_evaluation(evaluation)
+        repo.update_filter_shadow_experiment(target["id"], **update)
+    return evaluation
+
+
+def capture_frozen_units_for(experiment: dict[str, Any], *, now: datetime | None = None) -> int:
+    """Copy new first-exposure rows into ``filter_shadow_frozen_units``.
+
+    Only adapters with a declared causal identity (currently
+    ``ranker_confidence_gate``) participate in freezing — others keep the legacy
+    live-replay path. The first-exposure query intentionally does NOT filter by
+    ``filter_version``: a candidate's earliest exposure across all versions of
+    the same scope wins, so unrelated ``filter_version`` bumps produce zero
+    new frozen units and the experiment keeps collecting.
+
+    Idempotent. Returns the number of freshly-inserted units.
+    """
+    filter_name = str(experiment.get("filter_name") or "")
+    if filter_name not in _FROZEN_REBUILD_ADAPTERS:
+        return 0
+    timestamp = _iso(now)
+    rows = get_db().execute(
+        """
+        WITH first_exposure AS (
+            SELECT outcome_candidate_key,
+                   decision,
+                   input_snapshot,
+                   parameter_snapshot,
+                   evaluated_at,
+                   filter_version,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY outcome_candidate_key
+                       ORDER BY datetime(evaluated_at), rowid
+                   ) AS rn
+            FROM filter_decisions
+            WHERE filter_name = ?
+              AND stage = ?
+              AND COALESCE(scanner_family, 'unknown') = ?
+              AND direction = ?
+              AND market_type = ?
+              AND decision IN ('passed', 'rejected')
+              AND outcome_candidate_key IS NOT NULL
+        )
+        SELECT outcome_candidate_key, decision, input_snapshot, parameter_snapshot,
+               evaluated_at AS first_evaluated_at, filter_version
+        FROM first_exposure
+        WHERE rn = 1
+          AND julianday(evaluated_at) > julianday(?)
+        ORDER BY datetime(evaluated_at), outcome_candidate_key
+        """,
+        (
+            experiment["filter_name"],
+            experiment["stage"],
+            experiment["scanner_family"],
+            experiment["direction"],
+            experiment["market_type"],
+            experiment["started_at"],
+        ),
+    ).fetchall()
+    if not rows:
+        return 0
+    frozen: list[dict[str, Any]] = []
+    for row in rows:
+        frozen.append({
+            "id": uuid.uuid4().hex,
+            "outcome_candidate_key": row["outcome_candidate_key"],
+            "decision": row["decision"],
+            "input_snapshot": row["input_snapshot"] or "{}",
+            "parameter_snapshot": row["parameter_snapshot"] or "{}",
+            "first_evaluated_at": row["first_evaluated_at"],
+            # Provenance only — never used for identity/comparability decisions.
+            "source_runtime_commit": row["filter_version"],
+            "first_seen_at": timestamp,
+        })
+    return lab_units.insert_frozen_units(experiment["id"], frozen)
 
 
 def build_filter_shadow_experiment_report(limit: int = 50) -> list[dict[str, Any]]:
@@ -234,6 +462,36 @@ def _evaluate_one(
         "edge_delta_pct": edge_delta,
         "note": note,
     }, disposition)
+
+
+def _invalidation_for(experiment: dict[str, Any]) -> tuple[str, str] | None:
+    """Decide whether ``experiment`` must be invalidated on this evaluation pass.
+
+    Returns ``(reason_code, human_note)`` or ``None`` when it should keep collecting.
+
+    ``ranker_confidence_gate`` uses the adapter-declared causal identity vector
+    (Issue #1072 owner review §4): unrelated ``filter_version`` bumps in production
+    are provenance-only and do not invalidate; only a change in the adapter's own
+    declared causal identity does. Other filter kinds keep the legacy strict
+    version check pending Phase 2 migration.
+    """
+    filter_name = str(experiment.get("filter_name") or "")
+    if filter_name in _ADAPTER_CAUSAL_IDENTITY:
+        stored = experiment.get("adapter_identity_hash")
+        current = _adapter_causal_identity_hash(filter_name)
+        if stored and current and stored != current:
+            return (
+                "adapter_causal_identity_changed",
+                "Adapter causal identity changed after experiment start — "
+                "new cohort required. Historical evidence remains available.",
+            )
+        return None
+    if _production_version_changed(experiment):
+        return (
+            "production_filter_version_changed",
+            "Production filter version changed after experiment start.",
+        )
+    return None
 
 
 def _production_version_changed(experiment: dict[str, Any]) -> bool:
@@ -452,6 +710,24 @@ def _ranker_rebuild(
     treatment = str(
         _json_dict(experiment["treatment_parameter"]).get("minimum_confidence") or ""
     )
+    # Prefer Observation Lab frozen units when they exist: unrelated production
+    # ``filter_version`` bumps then don't retroactively change the input snapshot
+    # the evaluator sees. Falls back to the live replay on the first cycle
+    # (before any unit has been captured).
+    if lab_units.count_frozen_units(experiment["id"]) > 0:
+        frozen = build_ranker_confidence_replay_from_frozen(
+            experiment_id=experiment["id"],
+            horizon=experiment["horizon"],
+            current_minimum_confidence=control,
+            treatment_minimum=treatment,
+            min_samples=int(experiment["min_samples"]),
+        )
+        if frozen is not None:
+            match = next((
+                alt for alt in frozen.get("alternatives") or []
+                if alt.get("minimum_confidence") == treatment
+            ), None)
+            return (frozen["current_pass"], match) if match is not None else (None, None)
     replay = build_ranker_confidence_replay(
         filter_version=experiment["filter_version"],
         stage=experiment["stage"],
