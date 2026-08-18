@@ -395,7 +395,7 @@ def test_interactions_are_not_labelled_as_independent_additive_votes() -> None:
 
 
 def test_influence_budgets_match_frozen_step_boundary_envelope() -> None:
-    """Budgets are frozen step-v1 evidence, not tuned to new outputs."""
+    """Budgets are frozen step-v2 evidence, not tuned to new outputs."""
 
     import json
 
@@ -405,7 +405,7 @@ def test_influence_budgets_match_frozen_step_boundary_envelope() -> None:
     from aletheia.universe.scanners import run_all_scanners
 
     fixture = json.loads(
-        (Path(__file__).parent / "fixtures" / "universe_step_score_v1.json").read_text(encoding="utf-8")
+        (Path(__file__).parent / "fixtures" / "universe_step_score_v2.json").read_text(encoding="utf-8")
     )
     values_by_feature: dict[str, set[float]] = {}
     for group in fixture["threshold_probes"]:

@@ -46,7 +46,7 @@ causal evaluation, not greater model complexity.
 The normative [Learning contract](../contracts/learning_contract.md) currently
 marks only `universe_family_calibration` as measurement-supported. Factor,
 ranker, guard, and other Learning hooks retain static fallbacks. The frozen
-`universe-step-v1` scorer remains authoritative; `universe-continuous-shadow-v1`
+`universe-step-v2` scorer remains authoritative; `universe-continuous-shadow-v1`
 is reserved and is not active.
 
 No current Learning path automatically edits an individual RSI, return,
@@ -83,7 +83,7 @@ Non-goals:
 The stages are strictly ordered:
 
 ```text
-frozen step-v1
+frozen step-v2
   -> pure continuous curve library
   -> step-authoritative twin Shadow scorer
   -> prospective curve comparison in Shadow
@@ -141,7 +141,7 @@ comparable per declared transition interval instead of per arbitrary raw unit;
 changing the anchor union or perturbation rule changes the behavior identity.
 
 Each raw feature also has a frozen influence
-budget equal to the maximum total-score movement that `universe-step-v1` can
+budget equal to the maximum total-score movement that `universe-step-v2` can
 produce from that feature across the golden boundary fixture. The continuous
 scorer cannot exceed that budget without a new proposal decision.
 
@@ -373,7 +373,7 @@ Before the continuous scorer can even enter twin Shadow:
 - the curve and missingness property suite passes for anchors, continuity,
   bounds, symmetry, invalid inputs, pessimistic dominance, raw-feature identity,
   influence budgets, and concentration flags;
-- the frozen step scorer and hard-gate golden fixture remain unchanged;
+- the frozen step scorer and hard-gate golden fixture remain versioned and reviewed;
 - pure implementation contains no import or call from an authority consumer.
 
 Before factor Learning can become measurement-supported:
@@ -395,14 +395,14 @@ contribution.
 
 1. Implement pure curve and pessimistic-bound functions with no production
    consumer.
-2. Wire a twin Shadow record while keeping `universe-step-v1` authoritative.
+2. Wire a twin Shadow record while keeping `universe-step-v2` authoritative.
 3. open a new behavior version and policy epoch; collect all-candidate outcomes;
 4. report distribution, turnover, missingness, concentration, cohort, cost, and
    tail-risk evidence;
 5. only then consider a separately registered factor-suppression experiment.
 
 Any invalid, negative, harm, identity, source, or availability condition leaves
-or restores `universe-step-v1`. Rollback is removal of the non-authoritative
+or restores `universe-step-v2`. Rollback is removal of the non-authoritative
 twin consumer or expiry/refreeze of a separately admitted treatment; it never
 rewrites historical records.
 

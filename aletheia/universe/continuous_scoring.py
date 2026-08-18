@@ -2,7 +2,7 @@
 
 The module does not import the legacy allocator, filters, signal emitter,
 Learning, repositories, or runtime services.  A separate twin adapter may call
-it for diagnostics, but ``universe-step-v1`` remains the only authority.
+it for diagnostics, but ``universe-step-v2`` remains the only authority.
 """
 
 from __future__ import annotations

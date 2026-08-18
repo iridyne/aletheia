@@ -25,8 +25,8 @@ baseline update, and matching assertions in `test_runtime_replay_pack.py`.
 
 # Universe step-score golden baseline
 
-`universe_step_score_v1.json` freezes the current piecewise/step behavior under
-the scorer identity `universe-step-v1`. It contains two complementary evidence
+`universe_step_score_v2.json` freezes the current piecewise/step behavior under
+the scorer identity `universe-step-v2`. It contains two complementary evidence
 sets:
 
 - six sanitized numeric feature shapes derived from the Fedora Paper runtime;

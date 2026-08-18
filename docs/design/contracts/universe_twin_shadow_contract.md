@@ -2,7 +2,7 @@
 
 > Current behavior as of 2026-08-09
 >
-> Authority scorer: `universe-step-v1`
+> Authority scorer: `universe-step-v2`
 >
 > Shadow comparison: step control versus continuous pessimistic treatment
 >
@@ -12,7 +12,7 @@
 
 `UniverseService.refresh()` computes continuous point and pessimistic scores for
 every coarse-filter survivor, then replays both continuous allocations beside
-the current step allocation. Only step-v1 publishes `universe_members` and
+the current step allocation. Only step-v2 publishes `universe_members` and
 Opportunities.
 
 After authority publication succeeds and the scanner run is marked complete,
@@ -42,7 +42,7 @@ policy freezes:
   model, and allocation-utility metric identity;
 - complete-scanner-run assignment, SHA-256 assignment contract, and `0.5`
   treatment probability;
-- step-v1 as control and continuous pessimistic as treatment.
+- step-v2 as control and continuous pessimistic as treatment.
 
 The scanner run is the assignment unit. Assignment is derived from the policy
 hash and scanner-run id without reading or advancing Python's process-global

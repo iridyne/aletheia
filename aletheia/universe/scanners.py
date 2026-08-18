@@ -17,9 +17,9 @@ _DERIVATIVES_MARKET_TYPES = frozenset({"perp", "swap", "futures", "usdt_futures"
 
 # Frozen identity for the current piecewise/step scoring behavior.  This is a
 # measurement contract, not a runtime policy switch: changing it does not alter
-# scores.  Any future scorer implementation must receive a new version only
-# after its golden baseline is reviewed and approved.
-UNIVERSE_SCORER_BEHAVIOR_VERSION = "universe-step-v1"
+# scores.  Directionally incoherent evidence was removed in v2; the golden
+# baseline is versioned so old/new score comparisons remain auditable.
+UNIVERSE_SCORER_BEHAVIOR_VERSION = "universe-step-v2"
 
 
 def score_momentum(feat: dict) -> tuple[float, list[str], str | None]:

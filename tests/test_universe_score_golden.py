@@ -30,7 +30,7 @@ from aletheia.universe.scanners import (
 )
 
 
-_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "universe_step_score_v1.json"
+_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "universe_step_score_v2.json"
 _SCANNERS = {
     "momentum": score_momentum,
     "mean_reversion": score_mean_reversion,
@@ -52,9 +52,9 @@ def _assert_number(actual: float, expected: float) -> None:
 
 def test_golden_contract_identity_and_inventory(golden: dict) -> None:
     """The fixture must identify the exact frozen scorer and its full inventory."""
-    assert golden["contract"] == "universe-step-score-golden/v1"
+    assert golden["contract"] == "universe-step-score-golden/v2"
     assert golden["scorer_behavior_version"] == UNIVERSE_SCORER_BEHAVIOR_VERSION
-    assert UNIVERSE_SCORER_BEHAVIOR_VERSION == "universe-step-v1"
+    assert UNIVERSE_SCORER_BEHAVIOR_VERSION == "universe-step-v2"
 
     coverage = golden["coverage"]
     assert coverage["real_vector_count"] == len(golden["real_vectors"]) == 6
