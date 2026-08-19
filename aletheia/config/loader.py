@@ -1,5 +1,6 @@
 """Config loader for the current user's Aletheia runtime home."""
 
+import hashlib
 import os
 import tempfile
 import threading
@@ -7,6 +8,16 @@ import time
 from pathlib import Path
 
 import yaml
+
+try:
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - Windows
+    _fcntl = None
+
+try:
+    import msvcrt as _msvcrt
+except ImportError:  # pragma: no cover - POSIX
+    _msvcrt = None
 
 from aletheia.config.schema import AletheiaConfig
 from aletheia.runtime_paths import preview_root, runtime_home
@@ -270,6 +281,73 @@ def _persisted_operator_shell_owner_selected() -> bool:
     )
 
 
+class ConfigConflictError(RuntimeError):
+    """Raised by save_config when a CAS check detects concurrent modification."""
+
+
+# ─── Cross-process config write lock ─────────────────────────────────────────
+# config.yaml is shared by multiple Aletheia processes. A process-local
+# threading.Lock only serialises writers within one process. This file-permit
+# (analogous to storage/sqlite.py's *.write.lock) serialises writers across
+# processes by holding an exclusive flock/msvcrt lock on config.yaml.write.lock
+# before the read-modify-write transaction begins.
+_CONFIG_WRITE_LOCK_TIMEOUT_S = 10.0
+
+
+def _acquire_config_file_lock() -> "int | None":
+    """Open and exclusively lock config.yaml.write.lock. Returns fd, or None on Windows without msvcrt."""
+    if _fcntl is None and _msvcrt is None:
+        return None
+    lock_path = CONFIG_PATH.with_suffix(".write.lock")
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError as exc:
+        raise OSError(f"cannot open config writer lock: {exc}") from exc
+    started = time.monotonic()
+    try:
+        if _msvcrt is not None and os.fstat(fd).st_size == 0:
+            os.write(fd, b"\0")
+        while True:
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                if _fcntl is not None:
+                    _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                else:
+                    _msvcrt.locking(fd, _msvcrt.LK_NBLCK, 1)
+                return fd
+            except (BlockingIOError, OSError):
+                if time.monotonic() - started >= _CONFIG_WRITE_LOCK_TIMEOUT_S:
+                    # raise without closing — except BaseException below will close fd
+                    raise TimeoutError(
+                        "config_write_lock_timeout: another process held the config writer permit"
+                    )
+                time.sleep(0.01)
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _release_config_file_lock(fd: "int | None") -> None:
+    if fd is None:
+        return
+    try:
+        if _fcntl is not None:
+            _fcntl.flock(fd, _fcntl.LOCK_UN)
+        elif _msvcrt is not None:
+            os.lseek(fd, 0, os.SEEK_SET)
+            _msvcrt.locking(fd, _msvcrt.LK_UNLCK, 1)
+    finally:
+        os.close(fd)
+
+
+def config_file_hash() -> "str | None":
+    """SHA-256 hex digest of current config.yaml. Returns None if file absent."""
+    try:
+        return hashlib.sha256(CONFIG_PATH.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
 # ─── In-memory config cache ───────────────────────────────────────────────────
 # Avoids repeated disk reads on every API request.  TTL = 5 s; invalidated
 # immediately by save_config() so mutations are always reflected.
@@ -408,23 +486,45 @@ def save_config(
     cfg: AletheiaConfig,
     *,
     allow_operator_handoff: bool = False,
+    expected_hash: "str | None" = None,
 ) -> None:
-    """Persist config to disk (atomic write + thread lock)."""
+    """Persist config to disk (atomic write + cross-process lock).
+
+    Pass expected_hash (from config_file_hash()) to enable CAS: raises
+    ConfigConflictError if the file was modified by another writer since load.
+    """
     with _config_write_lock:
-        _save_config_locked(
-            cfg,
-            allow_operator_handoff=allow_operator_handoff,
-        )
+        file_fd = _acquire_config_file_lock()
+        try:
+            if expected_hash is not None:
+                current = config_file_hash()
+                if current != expected_hash:
+                    raise ConfigConflictError(
+                        f"config modified by another writer "
+                        f"(expected {expected_hash[:8]}, got {current and current[:8]})"
+                    )
+            _save_config_locked(cfg, allow_operator_handoff=allow_operator_handoff)
+        finally:
+            _release_config_file_lock(file_fd)
     _emit_consistency_events(cfg)
 
 
 def mutate_config(mutator):
-    """Apply one mutation to the latest config snapshot under the write lock."""
+    """Apply one targeted mutation under the cross-process write lock.
+
+    Acquires the filesystem permit before reading so the mutation base is always
+    the latest committed revision — not a process-local cached snapshot.
+    """
     with _config_write_lock:
-        cfg = load_config(persist_migrations=False)
-        changed = bool(mutator(cfg))
-        if changed:
-            _save_config_locked(cfg)
+        file_fd = _acquire_config_file_lock()
+        try:
+            _invalidate_config_cache()
+            cfg = load_config(persist_migrations=False)
+            changed = bool(mutator(cfg))
+            if changed:
+                _save_config_locked(cfg)
+        finally:
+            _release_config_file_lock(file_fd)
     if changed:
         _emit_consistency_events(cfg)
     return changed
