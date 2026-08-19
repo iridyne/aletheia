@@ -68,10 +68,10 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 | 13 | Single Trade Risk | 止损距离×数量<上限；demo 默认 20%，设置 API 只保留正数下限 | `risk.max_{/demo_}single_trade_risk_pct` | `max_single_trade_risk_missing_stop_price` (live, no stop_price, engine.py:207); `exceeds_single_trade_risk:{r}>{max}` (live, over cap); `exceeds_demo_single_trade_risk:{r}>{max}` (demo) | :202 |
 | 14 | Scanner-Family Evidence | live 需该单 `scanner_family`(经 opportunity 解析)在干净窗有 ≥N 已结算证据且方向胜率≥门槛(取代已删的策略 FSM 准入,Position C 2026-07-02;fail-closed:无 family/无证据/样本不足/胜率不足均拒) | `risk.live_family_min_samples`(30)/`risk.live_family_min_win_rate_pct`(50.0) + `repo.family_direction_edge` | `family_not_live_eligible:{unknown/family:no_evidence/family:samples=n<N/family:wr=w<T}` | :211 |
 | 15 | Lesson Constraints | 已接受且未过期的 manual/owner/human block 规则保持静态硬约束；自动来源默认 advisory，只有 exact `risk_lesson_constraint` prospective treatment 可阻断该 Proposal，control/default/error 不得阻断 | `LessonStore.recommendation_json` + Learning path authority | `lesson_block_{symbol/...}:{id}:{v}` / `lesson_check_error:internal_failure` | engine.py `_check_lesson_constraints` |
-| 16 | Portfolio Correlation | 部门集中度 + 组合 BTC beta | `risk.correlation_guard_enabled/max_sector_concentration_pct/max_portfolio_beta` | `sector_concentration/portfolio_beta:...` | :245,387 |
+| 16 | Portfolio Correlation | 部门集中度 + 组合 BTC beta；持仓数低于 `correlation.min_positions_for_concentration`(默认 4)时跳过，少于 4 个持仓时浓度百分比粒度不足以区分信号 | `risk.correlation_guard_enabled/max_sector_concentration_pct/max_portfolio_beta/min_positions_for_concentration` | `sector_concentration/portfolio_beta:...` | :245,387 |
 | 17 | Account Leverage Ratio | 期货:同一账户池的 Position + 未决 entry Order + pre-Order reservation 的 Σ(notional×lev)/同账户 equity ≤ 上限；不同 demo broker 不混算；外部 equity 必须来自新鲜健康的具名缓存；相关 Position 的 market type/数量/价格/杠杆非法时拒绝，不能当零敞口（spot 的 NULL leverage 按其结构语义计 1x，显式非 1x 反而拒绝）。Demo 默认 10x，设置 API 只保留正数下限；live 保持 1.5x | `risk.max_account_leverage_{live/demo}` + named local cache | `account_leverage_ratio:{r}x>{cap}x` / `account_equity_unavailable:{mode}` / `account_leverage_check_error:invalid_position_exposure:position={id}:field={category}` / `account_leverage_check_error:internal_failure` | engine.py check #17 (RE-B23~28) |
 | 18 | Liquidation Buffer | 期货(lev>1):估算爆仓价距入场 ≥ buffer% | `risk.min_liquidation_buffer_pct`(5.0) | `liquidation_too_close:{g}%<{b}%` | :695 (FL-S09) |
-| 19 | Per-symbol Cumulative Notional | 同标的同池累计名义(含本单)≤ 上限(CUM-ADD 均价合并会绕过 #5 单仓上限) | `risk.max_per_symbol_notional_usdt` | `exceeds_per_symbol_notional:{sym}:{proj}>{cap}` | :285 |
+| 19 | Per-symbol Cumulative Notional | 同标的同池累计名义(含本单)≤ 上限(CUM-ADD 均价合并会绕过 #5 单仓上限)；上限由 sizing 公式推导：`capital_base × risk_pct × leverage × max_per_symbol_entries`，永不与首单产生矛盾 | `risk.capital.max_per_symbol_entries`(无量纲次数，默认 3) | `exceeds_per_symbol_notional:{sym}:{proj}>{cap}` | :285 |
 
 > ⚠️ 关卡 #11 的 `_MAX_DATA_AGE_SECONDS` 是模块常量,非 config 字段。若要 config 化需迁移 + 测试。
 >
@@ -84,6 +84,8 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 > ⚠️ 关卡 #5 的回撤缩放(`_portfolio_drawdown_scale`, engine.py:356):缩放系数(0-5% DD→1.0, 5-10%→1.0→0.5, 10-20%→0.5→0.0, >20%→0)由组合回撤驱动。**回撤的数据源**:交易所模式(okx_demo/*_demo/live)读 `portfolio_snapshots` 的 `exchange_account` 行(真实账户 equity),**不读**每个 mode 自己的行——后者的 `total_value_usdt` 是持仓 notional(Σqty×price)而非 equity,平掉盈利持仓会让 notional 暴跌被误判成回撤、把 cap 缩到 $0 锁死开仓。paper_internal 没有可信的模拟账户权益序列：本地快照是持仓名义金额，外部账户快照属于另一账户，因此它跳过回撤缩放并继续受固定上限、日损和持仓数限制。spec: RE-B05(分段)+ RE-B05a(交易所数据源)+ RE-B05b(本地模拟)。
 
 > 关卡 #5 的账户余额收紧:不在下单时请求交易所，只读取本地缓存/账本的可用 USDT。Bitget demo/live 分别读各自模式缓存；OKX/Binance 读统一缓存中与 execution mode 同名的账户；`paper_internal` 读独立纸面现金账本。有效上限始终是 `min(configured_hard_cap, available_usdt)`，因此余额数据只能收紧、不能抬高配置上限。外部账户没有缓存时仍保留配置上限，因为缓存只是额外收紧信息；本地纸面账本本身就是资金权威，读取失败必须以 `paper_account_balance_unavailable` 拒绝，不能假装仍有配置资金。本地纸面账户若存在尚未补齐 funding/关闭成本的已关闭仓位，则返回可用余额 0 并阻止继续扩张。spec: RE-B18、RE-B29、PL-PCM-06。
+>
+> 关卡 #5 的比较量：比较的是 **pledged cash（保证金）= notional / leverage**，而非原始名义价值。原始名义价值与可用现金相比时，任何杠杆 > `1/risk_pct` 的单子都会被错误拒绝（20% 风险时为 5x）；以保证金比较后，有效杠杆上限由账户余额自然决定，不受 per_trade_risk_pct 的隐式 cap。spec: RE-B05c、RE-B05d。
 
 > **本地合约资金费前置门**：`paper_internal + usdt_futures` 只有在该 symbol 存在新鲜、非预测跨 venue 的下一结算快照时才可开仓。通过只代表本地模拟器已有起始锚点；平仓仍逐事件验证完整时间窗，任何断档都关闭仓位但保持净收益不可用。spec: RE-B22、PL-LF-01~06。
 
@@ -180,14 +182,11 @@ interference 与 downstream Execution/Exit 不在其 estimand 内。
 当前新建仓位的生产消费者只有 System Operator。`paper_trader._atr_adjusted_notional()`
 仍保留为 helper，但没有生产调用者，不构成第二条权威 sizing 路径。
 
-System Operator 调用 `vol_target_size()`：先以 ATR 推导的 notional 和历史缩放上限
-确定 sizing base，再由 `compute_position_size()` 把 conviction 映射为 [0.3, 2.5]
-区间内的乘数，并应用回撤缩放。历史配置名 `vol_kelly_cap_fraction` /
-`kelly_fraction` 仅是兼容保留的 scaling factor；当前实现没有使用经校准的
-胜率、payoff odds 或收益分布，因此不是 Kelly sizing。
+System Operator 的权威 sizing 路径为 `available_balance_risk_budget_size()`：用账户**可用余额**（available balance，非 equity）× `max_single_trade_risk_pct` × leverage 得到名义价值。使用可用余额而非净值，可实现几何自收敛——每笔入场后余额减少，下一笔 sizing 自动变小，保证金永不耗尽。
 
-config：`trading.default_notional_usdt=25`、`vol_kelly_cap_fraction=0.25`、
-`vol_sizing_enabled=True`。
+policy version：`available-balance-risk-budget/v1`（换代用于隔离 learning evidence cohort）。
+
+历史路径 `vol_target_size()` 已无生产调用者，保留为 helper；`trading.default_notional_usdt=25`、`vol_kelly_cap_fraction` 等为旧版兼容字段，不影响当前权威路径。
 
 **关键契约**：sizing 计算结果**不是**最终下单量；它仍须通过 §2 第 5 关
 (Max Position Notional)。sizing 提交期望 notional，Risk Engine 只能批准或拒绝，
