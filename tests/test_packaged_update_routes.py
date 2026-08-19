@@ -49,13 +49,6 @@ def test_empty_script_request_still_requires_explicit_confirmation(monkeypatch):
         "apply_update",
         lambda: (_ for _ in ()).throw(AssertionError("applier must not run")),
     )
-    monkeypatch.setattr(
-        update_routes.continuity,
-        "apply_update_with_continuity",
-        lambda **kwargs: (_ for _ in ()).throw(
-            AssertionError("continuity must not run")
-        ),
-    )
 
     result = update_routes.update_apply(
         _request(), update_routes.ApplyBody(confirm=False)
@@ -68,13 +61,6 @@ def test_same_origin_dashboard_request_can_start_packaged_update(monkeypatch):
     monkeypatch.setattr(update_routes, "is_preview_mode", lambda: False)
     monkeypatch.setattr(update_routes, "write_audit", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(update_routes, "_is_packaged_update_mode", lambda: True)
-    monkeypatch.setattr(
-        update_routes.continuity,
-        "apply_update_with_continuity",
-        lambda **kwargs: (_ for _ in ()).throw(
-            AssertionError("packaged flow must not use source continuity")
-        ),
-    )
     monkeypatch.setattr(
         update_routes.applier,
         "apply_update",
@@ -98,7 +84,7 @@ def test_same_origin_dashboard_request_can_start_packaged_update(monkeypatch):
     assert result["reason"] == "update_started_in_background"
 
 
-def test_source_dashboard_apply_uses_observer_aware_restart_transaction(monkeypatch):
+def test_source_dashboard_apply_refuses_mutation_and_requires_cli(monkeypatch):
     monkeypatch.setattr(update_routes, "is_preview_mode", lambda: False)
     monkeypatch.setattr(update_routes, "write_audit", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(update_routes, "_is_packaged_update_mode", lambda: False)
@@ -106,26 +92,8 @@ def test_source_dashboard_apply_uses_observer_aware_restart_transaction(monkeypa
         update_routes.applier,
         "apply_update",
         lambda: (_ for _ in ()).throw(
-            AssertionError("source API must not bypass continuity")
+            AssertionError("source API must never mutate the checkout")
         ),
-    )
-    seen = {}
-
-    def apply_update_with_continuity(*, restart: bool):
-        seen["restart"] = restart
-        return {
-            "mode": "development",
-            "applied": True,
-            "old_commit": "old111",
-            "new_commit": "new222",
-            "continuity_verified": True,
-            "continuity_state": "verified",
-        }
-
-    monkeypatch.setattr(
-        update_routes.continuity,
-        "apply_update_with_continuity",
-        apply_update_with_continuity,
     )
 
     result = update_routes.update_apply(
@@ -133,9 +101,16 @@ def test_source_dashboard_apply_uses_observer_aware_restart_transaction(monkeypa
         update_routes.ApplyBody(confirm=True),
     )
 
-    assert result["applied"] is True
-    assert result["continuity_verified"] is True
-    assert seen["restart"] is True
+    assert result == {
+        "applied": False,
+        "accepted": False,
+        "mode": "development",
+        "reason": "source_update_requires_cli",
+        "message": (
+            "Source-checkout updates must run through `aletheia update` so the "
+            "external updater process can restart Main and verify Observer continuity."
+        ),
+    }
 
 
 def test_rollback_requires_confirmation_before_calling_applier(monkeypatch):
