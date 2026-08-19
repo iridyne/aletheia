@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -23,6 +24,12 @@ from aletheia.files.jsonl import write_audit
 _SCHEMA_VERSION = "update_observer_continuity/v1"
 _VALID_OWNERS = {"main", "worker"}
 _FRESH_CAPTURE_PREFIX = "ALETHEIA_CONTINUITY_SNAPSHOT="
+_POSTFLIGHT_SETTLE_TIMEOUT_SEC = 120.0
+_POSTFLIGHT_POLL_SEC = 2.0
+_CHECKPOINT_MISMATCH_RE = re.compile(
+    r"^fingerprint_mismatch: app_head\((.*?)→(.*?)\) "
+    r"count\((\d+)→(\d+)\) manifests\((\d+)→(\d+)\)$"
+)
 
 
 def _now() -> str:
@@ -236,13 +243,7 @@ def _unavailable_fresh_snapshot(reason: str, *, detail: str | None = None) -> di
 
 
 def capture_update_continuity_fresh() -> dict[str, Any]:
-    """Capture postflight from a fresh interpreter loaded from the target checkout.
-
-    The updater process imported pre-update modules before `git pull`; reusing
-    those modules after the pull would prove the target with stale Python code.
-    A fresh interpreter preserves the same read-model helpers while loading the
-    newly checked-out source from disk.
-    """
+    """Capture postflight from a fresh interpreter loaded from the target checkout."""
     from aletheia.config.loader import _PROJECT_ROOT
 
     script = (
@@ -293,6 +294,29 @@ def _runtime_owner_proof(snapshot: dict[str, Any]) -> dict[str, Any]:
     return execution if isinstance(execution, dict) else {}
 
 
+def _checkpoint_preflight_verdict(checkpoint: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Classify checkpoint drift without turning normal manifest expiry into a gate.
+
+    The canonical Observation runner warns and re-anchors when the joint
+    fingerprint changes. During deployment preflight we only hard-fail the part
+    that proves app.db structural drift: migration head/count movement. A
+    mismatch caused solely by the time-dependent active-manifest set is normal
+    Observation lifecycle progress and remains warning-only. Unknown mismatch
+    shapes fail closed rather than being silently reclassified.
+    """
+    verified = checkpoint.get("verified") if isinstance(checkpoint, dict) else None
+    if not isinstance(verified, dict) or verified.get("ok") is not False:
+        return (None, None)
+    reason = str(verified.get("reason") or "")
+    match = _CHECKPOINT_MISMATCH_RE.fullmatch(reason)
+    if match is None:
+        return ("failure", "observation_checkpoint_drift")
+    old_head, new_head, old_count, new_count, _old_manifests, _new_manifests = match.groups()
+    if old_head != new_head or old_count != new_count:
+        return ("failure", "observation_checkpoint_app_migration_drift")
+    return ("warning", "observation_checkpoint_changed")
+
+
 def evaluate_preflight(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Fail only on directly observed structural pre-existing integrity faults."""
     failures: list[str] = []
@@ -310,13 +334,16 @@ def evaluate_preflight(snapshot: dict[str, Any]) -> dict[str, Any]:
             failures.append("observation_runtime_owner_mismatch")
         if runtime_owner.get("exclusive") is False:
             failures.append("duplicate_observation_cycle_owner")
-    elif (snapshot.get("gateway") or {}).get("available"):
-        warnings.append("observation_runtime_owner_proof_unavailable")
+    elif owner == "worker":
+        proof_gaps.append("observation_runtime_owner_proof_unavailable")
 
-    checkpoint = observation.get("checkpoint") or {}
-    verified = checkpoint.get("verified") if isinstance(checkpoint, dict) else None
-    if isinstance(verified, dict) and verified.get("ok") is False:
-        failures.append("observation_checkpoint_drift")
+    checkpoint_kind, checkpoint_reason = _checkpoint_preflight_verdict(
+        observation.get("checkpoint") or {}
+    )
+    if checkpoint_kind == "failure" and checkpoint_reason:
+        failures.append(checkpoint_reason)
+    elif checkpoint_kind == "warning" and checkpoint_reason:
+        warnings.append(checkpoint_reason)
 
     control = snapshot.get("control") or {}
     data_root = control.get("data_root") or {}
@@ -337,9 +364,9 @@ def evaluate_preflight(snapshot: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "ok": not failures,
-        "failures": failures,
-        "warnings": warnings,
-        "proof_gaps": proof_gaps,
+        "failures": sorted(set(failures)),
+        "warnings": sorted(set(warnings)),
+        "proof_gaps": sorted(set(proof_gaps)),
     }
 
 
@@ -399,8 +426,12 @@ def compare_update_continuity(
 
     before_worker = before_obs.get("worker") or {}
     after_worker = after_obs.get("worker") or {}
-    before_worker_sha = before_worker.get("source_commit") if before_worker.get("available") else None
-    after_worker_sha = after_worker.get("source_commit") if after_worker.get("available") else None
+    before_worker_sha = (
+        before_worker.get("source_commit") if before_worker.get("available") else None
+    )
+    after_worker_sha = (
+        after_worker.get("source_commit") if after_worker.get("available") else None
+    )
     if before_obs.get("owner") == "worker":
         if before_worker_sha and not after_worker_sha:
             failures.append("worker_identity_lost")
@@ -437,8 +468,6 @@ def compare_update_continuity(
     checkpoint = after_obs.get("checkpoint") or {}
     verified = checkpoint.get("verified") if isinstance(checkpoint, dict) else None
     if isinstance(verified, dict) and verified.get("ok") is False:
-        # A legitimate Main migration or independent Worker progress can move
-        # the checkpoint fingerprint. The runner re-anchors on the next pass.
         warnings.append("observation_checkpoint_changed")
 
     gateway = after.get("gateway") or {}
@@ -517,6 +546,33 @@ def _postflight_settled(snapshot: dict[str, Any], target: str) -> bool:
     return gateway.get("health_status") in {"healthy", "degraded"}
 
 
+def capture_update_continuity_until_settled(
+    target: str,
+    *,
+    timeout_sec: float = _POSTFLIGHT_SETTLE_TIMEOUT_SEC,
+    poll_sec: float = _POSTFLIGHT_POLL_SEC,
+) -> dict[str, Any]:
+    """Wait through expected post-restart health warmup using target-loaded code.
+
+    Market Observer's first scheduled pass is intentionally delayed after boot,
+    while `/api/status` health is cached for a few seconds. Four one-second
+    retries therefore cannot prove a normal fresh runtime. This bounded poll
+    keeps the update transaction synchronous but gives the existing health
+    contract its real startup window.
+    """
+    poll = max(0.1, float(poll_sec))
+    attempts = max(1, int(max(0.0, float(timeout_sec)) / poll) + 1)
+    after = capture_update_continuity_fresh()
+    for attempt in range(attempts):
+        if _postflight_settled(after, target):
+            break
+        if attempt + 1 >= attempts:
+            break
+        time.sleep(poll)
+        after = capture_update_continuity_fresh()
+    return after
+
+
 def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
     """Run the existing source updater with Observer pre/postflight verification."""
     before = capture_update_continuity()
@@ -552,26 +608,15 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
 
     target = result.get("new_commit")
     expected_target = (
-        str(target)
-        if result.get("mode") == "development" and target
-        else None
+        str(target) if result.get("mode") == "development" and target else None
     )
 
-    # Only a development result with an operation-owned target SHA can be
-    # proven against target-loaded code. If that contract is unavailable, keep
-    # the result explicitly unproven rather than launching a subprocess and
-    # guessing which code/data root it represents.
-    after = (
-        capture_update_continuity_fresh()
-        if expected_target
-        else capture_update_continuity()
-    )
-    if restart and expected_target:
-        for _ in range(4):
-            if _postflight_settled(after, expected_target):
-                break
-            time.sleep(1)
-            after = capture_update_continuity_fresh()
+    if expected_target and restart:
+        after = capture_update_continuity_until_settled(expected_target)
+    elif expected_target:
+        after = capture_update_continuity_fresh()
+    else:
+        after = capture_update_continuity()
 
     comparison = compare_update_continuity(
         before,
@@ -579,6 +624,15 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
         expected_target=expected_target,
         restart=restart,
     )
+
+    # A verified postflight cannot erase evidence that was already missing
+    # before mutation. Carry preflight proof gaps into the final verdict.
+    combined_proof_gaps = sorted(
+        set((preflight.get("proof_gaps") or []) + (comparison.get("proof_gaps") or []))
+    )
+    comparison["proof_gaps"] = combined_proof_gaps
+    comparison["ok"] = not comparison["failures"] and not combined_proof_gaps
+
     continuity = {
         "preflight": preflight,
         "before": before,
@@ -605,8 +659,8 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
             "continuity": continuity,
         }
 
-    if comparison["proof_gaps"]:
-        only_restart_pending = set(comparison["proof_gaps"]) == {
+    if combined_proof_gaps:
+        only_restart_pending = set(combined_proof_gaps) == {
             "main_restart_required_for_full_verification"
         }
         state = "pending_restart" if only_restart_pending else "unproven"
@@ -625,7 +679,7 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
             ),
             "message": (
                 "Update was applied, but continuity is not proven: "
-                + ", ".join(comparison["proof_gaps"])
+                + ", ".join(combined_proof_gaps)
             ),
             "continuity_verified": False,
             "continuity_state": state,
@@ -639,7 +693,7 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
         continuity={
             "comparison": comparison,
             "warnings": sorted(
-                set(preflight["warnings"] + comparison["warnings"])
+                set((preflight.get("warnings") or []) + (comparison.get("warnings") or []))
             ),
         },
     )
