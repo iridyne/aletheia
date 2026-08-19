@@ -128,7 +128,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
         ((clock[0] + timedelta(days=30)).isoformat(),),
     )
     for index in range(60):
-        entry_at = clock[0] - timedelta(days=1) + timedelta(seconds=index)
+        entry_at = clock[0] - timedelta(days=1) + timedelta(hours=4, minutes=1) * index
         db.execute(
             "INSERT INTO universe_forward_outcomes "
             "(id,outcome_candidate_key,member_id,snapshot_id,symbol,venue,market_type,"
