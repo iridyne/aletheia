@@ -48,3 +48,13 @@ from aletheia.observation_lab.checkpoint import (  # noqa: F401
     save_joint_checkpoint,
     verify_joint_checkpoint,
 )
+from aletheia.observation_lab.conflict import (  # noqa: F401
+    ConflictResolution,
+    resolve_manifest_conflict,
+)
+from aletheia.observation_lab.exposure import (  # noqa: F401
+    LabExposureFact,
+    fact_from_conflict,
+    list_lab_exposures,
+    record_lab_exposure,
+)
