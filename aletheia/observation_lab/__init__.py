@@ -24,3 +24,10 @@ from aletheia.observation_lab.ufc_shadow import (  # noqa: F401
     latest_equivalence_record,
     run_ufc_shadow_equivalence_pass,
 )
+from aletheia.observation_lab.runner import (  # noqa: F401
+    LabWindow,
+    clear_windows,
+    register_window,
+    registered_windows,
+    run_lab_windows,
+)

@@ -760,47 +760,44 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
         "evaluated": 0, "ready_for_review": 0,
         "completed_no_support": 0, "invalidated": 0,
     }
-    frozen_units_captured = 0
+    # Filter-shadow registration is still a filter_controller responsibility
+    # because the replays it produces are the input the register step consumes.
+    # Everything else (capture + evaluate + UFC equivalence) is now driven by
+    # the Lab runner (Issue #1072 §"Runner semantics" / Cluster 2) so a single
+    # bounded pass advances every Observation Window under one exception
+    # boundary.
     try:
         from aletheia.counterfactual.filter_replay import build_bounded_filter_replays
         from aletheia.counterfactual.filter_experiments import (
-            capture_frozen_units_for,
-            evaluate_active_shadow_experiments,
             register_replay_ready_experiments,
         )
-        from aletheia.storage import repositories as _repo
 
         replays = build_bounded_filter_replays(recs, min_samples=min_samples)
         experiment_registration = register_replay_ready_experiments(replays)
-        # Observation Lab (Issue #1072): freeze first-exposure inputs so
-        # unrelated master iteration cannot retroactively contaminate a
-        # collecting cohort. ``capture_frozen_units_for`` self-filters — it
-        # short-circuits for adapters that don't declare causal identity.
-        for experiment in _repo.list_filter_shadow_experiments(status="collecting"):
-            frozen_units_captured += capture_frozen_units_for(experiment)
-        experiment_evaluation = evaluate_active_shadow_experiments()
     except Exception as exc:  # pragma: no cover - defensive scheduler boundary
-        logger.warning("filter_controller: shadow experiment cycle failed: %s", exc)
+        logger.warning("filter_controller: replay registration failed: %s", exc)
 
-    # Observation Lab UFC shadow-equivalence pass (Issue #1072 Packet 1).
-    # Isolated try/except so a filter-shadow failure never suppresses UFC
-    # equivalence recording and vice versa (new #1072 §"Failure isolation":
-    # one window's failure must not block another).
-    ufc_shadow_equivalence = {"checked": 0, "matched": 0, "mismatched": 0, "skipped": 0}
+    lab_summary = {"windows_run": 0, "windows_errored": 0, "results": {}}
     try:
-        from aletheia.observation_lab.ufc_shadow import run_ufc_shadow_equivalence_pass
+        from aletheia.observation_lab.runner import run_lab_windows
 
-        ufc_shadow_equivalence = run_ufc_shadow_equivalence_pass()
+        lab_summary = run_lab_windows()
     except Exception as exc:  # pragma: no cover - defensive scheduler boundary
-        logger.warning(
-            "filter_controller: UFC shadow-equivalence pass failed: %s", exc,
-        )
+        logger.warning("filter_controller: lab runner pass failed: %s", exc)
+
+    filter_shadow_result = lab_summary["results"].get("filter_shadow_evaluate") or {}
+    ufc_shadow_equivalence = lab_summary["results"].get("ufc_shadow_equivalence") or {
+        "checked": 0, "matched": 0, "mismatched": 0, "skipped": 0,
+    }
+    frozen_units_captured = int(filter_shadow_result.get("frozen_units_captured", 0))
+    experiment_evaluation = filter_shadow_result.get("evaluation", experiment_evaluation)
 
     logger.info(
         "filter_controller observe: run=%s written=%d verdicts=%s experiments=%s/%s "
-        "frozen_units_new=%d ufc_equivalence=%s",
+        "frozen_units_new=%d ufc_equivalence=%s lab_windows=%d/errored=%d",
         run_id, written, counts, experiment_registration, experiment_evaluation,
         frozen_units_captured, ufc_shadow_equivalence,
+        lab_summary["windows_run"], lab_summary["windows_errored"],
     )
     return {
         "run_id": run_id,
@@ -813,6 +810,7 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
         "experiments_evaluated": experiment_evaluation["evaluated"],
         "experiment_registration": experiment_registration,
         "ufc_shadow_equivalence": ufc_shadow_equivalence,
+        "lab_windows": lab_summary,
         "experiment_evaluation": experiment_evaluation,
     }
 
