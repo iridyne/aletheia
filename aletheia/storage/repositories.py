@@ -8097,8 +8097,62 @@ def calibration_stats() -> list[dict]:
             source["fingerprint"] if source else None
         )
         row["source_window_start"] = cutoff
+        row["independent_n"] = source["independent_n"] if source else 0
+        row["distinct_symbols"] = source["distinct_symbols"] if source else 0
+        row["distinct_days"] = source["distinct_days"] if source else 0
         result.append(row)
     return result
+
+
+def _horizon_to_seconds(h: str) -> int:
+    if h.endswith("m"):
+        return int(h[:-1]) * 60
+    if h.endswith("h"):
+        return int(h[:-1]) * 3600
+    if h.endswith("d"):
+        return int(h[:-1]) * 86400
+    raise ValueError(f"unknown horizon: {h!r}")
+
+
+def _horizon_separated_counts(
+    rows: list[tuple[str, str, str]],
+    horizon: str,
+) -> tuple[int, int, int]:
+    """Greedy horizon-separated counts for (symbol, venue, entry_ts) rows.
+
+    Within each (symbol, venue) pair, admit a row only if its entry_ts is at
+    least one target horizon after the last admitted row for that pair.
+    Returns (independent_n, distinct_symbols, distinct_days).
+    """
+    from datetime import datetime
+
+    try:
+        horizon_sec = _horizon_to_seconds(horizon)
+    except (ValueError, TypeError):
+        horizon_sec = 0
+
+    sorted_rows = sorted(rows, key=lambda r: (r[0], r[1], r[2]))
+    last_admitted: dict[tuple, float] = {}
+    admitted_symbols: set[str] = set()
+    admitted_days: set[str] = set()
+    independent_n = 0
+
+    for symbol, venue, entry_ts_str in sorted_rows:
+        try:
+            ts = datetime.fromisoformat(
+                entry_ts_str.replace("Z", "+00:00")
+            ).timestamp()
+        except (ValueError, TypeError):
+            continue
+        sv = (symbol, venue)
+        last = last_admitted.get(sv)
+        if last is None or ts >= last + horizon_sec:
+            last_admitted[sv] = ts
+            independent_n += 1
+            admitted_symbols.add(symbol)
+            admitted_days.add(entry_ts_str[:10])
+
+    return independent_n, len(admitted_symbols), len(admitted_days)
 
 
 def _calibration_source_lineage(db, cutoff: str) -> dict[tuple, dict]:
@@ -8106,7 +8160,7 @@ def _calibration_source_lineage(db, cutoff: str) -> dict[tuple, dict]:
     cursor = db.execute(
         "SELECT scanner_family, direction, "
         f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, id, "
-        "outcome_candidate_key, member_id, entry_ts, settled_at, net_return_pct, "
+        "outcome_candidate_key, member_id, symbol, venue, entry_ts, settled_at, net_return_pct, "
         "min_tradable_edge_pct, cost_model_version "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' "
@@ -8120,21 +8174,37 @@ def _calibration_source_lineage(db, cutoff: str) -> dict[tuple, dict]:
     )
     hashers: dict[tuple, object] = {}
     counts: dict[tuple, int] = {}
+    group_rows: dict[tuple, list] = {}
     for raw in cursor:
         row = dict(raw)
         key = (
             row.pop("scanner_family"), row.pop("direction"),
             row.pop("market_type"), row.pop("horizon"),
         )
+        symbol = row.pop("symbol", None) or ""
+        venue = row.pop("venue", None) or ""
+        entry_ts = row.get("entry_ts")
         hasher = hashers.setdefault(key, hashlib.sha256())
         canonical = json.dumps(row, sort_keys=True, separators=(",", ":"))
         hasher.update(canonical.encode("utf-8"))
         hasher.update(b"\n")
         counts[key] = counts.get(key, 0) + 1
-    return {
-        key: {"fingerprint": hasher.hexdigest(), "count": counts[key]}
-        for key, hasher in hashers.items()
-    }
+        if entry_ts:
+            group_rows.setdefault(key, []).append((symbol, venue, entry_ts))
+    result = {}
+    for key, hasher in hashers.items():
+        horizon = key[3]
+        ind_n, dist_sym, dist_days = _horizon_separated_counts(
+            group_rows.get(key, []), horizon
+        )
+        result[key] = {
+            "fingerprint": hasher.hexdigest(),
+            "count": counts[key],
+            "independent_n": ind_n,
+            "distinct_symbols": dist_sym,
+            "distinct_days": dist_days,
+        }
+    return result
 
 
 def filter_pressure_stats() -> list[dict]:
