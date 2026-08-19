@@ -800,6 +800,33 @@ export interface components {
             /** Url */
             url: string;
         };
+        /**
+         * ObservationConfig
+         * @description Observation Lab execution-ownership contract (Issue #1072 Worker split).
+         *
+         *     Determines WHICH process owns the periodic Observation cycle. There is no
+         *     ``both`` state — exactly one owner runs the cycle at a time.
+         *
+         *     - ``main`` (default, backward compatible): the ordinary Main Runtime
+         *       APScheduler owns and executes ``filter_controller_observe``. Restart
+         *       / update / smoke behavior is unchanged from before #1072.
+         *     - ``worker``: a sibling ``aletheia-observer`` checkout owns the cycle via
+         *       its own systemd timer + ``aletheia observe run`` invocation. In this
+         *       mode the Main Runtime MUST NOT register or execute the cycle, and
+         *       settings reconciliation MUST NOT recreate it — the ownership contract
+         *       is enforced at three gates (scheduler start, reconcile, run).
+         *
+         *     The two owners intentionally may run different commits while sharing the
+         *     same ``~/.aletheia`` data root; that is the whole point of the split.
+         */
+        ObservationConfig: {
+            /**
+             * Execution Owner
+             * @description Which process owns the Observation cycle: main | worker.
+             * @default main
+             */
+            execution_owner: string;
+        };
         /** OperatorConfig */
         OperatorConfig: {
             /**
@@ -1823,6 +1850,7 @@ export interface components {
             models: components["schemas"]["SettingsModelsResponse"];
             network: components["schemas"]["NetworkConfig"];
             news: components["schemas"]["NewsConfig"];
+            observation: components["schemas"]["ObservationConfig"];
             operator: components["schemas"]["OperatorConfig"];
             persona_rollout: components["schemas"]["SettingsPersonaRolloutResponse"];
             pi_daemon: components["schemas"]["PiDaemonConfig"];
