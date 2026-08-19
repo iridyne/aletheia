@@ -1373,12 +1373,29 @@ def init_scheduler() -> BackgroundScheduler | None:
     # filter-version pass/reject findings from cost-aware net outcomes and append
     # them to controller_recommendations. Read-only — writes NO
     # trading config. No-op unless cfg.controller.shadow_enabled. See filter_controller.py.
-    if getattr(cfg, "controller", None) and cfg.controller.shadow_enabled:
+    #
+    # Observation Worker split (Issue #1072): when
+    # ``observation.execution_owner == 'worker'``, a sibling
+    # ``aletheia-observer`` checkout owns this cycle via its own systemd
+    # timer + ``aletheia observe run``. Main Scheduler MUST NOT register the
+    # job in that mode — the ownership contract is exclusive.
+    from aletheia.observation_lab.execution_owner import is_main_owner as _obs_is_main_owner
+    _observation_owned_by_main = _obs_is_main_owner()
+    if (
+        _observation_owned_by_main
+        and getattr(cfg, "controller", None)
+        and cfg.controller.shadow_enabled
+    ):
         _scheduler.add_job(
             _guarded("filter_controller_observe", _run_filter_controller_observe), "interval",
             hours=max(1, int(cfg.controller.observe_interval_hours)),
             id="filter_controller_observe", misfire_grace_time=600, executor="io",
             next_run_time=datetime.now() + timedelta(minutes=2),
+        )
+    elif not _observation_owned_by_main:
+        logger.info(
+            "filter_controller_observe: skipped registration — "
+            "observation.execution_owner=worker (sibling aletheia-observer owns cycle)"
         )
     # News RSS feed collector — fetches enabled feeds every N minutes (default 15).
     _scheduler.add_job(
@@ -2034,12 +2051,29 @@ def reconcile_filter_controller(shadow_enabled: bool, observe_interval_hours: fl
 
     This job is non-essential: newly added jobs are paused when layered pause
     is active. Returns True when the scheduler was reached; False otherwise.
+
+    Observation Worker split (Issue #1072): when
+    ``observation.execution_owner == 'worker'``, this function ALWAYS
+    ensures the job is absent — regardless of ``shadow_enabled`` — because
+    the sibling Worker checkout owns the cycle. Settings reconciliation
+    cannot re-add the job while the Worker owns it; flipping ownership
+    back to ``main`` and calling this function again is the rollback path.
     """
     if _scheduler is None:
         return False
     try:
+        from aletheia.observation_lab.execution_owner import is_worker_owner as _obs_is_worker_owner
         with _SCHEDULER_JOB_LOCK:
             existing = _scheduler.get_job("filter_controller_observe")
+            if _obs_is_worker_owner():
+                if existing is not None:
+                    _scheduler.remove_job("filter_controller_observe")
+                    _selectively_paused_jobs.discard("filter_controller_observe")
+                    logger.info(
+                        "Removed filter_controller_observe job "
+                        "(observation.execution_owner=worker)"
+                    )
+                return True
             if shadow_enabled:
                 interval_h = max(1, int(observe_interval_hours))
                 if existing is None:
@@ -3365,8 +3399,27 @@ def _run_persona_rollout():
 def _run_filter_controller_observe():
     """Phase 1 shadow observe: compute + persist filter feedback recommendations.
     Read-only w.r.t. trading config — appends to controller_recommendations only.
-    No-op unless cfg.controller.shadow_enabled. See analytics/filter_controller.py."""
+    No-op unless cfg.controller.shadow_enabled. See analytics/filter_controller.py.
+
+    Observation Worker split (Issue #1072): fails closed with a typed
+    reason if ``observation.execution_owner=worker``. This is a defence
+    in depth against a stray manual scheduler entry — startup + reconcile
+    are the primary gates, but this guard catches any code path that
+    reaches the runner directly.
+    """
     try:
+        from aletheia.observation_lab.execution_owner import (
+            ObservationOwnerError,
+            require_main_or_absent,
+        )
+        try:
+            require_main_or_absent(action="filter_controller_observe scheduler job")
+        except ObservationOwnerError as owner_exc:
+            logger.warning("%s", owner_exc)
+            _record_job_failure(
+                "filter_controller_observe", f"worker_owns_cycle: {owner_exc}"
+            )
+            return
         from aletheia.config.loader import load_config
         cfg = load_config()
         ctrl = getattr(cfg, "controller", None)

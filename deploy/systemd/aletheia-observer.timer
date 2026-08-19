@@ -1,0 +1,22 @@
+[Unit]
+Description=Trigger the Aletheia Observation Worker every six hours
+Documentation=https://github.com/iridyne/aletheia/issues/1072
+# Companion to ``aletheia-observer.service``. The 6h cadence matches the
+# controller's default ``observe_interval_hours`` — see
+# ``docs/design/contracts/observation_lab_v1_design.md`` §3 for the
+# rationale (multi-hour forward-return horizons mean more frequent
+# passes add no signal).
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=6h
+# ``Persistent=true`` fires a catch-up pass at boot if the previous
+# window was missed (e.g. Main and Worker were both offline for a
+# window's duration). One catch-up pass is enough — the cycle is
+# idempotent, but we don't want a stampede.
+Persistent=true
+RandomizedDelaySec=60s
+Unit=aletheia-observer.service
+
+[Install]
+WantedBy=timers.target

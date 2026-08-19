@@ -94,7 +94,24 @@ Lab **never touches** `learning_*` writes, `orders`, `fills`, `positions`, `prop
   3. Return summary dict with per-window results + convenience projections.
 - `_is_fresh_prior_run` freshness gate: if last run was within `interval / 2`, skip. Prevents scheduler-misfire duplication.
 
-**No systemd timer, no separate Lab daemon.** Everything runs inside the main Fedora `aletheia` process on its existing scheduler.
+**Ownership contract** (Issue #1072 first-patch update — supersedes the earlier "no systemd timer" claim):
+
+- ``config.observation.execution_owner`` selects one of ``main | worker``. There is no ``both`` state.
+- ``main`` (default, backward compatible) — the APScheduler job above owns and executes the cycle exactly as before.
+- ``worker`` — a sibling ``/home/admin/aletheia-observer`` checkout owns the cycle via its own systemd user timer (see `deploy/systemd/`) invoking ``aletheia observe run``. Main APScheduler MUST NOT register the job in that mode.
+
+Enforced at three seams inside `aletheia/agent_runtime/scheduler.py`:
+
+1. **Startup** (~L1376) — `if is_main_owner()` guards the initial `add_job` call. Worker mode logs "skipped registration" and moves on.
+2. **Reconcile** (`reconcile_filter_controller`) — Worker mode always strips any existing job, refuses to add one, and returns True. Settings reconciliation cannot re-add it while Worker owns.
+3. **Runner** (`_run_filter_controller_observe`) — Main-side entry point calls `require_main_or_absent`; a stray manual invocation while Worker owns is recorded as `worker_owns_cycle` and skipped.
+
+`aletheia observe run` is the Worker's one-shot entry point. It:
+- Calls `require_worker_owner` — exits code 2 if config says `main`.
+- Acquires a cross-process file lock at `~/.aletheia/observation-lab/worker.lock` via `fcntl.flock`. Second concurrent pass exits code 3, does not wait.
+- Records worker SHA + acquired timestamp + PID into the lock file for audit.
+- Invokes the exact same `run_controller_observe → run_lab_windows` chain — no Worker-specific reimplementation.
+- Does NOT start Gateway, Frontdoor, Main scheduler, Operator shell, Risk, Execution, exchange adapters, or trading authority. Systemd unit explicitly clears exchange credential env vars.
 
 ### 3.2 The runner (Cluster 2)
 
@@ -235,6 +252,58 @@ Everything in this design is additive:
 - Adapter identity checks fall back to legacy `_production_version_changed` for other adapters.
 
 To fully disable: set `controller.shadow_enabled = False` in `config.yaml`. Scheduler stops firing `filter_controller_observe`, Lab quiesces.
+
+### 8.6 Worker split (Issue #1072 first-patch update)
+
+Independent Worker execution ownership is the ONLY pre-release implementation objective; the changes below supersede §8.2 / §8.3 for a Worker-mode deploy.
+
+**One-time Fedora bring-up:**
+
+```sh
+# Sibling checkout, deliberately pinned to a different SHA than Main.
+git -C /home/admin clone git@github.com:iridyne/aletheia.git aletheia-observer
+cd /home/admin/aletheia-observer && uv sync
+
+# Flip ownership in the SHARED data-root config (~/.aletheia/config.yaml):
+#   observation:
+#     execution_owner: worker
+
+# Restart Main so the ownership gate takes effect there:
+systemctl --user restart aletheia-gateway  # or your usual restart path
+
+# Install & enable the Worker timer:
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd/aletheia-observer.service ~/.config/systemd/user/
+cp deploy/systemd/aletheia-observer.timer   ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now aletheia-observer.timer
+```
+
+**Acceptance for closing #1072** (must all hold):
+
+| Check | Command |
+|---|---|
+| Sibling checkout exists | `test -d /home/admin/aletheia-observer && echo ok` |
+| Main SHA visible | `cd /home/admin/aletheia && git rev-parse HEAD` |
+| Worker SHA visible | `cd /home/admin/aletheia-observer && git rev-parse HEAD` |
+| Main Scheduler has NO observation job | `curl -s http://127.0.0.1:8787/api/scheduler/jobs \| grep -c filter_controller_observe` → `0` |
+| Worker systemd timer succeeded | `systemctl --user status aletheia-observer.timer` |
+| ≥2 windows in one Worker pass | `journalctl --user -u aletheia-observer.service -n 20 \| grep 'windows_run'` → `windows_run=2` |
+| Main can restart/update while Worker pinned | run `aletheia update` on Main; verify Worker SHA unchanged |
+| Existing Observation identities survive | `sqlite3 ~/.aletheia/observation-lab/lab.db 'select count(*) from ufc_shadow_equivalence'` non-decreasing |
+| No duplicate cycle | `select count(*) from joint_checkpoints where recorded_at > date("now","-1 hour")` ≤ 1 |
+| Shared canonical `app.db` used | Same `~/.aletheia/app.db` inode from Main + Worker |
+| No Risk/Execution/config mutation | `journalctl --user -u aletheia-observer.service` shows no risk/execution imports; systemd unit clears exchange creds |
+
+**Rollback path** (no data migration required):
+
+```sh
+systemctl --user disable --now aletheia-observer.timer
+# Edit ~/.aletheia/config.yaml: observation.execution_owner: main
+# Restart Main Gateway — reconcile re-adds filter_controller_observe.
+```
+
+`app.db` and `lab.db` remain untouched during rollback. All Observation identities/history survive both the split and the rollback.
 
 ## 9. Operator quick reference
 
