@@ -736,6 +736,11 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
     b2_evidence = _b2_evidence_for_decision(decision, trading_context)
     if b2_evidence:
         assessment_inputs["b2_evidence"] = b2_evidence
+        if decision.expected_horizon_hours is not None:
+            from aletheia.analytics.pi_evidence import b2_horizon_status
+            assessment_inputs["b2_evidence_horizon_status"] = b2_horizon_status(
+                b2_evidence.get("horizon", "24h"), decision.expected_horizon_hours
+            )
     decision.filter_trace.insert(0, {
         "filter_name": "operator_action_assessment",
         "stage": "system_operator",
