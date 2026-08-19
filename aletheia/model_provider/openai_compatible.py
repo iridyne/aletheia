@@ -61,12 +61,13 @@ def _extract_chat_completion_text(data: object) -> str:
     raise ProviderResponseError("openai_chat_missing_message")
 
 
-def _reasoning_effort_is_unsupported(response: httpx.Response) -> bool:
+def _optional_request_field_is_unsupported(response: httpx.Response, field_name: str) -> bool:
     """Recognize only explicit request-field incompatibility responses.
 
-    Some OpenAI-compatible endpoints do not implement ``reasoning_effort``.
-    Retrying a read-only completion without that optional field is safe, but a
-    generic 400/422 must retain its original failure semantics.
+    Some OpenAI-compatible endpoints do not implement optional fields such as
+    ``reasoning_effort`` or ``response_format``. Retrying a read-only completion
+    without that field is safe, but a generic 400/422 must retain its original
+    failure semantics.
     """
     if response.status_code not in {400, 422}:
         return False
@@ -79,14 +80,17 @@ def _reasoning_effort_is_unsupported(response: httpx.Response) -> bool:
     error = data.get("error")
     if not isinstance(error, dict):
         error = data
+    needle = str(field_name or "").strip().lower()
+    if not needle:
+        return False
     parameter = str(error.get("param") or "").strip().lower()
-    if parameter == "reasoning_effort":
+    if parameter == needle:
         return True
     detail = " ".join(
         str(error.get(key) or "")
         for key in ("code", "type", "message", "detail")
     ).lower()
-    if "reasoning_effort" not in detail:
+    if needle not in detail:
         return False
     return any(
         marker in detail
@@ -99,6 +103,16 @@ def _reasoning_effort_is_unsupported(response: httpx.Response) -> bool:
             "extra fields not permitted",
         )
     )
+
+
+def _reasoning_effort_is_unsupported(response: httpx.Response) -> bool:
+    return _optional_request_field_is_unsupported(response, "reasoning_effort")
+
+
+def _json_object_is_unsupported(response: httpx.Response) -> bool:
+    return _optional_request_field_is_unsupported(
+        response, "response_format"
+    ) or _optional_request_field_is_unsupported(response, "json_object")
 
 
 class OpenAICompatibleProvider(ModelProvider):
@@ -133,14 +147,22 @@ class OpenAICompatibleProvider(ModelProvider):
         }
         if request.reasoning_effort is not None:
             payload["reasoning_effort"] = request.reasoning_effort
+        if request.response_format == "json_object":
+            payload["response_format"] = {"type": "json_object"}
         client = self._get_http_client(httpx_client)
         resp = await client.post(f"{self.base_url}/chat/completions", json=payload, headers=self._headers())
-        if request.reasoning_effort is not None and _reasoning_effort_is_unsupported(resp):
-            compatible_payload = dict(payload)
-            compatible_payload.pop("reasoning_effort", None)
+        for _ in range(2):
+            if "reasoning_effort" in payload and _reasoning_effort_is_unsupported(resp):
+                payload = dict(payload)
+                payload.pop("reasoning_effort", None)
+            elif payload.get("response_format") is not None and _json_object_is_unsupported(resp):
+                payload = dict(payload)
+                payload.pop("response_format", None)
+            else:
+                break
             resp = await client.post(
                 f"{self.base_url}/chat/completions",
-                json=compatible_payload,
+                json=payload,
                 headers=self._headers(),
             )
         _raise_without_secrets(resp)

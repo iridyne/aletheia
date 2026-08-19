@@ -121,6 +121,9 @@ class ModelRequest:
     inference: Any | None = None
     allow_model_fallback: bool = True
     reasoning_effort: Literal["none", "low", "medium", "high"] | None = None
+    response_format: Literal["json_object"] | None = None
+    prefer_json_reliable_models: bool = False
+    exclude_models: tuple[str, ...] = ()
 
 
 @dataclass
