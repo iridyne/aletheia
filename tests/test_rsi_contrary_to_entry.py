@@ -8,6 +8,48 @@ def test_short_oversold_rsi_15m_is_contrary_for_short_bias():
     assert refs == ["technical.rsi_15m"]
 
 
+def test_sideways_demo_short_at_rsi_33_is_contrary():
+    """NEAR short RSI 15m=33.58 warned oversold rebound but was not <30."""
+    refs = _rsi_contrary_refs(
+        "short",
+        {"rsi_15m": 33.58, "rsi_14": 41.0},
+        "short_bias",
+        regime_state="sideways",
+        execution_mode="bitget_demo",
+    )
+    assert refs == ["technical.rsi_15m"]
+
+
+def test_sideways_demo_short_at_rsi_45_is_not_contrary():
+    assert _rsi_contrary_refs(
+        "short",
+        {"rsi_15m": 45.0},
+        "short_bias",
+        regime_state="sideways",
+        execution_mode="bitget_demo",
+    ) is None
+
+
+def test_rsi_33_short_without_sideways_is_not_contrary():
+    assert _rsi_contrary_refs(
+        "short",
+        {"rsi_15m": 33.58},
+        "short_bias",
+        regime_state="bear",
+        execution_mode="bitget_demo",
+    ) is None
+
+
+def test_live_sideways_keeps_rsi_30_short_band():
+    assert _rsi_contrary_refs(
+        "short",
+        {"rsi_15m": 33.58},
+        "short_bias",
+        regime_state="sideways",
+        execution_mode="bitget_live_limited",
+    ) is None
+
+
 def test_mean_reversion_oversold_long_is_exempt():
     assert _rsi_contrary_refs("long", {"rsi_14": 22.0}, "mean_reversion") is None
 
@@ -44,6 +86,38 @@ def test_rsi_contrary_reads_selected_candidate_facts():
                 "market_type": "perp",
                 "rsi_15m": 24.0,
                 "rsi_14": 40.0,
+            }]
+        },
+    }
+    assert rsi_contrary_to_entry_refs(_Decision(), ctx) == ["technical.rsi_15m"]
+
+
+def test_rsi_contrary_reads_sideways_demo_near_33():
+    class _Decision:
+        opportunity_id = "opp-near"
+        direction = "short"
+        scanner_family = "short_bias"
+
+    ctx = {
+        "execution_mode": "bitget_demo",
+        "layer2": {
+            "pending_signals": [{
+                "opportunity_id": "opp-near",
+                "symbol": "NEAR/USDT",
+                "direction": "short",
+                "market_type": "usdt_futures",
+                "scanner_family": "short_bias",
+            }]
+        },
+        "layer1": {
+            "regime": {"state": "sideways", "confidence": 0.72},
+            "features": [{
+                "feature_snapshot_id": "fs-1",
+                "feature_ts": "2026-08-19T00:00:00+00:00",
+                "symbol": "NEAR/USDT",
+                "market_type": "perp",
+                "rsi_15m": 33.58,
+                "rsi_14": 41.0,
             }]
         },
     }

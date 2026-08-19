@@ -1248,6 +1248,23 @@ def _evaluate_proposal_locked(
                     f"{projected}>{demo_exposure_cap}"
                 )
 
+        # 14b. Exchange-demo entry quality. Live #14 and paper_internal stay
+        # unchanged. Open positions are not closed by these tokens.
+        from aletheia.risk.demo_entry_quality import (
+            collect_demo_entry_quality_violations,
+        )
+        violations.extend(
+            collect_demo_entry_quality_violations(
+                execution_mode=proposal.execution_mode,
+                eligibility=resolved_policy.policy.eligibility,
+                scanner_family=_resolve_proposal_family(proposal),
+                direction=proposal.direction,
+                market_type=getattr(proposal, "market_type", "spot"),
+                symbol=getattr(proposal, "symbol", None),
+            )
+        )
+
+
     # 15. Lesson-based constraints — accepted lessons with actionable recommendations
     #     can impose symbol/direction blocks learned from past failures.
     lesson_violations = _check_lesson_constraints(proposal)

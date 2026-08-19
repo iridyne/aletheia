@@ -307,6 +307,46 @@ def _evaluate_candidate(
         inputs={"direction": direction}, parameters={"allowed": ["long", "short"]},
     )
 
+    # Exchange-demo entry quality (Risk is still authoritative). Local
+    # paper_internal and live venues do not even record this filter step.
+    from aletheia.risk.demo_entry_quality import (
+        applies_to_execution_mode,
+        collect_demo_entry_quality_violations,
+        ranker_skip_reason,
+    )
+    if applies_to_execution_mode(global_venue):
+        demo_quality_violations = collect_demo_entry_quality_violations(
+            execution_mode=global_venue,
+            eligibility=getattr(getattr(cfg.risk, "demo", None), "eligibility", None),
+            scanner_family=opp.get("scanner_family"),
+            direction=direction,
+            market_type=opp.get("market") or opp.get("market_type") or "spot",
+            symbol=symbol,
+        )
+        demo_quality_skip = ranker_skip_reason(demo_quality_violations)
+        if demo_quality_skip:
+            _filter_step(
+                filter_trace, "demo_entry_quality", "rejected", demo_quality_skip,
+                inputs={
+                    "execution_mode": global_venue,
+                    "scanner_family": opp.get("scanner_family"),
+                    "direction": direction,
+                    "violations": demo_quality_violations,
+                },
+                parameters={"venue_scope": "exchange_demo_only"},
+            )
+            return _make_candidate(
+                opp, skip_reason=demo_quality_skip, direction=direction,
+                strategy_id=opp.get("linked_strategy_id"),
+                filter_trace=filter_trace,
+            )
+        _filter_step(
+            filter_trace, "demo_entry_quality", "passed", "demo_entry_quality_clear",
+            inputs={"execution_mode": global_venue},
+            parameters={"venue_scope": "exchange_demo_only"},
+        )
+
+
     # Confidence gate
     confidence = (opp.get("confidence") or "speculative").lower()
     conf_ok = _CONFIDENCE_RANK.get(confidence, 0) >= _CONFIDENCE_RANK.get(min_conf, 1)

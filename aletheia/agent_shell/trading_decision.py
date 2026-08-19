@@ -870,6 +870,8 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
 
         contrary_refs = rsi_contrary_to_entry_refs(decision, trading_context)
         if contrary_refs:
+            from aletheia.agent_shell.decision_facts import _rsi_short_oversold_floor
+            regime = ((trading_context.get("layer1") or {}).get("regime") or {})
             decision.filter_trace.append({
                 "filter_name": "operator_rsi_contrary_gate",
                 "stage": "system_operator",
@@ -881,7 +883,13 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
                     "scanner_family": decision.scanner_family,
                     "fact_refs": contrary_refs,
                 },
-                "parameters": {"rsi_oversold": 30.0, "rsi_overbought": 70.0},
+                "parameters": {
+                    "rsi_oversold": _rsi_short_oversold_floor(
+                        execution_mode=str(trading_context.get("execution_mode") or "") or None,
+                        regime_state=regime.get("state"),
+                    ),
+                    "rsi_overbought": 70.0,
+                },
             })
             raise DecisionUnavailable(
                 "rsi_contrary_to_entry",
@@ -3150,6 +3158,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "  invalid_risk_reward → reward/risk < 1.0 given your stop_price and "
         "take_profit vs entry price\n"
         "  rsi_contrary_to_entry → non-mean_reversion short with RSI 15m/14 < 30 "
+        "(or < 40 when exchange-demo and published regime is sideways) "
         "(oversold bounce risk) or long with RSI 15m/14 > 70 (overbought fade risk)\n"
         "  A claim that does not satisfy its predicate is rejected by the validation gate "
         "and the candidate is deferred, not consumed. Missing optional fields such as "

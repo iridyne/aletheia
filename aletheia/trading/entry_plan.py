@@ -13,6 +13,8 @@ OPERATOR_RISK_REWARD_OUTSIDE_ENVELOPE = (
 )
 RISK_REWARD_OUTSIDE_ENVELOPE = "entry_plan_risk_reward_outside_envelope"
 STOP_DISTANCE_BELOW_VOL_TARGET = "stop_distance_below_vol_target"
+# Published-sideways demo floor: 1.5% vol_target sits inside a >2% daily range.
+SIDEWAYS_STOP_MULT = 2.0
 
 
 def stop_distance_pct(
@@ -36,9 +38,15 @@ def min_stop_distance_pct(*, execution_mode: str | None, cfg) -> float | None:
     """Exchange-demo floor: stop must be at least ``trading.vol_target_pct``.
 
     That field is the existing ATR vol-target percent used for sizing, not a
-    new magic number. Live and ``paper_internal`` stay unchanged. ``0`` disables.
+    new magic number. In a published sideways regime the floor is
+    ``vol_target_pct * SIDEWAYS_STOP_MULT`` (never tighter than the base
+    floor). Live and ``paper_internal`` stay unchanged. ``0`` disables.
+    Unpublished regime is fail-open to the base floor.
     """
-    from aletheia.risk.demo_entry_quality import applies_to_execution_mode
+    from aletheia.risk.demo_entry_quality import (
+        applies_to_execution_mode,
+        load_published_regime,
+    )
 
     if not applies_to_execution_mode(execution_mode):
         return None
@@ -48,6 +56,14 @@ def min_stop_distance_pct(*, execution_mode: str | None, cfg) -> float | None:
         return None
     if not math.isfinite(floor) or floor <= 0:
         return None
+    try:
+        state, _confidence = load_published_regime()
+    except Exception:
+        state = None
+    if str(state or "").lower() == "sideways":
+        widened = floor * SIDEWAYS_STOP_MULT
+        if math.isfinite(widened) and widened > floor:
+            floor = widened
     return floor
 
 

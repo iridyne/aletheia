@@ -48,6 +48,46 @@ def test_default_two_percent_stop_clears_demo_floor():
     )
 
 
+def test_sideways_raises_demo_stop_floor_to_twice_vol_target(monkeypatch):
+    monkeypatch.setattr(
+        "aletheia.risk.demo_entry_quality.load_published_regime",
+        lambda: ("sideways", 0.80),
+    )
+    token = stop_distance_below_min_floor(
+        100.0, 98.0, execution_mode="bitget_demo", cfg=_cfg()
+    )
+    assert token is not None
+    assert token.startswith(STOP_DISTANCE_BELOW_VOL_TARGET)
+    assert "<3.0000" in token
+
+
+def test_sideways_three_percent_stop_clears_widened_floor(monkeypatch):
+    monkeypatch.setattr(
+        "aletheia.risk.demo_entry_quality.load_published_regime",
+        lambda: ("sideways", 0.80),
+    )
+    assert (
+        stop_distance_below_min_floor(
+            100.0, 97.0, execution_mode="bitget_demo", cfg=_cfg()
+        )
+        is None
+    )
+
+
+def test_sideways_stop_floor_does_not_apply_to_live(monkeypatch):
+    monkeypatch.setattr(
+        "aletheia.risk.demo_entry_quality.load_published_regime",
+        lambda: ("sideways", 0.80),
+    )
+    assert min_stop_distance_pct(execution_mode="bitget_live_limited", cfg=_cfg()) is None
+    assert (
+        stop_distance_below_min_floor(
+            100.0, 98.0, execution_mode="paper_internal", cfg=_cfg()
+        )
+        is None
+    )
+
+
 def test_zero_vol_target_disables_floor():
     assert (
         stop_distance_below_min_floor(

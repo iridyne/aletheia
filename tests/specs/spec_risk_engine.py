@@ -2798,6 +2798,36 @@ def test_re_b17_check14_is_family_evidence_gate():
 
 @spec_claim(
     SpecClaim(
+        "RE-S07",
+        "risk_engine_contract",
+        "§2 check #14b",
+        "L2a",
+        "Exchange-demo new entries are refused when a published regime is sideways "
+        "or at/below risk.demo.eligibility.min_regime_confidence_to_enter, or when "
+        "family×direction expectancy is negative with enough samples, or when a "
+        "same-symbol reverse follows a stop_loss inside 24h. paper_internal "
+        "and live #14 stay unchanged. Tokens: regime_confidence_standdown / "
+        "regime_sideways_standdown / family_not_demo_eligible / reverse_after_stop.",
+        status="implemented",
+    ),
+)
+def test_re_s07_demo_entry_quality_gate_is_wired():
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent.parent
+    engine = (root / "aletheia" / "risk" / "engine.py").read_text(encoding="utf-8")
+    quality = (root / "aletheia" / "risk" / "demo_entry_quality.py").read_text(encoding="utf-8")
+    assert "collect_demo_entry_quality_violations" in engine
+    assert "family_not_live_eligible" in engine
+    assert "regime_confidence_standdown" in quality
+    assert "regime_sideways_standdown" in quality
+    assert "family_not_demo_eligible" in quality
+    assert "reverse_after_stop" in quality
+    assert "paper_internal" in quality
+
+
+@spec_claim(
+    SpecClaim(
         "RE-B30",
         "risk_engine_contract",
         "§2 paper equity not zeroed by unsettled funding",

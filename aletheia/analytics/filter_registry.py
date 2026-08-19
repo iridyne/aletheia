@@ -304,7 +304,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         drop_reason_codes=("rsi_contrary_to_entry",),
         config_path="",
         hardcoded_at="aletheia/agent_shell/decision_facts.py",
-        current_value="non-MR short RSI<30 or long RSI>70 (Trend agent bands)",
+        current_value="non-MR short RSI<30 (demo sideways short RSI<40) or long RSI>70",
         loosen_direction="n/a",
         neutral=None, floor=30.0, ceiling=70.0,
         feedback_source="forward_return",
@@ -312,7 +312,8 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         auto_tunable=False,
         authority_class="risk_or_safety",
         feedback_ready=True,
-        note="Oversold short / overbought long is rebound risk. Mean-reversion exempt.",
+        note="Oversold short / overbought long is rebound risk. Mean-reversion exempt. "
+             "Demo + published sideways uses RSI<40 for shorts only (NEAR 33.58).",
     ),
     FilterSpec(
         name="ranker_ic_ramp",
@@ -647,6 +648,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
             "regime_confidence_standdown",
             "regime_sideways_standdown",
             "family_not_demo_eligible",
+            "reverse_after_stop",
         ),
         config_path=(
             "risk.demo.eligibility.min_regime_confidence_to_enter / "
@@ -654,7 +656,8 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
             "risk.demo.eligibility.family_min_expectancy"
         ),
         hardcoded_at="aletheia/risk/demo_entry_quality.py",
-        current_value="exchange_demo: conf<=0.60 or sideways or n>=20 & exp<0",
+        current_value="exchange_demo: conf<=0.60 (non-MR) or sideways (all families) "
+                      "or n>=20 & exp<0 or reverse_after_stop",
         loosen_direction="down",
         neutral=None, floor=None, ceiling=None,
         feedback_source="forward_return",

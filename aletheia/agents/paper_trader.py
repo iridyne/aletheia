@@ -496,7 +496,8 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         "ttl_expired", "ttl_invalid", "factor_hard_blocked", "okx_demo_symbol_not_supported",
         "symbol_not_allowed:", "producer_not_authorized", "producer_eligibility_",
         "regime_confidence_standdown", "regime_sideways_standdown",
-        "family_not_demo_eligible", "committee_direction_conflict",
+        "family_not_demo_eligible", "reverse_after_stop",
+        "committee_direction_conflict",
     )
     def _is_permanent_skip(candidate: dict) -> bool:
         return bool(
