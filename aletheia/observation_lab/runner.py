@@ -86,16 +86,37 @@ def run_lab_windows(*, max_windows: int | None = None) -> dict[str, Any]:
 
     Returns a summary dict:
 
-    ``{"windows_run": N, "windows_errored": K, "results": {name: <summary>}}``
+    ``{"windows_run": N, "windows_errored": K,
+       "results": {name: <summary>}, "joint_checkpoint": {...}}``
 
     Every window either produced a summary (``results[name]`` = that dict)
     or errored (``results[name]`` = ``{"status": "error", "error": <repr>}``).
     Exceptions never propagate out; the runner is the top-level exception
     boundary for one pass.
+
+    ## Checkpoint step (Cluster 5 / G3)
+
+    Before any window runs, the runner:
+
+    1. Verifies the joint app.db + lab.db + manifest fingerprint against
+       the last stored checkpoint. Result surfaces as ``joint_checkpoint``
+       in the return dict. A mismatch is logged as a warning but does NOT
+       stop the pass — v1 records the drift; Packet 2+ can escalate to
+       per-window invalidation when it has treatment-bearing windows to
+       protect.
+    2. Saves the current fingerprint (idempotent no-op when unchanged
+       from the last stored row).
+
+    Errors in the checkpoint step are contained the same way per-window
+    errors are: logged, surfaced in the summary, execution continues.
+    Cluster 5's contract requires the fingerprint chain to survive a
+    misbehaving app.db read.
     """
     ordered = registered_windows()
     if max_windows is not None:
         ordered = ordered[: max(0, int(max_windows))]
+
+    checkpoint_summary: dict[str, Any] = _pass_checkpoint()
 
     results: dict[str, Any] = {}
     errored = 0
@@ -116,7 +137,48 @@ def run_lab_windows(*, max_windows: int | None = None) -> dict[str, Any]:
         "windows_run": len(ordered),
         "windows_errored": errored,
         "results": results,
+        "joint_checkpoint": checkpoint_summary,
     }
+
+
+def _pass_checkpoint() -> dict[str, Any]:
+    """Verify + save the joint checkpoint at the start of one pass.
+
+    Failure-isolated: the whole checkpoint step is one try/except so a
+    broken ``aletheia_schema_migrations`` reader (or any other input to
+    the fingerprint) never prevents the window pass from running.
+    """
+    try:
+        from aletheia.observation_lab.checkpoint import (
+            compute_joint_checkpoint,
+            save_joint_checkpoint,
+            verify_joint_checkpoint,
+        )
+
+        verdict = verify_joint_checkpoint()
+        if not verdict.ok:
+            logger.warning(
+                "observation_lab.runner: joint checkpoint mismatch: %s",
+                verdict.reason,
+            )
+        current = compute_joint_checkpoint()
+        save_joint_checkpoint(current)
+        return {
+            "ok": bool(verdict.ok),
+            "reason": verdict.reason,
+            "current_fingerprint": current.joint_fingerprint,
+            "last_fingerprint": (
+                verdict.last.joint_fingerprint if verdict.last is not None else None
+            ),
+            "active_manifest_count": current.active_manifest_count,
+            "app_migration_count": current.app_migration_count,
+        }
+    except Exception as exc:
+        logger.warning(
+            "observation_lab.runner: joint checkpoint step errored: %s",
+            exc, exc_info=True,
+        )
+        return {"ok": False, "reason": f"checkpoint_error:{exc!r}"[:400]}
 
 
 def _register_default_windows() -> None:
