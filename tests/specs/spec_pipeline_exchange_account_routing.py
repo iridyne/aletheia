@@ -86,7 +86,7 @@ def test_entry_client_mode_comes_from_authoritative_order(
     observed_clients: list[tuple[str, str | None]] = []
 
     class _FakeBitgetClient:
-        def __init__(self, mode):
+        def __init__(self, mode, profile="classic_v2"):
             orders = repo.list_orders(limit=10)
             persisted_mode = orders[0]["execution_mode"] if orders else None
             observed_clients.append((mode, persisted_mode))
