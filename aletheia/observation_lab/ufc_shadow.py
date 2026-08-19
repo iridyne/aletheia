@@ -36,15 +36,47 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
+def _resolve_policy_epoch(experiment_row: dict[str, Any]) -> str:
+    """Best-effort policy epoch for one UFC experiment (v1 design G1 fix).
+
+    ``LearningExperiment`` does NOT carry ``policy_epoch`` as a column;
+    the epoch lives on ``LearningExposure.concurrent_policy_epoch`` and
+    ``LearningContributionVerdict.policy_epoch``. Sourcing order:
+
+    1. Latest measurement verdict's ``policy_epoch`` for this experiment
+       (the ledger stamp for the cohort the evaluator actually used).
+    2. ``aletheia.learning.experiments.current_policy_epoch(UFC_PATH_ID)``
+       (the epoch the running Learning code would compute right now).
+    3. Sentinel ``"unknown"`` — kept because the audit trail is more
+       useful with a stable placeholder than an unhandled None.
+    """
+    from aletheia.learning.ledger import get_latest_measurement_verdict
+
+    verdict = get_latest_measurement_verdict(str(experiment_row["experiment_id"]))
+    if verdict and verdict.get("policy_epoch"):
+        return str(verdict["policy_epoch"])
+    try:
+        from aletheia.learning.experiments import current_policy_epoch as _current_epoch
+
+        computed = _current_epoch(UFC_PATH_ID)
+        if computed:
+            return str(computed)
+    except Exception:  # pragma: no cover - config load fallback
+        logger.debug("ufc_shadow: current_policy_epoch unavailable", exc_info=True)
+    return "unknown"
+
+
 def _observation_id(experiment_row: dict[str, Any]) -> str:
     """Stable Lab identity for one UFC generation.
 
     Per new #1072 Packet 1: ``ufc:<experiment_id>:<policy_epoch>:<fixed_look_generation>``.
-    ``policy_epoch`` and ``fixed_look_generation`` come from the experiment
-    row's own fields — no recomputation, no drift.
+    ``fixed_look_generation`` comes from the experiment row's
+    ``stage_generation`` field; ``policy_epoch`` is resolved via
+    ``_resolve_policy_epoch`` because it is not a column on
+    ``LearningExperiment`` itself.
     """
     exp_id = str(experiment_row["experiment_id"])
-    policy_epoch = str(experiment_row.get("policy_epoch") or "unknown")
+    policy_epoch = _resolve_policy_epoch(experiment_row)
     fixed_look_gen = str(
         experiment_row.get("fixed_look_generation")
         or experiment_row.get("stage_generation")
@@ -55,7 +87,7 @@ def _observation_id(experiment_row: dict[str, Any]) -> str:
 
 def _cohort_key(experiment_row: dict[str, Any]) -> str:
     return (
-        f"{experiment_row['hypothesis_id']}:{experiment_row.get('policy_epoch', '')}:"
+        f"{experiment_row['hypothesis_id']}:{_resolve_policy_epoch(experiment_row)}:"
         f"{experiment_row.get('stage', '')}"
     )
 

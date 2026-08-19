@@ -45,7 +45,7 @@ def test_equivalence_pass_records_match():
         run_ufc_shadow_equivalence_pass,
     )
 
-    stored = {"verdict": "positive", "unique_treatment_n": 50, "unique_control_n": 50}
+    stored = {"verdict": "positive", "unique_treatment_n": 50, "unique_control_n": 50, "policy_epoch": "epoch-1"}
     recomputed = _FakeVerdictEval("positive", 50, 50)
 
     with patch(
@@ -78,7 +78,7 @@ def test_equivalence_pass_fails_closed_on_verdict_mismatch():
         run_ufc_shadow_equivalence_pass,
     )
 
-    stored = {"verdict": "positive", "unique_treatment_n": 50, "unique_control_n": 50}
+    stored = {"verdict": "positive", "unique_treatment_n": 50, "unique_control_n": 50, "policy_epoch": "epoch-1"}
     recomputed = _FakeVerdictEval("negative", 50, 50)  # <-- disagrees with stored
 
     with patch(
@@ -111,12 +111,19 @@ def test_equivalence_pass_skips_when_no_stored_verdict_yet():
         run_ufc_shadow_equivalence_pass,
     )
 
+    # G1: with no stored verdict AND no learning config, the epoch resolver
+    # falls through to the "unknown" sentinel, so the observation_id label
+    # comes out as ``ufc:exp-1:unknown:0``. The label is incidental — the
+    # test is really asserting the "no verdict → skip" path.
     with patch(
         "aletheia.learning.ledger.list_open_experiments",
         return_value=[_fake_experiment_row()],
     ), patch(
         "aletheia.learning.ledger.get_latest_measurement_verdict",
         return_value=None,
+    ), patch(
+        "aletheia.learning.experiments.current_policy_epoch",
+        return_value="epoch-1",
     ):
         summary = run_ufc_shadow_equivalence_pass()
 
@@ -132,7 +139,7 @@ def test_equivalence_pass_treats_evaluator_error_as_mismatch():
         run_ufc_shadow_equivalence_pass,
     )
 
-    stored = {"verdict": "positive", "unique_treatment_n": 50, "unique_control_n": 50}
+    stored = {"verdict": "positive", "unique_treatment_n": 50, "unique_control_n": 50, "policy_epoch": "epoch-1"}
 
     def _raise(_cohort):
         raise RuntimeError("evaluator broke")

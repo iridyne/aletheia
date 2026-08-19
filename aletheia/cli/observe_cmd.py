@@ -293,6 +293,88 @@ def register(
         typer.echo(f"registered observation {observation_id}")
 
 
+@observe_app.command("publish-manifest")
+def publish_manifest_cmd(
+    spec_path: Path = typer.Argument(
+        ..., exists=True, dir_okay=False, readable=True,
+        help="Path to a YAML file describing the ExecutionManifest.",
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Publish one ExecutionManifest to lab.db (Packet 2 admission entry).
+
+    Required YAML keys mirror ``aletheia.observation_lab.manifest.build_manifest``:
+
+    - ``observation_id``, ``generation``, ``spec_hash``
+    - ``treatment_adapter_id``, ``treatment_adapter_version``
+    - ``assignment_policy``, ``assignment_salt``, ``assignment_unit_key_template``
+    - ``allocation_pct`` (0-1 float)
+    - ``control_payload``, ``treatment_payload`` (dicts)
+    - ``eligible_population`` (dict; include ``population_key`` when
+      ``composability_contract`` is ``disjoint_population``)
+    - ``behavior_contract_hash``, ``interference_key``
+    - ``composability_contract`` — ``exclusive`` / ``disjoint_population`` / ``factorial``
+    - ``effective_from`` (ISO UTC timestamp)
+    - ``deterministic_baseline`` (dict), ``unavailable_fallback``
+      (``baseline`` / ``exclude``)
+
+    Optional: ``effective_until``, ``owner_admission_ref``.
+
+    Exit codes:
+    - 0: manifest published or silent no-op (same hash already present).
+    - 1: YAML parse error, missing/invalid field, or generation conflict
+      (different content already occupies this ``(observation_id,
+      generation)``; caller must bump generation).
+    """
+    import yaml
+
+    from aletheia.observation_lab.manifest import (
+        ManifestGenerationConflict,
+        build_manifest,
+        publish_manifest,
+    )
+
+    try:
+        spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        typer.echo(f"cannot parse YAML: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    if not isinstance(spec, dict):
+        typer.echo("spec file must contain a YAML mapping", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        manifest = build_manifest(**spec)
+    except (TypeError, ValueError, KeyError) as exc:
+        typer.echo(f"invalid manifest spec: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    try:
+        newly_inserted = publish_manifest(manifest)
+    except ManifestGenerationConflict as exc:
+        typer.echo(f"generation conflict: {exc}", err=True)
+        typer.echo(
+            "bump ``generation`` in the spec for a semantically different manifest.",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
+
+    payload = {
+        "manifest_id": manifest.manifest_id,
+        "manifest_hash": manifest.manifest_hash,
+        "observation_id": manifest.observation_id,
+        "generation": manifest.generation,
+        "newly_inserted": newly_inserted,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    verb = "published" if newly_inserted else "already published (no-op)"
+    typer.echo(f"{verb} manifest {manifest.manifest_id[:12]}…")
+    typer.echo(f"  observation_id={manifest.observation_id} generation={manifest.generation}")
+    typer.echo(f"  manifest_hash={manifest.manifest_hash}")
+
+
 @observe_app.command("close")
 def close_observation(
     observation_id: str = typer.Argument(..., help="Observation id (or unique prefix)."),
