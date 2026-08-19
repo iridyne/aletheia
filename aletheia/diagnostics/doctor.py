@@ -2679,6 +2679,143 @@ def _probe_operator_shell(report: Report) -> None:
         report.add("operator.shell", "info", f"probe error: {e}")
 
 
+def _probe_pi_daemon(report: Report) -> None:
+    """System Operator (PI Daemon) liveness — the event-driven trade decision loop.
+
+    The daemon is an in-memory ``asyncio.Task`` inside the gateway process, so a
+    separate ``aletheia doctor`` process cannot see its module-level state
+    (``is_daemon_running()`` would always be False when imported here).  We
+    therefore **query the gateway's ``/api/operator/status`` endpoint**, which
+    evaluates ``daemon_status()`` *inside* the real gateway process and returns
+    the ``trading_daemon`` payload.
+
+    Direct import of ``pi_daemon`` is only a fallback for the unusual case where
+    the API is unreachable.
+    """
+    import json
+    import urllib.request
+
+    from aletheia.config.loader import load_config
+    from aletheia.gateway.network import local_frontdoor_host
+
+    cfg = load_config()
+    if not cfg.pi_daemon.enabled:
+        report.add("pi_daemon", "info", "PI daemon disabled in config")
+        return
+
+    # --- Attempt 1: query the gateway HTTP API (cross-process safe) ---
+    # The front door may gzip-compress responses; a bare ProxyHandler opener
+    # does not install urllib's default Content-Encoding handler, so we send
+    # Accept-Encoding: identity and also try the backend port as fallback.
+    daemon: dict | None = None
+    try:
+        host = local_frontdoor_host()
+        runtime_port = os.environ.get("ALETHEIA_RUNTIME_PORT")
+        base_port = int(runtime_port) if runtime_port else cfg.app.dashboard_port
+        for port in (base_port, base_port + 1):
+            try:
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                req = urllib.request.Request(
+                    f"http://{host}:{port}/api/operator/status",
+                    headers={"Accept": "application/json", "Accept-Encoding": "identity"},
+                )
+                with opener.open(req, timeout=2) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
+                payload_daemon = payload.get("trading_daemon")
+                if payload_daemon is not None:
+                    daemon = payload_daemon
+                    break
+            except Exception:
+                continue
+    except Exception:
+        daemon = None
+
+    if daemon is not None:
+        _render_daemon_report(report, daemon)
+        return
+
+    # --- Attempt 2: API unreachable. The gateway may be down, restarting, or
+    # the probe timed out.  Do NOT assert "daemon not running": the in-process
+    # import below only works when doctor runs inside the gateway process
+    # itself. In a separate CLI it would always report False, giving a false
+    # negative.  Report indeterminate unless the import authoritatively says
+    # the daemon IS running.
+    try:
+        from aletheia.agent_runtime.pi_daemon import daemon_status, is_daemon_running
+
+        if is_daemon_running():
+            status = daemon_status()
+            hb_age = status.get("last_heartbeat_age_sec")
+            failures = status.get("consecutive_failures", 0)
+            queue_depth = status.get("signal_pending_queue_depth")
+
+            parts = [f"running (gen={status.get('task_generation', 0)})"]
+            if hb_age is not None:
+                parts.append(f"heartbeat {_fmt_age(hb_age)}")
+            if failures >= 3:
+                parts.append(f"{failures} consecutive eval failures")
+            if queue_depth is not None and queue_depth > 5:
+                parts.append(f"queue depth {queue_depth}")
+
+            if hb_age is not None and hb_age > 120:
+                report.add("pi_daemon", "warn", ", ".join(parts),
+                           "daemon heartbeat stale — watchdog will restart if >3min")
+            elif failures >= 3:
+                report.add("pi_daemon", "warn", ", ".join(parts))
+            else:
+                report.add("pi_daemon", "ok", ", ".join(parts))
+        else:
+            report.add(
+                "pi_daemon", "info",
+                "gateway API unreachable — cannot determine daemon state",
+                "gateway may be restarting; re-run `aletheia doctor` in a moment",
+            )
+    except Exception as e:
+        report.add("pi_daemon", "info", f"probe error: {e}")
+
+
+def _render_daemon_report(report: Report, daemon: dict) -> None:
+    """Render a doctor ``pi_daemon`` line from the ``trading_daemon`` payload
+    returned by ``/api/operator/status``.
+    """
+    configured = daemon.get("configured", True)
+    running = daemon.get("running", False)
+    state = daemon.get("state", "unknown")
+    evaluating = daemon.get("evaluating", False)
+    last_error = daemon.get("last_error_summary")
+    fallback = daemon.get("fallback_available", False)
+
+    if not configured:
+        report.add("pi_daemon", "info", "PI daemon disabled in config")
+        return
+
+    if not running:
+        if fallback:
+            report.add(
+                "pi_daemon", "warn",
+                "PI daemon not running (scheduler fallback active) — "
+                "event-driven decisions paused",
+                "watchdog will auto-restart; if persistent, check gateway logs",
+            )
+        else:
+            report.add(
+                "pi_daemon", "warn",
+                "PI daemon not running — trade decisions stopped",
+                "watchdog will auto-restart; if persistent, check gateway logs",
+            )
+        return
+
+    parts = [f"running (state={state})"]
+    if evaluating:
+        parts.append("evaluating")
+    if last_error:
+        parts.append(f"last error: {last_error}")
+    if fallback:
+        parts.append("scheduler fallback available")
+
+    report.add("pi_daemon", "ok", ", ".join(parts))
+
+
 def _probe_webui_static(report: Report) -> None:
     """WebUI 静态文件完整性检查（新增诊断维度）。"""
     from pathlib import Path
@@ -4099,6 +4236,7 @@ def build_report(*, probe_llm: bool = False) -> Report:
         _probe_startup_behavior_gate,
         _probe_operator_shell,
         _probe_operator_loop,
+        _probe_pi_daemon,
         _probe_webui_static,
         _probe_git_hooks,
         _probe_network,
