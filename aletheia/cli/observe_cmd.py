@@ -196,6 +196,96 @@ def observation_checkpoint(
         typer.echo("appended new checkpoint row (idempotent no-op if unchanged)")
 
 
+@observe_app.command("run")
+def run_worker_pass(
+    min_samples: int = typer.Option(
+        20, "--min-samples",
+        help="Minimum settled samples per (filter, family) cell before verdicts emit.",
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """One Worker pass of the Observation cycle (Issue #1072).
+
+    Entry point for the sibling ``aletheia-observer`` checkout's systemd
+    timer. Fails closed unless
+    ``config.observation.execution_owner == "worker"`` and no other Worker
+    pass currently holds the cross-process cycle lock.
+
+    Reuses the existing one-shot path — this command does NOT reimplement
+    the Observation cycle. It calls the exact same
+    ``run_controller_observe`` → ``run_lab_windows`` chain the Main
+    Scheduler would call in ``main`` mode; the split is about **who**
+    runs it, not **what** runs.
+
+    Non-zero exit on:
+    - Ownership contract violation (``observation.execution_owner != "worker"``).
+    - Another Worker pass already holds the cross-process lock.
+    - Any exception the underlying runner propagates.
+
+    Explicitly does NOT start Gateway, Frontdoor, full Main scheduler,
+    Operator shell, Risk, Execution, exchange adapters, or trading
+    authority.
+    """
+    from aletheia.observation_lab.execution_owner import (
+        ObservationOwnerError,
+        get_execution_owner,
+        require_worker_owner,
+    )
+    from aletheia.observation_lab.worker_lock import (
+        WorkerCycleLockError,
+        worker_pass_lock,
+    )
+
+    try:
+        require_worker_owner(action="observe run")
+    except ObservationOwnerError as exc:
+        typer.echo(f"observe run: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    try:
+        from aletheia.agent_runtime.build_info import get_boot_commit
+        source_commit = get_boot_commit()
+    except Exception:  # pragma: no cover - build info fallback
+        source_commit = None
+
+    try:
+        with worker_pass_lock(source_commit=source_commit):
+            from aletheia.analytics.filter_controller import run_controller_observe
+
+            summary = run_controller_observe(min_samples=int(min_samples))
+    except WorkerCycleLockError as exc:
+        typer.echo(f"observe run: {exc}", err=True)
+        raise typer.Exit(code=3) from exc
+
+    payload = {
+        "owner": get_execution_owner(),
+        "source_commit": source_commit,
+        "recommendations_written": summary.get("recommendations_written", 0),
+        "lab_windows": summary.get("lab_windows"),
+        "ufc_shadow_equivalence": summary.get("ufc_shadow_equivalence"),
+        "experiment_registration": summary.get("experiment_registration"),
+        "experiment_evaluation": summary.get("experiment_evaluation"),
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, default=str))
+        return
+    typer.echo(f"owner={payload['owner']} source_commit={payload['source_commit']}")
+    typer.echo(f"recommendations_written={payload['recommendations_written']}")
+    lab_windows = payload.get("lab_windows") or {}
+    if lab_windows:
+        typer.echo(
+            f"lab_windows: run={lab_windows.get('windows_run')} "
+            f"errored={lab_windows.get('windows_errored')}"
+        )
+    ufc = payload.get("ufc_shadow_equivalence") or {}
+    if ufc:
+        typer.echo(
+            f"ufc_shadow_equivalence: checked={ufc.get('checked')} "
+            f"matched={ufc.get('matched')} mismatched={ufc.get('mismatched')} "
+            f"skipped={ufc.get('skipped')}"
+        )
+
+
 @observe_app.command("sync")
 def sync_all(
     json_output: bool = typer.Option(False, "--json"),

@@ -1588,6 +1588,32 @@ class ControllerConfig(BaseModel):
     persistent_max_runs_lookback: int = 10
 
 
+class ObservationConfig(BaseModel):
+    """Observation Lab execution-ownership contract (Issue #1072 Worker split).
+
+    Determines WHICH process owns the periodic Observation cycle. There is no
+    ``both`` state — exactly one owner runs the cycle at a time.
+
+    - ``main`` (default, backward compatible): the ordinary Main Runtime
+      APScheduler owns and executes ``filter_controller_observe``. Restart
+      / update / smoke behavior is unchanged from before #1072.
+    - ``worker``: a sibling ``aletheia-observer`` checkout owns the cycle via
+      its own systemd timer + ``aletheia observe run`` invocation. In this
+      mode the Main Runtime MUST NOT register or execute the cycle, and
+      settings reconciliation MUST NOT recreate it — the ownership contract
+      is enforced at three gates (scheduler start, reconcile, run).
+
+    The two owners intentionally may run different commits while sharing the
+    same ``~/.aletheia`` data root; that is the whole point of the split.
+    """
+
+    execution_owner: str = Field(
+        default="main",
+        pattern="^(main|worker)$",
+        description="Which process owns the Observation cycle: main | worker.",
+    )
+
+
 class EconomicsConfig(BaseModel):
     """Tokenomics harness configuration (Phase 2 scaffold; see #475).
 
@@ -1687,6 +1713,7 @@ class AletheiaConfig(BaseModel):
     news: NewsConfig = Field(default_factory=NewsConfig)
     serenity: SerenityConfig = Field(default_factory=SerenityConfig)
     controller: ControllerConfig = Field(default_factory=ControllerConfig)
+    observation: ObservationConfig = Field(default_factory=ObservationConfig)
     learning: LearningConfig = Field(default_factory=LearningConfig)
     economics: EconomicsConfig = Field(default_factory=EconomicsConfig)
     # Optional, single observe-only governance declaration. Strict validation is

@@ -48,6 +48,18 @@ from aletheia.observation_lab.checkpoint import (  # noqa: F401
     save_joint_checkpoint,
     verify_joint_checkpoint,
 )
+from aletheia.observation_lab.execution_owner import (  # noqa: F401
+    ObservationOwnerError,
+    get_execution_owner,
+    is_main_owner,
+    is_worker_owner,
+    require_main_or_absent,
+    require_worker_owner,
+)
+from aletheia.observation_lab.worker_lock import (  # noqa: F401
+    WorkerCycleLockError,
+    worker_pass_lock,
+)
 from aletheia.observation_lab.conflict import (  # noqa: F401
     ConflictResolution,
     resolve_manifest_conflict,

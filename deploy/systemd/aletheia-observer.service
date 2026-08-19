@@ -1,0 +1,59 @@
+[Unit]
+Description=Aletheia Observation Worker — one Observation cycle pass
+Documentation=https://github.com/iridyne/aletheia/issues/1072
+# Managed unit — generated from repo template ``deploy/systemd/aletheia-observer.service``
+# (Issue #1072 Worker split). Copy into ``~/.config/systemd/user/`` on Fedora
+# to install; ``systemctl --user daemon-reload`` picks it up.
+#
+# The Observation cycle is a bounded one-shot: the sibling
+# ``aletheia-observer`` checkout invokes the existing runner via
+# ``aletheia observe run``. Exit codes:
+#   0  cycle completed cleanly
+#   2  ownership contract violated
+#      (config.observation.execution_owner != "worker")
+#   3  another Worker pass already holds the cross-process cycle lock
+#   1  runner raised (see journal for detail)
+#
+# The Worker deliberately does NOT start Gateway, Frontdoor, Main
+# scheduler, Operator shell, Risk, Execution, exchange adapters, or any
+# trading authority. It only reads the shared ``app.db`` and writes the
+# Lab's own ``~/.aletheia/observation-lab/lab.db``.
+
+[Service]
+Type=oneshot
+# The Worker checkout is a repo sibling; typically /home/admin/aletheia-observer.
+# Main lives at /home/admin/aletheia and updates independently — this is the
+# whole point of the Worker split.
+WorkingDirectory=%h/aletheia-observer
+
+# Share the same data root as Main so ``app.db`` + ``lab.db`` stay
+# canonical. Override with ``ALETHEIA_DATA_DIR=/some/absolute/path`` if
+# your Main uses a non-default root.
+Environment=ALETHEIA_DATA_DIR=%h/.aletheia
+
+# Explicit worker owner. The CLI still fails closed if the shared config
+# says ``main``; this env var is documentation for the operator inspecting
+# ``systemctl cat``.
+Environment=ALETHEIA_OBSERVATION_ROLE=worker
+
+# One pass. Bounded. If the runner hangs (evaluator wedge, sqlite
+# contention), systemd kills it and returns non-zero. Two consecutive
+# failures are visible in ``systemctl status aletheia-observer.timer``.
+TimeoutStartSec=15min
+
+# Trading-credential isolation. The Worker never needs exchange creds;
+# refuse to inherit them so a misconfiguration cannot leak them.
+Environment=BITGET_API_KEY=
+Environment=BITGET_API_SECRET=
+Environment=BITGET_PASSPHRASE=
+
+ExecStart=%h/aletheia-observer/.venv/bin/aletheia observe run --min-samples 20
+
+# Hardening. The Worker is read-mostly and writes only to lab.db + audit.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=%h/.aletheia
+
+[Install]
+WantedBy=default.target

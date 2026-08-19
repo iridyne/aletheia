@@ -2,7 +2,7 @@
 
 > 状态：Issue #1072 POC 首次合入 (2026-08-17)；Clusters 1-5 build-out 2026-08-19。
 > 范围：`ranker_confidence_gate` prospective 前瞻实验的运行时解耦；主 Runtime 可高频迭代 `master`，已登记 Observation 仍按冻结身份继续收集证据。加上 Clusters 1-5 引入的 multi-window runner + `ExecutionManifest` + typed exposure fact + joint checkpoint 基础设施（详见 §11）。
-> 不包含：新 assignment 语义、`family_ttl` / `observer_pre_filter` 迁移到 adapter identity 模型、生产表迁移或删除、新 Web UI、新 scheduler。
+> 不包含：新 assignment 语义、`family_ttl` / `observer_pre_filter` 迁移到 adapter identity 模型、生产表迁移或删除、新 Web UI、新 scheduler framework。（Worker split PR 引入的 systemd 一次性 unit 不是新 scheduler——它只调 `aletheia observe run` 一次，仍复用 `run_lab_windows()`。）
 
 **Companion docs**:
 - [observation_lab_v1_design.md](observation_lab_v1_design.md) — 权威 v1 实施设计 + Fedora 部署计划（这是部署前必读）。
