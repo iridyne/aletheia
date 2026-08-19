@@ -126,6 +126,8 @@ def conviction_to_multiplier(conviction: int) -> float:
 def vol_target_size(
     symbol: str,
     *,
+    venue: str | None = None,
+    market_type: str | None = None,
     conviction: int = 70,
     direction: str | None = None,
     drawdown_pct: float = 0.0,
@@ -166,7 +168,7 @@ def vol_target_size(
     atr_pct = atr_pct_override
     atr_snapshot = None
     if cfg.trading.vol_sizing_enabled and atr_pct is None:
-        atr_snapshot = _lookup_atr_snapshot(symbol)
+        atr_snapshot = _lookup_atr_snapshot(symbol, venue=venue, market_type=market_type)
         atr_pct = atr_snapshot["atr_pct"] if atr_snapshot else None
 
     def _from_params(params: dict) -> tuple[float, dict]:
@@ -243,29 +245,56 @@ def vol_target_size(
     return round(float(trace["actual_notional"]), 2)
 
 
-def _lookup_atr_pct(symbol: str) -> float | None:
+def _lookup_atr_pct(
+    symbol: str,
+    *,
+    venue: str | None = None,
+    market_type: str | None = None,
+) -> float | None:
     """Fetch ATR% from universe_feature_snapshots (most recent row).
 
     universe_feature_snapshots uses asset_id (FK → universe_registry) + ts,
     not symbol + snapshot_at. We join through universe_registry to filter by symbol.
+    When venue and market_type are supplied, the lookup is scoped to the exact
+    instrument identity (venue, symbol, market_type) to avoid cross-market ambiguity.
     """
-    snapshot = _lookup_atr_snapshot(symbol)
+    snapshot = _lookup_atr_snapshot(symbol, venue=venue, market_type=market_type)
     return float(snapshot["atr_pct"]) if snapshot else None
 
 
-def _lookup_atr_snapshot(symbol: str) -> dict | None:
-    """Return the exact feature row selected by the existing symbol lookup."""
+def _lookup_atr_snapshot(
+    symbol: str,
+    *,
+    venue: str | None = None,
+    market_type: str | None = None,
+) -> dict | None:
+    """Return the feature row for the exact instrument identity.
+
+    Filters by (venue, symbol, market_type) when all three are provided so that
+    spot and perpetual rows for the same symbol on the same or different venues
+    cannot collide on the newest timestamp.  Without venue/market_type the
+    lookup falls back to symbol-only (backward-compatible for callers that do
+    not yet carry the full identity).
+    """
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
+        sql_params: list = [symbol]
+        extra = ""
+        if venue:
+            extra += " AND ur.venue = ?"
+            sql_params.append(venue)
+        if market_type:
+            extra += " AND ur.market_type = ?"
+            sql_params.append(market_type)
         row = db.execute(
             "SELECT ufs.id AS feature_snapshot_id,ufs.ts AS feature_ts,"
             "ufs.atr_pct,ur.id AS asset_id,ur.venue,ur.symbol,ur.market_type "
             "FROM universe_feature_snapshots ufs "
             "JOIN universe_registry ur ON ufs.asset_id = ur.id "
-            "WHERE ur.symbol = ? "
+            f"WHERE ur.symbol = ?{extra} "
             "ORDER BY ufs.ts DESC LIMIT 1",
-            (symbol,),
+            sql_params,
         ).fetchone()
         if row and row["atr_pct"]:
             return {

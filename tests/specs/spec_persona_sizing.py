@@ -169,7 +169,7 @@ def test_vol_target_size_freezes_selected_atr_instrument_lineage(monkeypatch):
         "atr_pct": 2.0,
     }
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
-    monkeypatch.setattr(sizing, "_lookup_atr_snapshot", lambda _symbol: snapshot)
+    monkeypatch.setattr(sizing, "_lookup_atr_snapshot", lambda _symbol, **_kw: snapshot)
     trace: dict = {}
 
     sizing.vol_target_size("BTC/USDT", sizing_trace=trace)
@@ -891,3 +891,64 @@ def test_persona_rollout_audit_failure_refreezes_and_records_retry(tmp_path, mon
     assert event and event[0] == "audit_delivery_failed"
     assert event[1] == "audit_delivery_failed"
     assert '"retry_required": true' in event[2]
+
+
+@spec_claim(
+    SpecClaim("PS-S42", "persona_sizing", "§ ATR exact instrument identity", "L2b",
+              "ATR lookup scoped to (venue, symbol, market_type): same-symbol spot/perp "
+              "rows with equal timestamps must not cross-contaminate sizing."),
+)
+def test_atr_lookup_exact_instrument_identity(tmp_path, monkeypatch):
+    """Regression for #947: spot and perp ATR rows with the same ts must not collide."""
+    import aletheia.storage.sqlite as sq
+    import aletheia.config.loader as loader
+    from aletheia.storage.migrations import run_migrations
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    sq._db_conn = None
+    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    sq._db_conn = conn
+    run_migrations()
+
+    # Insert spot and perp rows for the same symbol at the same timestamp.
+    # Perp ATR is intentionally larger so a wrong selection is detectable.
+    conn.execute(
+        "INSERT INTO universe_registry (id, venue, symbol, market_type) VALUES (?,?,?,?)",
+        ("asset-spot", "okx", "BTC/USDT", "spot"),
+    )
+    conn.execute(
+        "INSERT INTO universe_registry (id, venue, symbol, market_type) VALUES (?,?,?,?)",
+        ("asset-perp", "okx", "BTC/USDT", "usdt_futures"),
+    )
+    ts = "2026-01-01T00:00:00"
+    conn.execute(
+        "INSERT INTO universe_feature_snapshots (id, asset_id, ts, atr_pct) VALUES (?,?,?,?)",
+        ("snap-spot", "asset-spot", ts, 2.0),
+    )
+    conn.execute(
+        "INSERT INTO universe_feature_snapshots (id, asset_id, ts, atr_pct) VALUES (?,?,?,?)",
+        ("snap-perp", "asset-perp", ts, 5.0),
+    )
+    conn.commit()
+
+    from aletheia.trading.sizing import _lookup_atr_snapshot
+
+    # Exact spot identity → must return 2.0
+    snap_spot = _lookup_atr_snapshot("BTC/USDT", venue="okx", market_type="spot")
+    assert snap_spot is not None, "spot snapshot should be found"
+    assert snap_spot["atr_pct"] == 2.0, f"expected spot ATR 2.0, got {snap_spot['atr_pct']}"
+    assert snap_spot["market_type"] == "spot"
+
+    # Exact perp identity → must return 5.0
+    snap_perp = _lookup_atr_snapshot("BTC/USDT", venue="okx", market_type="usdt_futures")
+    assert snap_perp is not None, "perp snapshot should be found"
+    assert snap_perp["atr_pct"] == 5.0, f"expected perp ATR 5.0, got {snap_perp['atr_pct']}"
+    assert snap_perp["market_type"] == "usdt_futures"
+
+    # Without exact identity the old symbol-only path may return either row;
+    # the key invariant is that WITH exact identity the results are unambiguous.
+    snap_ambiguous = _lookup_atr_snapshot("BTC/USDT")
+    assert snap_ambiguous is not None, "symbol-only fallback should still find a row"
