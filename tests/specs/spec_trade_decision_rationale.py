@@ -131,7 +131,7 @@ def test_proposal_rationale_carries_final_parameter_snapshot(tmp_path, monkeypat
     assert snapshot["notional_usdt"]["actual_value"] == 25.0
     assert snapshot["notional_usdt"]["estimated_loss_at_stop_usdt"] > 0
     assert snapshot["notional_usdt"]["value_source"] == "programmatic_or_legacy"
-    assert snapshot["leverage"]["requested_value"] == 9
+    assert snapshot["leverage"]["advisory_value"] == 9
     assert snapshot["leverage"]["final_value"] == 3
     assert snapshot["leverage"]["value_source"] == "risk_cap_clamped"
 

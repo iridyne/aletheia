@@ -145,13 +145,15 @@ class TradingDecision:
     # better fill). None → market. Only meaningful on close actions.
     order_type: str | None = None
     limit_price: float | None = None
-    # Futures: which venue + leverage the PI chose. market_type defaults to
-    # usdt_futures (the demo/perp venue) when the LLM omits it; leverage is the
-    # PI's requested level, clamped to the per-tier cap at submit time.
+    # Futures: which venue + leverage. market_type defaults to usdt_futures (the
+    # demo/perp venue) when the LLM omits it. leverage holds the deterministic
+    # post-debate value; leverage_advisory is the AI's original request, kept for
+    # audit only — it never drives the final position.
     market_type: str | None = None
     # Durable carrier venue. This is context-bound, never model-selected.
     venue: str | None = None
     leverage: int | None = None
+    leverage_advisory: int | None = None  # AI-requested, advisory only
     debate_ran: bool = False
     debate_initial_conviction: int | None = None
     debate_bull_confidence: int | None = None
@@ -874,8 +876,15 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
             market_type = decision.market_type or (
                 "usdt_futures" if decision.direction == "short" else "spot"
             )
-            final_leverage, _ = _resolve_final_leverage(
-                decision, market_type, execution_mode, cfg
+            # Resolve leverage deterministically after debate, using all authoritative
+            # inputs.  Overwrites decision.leverage with the resolved value and stores
+            # decision.leverage_advisory for audit.  Stamp the policy epoch for
+            # outcome-comparison isolation.
+            from aletheia.agent_shell.leverage_policy import ensure_leverage_policy_epoch
+            lev_epoch_id = ensure_leverage_policy_epoch()
+            decision.sizing_trace["leverage_policy_epoch_id"] = lev_epoch_id
+            final_leverage = _resolve_post_debate_leverage(
+                decision, market_type, trading_context, cfg
             )
             decision.position_size_usdt = _compute_position_size(
                 decision.conviction,
@@ -1850,13 +1859,30 @@ def _build_entry_parameter_snapshot(
         notional_source = "programmatic_or_legacy"
     else:
         notional_source = "default_config"
-    requested_leverage = decision.leverage if market_type == "usdt_futures" else None
+    # AI advisory is stored separately from the deterministic final value.
+    # New resolver path: leverage_advisory has the AI's request; leverage is the
+    # deterministic result. Legacy path (no resolver): leverage_advisory is None
+    # and leverage still holds the AI's request, so fall back to it for labelling.
+    if market_type != "usdt_futures":
+        advisory_leverage = None
+    elif decision.leverage_advisory is not None:
+        advisory_leverage = decision.leverage_advisory
+    else:
+        # Legacy: leverage field was not overwritten by resolver; it is the AI request.
+        advisory_leverage = decision.leverage
     final_leverage = leverage or 1
+    resolver_inputs = (
+        (decision.sizing_trace or {}).get("leverage_resolver")
+        if isinstance(decision.sizing_trace, dict)
+        else None
+    )
     if market_type != "usdt_futures":
         leverage_source = "not_applicable_spot"
-    elif requested_leverage and leverage_cap and final_leverage != requested_leverage:
+    elif resolver_inputs is not None:
+        leverage_source = "deterministic_post_debate"
+    elif advisory_leverage and leverage_cap and final_leverage != advisory_leverage:
         leverage_source = "risk_cap_clamped"
-    elif requested_leverage and requested_leverage > 1:
+    elif advisory_leverage and advisory_leverage > 1:
         leverage_source = "ai_requested"
     else:
         leverage_source = "default_1x"
@@ -1897,12 +1923,13 @@ def _build_entry_parameter_snapshot(
             "reason": reason_for("notional_usdt"),
         },
         "leverage": {
-            "requested_value": requested_leverage,
+            "advisory_value": advisory_leverage,
             "final_value": final_leverage,
             "maximum_allowed": leverage_cap,
             "estimated_margin_usdt": round(actual_notional / final_leverage, 8) if final_leverage else None,
             "value_source": leverage_source,
             "reason": reason_for("leverage"),
+            "resolver_inputs": resolver_inputs,
         },
     }
 
@@ -2159,6 +2186,123 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
 
 
 # ── sizing ────────────────────────────────────────────────────────────────────
+
+# ponytail: hardcoded liquidation safety margin — add config knob if operators
+# want per-risk-profile tuning (e.g. tighter margin for alts).
+_LIQ_SAFETY_MARGIN = 0.80
+
+# ponytail: conviction-to-leverage ceiling — keeps leverage modest even at peak
+# conviction; raise to tier_cap if the resolver should scale further.
+_CONVICTION_MAX_LEV = 5
+
+
+def _resolve_post_debate_leverage(
+    decision: TradingDecision,
+    market_type: str,
+    trading_context: dict,
+    cfg,
+) -> int | None:
+    """Deterministic leverage resolver — runs after debate, uses authoritative inputs.
+
+    Saves the AI advisory in decision.leverage_advisory, then overwrites
+    decision.leverage with the deterministic result.  Stores resolver facts in
+    decision.sizing_trace["leverage_resolver"] for audit.
+
+    Returns the final leverage (or None for spot).
+    Falls back to 1x when required inputs are missing or invalid.
+    """
+    if market_type != "usdt_futures":
+        decision.leverage_advisory = decision.leverage
+        decision.leverage = None
+        return None
+
+    from aletheia.trading.instruments import get_max_leverage
+
+    ai_advisory = decision.leverage
+    decision.leverage_advisory = ai_advisory
+
+    tier_cap = get_max_leverage(
+        decision.symbol,
+        "live" in (execution_mode := str(trading_context.get("execution_mode") or "")),
+        cfg,
+    )
+
+    def _fallback(reason: str) -> int:
+        decision.leverage = 1
+        decision.sizing_trace["leverage_resolver"] = {
+            "ai_advisory": ai_advisory,
+            "tier_cap": tier_cap,
+            "reason": reason,
+            "final": 1,
+        }
+        return 1
+
+    # entry price from the context-bound mark (always present when trade reaches here)
+    entry_mark = (trading_context.get("layer2") or {}).get("entry_mark") or {}
+    entry_price = _valid_protective_price(entry_mark.get("price"))
+    if entry_price is None:
+        return _fallback("missing_entry_price_fallback")
+
+    stop_price = _valid_protective_price(decision.stop_price)
+    if stop_price is None:
+        return _fallback("missing_stop_price_fallback")
+
+    stop_pct = abs(entry_price - stop_price) / entry_price
+    if stop_pct <= 0:
+        return _fallback("zero_stop_distance_fallback")
+
+    # 1. Stop-distance safety: stop must fire before liquidation
+    #    At leverage L, liquidation at ~1/L. Safety: stop_pct < liq_margin/L
+    #    → L ≤ liq_margin / stop_pct
+    stop_based_max = max(1, int(_LIQ_SAFETY_MARGIN / stop_pct))
+
+    # 2. Conviction scaling: [55, 100] → [1, _CONVICTION_MAX_LEV]
+    conviction_fraction = max(0.0, (decision.conviction - 55) / 45.0)
+    conviction_max = min(tier_cap, _CONVICTION_MAX_LEV)
+    conviction_based = max(1, round(1 + conviction_fraction * (conviction_max - 1)))
+
+    # 3. ATR volatility constraint: max(1, round(10 / atr_pct))
+    atr_based = tier_cap  # unconstrained when data unavailable
+    feature = _feature_for_candidate(
+        decision.symbol or "", decision.direction, trading_context
+    )
+    atr_pct = feature.get("atr_pct")
+    if atr_pct is not None and float(atr_pct) > 0:
+        atr_based = max(1, round(10.0 / float(atr_pct)))
+
+    # 4. Account headroom constraint
+    futures_ctx = (trading_context.get("layer1") or {}).get("futures") or {}
+    account_lev_ratio = futures_ctx.get("account_leverage_ratio")
+    account_lev_cap = futures_ctx.get("account_leverage_cap")
+    headroom_based = tier_cap  # unconstrained when data unavailable
+    if account_lev_cap is not None and account_lev_ratio is not None:
+        remaining = float(account_lev_cap) - float(account_lev_ratio)
+        if remaining <= 0:
+            return _fallback("account_headroom_exhausted")
+        headroom_based = max(1, int(remaining))
+
+    final = max(1, min(stop_based_max, conviction_based, atr_based, headroom_based, tier_cap))
+    decision.leverage = final
+    decision.sizing_trace["leverage_resolver"] = {
+        "ai_advisory": ai_advisory,
+        "tier_cap": tier_cap,
+        "entry_price": entry_price,
+        "stop_price": stop_price,
+        "stop_pct": round(stop_pct * 100, 4),
+        "atr_pct": atr_pct,
+        "account_leverage_ratio": account_lev_ratio,
+        "account_leverage_cap": account_lev_cap,
+        "conviction": decision.conviction,
+        "stop_based_max": stop_based_max,
+        "conviction_based": conviction_based,
+        "atr_based": atr_based if atr_based < tier_cap else None,
+        "headroom_based": headroom_based if headroom_based < tier_cap else None,
+        "liq_safety_margin": _LIQ_SAFETY_MARGIN,
+        "reason": "deterministic_post_debate",
+        "final": final,
+    }
+    return final
+
 
 def _resolve_final_leverage(
     decision: TradingDecision,
@@ -2961,10 +3105,10 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "- market_type: for a new entry, copy the exact market_type from its durable "
         "Pending Signal; never relabel spot as futures or futures as spot downstream. "
         "A short requires an existing usdt_futures carrier (spot cannot be sold short).",
-        "- leverage: integer ≥1, only for usdt_futures. Scale with conviction — 1 (none) when "
-        "uncertain, 2-3 for solid setups, higher only for the strongest confluence. The risk "
-        "engine clamps to a per-asset-tier cap (majors allow more than alts), so an over-eager "
-        "number is reduced, not rejected. Leave at 1 if unsure.",
+        "- leverage: integer ≥1, only for usdt_futures. Advisory only — express your desired "
+        "aggressiveness (e.g. 1 = cautious, 5 = high conviction). The deterministic resolver "
+        "will compute the final leverage from stop distance, volatility, conviction, and account "
+        "headroom AFTER debate; your value is stored for audit but does not set the final level.",
         "",
         "Actions available:",
         "- trade: open a new position",
