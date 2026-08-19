@@ -597,8 +597,15 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
                 50.0 if is_live else 100_000.0,
             ),
             "max_per_symbol_entries": data.get("max_per_symbol_entries", 3),
+            # Demo default 0 = disabled. This check bounds TOTAL NOTIONAL against
+            # equity, i.e. it is a leverage cap wearing a percentage: at 100% it
+            # pins the account to 1.0x while `leverage.account_cap` says 10x, and
+            # the tighter, leverage-BLIND one silently won. #17 bounds the same
+            # ratio correctly (sum(notional x leverage) / equity), so keeping both
+            # only means one of them is dead weight. Live keeps its 5% envelope,
+            # where 1.0x-equivalent exposure is the intended conservatism.
             "max_total_exposure_pct": data.get(
-                "max_total_live_exposure_pct", 5.0 if is_live else 100.0
+                "max_total_live_exposure_pct", 5.0 if is_live else 0.0
             ),
         },
         "loss": {

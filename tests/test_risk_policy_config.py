@@ -129,3 +129,33 @@ def test_nested_risk_policy_rejects_unknown_fields():
             "demo": {"capital": {"max_position_notional_usdt_typo": 999}},
             "live": {},
         })
+
+
+def test_demo_total_exposure_default_is_disabled_in_favour_of_account_leverage():
+    """#12 and #17 bound the same ratio; only #17 is leverage-aware.
+
+    #12 compares TOTAL NOTIONAL against equity, so `max_total_exposure_pct = 100`
+    means "account leverage <= 1.0x". With `leverage.account_cap = 10.0` the two
+    disagreed by 10x and the leverage-blind one silently won, capping the demo
+    portfolio at a single leveraged position. Demo now defaults to disabled so the
+    configured account-leverage cap is what actually governs.
+    """
+    from aletheia.config.schema import RiskConfig
+
+    risk = RiskConfig.model_validate({})
+
+    assert risk.demo.capital.max_total_exposure_pct == 0.0
+    assert risk.demo.leverage.account_cap == 10.0
+    # Live keeps its deliberately conservative envelope.
+    assert risk.live.capital.max_total_exposure_pct == 5.0
+
+
+def test_explicit_total_exposure_pct_is_still_honoured():
+    """Disabling is a DEFAULT, not a removal — an operator can still set it."""
+    from aletheia.config.schema import RiskConfig
+
+    risk = RiskConfig.model_validate({
+        "demo": {"capital": {"max_total_exposure_pct": 250.0}},
+    })
+
+    assert risk.demo.capital.max_total_exposure_pct == 250.0
