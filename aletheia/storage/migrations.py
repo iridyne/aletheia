@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v35"
+SCHEMA_VERSION = "aletheia-sqlite-v36"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4816,6 +4816,35 @@ _MOMENTUM_SHORT_EXHAUSTION_CHECKSUM = hashlib.sha256(
 ).hexdigest()
 
 
+_OPTIONS_MARKET_STRUCTURE_SQL = """
+CREATE TABLE IF NOT EXISTS options_market_structure_snapshots (
+    id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
+    symbol TEXT NOT NULL CHECK (symbol IN ('BTC', 'ETH')),
+    source TEXT NOT NULL DEFAULT 'deribit_public',
+    gex_convention TEXT NOT NULL DEFAULT 'v1_retail_call_minus_put',
+    underlying_price REAL,
+    net_gex_estimate REAL,
+    gamma_regime TEXT CHECK (gamma_regime IN ('positive', 'negative', 'neutral')),
+    gamma_flip_estimate REAL,
+    call_gamma_wall REAL,
+    put_gamma_wall REAL,
+    nearest_gamma_wall_distance REAL,
+    options_open_interest REAL,
+    call_oi REAL,
+    put_oi REAL,
+    valid_strike_count INTEGER,
+    data_quality TEXT NOT NULL DEFAULT 'ok',
+    observed_at TEXT NOT NULL CHECK (julianday(observed_at) IS NOT NULL)
+);
+
+CREATE INDEX IF NOT EXISTS idx_options_structure_sym_ts
+ON options_market_structure_snapshots (symbol, observed_at DESC);
+"""
+_OPTIONS_MARKET_STRUCTURE_CHECKSUM = hashlib.sha256(
+    (_OPTIONS_MARKET_STRUCTURE_SQL + "\noptions_market_structure_v1").encode("utf-8")
+).hexdigest()
+
+
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
 
@@ -4917,6 +4946,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260817_0032_observation_lab_frozen_units_v33": (
         "Observation Lab v1 POC: adapter identity hash + frozen first-exposure units"
+    ),
+    "20260819_0035_options_market_structure_v36": (
+        "BTC/ETH Deribit options GEX and gamma-structure snapshot table"
     ),
 }
 
@@ -5211,6 +5243,12 @@ def _apply_momentum_short_exhaustion_shadow_v35(db: sqlite3.Connection) -> None:
         }
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.execute("PRAGMA optimize")
+
+
+def _apply_options_market_structure_v36(db: sqlite3.Connection) -> None:
+    """Add options_market_structure_snapshots for Deribit GEX/gamma support factors."""
+    db.executescript(_OPTIONS_MARKET_STRUCTURE_SQL)
     db.execute("PRAGMA optimize")
 
 
@@ -5761,6 +5799,12 @@ _MIGRATIONS = (
         checksum=_MOMENTUM_SHORT_EXHAUSTION_CHECKSUM,
         schema_version="aletheia-sqlite-v35",
         apply=_apply_momentum_short_exhaustion_shadow_v35,
+    ),
+    MigrationStep(
+        migration_id="20260819_0035_options_market_structure_v36",
+        checksum=_OPTIONS_MARKET_STRUCTURE_CHECKSUM,
+        schema_version="aletheia-sqlite-v36",
+        apply=_apply_options_market_structure_v36,
     ),
 )
 

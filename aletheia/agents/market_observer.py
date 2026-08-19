@@ -84,6 +84,7 @@ class _DbCache:
     news: dict[str, list[dict]]  # symbol → up-to-3 recent news_items rows
     onchain_rows: list[dict]  # global on-chain metrics (all symbols share)
     open_interest_hl: dict[str, dict] = field(default_factory=dict)
+    options_structures: dict[str, dict] = field(default_factory=dict)  # currency → latest row
 
 
 @dataclass
@@ -744,6 +745,7 @@ def _batch_prefetch_db(symbols: list[str]) -> _DbCache:
         news=repo.batch_news(symbols, news_since),
         onchain_rows=fresh_rows(repo.latest_onchain_snapshots(limit=3), "onchain"),
         open_interest_hl=repo.batch_open_interest(symbols, "hyperliquid"),
+        options_structures=repo.batch_options_structures(["BTC", "ETH"]),
     )
 
 
@@ -909,6 +911,7 @@ async def _prefetch_symbol(
             onchain=db_cache.onchain_rows,
             xvenue_funding=xvenue_funding,
             perp_structure=perp_structure,
+            options_structure=db_cache.options_structures or None,
         )
         if enriched:
             context = context + "\n\n" + enriched
@@ -1288,6 +1291,7 @@ async def _analyze_symbol(
                 onchain=onchain_rows,
                 xvenue_funding=xvenue_funding,
                 perp_structure=perp_structure,
+                options_structure=repo.batch_options_structures(["BTC", "ETH"]) or None,
             )
             if enriched:
                 context = context + "\n\n" + enriched
@@ -1909,6 +1913,7 @@ async def run_market_observer(permission_mode: str = "Observe", run_id: str | No
             funding_hl_pred={},
             news={},
             onchain_rows=[],
+            options_structures={},
         )
 
     # ── Phase 2: bounded async context build + pre-filter ────────────────────────────
