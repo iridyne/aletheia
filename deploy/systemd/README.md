@@ -40,6 +40,27 @@ systemctl --user start aletheia-observer.service
 journalctl --user -u aletheia-observer.service -n 20
 ```
 
+## Watching for Worker drift
+
+The Worker checkout is deliberately pinned — that is the whole point of the
+split. But over months a pinned SHA can accumulate real distance from
+master, and the operator should be able to check without leaving Fedora:
+
+```sh
+# From inside the Worker checkout — offline, uses local origin/master ref.
+cd /home/admin/aletheia-observer && .venv/bin/aletheia observe drift
+
+# Refresh the origin ref first for a live comparison.
+cd /home/admin/aletheia-observer && .venv/bin/aletheia observe drift --fetch
+
+# Non-zero exit when the Worker is more than N commits behind master
+# (default 30) — wire into any monitoring you like.
+cd /home/admin/aletheia-observer && .venv/bin/aletheia observe drift --fetch --warn-after 50 || echo "worker drift alert"
+```
+
+Drift is advisory. The Worker is never auto-updated by this command; the
+operator decides when to `git pull` and restart the timer.
+
 ## Rollback (no data migration)
 
 ```sh

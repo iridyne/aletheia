@@ -196,6 +196,102 @@ def observation_checkpoint(
         typer.echo("appended new checkpoint row (idempotent no-op if unchanged)")
 
 
+@observe_app.command("drift")
+def observation_drift(
+    fetch: bool = typer.Option(
+        False, "--fetch",
+        help=(
+            "Run 'git fetch origin master --quiet' first. Off by default so "
+            "the command stays offline-safe."
+        ),
+    ),
+    warn_after: int = typer.Option(
+        30, "--warn-after",
+        help=(
+            "Commits-behind threshold at which the exit code becomes non-zero, "
+            "so operators can wire this into cron/monitoring."
+        ),
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Report Worker checkout drift vs upstream master.
+
+    The Worker checkout is deliberately pinned (see Issue #1072). This
+    command lets the operator see, without leaving Fedora, how far the
+    Worker has drifted from master:
+
+    - ``HEAD`` — the currently-running Worker commit.
+    - ``origin/master`` — as-known-locally (pass ``--fetch`` to refresh).
+    - Commits behind + commits ahead.
+    - Exit non-zero when behind exceeds ``--warn-after`` (default 30) so
+      the command can be wired into a health check without extra logic.
+
+    Not run automatically. Advisory: the Worker is meant to be pinned,
+    but the operator wants to know when the pin is stale.
+    """
+    import subprocess
+    from pathlib import Path
+
+    cwd = Path.cwd()
+    if not (cwd / ".git").exists():
+        typer.echo(
+            f"observe drift: {cwd} is not a git checkout — run this from the "
+            "aletheia-observer directory",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    def _git(*args: str) -> str:
+        try:
+            result = subprocess.run(
+                ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=15,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            raise typer.Exit(code=1) from exc
+        return (result.stdout or "").strip()
+
+    if fetch:
+        subprocess.run(
+            ["git", "fetch", "origin", "master", "--quiet"],
+            cwd=cwd, check=False, timeout=60,
+        )
+
+    head_sha = _git("rev-parse", "HEAD")
+    master_sha = _git("rev-parse", "origin/master") or None
+    if master_sha:
+        behind_raw = _git("rev-list", "--count", "HEAD..origin/master")
+        ahead_raw = _git("rev-list", "--count", "origin/master..HEAD")
+    else:
+        behind_raw = ahead_raw = "0"
+    behind = int(behind_raw or 0)
+    ahead = int(ahead_raw or 0)
+
+    payload = {
+        "worker_head": head_sha,
+        "origin_master": master_sha,
+        "fetched": fetch,
+        "behind": behind,
+        "ahead": ahead,
+        "warn_after": warn_after,
+        "drifted": behind > warn_after,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        marker = "⚠" if payload["drifted"] else "✓"
+        typer.echo(
+            f"{marker} worker_head={head_sha[:12]}… "
+            f"origin/master={(master_sha or 'unknown')[:12]}…"
+        )
+        typer.echo(f"  behind={behind}  ahead={ahead}  warn_after={warn_after}")
+        if not fetch:
+            typer.echo(
+                "  (origin/master is local snapshot; pass --fetch for live comparison)"
+            )
+    if payload["drifted"]:
+        raise typer.Exit(code=1)
+
+
 @observe_app.command("run")
 def run_worker_pass(
     min_samples: int = typer.Option(
@@ -203,6 +299,14 @@ def run_worker_pass(
         help="Minimum settled samples per (filter, family) cell before verdicts emit.",
     ),
     json_output: bool = typer.Option(False, "--json"),
+    quiet: bool = typer.Option(
+        False, "--quiet",
+        help=(
+            "Suppress routine per-pass output. Ownership errors, lock contention, "
+            "runner errors, and UFC equivalence mismatches still print. Reduces "
+            "systemd journal chatter for long-running Workers."
+        ),
+    ),
 ) -> None:
     """One Worker pass of the Observation cycle (Issue #1072).
 
@@ -269,15 +373,23 @@ def run_worker_pass(
     if json_output:
         typer.echo(json.dumps(payload, indent=2, default=str))
         return
+
+    lab_windows = payload.get("lab_windows") or {}
+    ufc = payload.get("ufc_shadow_equivalence") or {}
+    has_window_errors = bool(lab_windows.get("windows_errored"))
+    has_ufc_mismatch = bool(ufc.get("mismatched"))
+
+    if quiet and not (has_window_errors or has_ufc_mismatch):
+        # Clean pass — stay silent so systemd journal only carries signal.
+        return
+
     typer.echo(f"owner={payload['owner']} source_commit={payload['source_commit']}")
     typer.echo(f"recommendations_written={payload['recommendations_written']}")
-    lab_windows = payload.get("lab_windows") or {}
     if lab_windows:
         typer.echo(
             f"lab_windows: run={lab_windows.get('windows_run')} "
             f"errored={lab_windows.get('windows_errored')}"
         )
-    ufc = payload.get("ufc_shadow_equivalence") or {}
     if ufc:
         typer.echo(
             f"ufc_shadow_equivalence: checked={ufc.get('checked')} "

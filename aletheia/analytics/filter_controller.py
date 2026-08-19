@@ -633,8 +633,16 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
     generated_at = _now_iso()
 
     # Freshness gate — skip if the latest observe row is younger than half the
-    # configured cadence. Prevents scheduler misfires + manual re-triggers from
-    # doubling the append-only recommendation stream during one window.
+    # configured cadence. Prevents Main APScheduler misfires + manual
+    # re-triggers from doubling the append-only recommendation stream during
+    # one window.
+    #
+    # Skip this gate in Worker mode. The Observation Worker (Issue #1072)
+    # already has two exclusive protections: systemd's deterministic 6h
+    # ``OnUnitInactiveSec`` cadence plus a cross-process ``fcntl.flock`` at
+    # ``worker.lock``. Layering the Main-scheduler-shaped freshness gate on
+    # top would occasionally swallow a legitimate Worker pass whenever the
+    # ``Persistent=true`` catch-up fires within 3h of the previous run.
     interval_hours = 0
     try:
         from aletheia.config.loader import load_config
@@ -642,7 +650,12 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
         interval_hours = int(load_config().controller.observe_interval_hours or 0)
     except Exception as exc:  # pragma: no cover - defensive config path
         logger.warning("filter_controller: observe_interval_hours unavailable: %s", exc)
-    if _is_fresh_prior_run(interval_hours):
+    try:
+        from aletheia.observation_lab.execution_owner import is_worker_owner
+        _worker_owns_cycle = is_worker_owner()
+    except Exception:  # pragma: no cover - defensive owner load
+        _worker_owns_cycle = False
+    if not _worker_owns_cycle and _is_fresh_prior_run(interval_hours):
         logger.info(
             "filter_controller observe: skipped — prior run inside %.1fh floor",
             interval_hours * 0.5,

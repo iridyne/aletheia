@@ -47,7 +47,12 @@ Environment=BITGET_API_KEY=
 Environment=BITGET_API_SECRET=
 Environment=BITGET_PASSPHRASE=
 
-ExecStart=%h/aletheia-observer/.venv/bin/aletheia observe run --min-samples 20
+# ``--quiet`` keeps steady-state passes silent in the systemd journal;
+# ownership errors, lock contention, runner errors, and UFC equivalence
+# mismatches always print. This is the difference between "5 lines every 6h"
+# and "0 lines when nothing interesting happened" — the operator's
+# ``journalctl`` output stays scannable over months.
+ExecStart=%h/aletheia-observer/.venv/bin/aletheia observe run --min-samples 20 --quiet
 
 # Hardening. The Worker is read-mostly and writes only to lab.db + audit.
 NoNewPrivileges=true
