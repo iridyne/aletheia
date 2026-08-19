@@ -1596,7 +1596,7 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
     # converts that cost into perpetual-futures notional. Programmatic/historical
     # callers retain their explicit position_size_usdt compatibility behavior.
     if decision.parameter_rationale_required:
-        notional = _compute_account_equity_risk_size(
+        notional = _compute_available_balance_risk_size(
             execution_mode=execution_mode,
             market_type=market_type,
             leverage=leverage,
@@ -2323,7 +2323,7 @@ def _resolve_final_leverage(
     return max(1, min(int(decision.leverage), leverage_cap)), leverage_cap
 
 
-def _compute_account_equity_risk_size(
+def _compute_available_balance_risk_size(
     *,
     execution_mode: str,
     market_type: str,
@@ -2331,15 +2331,20 @@ def _compute_account_equity_risk_size(
     cfg,
     sizing_trace: dict | None = None,
 ) -> float:
-    """Compute the active Operator target notional from authoritative account data."""
-    from aletheia.risk.engine import account_equity_for_execution
-    from aletheia.risk.policy import resolve_risk_policy
-    from aletheia.trading.sizing import account_equity_risk_budget_size
+    """Compute the active Operator target notional from authoritative account data.
 
-    equity = account_equity_for_execution(execution_mode, cfg)
-    if equity is None:
+    Sized from AVAILABLE balance, not equity: margin already pledged by open
+    positions is excluded, so each entry shrinks the next one and the portfolio
+    converges instead of committing N x the per-trade margin.
+    """
+    from aletheia.risk.engine import account_available_for_execution
+    from aletheia.risk.policy import resolve_risk_policy
+    from aletheia.trading.sizing import available_balance_risk_budget_size
+
+    available = account_available_for_execution(execution_mode, cfg)
+    if available is None or available <= 0:
         raise DecisionUnavailable(
-            f"account_equity_unavailable:{execution_mode}",
+            f"account_available_balance_unavailable:{execution_mode}",
             stage="operator_entry_plan",
         )
     try:
@@ -2356,15 +2361,15 @@ def _compute_account_equity_risk_size(
         else 1.0
     )
     try:
-        return account_equity_risk_budget_size(
-            equity,
+        return available_balance_risk_budget_size(
+            available,
             per_trade_risk_pct,
             leverage=effective_leverage,
             sizing_trace=sizing_trace,
         )
     except ValueError:
         raise DecisionUnavailable(
-            "invalid_account_equity_risk_budget",
+            "invalid_available_balance_risk_budget",
             stage="operator_entry_plan",
         ) from None
 
@@ -2397,7 +2402,7 @@ def _compute_position_size(
         resolved_market = market_type or (
             "usdt_futures" if direction == "short" else "spot"
         )
-        return _compute_account_equity_risk_size(
+        return _compute_available_balance_risk_size(
             execution_mode=execution_mode,
             market_type=resolved_market,
             leverage=leverage,

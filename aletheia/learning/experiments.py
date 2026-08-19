@@ -293,15 +293,18 @@ def _policy_epoch_definition(
                 opportunity_information_policy_context()
             )
             from aletheia.trading.sizing import (
-                ACCOUNT_EQUITY_RISK_BUDGET_POLICY_VERSION,
+                AVAILABLE_BALANCE_RISK_BUDGET_POLICY_VERSION,
             )
 
             # Entry sizing is part of the treatment identity.  A cohort that
-            # mixes conviction/volatility sizing with account-equity risk
-            # budgeting cannot support a causal outcome comparison.
+            # mixes conviction/volatility sizing with account-risk budgeting
+            # cannot support a causal outcome comparison — and neither can one
+            # that mixes equity-based sizing with available-balance sizing, since
+            # the latter shrinks each successive entry.  The version string is
+            # what keeps those outcomes in separate pools.
             values["operator_sizing_policy"] = {
-                "policy_version": ACCOUNT_EQUITY_RISK_BUDGET_POLICY_VERSION,
-                "account_equity_authority": True,
+                "policy_version": AVAILABLE_BALANCE_RISK_BUDGET_POLICY_VERSION,
+                "sizing_basis": "available_balance",
                 "per_trade_risk_source": "risk_policy.loss.max_single_trade_risk_pct",
                 "futures_notional_source": "cost_budget_times_effective_leverage",
                 "demo_per_trade_risk_pct": cfg.risk.demo.loss.max_single_trade_risk_pct,

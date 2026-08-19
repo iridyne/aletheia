@@ -9,7 +9,7 @@ nor payoff odds/return distributions.  The field is a bounded policy scaling
 factor until a separately measured Kelly policy exists.
 
 Legacy helpers can be called from paper_trader for RuleSet-driven entries. The
-active System Operator path uses ``account_equity_risk_budget_size`` instead.
+active System Operator path uses ``available_balance_risk_budget_size`` instead.
 All proposals still pass through Risk Engine gates after sizing.
 """
 from __future__ import annotations
@@ -21,46 +21,59 @@ _MAX_MULTIPLIER = 2.5            # cap: $25 base → $62.50 maximum at peak conv
 _CONVICTION_MIDPOINT = 70.0      # conviction at which multiplier = 1.0 (base notional)
 
 # Stable identity shared by sizing traces and the Operator Learning policy epoch.
-# Changing the treatment requires a fresh evidence cohort.
-ACCOUNT_EQUITY_RISK_BUDGET_POLICY_VERSION = "account-equity-risk-budget/v1"
+# Changing the treatment requires a fresh evidence cohort — the version string is
+# what keeps outcomes from one treatment out of another treatment's evidence pool.
+#
+# v1 sized from account EQUITY, which ignores margin already pledged: every entry
+# got the same full-size budget, so N entries committed N x the per-trade margin
+# and the portfolio could over-commit. Sizing from AVAILABLE balance makes each
+# open position shrink the next entry, so margin converges instead of exhausting
+# and no portfolio-level notional cap has to guess the right ceiling.
+AVAILABLE_BALANCE_RISK_BUDGET_POLICY_VERSION = "available-balance-risk-budget/v1"
 
 
-def account_equity_risk_budget_size(
-    account_equity_usdt: float,
+def available_balance_risk_budget_size(
+    available_balance_usdt: float,
     per_trade_risk_pct: float,
     *,
     leverage: float = 1.0,
     sizing_trace: dict | None = None,
 ) -> float:
-    """Return the notional implied by the account-equity risk budget.
+    """Return the notional implied by the available-balance risk budget.
 
-    ``account_equity × per_trade_risk`` is the margin/cost budget.  Futures
+    ``available_balance × per_trade_risk`` is the margin/cost budget.  Futures
     notional is that budget multiplied by the final effective leverage; spot is
     passed with the structural 1x leverage.  This pure helper intentionally has
     no conviction, strategy, sample-count, ATR, or configured-notional input.
+
+    Available balance — not equity — is the base on purpose: it already excludes
+    margin held by open positions, so a sequence of entries shrinks geometrically
+    and can never pledge more margin than the account has.
     """
     try:
-        equity = float(account_equity_usdt)
+        available = float(available_balance_usdt)
         risk_pct = float(per_trade_risk_pct)
         effective_leverage = float(leverage)
     except (TypeError, ValueError):
-        raise ValueError("invalid_account_equity_risk_budget") from None
-    if equity <= 0 or risk_pct <= 0 or effective_leverage < 1:
-        raise ValueError("invalid_account_equity_risk_budget")
+        raise ValueError("invalid_available_balance_risk_budget") from None
+    if available <= 0 or risk_pct <= 0 or effective_leverage < 1:
+        raise ValueError("invalid_available_balance_risk_budget")
     import math
 
-    if not all(math.isfinite(value) for value in (equity, risk_pct, effective_leverage)):
-        raise ValueError("invalid_account_equity_risk_budget")
-    cost_budget = equity * risk_pct / 100.0
+    if not all(
+        math.isfinite(value) for value in (available, risk_pct, effective_leverage)
+    ):
+        raise ValueError("invalid_available_balance_risk_budget")
+    cost_budget = available * risk_pct / 100.0
     target_notional = cost_budget * effective_leverage
     if not math.isfinite(cost_budget) or not math.isfinite(target_notional):
-        raise ValueError("invalid_account_equity_risk_budget")
+        raise ValueError("invalid_available_balance_risk_budget")
     if sizing_trace is not None:
         sizing_trace.clear()
         sizing_trace.update({
-            "policy_version": ACCOUNT_EQUITY_RISK_BUDGET_POLICY_VERSION,
-            "value_source": "risk_policy_account_equity",
-            "account_equity_usdt": round(equity, 8),
+            "policy_version": AVAILABLE_BALANCE_RISK_BUDGET_POLICY_VERSION,
+            "value_source": "risk_policy_available_balance",
+            "available_balance_usdt": round(available, 8),
             "per_trade_risk_pct": round(risk_pct, 8),
             "cost_budget_usdt": round(cost_budget, 8),
             "leverage": round(effective_leverage, 8),
