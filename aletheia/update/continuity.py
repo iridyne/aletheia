@@ -463,10 +463,12 @@ def compare_update_continuity(
                     proof_gaps.append("main_gateway_identity_unavailable")
         else:
             proof_gaps.append("main_restart_required_for_full_verification")
+    else:
+        proof_gaps.append("main_target_identity_unavailable")
 
     if restart:
         if not gateway.get("available"):
-            failures.append("main_health_unavailable")
+            proof_gaps.append("main_health_unavailable")
         else:
             health_status = gateway.get("health_status")
             if health_status == "degraded":
@@ -555,9 +557,15 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
         else None
     )
 
-    # The postflight must be loaded by the target checkout, not the updater's
-    # pre-pull interpreter and its stale sys.modules cache.
-    after = capture_update_continuity_fresh()
+    # Only a development result with an operation-owned target SHA can be
+    # proven against target-loaded code. If that contract is unavailable, keep
+    # the result explicitly unproven rather than launching a subprocess and
+    # guessing which code/data root it represents.
+    after = (
+        capture_update_continuity_fresh()
+        if expected_target
+        else capture_update_continuity()
+    )
     if restart and expected_target:
         for _ in range(4):
             if _postflight_settled(after, expected_target):
