@@ -4,6 +4,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
+import pytest
 from typer.testing import CliRunner
 
 import aletheia.analytics.profit_gradient_evidence as evidence
@@ -216,7 +217,7 @@ def test_position_assignment_precedes_entry_and_execution_chain_is_validated(mon
     )
 
     assert cost_sample is None
-    assert cost_reason == "cost_not_actionable"
+    assert cost_reason == "cost_baseline_unavailable"
     assert execution_reason is None and execution_sample is not None
     assert observed == [datetime(2026, 8, 13, tzinfo=timezone.utc)]
 
@@ -247,7 +248,103 @@ def test_execution_delta_excludes_settled_fees_and_costs_need_an_alternative(mon
     assert execution["paired_net_delta_quote"] == 2.0
     assert execution["cost_applied_once"] is False
     assert execution["execution_evidence"]["fees_excluded"] is True
-    assert cost is None and cost_reason == "cost_not_actionable"
+    assert cost is None and cost_reason == "cost_baseline_unavailable"
+
+
+def _cost_evidence(**overrides) -> dict:
+    base = {
+        "avoidable": True,
+        "baseline_kind": "turnover",
+        "cost_event_id": "cost-evt-1",
+        "baseline_id": "baseline-1",
+        "cost_model_id": "paper-execution-reference/v1",
+        "avoidable_extra_cost_quote": 0.5,
+    }
+    base.update(overrides)
+    return base
+
+
+def _cost_fact(**ce_overrides) -> dict:
+    fact = _execution_fact()
+    fact["cost_evidence"] = _cost_evidence(**ce_overrides)
+    return fact
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected_reason"),
+    [
+        ("avoidable", False, "cost_not_avoidable"),
+        ("avoidable", None, "cost_not_avoidable"),
+        ("baseline_kind", "zero_fees", "cost_baseline_not_realizable"),
+        ("baseline_kind", None, "cost_baseline_not_realizable"),
+        ("cost_event_id", "", "cost_event_identity_missing"),
+        ("cost_event_id", None, "cost_event_identity_missing"),
+        ("baseline_id", "", "cost_baseline_identity_missing"),
+        ("baseline_id", None, "cost_baseline_identity_missing"),
+        ("cost_model_id", "", "cost_model_identity_missing"),
+        ("cost_model_id", None, "cost_model_identity_missing"),
+        ("avoidable_extra_cost_quote", -0.01, "avoidable_cost_amount_invalid"),
+        ("avoidable_extra_cost_quote", None, "avoidable_cost_amount_invalid"),
+    ],
+)
+def test_cost_evidence_granular_rejection_codes(field, value, expected_reason, monkeypatch):
+    monkeypatch.setattr(
+        evidence,
+        "_position_assignment",
+        lambda *_a, **_k: ("treatment", "cluster-1", "pair-1", "policy-1", "commit-1", None),
+    )
+    fact = _cost_fact(**{field: value})
+    sample, reason = evidence._position_cost_sample(
+        sqlite3.connect(":memory:"),
+        fact,
+        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cost_model_id="paper-execution-reference/v1",
+        epoch_id="epoch-1",
+    )
+    assert sample is None
+    assert reason == expected_reason
+
+
+def test_cost_evidence_all_valid_baseline_kinds_are_admitted(monkeypatch):
+    monkeypatch.setattr(
+        evidence,
+        "_position_assignment",
+        lambda *_a, **_k: ("treatment", "cluster-1", "pair-1", "policy-1", "commit-1", None),
+    )
+    for kind in ("realizable_limit", "spot_vs_perpetual", "turnover", "venue"):
+        fact = _cost_fact(baseline_kind=kind)
+        sample, reason = evidence._position_cost_sample(
+            sqlite3.connect(":memory:"),
+            fact,
+            cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
+            epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+            cost_model_id="paper-execution-reference/v1",
+            epoch_id="epoch-1",
+        )
+        assert reason is None, f"baseline_kind={kind!r} rejected with {reason!r}"
+        assert sample is not None
+        assert sample["component"] == "avoidable_extra_cost"
+        assert sample["cost_applied_once"] is True
+
+
+def test_cost_evidence_absent_is_baseline_unavailable_not_zero(monkeypatch):
+    monkeypatch.setattr(
+        evidence,
+        "_position_assignment",
+        lambda *_a, **_k: ("treatment", "cluster-1", "pair-1", "policy-1", "commit-1", None),
+    )
+    fact = _execution_fact()
+    sample, reason = evidence._position_cost_sample(
+        sqlite3.connect(":memory:"),
+        fact,
+        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cost_model_id="paper-execution-reference/v1",
+        epoch_id="epoch-1",
+    )
+    assert sample is None
+    assert reason == "cost_baseline_unavailable"
 
 
 def test_execution_sample_rejects_invalid_fill_chain(monkeypatch):
