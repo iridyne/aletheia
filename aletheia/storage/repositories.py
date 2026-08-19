@@ -8961,6 +8961,42 @@ def prune_perp_structure_snapshots(days: int = 30) -> int:
     return _delete_by_rowid_batches("perp_structure_snapshots", "observed_at < ?", (cutoff,))
 
 
+def insert_options_structure_snapshot(data: dict) -> None:
+    """Persist one OptionsMarketStructureSnapshot row."""
+    _insert("options_market_structure_snapshots", data)
+
+
+def latest_options_structure(symbol: str) -> dict | None:
+    rows = _select_all(
+        "options_market_structure_snapshots",
+        where="symbol = ?",
+        params=(symbol,),
+        order="observed_at DESC",
+        limit=1,
+    )
+    return rows[0] if rows else None
+
+
+def batch_options_structures(symbols: list[str]) -> dict[str, dict]:
+    """Return {symbol: latest_row} for each symbol that has data."""
+    if not symbols:
+        return {}
+    placeholders = ",".join("?" * len(symbols))
+    db = get_db()
+    rows = db.execute(
+        f"SELECT * FROM options_market_structure_snapshots "
+        f"WHERE symbol IN ({placeholders}) "
+        f"AND observed_at = (SELECT MAX(o2.observed_at) FROM options_market_structure_snapshots o2 WHERE o2.symbol = options_market_structure_snapshots.symbol)",
+        symbols,
+    ).fetchall()
+    return {dict(row)["symbol"]: dict(row) for row in rows}
+
+
+def prune_options_structure_snapshots(days: int = 30) -> int:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return _delete_by_rowid_batches("options_market_structure_snapshots", "observed_at < ?", (cutoff,))
+
+
 def prune_perp_structure_shadow_outcomes(days: int = 30) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()

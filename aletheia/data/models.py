@@ -141,6 +141,36 @@ class MacroSnapshot(BaseModel):
     observed_at: str = ""
 
 
+class OptionsMarketStructureSnapshot(BaseModel):
+    """Derived options market-structure factors from Deribit public API.
+
+    GEX convention v1 (retail_call_minus_put):
+        net_gex = Σ[call_gamma * call_oi - put_gamma * put_oi] * spot² * 0.01 (USD/1%move)
+        Dealer assumption: dealers are short calls (sold to retail bulls) and
+        long puts (bought from retail hedgers). This is an approximation; actual
+        dealer inventory is not observable from public data.
+        positive net_gex → call OI heavy → commonly "positive gamma" (stabilizing) regime
+        negative net_gex → put OI heavy → commonly "negative gamma" (amplifying) regime
+    """
+
+    symbol: str  # BTC or ETH
+    source: str = "deribit_public"
+    gex_convention: str = "v1_retail_call_minus_put"
+    underlying_price: float | None = None
+    net_gex_estimate: float | None = None  # USD per 1% spot move
+    gamma_regime: str | None = None  # "positive" | "negative" | "neutral"
+    gamma_flip_estimate: float | None = None  # spot level where net GEX crosses zero
+    call_gamma_wall: float | None = None  # strike with highest call gamma exposure
+    put_gamma_wall: float | None = None  # strike with highest put gamma exposure
+    nearest_gamma_wall_distance: float | None = None  # % from current spot
+    options_open_interest: float | None = None  # total OI in base currency contracts
+    call_oi: float | None = None
+    put_oi: float | None = None
+    valid_strike_count: int | None = None
+    data_quality: str = "ok"
+    observed_at: str
+
+
 class MarketContextSnapshot(BaseModel):
     id: str
     symbols: list[str] = Field(default_factory=list)

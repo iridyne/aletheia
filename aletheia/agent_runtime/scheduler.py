@@ -3040,6 +3040,7 @@ def _run_cleanup():
             "orderbook_snapshots": repo.prune_orderbook_snapshots(7),
             "perp_structure_shadow_outcomes": repo.prune_perp_structure_shadow_outcomes(30),
             "perp_structure_snapshots": repo.prune_perp_structure_snapshots(30),
+            "options_market_structure_snapshots": repo.prune_options_structure_snapshots(30),
             "liquidation_events": repo.prune_liquidation_events(7),
             "funding_rate_snapshots": repo.prune_funding_rate_snapshots(r.funding_rate_snapshots_days),
             "open_interest_snapshots": repo.prune_open_interest_snapshots(r.open_interest_snapshots_days),
@@ -4335,6 +4336,15 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
         _record_collector_health("coinalyze", "disabled")
     else:
         _record_collector_health("coinalyze", "not_configured")
+    if getattr(cfg.market_data, "enable_options_structure", True):
+        from aletheia.data.collectors.options_structure import OptionsStructureCollector
+
+        tasks.append((
+            "options_structure",
+            _bounded(OptionsStructureCollector().collect(), "options_structure", 20.0, deadline),
+        ))
+    else:
+        _record_collector_health("options_structure", "disabled")
     wave_two = dict(zip(
         (label for label, _ in tasks),
         await asyncio.gather(*(coro for _, coro in tasks)),
@@ -4350,6 +4360,9 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     coinalyze_result = wave_two.get("coinalyze") or {}
     if coinalyze_result.get("errors"):
         logger.debug("coinalyze collection errors: %s", coinalyze_result["errors"])
+    options_result = wave_two.get("options_structure") or {}
+    if options_result.get("errors"):
+        logger.debug("options_structure collection errors: %s", options_result["errors"])
 
     # Build all persistence payloads before opening SQLite's single writer slot.
     hyperliquid_result = wave_one.get("hyperliquid") or {}
@@ -4368,6 +4381,9 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     ]
     coinalyze_liquidations = [
         row.model_dump() for row in coinalyze_result.get("liquidations", [])
+    ]
+    options_snapshots = [
+        snap.model_dump() for snap in options_result.get("snapshots", [])
     ]
     macro_row = macro_snapshot.model_dump() if macro_snapshot else None
     context_error_codes: list[str] = []
@@ -4418,6 +4434,15 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
                     open_interest=coinalyze_oi,
                     liquidations=coinalyze_liquidations,
                 ),
+            )
+        if options_snapshots:
+            _options_snapshots = options_snapshots
+            _persist_domain(
+                "options_structure",
+                lambda: [
+                    repo.insert_options_structure_snapshot(row)
+                    for row in _options_snapshots
+                ],
             )
 
     from aletheia.data.collector_health import classify_collector_result

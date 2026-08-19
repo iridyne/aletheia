@@ -80,6 +80,7 @@ def render_enriched_context_md(
     onchain: list[dict] | None = None,
     xvenue_funding: dict[str, dict] | None = None,
     perp_structure: dict[str, dict] | None = None,
+    options_structure: dict[str, dict] | None = None,
 ) -> str:
     """Render a markdown block with microstructure + derivatives + macro sections.
 
@@ -96,6 +97,10 @@ def render_enriched_context_md(
     perp_structure: {symbol: latest row} — observation-only perp positioning
     structure (value area, POC, liquidation walls, concentration). Omitted when
     empty so the prompt never invents this signal.
+
+    options_structure: {currency: latest row} — derived GEX/gamma-structure factors
+    from Deribit public options chain (BTC/ETH only). Supplementary context only;
+    do not promote to hard filters without Shadow attribution. Omitted when empty.
 
     Returns "" if all domains are empty so callers can skip appending.
     """
@@ -222,6 +227,40 @@ def render_enriched_context_md(
                 ps_rows.append(f"{sym} ({src}/{venue}): " + "; ".join(parts))
         if ps_rows:
             sections.append("### Perp structure (positioning map)\n" + "  \n".join(ps_rows))
+
+    # --- Options market structure (Deribit public chain; BTC/ETH only) ---
+    if options_structure:
+        opt_rows: list[str] = []
+        for currency in ("BTC", "ETH"):
+            row = options_structure.get(currency)
+            if not row:
+                continue
+            parts: list[str] = []
+            regime = row.get("gamma_regime")
+            net_gex = row.get("net_gex_estimate")
+            if regime:
+                parts.append(f"gamma regime: {regime}")
+            if net_gex is not None:
+                parts.append(f"net GEX {_fmt_usd_compact(net_gex)}/1%move")
+            flip = row.get("gamma_flip_estimate")
+            if flip is not None:
+                parts.append(f"gamma flip ~{_fmt_usd(flip)}")
+            call_wall = row.get("call_gamma_wall")
+            put_wall = row.get("put_gamma_wall")
+            if call_wall:
+                parts.append(f"call wall {_fmt_usd(call_wall)}")
+            if put_wall:
+                parts.append(f"put wall {_fmt_usd(put_wall)}")
+            dist = row.get("nearest_gamma_wall_distance")
+            if dist is not None:
+                parts.append(f"nearest wall {dist:.1f}% from spot")
+            if parts:
+                opt_rows.append(f"{currency}: " + "; ".join(parts))
+        if opt_rows:
+            sections.append(
+                "### Options market structure (Deribit public; GEX convention v1)\n"
+                + "  \n".join(opt_rows)
+            )
 
     # --- Macro ---
     if macro:
