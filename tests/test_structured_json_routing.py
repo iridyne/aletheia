@@ -1,4 +1,4 @@
-"""JSON-mode and glm-first routing for structured trade LLM calls."""
+"""JSON-mode routing for structured trade LLM calls (flash first, glm later)."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def test_prefers_json_reliable_models_only_for_trade_json_callers():
     assert _prefers_json_reliable_models("market_observer.market_read") is False
 
 
-def test_order_structured_json_candidates_puts_glm_first_without_sinking_flash(monkeypatch):
+def test_order_structured_json_candidates_keeps_flash_first_and_glm_later(monkeypatch):
     from aletheia.model_provider import fallback
     from aletheia.model_provider.fallback import _json_model_rank, _order_structured_json_candidates
 
@@ -74,16 +74,48 @@ def test_order_structured_json_candidates_puts_glm_first_without_sinking_flash(m
             ("openrouter", "cohere/north-mini-code:free"),
         ]
     )
-    assert ordered[0] == ("sensenova_glm", "glm-5.2")
-    assert [item[1] for item in ordered[1:]] == [
+    assert ordered[0] == ("sensenova", "deepseek-v4-flash")
+    assert ordered[-2] == ("sensenova_glm", "glm-5.2")
+    assert [item[1] for item in ordered] == [
         "deepseek-v4-flash",
         "sensenova-6.8-flash-lite",
+        "glm-5.2",
         "cohere/north-mini-code:free",
     ]
 
 
+def test_order_structured_json_candidates_appends_missing_glm_without_promoting(monkeypatch):
+    from aletheia.model_provider import fallback
+    from aletheia.model_provider.fallback import _MAX_MODELS_PER_REQUEST, _order_structured_json_candidates
+
+    monkeypatch.setattr(
+        fallback,
+        "_enabled_json_preferred_models",
+        lambda: [("sensenova_glm", "glm-5.2")],
+    )
+    short = _order_structured_json_candidates(
+        [
+            ("sensenova", "deepseek-v4-flash"),
+            ("sensenova", "sensenova-6.8-flash-lite"),
+        ]
+    )
+    assert short[0] == ("sensenova", "deepseek-v4-flash")
+    assert short[-1] == ("sensenova_glm", "glm-5.2")
+
+    full = [
+        ("sensenova", f"model-{idx}")
+        for idx in range(_MAX_MODELS_PER_REQUEST)
+    ]
+    capped = _order_structured_json_candidates(full)
+    assert capped[0] == ("sensenova", "model-0")
+    assert capped[-1] == ("sensenova_glm", "glm-5.2")
+    assert len(capped) == _MAX_MODELS_PER_REQUEST
+    assert ("sensenova_glm", "glm-5.2") in capped
+    assert capped[0][1] != "glm-5.2"
+
+
 @pytest.mark.asyncio
-async def test_complete_with_fallback_prefers_glm_for_trade_json(monkeypatch):
+async def test_complete_with_fallback_tries_flash_first_for_trade_json(monkeypatch):
     _patch_candidates(monkeypatch, ["deepseek-v4-flash", "glm-5.2"])
     from aletheia.model_provider import fallback
 
@@ -97,9 +129,9 @@ async def test_complete_with_fallback_prefers_glm_for_trade_json(monkeypatch):
         provider_name="sensenova",
     )
 
-    assert resp.content == "ok:glm-5.2"
-    assert provider.calls == ["glm-5.2"]
-    assert resp.raw["aletheia_model_fallback"]["requested_model"] == "sensenova/glm-5.2"
+    assert resp.content == "ok:deepseek-v4-flash"
+    assert provider.calls == ["deepseek-v4-flash"]
+    assert resp.raw["aletheia_model_fallback"]["requested_model"] == "sensenova/deepseek-v4-flash"
 
 
 @pytest.mark.asyncio
@@ -138,13 +170,13 @@ async def test_complete_with_fallback_skips_excluded_flash_model(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_complete_with_fallback_falls_back_to_flash_when_glm_unavailable(monkeypatch):
+async def test_complete_with_fallback_falls_back_to_glm_when_flash_unavailable(monkeypatch):
     _patch_candidates(monkeypatch, ["deepseek-v4-flash", "glm-5.2"])
     from aletheia.model_provider import fallback
 
     provider = FakeProvider(
         model="deepseek-v4-flash",
-        fail_models={"glm-5.2": "429 Too Many Requests"},
+        fail_models={"deepseek-v4-flash": "429 Too Many Requests"},
     )
     resp = await fallback.complete_with_fallback(
         ModelRequest(
@@ -155,12 +187,12 @@ async def test_complete_with_fallback_falls_back_to_flash_when_glm_unavailable(m
         provider_name="sensenova",
     )
 
-    assert resp.content == "ok:deepseek-v4-flash"
-    assert provider.calls == ["glm-5.2", "deepseek-v4-flash"]
+    assert resp.content == "ok:glm-5.2"
+    assert provider.calls == ["deepseek-v4-flash", "glm-5.2"]
 
 
 @pytest.mark.asyncio
-async def test_complete_with_fallback_injects_enabled_glm_provider(monkeypatch):
+async def test_complete_with_fallback_injects_enabled_glm_provider_after_flash(monkeypatch):
     _patch_candidates(
         monkeypatch,
         ["deepseek-v4-flash"],
@@ -184,9 +216,42 @@ async def test_complete_with_fallback_injects_enabled_glm_provider(monkeypatch):
         provider_name="sensenova",
     )
 
+    assert resp.content == "ok:deepseek-v4-flash"
+    assert flash.calls == ["deepseek-v4-flash"]
+    assert glm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_complete_with_fallback_uses_injected_glm_after_flash_429(monkeypatch):
+    _patch_candidates(
+        monkeypatch,
+        ["deepseek-v4-flash"],
+        extra_glm=[("sensenova_glm", "glm-5.2")],
+    )
+    from aletheia.model_provider import fallback
+
+    flash = FakeProvider(
+        model="deepseek-v4-flash",
+        fail_models={"deepseek-v4-flash": "429 Too Many Requests"},
+    )
+    glm = FakeProvider(model="glm-5.2")
+
+    def get_provider(name):
+        return {"sensenova": flash, "sensenova_glm": glm}[name]
+
+    monkeypatch.setattr(fallback.provider_router, "get_provider", get_provider)
+    resp = await fallback.complete_with_fallback(
+        ModelRequest(
+            messages=[{"role": "user", "content": "x"}],
+            prefer_json_reliable_models=True,
+        ),
+        provider=flash,
+        provider_name="sensenova",
+    )
+
     assert resp.content == "ok:glm-5.2"
+    assert flash.calls == ["deepseek-v4-flash"]
     assert glm.calls == ["glm-5.2"]
-    assert flash.calls == []
 
 
 @pytest.mark.asyncio

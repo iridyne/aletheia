@@ -122,6 +122,7 @@ class ModelRequest:
     allow_model_fallback: bool = True
     reasoning_effort: Literal["none", "low", "medium", "high"] | None = None
     response_format: Literal["json_object"] | None = None
+    # Trade JSON: keep glm-5.2 in the later fallback pool; do not promote it first.
     prefer_json_reliable_models: bool = False
     exclude_models: tuple[str, ...] = ()
 

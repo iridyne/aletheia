@@ -29,8 +29,8 @@ _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC = 180.0
 _LAST_INFERENCE_CALL_ID: ContextVar[str | None] = ContextVar(
     "aletheia_last_inference_call_id", default=None
 )
-# Structured trade JSON: prefer glm-5.2 over flash. News/research stay on the
-# default chain so glm quota is not spent on every structured helper call.
+# Structured trade JSON: keep glm-5.2 in the later fallback pool, not first.
+# News/research stay on the default chain so glm quota is not spent on every call.
 _TRADE_JSON_CALLER_PREFIXES = (
     "system_operator.",
     "risk_critic.",
@@ -653,7 +653,7 @@ async def llm_structured(
         None so existing providers and callers keep their exact request shape.
         Structured calls also request ``response_format=json_object``; providers
         that do not implement it retry without the field. Trade JSON callers
-        additionally prefer JSON-reliable models (glm-5.2) and skip a model that
+        keep glm-5.2 as a later fallback (not the primary) and skip a model that
         already returned unusable JSON for this logical call.
     """
     # #161 fix (mirrors llm_complete): thread the tier's provider name into
