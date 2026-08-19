@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from aletheia.universe.allocator import (
     compute_total_score, allocate_universe, compute_late_entry_penalty,
+    compute_direction_exhaustion_signal,
     get_family_multipliers,
 )
 from aletheia.config.schema import UniverseConfig
@@ -181,6 +182,52 @@ def test_late_entry_penalty_normal():
     feat = {"return_1h": 0.5, "return_4h": 1.0, "rsi_14": 55}
     penalty = compute_late_entry_penalty(feat)
     assert penalty == 0.0
+
+
+def test_direction_exhaustion_signal_flags_exhausted_momentum_short():
+    # INTC-shaped candidate: -6.35% 24h, RSI1h 34.65 — should be flagged
+    feat = {"market_type": "perp", "return_24h": -6.35, "rsi_14": 34.65, "rsi_15m": 29.59}
+    scanner = {"scanner_family": "momentum", "scanner_direction": "short"}
+    assert compute_direction_exhaustion_signal(feat, scanner) is True
+
+
+def test_direction_exhaustion_signal_no_flag_for_long():
+    feat = {"market_type": "perp", "return_24h": -6.0, "rsi_14": 28.0, "rsi_15m": 22.0}
+    scanner = {"scanner_family": "momentum", "scanner_direction": "long"}
+    assert compute_direction_exhaustion_signal(feat, scanner) is False
+
+
+def test_direction_exhaustion_signal_no_flag_for_spot():
+    feat = {"market_type": "spot", "return_24h": -6.0, "rsi_14": 30.0}
+    scanner = {"scanner_family": "momentum", "scanner_direction": "short"}
+    assert compute_direction_exhaustion_signal(feat, scanner) is False
+
+
+def test_direction_exhaustion_signal_no_flag_shallow_decline():
+    # Only -2% 24h — not exhausted
+    feat = {"market_type": "perp", "return_24h": -2.0, "rsi_14": 28.0, "rsi_15m": 22.0}
+    scanner = {"scanner_family": "momentum", "scanner_direction": "short"}
+    assert compute_direction_exhaustion_signal(feat, scanner) is False
+
+
+def test_direction_exhaustion_signal_stored_on_feat(cfg):
+    feat = {
+        "tradability_score": 80.0,
+        "quote_volume_24h": 50_000_000,
+        "spread_bps": 5.0,
+        "rsi_14": 34.0,
+        "rsi_15m": 28.0,
+        "return_1h": -1.5,
+        "return_4h": -3.0,
+        "return_24h": -6.0,
+        "data_freshness_sec": 200,
+        "market_type": "perp",
+    }
+    scanner = {"opportunity_score": 70.0, "scanner_family": "momentum", "scanner_direction": "short"}
+    compute_total_score(feat, scanner, cfg)
+    # Observation-only flag is stored but does not change penalty behavior
+    assert feat["direction_exhaustion_signal"] is True
+    assert feat["late_entry_penalty"] == compute_late_entry_penalty(feat)
 
 
 def test_total_score_formula(cfg):

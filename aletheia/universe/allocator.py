@@ -222,6 +222,33 @@ def get_family_multipliers(
     return multipliers
 
 
+_DERIVATIVE_MARKET_TYPES = frozenset({"perp", "swap", "futures", "usdt_futures"})
+
+
+def compute_direction_exhaustion_signal(feat: dict, scanner_result: dict) -> bool:
+    """Shadow-only: flag exhausted momentum shorts for counterfactual observation.
+
+    Returns True when a momentum:short:perp candidate shows 24h extension and
+    oversold RSI — evidence the short opportunity may already be extended.
+    No behavior change: this flag is observation-only and does not affect admission
+    or scoring. Outcome tracking at the declared 4h horizon determines whether
+    suppressing these candidates produces a cost-aware delta.
+    """
+    if scanner_result.get("scanner_family") != "momentum":
+        return False
+    direction = scanner_result.get("scanner_direction") or scanner_result.get("direction")
+    if direction != "short":
+        return False
+    if feat.get("market_type", "spot") not in _DERIVATIVE_MARKET_TYPES:
+        return False
+    return_24h = feat.get("return_24h")
+    if return_24h is None or return_24h > -4.0:
+        return False
+    rsi_1h = feat.get("rsi_14")
+    rsi_15m = feat.get("rsi_15m")
+    return (rsi_1h is not None and rsi_1h <= 35.0) or (rsi_15m is not None and rsi_15m <= 30.0)
+
+
 def compute_late_entry_penalty(feat: dict) -> float:
     """Compute penalty for chasing a move that's already extended.
 
@@ -464,6 +491,7 @@ def compute_total_score(
     feat["estimated_cost"] = estimated_cost
     feat["crowding_risk"] = crowding
     feat["late_entry_penalty"] = late_penalty
+    feat["direction_exhaustion_signal"] = compute_direction_exhaustion_signal(feat, scanner_result)
 
     return max(0.0, min(100.0, total))
 
