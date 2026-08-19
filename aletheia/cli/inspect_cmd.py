@@ -2074,3 +2074,57 @@ def opportunity_lifecycle(
         _output(story, True)
     else:
         typer.echo(render_opportunity_lifecycle_story(story))
+
+
+@inspect_app.command("profit-loop-qualification")
+def profit_loop_qualification(
+    registration_file: Path = typer.Option(
+        ...,
+        "--registration",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        help="JSON file with pre-registered cohort identity (see profit_loop_qualification.py).",
+    ),
+    cutoff_at: str = typer.Option(
+        ...,
+        "--cutoff",
+        "--cutoff-at",
+        help="Frozen UTC evaluation cutoff (ISO-8601 with timezone). Must be fixed before outcome inspection.",
+    ),
+    output: Optional[Path] = typer.Option(
+        None, "--output", help="Write the hashed verdict artifact to this path."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Print raw JSON to stdout."),
+):
+    """Evaluate a frozen policy cohort and emit the whole-policy profitability verdict.
+
+    Read-only. Never modifies DB, config, or trading authority.
+    Issue #988: prove or reject the minimum net-profitable frozen policy cohort.
+
+    The registration file must be written before the first eligible prospective
+    close and must not be changed after outcome inspection begins.
+    """
+    from aletheia.analytics.profit_loop_qualification import compile_qualification_verdict
+
+    payload = json.loads(registration_file.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise typer.BadParameter("registration must be a JSON object")
+
+    try:
+        datetime.fromisoformat(cutoff_at.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        raise typer.BadParameter(
+            "invalid cutoff timestamp; use ISO-8601 with timezone", param_hint="--cutoff"
+        )
+
+    verdict = compile_qualification_verdict(registration=payload, cutoff_at=cutoff_at)
+
+    if output is not None:
+        output.write_text(
+            json.dumps(verdict, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+        typer.echo(f"verdict={verdict['verdict']} hash={verdict['content_hash'][:16]}... → {output}")
+    else:
+        _output(verdict, json_output)
