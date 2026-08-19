@@ -19,7 +19,7 @@ _DERIVATIVES_MARKET_TYPES = frozenset({"perp", "swap", "futures", "usdt_futures"
 # measurement contract, not a runtime policy switch: changing it does not alter
 # scores.  Directionally incoherent evidence was removed in v2; the golden
 # baseline is versioned so old/new score comparisons remain auditable.
-UNIVERSE_SCORER_BEHAVIOR_VERSION = "universe-step-v2"
+UNIVERSE_SCORER_BEHAVIOR_VERSION = "universe-step-v3"
 
 
 def score_momentum(feat: dict) -> tuple[float, list[str], str | None]:
@@ -151,6 +151,7 @@ def score_mean_reversion(feat: dict) -> tuple[float, list[str], str | None]:
     score = 0.0
     reasons = []
     direction = None
+    opposing = False
 
     rsi_val = feat.get("rsi_14")
     rsi_4h = feat.get("rsi_4h")
@@ -188,6 +189,8 @@ def score_mean_reversion(feat: dict) -> tuple[float, list[str], str | None]:
             if direction == evidence_direction:
                 score += 15.0
                 reasons.append(f"4h RSI {rsi_4h:.0f} overbought")
+            else:
+                opposing = True
         elif rsi_4h <= 25:
             evidence_direction = "long"
             if direction is None:
@@ -195,6 +198,8 @@ def score_mean_reversion(feat: dict) -> tuple[float, list[str], str | None]:
             if direction == evidence_direction:
                 score += 15.0
                 reasons.append(f"4h RSI {rsi_4h:.0f} oversold")
+            else:
+                opposing = True
 
     # === Overextended returns ===
     if ret_4h is not None:
@@ -205,6 +210,8 @@ def score_mean_reversion(feat: dict) -> tuple[float, list[str], str | None]:
             if direction == evidence_direction:
                 score += 25.0
                 reasons.append(f"4h overextended +{ret_4h:.1f}%")
+            else:
+                opposing = True
         elif ret_4h < -8.0:
             evidence_direction = "long"
             if direction is None:
@@ -212,6 +219,8 @@ def score_mean_reversion(feat: dict) -> tuple[float, list[str], str | None]:
             if direction == evidence_direction:
                 score += 25.0
                 reasons.append(f"4h overextended {ret_4h:.1f}%")
+            else:
+                opposing = True
 
     # === 24h extension ===
     if ret_24h is not None:
@@ -222,6 +231,8 @@ def score_mean_reversion(feat: dict) -> tuple[float, list[str], str | None]:
             if direction == evidence_direction:
                 score += 15.0
                 reasons.append(f"24h extended +{ret_24h:.1f}%")
+            else:
+                opposing = True
         elif ret_24h < -12.0:
             evidence_direction = "long"
             if direction is None:
@@ -229,23 +240,26 @@ def score_mean_reversion(feat: dict) -> tuple[float, list[str], str | None]:
             if direction == evidence_direction:
                 score += 15.0
                 reasons.append(f"24h extended {ret_24h:.1f}%")
+            else:
+                opposing = True
 
-    # === Volume exhaustion confirmation ===
+    # Fail closed: any qualifying factor opposing the chosen direction → directionless.
+    if direction is None or opposing:
+        return 0.0, [], None
+
+    # === Volume exhaustion confirmation (direction-neutral) ===
     if vol_ratio is not None and vol_ratio < 0.7:
         score += 15.0
         reasons.append("volume exhaustion")
 
     # === Funding confirms crowding (reversion more likely) ===
-    if funding is not None and direction is not None:
+    if funding is not None:
         if direction == "short" and funding > ELEVATED_FUNDING_RATE:
             score += 15.0
             reasons.append("crowded longs (funding)")
         elif direction == "long" and funding < -ELEVATED_FUNDING_RATE:
             score += 15.0
             reasons.append("crowded shorts (funding)")
-
-    if direction is None:
-        score = 0.0
 
     return max(0.0, min(100.0, score)), reasons, direction
 
