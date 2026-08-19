@@ -58,6 +58,40 @@ _LAB_SCHEMA_SQL = (
     ");"
     "CREATE INDEX IF NOT EXISTS idx_ufc_shadow_equivalence_obs "
     "ON ufc_shadow_equivalence(observation_id, checked_at DESC);"
+    # ExecutionManifest (Issue #1072 Cluster 3 / §"Minimal contracts").
+    # Immutable per (observation_id, generation, manifest_hash). Publishing
+    # a semantically different manifest for the same observation MUST create
+    # a new generation — this table never UPDATEs, only INSERTs.
+    "CREATE TABLE IF NOT EXISTS execution_manifests ("
+    "manifest_id TEXT PRIMARY KEY,"
+    "observation_id TEXT NOT NULL,"
+    "generation INTEGER NOT NULL,"
+    "spec_hash TEXT NOT NULL,"
+    "manifest_hash TEXT NOT NULL UNIQUE,"
+    "treatment_adapter_id TEXT NOT NULL,"
+    "treatment_adapter_version TEXT NOT NULL,"
+    "assignment_policy TEXT NOT NULL,"
+    "assignment_salt TEXT NOT NULL,"
+    "assignment_unit_key_template TEXT NOT NULL,"
+    "allocation_pct REAL NOT NULL,"
+    "control_payload_json TEXT NOT NULL,"
+    "treatment_payload_json TEXT NOT NULL,"
+    "eligible_population_json TEXT NOT NULL,"
+    "behavior_contract_hash TEXT NOT NULL,"
+    "interference_key TEXT NOT NULL,"
+    "composability_contract TEXT NOT NULL,"       # 'exclusive' / 'disjoint_population' / 'factorial'
+    "effective_from TEXT NOT NULL,"
+    "effective_until TEXT,"
+    "deterministic_baseline_json TEXT NOT NULL,"
+    "unavailable_fallback TEXT NOT NULL,"          # e.g. 'baseline' / 'exclude'
+    "owner_admission_ref TEXT,"
+    "created_at TEXT NOT NULL,"
+    "UNIQUE (observation_id, generation)"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_execution_manifests_active "
+    "ON execution_manifests(effective_from, effective_until);"
+    "CREATE INDEX IF NOT EXISTS idx_execution_manifests_interference "
+    "ON execution_manifests(interference_key, effective_from);"
 )
 
 
