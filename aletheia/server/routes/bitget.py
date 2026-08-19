@@ -436,6 +436,7 @@ async def uta_state():
             "total_unrealized_pnl": bitget.get("futures_unrealized_pnl", 0),
             "accounts": [{
                 "broker_id": "bitget_demo",
+                "bitget_profile": load_config().exchange.bitget_profile,
                 "display_name": "Bitget Demo",
                 "equity_usdt": bitget.get("equity_usdt", 0),
                 "available_usdt": bitget.get("available_usdt", 0),

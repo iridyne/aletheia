@@ -399,7 +399,7 @@ def test_replace_exchange_stop_cancel_and_replace(
 
         replace_exchange_stop("pos-3", 94000.0)
 
-        mock_cls.assert_called_once_with(mode=expected_client_mode)
+        mock_cls.assert_called_once_with(mode=expected_client_mode, profile="classic_v2")
         assert mock_update.called
         stored = json.loads(mock_update.call_args[1]["exchange_tpsl_order_id"])
         assert stored["sl"] == "new-sl-id"

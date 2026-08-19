@@ -65,6 +65,13 @@ def _client_mode_for_execution_mode(execution_mode: str) -> str:
     raise ValueError(f"unsupported Bitget execution mode: {execution_mode!r}")
 
 
+def _configured_bitget_profile() -> str:
+    """Return the configured Bitget profile (classic_v2 | uta_v3) from active config."""
+    from aletheia.config.loader import load_config
+
+    return load_config().exchange.bitget_profile
+
+
 def _guard_unresolved_submission(proposal_id: str, execution_mode: str) -> None:
     placeholders = ",".join("?" for _ in _RETRY_SUPPRESSING_ORDER_STATES)
     row = get_db().execute(
@@ -219,6 +226,7 @@ def execute_live_order(
     try:
         client = BitgetClient(
             mode=_client_mode_for_execution_mode(order.execution_mode),
+            profile=_configured_bitget_profile(),
         )
     except Exception:
         # No exchange method has run yet, so this is a known pre-submission
@@ -418,7 +426,8 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
     # has since flipped the configured mode (mirrors close_testnet_position).
     try:
         client = BitgetClient(
-            mode=_client_mode_for_execution_mode(row["execution_mode"])
+            mode=_client_mode_for_execution_mode(row["execution_mode"]),
+            profile=_configured_bitget_profile(),
         )
     except Exception:
         # The close claim was persisted before client construction. Since no
@@ -647,7 +656,8 @@ def replace_exchange_stop(position_id: str, new_stop_price: float) -> None:
     if not row or not row.get("exchange_tpsl_order_id"):
         return
     client = BitgetClient(
-        mode=_client_mode_for_execution_mode(row.get("execution_mode"))
+        mode=_client_mode_for_execution_mode(row.get("execution_mode")),
+        profile=_configured_bitget_profile(),
     )
     exchange_symbol = to_bitget(row["symbol"])
     hold_side = "long" if row["direction"] in ("long", "buy") else "short"

@@ -393,7 +393,29 @@ def _run_checks(cfg, state_store) -> list[dict]:
     ok, detail = _check_pending_closes(cfg, state_store); add("pending_closes", ok, detail)
     ok, detail = _check_reconciliation_incident(cfg); add("reconciliation_incident", ok, detail)
     ok, detail = _check_learning_influence(cfg); add("learning_influence", ok, detail)
+    # Non-blocking: validates bitget_profile is known and warns if uta_v3 is active.
+    # Fails closed on unknown value (config_drift), warns on Experimental uta_v3.
+    ok, detail = _check_bitget_profile(cfg)
+    checks.append({"name": "bitget_profile", "ok": ok, "detail": detail, "blocking": False})
     return checks
+
+
+def _check_bitget_profile(cfg) -> tuple[bool, str]:
+    """Validate bitget_profile is a known value and warn on Experimental uta_v3."""
+    from aletheia.exchanges.bitget.client import _KNOWN_PROFILES
+
+    try:
+        mode = cfg.exchange.paper_execution_mode or ""
+        profile = (getattr(cfg.exchange, "bitget_profile", None) or "classic_v2").strip()
+    except Exception as e:
+        return False, f"bitget_profile check failed: {e}"
+    if profile not in _KNOWN_PROFILES:
+        return False, f"bitget_profile={profile!r} is not a known profile {sorted(_KNOWN_PROFILES)}"
+    if "bitget" not in mode:
+        return True, f"bitget_profile={profile!r} (bitget not active)"
+    if profile == "uta_v3":
+        return True, "bitget_profile=uta_v3 (Experimental — Demo qualification required before live use)"
+    return True, f"bitget_profile={profile!r} (classic_v2, active)"
 
 
 def _user_block(cfg) -> str | None:
