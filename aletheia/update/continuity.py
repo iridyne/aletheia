@@ -41,6 +41,8 @@ def _gateway_status() -> dict[str, Any]:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         with opener.open(request, timeout=2) as response:
             payload = json.loads(response.read().decode("utf-8"))
+        execution = payload.get("observation_execution")
+        execution = execution if isinstance(execution, dict) else {}
         return {
             "available": True,
             "unavailable_reason": None,
@@ -48,6 +50,7 @@ def _gateway_status() -> dict[str, Any]:
             "current_commit": payload.get("current_commit") or payload.get("head_commit"),
             "scheduler_running": payload.get("scheduler_running"),
             "scheduler_job_count": payload.get("scheduler_job_count"),
+            "observation_execution": execution,
         }
     except Exception as exc:
         return {
@@ -58,6 +61,7 @@ def _gateway_status() -> dict[str, Any]:
             "current_commit": None,
             "scheduler_running": None,
             "scheduler_job_count": None,
+            "observation_execution": {},
         }
 
 
@@ -205,6 +209,12 @@ def capture_update_continuity() -> dict[str, Any]:
     }
 
 
+def _runtime_owner_proof(snapshot: dict[str, Any]) -> dict[str, Any]:
+    gateway = snapshot.get("gateway") or {}
+    execution = gateway.get("observation_execution") or {}
+    return execution if isinstance(execution, dict) else {}
+
+
 def evaluate_preflight(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Fail only on structural pre-existing integrity faults."""
     failures: list[str] = []
@@ -213,6 +223,16 @@ def evaluate_preflight(snapshot: dict[str, Any]) -> dict[str, Any]:
     owner = observation.get("owner")
     if owner not in _VALID_OWNERS:
         failures.append("observation_owner_invalid")
+
+    runtime_owner = _runtime_owner_proof(snapshot)
+    if runtime_owner.get("available"):
+        runtime_configured_owner = runtime_owner.get("owner")
+        if runtime_configured_owner in _VALID_OWNERS and runtime_configured_owner != owner:
+            failures.append("observation_runtime_owner_mismatch")
+        if runtime_owner.get("exclusive") is False:
+            failures.append("duplicate_observation_cycle_owner")
+    elif (snapshot.get("gateway") or {}).get("available"):
+        warnings.append("observation_runtime_owner_proof_unavailable")
 
     checkpoint = observation.get("checkpoint") or {}
     verified = checkpoint.get("verified") if isinstance(checkpoint, dict) else None
@@ -263,6 +283,21 @@ def compare_update_continuity(
         failures.append("observation_owner_changed")
     if after_obs.get("owner") not in _VALID_OWNERS:
         failures.append("observation_owner_invalid")
+
+    runtime_owner = _runtime_owner_proof(after)
+    if runtime_owner.get("available"):
+        runtime_configured_owner = runtime_owner.get("owner")
+        if (
+            runtime_configured_owner in _VALID_OWNERS
+            and runtime_configured_owner != after_obs.get("owner")
+        ):
+            failures.append("observation_runtime_owner_mismatch")
+        if runtime_owner.get("exclusive") is False:
+            failures.append("duplicate_observation_cycle_owner")
+    elif after_obs.get("owner") == "worker" and restart:
+        failures.append("observation_runtime_owner_proof_unavailable")
+    elif after_obs.get("owner") == "worker":
+        warnings.append("observation_runtime_owner_proof_unavailable")
 
     before_root = _identity(before_control.get("data_root"))
     after_root = _identity(after_control.get("data_root"))
@@ -346,6 +381,8 @@ def compare_update_continuity(
         "worker_sha_before": before_worker_sha,
         "worker_sha_after": after_worker_sha,
         "data_root_unchanged": bool(before_root and after_root and before_root == after_root),
+        "main_observation_cycle_registered": runtime_owner.get("main_cycle_registered"),
+        "observation_execution_exclusive": runtime_owner.get("exclusive"),
     }
 
 

@@ -14,8 +14,12 @@ def _snapshot(
     generations: dict[str, int] | None = None,
     overview_available: bool = True,
     checkpoint_ok: bool = True,
+    runtime_owner: str | None = None,
+    runtime_proof_available: bool = True,
+    main_cycle_registered: bool = False,
 ):
     generations = generations or {"obs-a": 2}
+    runtime_owner = runtime_owner or owner
     return {
         "schema_version": "update_observer_continuity/v1",
         "control": {
@@ -33,6 +37,19 @@ def _snapshot(
             "current_commit": gateway_sha,
             "scheduler_running": True,
             "scheduler_job_count": 10,
+            "observation_execution": {
+                "available": runtime_proof_available,
+                "owner": runtime_owner,
+                "job_id": "filter_controller_observe",
+                "main_cycle_registered": (
+                    main_cycle_registered if runtime_proof_available else None
+                ),
+                "exclusive": (
+                    not (runtime_owner == "worker" and main_cycle_registered)
+                    if runtime_proof_available
+                    else None
+                ),
+            },
         },
         "observation": {
             "owner": owner,
@@ -84,6 +101,8 @@ def test_compare_allows_normal_observation_progress():
     assert result["worker_sha_before"] == "worker999"
     assert result["worker_sha_after"] == "worker999"
     assert result["data_root_unchanged"] is True
+    assert result["main_observation_cycle_registered"] is False
+    assert result["observation_execution_exclusive"] is True
 
 
 def test_compare_detects_owner_change():
@@ -173,6 +192,17 @@ def test_preflight_fails_closed_on_structural_checkpoint_drift():
     assert result["failures"] == ["observation_checkpoint_drift"]
 
 
+def test_preflight_detects_duplicate_worker_and_main_cycle_owner():
+    from aletheia.update.continuity import evaluate_preflight
+
+    result = evaluate_preflight(
+        _snapshot(owner="worker", main_cycle_registered=True)
+    )
+
+    assert result["ok"] is False
+    assert "duplicate_observation_cycle_owner" in result["failures"]
+
+
 def test_preflight_pending_business_state_is_not_a_gate():
     from aletheia.update.continuity import evaluate_preflight
 
@@ -188,6 +218,60 @@ def test_preflight_pending_business_state_is_not_a_gate():
 
     assert result["ok"] is True
     assert result["failures"] == []
+
+
+def test_compare_detects_duplicate_observation_cycle_after_update():
+    from aletheia.update.continuity import compare_update_continuity
+
+    result = compare_update_continuity(
+        _snapshot(),
+        _snapshot(
+            disk_sha="new222",
+            gateway_sha="new222",
+            main_cycle_registered=True,
+        ),
+        expected_target="new222",
+        restart=True,
+    )
+
+    assert result["ok"] is False
+    assert "duplicate_observation_cycle_owner" in result["failures"]
+
+
+def test_compare_requires_runtime_owner_proof_for_restarted_worker_mode():
+    from aletheia.update.continuity import compare_update_continuity
+
+    result = compare_update_continuity(
+        _snapshot(),
+        _snapshot(
+            disk_sha="new222",
+            gateway_sha="new222",
+            runtime_proof_available=False,
+        ),
+        expected_target="new222",
+        restart=True,
+    )
+
+    assert result["ok"] is False
+    assert "observation_runtime_owner_proof_unavailable" in result["failures"]
+
+
+def test_compare_detects_runtime_owner_mismatch():
+    from aletheia.update.continuity import compare_update_continuity
+
+    result = compare_update_continuity(
+        _snapshot(),
+        _snapshot(
+            disk_sha="new222",
+            gateway_sha="new222",
+            runtime_owner="main",
+        ),
+        expected_target="new222",
+        restart=True,
+    )
+
+    assert result["ok"] is False
+    assert "observation_runtime_owner_mismatch" in result["failures"]
 
 
 def test_wrapper_preserves_existing_applier_and_adds_postflight(monkeypatch):
