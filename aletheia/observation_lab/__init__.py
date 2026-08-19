@@ -31,3 +31,12 @@ from aletheia.observation_lab.runner import (  # noqa: F401
     registered_windows,
     run_lab_windows,
 )
+from aletheia.observation_lab.manifest import (  # noqa: F401
+    ExecutionManifest,
+    ManifestGenerationConflict,
+    ManifestResolution,
+    build_manifest,
+    load_active_manifests,
+    publish_manifest,
+    resolve_treatment,
+)
