@@ -77,14 +77,19 @@ def _run_update(*, restart: bool) -> None:
             typer.echo(f"  {result['message']}")
         raise typer.Exit(1)
 
-    if result.get("continuity_verified") is False:
+    continuity_state = result.get("continuity_state")
+    comparison = (result.get("continuity") or {}).get("comparison") or {}
+
+    # Only directly observed structural breakage is a failed deployment. Missing
+    # evidence is surfaced as UNPROVEN without rewriting an already-applied
+    # source update into a false hard failure.
+    if continuity_state == "failed":
+        failures = comparison.get("failures") or []
         typer.echo(
             f"Updated {result['old_commit'][:8]} -> {result['new_commit'][:8]}, "
             "but Observer continuity verification FAILED.",
             err=True,
         )
-        comparison = (result.get("continuity") or {}).get("comparison") or {}
-        failures = comparison.get("failures") or []
         if failures:
             typer.echo(f"  failures: {', '.join(str(item) for item in failures)}", err=True)
         if result.get("message"):
@@ -105,15 +110,30 @@ def _run_update(*, restart: bool) -> None:
     else:
         typer.echo("Restart the gateway to load the new code: aletheia gateway restart")
 
+    if continuity_state in {"unproven", "pending_restart"}:
+        proof_gaps = comparison.get("proof_gaps") or []
+        typer.echo(
+            "Observer continuity is UNPROVEN; no verified claim was emitted.",
+            err=True,
+        )
+        if proof_gaps:
+            typer.echo(
+                f"  proof gaps: {', '.join(str(item) for item in proof_gaps)}",
+                err=True,
+            )
+        if result.get("message"):
+            typer.echo(f"  {result['message']}", err=True)
+        return
+
     if result.get("continuity_verified") is True:
-        comparison = (result.get("continuity") or {}).get("comparison") or {}
         owner = comparison.get("owner") or "unknown"
         worker_sha = comparison.get("worker_sha_after")
         worker_text = str(worker_sha)[:12] if worker_sha else "unavailable"
         typer.echo(
             "Observer continuity verified: "
             f"owner={owner}, worker_sha={worker_text}, "
-            f"data_root_unchanged={comparison.get('data_root_unchanged')}."
+            f"data_root_unchanged={comparison.get('data_root_unchanged')}, "
+            f"main_health={comparison.get('main_health_status')}."
         )
         warnings = comparison.get("warnings") or []
         if warnings:

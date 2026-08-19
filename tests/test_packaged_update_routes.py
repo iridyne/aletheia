@@ -60,6 +60,7 @@ def test_empty_script_request_still_requires_explicit_confirmation(monkeypatch):
 def test_same_origin_dashboard_request_can_start_packaged_update(monkeypatch):
     monkeypatch.setattr(update_routes, "is_preview_mode", lambda: False)
     monkeypatch.setattr(update_routes, "write_audit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(update_routes, "_is_packaged_update_mode", lambda: True)
     monkeypatch.setattr(
         update_routes.applier,
         "apply_update",
@@ -81,6 +82,35 @@ def test_same_origin_dashboard_request_can_start_packaged_update(monkeypatch):
     )
     assert result["accepted"] is True
     assert result["reason"] == "update_started_in_background"
+
+
+def test_source_dashboard_apply_refuses_mutation_and_requires_cli(monkeypatch):
+    monkeypatch.setattr(update_routes, "is_preview_mode", lambda: False)
+    monkeypatch.setattr(update_routes, "write_audit", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(update_routes, "_is_packaged_update_mode", lambda: False)
+    monkeypatch.setattr(
+        update_routes.applier,
+        "apply_update",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("source API must never mutate the checkout")
+        ),
+    )
+
+    result = update_routes.update_apply(
+        _request(),
+        update_routes.ApplyBody(confirm=True),
+    )
+
+    assert result == {
+        "applied": False,
+        "accepted": False,
+        "mode": "development",
+        "reason": "source_update_requires_cli",
+        "message": (
+            "Source-checkout updates must run through `aletheia update` so the "
+            "external updater process can restart Main and verify Observer continuity."
+        ),
+    }
 
 
 def test_rollback_requires_confirmation_before_calling_applier(monkeypatch):

@@ -49,6 +49,12 @@ def _same_origin_dashboard_confirmation(request: Request) -> bool:
     return any(referer.startswith(base) or origin == base.rstrip("/") for base in _LOOPBACK_UI_ORIGINS)
 
 
+def _is_packaged_update_mode() -> bool:
+    from aletheia.update.packaged_commands import is_packaged_mode
+
+    return is_packaged_mode()
+
+
 @router.get("/status")
 def update_status():
     """Return local state only; network checks require an explicit human action."""
@@ -91,6 +97,34 @@ def update_apply(request: Request, body: ApplyBody = ApplyBody()):
             "reason": "confirmation_required",
             "message": "Set confirm=true to apply the update.",
         }
+
+    # A source-checkout restart must be owned by the external CLI process. A
+    # request handler lives inside the Gateway process tree that do_stop() kills,
+    # so trying to run the full restart transaction from this route is not a safe
+    # alternative entrypoint. Keep `aletheia update` as the one source mutation
+    # command; packaged installs retain their Tray-owned API staging flow.
+    if not _is_packaged_update_mode():
+        write_audit(
+            {
+                "actor": "human",
+                "source": "api",
+                "event_type": "source_update_requires_cli",
+                "entity_type": "system_update",
+                "entity_id": "apply",
+                "message": "Source update was not applied via API; use `aletheia update`",
+            }
+        )
+        return {
+            "applied": False,
+            "accepted": False,
+            "mode": "development",
+            "reason": "source_update_requires_cli",
+            "message": (
+                "Source-checkout updates must run through `aletheia update` so the "
+                "external updater process can restart Main and verify Observer continuity."
+            ),
+        }
+
     write_audit(
         {
             "actor": "human",
@@ -98,11 +132,11 @@ def update_apply(request: Request, body: ApplyBody = ApplyBody()):
             "event_type": "code_update_requested",
             "entity_type": "system_update",
             "entity_id": "apply",
-            "message": "Human confirmed software update via API",
+            "message": "Human confirmed packaged software update via API",
         }
     )
     result = applier.apply_update()
-    if result.get("mode") == "packaged" and result.get("accepted") and not result.get("applied"):
+    if result.get("accepted") and not result.get("applied"):
         result.setdefault("reason", "update_started_in_background")
     return result
 
