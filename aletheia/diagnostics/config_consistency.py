@@ -195,13 +195,17 @@ def _check_live_state(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
 def _check_risk_caps_admit_sizing(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
     """Detect when risk caps would block every first entry at current account size."""
     try:
-        from aletheia.risk.engine import (
-            account_available_for_execution,
-            per_symbol_notional_ceiling,
-        )
+        from aletheia.risk.engine import per_symbol_notional_ceiling
+        from aletheia.storage import repositories as _repo
 
         mode = getattr(cfg.exchange, "paper_execution_mode", None) or "paper_internal"
-        available = account_available_for_execution(mode)
+        # For paper_internal read balance directly — get_paper_account() seeds on
+        # first call and would corrupt tests that expect a clean database.
+        if mode == "paper_internal":
+            available = _repo.get_paper_account_cash_balance()
+        else:
+            from aletheia.risk.engine import account_available_for_execution
+            available = account_available_for_execution(mode)
         if not available or available <= 0:
             return None
 
