@@ -2,7 +2,7 @@
 
 This is deliberately a small wrapper around the existing source updater pieces:
 Git supplies a pinned release commit, ``BackupService`` supplies recoverable data,
-and the Gateway lifecycle remains the only process owner.  It never enables Live
+and the Gateway lifecycle remains the only process owner. It never enables Live
 trading or changes Risk, provider, or scheduler policy.
 """
 
@@ -244,6 +244,134 @@ def _wait_for_runtime(expected_sha: str, expected_version: str) -> dict[str, Any
     return last or {"ok": False, "reason": "runtime_verification_timeout"}
 
 
+def _observer_auto_preflight() -> dict[str, Any]:
+    """Require complete structural proof only when a sibling Worker owns Observation.
+
+    Main-owned Observation has no independent Worker lifecycle to preserve. In
+    Worker mode this unattended deploy path must have stronger evidence than the
+    interactive command: missing proof blocks mutation and is retried by the
+    timer on a later tick.
+    """
+    from aletheia.observation_lab.execution_owner import get_execution_owner
+
+    if get_execution_owner() != "worker":
+        return {"required": False, "ok": True, "before": None, "preflight": None}
+
+    from aletheia.update import continuity
+
+    before = continuity.capture_update_continuity()
+    preflight = continuity.evaluate_preflight(before)
+    proof_gaps = list(preflight.get("proof_gaps") or [])
+    worker = ((before.get("observation") or {}).get("worker") or {})
+    if not worker.get("acquired_at"):
+        proof_gaps.append("worker_pass_timestamp_unavailable")
+    proof_gaps = sorted(set(proof_gaps))
+    preflight = {**preflight, "proof_gaps": proof_gaps}
+    return {
+        "required": True,
+        "ok": bool(preflight.get("ok")) and not proof_gaps,
+        "before": before,
+        "preflight": preflight,
+    }
+
+
+def _observer_auto_postflight(guard: dict[str, Any], target: str) -> dict[str, Any]:
+    if not guard.get("required"):
+        return {"required": False, "ok": True, "comparison": None, "after": None}
+
+    from aletheia.update import continuity
+
+    before = guard.get("before") or {}
+    after = continuity.capture_update_continuity_until_settled(
+        target,
+        timeout_sec=10,
+        poll_sec=1,
+    )
+    comparison = continuity.compare_update_continuity(
+        before,
+        after,
+        expected_target=target,
+        restart=True,
+    )
+    return {
+        "required": True,
+        "ok": bool(comparison.get("ok")),
+        "comparison": comparison,
+        "after": after,
+    }
+
+
+def _observer_rollback_safe(guard: dict[str, Any]) -> bool:
+    """Prove the Worker did not advance before restoring a pre-update app.db.
+
+    Main backups intentionally do not rewind the independent Lab database. If a
+    Worker pass ran after the activation backup, restoring only app.db would
+    create a cross-time evidence state. In that case availability yields to
+    evidence integrity: keep the failed target state held for operator repair
+    instead of silently manufacturing an inconsistent restore.
+    """
+    if not guard.get("required"):
+        return True
+    before_worker = (((guard.get("before") or {}).get("observation") or {}).get("worker") or {})
+    before_acquired = before_worker.get("acquired_at")
+    if not before_acquired:
+        return False
+    try:
+        from aletheia.update import continuity
+
+        current = continuity.capture_update_continuity()
+    except Exception:
+        return False
+    current_worker = (((current.get("observation") or {}).get("worker") or {}))
+    return bool(
+        current_worker.get("available")
+        and current_worker.get("acquired_at") == before_acquired
+    )
+
+
+def _observer_hold_after_activation(
+    state: dict[str, Any],
+    *,
+    tag: str,
+    target: str,
+    reason: str,
+    detail: str,
+    continuity: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    summary = None
+    if continuity:
+        comparison = continuity.get("comparison") or {}
+        summary = {
+            "failures": comparison.get("failures") or [],
+            "proof_gaps": comparison.get("proof_gaps") or [],
+            "warnings": comparison.get("warnings") or [],
+        }
+    held = _write_state(
+        state,
+        phase="held",
+        status="held",
+        hold=True,
+        target_tag=tag,
+        target_sha=target,
+        reason=reason,
+        detail=detail,
+        observer_continuity=summary,
+    )
+    _record_audit(
+        "auto_update_observer_hold",
+        tag,
+        detail or reason,
+        reason=reason,
+        continuity=continuity,
+    )
+    return {
+        "ok": False,
+        "reason": reason,
+        "state": held,
+        "continuity": continuity,
+    }
+
+
 def _run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None, timeout: int = 300) -> subprocess.CompletedProcess:
     return subprocess.run(command, cwd=str(cwd), capture_output=True, text=True, env=env, timeout=timeout)
 
@@ -468,6 +596,15 @@ def run() -> dict[str, Any]:
             detail = ",".join(baseline.get("failed", [])) or str(baseline.get("detail") or baseline.get("reason") or "")
             return _failed(state, tag=tag, sha=target, reason="baseline_unhealthy", detail=detail)
 
+        observer_guard = _observer_auto_preflight()
+        if observer_guard.get("required") and not observer_guard.get("ok"):
+            preflight = observer_guard.get("preflight") or {}
+            failures = preflight.get("failures") or []
+            proof_gaps = preflight.get("proof_gaps") or []
+            reason = "observer_preflight_failed" if failures else "observer_preflight_unproven"
+            detail = ",".join(str(item) for item in (failures or proof_gaps))
+            return _failed(state, tag=tag, sha=target, reason=reason, detail=detail)
+
         worktree: Path | None = None
         preflight_backup: Path | None = None
         final_backup: Path | None = None
@@ -476,6 +613,7 @@ def run() -> dict[str, Any]:
         stopped = False
         source_switched = False
         static_activated = False
+        observer_postflight: dict[str, Any] | None = None
         try:
             state = _write_state(state, phase="preflight", status="running", target_tag=tag, target_sha=target)
             preflight_backup = BackupService(get_data_dir()).create_backup(label=f"auto_preflight_{tag[1:]}")
@@ -487,9 +625,9 @@ def run() -> dict[str, Any]:
             worktree = None
 
             state = _write_state(state, phase="quiescing", status="running")
-            stopped = _gateway_command("stop")
-            if not stopped.get("ok"):
-                raise AutoUpdateError(stopped.get("reason", "gateway_stop_failed"), stopped.get("detail", ""))
+            stopped_result = _gateway_command("stop")
+            if not stopped_result.get("ok"):
+                raise AutoUpdateError(stopped_result.get("reason", "gateway_stop_failed"), stopped_result.get("detail", ""))
             stopped = True
             final_backup = BackupService(get_data_dir()).create_backup(label=f"auto_activate_{tag[1:]}")
 
@@ -498,8 +636,6 @@ def run() -> dict[str, Any]:
             if not merged.get("ok"):
                 raise AutoUpdateError(merged.get("reason", "ff_only_rejected"), merged.get("stderr", ""))
             source_switched = True
-            # The candidate install was editable and pointed at its temporary worktree.
-            # Rebind it to the now-pinned source checkout before starting a new process.
             if not _install_source_dependencies():
                 raise AutoUpdateError("target_dependency_bind_failed")
             had_previous_static = _activate_frontend_build()
@@ -510,6 +646,27 @@ def run() -> dict[str, Any]:
             verified = _wait_for_runtime(target, version)
             if not verified.get("ok"):
                 raise AutoUpdateError(verified.get("reason", "runtime_verification_failed"), str(verified.get("detail", "")))
+
+            observer_postflight = _observer_auto_postflight(observer_guard, target)
+            if observer_postflight.get("required") and not observer_postflight.get("ok"):
+                comparison = observer_postflight.get("comparison") or {}
+                failures = comparison.get("failures") or []
+                proof_gaps = comparison.get("proof_gaps") or []
+                reason = "observer_continuity_failed" if failures else "observer_continuity_unproven"
+                detail = ",".join(str(item) for item in (failures or proof_gaps))
+                return _observer_hold_after_activation(
+                    state,
+                    tag=tag,
+                    target=target,
+                    reason=reason,
+                    detail=detail,
+                    continuity={
+                        "preflight": observer_guard.get("preflight"),
+                        "before": observer_guard.get("before"),
+                        "after": observer_postflight.get("after"),
+                        "comparison": comparison,
+                    },
+                )
         except AutoUpdateError as exc:
             _remove_candidate(worktree)
             if not source_switched:
@@ -519,6 +676,17 @@ def run() -> dict[str, Any]:
                 recovery = _gateway_command("start") if stopped else {"ok": True}
                 return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail,
                                hold=not recovery.get("ok"), blacklist=exc.reason not in _TRANSIENT_CANDIDATE_FAILURES)
+            if not _observer_rollback_safe(observer_guard):
+                return _observer_hold_after_activation(
+                    state,
+                    tag=tag,
+                    target=target,
+                    reason="observer_advanced_during_failed_activation",
+                    detail=(
+                        "Target activation failed, but Worker progress changed or could not be "
+                        "proven unchanged; refusing to restore an older app.db beneath newer Lab state."
+                    ),
+                )
             state = _write_state(state, phase="rolling_back", status="running", reason=exc.reason, detail=exc.detail)
             recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
                                                 restore_static=static_activated)
@@ -533,15 +701,43 @@ def run() -> dict[str, Any]:
                     _install_source_dependencies()
                 recovery = _gateway_command("start") if stopped else {"ok": True}
                 return _failed(state, tag=tag, sha=target, reason=reason, hold=not recovery.get("ok"))
+            if not _observer_rollback_safe(observer_guard):
+                return _observer_hold_after_activation(
+                    state,
+                    tag=tag,
+                    target=target,
+                    reason="observer_advanced_during_failed_activation",
+                    detail=(
+                        f"Unexpected target activation failure ({type(exc).__name__}), and Worker "
+                        "progress changed or could not be proven unchanged; refusing cross-time rollback."
+                    ),
+                )
             state = _write_state(state, phase="rolling_back", status="running", reason=reason)
             recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
                                                 restore_static=static_activated)
             return _failed(state, tag=tag, sha=target, reason=reason, hold=not recovery.get("ok"), blacklist=True)
 
         shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
+        observer_summary = None
+        if observer_postflight and observer_postflight.get("required"):
+            comparison = observer_postflight.get("comparison") or {}
+            observer_summary = {
+                "verified": True,
+                "owner": comparison.get("owner"),
+                "worker_sha": comparison.get("worker_sha_after"),
+                "data_root_unchanged": comparison.get("data_root_unchanged"),
+                "main_health_status": comparison.get("main_health_status"),
+                "observation_execution_exclusive": comparison.get("observation_execution_exclusive"),
+            }
         success = _write_state(state, phase="complete", status="deployed", target_tag=tag, target_sha=target,
-                               reason=None, detail=None, last_successful={"tag": tag, "sha": target, "at": _now()})
-        _record_audit("auto_update_deployed", tag, f"Deployed {tag} at {target}")
+                               reason=None, detail=None, observer_continuity=observer_summary,
+                               last_successful={"tag": tag, "sha": target, "at": _now()})
+        _record_audit(
+            "auto_update_deployed",
+            tag,
+            f"Deployed {tag} at {target}",
+            observer_continuity=observer_summary,
+        )
         return {"ok": True, "reason": "deployed", "state": success}
 
 
