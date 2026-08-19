@@ -40,3 +40,11 @@ from aletheia.observation_lab.manifest import (  # noqa: F401
     publish_manifest,
     resolve_treatment,
 )
+from aletheia.observation_lab.checkpoint import (  # noqa: F401
+    CheckpointVerification,
+    JointCheckpoint,
+    compute_joint_checkpoint,
+    latest_joint_checkpoint,
+    save_joint_checkpoint,
+    verify_joint_checkpoint,
+)

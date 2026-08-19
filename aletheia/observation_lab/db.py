@@ -92,6 +92,25 @@ _LAB_SCHEMA_SQL = (
     "ON execution_manifests(effective_from, effective_until);"
     "CREATE INDEX IF NOT EXISTS idx_execution_manifests_interference "
     "ON execution_manifests(interference_key, effective_from);"
+    # Joint checkpoint (Issue #1072 Cluster 5 / §"Storage and runtime boundary").
+    # Every scheduled Lab pass computes and appends a fingerprint over the
+    # app.db migration head + lab.db manifest-set hashes. A restore that
+    # leaves those two out of step is detectable at startup: the freshly
+    # computed fingerprint disagrees with the most recent stored one, and
+    # the affected Observations fail closed as invalidated (per new #1072
+    # §"Storage and runtime boundary" verbatim).
+    "CREATE TABLE IF NOT EXISTS joint_checkpoints ("
+    "checkpoint_id TEXT PRIMARY KEY,"
+    "recorded_at TEXT NOT NULL,"
+    "app_migration_head TEXT NOT NULL,"
+    "app_migration_count INTEGER NOT NULL,"
+    "active_manifest_hashes TEXT NOT NULL,"     # canonical json array
+    "active_manifest_count INTEGER NOT NULL,"
+    "joint_fingerprint TEXT NOT NULL,"          # sha256 over the whole shape
+    "notes TEXT"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_joint_checkpoints_recent "
+    "ON joint_checkpoints(recorded_at DESC);"
 )
 
 
