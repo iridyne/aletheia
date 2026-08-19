@@ -417,6 +417,7 @@ def test_correlation_guards_include_unmaterialized_entry_exposure(
     cfg.risk.max_open_positions_demo = 10
     cfg.risk.max_demo_position_notional_usdt = 100_000.0
     cfg.risk.max_per_symbol_entries = 20
+    cfg.risk.demo.correlation.min_positions_for_concentration = 1
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
     monkeypatch.setattr(eng, "_portfolio_drawdown_scale", lambda _mode: 1.0)
     monkeypatch.setattr(eng, "_check_lesson_constraints", lambda _proposal: [])
@@ -544,6 +545,8 @@ def test_sector_concentration_isolated_by_live_demo_pool(
     cfg = AletheiaConfig()
     cfg.risk.correlation_guard_enabled = True
     cfg.risk.max_sector_concentration_pct = 60.0
+    cfg.risk.demo.correlation.min_positions_for_concentration = 1
+    cfg.risk.live.correlation.min_positions_for_concentration = 1
     monkeypatch.setattr(eng, "_lookup_beta", lambda _symbol: None)
 
     existing_opportunity = Opportunity(

@@ -553,6 +553,7 @@ class RiskCorrelationPolicy(StrictRiskPolicyModel):
     enabled: bool = True
     max_sector_concentration_pct: float = 60.0
     max_portfolio_beta: float = 3.0
+    min_positions_for_concentration: int = 4
 
 
 class RiskExitPolicy(StrictRiskPolicyModel):

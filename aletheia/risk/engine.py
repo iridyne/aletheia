@@ -1851,9 +1851,11 @@ def _check_correlation_exposure(
                     entry.opportunity_id,
                 ))
 
-        # Preserve the original behavior: the first exposure is not rejected
-        # merely because it is, by definition, 100% of an empty portfolio.
-        if not existing_exposures:
+        # With N=2 positions the same-family share is 50% or 100%, so 60% is a
+        # coin-flip, not a risk signal. Skip until the portfolio is deep enough.
+        mode_policy = cfg.risk.live if _is_live(proposal.execution_mode) else cfg.risk.demo
+        min_n = mode_policy.correlation.min_positions_for_concentration
+        if len(existing_exposures) < min_n:
             return []
 
         prop_notional = 0.0
