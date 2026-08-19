@@ -38,3 +38,9 @@ Each decision should have:
 - supersession links when replaced
 
 Historical decisions are preserved. New decisions should not rewrite old reasoning.
+
+## Decision index
+
+| ID | Title | Status | Date |
+|---|---|---|---|
+| [ADR-0001](source_first_python_runtime_convergence.md) | Source-first Python Runtime Convergence | accepted | 2026-08-19 |
