@@ -45,7 +45,7 @@ The existing `aletheia update auto run` path keeps its pinned-tag, candidate-pre
 
 If target Main becomes healthy but Observer continuity fails or remains unproven, auto deployment enters a durable hold and does not invent an Observer rollback.
 
-Main backups intentionally do not rewind the independently owned `observation-lab/lab.db`. Before an existing Main rollback restores a pre-update `app.db`, the auto path compares the Worker's persisted `acquired_at` pass signature with its preflight value. If the Worker advanced during the activation window—or that fact cannot be proven unchanged—the auto path refuses the cross-time rollback and enters hold for operator repair rather than creating `old app.db + newer lab.db` evidence state.
+Main backups intentionally do not rewind the independently owned `observation-lab/lab.db`. Before an existing Main rollback restores a pre-update `app.db`, the auto path acquires a non-mutating exclusion on the same `worker.lock` used by Worker passes. While that exclusion is held, it verifies the Worker's persisted `acquired_at` still equals the preflight value and keeps the exclusion for the entire Main rollback. If a Worker pass is already active, the signature changed, or exclusivity cannot be proven, the auto path refuses the cross-time rollback and enters hold rather than creating `old app.db + newer lab.db` evidence state. The exclusion does not rewrite the Worker pass signature and is used only on an already-failed target activation.
 
 ## Warning-only Observation progress
 
