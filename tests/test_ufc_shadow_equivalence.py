@@ -133,6 +133,46 @@ def test_equivalence_pass_skips_when_no_stored_verdict_yet():
     assert record["notes"] == "no_stored_verdict_yet"
 
 
+def test_equivalence_pass_matches_when_only_counts_drift():
+    """Verdict-only equivalence: sample counts legitimately drift between the
+    stored verdict's snapshot and Lab's fresh recompute (market-day coverage
+    gate re-qualifies with each pass). As long as the conclusion is the same,
+    the pass is a match — counts land in the audit fields only."""
+    from aletheia.observation_lab.ufc_shadow import (
+        latest_equivalence_record,
+        run_ufc_shadow_equivalence_pass,
+    )
+
+    stored = {"verdict": "insufficient_data", "unique_treatment_n": 68, "unique_control_n": 65, "policy_epoch": "epoch-1"}
+    recomputed = _FakeVerdictEval("insufficient_data", 5, 13)  # counts drift, verdict same
+
+    with patch(
+        "aletheia.learning.ledger.list_open_experiments",
+        return_value=[_fake_experiment_row()],
+    ), patch(
+        "aletheia.learning.ledger.get_latest_measurement_verdict",
+        return_value=stored,
+    ), patch(
+        "aletheia.learning.cohorts.build_experiment_cohorts",
+        return_value=[_FakeCohort()],
+    ), patch(
+        "aletheia.learning.verdicts.evaluate_cohort",
+        return_value=recomputed,
+    ):
+        summary = run_ufc_shadow_equivalence_pass()
+
+    assert summary == {"checked": 1, "matched": 1, "mismatched": 0, "skipped": 0}
+    record = latest_equivalence_record("ufc:exp-1:epoch-1:0")
+    assert record is not None
+    assert record["matched"] == 1
+    assert record["mismatch_field"] is None
+    # But the drifted counts are still preserved in the audit row.
+    assert record["learning_treatment_n"] == 68
+    assert record["recomputed_treatment_n"] == 5
+    assert record["learning_control_n"] == 65
+    assert record["recomputed_control_n"] == 13
+
+
 def test_equivalence_pass_treats_evaluator_error_as_mismatch():
     from aletheia.observation_lab.ufc_shadow import (
         latest_equivalence_record,
