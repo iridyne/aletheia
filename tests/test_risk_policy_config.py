@@ -6,7 +6,7 @@ def test_flat_risk_config_migrates_to_mode_policies_without_changing_values():
 
     risk = RiskConfig.model_validate({
         "max_daily_loss_pct": 3.5,
-        "max_per_symbol_notional_usdt": 750.0,
+        "max_per_symbol_entries": 4,
         "futures_margin_warning_ratio": 0.6,
         "futures_margin_force_close_ratio": 0.8,
         "min_liquidation_buffer_pct": 7.0,
@@ -22,14 +22,53 @@ def test_flat_risk_config_migrates_to_mode_policies_without_changing_values():
     assert risk.live.capital.base_source == "account_equity"
     assert risk.demo.loss.max_daily_loss_pct == 3.5
     assert risk.live.loss.max_daily_loss_pct == 3.5
-    assert risk.demo.capital.max_per_symbol_notional_usdt == 750.0
-    assert risk.live.capital.max_per_symbol_notional_usdt == 750.0
+    assert risk.demo.capital.max_per_symbol_entries == 4
+    assert risk.live.capital.max_per_symbol_entries == 4
     assert risk.demo.margin.warning_ratio == 0.6
     assert risk.live.margin.block_ratio == 0.8
     assert risk.demo.correlation.enabled is False
     assert risk.live.correlation.max_portfolio_beta == 2.5
     assert risk.demo.capital.max_position_notional_usdt == 900.0
     assert risk.live.capital.max_position_notional_usdt == 45.0
+
+
+def test_persisted_config_carrying_retired_absolute_cap_still_loads():
+    """A deployed config still holding `max_per_symbol_notional_usdt` must load.
+
+    The policy models are extra="forbid", so leaving the retired key in place
+    would raise at validation time and take the whole runtime down rather than
+    degrade — this is the migration's blast radius, so it is asserted directly.
+    Shape mirrors the real deployed config: the retired key appears both flat and
+    nested under each mode's `capital`.
+    """
+    from aletheia.config.schema import RiskConfig
+
+    risk = RiskConfig.model_validate({
+        "max_per_symbol_notional_usdt": 400.0,
+        "demo": {
+            "capital": {
+                "base_source": "account_equity",
+                "base_usdt": 200.0,
+                "max_per_symbol_notional_usdt": 400.0,
+                "max_position_notional_usdt": 51200.0,
+                "max_total_exposure_pct": 100.0,
+            },
+            "loss": {"max_single_trade_risk_pct": 20.0, "max_daily_loss_pct": 20.0},
+        },
+        "live": {
+            "capital": {"max_per_symbol_notional_usdt": 400.0},
+        },
+    })
+
+    # Retired key is gone; the count default takes over for both modes.
+    assert not hasattr(risk.demo.capital, "max_per_symbol_notional_usdt")
+    assert risk.demo.capital.max_per_symbol_entries == 3
+    assert risk.live.capital.max_per_symbol_entries == 3
+    # Every other persisted value on the same nested object survives untouched.
+    assert risk.demo.capital.max_position_notional_usdt == 51200.0
+    assert risk.demo.capital.max_total_exposure_pct == 100.0
+    assert risk.demo.capital.base_usdt == 200.0
+    assert risk.demo.loss.max_single_trade_risk_pct == 20.0
 
 
 def test_nested_risk_policy_is_authoritative_over_legacy_projection():

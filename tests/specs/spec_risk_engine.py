@@ -416,7 +416,7 @@ def test_correlation_guards_include_unmaterialized_entry_exposure(
     cfg.risk.max_portfolio_beta = 3.0
     cfg.risk.max_open_positions_demo = 10
     cfg.risk.max_demo_position_notional_usdt = 100_000.0
-    cfg.risk.max_per_symbol_notional_usdt = 100_000.0
+    cfg.risk.max_per_symbol_entries = 20
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
     monkeypatch.setattr(eng, "_portfolio_drawdown_scale", lambda _mode: 1.0)
     monkeypatch.setattr(eng, "_check_lesson_constraints", lambda _proposal: [])
@@ -967,7 +967,7 @@ def test_local_paper_balance_reader_failure_rejects_authoritative_proposal(
     cfg.agent.permission_mode = "Paper"
     cfg.risk.max_demo_position_notional_usdt = 200.0
     cfg.risk.max_open_positions_demo = 10
-    cfg.risk.max_per_symbol_notional_usdt = 10_000.0
+    cfg.risk.max_per_symbol_entries = 20
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
     monkeypatch.setattr(eng, "_portfolio_drawdown_scale", lambda _mode: 1.0)
     monkeypatch.setattr(eng, "_check_lesson_constraints", lambda _proposal: [])
@@ -2043,16 +2043,24 @@ def test_futures_context_keeps_unavailable_account_leverage_empty(monkeypatch):
 @spec_claim(
     SpecClaim("RE-B15", "risk_engine_contract", "§19 per-symbol cap", "L2b",
               "Cumulative open-position notional for a symbol + the proposed notional "
-              "may not exceed risk.max_per_symbol_notional_usdt. Averaging-merge grows "
-              "ONE position past the single-trade cap, so repeated adds need a bound."),
+              "may not exceed a ceiling DERIVED from sizing's own formula "
+              "(capital_base x per_trade_risk_pct x leverage x "
+              "risk.max_per_symbol_entries). Averaging-merge grows ONE position past "
+              "the single-trade cap, so repeated adds need a bound — but the bound "
+              "must scale with the account, or it eventually rejects first entries."),
 )
-def test_per_symbol_cumulative_notional_cap():
+def test_per_symbol_cumulative_notional_cap(monkeypatch):
     import aletheia.risk.engine as eng
     from aletheia.storage.models import Position, TradeProposal
     from aletheia.storage import repositories as repo
-    from aletheia.config.loader import load_config
 
-    cap = load_config().risk.max_per_symbol_notional_usdt
+    # The ceiling now derives from account equity, so the denominator must exist.
+    # Without it `_resolve_capital_base` fails closed and every percentage limit
+    # (including this one) reports no ceiling — the proposal is then rejected by
+    # `capital_base_unavailable` instead, which is a different claim.
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 1_000.0)
+
+    cap = eng.per_symbol_notional_ceiling("okx_demo", leverage=1)
     assert cap > 0, "per-symbol cap must be enabled by default"
 
     # Existing demo position at 80% of the cap.
@@ -2081,6 +2089,41 @@ def test_per_symbol_cumulative_notional_cap():
     repo.insert_trade_proposal(under)
     res_under = eng.evaluate_proposal(under)
     assert not any("exceeds_per_symbol_notional" in v for v in res_under.violations), res_under.violations
+
+
+@spec_claim(
+    SpecClaim("RE-B15b", "risk_engine_contract", "§19 first entry admitted", "L2b",
+              "A normal first entry on an unheld symbol is NEVER rejected by §19, at "
+              "any account size or leverage. §19 bounds ACCUMULATION; sizing already "
+              "bounds a single entry. A fixed-dollar ceiling could not honour this: at "
+              "equity above cap/(risk_pct x leverage) it rejected every first entry and "
+              "deadlocked the account at zero positions."),
+)
+def test_per_symbol_cap_never_rejects_a_first_entry(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.storage.models import TradeProposal
+    from aletheia.storage import repositories as repo
+    from aletheia.config.loader import load_config
+
+    # The equity that triggered the real deadlock on the paper deployment.
+    equity = 668.52648937
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: equity)
+
+    policy = load_config().risk.demo
+    risk_pct = float(policy.loss.max_single_trade_risk_pct)
+    for leverage in (1, 3, 5):
+        # Exactly what sizing would produce for a first entry at this leverage.
+        notional = equity * (risk_pct / 100.0) * leverage
+        first = TradeProposal(
+            symbol=f"FIRST{leverage}/USDT", market_type="usdt_futures",
+            direction="long", execution_mode="okx_demo",
+            quantity=notional / 100.0, price=100.0, leverage=leverage,
+        )
+        repo.insert_trade_proposal(first)
+        res = eng.evaluate_proposal(first)
+        assert not any(
+            "exceeds_per_symbol_notional" in v for v in res.violations
+        ), (leverage, notional, res.violations)
 
 
 # ---------------------------------------------------------------------------

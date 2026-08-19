@@ -1263,8 +1263,21 @@ def _evaluate_proposal_locked(
     #     into one position (paper_broker / live brokers), so the single-position cap
     #     (#5) does not bound repeated accumulation. Sum existing open notional for this
     #     symbol in the same live/demo class + the proposed notional; reject if over cap.
-    per_symbol_cap = getattr(risk, "max_per_symbol_notional_usdt", 0.0)
-    if per_symbol_cap and per_symbol_cap > 0 and proposal.price and proposal.quantity:
+    #
+    #     The ceiling is DERIVED from the same formula proposal sizing uses, times a
+    #     configured count of full-size entries. A first entry is therefore always
+    #     exactly 1/N of the cap and can never trip this check, at any account size
+    #     and any leverage. The former absolute `max_per_symbol_notional_usdt` ($400)
+    #     had no such guarantee: once equity passed $400/(20%×3x)=$666.67 it rejected
+    #     every normal first entry, which is how this deadlocked a live paper account.
+    per_symbol_entries = int(getattr(risk, "max_per_symbol_entries", 0) or 0)
+    per_symbol_cap = _derive_per_symbol_cap(
+        capital_base,
+        float(risk.max_single_trade_risk_pct),
+        float(proposal.leverage or 1),
+        per_symbol_entries,
+    )
+    if per_symbol_cap > 0 and proposal.price and proposal.quantity:
         prop_is_live = _is_live(proposal.execution_mode)
         existing_sym_notional = 0.0
         for p in open_positions:
@@ -1286,9 +1299,13 @@ def _evaluate_proposal_locked(
             existing_sym_notional += abs(entry.reserved_quantity * entry.price)
         projected = existing_sym_notional + abs(proposal.price * proposal.quantity)
         if projected > per_symbol_cap:
+            # 2 decimals, not 0: the previous ":.0f" rendered a genuine $1.12
+            # breach as "401>400", which reads like a display bug and cost real
+            # diagnosis time. Carry the entry count so the cap is reproducible.
             violations.append(
                 f"exceeds_per_symbol_notional:{proposal.symbol}:"
-                f"{projected:.0f}>{per_symbol_cap:.0f}"
+                f"{projected:.2f}>{per_symbol_cap:.2f}"
+                f"(entries={per_symbol_entries})"
             )
 
     return _persist_risk_result(
@@ -2356,6 +2373,54 @@ def account_available_for_execution(execution_mode: str, cfg=None) -> float | No
     """
     del cfg  # accepted for signature symmetry; the resolver reads config itself
     return _cached_available_balance_usdt(execution_mode)
+
+
+def _derive_per_symbol_cap(
+    capital_base: float,
+    per_trade_risk_pct: float,
+    leverage: float,
+    entries: int,
+) -> float:
+    """THE single definition of check #19's per-symbol ceiling.
+
+    Deliberately one function with two callers (check #19 and pyramid add-on
+    sizing).  A second copy of this arithmetic is how the retired absolute cap
+    drifted out of agreement with sizing in the first place, so the formula must
+    not be re-expressed anywhere else.
+
+    Returns 0.0 when the check is disabled or the denominator is unavailable —
+    callers treat 0.0 as "no ceiling to enforce".
+    """
+    if entries <= 0 or capital_base <= 0 or per_trade_risk_pct <= 0:
+        return 0.0
+    return capital_base * (per_trade_risk_pct / 100.0) * max(1.0, leverage) * entries
+
+
+def per_symbol_notional_ceiling(
+    execution_mode: str, *, leverage: float = 1.0, cfg=None
+) -> float:
+    """Public read-only view of check #19's ceiling for one execution pool.
+
+    Lets add-on/pyramid sizing stay inside the same bound the Risk Engine will
+    enforce, without duplicating the formula or the mode-policy resolution.
+    Returns 0.0 when unavailable or disabled.
+    """
+    from aletheia.risk.policy import resolve_risk_policy
+
+    cfg = cfg or load_config()
+    try:
+        policy = resolve_risk_policy(cfg, execution_mode).policy
+    except Exception:
+        return 0.0
+    capital_base, _reason = _resolve_capital_base(execution_mode, policy, cfg)
+    if capital_base is None:
+        return 0.0
+    return _derive_per_symbol_cap(
+        capital_base,
+        float(policy.loss.max_single_trade_risk_pct),
+        float(leverage or 1),
+        int(policy.capital.max_per_symbol_entries or 0),
+    )
 
 
 def _resolve_capital_base(execution_mode: str, policy, cfg) -> tuple[float | None, str | None]:

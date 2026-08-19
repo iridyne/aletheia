@@ -57,7 +57,7 @@ def _risk_config(monkeypatch, *, demo_slots=6, live_slots=3):
     cfg.risk.max_open_positions_live = live_slots
     cfg.risk.max_demo_position_notional_usdt = 1_000_000.0
     cfg.risk.max_live_position_notional_usdt = 1_000_000.0
-    cfg.risk.max_per_symbol_notional_usdt = 0.0
+    cfg.risk.max_per_symbol_entries = 0
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
     monkeypatch.setattr(
         eng,

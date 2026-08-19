@@ -262,8 +262,16 @@ def pyramid_plan(position: dict, adds_done: int = 0, cfg=None) -> dict:
     add_notional = min(desired, total_room)
 
     # CAP 2 (risk envelope): base + adds must fit the per-symbol exposure limit —
-    # the immutable outer bound regardless of persona/pyramid state.
-    cap = float(cfg.risk.demo.capital.max_per_symbol_notional_usdt or 0)
+    # the immutable outer bound regardless of persona/pyramid state. Read through
+    # the Risk Engine's own seam so this can never disagree with check #19, and
+    # so the position's actual pool is used: this previously hardcoded the demo
+    # policy, silently applying demo limits to a live position.
+    from aletheia.risk.engine import per_symbol_notional_ceiling
+    cap = per_symbol_notional_ceiling(
+        str(position.get("execution_mode") or "paper_internal"),
+        leverage=float(position.get("leverage") or 1),
+        cfg=cfg,
+    )
     if cap > 0:
         room = max(0.0, cap - (base_notional + already_added))
         add_notional = min(add_notional, room)

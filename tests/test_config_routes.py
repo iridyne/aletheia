@@ -674,18 +674,22 @@ async def test_settings_post_does_not_echo_secrets(client):
 
 
 @pytest.mark.anyio
-async def test_risk_config_saves_per_symbol_notional_cap(client):
-    """The Settings risk form must be able to round-trip its shared symbol cap."""
+async def test_risk_config_saves_per_symbol_entry_count(client):
+    """The Settings risk form must be able to round-trip its shared symbol cap.
+
+    The cap is a COUNT of full-size entries, not a currency amount — the engine
+    derives the USD ceiling from sizing's formula so it cannot go stale.
+    """
     response = await client.post(
         "/api/settings/risk",
-        json={"max_per_symbol_notional_usdt": 450.0},
+        json={"max_per_symbol_entries": 5},
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["risk"]["max_per_symbol_notional_usdt"] == 450.0
+    assert response.json()["risk"]["max_per_symbol_entries"] == 5
 
     settings = (await client.get("/api/settings")).json()
-    assert settings["risk"]["max_per_symbol_notional_usdt"] == 450.0
+    assert settings["risk"]["max_per_symbol_entries"] == 5
 
 
 @pytest.mark.anyio

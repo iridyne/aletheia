@@ -1265,7 +1265,7 @@ export interface components {
              * Max Per Symbol Notional Usdt
              * @default 400
              */
-            max_per_symbol_notional_usdt: number;
+            max_per_symbol_entries: number;
             /**
              * Max Position Notional Usdt
              * @default 50
@@ -1440,7 +1440,7 @@ export interface components {
              * Max Per Symbol Notional Usdt
              * @default 400
              */
-            max_per_symbol_notional_usdt: number;
+            max_per_symbol_entries: number;
             /**
              * Max Portfolio Beta
              * @default 3
