@@ -14,6 +14,7 @@ from aletheia.model_provider.broker import (
     inference_priority,
     InferenceBroker,
     InferenceBrokerClosed,
+    InferencePolicyReload,
     InferencePriority,
     InferenceQueueFull,
     InferenceRateLimitExceeded,
@@ -495,3 +496,98 @@ async def test_broker_bounds_noncooperative_executor_shutdown(monkeypatch):
             await task
         except asyncio.CancelledError:
             pass
+
+
+@pytest.mark.anyio
+async def test_policy_reload_timeout_raises_InferencePolicyReload_not_generic_InferenceTimeout():
+    """Reload-wait deadline raises the distinct InferencePolicyReload subtype.
+
+    This ensures callers can distinguish 'waited for reload and it took too long'
+    from 'the provider itself timed out' without parsing exception messages.
+    """
+    current_policy = _policy(max_concurrency=1)
+    broker = InferenceBroker(policy_loader=lambda _name: current_policy)
+    started = threading.Event()
+    release = threading.Event()
+
+    async def blocker():
+        started.set()
+        await asyncio.to_thread(release.wait)
+        return "done"
+
+    first = asyncio.create_task(broker.submit("provider-a", blocker))
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        current_policy = _policy(max_concurrency=2)
+        await broker.invalidate_provider("provider-a")
+
+        with pytest.raises(InferencePolicyReload) as exc_info:
+            await broker.submit(
+                "provider-a",
+                lambda: _immediate("must-not-run"),
+                timeout_sec=0.01,
+            )
+        exc = exc_info.value
+        assert isinstance(exc, InferenceTimeout), "InferencePolicyReload must be a subtype of InferenceTimeout"
+        assert type(exc) is InferencePolicyReload, "must be the specific reload subtype, not a plain InferenceTimeout"
+    finally:
+        release.set()
+        await asyncio.gather(first, return_exceptions=True)
+        await broker.aclose()
+
+
+@pytest.mark.anyio
+async def test_failed_invalidate_provider_loader_error_leaves_broker_usable():
+    """If the policy loader raises during invalidate_provider, the broker stays usable.
+
+    The retire never gets committed; the old policy keeps serving requests.
+    """
+    good_policy = _policy(max_concurrency=1)
+    should_fail = [False]
+
+    def loader(name: str) -> ProviderPolicy:
+        if should_fail[0]:
+            raise RuntimeError("loader failure")
+        return good_policy
+
+    broker = InferenceBroker(policy_loader=loader)
+    try:
+        assert await broker.submit("provider-a", lambda: _immediate("before")) == "before"
+
+        should_fail[0] = True
+        with pytest.raises(RuntimeError, match="loader failure"):
+            await broker.invalidate_provider("provider-a")
+
+        should_fail[0] = False
+        snapshot = await broker.snapshot()
+        assert snapshot["providers"]["provider-a"]["status"] == "running"
+        assert await broker.submit("provider-a", lambda: _immediate("after")) == "after"
+    finally:
+        await broker.aclose()
+
+
+@pytest.mark.anyio
+async def test_real_provider_exception_is_not_InferencePolicyReload():
+    """A real provider error during execution raises the provider exception, not InferencePolicyReload.
+
+    Verifies that the typed reload exception is only raised from the reload-wait
+    path and never from normal provider execution failures.
+    """
+    policy = _policy(max_concurrency=1)
+
+    class ProviderDown(RuntimeError):
+        pass
+
+    async def failing():
+        raise ProviderDown("connection refused")
+
+    broker = InferenceBroker(policy_loader=lambda _name: policy)
+    try:
+        with pytest.raises(ProviderDown):
+            await broker.submit("provider-a", failing)
+
+        metrics = (await broker.snapshot())["providers"]["provider-a"]["metrics"]
+        assert metrics["failed"] == 1
+        assert metrics["completed"] == 0
+    finally:
+        await broker.aclose()

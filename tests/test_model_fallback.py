@@ -217,6 +217,7 @@ async def test_complete_with_fallback_does_not_hide_non_transient_errors(tmp_pat
     ("exc", "code"),
     [
         ("InferenceQueueFull", "llm_broker_queue_full"),
+        ("InferencePolicyReload", "llm_broker_policy_reload"),
         ("InferenceTimeout", "llm_broker_timeout"),
         ("InferenceRateLimitExceeded", "llm_broker_rate_limit_exceeded"),
         ("InferenceBrokerClosed", "llm_broker_closed"),

@@ -721,6 +721,8 @@ def _classify_health_error(error: str | None) -> str:
         return "cooldown"
     if any(token in detail for token in ("401", "403", "unauthor", "forbidden", "authentication", "api key", "token")):
         return "authentication_failure"
+    if "policy reload" in detail:
+        return "policy_reload"
     if any(token in detail for token in ("timeout", "timed out", "connect", "connection", "network", "dns", "refused", "unreachable", "pool")):
         return "network_failure"
     if any(token in detail for token in ("400", "404", "405", "422", "catalogue", "catalog", "endpoint state", "not found", "unsupported", "invalid")):
