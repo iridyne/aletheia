@@ -1,10 +1,15 @@
 # Observation Lab v1 Contract (POC)
 
-> 状态：Issue #1072 POC 首次合入。
-> 范围：`ranker_confidence_gate` prospective 前瞻实验的运行时解耦；主 Runtime 可高频迭代 `master`，已登记 Observation 仍按冻结身份继续收集证据。
+> 状态：Issue #1072 POC 首次合入 (2026-08-17)；Clusters 1-5 build-out 2026-08-19。
+> 范围：`ranker_confidence_gate` prospective 前瞻实验的运行时解耦；主 Runtime 可高频迭代 `master`，已登记 Observation 仍按冻结身份继续收集证据。加上 Clusters 1-5 引入的 multi-window runner + `ExecutionManifest` + typed exposure fact + joint checkpoint 基础设施（详见 §11）。
 > 不包含：新 assignment 语义、`family_ttl` / `observer_pre_filter` 迁移到 adapter identity 模型、生产表迁移或删除、新 Web UI、新 scheduler。
 
-本合同是 [counterfactual_contract.md](counterfactual_contract.md) 的 L4 前瞻实验层在 Issue #1072 后的增量约束。若与源约束矛盾，源约束优先。
+**Companion docs**:
+- [observation_lab_v1_design.md](observation_lab_v1_design.md) — 权威 v1 实施设计 + Fedora 部署计划（这是部署前必读）。
+- [observation_lab_backup_contract.md](observation_lab_backup_contract.md) — app.db + lab.db + manifest 三方一致性契约。
+- [../../research/audits/UFC_OWNERSHIP_MAP_2026-08-18.md](../../research/audits/UFC_OWNERSHIP_MAP_2026-08-18.md) — Packet 0 UFC ownership 审计。
+
+本合同是 [counterfactual_contract.md](counterfactual_contract.md) 的 L4 前瞻实验层在 Issue #1072 后的增量约束。若与源约束矛盾，源约束优先。若与 v1 design 冲突，v1 design（更新更晚）优先。
 
 ## 1. Why (第一性原理)
 
