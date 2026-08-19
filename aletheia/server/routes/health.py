@@ -321,6 +321,21 @@ def status():
         }
 
     try:
+        from aletheia.observation_lab.runtime_status import main_scheduler_ownership_snapshot
+
+        observation_execution = main_scheduler_ownership_snapshot()
+    except Exception as e:
+        logger.debug("status Observation execution snapshot failed: %s", e)
+        observation_execution = {
+            "available": False,
+            "unavailable_reason": f"status_probe_error:{type(e).__name__}",
+            "owner": None,
+            "job_id": "filter_controller_observe",
+            "main_cycle_registered": None,
+            "exclusive": None,
+        }
+
+    try:
         from aletheia.agent_runtime.build_info import get_boot_commit
         boot_commit = get_boot_commit()
     except Exception:
@@ -419,6 +434,7 @@ def status():
         "scheduler_state": sched["state"],
         "scheduler_job_count": sched["job_count"],
         "scheduler_last_tick": sched.get("last_tick"),
+        "observation_execution": observation_execution,
         "ohlcv_cache": ohlcv_cache,
         "market_data_providers": market_data_providers,
         "lifecycle_tasks": lifecycle_tasks,
