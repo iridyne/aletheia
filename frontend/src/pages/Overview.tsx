@@ -88,7 +88,7 @@ function RiskCard({ shell }: { shell?: ShellBootstrap }) {
   const risk = shell?.risk
   const status = String(risk?.status || 'not_available')
   const violations = risk?.violations || []
-  const tone = status === 'blocked' ? 'red' : status === 'healthy' ? 'green' : 'yellow'
+  const tone = !shell ? 'muted' : status === 'blocked' ? 'red' : status === 'healthy' ? 'green' : 'yellow'
   return (
     <Card className="rail-card risk-panel">
       <div className="risk-head"><h3>Risk State</h3><div className="risk-head-badges">{risk?.kill_switch_active && <StatusText tone="red">KILL SWITCH</StatusText>}<StatusText tone={tone}>{riskStateLabel(status)}</StatusText></div></div>
@@ -130,12 +130,12 @@ function SystemCard({ shell, coverage }: { shell?: ShellBootstrap; coverage?: Ov
 
 function BlotterSummaryStrip({ summary }: { summary?: OverviewBootstrap['summary'] }) {
   const navigate = useNavigate()
-  const staged = summary?.open_opportunities ?? 0
-  const awaiting = summary?.pending_proposals ?? 0
-  const runs = summary?.runs_24h ?? 0
+  const staged = summary?.open_opportunities
+  const awaiting = summary?.pending_proposals
+  const runs = summary?.runs_24h
   return (
     <div className="ov-blotter-strip" role="link" tabIndex={0} onClick={() => navigate('/blotter')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate('/blotter') } }} title="Open Blotter">
-      <span className="ov-blotter-label">Blotter</span><span className="ov-blotter-item">Staged <b className="mono">{staged}</b></span><span className="ov-blotter-item">Awaiting <b className={`mono ${awaiting ? 'ov-blotter-yellow' : ''}`}>{awaiting}</b></span><span className="ov-blotter-item">Runs 24h <b className="mono">{runs}</b></span><span className="ov-blotter-arrow">→</span>
+      <span className="ov-blotter-label">Blotter</span><span className="ov-blotter-item">Staged <b className="mono">{staged ?? '—'}</b></span><span className="ov-blotter-item">Awaiting <b className={`mono ${awaiting ? 'ov-blotter-yellow' : ''}`}>{awaiting ?? '—'}</b></span><span className="ov-blotter-item">Runs 24h <b className="mono">{runs ?? '—'}</b></span><span className="ov-blotter-arrow">→</span>
     </div>
   )
 }
@@ -146,7 +146,7 @@ function GoLiveScoreCard() {
   return (
     <Card className="rail-card scorecard-panel">
       <Button type="button" variant="ghost" className="scorecard-header" onClick={() => setExpanded(value => !value)} aria-expanded={expanded}>
-        <div className="scorecard-title"><h3>Go-Live</h3><StatusText tone="yellow">{data ? (data.traffic_light || 'NOT READY').toUpperCase() : 'deferred'}</StatusText></div><span className="text-muted text-xs">{expanded ? '▲' : '▼'}</span>
+        <div className="scorecard-title"><h3>Go-Live</h3><StatusText tone={data ? data.traffic_light : 'muted'}>{data ? (data.traffic_light || 'NOT READY').toUpperCase() : 'deferred'}</StatusText></div><span className="text-muted text-xs">{expanded ? '▲' : '▼'}</span>
       </Button>
       {expanded && data && <div className="scorecard-criteria">{data.criteria.map(item => <div key={item.key} className="scorecard-row"><span className="scorecard-label">{item.label}</span><div className="scorecard-bar-bg"><Meter pct={item.score} className="scorecard-bar-fill" /></div><span className="scorecard-detail">{item.detail}</span></div>)}{data.blockers.length > 0 && <div className="scorecard-blockers"><span className="text-xs text-error">Blockers: {data.blockers.join(' · ')}</span></div>}</div>}
       {expanded && !data && <p className="text-muted text-sm">Loading qualification details…</p>}

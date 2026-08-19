@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { operatorMutationError } from './Overview'
 import SRC from './Overview.tsx?raw'
+import CSS from '../index.css?raw'
 
 describe('Overview operator mutation truthfulness', () => {
   it('keeps the action identity and a usable rejection reason', () => {
@@ -21,5 +22,35 @@ describe('Overview operator mutation truthfulness', () => {
     expect(SRC).toContain('role="alert"')
     expect(SRC.match(/onMutate: \(\) => setGatewayCommandError\(''\)/g)).toHaveLength(2)
     expect(SRC).not.toContain("qc.setQueryData(['status']")
+  })
+})
+
+describe('Overview semantic honesty', () => {
+  it('RiskCard shows muted tone when shell data has not loaded', () => {
+    // Unknown state (no data) must not show yellow (degraded) — it is unknown.
+    // The tone expression must check !shell before assigning yellow.
+    expect(SRC).toContain('!shell ? \'muted\'')
+  })
+
+  it('GoLiveScoreCard derives tone from backend traffic_light, not hardcoded yellow', () => {
+    // Hardcoded tone="yellow" on the Go-Live badge violated semantic honesty:
+    // the deferred state (data not yet fetched) is unknown, not degraded.
+    expect(SRC).not.toContain('tone="yellow"')
+    expect(SRC).toContain('data ? data.traffic_light')
+  })
+
+  it('BlotterSummaryStrip shows em-dash instead of 0 when summary is not loaded', () => {
+    // Missing data is not zero. Counts must not coerce undefined to 0.
+    expect(SRC).not.toContain('?? 0')
+    expect(SRC).toContain("?? '—'")
+  })
+
+  it('canonical breakpoint scale documented in index.css matches design system', () => {
+    // ui_design_system.md mandates 640/768/1024/1280; the old 480/700/900/1100
+    // token comment conflicted with it. The documentation must list the target scale.
+    expect(CSS).toContain('--bp-sm: 640px')
+    expect(CSS).toContain('--bp-md: 768px')
+    expect(CSS).toContain('--bp-lg: 1024px')
+    expect(CSS).toContain('--bp-xl: 1280px')
   })
 })
