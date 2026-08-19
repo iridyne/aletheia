@@ -202,6 +202,11 @@ export interface components {
         };
         /** ExchangeConfig */
         ExchangeConfig: {
+            /**
+             * Bitget Profile
+             * @default classic_v2
+             */
+            bitget_profile: string;
             /** Enabled Markets */
             enabled_markets?: {
                 [key: string]: boolean;
