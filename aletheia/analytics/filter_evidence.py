@@ -1145,6 +1145,10 @@ def build_candidate_outcomes(
     entry_ts: str,
     allocation_selected: bool | None = None,
     horizons: tuple[str, ...] | None = None,
+    rsi_1h_at_entry: float | None = None,
+    rsi_15m_at_entry: float | None = None,
+    return_24h_at_entry: float | None = None,
+    direction_exhaustion_signal: bool | None = None,
 ) -> list[FilterCandidateOutcome]:
     """Build the requested fixed-horizon outcome rows without touching SQLite.
 
@@ -1179,6 +1183,10 @@ def build_candidate_outcomes(
             funding_rate_at_entry=funding_rate_at_entry,
             entry_ts=entry_ts,
             due_at=(entry_dt + delta).isoformat(),
+            rsi_1h_at_entry=rsi_1h_at_entry,
+            rsi_15m_at_entry=rsi_15m_at_entry,
+            return_24h_at_entry=return_24h_at_entry,
+            direction_exhaustion_signal=direction_exhaustion_signal,
         ))
     return outcomes
 

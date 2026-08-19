@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 35)
+        f"aletheia-sqlite-v{version}" for version in range(2, 36)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v34"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v35"
     connection.close()
 
 
@@ -673,9 +673,9 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
             # Keep the v24 identity migration pending so it materializes the
             # columns that the following v25 migration reads. The current tail
             # includes v31 (persona rollout), v32 (uPnL identity), v33
-            # (Observation Lab frozen units), and v34 (EX-04 live
-            # authorization ref).
-            for step in migrations._MIGRATIONS[:-11]
+            # (Observation Lab frozen units), v34 (EX-04 live authorization
+            # ref), and v35 (momentum-short exhaustion shadow).
+            for step in migrations._MIGRATIONS[:-12]
         ],
     )
     connection.commit()
@@ -693,8 +693,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260819_0033_live_authorization_ref_v34",
-        "aletheia-sqlite-v34",
+        "20260819_0034_momentum_short_exhaustion_shadow_v35",
+        "aletheia-sqlite-v35",
     )
     health_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(learning_job_health)")
