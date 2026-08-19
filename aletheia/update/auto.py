@@ -318,20 +318,33 @@ def _observer_rollback_safe(guard: dict[str, Any]) -> bool:
 
 @contextmanager
 def _observer_rollback_guard(guard: dict[str, Any]) -> Iterator[bool]:
-    """Hold Worker exclusion for the complete exceptional Main rollback window."""
+    """Hold Worker exclusion for the complete exceptional Main rollback window.
+
+    Enter failures are converted to ``False`` before yielding. Exceptions raised
+    by the rollback body itself are never caught/reinterpreted as lock contention;
+    they propagate normally after the exclusion lock is released.
+    """
     if not guard.get("required"):
         yield True
         return
-    from aletheia.observation_lab.worker_lock import (
-        WorkerCycleLockError,
-        worker_cycle_exclusion,
-    )
+
+    from aletheia.observation_lab.worker_lock import worker_cycle_exclusion
+
+    exclusion = worker_cycle_exclusion()
+    try:
+        exclusion.__enter__()
+    except Exception:
+        yield False
+        return
 
     try:
-        with worker_cycle_exclusion():
-            yield _observer_rollback_safe(guard)
-    except WorkerCycleLockError:
-        yield False
+        try:
+            safe = _observer_rollback_safe(guard)
+        except Exception:
+            safe = False
+        yield safe
+    finally:
+        exclusion.__exit__(None, None, None)
 
 
 def _observer_hold_after_activation(
