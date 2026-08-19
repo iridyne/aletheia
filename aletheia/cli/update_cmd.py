@@ -271,3 +271,6 @@ def auto_uninstall():
     typer.echo(result.get("reason", "unknown"))
     if not result.get("ok"):
         raise typer.Exit(1)
+
+
+update_app.add_typer(auto_app, name="auto")
