@@ -77,16 +77,21 @@ def _run_update(*, restart: bool) -> None:
             typer.echo(f"  {result['message']}")
         raise typer.Exit(1)
 
-    if result.get("continuity_verified") is False:
-        typer.echo(
-            f"Updated {result['old_commit'][:8]} -> {result['new_commit'][:8]}, "
-            "but Observer continuity verification FAILED.",
-            err=True,
-        )
+    continuity_state = result.get("continuity_state")
+    if result.get("continuity_verified") is False and continuity_state != "pending_restart":
         comparison = (result.get("continuity") or {}).get("comparison") or {}
         failures = comparison.get("failures") or []
+        proof_gaps = comparison.get("proof_gaps") or []
+        label = "FAILED" if continuity_state == "failed" else "UNPROVEN"
+        typer.echo(
+            f"Updated {result['old_commit'][:8]} -> {result['new_commit'][:8]}, "
+            f"but Observer continuity is {label}.",
+            err=True,
+        )
         if failures:
             typer.echo(f"  failures: {', '.join(str(item) for item in failures)}", err=True)
+        if proof_gaps:
+            typer.echo(f"  proof gaps: {', '.join(str(item) for item in proof_gaps)}", err=True)
         if result.get("message"):
             typer.echo(f"  {result['message']}", err=True)
         typer.echo(
@@ -105,6 +110,13 @@ def _run_update(*, restart: bool) -> None:
     else:
         typer.echo("Restart the gateway to load the new code: aletheia gateway restart")
 
+    if continuity_state == "pending_restart":
+        typer.echo(
+            "Observer continuity is not yet verified because `--no-restart` was requested; "
+            "no verified claim was emitted."
+        )
+        return
+
     if result.get("continuity_verified") is True:
         comparison = (result.get("continuity") or {}).get("comparison") or {}
         owner = comparison.get("owner") or "unknown"
@@ -113,7 +125,8 @@ def _run_update(*, restart: bool) -> None:
         typer.echo(
             "Observer continuity verified: "
             f"owner={owner}, worker_sha={worker_text}, "
-            f"data_root_unchanged={comparison.get('data_root_unchanged')}."
+            f"data_root_unchanged={comparison.get('data_root_unchanged')}, "
+            f"main_health={comparison.get('main_health_status')}."
         )
         warnings = comparison.get("warnings") or []
         if warnings:
@@ -258,6 +271,3 @@ def auto_uninstall():
     typer.echo(result.get("reason", "unknown"))
     if not result.get("ok"):
         raise typer.Exit(1)
-
-
-update_app.add_typer(auto_app, name="auto")
