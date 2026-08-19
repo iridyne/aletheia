@@ -111,6 +111,44 @@ _LAB_SCHEMA_SQL = (
     ");"
     "CREATE INDEX IF NOT EXISTS idx_joint_checkpoints_recent "
     "ON joint_checkpoints(recorded_at DESC);"
+    # Typed exposure fact (Issue #1072 Cluster 4 / §"Exposure fact").
+    # Append-only. Every eligible prospective unit — even one whose manifest
+    # resolution declined (fail-closed conflict, not-effective window,
+    # malformed input) — records a row so "unavailable / exclusion reason"
+    # is inspectable at audit time. Lab side only; production
+    # ``learning_exposures`` remains the canonical write path for legacy
+    # UFC until Packet 2 rewires Main Runtime to consume manifests.
+    "CREATE TABLE IF NOT EXISTS lab_exposures ("
+    "exposure_id TEXT PRIMARY KEY,"
+    "observation_id TEXT NOT NULL,"
+    "manifest_id TEXT,"                        # NULL when no manifest matched
+    "manifest_hash TEXT,"
+    "assignment_unit_key TEXT NOT NULL,"
+    "candidate_key TEXT NOT NULL,"
+    "assignment TEXT NOT NULL CHECK ("
+    "  assignment IN ('treatment','control','unassigned')"
+    "),"
+    "applied INTEGER NOT NULL CHECK (applied IN (0, 1)),"
+    "behavior_changed INTEGER NOT NULL CHECK (behavior_changed IN (0, 1)),"
+    "payload_json TEXT NOT NULL,"
+    "reason TEXT NOT NULL,"
+    "active_manifest_set_json TEXT NOT NULL,"  # identity set the resolver saw
+    "conflict_result TEXT NOT NULL,"           # single_manifest / no_manifest / disjoint_ok / factorial_ok / undeclared_conflict:*
+    "exposed_at TEXT NOT NULL,"
+    "source_runtime_commit TEXT"
+    ");"
+    "CREATE INDEX IF NOT EXISTS idx_lab_exposures_obs "
+    "ON lab_exposures(observation_id, exposed_at DESC);"
+    "CREATE INDEX IF NOT EXISTS idx_lab_exposures_unit "
+    "ON lab_exposures(assignment_unit_key, exposed_at DESC);"
+    "CREATE INDEX IF NOT EXISTS idx_lab_exposures_conflict "
+    "ON lab_exposures(conflict_result, exposed_at DESC);"
+    "CREATE TRIGGER IF NOT EXISTS trg_lab_exposures_no_update "
+    "BEFORE UPDATE ON lab_exposures BEGIN "
+    "SELECT RAISE(ABORT, 'lab_exposures is append-only'); END;"
+    "CREATE TRIGGER IF NOT EXISTS trg_lab_exposures_no_delete "
+    "BEFORE DELETE ON lab_exposures BEGIN "
+    "SELECT RAISE(ABORT, 'lab_exposures is append-only'); END;"
 )
 
 
