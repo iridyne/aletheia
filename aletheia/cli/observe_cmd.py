@@ -96,6 +96,106 @@ def observation_status(
         typer.echo(f"latest.edge_delta_pct={latest.get('edge_delta_pct')}")
 
 
+@observe_app.command("overview")
+def observation_overview(
+    equivalence_limit: int = typer.Option(
+        5, "--equivalence-limit",
+        help="How many recent UFC equivalence records to include.",
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Whole-Lab health snapshot: experiments, UFC equivalence, manifests, checkpoint.
+
+    This is the "is Observation Lab alive and healthy?" single command
+    Fedora operators run to answer the four questions ``observation_lab_v1_design.md``
+    §9 asks: is it running, is UFC still matching, did anything drift, and
+    what manifests are live.
+    """
+    payload = _collect_overview(equivalence_limit=equivalence_limit)
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, default=str))
+        return
+
+    typer.echo(
+        f"experiments: {payload['experiments']['total']} total, "
+        f"{payload['experiments']['collecting']} collecting, "
+        f"{payload['experiments']['ready_for_review']} ready_for_review, "
+        f"{payload['experiments']['invalidated']} invalidated"
+    )
+    typer.echo(
+        f"ufc_shadow_equivalence: last {equivalence_limit} — "
+        f"matched={payload['ufc_equivalence']['recent_matched']}/"
+        f"{payload['ufc_equivalence']['recent_total']}"
+    )
+    for record in payload["ufc_equivalence"]["recent_records"]:
+        marker = "✓" if record["matched"] else "✗"
+        detail = (
+            f" mismatch={record['mismatch_field']}"
+            if not record["matched"] and record.get("mismatch_field") else ""
+        )
+        typer.echo(
+            f"  {marker} {record['checked_at']} {record['observation_id']}{detail}"
+        )
+    typer.echo(f"active_manifests: {payload['manifests']['active_count']}")
+    for m in payload["manifests"]["active"]:
+        typer.echo(
+            f"  {m['observation_id']} gen={m['generation']} "
+            f"hash={m['manifest_hash'][:12]}… composability={m['composability_contract']}"
+        )
+    cp = payload["checkpoint"]
+    if cp["latest"] is None:
+        typer.echo("checkpoint: (no fingerprint recorded yet)")
+    else:
+        marker = "✓" if cp["verified"]["ok"] else "✗"
+        typer.echo(
+            f"checkpoint: {marker} recorded_at={cp['latest']['recorded_at']} "
+            f"app_migrations={cp['latest']['app_migration_count']} "
+            f"active_manifests={cp['latest']['active_manifest_count']} "
+            f"reason={cp['verified']['reason']}"
+        )
+
+
+@observe_app.command("checkpoint")
+def observation_checkpoint(
+    verify_only: bool = typer.Option(
+        False, "--verify-only",
+        help="Only verify without appending; useful when diagnosing drift.",
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Run one joint app.db + lab.db + manifest checkpoint pass."""
+    from aletheia.observation_lab.checkpoint import (
+        compute_joint_checkpoint,
+        save_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+
+    verdict = verify_joint_checkpoint()
+    saved = False
+    if not verify_only:
+        save_joint_checkpoint(compute_joint_checkpoint())
+        saved = True
+    payload = {
+        "ok": verdict.ok,
+        "reason": verdict.reason,
+        "current_fingerprint": verdict.current_fingerprint,
+        "last_fingerprint": (
+            verdict.last.joint_fingerprint if verdict.last is not None else None
+        ),
+        "saved": saved,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    marker = "✓" if verdict.ok else "✗"
+    typer.echo(f"{marker} {verdict.reason}")
+    typer.echo(f"current_fingerprint={verdict.current_fingerprint[:16]}…")
+    if verdict.last is not None:
+        typer.echo(f"last_fingerprint   ={verdict.last.joint_fingerprint[:16]}…")
+    if saved:
+        typer.echo("appended new checkpoint row (idempotent no-op if unchanged)")
+
+
 @observe_app.command("sync")
 def sync_all(
     json_output: bool = typer.Option(False, "--json"),
@@ -229,6 +329,93 @@ def close_observation(
         ))
     else:
         typer.echo(f"closed {row['id']} at {now}: {reason}")
+
+
+def _collect_overview(*, equivalence_limit: int = 5) -> dict:
+    """Whole-Lab snapshot backing ``observe overview``.
+
+    Kept as a pure function so unit tests can seed lab.db, call it once,
+    and inspect the shape without spawning a subprocess. The CLI command
+    is a thin renderer on top.
+    """
+    from aletheia.observation_lab.checkpoint import (
+        latest_joint_checkpoint,
+        verify_joint_checkpoint,
+    )
+    from aletheia.observation_lab.db import get_lab_db
+    from aletheia.observation_lab.manifest import load_active_manifests
+    from aletheia.storage import repositories as repo
+
+    experiments = repo.list_filter_shadow_experiments(limit=1000)
+    counts = {"total": len(experiments)}
+    for status in ("collecting", "ready_for_review", "completed_no_support", "invalidated"):
+        counts[status] = sum(1 for r in experiments if r["status"] == status)
+
+    limit = max(0, int(equivalence_limit))
+    equivalence_rows = [
+        dict(row) for row in get_lab_db().execute(
+            "SELECT observation_id, checked_at, matched, mismatch_field, "
+            "learning_verdict, recomputed_verdict, notes "
+            "FROM ufc_shadow_equivalence ORDER BY checked_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    ]
+    recent_matched = sum(1 for r in equivalence_rows if r["matched"] == 1)
+
+    active_manifests = load_active_manifests()
+    manifest_dicts = [
+        {
+            "observation_id": m.observation_id,
+            "generation": m.generation,
+            "manifest_hash": m.manifest_hash,
+            "composability_contract": m.composability_contract,
+            "effective_from": m.effective_from,
+            "effective_until": m.effective_until,
+        }
+        for m in active_manifests
+    ]
+
+    latest_cp = latest_joint_checkpoint()
+    verified = verify_joint_checkpoint()
+    checkpoint_payload = {
+        "latest": None if latest_cp is None else {
+            "recorded_at": latest_cp.recorded_at,
+            "joint_fingerprint": latest_cp.joint_fingerprint,
+            "app_migration_head": latest_cp.app_migration_head,
+            "app_migration_count": latest_cp.app_migration_count,
+            "active_manifest_count": latest_cp.active_manifest_count,
+        },
+        "verified": {
+            "ok": verified.ok,
+            "reason": verified.reason,
+            "current_fingerprint": verified.current_fingerprint,
+        },
+    }
+
+    return {
+        "experiments": counts,
+        "ufc_equivalence": {
+            "recent_records": [
+                {
+                    "observation_id": r["observation_id"],
+                    "checked_at": r["checked_at"],
+                    "matched": bool(r["matched"]),
+                    "mismatch_field": r.get("mismatch_field"),
+                    "learning_verdict": r.get("learning_verdict"),
+                    "recomputed_verdict": r.get("recomputed_verdict"),
+                    "notes": r.get("notes"),
+                }
+                for r in equivalence_rows
+            ],
+            "recent_matched": recent_matched,
+            "recent_total": len(equivalence_rows),
+        },
+        "manifests": {
+            "active": manifest_dicts,
+            "active_count": len(manifest_dicts),
+        },
+        "checkpoint": checkpoint_payload,
+    }
 
 
 def _find_observation(observation_id: str) -> dict | None:
