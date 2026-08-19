@@ -125,11 +125,13 @@
   --fs-3xl:  1.5rem;
 
   /* Responsive breakpoints — CSS can't use vars in @media, so these are
-     canonical documentation tokens. All @media in this file must use one of:
-       --bp-sm: 480px   (phone)
-       --bp-md: 700px   (narrow tablet / compact desktop)
-       --bp-lg: 900px   (tablet / medium desktop)
-       --bp-xl: 1100px  (standard desktop, grid collapse point)
+     canonical documentation tokens. Target scale (ui_design_system.md §responsive):
+       --bp-sm: 640px   (phone / small)
+       --bp-md: 768px   (narrow tablet)
+       --bp-lg: 1024px  (medium desktop, main+rail split, settings nav collapse)
+       --bp-xl: 1280px  (standard desktop)
+     Legacy rules still use 480/700/900/1100 pending Phase 2a migration (#689).
+     Do NOT introduce new rules at legacy values; use the target scale above.
   */
 
   --card: var(--surface);
