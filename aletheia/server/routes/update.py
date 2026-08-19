@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from aletheia.config.loader import is_preview_mode
 from aletheia.files.jsonl import write_audit
-from aletheia.update import applier
+from aletheia.update import applier, continuity
 
 router = APIRouter(prefix="/api/update", tags=["update"])
 _LOOPBACK_UI_ORIGINS = (
@@ -47,6 +47,12 @@ def _same_origin_dashboard_confirmation(request: Request) -> bool:
     referer = request.headers.get("referer", "")
     origin = request.headers.get("origin", "")
     return any(referer.startswith(base) or origin == base.rstrip("/") for base in _LOOPBACK_UI_ORIGINS)
+
+
+def _is_packaged_update_mode() -> bool:
+    from aletheia.update.packaged_commands import is_packaged_mode
+
+    return is_packaged_mode()
 
 
 @router.get("/status")
@@ -101,7 +107,15 @@ def update_apply(request: Request, body: ApplyBody = ApplyBody()):
             "message": "Human confirmed software update via API",
         }
     )
-    result = applier.apply_update()
+
+    # Packaged installs keep the signed Tray-owned staging flow. Development
+    # checkouts must use the same Observer-aware transaction as `aletheia update`;
+    # the Dashboard is not allowed to bypass continuity verification.
+    if _is_packaged_update_mode():
+        result = applier.apply_update()
+    else:
+        result = continuity.apply_update_with_continuity(restart=True)
+
     if result.get("mode") == "packaged" and result.get("accepted") and not result.get("applied"):
         result.setdefault("reason", "update_started_in_background")
     return result
