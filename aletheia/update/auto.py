@@ -245,13 +245,7 @@ def _wait_for_runtime(expected_sha: str, expected_version: str) -> dict[str, Any
 
 
 def _observer_auto_preflight() -> dict[str, Any]:
-    """Require complete structural proof only when a sibling Worker owns Observation.
-
-    Main-owned Observation has no independent Worker lifecycle to preserve. In
-    Worker mode this unattended deploy path must have stronger evidence than the
-    interactive command: missing proof blocks mutation and is retried by the
-    timer on a later tick.
-    """
+    """Require complete structural proof only when a sibling Worker owns Observation."""
     from aletheia.observation_lab.execution_owner import get_execution_owner
 
     if get_execution_owner() != "worker":
@@ -302,14 +296,7 @@ def _observer_auto_postflight(guard: dict[str, Any], target: str) -> dict[str, A
 
 
 def _observer_rollback_safe(guard: dict[str, Any]) -> bool:
-    """Prove the Worker did not advance before restoring a pre-update app.db.
-
-    Main backups intentionally do not rewind the independent Lab database. If a
-    Worker pass ran after the activation backup, restoring only app.db would
-    create a cross-time evidence state. In that case availability yields to
-    evidence integrity: keep the failed target state held for operator repair
-    instead of silently manufacturing an inconsistent restore.
-    """
+    """Prove the Worker's persisted pass signature still matches preflight."""
     if not guard.get("required"):
         return True
     before_worker = (((guard.get("before") or {}).get("observation") or {}).get("worker") or {})
@@ -327,6 +314,24 @@ def _observer_rollback_safe(guard: dict[str, Any]) -> bool:
         current_worker.get("available")
         and current_worker.get("acquired_at") == before_acquired
     )
+
+
+@contextmanager
+def _observer_rollback_guard(guard: dict[str, Any]) -> Iterator[bool]:
+    """Hold Worker exclusion for the complete exceptional Main rollback window."""
+    if not guard.get("required"):
+        yield True
+        return
+    from aletheia.observation_lab.worker_lock import (
+        WorkerCycleLockError,
+        worker_cycle_exclusion,
+    )
+
+    try:
+        with worker_cycle_exclusion():
+            yield _observer_rollback_safe(guard)
+    except WorkerCycleLockError:
+        yield False
 
 
 def _observer_hold_after_activation(
@@ -676,22 +681,23 @@ def run() -> dict[str, Any]:
                 recovery = _gateway_command("start") if stopped else {"ok": True}
                 return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail,
                                hold=not recovery.get("ok"), blacklist=exc.reason not in _TRANSIENT_CANDIDATE_FAILURES)
-            if not _observer_rollback_safe(observer_guard):
-                return _observer_hold_after_activation(
-                    state,
-                    tag=tag,
-                    target=target,
-                    reason="observer_advanced_during_failed_activation",
-                    detail=(
-                        "Target activation failed, but Worker progress changed or could not be "
-                        "proven unchanged; refusing to restore an older app.db beneath newer Lab state."
-                    ),
-                )
-            state = _write_state(state, phase="rolling_back", status="running", reason=exc.reason, detail=exc.detail)
-            recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
-                                                restore_static=static_activated)
-            return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail,
-                           hold=not recovery.get("ok"), blacklist=True)
+            with _observer_rollback_guard(observer_guard) as rollback_safe:
+                if not rollback_safe:
+                    return _observer_hold_after_activation(
+                        state,
+                        tag=tag,
+                        target=target,
+                        reason="observer_advanced_during_failed_activation",
+                        detail=(
+                            "Target activation failed, but Worker progress changed or could not be "
+                            "proven unchanged; refusing to restore an older app.db beneath newer Lab state."
+                        ),
+                    )
+                state = _write_state(state, phase="rolling_back", status="running", reason=exc.reason, detail=exc.detail)
+                recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
+                                                    restore_static=static_activated)
+                return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail,
+                               hold=not recovery.get("ok"), blacklist=True)
         except Exception as exc:
             _remove_candidate(worktree)
             reason = f"unexpected_{type(exc).__name__}"
@@ -701,21 +707,22 @@ def run() -> dict[str, Any]:
                     _install_source_dependencies()
                 recovery = _gateway_command("start") if stopped else {"ok": True}
                 return _failed(state, tag=tag, sha=target, reason=reason, hold=not recovery.get("ok"))
-            if not _observer_rollback_safe(observer_guard):
-                return _observer_hold_after_activation(
-                    state,
-                    tag=tag,
-                    target=target,
-                    reason="observer_advanced_during_failed_activation",
-                    detail=(
-                        f"Unexpected target activation failure ({type(exc).__name__}), and Worker "
-                        "progress changed or could not be proven unchanged; refusing cross-time rollback."
-                    ),
-                )
-            state = _write_state(state, phase="rolling_back", status="running", reason=reason)
-            recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
-                                                restore_static=static_activated)
-            return _failed(state, tag=tag, sha=target, reason=reason, hold=not recovery.get("ok"), blacklist=True)
+            with _observer_rollback_guard(observer_guard) as rollback_safe:
+                if not rollback_safe:
+                    return _observer_hold_after_activation(
+                        state,
+                        tag=tag,
+                        target=target,
+                        reason="observer_advanced_during_failed_activation",
+                        detail=(
+                            f"Unexpected target activation failure ({type(exc).__name__}), and Worker "
+                            "progress changed or could not be proven unchanged; refusing cross-time rollback."
+                        ),
+                    )
+                state = _write_state(state, phase="rolling_back", status="running", reason=reason)
+                recovery = _rollback_to_old_runtime(head, final_backup or preflight_backup, had_previous_static,
+                                                    restore_static=static_activated)
+                return _failed(state, tag=tag, sha=target, reason=reason, hold=not recovery.get("ok"), blacklist=True)
 
         shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
         observer_summary = None
