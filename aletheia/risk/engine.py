@@ -2340,6 +2340,24 @@ def account_equity_for_execution(execution_mode: str, cfg=None) -> float | None:
     return _account_equity(execution_mode, cfg or load_config())
 
 
+def account_available_for_execution(execution_mode: str, cfg=None) -> float | None:
+    """Return the cached AVAILABLE balance for one execution account pool.
+
+    Sibling seam to ``account_equity_for_execution``.  Equity answers "how big is
+    this account"; available balance answers "how much of it is not already
+    pledged as margin".  Proposal sizing uses this one so each open position
+    shrinks the next entry instead of re-spending the same margin, and the Risk
+    Engine keeps using equity for its percentage denominators so caps do not
+    jitter as margin is consumed.
+
+    Returns ``None`` when the account snapshot cannot be read.  Callers must
+    fail closed on ``None``: configured capital is never a substitute for an
+    unavailable account authority.
+    """
+    del cfg  # accepted for signature symmetry; the resolver reads config itself
+    return _cached_available_balance_usdt(execution_mode)
+
+
 def _resolve_capital_base(execution_mode: str, policy, cfg) -> tuple[float | None, str | None]:
     """Resolve the one authoritative denominator for percentage risk limits.
 
