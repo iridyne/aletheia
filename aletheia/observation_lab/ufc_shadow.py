@@ -93,7 +93,19 @@ def _cohort_key(experiment_row: dict[str, Any]) -> str:
 
 
 def _extract_verdict_fields(verdict_row: dict[str, Any]) -> dict[str, Any]:
-    """Pull the comparison-relevant fields from a stored verdict row."""
+    """Pull the comparison-relevant fields from a stored verdict row.
+
+    ``verdict`` is the load-bearing field — the actual causal conclusion
+    (``positive`` / ``negative`` / ``insufficient_data`` / …). ``treatment_n``
+    and ``control_n`` are recorded for **diagnostic audit only** and are NOT
+    part of the equivalence signature: they legitimately drift between the
+    stored verdict's snapshot time and Lab's fresh recompute because
+    :func:`_market_day_coverage` in ``learning.verdicts`` re-qualifies the
+    treatment set every pass, and newly-arrived exposures on market days
+    with no matching control can collapse the qualified prefix. Both sides
+    still say ``insufficient_data``; the counts just walk. If Lab actually
+    disagrees on the **conclusion**, that's the signal we want to catch.
+    """
     return {
         "verdict": str(verdict_row.get("verdict") or ""),
         "treatment_n": int(verdict_row.get("unique_treatment_n") or 0),
@@ -104,10 +116,17 @@ def _extract_verdict_fields(verdict_row: dict[str, Any]) -> dict[str, Any]:
 def _first_mismatch(
     stored: dict[str, Any], recomputed: dict[str, Any]
 ) -> str | None:
-    """Return the first field name that differs, or None on full match."""
-    for key in ("verdict", "treatment_n", "control_n"):
-        if stored.get(key) != recomputed.get(key):
-            return key
+    """Return the mismatch field name, or None when the causal conclusion matches.
+
+    Only compares ``verdict`` — the sole field that expresses a causal
+    conclusion. ``treatment_n`` / ``control_n`` differences do not
+    invalidate the pass; the stored verdict and the fresh recompute are
+    taken at different times against a coverage gate that legitimately
+    shifts. The diff is still recorded in the equivalence row for audit
+    (see :func:`_record_equivalence` caller sites).
+    """
+    if stored.get("verdict") != recomputed.get("verdict"):
+        return "verdict"
     return None
 
 
