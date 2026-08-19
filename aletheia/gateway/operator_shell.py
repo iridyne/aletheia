@@ -20,6 +20,8 @@ from aletheia.operator_service_identity import (
     OPERATOR_SERVICE_HEADER,
     current_operator_service_token,
     ensure_operator_service_token,
+    issue_session_token,
+    revoke_session_token,
     rotate_operator_service_token,
 )
 
@@ -453,12 +455,10 @@ def spawn_operator_shell(
     def _spawn_new():
         log_path = operator_shell_log_path()
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        # A normal long-lived shell gets a fresh service token each time it is
-        # actually respawned. Shadow/once shells share the current token so they
-        # cannot invalidate the live shell while running concurrently.
-        service_token = (
-            ensure_operator_service_token() if once else rotate_operator_service_token()
-        )
+        # Live shells rotate the durable token on each respawn. Shadow / one-shot
+        # shells get an independent ephemeral token so live-shell rotation cannot
+        # invalidate a concurrent shadow run.
+        service_token = issue_session_token() if once else rotate_operator_service_token()
         env = os.environ.copy()
         env.update(
             _build_operator_shell_env(
@@ -481,7 +481,10 @@ def spawn_operator_shell(
 
         with log_path.open("a", encoding="utf-8") as log_file:
             popen_kwargs["stderr"] = log_file
-            return subprocess.Popen(cmd, **popen_kwargs)
+            proc = subprocess.Popen(cmd, **popen_kwargs)
+        if once:
+            _watch_and_revoke_session_token(proc, service_token)
+        return proc
 
     if not once:
         with _exclusive_pidfile_lock():
@@ -510,6 +513,18 @@ def spawn_operator_shell(
             return proc
 
     return _spawn_new()
+
+
+def _watch_and_revoke_session_token(proc, token: str) -> None:
+    """Revoke an ephemeral session token when its once-process exits."""
+    def _watcher():
+        try:
+            proc.wait()
+        except Exception:
+            pass
+        finally:
+            revoke_session_token(token)
+    threading.Thread(target=_watcher, daemon=True, name="operator-session-token-watcher").start()
 
 
 def spawn_shadow_operator_shell(cfg, runtime_id: str):
