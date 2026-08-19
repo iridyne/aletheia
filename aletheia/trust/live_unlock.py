@@ -356,6 +356,41 @@ def evidence_matches_config(cfg, evidence: dict[str, Any] | None) -> tuple[bool,
     return True, "ok"
 
 
+def current_authorization_ref(cfg) -> str | None:
+    """Return the opaque live_authorization_ref for the currently unlocked account.
+
+    The ref is the sanitised `evidence_binding` hash from `unlock_evidence`,
+    valid only while `evidence_matches_config` still accepts that evidence.
+    Returns ``None`` when live is not authorized right now (any failure path).
+    Callers stamp this on new live Proposals and re-check it at execution.
+    """
+    if getattr(getattr(cfg, "live", None), "state", "") != "live_limited":
+        return None
+    evidence = getattr(cfg.live, "unlock_evidence", None)
+    valid, _ = evidence_matches_config(cfg, evidence)
+    if not valid:
+        return None
+    ref = (evidence or {}).get("evidence_binding")
+    return str(ref) if ref else None
+
+
+def authorization_matches_ref(cfg, stored_ref: str | None) -> tuple[bool, str]:
+    """Confirm a stored ref matches the currently authorized live scope.
+
+    Fails when live is not currently authorized, when the stored ref is empty,
+    or when the current scope's binding differs from what was captured with the
+    Proposal (account, environment, execution profile, config, or expiry).
+    """
+    if not stored_ref:
+        return False, "missing_live_authorization_ref"
+    current = current_authorization_ref(cfg)
+    if current is None:
+        return False, "no_active_live_authorization"
+    if current != stored_ref:
+        return False, "live_authorization_scope_mismatch"
+    return True, "ok"
+
+
 def active_live_profile_conflict(cfg, broker: str, profile: str) -> bool:
     """Whether a credential profile is the currently unlocked live identity."""
     return (

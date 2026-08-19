@@ -163,15 +163,29 @@ def _check_live_state(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
                 "Unlocking does not enable live proposal routing (GitHub #418)"
             ),
         )
+    # EX-04 (#1004): live.state=live_limited authorizes proposal-mode selection
+    # only while a valid live_authorization_ref is currently in scope. When
+    # unlock evidence has expired, been revoked, or does not match the selected
+    # account/config, new proposals stay on the paper/demo path fail-closed.
+    try:
+        from aletheia.trust.live_unlock import current_authorization_ref
+
+        authorized = current_authorization_ref(cfg) is not None
+    except Exception:
+        authorized = False
+    if authorized:
+        return None
     return ConfigInconsistency(
         field_path="exchange.mode",
         severity="warning",
         message=(
-            "experimental Live authority is unlocked, but new proposals still use "
+            "experimental Live authority is unlocked, but no valid live "
+            "authorization is currently in scope; new proposals still use "
             f"exchange.paper_execution_mode={cfg.exchange.paper_execution_mode}"
         ),
         fix_hint=(
-            "Use exchange.mode=demo for normal operation; keep live selected only "
-            "when evaluating readiness until GitHub #418 is implemented"
+            "Re-run the Live Unlock preflight so the current unlock evidence "
+            "matches the selected account/config and has not expired "
+            "(GitHub #418)"
         ),
     )

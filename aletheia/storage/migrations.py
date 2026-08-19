@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v33"
+SCHEMA_VERSION = "aletheia-sqlite-v34"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4787,6 +4787,21 @@ _OBSERVATION_LAB_FROZEN_UNITS_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+# EX-04 (#1004): bind the opaque live-authorization scope hash to every
+# newly created live Proposal so the execution gateway can revalidate that
+# the exact authorization is still active before an order goes out. The
+# column is nullable — every historical Proposal was paper/demo and has no
+# live authorization to carry.
+_LIVE_AUTHORIZATION_REF_COLUMNS = (
+    ("live_authorization_ref", "trade_proposals", "TEXT"),
+)
+_LIVE_AUTHORIZATION_REF_CHECKSUM = hashlib.sha256(
+    (
+        repr(_LIVE_AUTHORIZATION_REF_COLUMNS)
+        + "\nlive_authorization_ref_v1"
+    ).encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -5145,6 +5160,17 @@ def _apply_observation_lab_frozen_units_v33(db: sqlite3.Connection) -> None:
     ``app.db`` because the spec is the identity anchor operators query.
     """
     for column, table, column_type in _OBSERVATION_LAB_FROZEN_UNITS_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.execute("PRAGMA optimize")
+
+
+def _apply_live_authorization_ref_v34(db: sqlite3.Connection) -> None:
+    """Add the EX-04 opaque live authorization ref column on trade_proposals."""
+    for column, table, column_type in _LIVE_AUTHORIZATION_REF_COLUMNS:
         existing = {
             str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
         }
@@ -5688,6 +5714,12 @@ _MIGRATIONS = (
         checksum=_OBSERVATION_LAB_FROZEN_UNITS_CHECKSUM,
         schema_version="aletheia-sqlite-v33",
         apply=_apply_observation_lab_frozen_units_v33,
+    ),
+    MigrationStep(
+        migration_id="20260819_0033_live_authorization_ref_v34",
+        checksum=_LIVE_AUTHORIZATION_REF_CHECKSUM,
+        schema_version="aletheia-sqlite-v34",
+        apply=_apply_live_authorization_ref_v34,
     ),
 )
 

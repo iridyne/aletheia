@@ -165,7 +165,16 @@ async def test_live_order_blocked_when_disabled(tmp_path, monkeypatch):
         quantity=0.001, price=60000, execution_mode="bitget_live_limited",
     )
     assert result["status"] == "rejected"
-    assert "live_disabled" in str(result.get("risk_violations", []))
+    # EX-04 (#1004): a live Proposal now fails closed at authorization before
+    # Risk sees it. Either the ref gate or Risk's live_disabled violation is a
+    # valid proof that live is blocked; both defend the same boundary.
+    reason_blob = (
+        str(result.get("risk_violations", []))
+        + str(result.get("reason_code", ""))
+    )
+    assert "live_disabled" in reason_blob or "live_authorization_missing" in reason_blob, (
+        result
+    )
     reset_db()
 
 

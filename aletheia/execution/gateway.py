@@ -155,6 +155,27 @@ def submit_proposal(
     # silently lose the same metadata already preserved for local paper.
     attribution_snapshot = _capture_attribution_snapshot_json(symbol)
 
+    # EX-04 (#1004): a direct-entry live Proposal must also carry the opaque
+    # authorization ref so the execution-time revalidation has something to
+    # compare against. Fail-closed instead of persisting a live Proposal with
+    # no authorization provenance.
+    live_authorization_ref: str | None = None
+    if execution_mode in {
+        "okx_live_limited", "bitget_live_limited", "binance_live_limited",
+    }:
+        from aletheia.trust.live_unlock import current_authorization_ref
+
+        live_authorization_ref = current_authorization_ref(load_config())
+        if live_authorization_ref is None:
+            return {
+                "status": "rejected",
+                "reason_code": "live_authorization_missing",
+                "proposal_id": None,
+                "message": (
+                    "Live authorization is not active; no live Proposal was created."
+                ),
+            }
+
     proposal = TradeProposal(
         strategy_id=strategy_id,
         opportunity_id=opportunity_id,
@@ -175,6 +196,7 @@ def submit_proposal(
         expected_horizon_hours=expected_horizon_hours,
         stop_source=stop_source,
         source=source,
+        live_authorization_ref=live_authorization_ref,
     )
     insert_trade_proposal(proposal)
     return execute_existing_proposal(proposal.id, execution_mode)
@@ -1433,6 +1455,7 @@ def _execute_proposal(
                 }
             if expected_live_mode is not None and cfg.live.state == "live_limited":
                 from aletheia.trust.live_unlock import (
+                    authorization_matches_ref,
                     evidence_matches_config,
                     revoke_stale_live_unlock,
                 )
@@ -1457,6 +1480,38 @@ def _execute_proposal(
                         "status": "rejected",
                         "proposal_id": proposal.id,
                         "message": "Live account trust evidence is missing or stale",
+                    }
+
+                # EX-04 (#1004): the Proposal's creation-time authorization must
+                # still be the active authorization. A rotated unlock (different
+                # account, environment, or config) breaks the scope binding even
+                # if the new unlock is itself valid — reject the old Proposal.
+                ref_ok, ref_reason = authorization_matches_ref(
+                    cfg, getattr(proposal, "live_authorization_ref", None),
+                )
+                if not ref_ok:
+                    update_trade_proposal(proposal.id, status="rejected")
+                    write_audit({
+                        "actor": "system",
+                        "source": "execution_gateway",
+                        "event_type": "proposal_rejected",
+                        "entity_type": "trade_proposal",
+                        "entity_id": proposal.id,
+                        "before": {"status": proposal.status},
+                        "after": {"status": "rejected"},
+                        "message": (
+                            f"Live authorization revalidation failed: {ref_reason}"
+                        ),
+                    })
+                    return {
+                        "status": "rejected",
+                        "reason_code": ref_reason,
+                        "proposal_id": proposal.id,
+                        "message": (
+                            "Live authorization is not equivalent to the "
+                            "authorization captured when this Proposal was "
+                            "created; no live order was submitted."
+                        ),
                     }
             if cfg.live.state == "live_disabled":
                 update_trade_proposal(proposal.id, status="rejected")

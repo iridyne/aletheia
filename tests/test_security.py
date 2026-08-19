@@ -99,7 +99,10 @@ def test_live_disabled_blocks_live_execution(tmp_path, monkeypatch):
     result = submit_proposal(symbol="BTC/USDT", market_type="spot", direction="long",
                              quantity=0.001, price=60000, execution_mode="bitget_live_limited")
     assert result["status"] == "rejected"
-    assert "live_disabled" in str(result.get("risk_violations", []))
+    # EX-04 (#1004): live Proposals now fail closed at authorization before Risk
+    # sees them. Either gate is a valid proof that live execution is blocked.
+    reason_blob = str(result.get("risk_violations", [])) + str(result.get("reason_code", ""))
+    assert "live_disabled" in reason_blob or "live_authorization_missing" in reason_blob, result
     reset_db()
 
 

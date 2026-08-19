@@ -1540,6 +1540,7 @@ def test_authoritative_risk_rejects_every_non_quantity_hash_field_mismatch(
         "parent_hash": "altered-parent-hash",
         "stop_source": "altered-stop-source",
         "expected_horizon_hours": 48.0,
+        "live_authorization_ref": "sha256:altered-live-ref",
     }
     model_fields = set(
         TradeProposal(
