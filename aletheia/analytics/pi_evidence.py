@@ -14,6 +14,25 @@ from typing import Any
 _MIN_NET_SAMPLES = 20
 _MIN_OUTCOME_COVERAGE = 0.70
 _SHRINKAGE_K = 20.0
+_B2_VERSION = "b2.1"
+_EVIDENCE_HORIZON = "24h"
+# Maps evidence horizon strings to float hours for bucket comparison
+_HORIZON_HOURS: dict[str, float] = {"1h": 1.0, "4h": 4.0, "24h": 24.0}
+
+
+def horizon_bucket(hours: float) -> str:
+    """Map an intended holding period (hours) to the nearest settled evidence horizon bucket."""
+    if hours <= 2:
+        return "1h"
+    if hours <= 8:
+        return "4h"
+    return "24h"
+
+
+def b2_horizon_status(evidence_horizon: str, expected_hours: float) -> str:
+    """Deterministic provenance label: 'compatible' or 'mismatched_neutral'."""
+    evid_hours = _HORIZON_HOURS.get(evidence_horizon, 24.0)
+    return "compatible" if horizon_bucket(expected_hours) == horizon_bucket(evid_hours) else "mismatched_neutral"
 
 
 def score_bucket(trade_score: Any) -> str:
@@ -51,14 +70,14 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
     market = _market_type(candidate.get("market_type"))
     bucket = score_bucket(candidate.get("trade_score"))
     base = {
-        "version": "b2",
+        "version": _B2_VERSION,
         "policy_epoch_id": policy_epoch_id,
         "selection_tier": "ranker_enqueued",
         "scanner_family": family,
         "direction": direction,
         "market_type": market,
         "score_bucket": bucket,
-        "horizon": "24h",
+        "horizon": _EVIDENCE_HORIZON,
         "min_net_samples": _MIN_NET_SAMPLES,
         "min_outcome_coverage": _MIN_OUTCOME_COVERAGE,
         "shrinkage_k": _SHRINKAGE_K,
@@ -81,7 +100,7 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
         "   AND LOWER(COALESCE(fd.direction, ''))=? "
         "   AND CASE WHEN fd.market_type IN ('perp','futures','swap','usdt_futures') "
         "            THEN 'perp' ELSE COALESCE(fd.market_type, 'spot') END=? "
-        "   AND json_extract(fd.input_snapshot, '$.b2_evidence.version')='b2' "
+        "   AND json_extract(fd.input_snapshot, '$.b2_evidence.version')=? "
         "   AND json_extract(fd.input_snapshot, '$.b2_evidence.policy_epoch_id')=? "
         "   AND json_extract(fd.input_snapshot, '$.b2_evidence.selection_tier')='ranker_enqueued' "
         "   AND json_extract(fd.input_snapshot, '$.b2_evidence.score_bucket')=? "
@@ -91,7 +110,7 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
         "), outcomes AS ("
         " SELECT c.opportunity_id, fo.net_return_pct, fo.cost_model_version, fo.status "
         " FROM cohort c LEFT JOIN filter_candidate_outcomes fo "
-        "   ON fo.outcome_candidate_key=c.outcome_candidate_key AND fo.horizon='24h'"
+        "   ON fo.outcome_candidate_key=c.outcome_candidate_key AND fo.horizon=?"
         ") "
         "SELECT COUNT(DISTINCT opportunity_id) AS n_total, "
         " COUNT(DISTINCT CASE WHEN status='settled' AND net_return_pct IS NOT NULL "
@@ -100,7 +119,7 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
         " COUNT(DISTINCT CASE WHEN status='settled' THEN cost_model_version END) AS cost_versions, "
         " MIN(CASE WHEN status='settled' THEN cost_model_version END) AS cost_model_version "
         "FROM outcomes",
-        (family, direction, market, policy_epoch_id, bucket),
+        (family, direction, market, _B2_VERSION, policy_epoch_id, bucket, _EVIDENCE_HORIZON),
     ).fetchone()
     n_total = int(row["n_total"] or 0)
     n_net = int(row["n_net"] or 0)
@@ -125,17 +144,18 @@ def render_b2_evidence_summary(summary: dict[str, Any] | None) -> str:
     """Render the exact, role-neutral B2 evidence block shared by all LLM roles."""
     if not summary:
         return "B2 candidate evidence: unavailable; neutral, not a directional veto."
+    horizon = summary.get("horizon", _EVIDENCE_HORIZON)
     if summary.get("status") in {"insufficient_evidence", "data_quality_incident"}:
         reason = "data-quality incident" if summary.get("status") == "data_quality_incident" else "insufficient same-epoch settled evidence"
         return (
-            f"B2 candidate evidence: {reason} "
+            f"B2 candidate evidence (evidence_horizon={horizon}): {reason} "
             f"(n_net={summary.get('n_net', 0)}/{summary.get('n_total', 0)}, "
             f"coverage={float(summary.get('outcome_coverage') or 0):.0%}); "
             "neutral, not a directional veto."
         )
     profitable = summary.get("status") == "qualified_positive"
     return (
-        "B2 same-direction outcome evidence: comparable candidate outcomes were "
+        f"B2 same-direction outcome evidence (evidence_horizon={horizon}): comparable candidate outcomes were "
         f"{'profitable and support' if profitable else 'unprofitable and oppose'} "
         "this candidate "
         f"(n_net={summary.get('n_net')}/{summary.get('n_total')}, "

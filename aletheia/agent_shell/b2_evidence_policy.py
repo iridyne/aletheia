@@ -8,7 +8,7 @@ from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_e
 
 _EPOCH_KIND = "system_operator_b2_candidate_evidence"
 _EFFECTIVE_VALUES = {
-    "version": "b2",
+    "version": "b2.1",
     "source": "same_epoch_operator_outcomes",
     "selection_tier": "ranker_enqueued",
     "score_buckets": ["low_score", "medium_score", "high_score"],
@@ -21,6 +21,10 @@ _EFFECTIVE_VALUES = {
     "qualified_outcome_semantics": "same_direction_net_outcome_not_price_direction",
     "funding_semantics": "positive_crowded_longs_negative_crowded_shorts",
     "shared_roles": ["assessment", "bull", "bear"],
+    # horizon_compatibility_rule: after decision, evidence whose horizon bucket differs
+    # from the intended holding bucket (intent_horizon_bucket_match) is labeled
+    # mismatched_neutral in assessment_inputs — it is never silently generalized.
+    "horizon_compatibility_rule": "intent_horizon_bucket_match",
 }
 _AFFECTED_PATHS = (
     "system_operator_assessment_evidence",

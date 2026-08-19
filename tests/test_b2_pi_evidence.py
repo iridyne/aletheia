@@ -48,7 +48,7 @@ def _insert_b2_candidate(*, index: int, epoch: str, bucket: str, net: float) -> 
         outcome_candidate_key=decision_key, evaluated_at=now.isoformat(),
         input_snapshot=json.dumps({
             "b2_evidence": {
-                "version": "b2", "policy_epoch_id": epoch,
+                "version": "b2.1", "policy_epoch_id": epoch,
                 "selection_tier": "ranker_enqueued", "score_bucket": bucket,
             },
         }),
@@ -114,9 +114,9 @@ def test_b2_summary_is_identical_for_assessment_bull_and_bear(tmp_path, monkeypa
     from aletheia.analytics.pi_evidence import render_b2_evidence_summary
 
     summary = {
-        "version": "b2", "status": "insufficient_evidence",
+        "version": "b2.1", "status": "insufficient_evidence",
         "policy_epoch_id": "b2-current", "selection_tier": "ranker_enqueued",
-        "score_bucket": "high_score", "n_total": 0, "n_net": 0,
+        "score_bucket": "high_score", "n_total": 0, "n_net": 0, "horizon": "24h",
         "outcome_coverage": 0.0, "directional_verdict": None,
     }
     block = render_b2_evidence_summary(summary)
@@ -169,3 +169,75 @@ def test_assessment_prompt_does_not_treat_negative_funding_as_short_support():
 
     assert "FR<-0.01%: shorts pay longs; crowded shorts" in prompt
     assert "supports a contrarian long, opposes a short" in prompt
+
+
+# ── Issue #954: horizon alignment ─────────────────────────────────────────────
+
+def test_render_b2_evidence_includes_horizon_in_insufficient_case():
+    from aletheia.analytics.pi_evidence import render_b2_evidence_summary
+
+    block = render_b2_evidence_summary({
+        "status": "insufficient_evidence", "horizon": "24h",
+        "n_total": 0, "n_net": 0, "outcome_coverage": 0.0,
+    })
+
+    assert "evidence_horizon=24h" in block
+
+
+def test_render_b2_evidence_includes_horizon_in_qualified_case():
+    from aletheia.analytics.pi_evidence import render_b2_evidence_summary
+
+    block = render_b2_evidence_summary({
+        "status": "qualified_positive", "horizon": "24h",
+        "n_total": 25, "n_net": 22, "outcome_coverage": 0.88,
+        "avg_net_pct": 1.2, "shrunk_avg_net_pct": 0.8,
+    })
+
+    assert "evidence_horizon=24h" in block
+
+
+def test_horizon_bucket_mapping():
+    from aletheia.analytics.pi_evidence import horizon_bucket
+
+    assert horizon_bucket(1.0) == "1h"
+    assert horizon_bucket(2.0) == "1h"
+    assert horizon_bucket(4.0) == "4h"
+    assert horizon_bucket(6.0) == "4h"
+    assert horizon_bucket(8.0) == "4h"
+    assert horizon_bucket(12.0) == "24h"
+    assert horizon_bucket(24.0) == "24h"
+
+
+def test_b2_horizon_status_mismatch_for_short_intent():
+    from aletheia.analytics.pi_evidence import b2_horizon_status
+
+    # 4h and 6h intent vs 24h evidence → mismatched_neutral
+    assert b2_horizon_status("24h", 4.0) == "mismatched_neutral"
+    assert b2_horizon_status("24h", 6.0) == "mismatched_neutral"
+
+
+def test_b2_horizon_status_compatible_for_long_intent():
+    from aletheia.analytics.pi_evidence import b2_horizon_status
+
+    # 18h intent vs 24h evidence → compatible (both in "24h" bucket)
+    assert b2_horizon_status("24h", 18.0) == "compatible"
+    assert b2_horizon_status("24h", 24.0) == "compatible"
+
+
+def test_b2_version_is_b2_1():
+    """New policy epoch uses version b2.1; old b2 data is isolated by policy_epoch_id."""
+    from aletheia.analytics.pi_evidence import build_b2_evidence_summary, _B2_VERSION
+
+    assert _B2_VERSION == "b2.1"
+
+
+def test_b2_horizon_status_covers_all_operator_horizon_values():
+    """Covers the issue #954 requirement: mismatch cannot be represented as compatible."""
+    from aletheia.analytics.pi_evidence import b2_horizon_status
+
+    # The Fedora observations had expected_horizon_hours in {4.0, 4.5, 6.0}
+    for h in (4.0, 4.5, 6.0):
+        assert b2_horizon_status("24h", h) == "mismatched_neutral", f"expected mismatch for {h}h"
+    # Only plans > 8h should be treated as compatible with 24h evidence
+    for h in (12.0, 18.0, 24.0):
+        assert b2_horizon_status("24h", h) == "compatible", f"expected compatible for {h}h"
