@@ -1082,16 +1082,21 @@ def _position_cost_sample(
         economics_cost_evidence = economics.get("cost_evidence")
         cost_evidence = economics_cost_evidence if isinstance(economics_cost_evidence, Mapping) else None
     if not isinstance(cost_evidence, Mapping):
-        return None, "cost_not_actionable"
-    if cost_evidence.get("avoidable") is not True or cost_evidence.get("baseline_kind") not in {
-        "realizable_limit", "spot_vs_perpetual", "turnover", "venue"
-    }:
-        return None, "cost_not_actionable"
+        # No cost alternative defined — unavoidable fees are part of net economics, not alpha.
+        return None, "cost_baseline_unavailable"
+    if cost_evidence.get("avoidable") is not True:
+        return None, "cost_not_avoidable"
+    if cost_evidence.get("baseline_kind") not in {"realizable_limit", "spot_vs_perpetual", "turnover", "venue"}:
+        return None, "cost_baseline_not_realizable"
+    if not str(cost_evidence.get("cost_event_id") or "").strip():
+        return None, "cost_event_identity_missing"
+    if not str(cost_evidence.get("baseline_id") or "").strip():
+        return None, "cost_baseline_identity_missing"
+    if not str(cost_evidence.get("cost_model_id") or "").strip():
+        return None, "cost_model_identity_missing"
     extra = _finite(cost_evidence.get("avoidable_extra_cost_quote"), nonnegative=True)
-    if extra is None or not str(cost_evidence.get("cost_event_id") or "").strip():
-        return None, "cost_not_actionable"
-    if not str(cost_evidence.get("baseline_id") or "").strip() or not str(cost_evidence.get("cost_model_id") or "").strip():
-        return None, "cost_not_actionable"
+    if extra is None:
+        return None, "avoidable_cost_amount_invalid"
     if str(cost_evidence.get("cost_model_id")) != cost_model_id:
         return None, "cost_incomplete"
     assignment_metadata: dict[str, str] = {}
