@@ -23,6 +23,7 @@ from aletheia.config.schema import (
     ModeRiskPolicy,
     NetworkConfig,
     NewsConfig,
+    ObservationConfig,
     OperatorConfig,
     PiDaemonConfig,
     RegimeConfig,
@@ -274,6 +275,7 @@ class SettingsResponse(BaseModel):
     news: NewsConfig
     serenity: SerenityConfig
     controller: ControllerConfig
+    observation: ObservationConfig
     learning: LearningConfig
     economics: EconomicsConfig
     trading_mandate: SettingsTradingMandateResponse | None = None
@@ -391,6 +393,7 @@ def get_settings() -> SettingsResponse:
         "news": cfg.news.model_dump(mode="json"),
         "serenity": cfg.serenity.model_dump(mode="json"),
         "controller": cfg.controller.model_dump(mode="json"),
+        "observation": cfg.observation.model_dump(mode="json"),
         "learning": cfg.learning.model_dump(mode="json"),
         "economics": cfg.economics.model_dump(mode="json"),
         # Read-only visibility keeps the config schema honest; unknown mandate
