@@ -31,6 +31,7 @@ def check_config_consistency(cfg: "AletheiaConfig") -> list[ConfigInconsistency]
         _check_whitelist_empty,
         _check_scheduler_needs_llm,
         _check_live_state,
+        _check_risk_caps_admit_sizing,
     ]
     for check in checks:
         try:
@@ -189,3 +190,54 @@ def _check_live_state(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
             "(GitHub #418)"
         ),
     )
+
+
+def _check_risk_caps_admit_sizing(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
+    """Detect when risk caps would block every first entry at current account size."""
+    try:
+        from aletheia.risk.engine import (
+            account_available_for_execution,
+            per_symbol_notional_ceiling,
+        )
+
+        mode = getattr(cfg.exchange, "paper_execution_mode", None) or "paper_internal"
+        available = account_available_for_execution(mode)
+        if not available or available <= 0:
+            return None
+
+        from aletheia.risk.policy import LIVE_EXECUTION_MODES
+        is_live = mode in LIVE_EXECUTION_MODES
+        risk_policy = cfg.risk.live if is_live else cfg.risk.demo
+        risk_pct = float(risk_policy.loss.max_single_trade_risk_pct)
+        leverage = float(risk_policy.leverage.major_cap)
+
+        single_entry = available * (risk_pct / 100.0) * leverage
+        if single_entry <= 0:
+            return None
+
+        ceiling = per_symbol_notional_ceiling(mode, leverage=leverage, cfg=cfg)
+        if ceiling > 0 and single_entry > ceiling:
+            return ConfigInconsistency(
+                field_path="risk.capital.max_per_symbol_entries",
+                severity="blocker",
+                message=(
+                    f"Sizing output ({single_entry:.0f}) exceeds per-symbol ceiling "
+                    f"({ceiling:.0f}) — check #19 will reject every first entry"
+                ),
+                fix_hint="Increase max_per_symbol_entries, or reduce max_single_trade_risk_pct / major leverage",
+            )
+
+        pos_cap = float(risk_policy.capital.max_position_notional_usdt)
+        if pos_cap > 0 and single_entry > pos_cap:
+            return ConfigInconsistency(
+                field_path="risk.capital.max_position_notional_usdt",
+                severity="blocker",
+                message=(
+                    f"Sizing output ({single_entry:.0f}) exceeds position notional cap "
+                    f"({pos_cap:.0f}) — check #5 will reject every entry"
+                ),
+                fix_hint=f"Raise max_position_notional_usdt above {single_entry:.0f}",
+            )
+    except Exception:
+        pass
+    return None
