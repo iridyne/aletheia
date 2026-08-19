@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
+import pytest
+
 
 def test_worker_cycle_exclusion_preserves_persisted_signature(tmp_path, monkeypatch):
     from aletheia.observation_lab import worker_lock
@@ -48,5 +50,31 @@ def test_auto_rollback_guard_holds_exclusion_while_proving_signature(monkeypatch
     with auto._observer_rollback_guard({"required": True}) as rollback_safe:
         assert rollback_safe is True
         assert held["value"] is True
+
+    assert held["value"] is False
+
+
+def test_auto_rollback_guard_does_not_reinterpret_body_exception(monkeypatch):
+    from aletheia.observation_lab import worker_lock
+    from aletheia.update import auto
+
+    held = {"value": False}
+
+    @contextmanager
+    def fake_exclusion():
+        held["value"] = True
+        try:
+            yield None
+        finally:
+            held["value"] = False
+
+    monkeypatch.setattr(worker_lock, "worker_cycle_exclusion", fake_exclusion)
+    monkeypatch.setattr(auto, "_observer_rollback_safe", lambda _guard: True)
+
+    with pytest.raises(RuntimeError, match="rollback exploded"):
+        with auto._observer_rollback_guard({"required": True}) as rollback_safe:
+            assert rollback_safe is True
+            assert held["value"] is True
+            raise RuntimeError("rollback exploded")
 
     assert held["value"] is False
