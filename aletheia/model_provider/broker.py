@@ -76,6 +76,10 @@ class InferenceTimeout(InferenceBrokerError):
     """The total queue + rate-limit + inference deadline expired."""
 
 
+class InferencePolicyReload(InferenceTimeout):
+    """A submission waited for an in-progress policy reload that exceeded the deadline."""
+
+
 class InferenceBrokerClosed(InferenceBrokerError):
     """The process-wide broker is shutting down or unavailable."""
 
@@ -359,13 +363,13 @@ class InferenceBroker:
             if state.metrics.outstanding:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise InferenceTimeout(
+                    raise InferencePolicyReload(
                         f"provider {provider_name} policy reload exceeded total deadline"
                     )
                 try:
                     await asyncio.wait_for(state.drained.wait(), timeout=remaining)
                 except TimeoutError as exc:
-                    raise InferenceTimeout(
+                    raise InferencePolicyReload(
                         f"provider {provider_name} policy reload exceeded total deadline"
                     ) from exc
                 continue

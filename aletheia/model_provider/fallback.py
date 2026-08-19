@@ -22,6 +22,7 @@ from aletheia.model_provider.base import ModelProvider, ModelRequest, ModelRespo
 from aletheia.model_provider.broker import (
     InferenceBrokerClosed,
     InferenceBrokerError,
+    InferencePolicyReload,
     InferenceQueueFull,
     InferenceRateLimitExceeded,
     InferenceTimeout,
@@ -357,6 +358,12 @@ def _emit_terminal_failure(
             "llm_broker_rate_limit_exceeded",
             "LLM inference broker rate limit denied request",
             "review_provider_rate_limit",
+        ),
+        InferencePolicyReload: (
+            "info",
+            "llm_broker_policy_reload",
+            "LLM provider configuration is reloading",
+            "retry_after_policy_reload",
         ),
         InferenceTimeout: (
             "warning",
