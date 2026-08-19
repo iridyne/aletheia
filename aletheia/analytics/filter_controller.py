@@ -782,10 +782,25 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
     except Exception as exc:  # pragma: no cover - defensive scheduler boundary
         logger.warning("filter_controller: shadow experiment cycle failed: %s", exc)
 
+    # Observation Lab UFC shadow-equivalence pass (Issue #1072 Packet 1).
+    # Isolated try/except so a filter-shadow failure never suppresses UFC
+    # equivalence recording and vice versa (new #1072 §"Failure isolation":
+    # one window's failure must not block another).
+    ufc_shadow_equivalence = {"checked": 0, "matched": 0, "mismatched": 0, "skipped": 0}
+    try:
+        from aletheia.observation_lab.ufc_shadow import run_ufc_shadow_equivalence_pass
+
+        ufc_shadow_equivalence = run_ufc_shadow_equivalence_pass()
+    except Exception as exc:  # pragma: no cover - defensive scheduler boundary
+        logger.warning(
+            "filter_controller: UFC shadow-equivalence pass failed: %s", exc,
+        )
+
     logger.info(
-        "filter_controller observe: run=%s written=%d verdicts=%s experiments=%s/%s frozen_units_new=%d",
+        "filter_controller observe: run=%s written=%d verdicts=%s experiments=%s/%s "
+        "frozen_units_new=%d ufc_equivalence=%s",
         run_id, written, counts, experiment_registration, experiment_evaluation,
-        frozen_units_captured,
+        frozen_units_captured, ufc_shadow_equivalence,
     )
     return {
         "run_id": run_id,
@@ -797,6 +812,7 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
         "experiments_registered": experiment_registration["registered"],
         "experiments_evaluated": experiment_evaluation["evaluated"],
         "experiment_registration": experiment_registration,
+        "ufc_shadow_equivalence": ufc_shadow_equivalence,
         "experiment_evaluation": experiment_evaluation,
     }
 
