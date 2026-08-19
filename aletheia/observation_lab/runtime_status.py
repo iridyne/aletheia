@@ -2,7 +2,7 @@
 
 Issue #1135 needs the updater to prove more than the configured owner: when a
 Worker owns Observation, the running Main Gateway must not retain the
-``filter_controller_observe`` APScheduler job.  This module exposes that narrow
+``filter_controller_observe`` APScheduler job. This module exposes that narrow
 in-process fact without adding another scheduler, management plane, or durable
 state.
 """
@@ -19,13 +19,13 @@ _OBSERVATION_CYCLE_JOB_ID = "filter_controller_observe"
 def main_scheduler_ownership_snapshot() -> dict[str, Any]:
     """Return the configured owner and live Main scheduler registration state.
 
-    This function is intended to run *inside the Gateway process*.  It reaches
+    This function is intended to run *inside the Gateway process*. It reaches
     the existing in-memory APScheduler object read-only; it never starts,
     reconciles, pauses, removes, or adds jobs.
 
     ``exclusive`` is only false for the unsafe state that #1072/#1135 prohibit:
     Worker owns the canonical Observation cycle while Main still has the cycle
-    job registered.  Main ownership with the job absent can be valid when the
+    job registered. Main ownership with the job absent can be valid when the
     shadow controller is disabled, so absence is not treated as an error there.
     """
 
@@ -35,13 +35,16 @@ def main_scheduler_ownership_snapshot() -> dict[str, Any]:
 
         scheduler = getattr(scheduler_mod, "_scheduler", None)
         if scheduler is None:
+            # No in-process Main scheduler means no Main-owned cycle can be
+            # registered. This is a positive exclusivity proof, not an unknown
+            # state (for example scheduler_enabled=false is legitimate).
             return {
-                "available": False,
-                "unavailable_reason": "main_scheduler_not_started",
+                "available": True,
+                "unavailable_reason": None,
                 "owner": owner,
                 "job_id": _OBSERVATION_CYCLE_JOB_ID,
-                "main_cycle_registered": None,
-                "exclusive": None,
+                "main_cycle_registered": False,
+                "exclusive": True,
             }
         registered = scheduler.get_job(_OBSERVATION_CYCLE_JOB_ID) is not None
     except Exception as exc:  # status surfaces must remain observational
