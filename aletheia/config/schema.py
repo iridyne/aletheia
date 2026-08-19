@@ -294,6 +294,19 @@ class ExchangeConfig(BaseModel):
     paper_execution_mode: str = "paper_internal"
     # Futures position mode: "hedge" (long/short separate) or "one_way".
     position_mode: str = "hedge"
+    # Bitget broker capability profile.
+    #   "classic_v2" → /api/v2/ endpoint family (marginCoin, marginMode, size, idLessThan).
+    #   "uta_v3"     → /api/v3/ Unified Trading Account (category, qty, posSide, cursor).
+    #                  Experimental: Demo qualification required before any live use.
+    bitget_profile: str = "classic_v2"
+
+    @field_validator("bitget_profile")
+    @classmethod
+    def _validate_bitget_profile(cls, v: str) -> str:
+        allowed = {"classic_v2", "uta_v3"}
+        if v not in allowed:
+            raise ValueError(f"bitget_profile must be one of {sorted(allowed)}, got {v!r}")
+        return v
     # Explicit perp symbol allowlist. Empty = all perps passing universe registry.
     futures_symbols: list[str] = Field(
         default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"]

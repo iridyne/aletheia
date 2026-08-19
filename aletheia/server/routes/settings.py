@@ -647,6 +647,7 @@ class ExchangeMarketsRequest(SettingsRequest):
     spot: bool
     usdt_futures: bool
     paper_execution_mode: Optional[str] = None
+    bitget_profile: Optional[str] = None
     confirm_exchange_divergence: bool = False
 
 
@@ -673,6 +674,8 @@ async def set_exchange_markets(req: ExchangeMarketsRequest):
         raise HTTPException(400, "At least one market must be enabled")
     if req.paper_execution_mode is not None and req.paper_execution_mode not in {"bitget_demo", "paper_internal", "binance_testnet", "okx_demo", "binance_live", "okx_live"}:
         raise HTTPException(400, "paper_execution_mode must be one of: bitget_demo, paper_internal, binance_testnet, okx_demo, binance_live, okx_live")
+    if req.bitget_profile is not None and req.bitget_profile not in {"classic_v2", "uta_v3"}:
+        raise HTTPException(400, "bitget_profile must be one of: classic_v2, uta_v3")
     cfg = load_config()
     old = cfg.exchange.model_dump(mode="json")
     next_paper_mode = req.paper_execution_mode or cfg.exchange.paper_execution_mode
@@ -693,6 +696,8 @@ async def set_exchange_markets(req: ExchangeMarketsRequest):
     cfg.exchange.enabled_markets = {"spot": req.spot, "usdt_futures": req.usdt_futures}
     if req.paper_execution_mode is not None:
         cfg.exchange.paper_execution_mode = req.paper_execution_mode
+    if req.bitget_profile is not None:
+        cfg.exchange.bitget_profile = req.bitget_profile
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "exchange_markets_changed",

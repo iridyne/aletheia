@@ -88,6 +88,10 @@ class DemoFundingUnavailable(RuntimeError):
     """mix wallet short and cannot be topped up automatically."""
 
 
+class ProfileContractError(RuntimeError):
+    """Raised when a BitgetClient operation is called on the wrong profile."""
+
+
 
 
 @dataclass
@@ -187,13 +191,66 @@ def _bitget_verified_fill(raw: dict):
     )
 
 
-class BitgetClient:
-    """Native Bitget adapter supporting spot + USDT futures, demo + live."""
+_KNOWN_PROFILES = frozenset({"classic_v2", "uta_v3"})
 
-    def __init__(self, mode: str = "demo"):
+# Error codes that mean "no open position" — profile-specific where they differ.
+# classic_v2: 22002, 25227. uta_v3: uses the same codes per Bitget migration guide.
+_CLOSE_ABSENT_CODES_CLASSIC_V2 = frozenset({"22002", "25227"})
+_CLOSE_ABSENT_CODES_UTA_V3 = frozenset({"22002", "25227", "45110"})
+
+
+def profile_close_absent_codes(profile: str) -> frozenset[str]:
+    if profile == "uta_v3":
+        return _CLOSE_ABSENT_CODES_UTA_V3
+    return _CLOSE_ABSENT_CODES_CLASSIC_V2
+
+
+def profile_pagination_param(profile: str) -> str:
+    """Return the pagination cursor parameter name for a profile's fill endpoints."""
+    return "cursor" if profile == "uta_v3" else "idLessThan"
+
+
+class BitgetClient:
+    """Native Bitget adapter supporting spot + USDT futures, demo + live.
+
+    ``profile`` selects the API endpoint family and payload contract:
+    - ``classic_v2``: /api/v2/ (marginCoin, marginMode, size, idLessThan pagination).
+    - ``uta_v3``:     /api/v3/ Unified Trading Account (category, qty, posSide, cursor
+                     pagination). Experimental — Demo qualification required.
+    Endpoints from the other profile's family raise ``ProfileContractError``.
+    """
+
+    def __init__(self, mode: str = "demo", profile: str = "classic_v2"):
+        if profile not in _KNOWN_PROFILES:
+            raise ValueError(
+                f"unknown Bitget profile {profile!r}; expected one of {sorted(_KNOWN_PROFILES)}"
+            )
         self.mode = mode
+        self.profile = profile
         self.demo = mode == "demo"
         self._base = BASE_URL
+
+    def _assert_classic_v2(self, operation: str) -> None:
+        if self.profile != "classic_v2":
+            raise ProfileContractError(
+                f"operation {operation!r} requires classic_v2 profile, "
+                f"configured profile is {self.profile!r}"
+            )
+
+    def _assert_uta_v3(self, operation: str) -> None:
+        if self.profile != "uta_v3":
+            raise ProfileContractError(
+                f"operation {operation!r} requires uta_v3 profile, "
+                f"configured profile is {self.profile!r}"
+            )
+
+    def _assert_uta_v3_qualified(self) -> None:
+        """UTA v3 Demo qualification is a prerequisite for live order operations."""
+        raise NotImplementedError(
+            "Bitget uta_v3 profile is Experimental: "
+            "Demo end-to-end qualification required before order operations. "
+            "See issue #1003."
+        )
 
     def _cred_prefix(self) -> str:
         return f"bitget.{self.mode}"
@@ -333,8 +390,14 @@ class BitgetClient:
             raise RuntimeError(f"Bitget set-leverage failed: {data.get('msg')}")
 
     async def place_order(self, order: OrderRequest) -> OrderResponse:
-        """Place an order — gated by execution mode externally."""
+        """Place an order — gated by execution mode externally.
+
+        Only classic_v2 profile is qualified for order placement. UTA v3
+        raises NotImplementedError until Demo qualification completes (#1003).
+        """
         import json
+        if self.profile == "uta_v3":
+            self._assert_uta_v3_qualified()
 
         # Validate before leverage setup or order submission so malformed
         # protection cannot leave any exchange-side effect behind. Validation is
@@ -434,11 +497,10 @@ class BitgetClient:
                 raise SubmissionResponseUnknownError(
                     "Bitget create-order acknowledgement was not a recognizable rejection"
                 )
-            # Bitget documents both codes across its futures account families.
-            # Scope this classification to hedge-mode closes: the response proves
-            # only that this submission was rejected, not why local exposure and
-            # the venue disagree or whether any earlier close filled.
-            if order.hold_side and response_code in {"22002", "25227"}:
+            # Error code set for "no open position" is profile-specific:
+            # classic_v2 uses 22002/25227; uta_v3 also adds 45110.
+            # Scope this classification to hedge-mode closes.
+            if order.hold_side and response_code in profile_close_absent_codes(self.profile):
                 raise ClosePositionAbsentError(
                     f"Bitget close rejected: no position available (code={response_code})"
                 )
@@ -530,7 +592,8 @@ class BitgetClient:
         )
 
     async def get_positions(self) -> list[Position]:
-        """Get open USDT-futures positions (§19.3)."""
+        """Get open USDT-futures positions (§19.3). classic_v2 only."""
+        self._assert_classic_v2("get_positions")
         path = "/api/v2/mix/position/all-position?productType=USDT-FUTURES&marginCoin=USDT"
         headers = self._headers("GET", path)
         async with httpx_client(timeout=15) as client:
@@ -566,9 +629,11 @@ class BitgetClient:
     async def get_mix_account(self, product_type: str = "USDT-FUTURES") -> dict:
         """Get futures/mix account summary (equity, available, unrealized PnL).
 
+        classic_v2 only — v2 mix/account/accounts endpoint.
         For Bitget demo accounts this is the only endpoint that returns real
         balance — spot/account/assets returns empty for demo keys.
         """
+        self._assert_classic_v2("get_mix_account")
         path = f"/api/v2/mix/account/accounts?productType={product_type}"
         headers = self._headers("GET", path)
         async with httpx_client(timeout=15) as client:
@@ -613,9 +678,10 @@ class BitgetClient:
     async def get_uta_account(self) -> dict:
         """Get UTA (Unified Trading Account) account assets — v3 API.
 
-        Returns the full UTA account with all assets. Only works for unified
-        accounts; classic accounts return an error (code != 00000).
+        Only available with uta_v3 profile; classic_v2 raises ProfileContractError.
+        Returns the full UTA account with all assets.
         """
+        self._assert_uta_v3("get_uta_account")
         path = "/api/v3/account/assets"
         headers = self._headers("GET", path)
         async with httpx_client(timeout=15) as client:
