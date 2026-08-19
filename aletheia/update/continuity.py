@@ -1,8 +1,8 @@
 """Observer-aware continuity verification for source updates (Issue #1135).
 
-This module is deliberately read-only apart from audit events.  It reuses the
+This module is deliberately read-only apart from audit events. It reuses the
 existing control-status and Observation-Lab projections, then compares only
-structural deployment invariants.  Observation business progress (sample
+structural deployment invariants. Observation business progress (sample
 counts, pending/ready verdicts, evidence arrival) is never a deployment gate.
 """
 
@@ -30,7 +30,10 @@ def _gateway_status() -> dict[str, Any]:
     try:
         from aletheia.config.loader import load_config
 
-        cfg = load_config()
+        try:
+            cfg = load_config(persist_migrations=False)
+        except TypeError:  # compatibility with older/custom loaders
+            cfg = load_config()
         url = f"http://127.0.0.1:{cfg.app.dashboard_port}/api/status"
         request = urllib.request.Request(
             url, headers={"User-Agent": "aletheia-update-continuity"}
@@ -392,13 +395,21 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
         }
 
     target = result.get("new_commit")
+    # The current source updater returns mode=development together with the
+    # operation-owned target SHA. Only that explicit contract is authoritative
+    # enough for this layer to independently verify target activation.
+    expected_target = (
+        str(target)
+        if result.get("mode") == "development" and target
+        else None
+    )
     after = capture_update_continuity()
     # Gateway startup is asynchronous on some hosts. Retry only the read-only
-    # postflight capture when the target identity has not appeared yet.
-    if restart and target:
+    # postflight capture when the authoritative target identity has not appeared.
+    if restart and expected_target:
         for _ in range(4):
             gateway = after.get("gateway") or {}
-            if gateway.get("available") and target in {
+            if gateway.get("available") and expected_target in {
                 gateway.get("boot_commit"), gateway.get("current_commit")
             }:
                 break
@@ -408,7 +419,7 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
     comparison = compare_update_continuity(
         before,
         after,
-        expected_target=str(target) if target else None,
+        expected_target=expected_target,
         restart=restart,
     )
     continuity = {
