@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 
 def _snapshot(
     *,
@@ -13,15 +16,21 @@ def _snapshot(
     observation_ids: tuple[str, ...] = ("obs-a", "obs-b"),
     generations: dict[str, int] | None = None,
     overview_available: bool = True,
+    identities_available: bool = True,
     checkpoint_ok: bool = True,
     runtime_owner: str | None = None,
     runtime_proof_available: bool = True,
     main_cycle_registered: bool = False,
+    health_status: str | None = "healthy",
+    capture_available: bool = True,
+    capture_source: str = "fresh_target_process",
 ):
     generations = generations or {"obs-a": 2}
     runtime_owner = runtime_owner or owner
     return {
         "schema_version": "update_observer_continuity/v1",
+        "capture_available": capture_available,
+        "capture_source": capture_source,
         "control": {
             "available": True,
             "disk_sha": disk_sha,
@@ -37,6 +46,8 @@ def _snapshot(
             "current_commit": gateway_sha,
             "scheduler_running": True,
             "scheduler_job_count": 10,
+            "health_status": health_status,
+            "health_issues": [] if health_status == "healthy" else ["test_health"],
             "observation_execution": {
                 "available": runtime_proof_available,
                 "owner": runtime_owner,
@@ -60,9 +71,9 @@ def _snapshot(
             },
             "overview_available": overview_available,
             "identities": {
-                "available": True,
-                "ids": list(observation_ids),
-                "total": len(observation_ids),
+                "available": identities_available,
+                "ids": list(observation_ids) if identities_available else [],
+                "total": len(observation_ids) if identities_available else None,
             },
             "manifest_generations": generations,
             "checkpoint": {
@@ -82,7 +93,7 @@ def _snapshot(
 def test_compare_allows_normal_observation_progress():
     from aletheia.update.continuity import compare_update_continuity
 
-    before = _snapshot()
+    before = _snapshot(capture_source="in_process")
     after = _snapshot(
         disk_sha="new222",
         gateway_sha="new222",
@@ -98,11 +109,12 @@ def test_compare_allows_normal_observation_progress():
 
     assert result["ok"] is True
     assert result["failures"] == []
+    assert result["proof_gaps"] == []
     assert result["worker_sha_before"] == "worker999"
     assert result["worker_sha_after"] == "worker999"
     assert result["data_root_unchanged"] is True
-    assert result["main_observation_cycle_registered"] is False
-    assert result["observation_execution_exclusive"] is True
+    assert result["main_health_status"] == "healthy"
+    assert result["postflight_capture_source"] == "fresh_target_process"
 
 
 def test_compare_detects_owner_change():
@@ -115,7 +127,6 @@ def test_compare_detects_owner_change():
         restart=True,
     )
 
-    assert result["ok"] is False
     assert "observation_owner_changed" in result["failures"]
 
 
@@ -131,7 +142,6 @@ def test_compare_detects_worker_identity_change():
         restart=True,
     )
 
-    assert result["ok"] is False
     assert "worker_identity_changed" in result["failures"]
 
 
@@ -147,7 +157,6 @@ def test_compare_detects_data_root_change():
         restart=True,
     )
 
-    assert result["ok"] is False
     assert "data_root_changed" in result["failures"]
 
 
@@ -163,7 +172,6 @@ def test_compare_detects_observation_history_loss():
         restart=True,
     )
 
-    assert result["ok"] is False
     assert "observation_history_missing" in result["failures"]
 
 
@@ -179,7 +187,6 @@ def test_compare_detects_manifest_generation_regression():
         restart=True,
     )
 
-    assert result["ok"] is False
     assert "manifest_generation_regressed:obs-a" in result["failures"]
 
 
@@ -220,25 +227,28 @@ def test_preflight_pending_business_state_is_not_a_gate():
     assert result["failures"] == []
 
 
-def test_compare_detects_duplicate_observation_cycle_after_update():
+def test_missing_structural_baseline_is_proof_gap_not_verified():
     from aletheia.update.continuity import compare_update_continuity
 
     result = compare_update_continuity(
-        _snapshot(),
+        _snapshot(data_root=None, worker_sha=None),
         _snapshot(
+            data_root=None,
+            worker_sha=None,
             disk_sha="new222",
             gateway_sha="new222",
-            main_cycle_registered=True,
         ),
         expected_target="new222",
         restart=True,
     )
 
+    assert result["structural_ok"] is True
     assert result["ok"] is False
-    assert "duplicate_observation_cycle_owner" in result["failures"]
+    assert "data_root_comparison_unavailable" in result["proof_gaps"]
+    assert "worker_identity_comparison_unavailable" in result["proof_gaps"]
 
 
-def test_compare_requires_runtime_owner_proof_for_restarted_worker_mode():
+def test_compare_runtime_owner_proof_unavailable_is_unproven():
     from aletheia.update.continuity import compare_update_continuity
 
     result = compare_update_continuity(
@@ -252,8 +262,9 @@ def test_compare_requires_runtime_owner_proof_for_restarted_worker_mode():
         restart=True,
     )
 
+    assert result["failures"] == []
+    assert "observation_runtime_owner_proof_unavailable" in result["proof_gaps"]
     assert result["ok"] is False
-    assert "observation_runtime_owner_proof_unavailable" in result["failures"]
 
 
 def test_compare_detects_runtime_owner_mismatch():
@@ -270,20 +281,103 @@ def test_compare_detects_runtime_owner_mismatch():
         restart=True,
     )
 
-    assert result["ok"] is False
     assert "observation_runtime_owner_mismatch" in result["failures"]
 
 
-def test_wrapper_preserves_existing_applier_and_adds_postflight(monkeypatch):
+def test_compare_degraded_main_health_is_failure():
+    from aletheia.update.continuity import compare_update_continuity
+
+    result = compare_update_continuity(
+        _snapshot(),
+        _snapshot(
+            disk_sha="new222",
+            gateway_sha="new222",
+            health_status="degraded",
+        ),
+        expected_target="new222",
+        restart=True,
+    )
+
+    assert "main_health_degraded" in result["failures"]
+
+
+def test_compare_initializing_main_health_is_unproven():
+    from aletheia.update.continuity import compare_update_continuity
+
+    result = compare_update_continuity(
+        _snapshot(),
+        _snapshot(
+            disk_sha="new222",
+            gateway_sha="new222",
+            health_status="initializing",
+        ),
+        expected_target="new222",
+        restart=True,
+    )
+
+    assert result["failures"] == []
+    assert "main_health_not_verified" in result["proof_gaps"]
+
+
+def test_no_restart_never_emits_verified_claim():
+    from aletheia.update.continuity import compare_update_continuity
+
+    result = compare_update_continuity(
+        _snapshot(),
+        _snapshot(disk_sha="new222"),
+        expected_target="new222",
+        restart=False,
+    )
+
+    assert result["ok"] is False
+    assert result["failures"] == []
+    assert result["proof_gaps"] == ["main_restart_required_for_full_verification"]
+
+
+def test_fresh_capture_parses_target_process_payload(monkeypatch):
+    from aletheia.update import continuity
+
+    payload = _snapshot(disk_sha="new222", gateway_sha="new222")
+    stdout = continuity._FRESH_CAPTURE_PREFIX + json.dumps(payload)
+    monkeypatch.setattr(
+        continuity.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0, stdout=stdout, stderr=""
+        ),
+    )
+
+    result = continuity.capture_update_continuity_fresh()
+
+    assert result["capture_available"] is True
+    assert result["capture_source"] == "fresh_target_process"
+    assert result["control"]["disk_sha"] == "new222"
+
+
+def test_fresh_capture_failure_is_explicit(monkeypatch):
+    from aletheia.update import continuity
+
+    monkeypatch.setattr(
+        continuity.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1, stdout="", stderr="boom"
+        ),
+    )
+
+    result = continuity.capture_update_continuity_fresh()
+
+    assert result["capture_available"] is False
+    assert result["capture_error"] == "target_postflight_process_failed"
+
+
+def test_wrapper_preserves_existing_applier_and_uses_fresh_postflight(monkeypatch):
     from aletheia.update import applier, continuity
 
-    snapshots = iter(
-        [
-            _snapshot(),
-            _snapshot(disk_sha="new222", gateway_sha="new222"),
-        ]
-    )
-    monkeypatch.setattr(continuity, "capture_update_continuity", lambda: next(snapshots))
+    before = _snapshot(capture_source="in_process")
+    after = _snapshot(disk_sha="new222", gateway_sha="new222")
+    monkeypatch.setattr(continuity, "capture_update_continuity", lambda: before)
+    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda: after)
     seen = {}
 
     def apply_update(*, restart):
@@ -308,7 +402,8 @@ def test_wrapper_preserves_existing_applier_and_adds_postflight(monkeypatch):
     assert seen["restart"] is True
     assert result["applied"] is True
     assert result["continuity_verified"] is True
-    assert result["continuity"]["comparison"]["ok"] is True
+    assert result["continuity_state"] == "verified"
+    assert result["continuity"]["comparison"]["postflight_capture_source"] == "fresh_target_process"
 
 
 def test_wrapper_does_not_call_applier_when_preflight_fails(monkeypatch):
@@ -330,20 +425,63 @@ def test_wrapper_does_not_call_applier_when_preflight_fails(monkeypatch):
 
     assert result["applied"] is False
     assert result["reason"] == "observer_preflight_failed"
+    assert result["continuity_state"] == "failed"
+
+
+def test_wrapper_reports_unproven_without_claiming_failure(monkeypatch):
+    from aletheia.update import applier, continuity
+
+    monkeypatch.setattr(continuity, "capture_update_continuity", lambda: _snapshot())
+    monkeypatch.setattr(
+        continuity,
+        "capture_update_continuity_fresh",
+        lambda: _snapshot(
+            disk_sha="new222",
+            gateway_sha="new222",
+            health_status="initializing",
+        ),
+    )
+    monkeypatch.setattr(
+        applier,
+        "apply_update",
+        lambda *, restart: {
+            "applied": True,
+            "mode": "development",
+            "old_commit": "old111",
+            "new_commit": "new222",
+            "deps_reinstalled": False,
+        },
+    )
+    monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
+    monkeypatch.setattr(continuity.time, "sleep", lambda *_args: None)
+
+    result = continuity.apply_update_with_continuity(restart=True)
+
+    assert result["applied"] is True
+    assert result["continuity_verified"] is False
+    assert result["continuity_state"] == "unproven"
+    assert result["reason"] == "observer_continuity_unproven"
+    assert result["continuity"]["comparison"]["failures"] == []
+    assert "main_health_not_verified" in result["continuity"]["comparison"]["proof_gaps"]
 
 
 def test_wrapper_reports_postflight_failure_without_claiming_rollback(monkeypatch):
     from aletheia.update import applier, continuity
 
-    snapshots = iter(
-        [
-            _snapshot(worker_sha="worker111"),
-            _snapshot(
-                worker_sha="worker222", disk_sha="new222", gateway_sha="new222"
-            ),
-        ]
+    monkeypatch.setattr(
+        continuity,
+        "capture_update_continuity",
+        lambda: _snapshot(worker_sha="worker111"),
     )
-    monkeypatch.setattr(continuity, "capture_update_continuity", lambda: next(snapshots))
+    monkeypatch.setattr(
+        continuity,
+        "capture_update_continuity_fresh",
+        lambda: _snapshot(
+            worker_sha="worker222",
+            disk_sha="new222",
+            gateway_sha="new222",
+        ),
+    )
     monkeypatch.setattr(
         applier,
         "apply_update",
@@ -361,5 +499,6 @@ def test_wrapper_reports_postflight_failure_without_claiming_rollback(monkeypatc
 
     assert result["applied"] is True
     assert result["continuity_verified"] is False
+    assert result["continuity_state"] == "failed"
     assert result["reason"] == "observer_continuity_failed"
     assert "worker_identity_changed" in result["continuity"]["comparison"]["failures"]
