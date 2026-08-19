@@ -159,7 +159,8 @@ def get_family_multipliers(
         if row.get("horizon") != expected_horizon:
             continue
         n = row.get("n", 0)
-        if n < _MIN_CALIBRATION_SAMPLES:
+        independent_n = row.get("independent_n") if row.get("independent_n") is not None else n
+        if independent_n < _MIN_CALIBRATION_SAMPLES:
             continue
         avg_net = row.get("avg_return")
         if avg_net is None:
@@ -193,6 +194,8 @@ def get_family_multipliers(
                 "market_type": market_type,
                 "horizon": row.get("horizon"),
                 "eligible_outcome_n": int(n),
+                "independent_outcome_n": int(independent_n),
+                "distinct_symbols": int(row.get("distinct_symbols") or 0),
                 "source_outcome_fingerprint": row.get(
                     "source_outcome_fingerprint"
                 ),

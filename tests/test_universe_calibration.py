@@ -23,15 +23,18 @@ def setup_test_db(tmp_path):
     return conn
 
 
-def _settled(symbol, direction, ret_pct, *, family="momentum", horizon="1h"):
+def _settled(symbol, direction, ret_pct, *, family="momentum", horizon="1h", entry_ts=None, member_id=None):
     directional = None
     if direction == "long":
         directional = ret_pct
     elif direction == "short":
         directional = -ret_pct
     net = directional - 0.2 if directional is not None else None
+    kwargs = {}
+    if entry_ts is not None:
+        kwargs["entry_ts"] = entry_ts
     return UniverseForwardOutcome(
-        member_id=f"m_{symbol}_{direction}_{ret_pct}",
+        member_id=member_id or f"m_{symbol}_{direction}_{ret_pct}",
         snapshot_id="snap_1",
         symbol=symbol,
         scanner_family=family,
@@ -41,6 +44,7 @@ def _settled(symbol, direction, ret_pct, *, family="momentum", horizon="1h"):
         entry_price_usd=100.0,
         due_at="2026-01-01T00:00:00+00:00",
         settled_at="2026-01-01T01:00:00+00:00",
+        **kwargs,
         exit_price_usd=100.0 * (1 + ret_pct / 100.0),
         forward_return_pct=ret_pct,
         gross_return_pct=ret_pct,
@@ -102,4 +106,25 @@ def test_null_direction_is_excluded_from_calibration(tmp_path):
     row = stats[("volatility", "long", "spot", "1h")]
     assert row["n"] == 1
     assert row["win_count"] == 1  # only the explicit long row counts
+    reset_db()
+
+
+def test_horizon_separated_counts(tmp_path):
+    setup_test_db(tmp_path)
+    # 3 rows for AAA/USDT, all within 30-minute spacing (< 1h horizon) → only 1 admitted
+    # 1 row for AAA/USDT at T+90min (> 1h) → 2nd admission for that symbol
+    # 1 row for BBB/USDT at T+0 → independent symbol, always admitted
+    repo.insert_forward_outcomes_batch([
+        _settled("AAA/USDT", "long", 1.0, entry_ts="2026-08-01T00:00:00+00:00", member_id="m_aaa_1"),
+        _settled("AAA/USDT", "long", 2.0, entry_ts="2026-08-01T00:20:00+00:00", member_id="m_aaa_2"),
+        _settled("AAA/USDT", "long", 3.0, entry_ts="2026-08-01T00:40:00+00:00", member_id="m_aaa_3"),
+        _settled("AAA/USDT", "long", 4.0, entry_ts="2026-08-01T01:30:00+00:00", member_id="m_aaa_4"),  # +90min
+        _settled("BBB/USDT", "long", 1.0, entry_ts="2026-08-01T00:00:00+00:00", member_id="m_bbb_1"),
+    ])
+    stats = {(r["scanner_family"], r["direction"], r["market_type"], r["horizon"]): r for r in repo.calibration_stats()}
+    row = stats[("momentum", "long", "spot", "1h")]
+    assert row["n"] == 5               # raw count unchanged
+    assert row["independent_n"] == 3   # AAA@T0, AAA@T+90m, BBB@T0
+    assert row["distinct_symbols"] == 2
+    assert row["distinct_days"] == 1
     reset_db()
