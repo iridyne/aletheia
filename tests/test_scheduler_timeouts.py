@@ -428,6 +428,7 @@ def test_symbol_independent_context_collectors_run_without_instruments(monkeypat
     from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
     from aletheia.data.collectors.defillama import DefiLlamaCollector
     from aletheia.data.collectors.macro import MacroCollector
+    from aletheia.data.collectors.options_structure import OptionsStructureCollector
 
     cfg = SimpleNamespace(
         market_data=SimpleNamespace(
@@ -436,6 +437,7 @@ def test_symbol_independent_context_collectors_run_without_instruments(monkeypat
             enable_coinalyze=True,
             enable_hyperliquid=True,
             enable_defillama=True,
+            enable_options_structure=True,
         )
     )
     bounded_labels = []
@@ -454,6 +456,9 @@ def test_symbol_independent_context_collectors_run_without_instruments(monkeypat
     async def defillama_collect(self):
         return {"snapshots": [], "errors": []}
 
+    async def options_collect(self):
+        return {"snapshots": [], "errors": []}
+
     monkeypatch.setattr(scheduler, "_get_observed_instruments", lambda _cfg: [])
     monkeypatch.setattr(scheduler, "_bounded", fake_bounded)
     monkeypatch.setattr(
@@ -464,10 +469,11 @@ def test_symbol_independent_context_collectors_run_without_instruments(monkeypat
     monkeypatch.setattr(MacroCollector, "collect", macro_collect)
     monkeypatch.setattr(CoinGeckoTopCollector, "collect", coingecko_collect)
     monkeypatch.setattr(DefiLlamaCollector, "collect", defillama_collect)
+    monkeypatch.setattr(OptionsStructureCollector, "collect", options_collect)
 
     asyncio.run(scheduler._async_data_collector_context(cfg, tick=1))
 
-    assert bounded_labels == ["defillama", "coingecko_top", "macro"]
+    assert bounded_labels == ["defillama", "coingecko_top", "macro", "options_structure"]
     assert ("volume_scanner", "not_configured") in health
     assert ("hyperliquid", "not_configured") in health
     assert ("coinalyze", "not_configured") in health
@@ -564,6 +570,7 @@ def test_shadow_context_lane_does_not_inherit_exhausted_core_budget(monkeypatch)
             enable_coinalyze=False,
             enable_hyperliquid=True,
             enable_defillama=True,
+            enable_options_structure=False,
         )
     )
 
