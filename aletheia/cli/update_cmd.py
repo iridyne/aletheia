@@ -68,14 +68,34 @@ def _run_update(*, restart: bool) -> None:
         typer.echo("Aletheia Tray will complete the short switch and automatic health check.")
         return
 
-    from aletheia.update.applier import apply_update
+    from aletheia.update.continuity import apply_update_with_continuity
 
-    result = apply_update(restart=restart)
+    result = apply_update_with_continuity(restart=restart)
     if not result.get("applied"):
         typer.echo(f"Update not applied: {result.get('reason')}")
         if result.get("message"):
             typer.echo(f"  {result['message']}")
         raise typer.Exit(1)
+
+    if result.get("continuity_verified") is False:
+        typer.echo(
+            f"Updated {result['old_commit'][:8]} -> {result['new_commit'][:8]}, "
+            "but Observer continuity verification FAILED.",
+            err=True,
+        )
+        comparison = (result.get("continuity") or {}).get("comparison") or {}
+        failures = comparison.get("failures") or []
+        if failures:
+            typer.echo(f"  failures: {', '.join(str(item) for item in failures)}", err=True)
+        if result.get("message"):
+            typer.echo(f"  {result['message']}", err=True)
+        typer.echo(
+            "  Source update remains applied; inspect `aletheia control status --json` "
+            "and `aletheia observe overview --json` before further mutation.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
     typer.echo(
         f"Updated {result['old_commit'][:8]} -> {result['new_commit'][:8]} "
         f"(deps reinstalled: {result['deps_reinstalled']})."
@@ -84,6 +104,20 @@ def _run_update(*, restart: bool) -> None:
         typer.echo("Gateway restarted and readiness verified.")
     else:
         typer.echo("Restart the gateway to load the new code: aletheia gateway restart")
+
+    if result.get("continuity_verified") is True:
+        comparison = (result.get("continuity") or {}).get("comparison") or {}
+        owner = comparison.get("owner") or "unknown"
+        worker_sha = comparison.get("worker_sha_after")
+        worker_text = str(worker_sha)[:12] if worker_sha else "unavailable"
+        typer.echo(
+            "Observer continuity verified: "
+            f"owner={owner}, worker_sha={worker_text}, "
+            f"data_root_unchanged={comparison.get('data_root_unchanged')}."
+        )
+        warnings = comparison.get("warnings") or []
+        if warnings:
+            typer.echo(f"Observer warnings: {', '.join(str(item) for item in warnings)}")
 
 
 @update_app.command()
