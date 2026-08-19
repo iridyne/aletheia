@@ -1715,6 +1715,32 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
 
     from aletheia.storage.models import TradeProposal
 
+    # EX-04 (#1004): a live-mode Proposal must be created under a valid,
+    # correctly-scoped authorization. Bind the opaque scope hash so execution
+    # can prove the same authorization is still in force. Fail-closed when
+    # the caller asked for live but no current authorization exists.
+    live_authorization_ref: str | None = None
+    if execution_mode in {
+        "okx_live_limited", "bitget_live_limited", "binance_live_limited",
+    }:
+        from aletheia.trust.live_unlock import current_authorization_ref
+
+        live_authorization_ref = current_authorization_ref(cfg)
+        if live_authorization_ref is None:
+            decision.filter_trace.append({
+                "filter_name": "live_authorization",
+                "stage": "proposal_submission",
+                "decision": "rejected",
+                "reason_code": "live_authorization_missing",
+                "inputs": {"execution_mode": execution_mode},
+                "parameters": {"required": "unlock_evidence_matches_config"},
+            })
+            raise DecisionUnavailable(
+                "live_authorization_missing",
+                stage="proposal_preflight",
+                filter_trace=list(decision.filter_trace),
+            )
+
     proposal = TradeProposal(
         symbol=decision.symbol,
         market_type=market_type,
@@ -1738,6 +1764,7 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
         # authored the stop (else config default filled it in above).
         expected_horizon_hours=decision.expected_horizon_hours,
         stop_source="operator" if _stop_from_operator else "default",
+        live_authorization_ref=live_authorization_ref,
     )
     return {"status": "prepared", "proposal_id": proposal.id, "proposal": proposal}
 

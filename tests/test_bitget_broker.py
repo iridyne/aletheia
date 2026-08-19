@@ -190,6 +190,20 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
     cfg.risk.live.capital.base_usdt = 100.0
     save_config(cfg)
 
+    # EX-04 (#1004): the routing path also requires a valid live authorization
+    # ref at both Proposal creation and execution. This test owns the broker
+    # mock; a stable stubbed authorization identity keeps focus on routing.
+    import aletheia.trust.live_unlock as trust_mod
+
+    monkeypatch.setattr(trust_mod, "current_authorization_ref", lambda _cfg: "sha256:test-ok")
+    monkeypatch.setattr(
+        trust_mod, "authorization_matches_ref",
+        lambda _cfg, ref: (bool(ref), "ok" if ref else "missing_live_authorization_ref"),
+    )
+    monkeypatch.setattr(
+        trust_mod, "evidence_matches_config", lambda _cfg, _ev: (True, "ok"),
+    )
+
     # fresh market data so the data-freshness check passes
     from datetime import datetime, timezone
     from aletheia.storage.models import MarketSnapshot, Opportunity, UniverseForwardOutcome

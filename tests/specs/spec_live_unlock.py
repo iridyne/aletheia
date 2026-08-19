@@ -590,13 +590,6 @@ def test_ui_warning_wall_three_elements():
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "EX-04/#418 — unlocked state is not consumed by new-Proposal "
-        "execution-mode selection"
-    ),
-)
 @spec_claim(
     SpecClaim(
         "LU-C07",
@@ -606,13 +599,14 @@ def test_ui_warning_wall_three_elements():
         "With live requested and live_limited authority present, the production "
         "new-Proposal selector resolves the selected broker's exact "
         "*_live_limited mode before Proposal persistence.",
-        status="missing",
+        status="implemented",
     ),
 )
 def test_unlocked_state_selects_live_mode_for_new_proposal(monkeypatch):
     from types import SimpleNamespace
 
     from aletheia.agent_shell import commands
+    from aletheia.trust import live_unlock as live_unlock_mod
 
     cfg = SimpleNamespace(
         exchange=SimpleNamespace(
@@ -620,8 +614,38 @@ def test_unlocked_state_selects_live_mode_for_new_proposal(monkeypatch):
             name="okx",
             paper_execution_mode="okx_demo",
         ),
-        live=SimpleNamespace(state="live_limited"),
+        live=SimpleNamespace(state="live_limited", unlock_evidence={"ok": True}),
     )
     monkeypatch.setattr(commands.config_loader, "load_config", lambda: cfg)
+    # `current_authorization_ref` is unit-under-test's proof of authority.
+    # The join itself is what LU-C07 asserts; the ref's internal derivation is
+    # covered by evidence_matches_config's own tests.
+    monkeypatch.setattr(
+        live_unlock_mod, "current_authorization_ref", lambda _cfg: "sha256:live-ok"
+    )
 
     assert commands._configured_paper_execution_mode() == "okx_live_limited"
+
+
+def test_locked_state_keeps_paper_mode_on_new_proposal(monkeypatch):
+    """LU-C07 negative complement: without a live authorization, new Proposals
+    keep the configured paper mode. Fail-closed by default (#1004 EX-04)."""
+    from types import SimpleNamespace
+
+    from aletheia.agent_shell import commands
+    from aletheia.trust import live_unlock as live_unlock_mod
+
+    cfg = SimpleNamespace(
+        exchange=SimpleNamespace(
+            mode="live",
+            name="okx",
+            paper_execution_mode="okx_demo",
+        ),
+        live=SimpleNamespace(state="live_limited", unlock_evidence=None),
+    )
+    monkeypatch.setattr(commands.config_loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        live_unlock_mod, "current_authorization_ref", lambda _cfg: None
+    )
+
+    assert commands._configured_paper_execution_mode() == "okx_demo"

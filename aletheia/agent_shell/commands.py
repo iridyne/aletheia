@@ -1682,7 +1682,33 @@ def _has_durable_pending_carrier(decision) -> bool:
 
 
 def _configured_paper_execution_mode() -> str:
-    return str(config_loader.load_config().exchange.paper_execution_mode)
+    """Resolve the execution mode for a newly created Operator Proposal.
+
+    Live mode consumes current unlock state (§4b): with `exchange.mode == live`,
+    `live.state == live_limited`, and `unlock_evidence` still equivalent to the
+    selected account/config/expiry scope, the selected broker's exact
+    `*_live_limited` mode is returned. Otherwise the configured paper/demo mode
+    is preserved unchanged. Fail-closed by design — any missing evidence,
+    stale expiry, or config drift silently keeps the paper mode instead of
+    routing a new Proposal to live.
+    """
+    cfg = config_loader.load_config()
+    paper_mode = str(cfg.exchange.paper_execution_mode)
+    if str(getattr(cfg.exchange, "mode", "") or "").strip().lower() != "live":
+        return paper_mode
+    if getattr(getattr(cfg, "live", None), "state", "") != "live_limited":
+        return paper_mode
+    try:
+        from aletheia.config.exchanges import live_execution_mode_for_exchange
+        from aletheia.trust.live_unlock import current_authorization_ref
+    except Exception:
+        return paper_mode
+    if current_authorization_ref(cfg) is None:
+        return paper_mode
+    live_mode = live_execution_mode_for_exchange(
+        getattr(cfg.exchange, "name", "") or ""
+    )
+    return live_mode or paper_mode
 
 
 def _proposal_status_from_execution_result(execution_result: dict) -> str | None:

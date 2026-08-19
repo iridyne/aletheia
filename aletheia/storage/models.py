@@ -325,6 +325,12 @@ class TradeProposal(_Provenanced):
     # risk engine. Default 'short_term' keeps every legacy proposal on the existing
     # path.
     trade_school: str = "short_term"
+    # Opaque provenance for live authorization at Proposal creation time.
+    # Value is `unlock_evidence.evidence_binding` — a sha256 hash over the
+    # (broker, execution_mode, account_environment, account_fingerprint,
+    # config_revision, permission_status) tuple. Never a reusable secret.
+    # NULL for every non-live-limited Proposal.
+    live_authorization_ref: str | None = None
     created_at: str = Field(default_factory=_utcnow)
     # TaG hash chain (P0-1, 2026-06-29) — borrow from OpenAlice TradingGit.
     # commit_hash = SHA-256 of canonical JSON over immutable proposal fields

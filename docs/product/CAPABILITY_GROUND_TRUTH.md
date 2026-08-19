@@ -34,10 +34,10 @@ Outside these canonical tables, use the full capability name.
 | Status | Count |
 |---|---:|
 | Supported | 70 |
-| Implemented | 7 |
+| Implemented | 8 |
 | Partial | 0 |
 | Experimental | 23 |
-| Broken | 1 |
+| Broken | 0 |
 | Deprecated | 0 |
 | **Total** | **101** |
 
@@ -118,8 +118,8 @@ Outside these canonical tables, use the full capability name.
 |---|---|---|---|---|---|
 | EX-01 | Automatic local paper trading | E1+E2 | Supported | None in tested paper contract | Yes |
 | EX-02 | Exchange demo trading | E1+E2 | Experimental | Adapters exist; outside active-scope proof | No |
-| EX-03 | Live Unlock and relock | E1+E2 | Experimental | UI and contract now identify this as an authority prerequisite only; Live remains outside support and EX-04 remains broken | No |
-| EX-04 | New-proposal live execution mode | E1+E2 | Broken | Trigger-missing: unlock state is not consumed by proposal-mode selection; explicit `LU-C07` tripwire and GitHub #418 | No |
+| EX-03 | Live Unlock and relock | E1+E2 | Experimental | UI and contract now identify this as an authority prerequisite only; Live remains outside support | No |
+| EX-04 | New-proposal live execution mode | E1+E2 | Implemented | Unlock state is consumed by proposal-mode selection and an opaque `live_authorization_ref` is bound at creation and revalidated at execution; Live remains outside the supported surface until a dedicated qualification packet (GitHub #1004) | No |
 | EX-05 | Order constraint normalization | E1+E2 | Supported | None in tested contract | Yes |
 | EX-06 | Exchange order materialization | E1+E2 | Implemented | No owner-selected external execution mode in supported profile | No |
 | EX-07 | Exchange-native TP/SL brackets | E1+E2 | Experimental | Broker/private-fill paths tested; external venue behavior outside supported surface | No |
