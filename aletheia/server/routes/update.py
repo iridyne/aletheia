@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from aletheia.config.loader import is_preview_mode
 from aletheia.files.jsonl import write_audit
-from aletheia.update import applier, continuity
+from aletheia.update import applier
 
 router = APIRouter(prefix="/api/update", tags=["update"])
 _LOOPBACK_UI_ORIGINS = (
@@ -97,6 +97,34 @@ def update_apply(request: Request, body: ApplyBody = ApplyBody()):
             "reason": "confirmation_required",
             "message": "Set confirm=true to apply the update.",
         }
+
+    # A source-checkout restart must be owned by the external CLI process. A
+    # request handler lives inside the Gateway process tree that do_stop() kills,
+    # so trying to run the full restart transaction from this route is not a safe
+    # alternative entrypoint. Keep `aletheia update` as the one source mutation
+    # command; packaged installs retain their Tray-owned API staging flow.
+    if not _is_packaged_update_mode():
+        write_audit(
+            {
+                "actor": "human",
+                "source": "api",
+                "event_type": "source_update_requires_cli",
+                "entity_type": "system_update",
+                "entity_id": "apply",
+                "message": "Source update was not applied via API; use `aletheia update`",
+            }
+        )
+        return {
+            "applied": False,
+            "accepted": False,
+            "mode": "development",
+            "reason": "source_update_requires_cli",
+            "message": (
+                "Source-checkout updates must run through `aletheia update` so the "
+                "external updater process can restart Main and verify Observer continuity."
+            ),
+        }
+
     write_audit(
         {
             "actor": "human",
@@ -104,19 +132,11 @@ def update_apply(request: Request, body: ApplyBody = ApplyBody()):
             "event_type": "code_update_requested",
             "entity_type": "system_update",
             "entity_id": "apply",
-            "message": "Human confirmed software update via API",
+            "message": "Human confirmed packaged software update via API",
         }
     )
-
-    # Packaged installs keep the signed Tray-owned staging flow. Development
-    # checkouts must use the same Observer-aware transaction as `aletheia update`;
-    # the Dashboard is not allowed to bypass continuity verification.
-    if _is_packaged_update_mode():
-        result = applier.apply_update()
-    else:
-        result = continuity.apply_update_with_continuity(restart=True)
-
-    if result.get("mode") == "packaged" and result.get("accepted") and not result.get("applied"):
+    result = applier.apply_update()
+    if result.get("accepted") and not result.get("applied"):
         result.setdefault("reason", "update_started_in_background")
     return result
 
