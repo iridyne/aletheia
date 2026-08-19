@@ -528,6 +528,10 @@ def _register_experiment_candidate_outcomes(
                     entry_ts=entry_ts,
                     allocation_selected=str(key) in selected_keys,
                     horizons=(str(target_horizon),),
+                    rsi_1h_at_entry=item.get("rsi_14"),
+                    rsi_15m_at_entry=item.get("rsi_15m"),
+                    return_24h_at_entry=item.get("return_24h"),
+                    direction_exhaustion_signal=item.get("direction_exhaustion_signal"),
                 )
             )
         except Exception:

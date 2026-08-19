@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v34"
+SCHEMA_VERSION = "aletheia-sqlite-v35"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4802,6 +4802,19 @@ _LIVE_AUTHORIZATION_REF_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+_MOMENTUM_SHORT_EXHAUSTION_COLUMNS = (
+    ("rsi_1h_at_entry", "filter_candidate_outcomes", "REAL"),
+    ("rsi_15m_at_entry", "filter_candidate_outcomes", "REAL"),
+    ("return_24h_at_entry", "filter_candidate_outcomes", "REAL"),
+    ("direction_exhaustion_signal", "filter_candidate_outcomes", "INTEGER"),
+)
+_MOMENTUM_SHORT_EXHAUSTION_CHECKSUM = hashlib.sha256(
+    (
+        repr(_MOMENTUM_SHORT_EXHAUSTION_COLUMNS)
+        + "\nmomentum_short_exhaustion_shadow_v1"
+    ).encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -5171,6 +5184,28 @@ def _apply_observation_lab_frozen_units_v33(db: sqlite3.Connection) -> None:
 def _apply_live_authorization_ref_v34(db: sqlite3.Connection) -> None:
     """Add the EX-04 opaque live authorization ref column on trade_proposals."""
     for column, table, column_type in _LIVE_AUTHORIZATION_REF_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+    db.execute("PRAGMA optimize")
+
+
+def _apply_momentum_short_exhaustion_shadow_v35(db: sqlite3.Connection) -> None:
+    """Add direction-aware exhaustion feature lineage to filter_candidate_outcomes.
+
+    Captures RSI 1h/15m and 24h return at entry time plus an observation-only
+    exhaustion signal for momentum:short:perp candidates. No behavior change —
+    these columns support shadow/counterfactual outcome tracking only.
+    """
+    table_exists = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='filter_candidate_outcomes'"
+    ).fetchone() is not None
+    if not table_exists:
+        db.execute("PRAGMA optimize")
+        return
+    for column, table, column_type in _MOMENTUM_SHORT_EXHAUSTION_COLUMNS:
         existing = {
             str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
         }
@@ -5720,6 +5755,12 @@ _MIGRATIONS = (
         checksum=_LIVE_AUTHORIZATION_REF_CHECKSUM,
         schema_version="aletheia-sqlite-v34",
         apply=_apply_live_authorization_ref_v34,
+    ),
+    MigrationStep(
+        migration_id="20260819_0034_momentum_short_exhaustion_shadow_v35",
+        checksum=_MOMENTUM_SHORT_EXHAUSTION_CHECKSUM,
+        schema_version="aletheia-sqlite-v35",
+        apply=_apply_momentum_short_exhaustion_shadow_v35,
     ),
 )
 

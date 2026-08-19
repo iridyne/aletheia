@@ -277,6 +277,10 @@ class FilterCandidateOutcome(BaseModel):
     settlement_lag_sec: float | None = None
     cost_model_version: str | None = None
     status: str = "pending"
+    rsi_1h_at_entry: float | None = None
+    rsi_15m_at_entry: float | None = None
+    return_24h_at_entry: float | None = None
+    direction_exhaustion_signal: bool | None = None
 
 
 class TradeProposal(_Provenanced):
