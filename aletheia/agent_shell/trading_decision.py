@@ -908,6 +908,8 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
                 opportunity_id=decision.opportunity_id,
                 learning_candidate_key=decision.learning_candidate_key,
                 sizing_trace=decision.sizing_trace,
+                venue=decision.venue,
+                market_type=decision.market_type,
             )
     elif trade_intent:
         # Initial conviction < 55 without a debate range trigger (or debate did
@@ -2378,6 +2380,7 @@ def _compute_position_size(
     learning_candidate_key: str | None = None,
     sizing_trace: dict | None = None,
     *,
+    venue: str | None = None,
     execution_mode: str | None = None,
     market_type: str | None = None,
     leverage: int | float | None = None,
@@ -2412,6 +2415,8 @@ def _compute_position_size(
 
         return vol_target_size(
             symbol,
+            venue=venue,
+            market_type=market_type,
             conviction=conviction,
             direction=direction,
             paper_trade_count=paper_trade_count,
