@@ -13,7 +13,7 @@ from numbers import Real
 from typing import Callable, Iterable, Mapping, Sequence
 
 
-CONTINUOUS_SCORER_BEHAVIOR_VERSION = "universe-continuous-shadow-v1"
+CONTINUOUS_SCORER_BEHAVIOR_VERSION = "universe-continuous-shadow-v2"
 
 _DERIVATIVES_MARKET_TYPES = frozenset({"perp", "swap", "futures", "usdt_futures"})
 _SIGNAL_GROUPS = frozenset({"price_path", "market_activity_liquidity", "positioning_flow"})
@@ -543,6 +543,7 @@ def _score_momentum(feat: Mapping[str, object]) -> ComponentScore:
 def _score_mean_reversion(feat: Mapping[str, object]) -> ComponentScore:
     evidence: list[FactorEvidence] = []
     direction: str | None = None
+    opposing = False
     point = pessimistic = 0.0
     cores = (
         (
@@ -585,6 +586,13 @@ def _score_mean_reversion(feat: Mapping[str, object]) -> ComponentScore:
         evidence_direction = direction_from(raw) if is_directional_value else None
         if direction is None and raw_contribution > 0 and evidence_direction:
             direction = evidence_direction
+        if (
+            direction is not None
+            and evidence_direction is not None
+            and evidence_direction != direction
+            and raw_contribution > 0
+        ):
+            opposing = True
         contribution = (
             raw_contribution
             if evidence_direction is None or direction is None or evidence_direction == direction
@@ -593,7 +601,7 @@ def _score_mean_reversion(feat: Mapping[str, object]) -> ComponentScore:
         evidence.append(_evidence(curve_id, key, raw, transformed, contribution))
         point += contribution
         pessimistic += contribution
-    if direction is None:
+    if direction is None or opposing:
         return _finalize("mean_reversion", None, 0.0, 0.0, evidence)
 
     vol = _read(feat, "vol_ratio")

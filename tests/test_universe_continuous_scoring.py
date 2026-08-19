@@ -54,7 +54,7 @@ def _complete_candidate(**overrides: object) -> dict[str, object]:
 
 
 def test_behavior_identity_is_reserved_shadow_version() -> None:
-    assert CONTINUOUS_SCORER_BEHAVIOR_VERSION == "universe-continuous-shadow-v1"
+    assert CONTINUOUS_SCORER_BEHAVIOR_VERSION == "universe-continuous-shadow-v2"
 
 
 def test_shape_preserving_curve_is_exact_clamped_and_bounded() -> None:
@@ -611,13 +611,30 @@ def test_explicit_policy_rejects_invalid_denominators() -> None:
         ContinuousScoringPolicy(min_depth_10bps_usd=math.inf)
 
 
-def test_continuous_mean_reversion_keeps_opposing_core_out_of_directional_score() -> None:
+def test_continuous_mean_reversion_opposing_core_fails_closed_to_directionless() -> None:
+    # rsi_14=80 → short; return_4h=-12 → long (opposing) → fail closed
     result = scoring._score_mean_reversion(
         _complete_candidate(rsi_14=80.0, return_4h=-12.0)
     )
+    assert result.direction is None
+    assert result.point_score == 0.0
+
+
+def test_continuous_mean_reversion_aligned_evidence_scores_normally() -> None:
+    result = scoring._score_mean_reversion(
+        _complete_candidate(rsi_14=80.0, return_4h=12.0)
+    )
     assert result.direction == "short"
-    assert result.point_score == 35.0
-    assert next(item for item in result.evidence if item.curve_id == "MR-03").point_value == 0.0
+    assert result.point_score > 0.0
+
+
+def test_continuous_mean_reversion_opposing_24h_fails_closed() -> None:
+    # return_4h=-9.6 → long; return_24h=+24.9 → short (opposing) → fail closed
+    result = scoring._score_mean_reversion(
+        _complete_candidate(rsi_14=50.0, rsi_4h=50.0, return_4h=-9.6, return_24h=24.9)
+    )
+    assert result.direction is None
+    assert result.point_score == 0.0
 
 
 def test_continuous_derivatives_keeps_opposing_interactions_out_of_directional_score() -> None:

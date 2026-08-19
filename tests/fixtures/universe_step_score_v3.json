@@ -1,0 +1,3703 @@
+{
+  "contract": "universe-step-score-golden/v3",
+  "coverage": {
+    "edge_case_count": 16,
+    "real_vector_count": 6,
+    "threshold_case_count": 387,
+    "threshold_group_count": 129
+  },
+  "edge_cases": [
+    {
+      "component": "volatility",
+      "expected": {
+        "score": 25.0,
+        "reasons": [
+          "vol 2.5x avg"
+        ],
+        "direction": "long"
+      },
+      "feature_overrides": {
+        "bb_squeeze": false,
+        "return_4h": 3.0,
+        "vol_ratio": 2.5
+      },
+      "name": "volatility.bb_squeeze_false"
+    },
+    {
+      "component": "volatility",
+      "expected": {
+        "score": 40.0,
+        "reasons": [
+          "BB squeeze",
+          "vol 2.5x avg"
+        ],
+        "direction": "long"
+      },
+      "feature_overrides": {
+        "bb_squeeze": true,
+        "return_4h": 3.0,
+        "vol_ratio": 2.5
+      },
+      "name": "volatility.bb_squeeze_true"
+    },
+    {
+      "component": "volatility",
+      "expected": {
+        "score": 21.0,
+        "reasons": [
+          "ATR 6.0% breakout"
+        ],
+        "direction": "long"
+      },
+      "feature_overrides": {
+        "atr_pct": 6.0,
+        "return_4h": 3.0,
+        "vol_ratio": null
+      },
+      "name": "volatility.volume_missing"
+    },
+    {
+      "component": "derivatives",
+      "expected": {
+        "score": 0.0,
+        "reasons": [],
+        "direction": null
+      },
+      "feature_overrides": {
+        "funding_rate": 0.001,
+        "market_type": "spot"
+      },
+      "name": "derivatives.spot_rejected"
+    },
+    {
+      "component": "derivatives",
+      "expected": {
+        "score": 15.0,
+        "reasons": [
+          "OI↑/price↓ accumulation divergence"
+        ],
+        "direction": "long"
+      },
+      "feature_overrides": {
+        "oi_price_divergence": 1
+      },
+      "name": "derivatives.divergence_accumulation"
+    },
+    {
+      "component": "derivatives",
+      "expected": {
+        "score": 15.0,
+        "reasons": [
+          "OI↓/price↑ weak-rally divergence"
+        ],
+        "direction": "short"
+      },
+      "feature_overrides": {
+        "oi_price_divergence": -1
+      },
+      "name": "derivatives.divergence_weak_rally"
+    },
+    {
+      "component": "event",
+      "expected": {
+        "score": 17.5,
+        "reasons": [
+          "+5.0% 1h move"
+        ],
+        "direction": "long"
+      },
+      "feature_overrides": {
+        "return_1h": 5.0,
+        "vol_ratio": null
+      },
+      "name": "event.volume_missing"
+    },
+    {
+      "component": "short_bias",
+      "expected": {
+        "score": 14.0,
+        "reasons": [
+          "4h -2.0% soft decline"
+        ],
+        "direction": "short"
+      },
+      "feature_overrides": {
+        "return_24h": null,
+        "return_4h": -2.0
+      },
+      "name": "short_bias.return24_missing_allowed"
+    },
+    {
+      "component": "tradability",
+      "expected": 75.0,
+      "feature_overrides": {
+        "spread_bps": null
+      },
+      "name": "tradability.spread_missing_neutral"
+    },
+    {
+      "component": "tradability",
+      "expected": 73.0,
+      "feature_overrides": {
+        "data_freshness_sec": null
+      },
+      "name": "tradability.freshness_missing_neutral"
+    },
+    {
+      "component": "tradability",
+      "expected": 83.0,
+      "feature_overrides": {
+        "depth_10bps_usd": null
+      },
+      "name": "tradability.depth_missing_no_penalty"
+    },
+    {
+      "component": "momentum",
+      "expected": {
+        "score": 20.0,
+        "reasons": [
+          "RS24h +3.0% vs BTC"
+        ],
+        "direction": "long"
+      },
+      "feature_overrides": {
+        "relative_strength_24h": 3.0,
+        "rs_beta_adj_24h": 0.0
+      },
+      "name": "momentum.zero_beta_adjusted_falls_back"
+    },
+    {
+      "component": "momentum",
+      "expected": {
+        "score": 30.0,
+        "reasons": [
+          "RS24h +6.0% vs BTC"
+        ],
+        "direction": "long"
+      },
+      "feature_overrides": {
+        "relative_strength_24h": 3.0,
+        "rs_beta_adj_24h": 6.0
+      },
+      "name": "momentum.beta_adjusted_precedence"
+    },
+    {
+      "component": "total_score",
+      "expected": 39.0,
+      "feature_overrides": {
+        "spread_bps": null,
+        "tradability_score": 70.0
+      },
+      "name": "total_score.spread_missing_defaults_10"
+    },
+    {
+      "component": "total_score",
+      "expected": 39.0,
+      "feature_overrides": {
+        "spread_bps": 0.0,
+        "tradability_score": 70.0
+      },
+      "name": "total_score.spread_zero_defaults_10"
+    },
+    {
+      "component": "total_score",
+      "expected": 39.0,
+      "feature_overrides": {
+        "data_freshness_sec": null,
+        "tradability_score": 70.0
+      },
+      "name": "total_score.freshness_missing_defaults_fresh"
+    }
+  ],
+  "neutral_features": {
+    "atr_4h": null,
+    "atr_pct": 2.0,
+    "bb_squeeze": false,
+    "bb_width_4h": null,
+    "bb_width_pct": null,
+    "data_freshness_sec": 300,
+    "depth_10bps_usd": 25000.0,
+    "funding_rate": null,
+    "last_candle_range_atr_15m": 0.0,
+    "market_type": "perp",
+    "oi_delta_1h": null,
+    "oi_price_divergence": null,
+    "quote_volume_24h": 10000000.0,
+    "relative_strength_24h": null,
+    "relative_strength_4h": null,
+    "return_15m": 0.0,
+    "return_1h": 0.0,
+    "return_24h": 0.0,
+    "return_4h": 0.0,
+    "rs_beta_adj_24h": null,
+    "rsi_14": 50.0,
+    "rsi_4h": 50.0,
+    "spread_bps": 10.0,
+    "taker_buy_ratio": null,
+    "vol_ratio": null
+  },
+  "provenance": {
+    "boundary_probe_method": "Deterministic below/at/above perturbations around every numeric branch used by the six scanners, tradability scorer, late-entry penalty, and final rank scorer.",
+    "captured_at_utc": "2026-08-07T12:54:33Z",
+    "runtime_mode": "Paper",
+    "runtime_repository_sha": "86b9bbf2e8dbb5886e84c43af789028bf8b560b7",
+    "sanitization": "Identifiers, symbols, timestamps, prices, quantities, and free text are omitted. Only persisted numeric market-feature shapes are retained; computed-only fields not persisted by the runtime are neutral or missing.",
+    "source_feature_row_count": 5278,
+    "source_feature_window_utc": [
+      "2026-08-07T01:56:58.462199+00:00",
+      "2026-08-07T12:53:16.882291+00:00"
+    ],
+    "source_member_row_count": 1862
+  },
+  "real_vectors": [
+    {
+      "expected_family_result": {
+        "score": 40.0,
+        "reasons": [
+          "funding 0.030% extreme"
+        ],
+        "direction": "short"
+      },
+      "expected_winner": {
+        "score": 40.0,
+        "family": "derivatives",
+        "direction": "short",
+        "reasons": [
+          "funding 0.030% extreme"
+        ],
+        "is_proxy": false,
+        "all_scores": {
+          "momentum": 0.0,
+          "mean_reversion": 0.0,
+          "volatility": 0.0,
+          "derivatives": 40.0,
+          "event": 0.0,
+          "short_bias": 0.0
+        }
+      },
+      "features": {
+        "atr_4h": 1.12823317,
+        "atr_pct": 0.39733933,
+        "bb_squeeze": true,
+        "bb_width_4h": 9.9319764,
+        "funding_rate": 0.00030021,
+        "last_candle_range_atr_15m": 2.7822814,
+        "market_type": "perp",
+        "oi_delta_1h": -0.01,
+        "relative_strength_24h": -1.89246678,
+        "return_15m": 0.07265208,
+        "return_1h": -0.03070824,
+        "return_24h": -0.79782813,
+        "return_4h": -0.3145617,
+        "rsi_14": 32.0447308,
+        "rsi_4h": 41.80000878,
+        "taker_buy_ratio": null,
+        "vol_ratio": 0.52094721
+      },
+      "name": "fedora.derivatives_shape",
+      "source_family": "derivatives"
+    },
+    {
+      "expected_family_result": {
+        "score": 25.0,
+        "reasons": [
+          "sharp -8.1% 1h dump",
+          "4h trend aligned"
+        ],
+        "direction": "short"
+      },
+      "expected_winner": {
+        "score": 60.0,
+        "family": "derivatives",
+        "direction": "long",
+        "reasons": [
+          "funding -0.354% extreme",
+          "OI delta -11%"
+        ],
+        "is_proxy": false,
+        "all_scores": {
+          "momentum": 15.0,
+          "mean_reversion": 0.0,
+          "volatility": 21.0,
+          "derivatives": 60.0,
+          "event": 25.0,
+          "short_bias": 0.0
+        }
+      },
+      "features": {
+        "atr_4h": 10.86855036,
+        "atr_pct": 10.66916346,
+        "bb_squeeze": false,
+        "bb_width_4h": 121.28398047,
+        "funding_rate": -0.00353582,
+        "last_candle_range_atr_15m": 1.77778074,
+        "market_type": "perp",
+        "oi_delta_1h": -11.16,
+        "relative_strength_24h": 59.86652835,
+        "return_15m": -8.1746504,
+        "return_1h": -8.10770604,
+        "return_24h": 61.11111111,
+        "return_4h": -8.19647767,
+        "rsi_14": 54.13787524,
+        "rsi_4h": 66.23387374,
+        "taker_buy_ratio": null,
+        "vol_ratio": 1.12004965
+      },
+      "name": "fedora.event_shape",
+      "source_family": "event"
+    },
+    {
+      "expected_family_result": {
+        "score": 60.0,
+        "reasons": [
+          "4h RSI 79 overbought",
+          "24h extended +12.9%",
+          "volume exhaustion",
+          "crowded longs (funding)"
+        ],
+        "direction": "short"
+      },
+      "expected_winner": {
+        "score": 60.0,
+        "family": "mean_reversion",
+        "direction": "short",
+        "reasons": [
+          "4h RSI 79 overbought",
+          "24h extended +12.9%",
+          "volume exhaustion",
+          "crowded longs (funding)"
+        ],
+        "is_proxy": false,
+        "all_scores": {
+          "momentum": 5.0,
+          "mean_reversion": 60.0,
+          "volatility": 23.5,
+          "derivatives": 40.0,
+          "event": 0.0,
+          "short_bias": 0.0
+        }
+      },
+      "features": {
+        "atr_4h": 7.81802718,
+        "atr_pct": 4.97969576,
+        "bb_squeeze": true,
+        "bb_width_4h": 65.03471395,
+        "funding_rate": 0.00060869,
+        "last_candle_range_atr_15m": 0.42221203,
+        "market_type": "perp",
+        "oi_delta_1h": 1.92,
+        "relative_strength_24h": 11.54291908,
+        "return_15m": 0.16180412,
+        "return_1h": 2.51604887,
+        "return_24h": 12.94775268,
+        "return_4h": 4.77803058,
+        "rsi_14": 65.83838968,
+        "rsi_4h": 78.54036202,
+        "taker_buy_ratio": null,
+        "vol_ratio": 0.52444248
+      },
+      "name": "fedora.mean_reversion_shape",
+      "source_family": "mean_reversion"
+    },
+    {
+      "expected_family_result": {
+        "score": 35.0,
+        "reasons": [
+          "RS24h -10.8% vs BTC",
+          "RSI 27 bearish",
+          "vol elevated 1.8x",
+          "funding crowded short"
+        ],
+        "direction": "short"
+      },
+      "expected_winner": {
+        "score": 40.0,
+        "family": "derivatives",
+        "direction": "long",
+        "reasons": [
+          "funding -0.051% extreme"
+        ],
+        "is_proxy": false,
+        "all_scores": {
+          "momentum": 35.0,
+          "mean_reversion": 30.0,
+          "volatility": 0.0,
+          "derivatives": 40.0,
+          "event": 0.0,
+          "short_bias": 0.0
+        }
+      },
+      "features": {
+        "atr_4h": 3.01384402,
+        "atr_pct": 2.24295208,
+        "bb_squeeze": false,
+        "bb_width_4h": 15.10960739,
+        "funding_rate": -0.0005066,
+        "last_candle_range_atr_15m": 0.73306166,
+        "market_type": "perp",
+        "oi_delta_1h": 0.05,
+        "relative_strength_24h": -10.84454803,
+        "return_15m": 0.24183797,
+        "return_1h": -0.51937675,
+        "return_24h": -9.74990939,
+        "return_4h": -1.77514793,
+        "rsi_14": 26.58507253,
+        "rsi_4h": 21.6235125,
+        "taker_buy_ratio": null,
+        "vol_ratio": 1.76946488
+      },
+      "name": "fedora.momentum_shape",
+      "source_family": "momentum"
+    },
+    {
+      "expected_family_result": {
+        "score": 80.0,
+        "reasons": [
+          "4h -4.9% decline",
+          "24h -6.7% aligned",
+          "RS24h -8.1% weak vs BTC",
+          "funding 0.000 (longs paying)",
+          "rsi 38 room to fall",
+          "4h rsi 44 room to fall"
+        ],
+        "direction": "short"
+      },
+      "expected_winner": {
+        "score": 80.0,
+        "family": "short_bias",
+        "direction": "short",
+        "reasons": [
+          "4h -4.9% decline",
+          "24h -6.7% aligned",
+          "RS24h -8.1% weak vs BTC",
+          "funding 0.000 (longs paying)",
+          "rsi 38 room to fall",
+          "4h rsi 44 room to fall"
+        ],
+        "is_proxy": false,
+        "all_scores": {
+          "momentum": 45.0,
+          "mean_reversion": 0.0,
+          "volatility": 23.5,
+          "derivatives": 25.0,
+          "event": 0.0,
+          "short_bias": 80.0
+        }
+      },
+      "features": {
+        "atr_4h": 12.97269158,
+        "atr_pct": 3.77444129,
+        "bb_squeeze": true,
+        "bb_width_4h": 24.66344037,
+        "funding_rate": 7.34e-05,
+        "last_candle_range_atr_15m": 0.59844672,
+        "market_type": "perp",
+        "oi_delta_1h": null,
+        "relative_strength_24h": -8.14326202,
+        "return_15m": -0.36815462,
+        "return_1h": -0.73327223,
+        "return_24h": -6.73842842,
+        "return_4h": -4.93745885,
+        "rsi_14": 37.69280285,
+        "rsi_4h": 43.97704946,
+        "taker_buy_ratio": null,
+        "vol_ratio": 0.24207521
+      },
+      "name": "fedora.short_bias_shape",
+      "source_family": "short_bias"
+    },
+    {
+      "expected_family_result": {
+        "score": 67.0,
+        "reasons": [
+          "ATR 10.3% breakout",
+          "4h ATR 10.5% sustained",
+          "vol 3.6x avg"
+        ],
+        "direction": "short"
+      },
+      "expected_winner": {
+        "score": 67.0,
+        "family": "volatility",
+        "direction": "short",
+        "reasons": [
+          "ATR 10.3% breakout",
+          "4h ATR 10.5% sustained",
+          "vol 3.6x avg"
+        ],
+        "is_proxy": false,
+        "all_scores": {
+          "momentum": 45.0,
+          "mean_reversion": 15.0,
+          "volatility": 67.0,
+          "derivatives": 40.0,
+          "event": 0.0,
+          "short_bias": 0.0
+        }
+      },
+      "features": {
+        "atr_4h": 10.46373837,
+        "atr_pct": 10.27388141,
+        "bb_squeeze": false,
+        "bb_width_4h": 122.6331177,
+        "funding_rate": -0.00341595,
+        "last_candle_range_atr_15m": 1.13942648,
+        "market_type": "perp",
+        "oi_delta_1h": -4.21,
+        "relative_strength_24h": 67.07456129,
+        "return_15m": 5.06308506,
+        "return_1h": -3.90508777,
+        "return_24h": 68.47939489,
+        "return_4h": -3.9979193,
+        "rsi_14": 57.98798635,
+        "rsi_4h": 70.07987136,
+        "taker_buy_ratio": null,
+        "vol_ratio": 3.56119628
+      },
+      "name": "fedora.volatility_shape",
+      "source_family": "volatility"
+    }
+  ],
+  "scorer_behavior_version": "universe-step-v3",
+  "threshold_probes": [
+    {
+      "base_overrides": {},
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "relative_strength_24h",
+      "name": "momentum.rs24_long_2_5",
+      "values": [
+        2.499,
+        2.5,
+        2.501
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 30.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "relative_strength_24h",
+      "name": "momentum.rs24_long_5",
+      "values": [
+        4.999,
+        5.0,
+        5.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "short"
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        }
+      ],
+      "feature": "relative_strength_24h",
+      "name": "momentum.rs24_short_minus_2_5",
+      "values": [
+        -2.501,
+        -2.5,
+        -2.499
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 30.0,
+          "direction": "short"
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "relative_strength_24h",
+      "name": "momentum.rs24_short_minus_5",
+      "values": [
+        -5.001,
+        -5.0,
+        -4.999
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 15.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "return_4h",
+      "name": "momentum.fallback_return4_long_3",
+      "values": [
+        2.999,
+        3.0,
+        3.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 15.0,
+          "direction": "short"
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        }
+      ],
+      "feature": "return_4h",
+      "name": "momentum.fallback_return4_short_minus_3",
+      "values": [
+        -3.001,
+        -3.0,
+        -2.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": 3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 35.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "relative_strength_4h",
+      "name": "momentum.rs4_long_1",
+      "values": [
+        0.999,
+        1.0,
+        1.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": -3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 35.0,
+          "direction": "short"
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "relative_strength_4h",
+      "name": "momentum.rs4_short_minus_1",
+      "values": [
+        -1.001,
+        -1.0,
+        -0.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": 3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 30.0,
+          "direction": "long"
+        },
+        {
+          "score": 30.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "rsi_14",
+      "name": "momentum.rsi_long_lower_55",
+      "values": [
+        54.999,
+        55.0,
+        55.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": 3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 30.0,
+          "direction": "long"
+        },
+        {
+          "score": 30.0,
+          "direction": "long"
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "rsi_14",
+      "name": "momentum.rsi_long_upper_75",
+      "values": [
+        74.999,
+        75.0,
+        75.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": -3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "short"
+        },
+        {
+          "score": 30.0,
+          "direction": "short"
+        },
+        {
+          "score": 30.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "rsi_14",
+      "name": "momentum.rsi_short_lower_25",
+      "values": [
+        24.999,
+        25.0,
+        25.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": -3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 30.0,
+          "direction": "short"
+        },
+        {
+          "score": 30.0,
+          "direction": "short"
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "rsi_14",
+      "name": "momentum.rsi_short_upper_45",
+      "values": [
+        44.999,
+        45.0,
+        45.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": 3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 25.0,
+          "direction": "long"
+        },
+        {
+          "score": 25.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "rsi_4h",
+      "name": "momentum.rsi4_long_lower_55",
+      "values": [
+        54.999,
+        55.0,
+        55.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": 3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 25.0,
+          "direction": "long"
+        },
+        {
+          "score": 25.0,
+          "direction": "long"
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "rsi_4h",
+      "name": "momentum.rsi4_long_upper_75",
+      "values": [
+        74.999,
+        75.0,
+        75.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": 3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 30.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "vol_ratio",
+      "name": "momentum.volume_1_5",
+      "values": [
+        1.499,
+        1.5,
+        1.501
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": 3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 30.0,
+          "direction": "long"
+        },
+        {
+          "score": 30.0,
+          "direction": "long"
+        },
+        {
+          "score": 40.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "vol_ratio",
+      "name": "momentum.volume_3",
+      "values": [
+        2.999,
+        3.0,
+        3.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": 3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 30.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "taker_buy_ratio",
+      "name": "momentum.taker_long_1_2",
+      "values": [
+        1.199,
+        1.2,
+        1.201
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": -3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 30.0,
+          "direction": "short"
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "taker_buy_ratio",
+      "name": "momentum.taker_short_0_8",
+      "values": [
+        0.799,
+        0.8,
+        0.801
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": 3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 30.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "oi_delta_1h",
+      "name": "momentum.oi_long_5",
+      "values": [
+        4.999,
+        5.0,
+        5.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": -3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 30.0,
+          "direction": "short"
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "oi_delta_1h",
+      "name": "momentum.oi_short_minus_5",
+      "values": [
+        -5.001,
+        -5.0,
+        -4.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": 3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 5.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "funding_rate",
+      "name": "momentum.funding_long_crowded",
+      "values": [
+        9.999e-05,
+        0.0001,
+        0.00010001
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": -3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 5.0,
+          "direction": "short"
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "funding_rate",
+      "name": "momentum.funding_short_crowded",
+      "values": [
+        -0.00010001,
+        -0.0001,
+        -9.999e-05
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": 6.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 30.0,
+          "direction": "long"
+        },
+        {
+          "score": 30.0,
+          "direction": "long"
+        },
+        {
+          "score": 10.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "return_24h",
+      "name": "momentum.overextension_abs_10",
+      "values": [
+        9.999,
+        10.0,
+        10.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "mean_reversion",
+      "expected": [
+        {
+          "score": 35.0,
+          "direction": "long"
+        },
+        {
+          "score": 35.0,
+          "direction": "long"
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "rsi_14",
+      "name": "mean_reversion.rsi_oversold_20",
+      "values": [
+        19.999,
+        20.0,
+        20.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "mean_reversion",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        }
+      ],
+      "feature": "rsi_14",
+      "name": "mean_reversion.rsi_oversold_25",
+      "values": [
+        24.999,
+        25.0,
+        25.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "mean_reversion",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "rsi_14",
+      "name": "mean_reversion.rsi_overbought_75",
+      "values": [
+        74.999,
+        75.0,
+        75.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "mean_reversion",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "short"
+        },
+        {
+          "score": 35.0,
+          "direction": "short"
+        },
+        {
+          "score": 35.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "rsi_14",
+      "name": "mean_reversion.rsi_overbought_80",
+      "values": [
+        79.999,
+        80.0,
+        80.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "mean_reversion",
+      "expected": [
+        {
+          "score": 15.0,
+          "direction": "long"
+        },
+        {
+          "score": 15.0,
+          "direction": "long"
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        }
+      ],
+      "feature": "rsi_4h",
+      "name": "mean_reversion.rsi4_oversold_25",
+      "values": [
+        24.999,
+        25.0,
+        25.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "mean_reversion",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 15.0,
+          "direction": "short"
+        },
+        {
+          "score": 15.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "rsi_4h",
+      "name": "mean_reversion.rsi4_overbought_75",
+      "values": [
+        74.999,
+        75.0,
+        75.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "mean_reversion",
+      "expected": [
+        {
+          "score": 25.0,
+          "direction": "long"
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        }
+      ],
+      "feature": "return_4h",
+      "name": "mean_reversion.return4_long_minus_8",
+      "values": [
+        -8.001,
+        -8.0,
+        -7.999
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "mean_reversion",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 25.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "return_4h",
+      "name": "mean_reversion.return4_short_8",
+      "values": [
+        7.999,
+        8.0,
+        8.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "mean_reversion",
+      "expected": [
+        {
+          "score": 15.0,
+          "direction": "long"
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        }
+      ],
+      "feature": "return_24h",
+      "name": "mean_reversion.return24_long_minus_12",
+      "values": [
+        -12.001,
+        -12.0,
+        -11.999
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "mean_reversion",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 15.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "return_24h",
+      "name": "mean_reversion.return24_short_12",
+      "values": [
+        11.999,
+        12.0,
+        12.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "rsi_14": 80.0
+      },
+      "component": "mean_reversion",
+      "expected": [
+        {
+          "score": 50.0,
+          "direction": "short"
+        },
+        {
+          "score": 35.0,
+          "direction": "short"
+        },
+        {
+          "score": 35.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "vol_ratio",
+      "name": "mean_reversion.volume_exhaustion_0_7",
+      "values": [
+        0.699,
+        0.7,
+        0.701
+      ]
+    },
+    {
+      "base_overrides": {
+        "rsi_14": 75.0
+      },
+      "component": "mean_reversion",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "short"
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        },
+        {
+          "score": 35.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "funding_rate",
+      "name": "mean_reversion.funding_short_elevated",
+      "values": [
+        4.999e-05,
+        5e-05,
+        5.001e-05
+      ]
+    },
+    {
+      "base_overrides": {
+        "rsi_14": 25.0
+      },
+      "component": "mean_reversion",
+      "expected": [
+        {
+          "score": 35.0,
+          "direction": "long"
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "funding_rate",
+      "name": "mean_reversion.funding_long_elevated",
+      "values": [
+        -5.001e-05,
+        -5e-05,
+        -4.999e-05
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_4h": 3.0,
+        "vol_ratio": 2.5
+      },
+      "component": "volatility",
+      "expected": [
+        {
+          "score": 25.0,
+          "direction": "long"
+        },
+        {
+          "score": 25.0,
+          "direction": "long"
+        },
+        {
+          "score": 45.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "atr_pct",
+      "name": "volatility.atr_3",
+      "values": [
+        2.999,
+        3.0,
+        3.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_4h": 3.0,
+        "vol_ratio": 2.5
+      },
+      "component": "volatility",
+      "expected": [
+        {
+          "score": 45.0,
+          "direction": "long"
+        },
+        {
+          "score": 45.0,
+          "direction": "long"
+        },
+        {
+          "score": 55.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "atr_pct",
+      "name": "volatility.atr_5",
+      "values": [
+        4.999,
+        5.0,
+        5.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_4h": 3.0,
+        "vol_ratio": 2.5
+      },
+      "component": "volatility",
+      "expected": [
+        {
+          "score": 35.0,
+          "direction": "long"
+        },
+        {
+          "score": 25.0,
+          "direction": "long"
+        },
+        {
+          "score": 25.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "bb_width_pct",
+      "name": "volatility.bb_width_2",
+      "values": [
+        1.999,
+        2.0,
+        2.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_4h": 3.0,
+        "vol_ratio": 2.5
+      },
+      "component": "volatility",
+      "expected": [
+        {
+          "score": 25.0,
+          "direction": "long"
+        },
+        {
+          "score": 25.0,
+          "direction": "long"
+        },
+        {
+          "score": 37.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "atr_4h",
+      "name": "volatility.atr4_4",
+      "values": [
+        3.999,
+        4.0,
+        4.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_4h": 3.0,
+        "vol_ratio": 2.5
+      },
+      "component": "volatility",
+      "expected": [
+        {
+          "score": 37.0,
+          "direction": "long"
+        },
+        {
+          "score": 25.0,
+          "direction": "long"
+        },
+        {
+          "score": 25.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "bb_width_4h",
+      "name": "volatility.bb_width4_3",
+      "values": [
+        2.999,
+        3.0,
+        3.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "atr_pct": 6.0,
+        "vol_ratio": 2.5
+      },
+      "component": "volatility",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 55.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "return_4h",
+      "name": "volatility.direction_long_2",
+      "values": [
+        1.999,
+        2.0,
+        2.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "atr_pct": 6.0,
+        "vol_ratio": 2.5
+      },
+      "component": "volatility",
+      "expected": [
+        {
+          "score": 55.0,
+          "direction": "short"
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        }
+      ],
+      "feature": "return_4h",
+      "name": "volatility.direction_short_minus_2",
+      "values": [
+        -2.001,
+        -2.0,
+        -1.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "atr_pct": 6.0,
+        "return_4h": 3.0,
+        "vol_ratio": 2.5
+      },
+      "component": "volatility",
+      "expected": [
+        {
+          "score": 55.0,
+          "direction": "long"
+        },
+        {
+          "score": 55.0,
+          "direction": "long"
+        },
+        {
+          "score": 65.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "taker_buy_ratio",
+      "name": "volatility.taker_long_1_2",
+      "values": [
+        1.199,
+        1.2,
+        1.201
+      ]
+    },
+    {
+      "base_overrides": {
+        "atr_pct": 6.0,
+        "return_4h": -3.0,
+        "vol_ratio": 2.5
+      },
+      "component": "volatility",
+      "expected": [
+        {
+          "score": 65.0,
+          "direction": "short"
+        },
+        {
+          "score": 55.0,
+          "direction": "short"
+        },
+        {
+          "score": 55.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "taker_buy_ratio",
+      "name": "volatility.taker_short_0_8",
+      "values": [
+        0.799,
+        0.8,
+        0.801
+      ]
+    },
+    {
+      "base_overrides": {
+        "atr_pct": 6.0,
+        "return_4h": 3.0
+      },
+      "component": "volatility",
+      "expected": [
+        {
+          "score": 15.0,
+          "direction": "long"
+        },
+        {
+          "score": 15.0,
+          "direction": "long"
+        },
+        {
+          "score": 40.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "vol_ratio",
+      "name": "volatility.volume_1_5",
+      "values": [
+        1.499,
+        1.5,
+        1.501
+      ]
+    },
+    {
+      "base_overrides": {
+        "atr_pct": 6.0,
+        "return_4h": 3.0
+      },
+      "component": "volatility",
+      "expected": [
+        {
+          "score": 40.0,
+          "direction": "long"
+        },
+        {
+          "score": 40.0,
+          "direction": "long"
+        },
+        {
+          "score": 55.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "vol_ratio",
+      "name": "volatility.volume_2",
+      "values": [
+        1.999,
+        2.0,
+        2.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "derivatives",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 10.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "funding_rate",
+      "name": "derivatives.funding_mild",
+      "values": [
+        1.999e-05,
+        2e-05,
+        2.001e-05
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "derivatives",
+      "expected": [
+        {
+          "score": 10.0,
+          "direction": "short"
+        },
+        {
+          "score": 10.0,
+          "direction": "short"
+        },
+        {
+          "score": 25.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "funding_rate",
+      "name": "derivatives.funding_elevated",
+      "values": [
+        4.999e-05,
+        5e-05,
+        5.001e-05
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "derivatives",
+      "expected": [
+        {
+          "score": 25.0,
+          "direction": "short"
+        },
+        {
+          "score": 25.0,
+          "direction": "short"
+        },
+        {
+          "score": 40.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "funding_rate",
+      "name": "derivatives.funding_crowded",
+      "values": [
+        9.999e-05,
+        0.0001,
+        0.00010001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "derivatives",
+      "expected": [
+        {
+          "score": 40.0,
+          "direction": "long"
+        },
+        {
+          "score": 25.0,
+          "direction": "long"
+        },
+        {
+          "score": 25.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "funding_rate",
+      "name": "derivatives.funding_negative_crowded",
+      "values": [
+        -0.00010001,
+        -0.0001,
+        -9.999e-05
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_1h": 1.0
+      },
+      "component": "derivatives",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "oi_delta_1h",
+      "name": "derivatives.oi_abs_10",
+      "values": [
+        9.999,
+        10.0,
+        10.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_1h": 1.0
+      },
+      "component": "derivatives",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 30.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "oi_delta_1h",
+      "name": "derivatives.oi_abs_20",
+      "values": [
+        19.999,
+        20.0,
+        20.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "oi_delta_1h": 11.0
+      },
+      "component": "derivatives",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 20.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "return_1h",
+      "name": "derivatives.oi_direction_long_0_5",
+      "values": [
+        0.499,
+        0.5,
+        0.501
+      ]
+    },
+    {
+      "base_overrides": {
+        "oi_delta_1h": 11.0
+      },
+      "component": "derivatives",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "short"
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        }
+      ],
+      "feature": "return_1h",
+      "name": "derivatives.oi_direction_short_minus_0_5",
+      "values": [
+        -0.501,
+        -0.5,
+        -0.499
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_4h": 6.0
+      },
+      "component": "derivatives",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "rsi_14",
+      "name": "derivatives.proxy_rsi_short_75",
+      "values": [
+        74.999,
+        75.0,
+        75.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "rsi_14": 76.0
+      },
+      "component": "derivatives",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "return_4h",
+      "name": "derivatives.proxy_return4_short_5",
+      "values": [
+        4.999,
+        5.0,
+        5.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "vol_ratio": 2.0
+      },
+      "component": "event",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 45.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "return_1h",
+      "name": "event.return1_long_4",
+      "values": [
+        3.999,
+        4.0,
+        4.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "vol_ratio": 2.0
+      },
+      "component": "event",
+      "expected": [
+        {
+          "score": 45.0,
+          "direction": "long"
+        },
+        {
+          "score": 45.0,
+          "direction": "long"
+        },
+        {
+          "score": 65.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "return_1h",
+      "name": "event.return1_long_8",
+      "values": [
+        7.999,
+        8.0,
+        8.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "vol_ratio": 2.0
+      },
+      "component": "event",
+      "expected": [
+        {
+          "score": 45.0,
+          "direction": "short"
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        }
+      ],
+      "feature": "return_1h",
+      "name": "event.return1_short_minus_4",
+      "values": [
+        -4.001,
+        -4.0,
+        -3.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "vol_ratio": 2.0
+      },
+      "component": "event",
+      "expected": [
+        {
+          "score": 65.0,
+          "direction": "short"
+        },
+        {
+          "score": 45.0,
+          "direction": "short"
+        },
+        {
+          "score": 45.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "return_1h",
+      "name": "event.return1_short_minus_8",
+      "values": [
+        -8.001,
+        -8.0,
+        -7.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_1h": 5.0,
+        "vol_ratio": 2.0
+      },
+      "component": "event",
+      "expected": [
+        {
+          "score": 45.0,
+          "direction": "long"
+        },
+        {
+          "score": 45.0,
+          "direction": "long"
+        },
+        {
+          "score": 60.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "taker_buy_ratio",
+      "name": "event.taker_long_1_5",
+      "values": [
+        1.499,
+        1.5,
+        1.501
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_1h": -5.0,
+        "vol_ratio": 2.0
+      },
+      "component": "event",
+      "expected": [
+        {
+          "score": 60.0,
+          "direction": "short"
+        },
+        {
+          "score": 45.0,
+          "direction": "short"
+        },
+        {
+          "score": 45.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "taker_buy_ratio",
+      "name": "event.taker_short_0_65",
+      "values": [
+        0.649,
+        0.65,
+        0.651
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_1h": 5.0,
+        "vol_ratio": 2.0
+      },
+      "component": "event",
+      "expected": [
+        {
+          "score": 45.0,
+          "direction": "long"
+        },
+        {
+          "score": 45.0,
+          "direction": "long"
+        },
+        {
+          "score": 55.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "oi_delta_1h",
+      "name": "event.oi_abs_15",
+      "values": [
+        14.999,
+        15.0,
+        15.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_1h": 5.0,
+        "vol_ratio": 2.0
+      },
+      "component": "event",
+      "expected": [
+        {
+          "score": 45.0,
+          "direction": "long"
+        },
+        {
+          "score": 45.0,
+          "direction": "long"
+        },
+        {
+          "score": 37.5,
+          "direction": "long"
+        }
+      ],
+      "feature": "rsi_14",
+      "name": "event.rsi_long_late_80",
+      "values": [
+        79.999,
+        80.0,
+        80.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_1h": -5.0,
+        "vol_ratio": 2.0
+      },
+      "component": "event",
+      "expected": [
+        {
+          "score": 37.5,
+          "direction": "short"
+        },
+        {
+          "score": 45.0,
+          "direction": "short"
+        },
+        {
+          "score": 45.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "rsi_14",
+      "name": "event.rsi_short_late_20",
+      "values": [
+        19.999,
+        20.0,
+        20.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_1h": 5.0,
+        "vol_ratio": 2.0
+      },
+      "component": "event",
+      "expected": [
+        {
+          "score": 45.0,
+          "direction": "long"
+        },
+        {
+          "score": 45.0,
+          "direction": "long"
+        },
+        {
+          "score": 50.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "return_4h",
+      "name": "event.return4_long_3",
+      "values": [
+        2.999,
+        3.0,
+        3.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_1h": -5.0,
+        "vol_ratio": 2.0
+      },
+      "component": "event",
+      "expected": [
+        {
+          "score": 50.0,
+          "direction": "short"
+        },
+        {
+          "score": 45.0,
+          "direction": "short"
+        },
+        {
+          "score": 45.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "return_4h",
+      "name": "event.return4_short_minus_3",
+      "values": [
+        -3.001,
+        -3.0,
+        -2.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_1h": 5.0
+      },
+      "component": "event",
+      "expected": [
+        {
+          "score": 12.5,
+          "direction": "long"
+        },
+        {
+          "score": 35.0,
+          "direction": "long"
+        },
+        {
+          "score": 35.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "vol_ratio",
+      "name": "event.volume_1_5",
+      "values": [
+        1.499,
+        1.5,
+        1.501
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_1h": 5.0
+      },
+      "component": "event",
+      "expected": [
+        {
+          "score": 35.0,
+          "direction": "long"
+        },
+        {
+          "score": 45.0,
+          "direction": "long"
+        },
+        {
+          "score": 45.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "vol_ratio",
+      "name": "event.volume_2",
+      "values": [
+        1.999,
+        2.0,
+        2.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_1h": 5.0
+      },
+      "component": "event",
+      "expected": [
+        {
+          "score": 45.0,
+          "direction": "long"
+        },
+        {
+          "score": 55.0,
+          "direction": "long"
+        },
+        {
+          "score": 55.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "vol_ratio",
+      "name": "event.volume_4",
+      "values": [
+        3.999,
+        4.0,
+        4.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_24h": -1.0
+      },
+      "component": "short_bias",
+      "expected": [
+        {
+          "score": 14.0,
+          "direction": "short"
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        }
+      ],
+      "feature": "return_4h",
+      "name": "short_bias.core_gate_minus_1",
+      "values": [
+        -1.001,
+        -1.0,
+        -0.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_24h": -1.0
+      },
+      "component": "short_bias",
+      "expected": [
+        {
+          "score": 22.0,
+          "direction": "short"
+        },
+        {
+          "score": 22.0,
+          "direction": "short"
+        },
+        {
+          "score": 14.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "return_4h",
+      "name": "short_bias.return4_tier_minus_2_5",
+      "values": [
+        -2.501,
+        -2.5,
+        -2.499
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_24h": -1.0
+      },
+      "component": "short_bias",
+      "expected": [
+        {
+          "score": 30.0,
+          "direction": "short"
+        },
+        {
+          "score": 30.0,
+          "direction": "short"
+        },
+        {
+          "score": 22.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "return_4h",
+      "name": "short_bias.return4_tier_minus_5",
+      "values": [
+        -5.001,
+        -5.0,
+        -4.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_4h": -2.0
+      },
+      "component": "short_bias",
+      "expected": [
+        {
+          "score": 14.0,
+          "direction": "short"
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        }
+      ],
+      "feature": "return_24h",
+      "name": "short_bias.return24_gate_0",
+      "values": [
+        -0.001,
+        0.0,
+        0.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_4h": -2.0
+      },
+      "component": "short_bias",
+      "expected": [
+        {
+          "score": 29.0,
+          "direction": "short"
+        },
+        {
+          "score": 14.0,
+          "direction": "short"
+        },
+        {
+          "score": 14.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "return_24h",
+      "name": "short_bias.return24_bonus_minus_3",
+      "values": [
+        -3.001,
+        -3.0,
+        -2.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_24h": -1.0,
+        "return_4h": -2.0
+      },
+      "component": "short_bias",
+      "expected": [
+        {
+          "score": 29.0,
+          "direction": "short"
+        },
+        {
+          "score": 14.0,
+          "direction": "short"
+        },
+        {
+          "score": 14.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "relative_strength_24h",
+      "name": "short_bias.rs24_minus_3",
+      "values": [
+        -3.001,
+        -3.0,
+        -2.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_24h": -1.0,
+        "return_4h": -2.0
+      },
+      "component": "short_bias",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 14.0,
+          "direction": "short"
+        },
+        {
+          "score": 14.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "funding_rate",
+      "name": "short_bias.funding_crowded_short",
+      "values": [
+        -0.00010001,
+        -0.0001,
+        -9.999e-05
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_24h": -1.0,
+        "return_4h": -2.0
+      },
+      "component": "short_bias",
+      "expected": [
+        {
+          "score": 14.0,
+          "direction": "short"
+        },
+        {
+          "score": 14.0,
+          "direction": "short"
+        },
+        {
+          "score": 24.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "funding_rate",
+      "name": "short_bias.funding_longs_paying",
+      "values": [
+        4.999e-05,
+        5e-05,
+        5.001e-05
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_24h": -1.0,
+        "return_4h": -2.0
+      },
+      "component": "short_bias",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 22.0,
+          "direction": "short"
+        },
+        {
+          "score": 22.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "rsi_14",
+      "name": "short_bias.rsi_gate_25",
+      "values": [
+        24.999,
+        25.0,
+        25.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_24h": -1.0,
+        "return_4h": -2.0
+      },
+      "component": "short_bias",
+      "expected": [
+        {
+          "score": 22.0,
+          "direction": "short"
+        },
+        {
+          "score": 14.0,
+          "direction": "short"
+        },
+        {
+          "score": 14.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "rsi_14",
+      "name": "short_bias.rsi_bonus_45",
+      "values": [
+        44.999,
+        45.0,
+        45.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_24h": -1.0,
+        "return_4h": -2.0
+      },
+      "component": "short_bias",
+      "expected": [
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 24.0,
+          "direction": "short"
+        },
+        {
+          "score": 24.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "rsi_4h",
+      "name": "short_bias.rsi4_gate_25",
+      "values": [
+        24.999,
+        25.0,
+        25.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_24h": -1.0,
+        "return_4h": -2.0
+      },
+      "component": "short_bias",
+      "expected": [
+        {
+          "score": 24.0,
+          "direction": "short"
+        },
+        {
+          "score": 14.0,
+          "direction": "short"
+        },
+        {
+          "score": 14.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "rsi_4h",
+      "name": "short_bias.rsi4_bonus_50",
+      "values": [
+        49.999,
+        50.0,
+        50.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_24h": -1.0,
+        "return_4h": -2.0
+      },
+      "component": "short_bias",
+      "expected": [
+        {
+          "score": 26.0,
+          "direction": "short"
+        },
+        {
+          "score": 14.0,
+          "direction": "short"
+        },
+        {
+          "score": 14.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "oi_delta_1h",
+      "name": "short_bias.oi_liquidation_minus_10",
+      "values": [
+        -10.001,
+        -10.0,
+        -9.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_24h": -1.0,
+        "return_4h": -2.0
+      },
+      "component": "short_bias",
+      "expected": [
+        {
+          "score": 14.0,
+          "direction": "short"
+        },
+        {
+          "score": 14.0,
+          "direction": "short"
+        },
+        {
+          "score": 24.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "oi_delta_1h",
+      "name": "short_bias.oi_new_shorts_10",
+      "values": [
+        9.999,
+        10.0,
+        10.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": 6.0,
+        "return_15m": 0.5
+      },
+      "component": "run_all",
+      "expected": [
+        {
+          "score": 30.0,
+          "direction": "long",
+          "family": "momentum"
+        },
+        {
+          "score": 30.0,
+          "direction": "long",
+          "family": "momentum"
+        },
+        {
+          "score": 0.0,
+          "direction": null,
+          "family": "momentum"
+        }
+      ],
+      "feature": "last_candle_range_atr_15m",
+      "name": "run_all.chase_guard_range_atr_1_5",
+      "values": [
+        1.499,
+        1.5,
+        1.501
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "tradability",
+      "expected": [
+        77.999996,
+        78.0,
+        78.0
+      ],
+      "feature": "quote_volume_24h",
+      "name": "tradability.volume_min_1x",
+      "values": [
+        4999999.0,
+        5000000.0,
+        5000001.0
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "tradability",
+      "expected": [
+        78.0,
+        88.0,
+        88.0
+      ],
+      "feature": "quote_volume_24h",
+      "name": "tradability.volume_min_2x",
+      "values": [
+        9999999.0,
+        10000000.0,
+        10000001.0
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "tradability",
+      "expected": [
+        88.0,
+        98.0,
+        98.0
+      ],
+      "feature": "quote_volume_24h",
+      "name": "tradability.volume_min_5x",
+      "values": [
+        24999999.0,
+        25000000.0,
+        25000001.0
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "tradability",
+      "expected": [
+        95.0,
+        95.0,
+        88.0
+      ],
+      "feature": "spread_bps",
+      "name": "tradability.spread_5",
+      "values": [
+        4.999,
+        5.0,
+        5.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "tradability",
+      "expected": [
+        88.0,
+        88.0,
+        80.0
+      ],
+      "feature": "spread_bps",
+      "name": "tradability.spread_10",
+      "values": [
+        9.999,
+        10.0,
+        10.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "tradability",
+      "expected": [
+        80.0,
+        80.0,
+        79.999
+      ],
+      "feature": "spread_bps",
+      "name": "tradability.spread_config_max_25",
+      "values": [
+        24.999,
+        25.0,
+        25.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "tradability",
+      "expected": [
+        88.0,
+        88.0,
+        83.0
+      ],
+      "feature": "data_freshness_sec",
+      "name": "tradability.freshness_300",
+      "values": [
+        299,
+        300,
+        301
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "tradability",
+      "expected": [
+        83.0,
+        83.0,
+        73.0
+      ],
+      "feature": "data_freshness_sec",
+      "name": "tradability.freshness_3600",
+      "values": [
+        3599,
+        3600,
+        3601
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "tradability",
+      "expected": [
+        73.0,
+        73.0,
+        63.0
+      ],
+      "feature": "data_freshness_sec",
+      "name": "tradability.freshness_7200",
+      "values": [
+        7199,
+        7200,
+        7201
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "tradability",
+      "expected": [
+        73.0,
+        83.0,
+        83.0
+      ],
+      "feature": "depth_10bps_usd",
+      "name": "tradability.depth_quarter_min",
+      "values": [
+        6249.0,
+        6250.0,
+        6251.0
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "tradability",
+      "expected": [
+        83.0,
+        88.0,
+        88.0
+      ],
+      "feature": "depth_10bps_usd",
+      "name": "tradability.depth_min",
+      "values": [
+        24999.0,
+        25000.0,
+        25001.0
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "tradability",
+      "expected": [
+        88.0,
+        93.0,
+        93.0
+      ],
+      "feature": "depth_10bps_usd",
+      "name": "tradability.depth_3x",
+      "values": [
+        74999.0,
+        75000.0,
+        75001.0
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "late_entry",
+      "expected": [
+        0.0,
+        0.0,
+        8.0
+      ],
+      "feature": "return_1h",
+      "name": "late_entry.return1_abs_3",
+      "values": [
+        2.999,
+        3.0,
+        3.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "late_entry",
+      "expected": [
+        8.0,
+        8.0,
+        15.0
+      ],
+      "feature": "return_1h",
+      "name": "late_entry.return1_abs_5",
+      "values": [
+        4.999,
+        5.0,
+        5.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "late_entry",
+      "expected": [
+        0.0,
+        0.0,
+        5.0
+      ],
+      "feature": "return_4h",
+      "name": "late_entry.return4_abs_7",
+      "values": [
+        6.999,
+        7.0,
+        7.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "late_entry",
+      "expected": [
+        5.0,
+        5.0,
+        10.0
+      ],
+      "feature": "return_4h",
+      "name": "late_entry.return4_abs_10",
+      "values": [
+        9.999,
+        10.0,
+        10.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "late_entry",
+      "expected": [
+        10.0,
+        5.0,
+        5.0
+      ],
+      "feature": "rsi_14",
+      "name": "late_entry.rsi_low_15",
+      "values": [
+        14.999,
+        15.0,
+        15.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "late_entry",
+      "expected": [
+        5.0,
+        0.0,
+        0.0
+      ],
+      "feature": "rsi_14",
+      "name": "late_entry.rsi_low_22",
+      "values": [
+        21.999,
+        22.0,
+        22.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "late_entry",
+      "expected": [
+        0.0,
+        0.0,
+        5.0
+      ],
+      "feature": "rsi_14",
+      "name": "late_entry.rsi_high_78",
+      "values": [
+        77.999,
+        78.0,
+        78.001
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "late_entry",
+      "expected": [
+        5.0,
+        5.0,
+        10.0
+      ],
+      "feature": "rsi_14",
+      "name": "late_entry.rsi_high_85",
+      "values": [
+        84.999,
+        85.0,
+        85.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "tradability_score": 70.0
+      },
+      "component": "total_score",
+      "expected": [
+        36.0,
+        39.0,
+        39.0
+      ],
+      "feature": "quote_volume_24h",
+      "name": "total_score.liquidity_2x",
+      "values": [
+        9999999.0,
+        10000000.0,
+        10000001.0
+      ]
+    },
+    {
+      "base_overrides": {
+        "tradability_score": 70.0
+      },
+      "component": "total_score",
+      "expected": [
+        39.0,
+        41.25,
+        41.25
+      ],
+      "feature": "quote_volume_24h",
+      "name": "total_score.liquidity_5x",
+      "values": [
+        24999999.0,
+        25000000.0,
+        25000001.0
+      ]
+    },
+    {
+      "base_overrides": {
+        "tradability_score": 70.0
+      },
+      "component": "total_score",
+      "expected": [
+        41.25,
+        43.5,
+        43.5
+      ],
+      "feature": "quote_volume_24h",
+      "name": "total_score.liquidity_10x",
+      "values": [
+        49999999.0,
+        50000000.0,
+        50000001.0
+      ]
+    },
+    {
+      "base_overrides": {
+        "tradability_score": 70.0
+      },
+      "component": "total_score",
+      "expected": [
+        39.0,
+        39.0,
+        34.0
+      ],
+      "feature": "data_freshness_sec",
+      "name": "total_score.staleness_1800",
+      "values": [
+        1799,
+        1800,
+        1801
+      ]
+    },
+    {
+      "base_overrides": {
+        "tradability_score": 70.0
+      },
+      "component": "total_score",
+      "expected": [
+        34.0,
+        34.0,
+        29.0
+      ],
+      "feature": "data_freshness_sec",
+      "name": "total_score.staleness_3600",
+      "values": [
+        3599,
+        3600,
+        3601
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_4h": 4.0,
+        "tradability_score": 70.0
+      },
+      "component": "total_score",
+      "expected": [
+        39.0,
+        39.0,
+        31.0
+      ],
+      "feature": "rsi_14",
+      "name": "total_score.crowding_rsi_70",
+      "values": [
+        69.999,
+        70.0,
+        70.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_4h": 6.0,
+        "tradability_score": 70.0
+      },
+      "component": "total_score",
+      "expected": [
+        26.0,
+        26.0,
+        19.0
+      ],
+      "feature": "rsi_14",
+      "name": "total_score.crowding_rsi_80",
+      "values": [
+        79.999,
+        80.0,
+        80.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "rsi_14": 75.0,
+        "tradability_score": 70.0
+      },
+      "component": "total_score",
+      "expected": [
+        39.0,
+        39.0,
+        31.0
+      ],
+      "feature": "return_4h",
+      "name": "total_score.crowding_return4_3",
+      "values": [
+        2.999,
+        3.0,
+        3.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "rsi_14": 85.0,
+        "tradability_score": 70.0
+      },
+      "component": "total_score",
+      "expected": [
+        26.0,
+        26.0,
+        19.0
+      ],
+      "feature": "return_4h",
+      "name": "total_score.crowding_return4_5",
+      "values": [
+        4.999,
+        5.0,
+        5.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": -3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "short"
+        },
+        {
+          "score": 25.0,
+          "direction": "short"
+        },
+        {
+          "score": 25.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "rsi_4h",
+      "name": "momentum.rsi4_short_lower_25",
+      "values": [
+        24.999,
+        25.0,
+        25.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": -3.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 25.0,
+          "direction": "short"
+        },
+        {
+          "score": 25.0,
+          "direction": "short"
+        },
+        {
+          "score": 20.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "rsi_4h",
+      "name": "momentum.rsi4_short_upper_45",
+      "values": [
+        44.999,
+        45.0,
+        45.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": -6.0
+      },
+      "component": "momentum",
+      "expected": [
+        {
+          "score": 10.0,
+          "direction": "short"
+        },
+        {
+          "score": 30.0,
+          "direction": "short"
+        },
+        {
+          "score": 30.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "return_24h",
+      "name": "momentum.overextension_abs_minus_10",
+      "values": [
+        -10.001,
+        -10.0,
+        -9.999
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "derivatives",
+      "expected": [
+        {
+          "score": 10.0,
+          "direction": "long"
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        }
+      ],
+      "feature": "funding_rate",
+      "name": "derivatives.funding_negative_mild",
+      "values": [
+        -2.001e-05,
+        -2e-05,
+        -1.999e-05
+      ]
+    },
+    {
+      "base_overrides": {},
+      "component": "derivatives",
+      "expected": [
+        {
+          "score": 25.0,
+          "direction": "long"
+        },
+        {
+          "score": 10.0,
+          "direction": "long"
+        },
+        {
+          "score": 10.0,
+          "direction": "long"
+        }
+      ],
+      "feature": "funding_rate",
+      "name": "derivatives.funding_negative_elevated",
+      "values": [
+        -5.001e-05,
+        -5e-05,
+        -4.999e-05
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_4h": -6.0
+      },
+      "component": "derivatives",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        }
+      ],
+      "feature": "rsi_14",
+      "name": "derivatives.proxy_rsi_long_25",
+      "values": [
+        24.999,
+        25.0,
+        25.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "rsi_14": 24.0
+      },
+      "component": "derivatives",
+      "expected": [
+        {
+          "score": 20.0,
+          "direction": "long"
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        },
+        {
+          "score": 0.0,
+          "direction": null
+        }
+      ],
+      "feature": "return_4h",
+      "name": "derivatives.proxy_return4_long_minus_5",
+      "values": [
+        -5.001,
+        -5.0,
+        -4.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_1h": -5.0,
+        "vol_ratio": 2.0
+      },
+      "component": "event",
+      "expected": [
+        {
+          "score": 55.0,
+          "direction": "short"
+        },
+        {
+          "score": 45.0,
+          "direction": "short"
+        },
+        {
+          "score": 45.0,
+          "direction": "short"
+        }
+      ],
+      "feature": "oi_delta_1h",
+      "name": "event.oi_abs_minus_15",
+      "values": [
+        -15.001,
+        -15.0,
+        -14.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "relative_strength_24h": -6.0,
+        "return_15m": -0.5
+      },
+      "component": "run_all",
+      "expected": [
+        {
+          "score": 30.0,
+          "direction": "short",
+          "family": "momentum"
+        },
+        {
+          "score": 30.0,
+          "direction": "short",
+          "family": "momentum"
+        },
+        {
+          "score": 0.0,
+          "direction": null,
+          "family": "momentum"
+        }
+      ],
+      "feature": "last_candle_range_atr_15m",
+      "name": "run_all.chase_guard_short_range_atr_1_5",
+      "values": [
+        1.499,
+        1.5,
+        1.501
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_4h": -4.0,
+        "tradability_score": 70.0
+      },
+      "component": "total_score",
+      "expected": [
+        31.0,
+        39.0,
+        39.0
+      ],
+      "feature": "rsi_14",
+      "name": "total_score.crowding_rsi_low_30",
+      "values": [
+        29.999,
+        30.0,
+        30.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "return_4h": -6.0,
+        "tradability_score": 70.0
+      },
+      "component": "total_score",
+      "expected": [
+        19.0,
+        26.0,
+        26.0
+      ],
+      "feature": "rsi_14",
+      "name": "total_score.crowding_rsi_low_20",
+      "values": [
+        19.999,
+        20.0,
+        20.001
+      ]
+    },
+    {
+      "base_overrides": {
+        "rsi_14": 25.0,
+        "tradability_score": 70.0
+      },
+      "component": "total_score",
+      "expected": [
+        31.0,
+        39.0,
+        39.0
+      ],
+      "feature": "return_4h",
+      "name": "total_score.crowding_return4_minus_3",
+      "values": [
+        -3.001,
+        -3.0,
+        -2.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "rsi_14": 15.0,
+        "tradability_score": 70.0
+      },
+      "component": "total_score",
+      "expected": [
+        19.0,
+        26.0,
+        26.0
+      ],
+      "feature": "return_4h",
+      "name": "total_score.crowding_return4_minus_5",
+      "values": [
+        -5.001,
+        -5.0,
+        -4.999
+      ]
+    },
+    {
+      "base_overrides": {
+        "tradability_score": 70.0
+      },
+      "component": "total_score",
+      "expected": [
+        24.0005,
+        24.0,
+        24.0
+      ],
+      "feature": "spread_bps",
+      "name": "total_score.estimated_cost_cap_spread_40",
+      "values": [
+        39.999,
+        40.0,
+        40.001
+      ]
+    }
+  ]
+}

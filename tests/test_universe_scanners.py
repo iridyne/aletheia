@@ -352,13 +352,44 @@ def test_run_all_scanners_prefers_directional():
     assert result["opportunity_score"] == 0 or result["scanner_direction"] is None
 
 
-def test_mean_reversion_does_not_score_opposing_return_for_selected_side():
+def test_mean_reversion_opposing_evidence_fails_closed_to_directionless():
+    # rsi_14=80 → short; return_4h=-12 → long (opposing) → fail closed
     score, reasons, direction = score_mean_reversion(
         _base_feat(rsi_14=80.0, return_4h=-12.0)
     )
+    assert direction is None
+    assert score == 0.0
+    assert reasons == []
+
+
+def test_mean_reversion_aligned_evidence_scores_normally():
+    # All directional signals agree → direction and score present
+    score, reasons, direction = score_mean_reversion(
+        _base_feat(rsi_14=80.0, return_4h=10.0, return_24h=15.0)
+    )
     assert direction == "short"
-    assert score == 35.0
-    assert all("overextended" not in reason for reason in reasons)
+    assert score > 0.0
+    assert any("overbought" in r for r in reasons)
+    assert any("overextended" in r for r in reasons)
+
+
+def test_mean_reversion_no_qualifying_signals_is_directionless():
+    # Neutral values → no qualifying directional factor → directionless
+    score, reasons, direction = score_mean_reversion(
+        _base_feat(rsi_14=50.0, return_4h=0.0, return_24h=0.0)
+    )
+    assert direction is None
+    assert score == 0.0
+
+
+def test_mean_reversion_opposing_24h_with_4h_return_direction_fails_closed():
+    # ret_4h=-9.6 → long; ret_24h=+24.9 → short (opposing) → fail closed
+    score, reasons, direction = score_mean_reversion(
+        _base_feat(return_4h=-9.6, return_24h=24.9)
+    )
+    assert direction is None
+    assert score == 0.0
+    assert reasons == []
 
 
 def test_derivatives_does_not_score_opposing_oi_or_divergence_for_selected_side():
