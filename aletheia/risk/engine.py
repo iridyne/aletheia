@@ -38,6 +38,7 @@ from aletheia.trading.entry_plan import (
     RISK_REWARD_OUTSIDE_ENVELOPE,
     calculate_entry_plan_risk_reward,
     entry_plan_risk_reward_is_plausible,
+    stop_distance_below_min_floor,
 )
 
 logger = logging.getLogger("aletheia.risk.engine")
@@ -902,6 +903,16 @@ def _evaluate_proposal_locked(
                     violations.append("entry_plan_risk_reward_mismatch")
                 if not entry_plan_risk_reward_is_plausible(expected_risk_reward):
                     violations.append(RISK_REWARD_OUTSIDE_ENVELOPE)
+
+    if proposal.stop_price and proposal.price:
+        tight_stop = stop_distance_below_min_floor(
+            proposal.price,
+            proposal.stop_price,
+            execution_mode=proposal.execution_mode,
+            cfg=cfg,
+        )
+        if tight_stop:
+            violations.append(tight_stop)
 
     # 3. Live state — fail CLOSED. A *_live_limited order is permitted ONLY when the
     #    live state is the explicit unlocked value ("live_limited", set by human

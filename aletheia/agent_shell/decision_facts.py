@@ -14,6 +14,9 @@ import json
 
 
 _CANDIDATE_TECHNICAL_MAX_AGE_SEC = 7200
+# Same thresholds as aletheia/agents/committee/trend_agent.py RSI evidence.
+_TREND_RSI_OVERSOLD = 30.0
+_TREND_RSI_OVERBOUGHT = 70.0
 
 
 def _market_type(value: Any) -> str | None:
@@ -28,6 +31,48 @@ def _number(value: Any) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _rsi_contrary_refs(
+    direction: str,
+    technical: dict[str, Any],
+    scanner_family: str | None,
+) -> list[str] | None:
+    """Oversold short / overbought long is rebound risk, not confirmation.
+
+    Mean-reversion is designed to fade those extremes, so it is exempt.
+    Thresholds match the Trend agent's RSI evidence bands (30 / 70).
+    Prefer 15m RSI when present (the NEAR 8/19 opposing signal).
+    """
+    if str(scanner_family or "").lower() == "mean_reversion":
+        return None
+    side = str(direction or "").lower()
+    rsi_15m = _number(technical.get("rsi_15m"))
+    rsi_14 = _number(technical.get("rsi_14"))
+    rsi = rsi_15m if rsi_15m is not None else rsi_14
+    if rsi is None:
+        return None
+    if side == "short" and rsi < _TREND_RSI_OVERSOLD:
+        return ["technical.rsi_15m" if rsi_15m is not None else "technical.rsi_14"]
+    if side == "long" and rsi > _TREND_RSI_OVERBOUGHT:
+        return ["technical.rsi_15m" if rsi_15m is not None else "technical.rsi_14"]
+    return None
+
+
+def rsi_contrary_to_entry_refs(decision: Any, ctx: dict[str, Any]) -> list[str] | None:
+    """Return fact refs when a non-MR entry fights RSI extremes; else None."""
+    facts = candidate_fact_bundle(
+        ctx, opportunity_id=getattr(decision, "opportunity_id", None)
+    )
+    direction = str(
+        getattr(decision, "direction", None)
+        or facts["candidate"].get("direction")
+        or ""
+    ).lower()
+    family = getattr(decision, "scanner_family", None) or facts["candidate"].get(
+        "scanner_family"
+    )
+    return _rsi_contrary_refs(direction, facts["technical"], family)
 
 
 def _selected_candidate(ctx: dict[str, Any], opportunity_id: str | None = None) -> dict[str, Any]:
@@ -240,6 +285,12 @@ def validate_adverse_claims(decision: Any, ctx: dict[str, Any]) -> tuple[list[di
                 reward = target - price if direction == "long" else price - target
                 if risk > 0 and reward > 0 and reward / risk < 1.0:
                     refs = ["technical.price", "decision.stop_price", "decision.take_profit"]
+        elif code == "rsi_contrary_to_entry":
+            refs = _rsi_contrary_refs(
+                direction,
+                technical,
+                facts["candidate"].get("scanner_family"),
+            )
         # candidate_data_integrity intentionally has no terminal support. Missing
         # optional OI/funding or stale required data is retryable, not adverse.
 

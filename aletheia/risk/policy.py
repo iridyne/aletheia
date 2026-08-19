@@ -82,6 +82,7 @@ class RiskPolicyView:
             "catastrophic_stop_pct": self._policy.exits.catastrophic_stop_pct,
             "catastrophic_stop_pct_serenity": self._policy.exits.catastrophic_stop_pct_serenity,
             "horizon_hard_backstop_mult": self._policy.exits.horizon_hard_backstop_mult,
+            "horizon_due_allow_hold": self._policy.exits.horizon_due_allow_hold,
             "kill_switch_enabled_live": self._policy.auto_trip_mode_brake_on_daily_loss,
             "kill_switch_enabled_demo": self._policy.auto_trip_mode_brake_on_daily_loss,
         }

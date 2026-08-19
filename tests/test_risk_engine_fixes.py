@@ -17,6 +17,7 @@ def _prepare(tmp_path, monkeypatch):
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
     sq._db_conn = None
     conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
@@ -203,3 +204,32 @@ def test_paper_internal_drawdown_ignores_external_equity_drop(monkeypatch):
     )
     scale = _portfolio_drawdown_scale("paper_internal")
     assert scale == 1.0
+
+
+def test_exchange_demo_rejects_stop_tighter_than_vol_target(tmp_path, monkeypatch):
+    """DOGE 0.14% noise stops cannot pass Risk on bitget_demo."""
+    _prepare(tmp_path, monkeypatch)
+    from aletheia.storage.models import TradeProposal
+    from aletheia.storage import repositories as repo
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.trading.entry_plan import STOP_DISTANCE_BELOW_VOL_TARGET
+
+    p = TradeProposal(
+        symbol="DOGE/USDT",
+        market_type="usdt_futures",
+        direction="short",
+        execution_mode="bitget_demo",
+        quantity=100.0,
+        price=0.06998,
+        order_type="limit",
+        source="native",
+        leverage=2,
+        stop_price=0.07008,
+        take_profit=0.06800,
+        risk_reward=1.98,
+    )
+    repo.insert_trade_proposal(p)
+    assert any(
+        v.startswith(STOP_DISTANCE_BELOW_VOL_TARGET)
+        for v in evaluate_proposal(p).violations
+    )

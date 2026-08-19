@@ -30,6 +30,7 @@ from aletheia.trading.entry_plan import (
     OPERATOR_RISK_REWARD_OUTSIDE_ENVELOPE,
     calculate_entry_plan_risk_reward,
     entry_plan_risk_reward_is_plausible,
+    stop_distance_below_min_floor,
 )
 
 logger = logging.getLogger("aletheia.agent_shell.trading_decision")
@@ -85,6 +86,7 @@ _ADVERSE_SKIP_REASON_CODES = {
     "liquidity_or_execution_quality",
     "negative_same_cohort_outcomes",
     "invalid_risk_reward",
+    "rsi_contrary_to_entry",
 }
 
 
@@ -864,6 +866,28 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
     # and the mode's Risk-page per-trade budget. Direct historical/programmatic
     # callers without that authority retain the compatibility sizing path.
     if decision.action in trade_actions and decision.conviction >= _MIN_CONVICTION_TO_TRADE:
+        from aletheia.agent_shell.decision_facts import rsi_contrary_to_entry_refs
+
+        contrary_refs = rsi_contrary_to_entry_refs(decision, trading_context)
+        if contrary_refs:
+            decision.filter_trace.append({
+                "filter_name": "operator_rsi_contrary_gate",
+                "stage": "system_operator",
+                "decision": "rejected",
+                "reason_code": "rsi_contrary_to_entry",
+                "inputs": {
+                    "conviction": decision.conviction,
+                    "direction": decision.direction,
+                    "scanner_family": decision.scanner_family,
+                    "fact_refs": contrary_refs,
+                },
+                "parameters": {"rsi_oversold": 30.0, "rsi_overbought": 70.0},
+            })
+            raise DecisionUnavailable(
+                "rsi_contrary_to_entry",
+                stage="operator_contrary_signal_gate",
+                filter_trace=list(decision.filter_trace),
+            )
         decision.filter_trace.append({
             "filter_name": "operator_conviction_gate",
             "stage": "system_operator",
@@ -1473,6 +1497,14 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
             stop_price = round(price * (1 - stop_pct / 100.0), 8)
         else:
             stop_price = round(price * (1 + stop_pct / 100.0), 8)
+    tight_stop = stop_distance_below_min_floor(
+        price,
+        stop_price,
+        execution_mode=str(getattr(cfg.exchange, "paper_execution_mode", "") or ""),
+        cfg=cfg,
+    )
+    if tight_stop:
+        _reject_operator_entry_plan(tight_stop, ["stop_price"])
 
     # Commit take-profit + reward:risk before execution. take_profit is the
     # operator's explicit price for parsed model decisions. Programmatic/legacy
@@ -3083,6 +3115,9 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "for execution. If no durable pending signal is suitable, skip.",
         "- A rank_priority value only orders candidates that already passed upstream "
         "eligibility. Never reject a candidate merely because that value looks low.",
+        "- An AI committee blocked or neutral opinion is advisory, not a veto. A "
+        "committee direction that contradicts the candidate direction is a veto. "
+        "Trade, skip with typed adverse evidence, or let the caller defer.",
         "- Insufficient matured outcomes or missing historical evidence is neutral. It "
         "cannot by itself justify a terminal skip.",
         "- Missing optional telemetry (for example OI delta) is unknown, not zero and not "
@@ -3114,6 +3149,8 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "candidate.risk_flags is non-empty\n"
         "  invalid_risk_reward → reward/risk < 1.0 given your stop_price and "
         "take_profit vs entry price\n"
+        "  rsi_contrary_to_entry → non-mean_reversion short with RSI 15m/14 < 30 "
+        "(oversold bounce risk) or long with RSI 15m/14 > 70 (overbought fade risk)\n"
         "  A claim that does not satisfy its predicate is rejected by the validation gate "
         "and the candidate is deferred, not consumed. Missing optional fields such as "
         "oi_delta_1h or funding_rate are unknown, not adverse — use "

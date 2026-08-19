@@ -299,6 +299,22 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
              "pass/reject net cohorts satisfy coverage and sample gates.",
     ),
     FilterSpec(
+        name="operator_rsi_contrary_gate",
+        stage="operator_skip",
+        drop_reason_codes=("rsi_contrary_to_entry",),
+        config_path="",
+        hardcoded_at="aletheia/agent_shell/decision_facts.py",
+        current_value="non-MR short RSI<30 or long RSI>70 (Trend agent bands)",
+        loosen_direction="n/a",
+        neutral=None, floor=30.0, ceiling=70.0,
+        feedback_source="forward_return",
+        family_keyed=True,
+        auto_tunable=False,
+        authority_class="risk_or_safety",
+        feedback_ready=True,
+        note="Oversold short / overbought long is rebound risk. Mean-reversion exempt.",
+    ),
+    FilterSpec(
         name="ranker_ic_ramp",
         stage="ranker_score",
         drop_reason_codes=(),  # score penalty, not a hard drop reason
@@ -607,6 +623,47 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         feedback_ready=True,
         note="RiskDecision remains authoritative. Unified evidence is report-only "
              "and must never loosen risk, live, credential or execution gates.",
+    ),
+    FilterSpec(
+        name="committee_direction_conflict",
+        stage="ranker_rejected",
+        drop_reason_codes=("committee_direction_conflict",),
+        config_path="",
+        hardcoded_at="aletheia/agents/committee/integration.py",
+        current_value="committee long/short opposite scanner direction → skip",
+        loosen_direction="n/a",
+        neutral=None, floor=None, ceiling=None,
+        feedback_source="forward_return",
+        family_keyed=True,
+        auto_tunable=False,
+        authority_class="risk_or_safety",
+        drop_share_hint=0.0,
+        note="Directional committee dissent is a veto. Blocked/neutral stays advisory.",
+    ),
+    FilterSpec(
+        name="demo_entry_quality",
+        stage="ranker_rejected",
+        drop_reason_codes=(
+            "regime_confidence_standdown",
+            "regime_sideways_standdown",
+            "family_not_demo_eligible",
+        ),
+        config_path=(
+            "risk.demo.eligibility.min_regime_confidence_to_enter / "
+            "risk.demo.eligibility.sideways_standdown / "
+            "risk.demo.eligibility.family_min_expectancy"
+        ),
+        hardcoded_at="aletheia/risk/demo_entry_quality.py",
+        current_value="exchange_demo: conf<=0.60 or sideways or n>=20 & exp<0",
+        loosen_direction="down",
+        neutral=None, floor=None, ceiling=None,
+        feedback_source="forward_return",
+        family_keyed=True,
+        auto_tunable=False,
+        authority_class="risk_or_safety",
+        drop_share_hint=0.0,
+        note="Exchange-demo only. paper_internal and live #14 stay unchanged. "
+             "Risk records the same tokens as the authoritative backstop.",
     ),
     FilterSpec(
         name="risk_family_live_eligibility",

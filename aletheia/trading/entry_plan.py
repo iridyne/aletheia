@@ -12,6 +12,60 @@ OPERATOR_RISK_REWARD_OUTSIDE_ENVELOPE = (
     "invalid_operator_entry_plan_risk_reward:outside_envelope"
 )
 RISK_REWARD_OUTSIDE_ENVELOPE = "entry_plan_risk_reward_outside_envelope"
+STOP_DISTANCE_BELOW_VOL_TARGET = "stop_distance_below_vol_target"
+
+
+def stop_distance_pct(
+    entry_price: float | None, stop_price: float | None
+) -> float | None:
+    """Absolute stop distance as a percent of entry. ``None`` if undefined."""
+    try:
+        entry = float(entry_price)
+        stop = float(stop_price)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in (entry, stop)) or entry <= 0:
+        return None
+    distance = abs(entry - stop)
+    if distance <= 0:
+        return None
+    return (distance / entry) * 100.0
+
+
+def min_stop_distance_pct(*, execution_mode: str | None, cfg) -> float | None:
+    """Exchange-demo floor: stop must be at least ``trading.vol_target_pct``.
+
+    That field is the existing ATR vol-target percent used for sizing, not a
+    new magic number. Live and ``paper_internal`` stay unchanged. ``0`` disables.
+    """
+    from aletheia.risk.demo_entry_quality import applies_to_execution_mode
+
+    if not applies_to_execution_mode(execution_mode):
+        return None
+    try:
+        floor = float(getattr(getattr(cfg, "trading", None), "vol_target_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(floor) or floor <= 0:
+        return None
+    return floor
+
+
+def stop_distance_below_min_floor(
+    entry_price: float | None,
+    stop_price: float | None,
+    *,
+    execution_mode: str | None,
+    cfg,
+) -> str | None:
+    """Return a violation token when the stop is tighter than the demo floor."""
+    floor = min_stop_distance_pct(execution_mode=execution_mode, cfg=cfg)
+    distance = stop_distance_pct(entry_price, stop_price)
+    if floor is None or distance is None:
+        return None
+    if distance + 1e-12 < floor:
+        return f"{STOP_DISTANCE_BELOW_VOL_TARGET}:{distance:.4f}<{floor:.4f}"
+    return None
 
 
 def calculate_entry_plan_risk_reward(

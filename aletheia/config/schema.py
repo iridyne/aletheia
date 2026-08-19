@@ -567,6 +567,10 @@ class RiskExitPolicy(StrictRiskPolicyModel):
     catastrophic_stop_pct: float = 10.0
     catastrophic_stop_pct_serenity: float = 15.0
     horizon_hard_backstop_mult: float = 3.0
+    # Horizon-due review may hold (roll the authored horizon) instead of
+    # flattening. Default True is the safer behavior: expiry is not a forced
+    # close. False restores close-or-explicit-extend.
+    horizon_due_allow_hold: bool = True
 
 
 class RiskEligibilityPolicy(StrictRiskPolicyModel):
@@ -679,6 +683,9 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
             ),
             "horizon_hard_backstop_mult": data.get(
                 "horizon_hard_backstop_mult", 3.0
+            ),
+            "horizon_due_allow_hold": data.get(
+                "horizon_due_allow_hold", True
             ),
         },
         "eligibility": (
@@ -874,6 +881,9 @@ class RiskConfig(BaseModel):
             "horizon_hard_backstop_mult": (
                 "exits", "horizon_hard_backstop_mult",
             ),
+            "horizon_due_allow_hold": (
+                "exits", "horizon_due_allow_hold",
+            ),
         }
         if name in mode_paths:
             mode, group, field = mode_paths[name]
@@ -951,6 +961,7 @@ class RiskConfig(BaseModel):
     # decision (close / extend). The position is auto-closed only at the far backstop
     # min(expected_horizon * this multiplier, the school's absolute max_hold).
     horizon_hard_backstop_mult: float = 3.0
+    horizon_due_allow_hold: bool = True
     max_open_positions_live: int = 3
     max_open_positions_demo: int = 200
     # "whitelist" = only symbol_list may trade; "blacklist" = all except symbol_list.
