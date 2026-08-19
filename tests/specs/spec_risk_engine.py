@@ -2756,3 +2756,65 @@ def test_paper_internal_proposal_not_rejected_during_funding_settler_window(
         f"effective_cap must not collapse to 0.0 during settler window; "
         f"violations: {result.violations}"
     )
+
+
+@spec_claim(
+    SpecClaim("RE-B05c", "risk_engine_contract", "§2 check #5 pledged cash", "L2b",
+              "Check #5 compares margin_required (notional / leverage) against the "
+              "position cap, not raw notional. Comparing notional to the available-balance "
+              "cap silently caps effective leverage at 1/per_trade_risk_pct (e.g. 5x at "
+              "20% risk) even when the demo policy allows 20x for majors."),
+)
+def test_position_cap_bounds_pledged_cash_not_raw_notional(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.storage.models import TradeProposal
+    from aletheia.storage import repositories as repo
+
+    available = 668.52648937
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: available)
+    monkeypatch.setattr(eng, "_cached_available_balance_usdt", lambda *_: available)
+
+    # 20% of balance at 6x: $802 notional but only $134 pledged margin.
+    # Before the fix, $802 > $668 → rejected. After fix, $134 < $668 → passes.
+    notional = available * 0.20 * 6
+    assert notional > available, "precondition: notional exceeds available at 6x"
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        execution_mode="okx_demo", quantity=notional / 60000.0, price=60000.0,
+        leverage=6,
+    )
+    repo.insert_trade_proposal(proposal)
+    result = eng.evaluate_proposal(proposal)
+
+    assert not any(
+        "exceeds_demo_position_notional" in v for v in result.violations
+    ), result.violations
+
+
+@spec_claim(
+    SpecClaim("RE-B05d", "risk_engine_contract", "§2 check #5 insolvent entry rejected", "L2b",
+              "The pledged-cash comparison still rejects a position whose margin exceeds "
+              "available balance — the unit fix widens the leverage range, not the solvency floor."),
+)
+def test_position_cap_still_rejects_margin_beyond_available_cash(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.storage.models import TradeProposal
+    from aletheia.storage import repositories as repo
+
+    available = 100.0
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 10_000.0)
+    monkeypatch.setattr(eng, "_cached_available_balance_usdt", lambda *_: available)
+
+    # $600 margin required (notional $1200 at 2x) against $100 available → rejected.
+    proposal = TradeProposal(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        execution_mode="okx_demo", quantity=1200.0 / 60000.0, price=60000.0,
+        leverage=2,
+    )
+    repo.insert_trade_proposal(proposal)
+    result = eng.evaluate_proposal(proposal)
+
+    assert any(
+        "exceeds_demo_position_notional" in v for v in result.violations
+    ), result.violations

@@ -946,6 +946,8 @@ def _evaluate_proposal_locked(
     drawdown_scale = _portfolio_drawdown_scale(proposal.execution_mode)
     if proposal.quantity and proposal.price:
         notional = proposal.quantity * proposal.price
+        lev = max(1.0, float(proposal.leverage or 1))
+        margin_required = notional / lev
         position_cap = _effective_position_notional_cap(
             risk,
             proposal.execution_mode,
@@ -955,13 +957,13 @@ def _evaluate_proposal_locked(
         else:
             effective_cap = position_cap * drawdown_scale
             if _is_live(proposal.execution_mode):
-                if notional > effective_cap:
+                if margin_required > effective_cap:
                     violations.append(
-                        f"exceeds_max_position_notional:{notional}>{effective_cap}"
+                        f"exceeds_max_position_notional:{margin_required}>{effective_cap}"
                     )
-            elif notional > effective_cap:
+            elif margin_required > effective_cap:
                 violations.append(
-                    f"exceeds_demo_position_notional:{notional}>{effective_cap}"
+                    f"exceeds_demo_position_notional:{margin_required}>{effective_cap}"
                 )
 
     # 6. Max open positions
