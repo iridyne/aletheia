@@ -59,6 +59,43 @@ def backend_base_url(*, route_path: Path | None = None, fallback: str | None = N
     return resolve_backend_base_url(path=route_path, fallback=fallback)
 
 
+def _minimal_liveness_payload(*, ok: bool) -> dict:
+    return {"ok": ok, "role": "frontdoor", "version": __version__}
+
+
+def _remote_auth_check(request: Request) -> JSONResponse | None:
+    """Return 401 if remote auth is required but caller lacks a valid token; None if allowed.
+
+    Mirrors backend _tunnel_auth_guard: active when tunnel.enabled=True or
+    remote_control.require_token=True.  Fails open on config errors so the
+    front door remains reachable for local diagnostics when config is broken.
+    """
+    import hmac as _hmac
+    from aletheia.config.loader import load_config
+    from aletheia.config.secrets import get_secret
+    try:
+        cfg = load_config(persist_migrations=False)
+    except Exception:
+        return None
+    tunnel_enabled = bool(getattr(getattr(cfg, "tunnel", None), "enabled", False))
+    rc = getattr(cfg, "remote_control", None)
+    remote_token_required = bool(getattr(rc, "enabled", False) and getattr(rc, "require_token", False))
+    if not (tunnel_enabled or remote_token_required):
+        return None
+    expected = get_secret("remote_control_api_token") or get_secret("tunnel_api_token")
+    if not expected:
+        return JSONResponse(
+            {"detail": "Remote Control is enabled but no API token is configured."},
+            status_code=401,
+        )
+    if not _hmac.compare_digest(request.headers.get("x-aletheia-token", ""), expected):
+        return JSONResponse(
+            {"detail": "Unauthorized: X-Aletheia-Token required when Remote Control is active"},
+            status_code=401,
+        )
+    return None
+
+
 def _frontdoor_payload(*, static_dir: Path, backend_url: str, route: dict | None) -> dict:
     static_index = static_dir.exists() and (static_dir / "index.html").exists()
     return {
@@ -261,26 +298,17 @@ def create_app(
 
     @app.get("/_infra/livez")
     async def livez():
-        return _frontdoor_payload(
-            static_dir=effective_static_dir,
-            backend_url=_backend_url(),
-            route=_backend_route(),
-        )
+        return _minimal_liveness_payload(ok=True)
 
     @app.get("/_infra/readyz")
     async def readyz():
-        payload = _frontdoor_payload(
-            static_dir=effective_static_dir,
-            backend_url=_backend_url(),
-            route=_backend_route(),
-        )
-        backend = await _probe_backend(_backend_url())
-        payload["backend"] = backend
-        status_code = 200 if payload["static_index"] else 503
-        return JSONResponse(status_code=status_code, content=payload)
+        ok = (effective_static_dir / "index.html").exists()
+        return JSONResponse(status_code=200 if ok else 503, content=_minimal_liveness_payload(ok=ok))
 
     @app.get("/_infra/status")
-    async def infra_status():
+    async def infra_status(request: Request):
+        if (denied := _remote_auth_check(request)):
+            return denied
         payload = _frontdoor_payload(
             static_dir=effective_static_dir,
             backend_url=_backend_url(),
@@ -292,12 +320,15 @@ def create_app(
 
     @app.get("/_infra/doctor")
     async def infra_doctor(request: Request):
+        if (denied := _remote_auth_check(request)):
+            return denied
         backend = _backend_url()
         query = request.url.query.encode("utf-8") if request.url.query else None
         target = httpx.URL(f"{backend}/_infra/doctor", query=query)
+        headers = _filtered_headers(request.headers.items())
         client = _get_proxy_client()
         try:
-            upstream = await client.send(client.build_request("GET", target), stream=True)
+            upstream = await client.send(client.build_request("GET", target, headers=headers), stream=True)
         except Exception as exc:
             return _proxy_unavailable("_infra/doctor", backend, _backend_route(), exc)
         response_headers = _filtered_headers(upstream.headers.items())
