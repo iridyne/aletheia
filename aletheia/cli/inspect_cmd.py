@@ -2084,13 +2084,17 @@ def profit_loop_qualification(
         exists=True,
         file_okay=True,
         dir_okay=False,
-        help="JSON file with pre-registered cohort identity (see profit_loop_qualification.py).",
+        help="JSON file with pre-registered cohort identity.  Must include cutoff_at.",
     ),
-    cutoff_at: str = typer.Option(
-        ...,
+    cutoff_at: Optional[str] = typer.Option(
+        None,
         "--cutoff",
         "--cutoff-at",
-        help="Frozen UTC evaluation cutoff (ISO-8601 with timezone). Must be fixed before outcome inspection.",
+        help=(
+            "Optional validation check: if provided, must exactly match "
+            "registration['cutoff_at'].  Cutoff must be preregistered in the "
+            "registration file; supplying it only here is rejected."
+        ),
     ),
     output: Optional[Path] = typer.Option(
         None, "--output", help="Write the hashed verdict artifact to this path."
@@ -2103,7 +2107,8 @@ def profit_loop_qualification(
     Issue #988: prove or reject the minimum net-profitable frozen policy cohort.
 
     The registration file must be written before the first eligible prospective
-    close and must not be changed after outcome inspection begins.
+    close and must not be changed after outcome inspection begins.  All required
+    fields including cutoff_at must appear in the registration file itself.
     """
     from aletheia.analytics.profit_loop_qualification import compile_qualification_verdict
 
@@ -2111,14 +2116,17 @@ def profit_loop_qualification(
     if not isinstance(payload, dict):
         raise typer.BadParameter("registration must be a JSON object")
 
-    try:
-        datetime.fromisoformat(cutoff_at.replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        raise typer.BadParameter(
-            "invalid cutoff timestamp; use ISO-8601 with timezone", param_hint="--cutoff"
-        )
+    if cutoff_at is not None:
+        registered_cutoff = payload.get("cutoff_at")
+        if registered_cutoff != cutoff_at:
+            raise typer.BadParameter(
+                f"--cutoff {cutoff_at!r} does not match registration cutoff_at "
+                f"{registered_cutoff!r}; cutoff must be preregistered in the "
+                "registration file, not supplied at evaluation time",
+                param_hint="--cutoff",
+            )
 
-    verdict = compile_qualification_verdict(registration=payload, cutoff_at=cutoff_at)
+    verdict = compile_qualification_verdict(registration=payload)
 
     if output is not None:
         output.write_text(
