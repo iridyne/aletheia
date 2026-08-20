@@ -51,32 +51,38 @@ def remote_commit(branch: str = "master") -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-def _https_fallback_url() -> str | None:
-    """Return HTTPS equivalent when origin is an SSH URL, else None."""
-    r = _git("remote", "get-url", "origin")
-    if r.returncode != 0:
-        return None
-    url = r.stdout.strip()
-    if not url.startswith("git@"):
-        return None
-    try:
-        host, path = url[4:].split(":", 1)
-        return f"https://{host}/{path}"
-    except ValueError:
-        return None
-
-
 def _fetch_with_https_fallback(*args: str) -> subprocess.CompletedProcess:
-    """git fetch, retrying with HTTPS when the SSH remote fails."""
+    """git fetch, retrying via HTTPS URL-rewrite when the SSH remote fails.
+
+    Uses GIT_CONFIG_* env vars so the rewrite applies transparently to the
+    named remote without modifying any on-disk git config, and sets
+    GIT_TERMINAL_PROMPT=0 to prevent the fallback from hanging on auth prompts.
+    """
     r = _git("fetch", *args)
     if r.returncode == 0:
         return r
-    fallback = _https_fallback_url()
-    if not fallback:
+    url_r = _git("remote", "get-url", "origin")
+    if url_r.returncode != 0 or not url_r.stdout.strip().startswith("git@"):
         return r
-    fb_args = tuple(fallback if a == "origin" else a for a in args)
-    r2 = _git("fetch", *fb_args)
-    return r2 if r2.returncode == 0 else r
+    try:
+        host, _ = url_r.stdout.strip()[4:].split(":", 1)
+    except ValueError:
+        return r
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_CONFIG_COUNT"] = "1"
+    env["GIT_CONFIG_KEY_0"] = f"url.https://{host}/.insteadOf"
+    env["GIT_CONFIG_VALUE_0"] = f"git@{host}:"
+    r2 = subprocess.run(
+        ["git", "fetch", *args],
+        cwd=str(REPO_ROOT), capture_output=True, text=True,
+        env=env,
+        **_no_window_kwargs(),
+    )
+    if r2.returncode == 0:
+        return r2
+    combined = "; ".join(filter(None, [r.stderr.strip(), r2.stderr.strip()]))
+    return subprocess.CompletedProcess(r2.args, r2.returncode, r2.stdout, combined)
 
 
 def fetch(branch: str = "master") -> dict:

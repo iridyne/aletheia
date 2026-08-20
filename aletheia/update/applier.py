@@ -378,6 +378,7 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
         return {
             "applied": False,
             "reason": pulled.get("reason", "pull_failed"),
+            "message": pulled.get("stderr") or "",
             "mode": "development",
         }
 
