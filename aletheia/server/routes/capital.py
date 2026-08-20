@@ -1,16 +1,18 @@
 """Capital events API: audited deposit/withdraw tracking and net-flow reporting."""
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from aletheia.storage import repositories as repo
 
 router = APIRouter(prefix="/api/capital", tags=["capital"])
 
 class CapitalEventRequest(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     broker_id: str
     event_type: str  # "deposit" | "withdraw"
-    amount_usdt: float
+    amount_usdt: float = Field(gt=0)
     note: str = ""
 
 
@@ -30,8 +32,6 @@ async def list_events():
 async def create_event(body: CapitalEventRequest):
     if body.event_type not in ("deposit", "withdraw"):
         raise HTTPException(400, "event_type must be 'deposit' or 'withdraw'")
-    if body.amount_usdt <= 0:
-        raise HTTPException(400, "amount_usdt must be positive")
 
     from aletheia.storage.models import CapitalEvent
     event = CapitalEvent(

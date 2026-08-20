@@ -1626,10 +1626,12 @@ class OperatorEvaluationEvent(BaseModel):
 
 
 class CapitalEvent(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     id: str = Field(default_factory=new_id)
     broker_id: str
     event_type: str  # "deposit" | "withdraw"
-    amount_usdt: float
+    amount_usdt: float = Field(gt=0)
     equity_at_event: float | None = None
     detected_at: str = Field(default_factory=_utcnow)
     note: str = ""

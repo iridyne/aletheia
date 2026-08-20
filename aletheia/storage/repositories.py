@@ -1623,6 +1623,8 @@ def _normalized_utc_datetime(value: str) -> datetime:
 
 
 def insert_capital_event(event) -> None:
+    if not math.isfinite(event.amount_usdt):
+        raise ValueError(f"capital event amount_usdt must be finite, got {event.amount_usdt!r}")
     _insert("capital_events", _to_payload_dict(event))
 
 
@@ -1655,12 +1657,19 @@ def list_capital_events_between(start_at: str, end_at: str) -> list[dict]:
 
 
 def get_net_deposits() -> float:
-    """Sum of all deposits minus withdrawals."""
+    """Sum of all deposits minus withdrawals, excluding any historical non-finite rows."""
     db = get_db()
-    row = db.execute(
-        "SELECT COALESCE(SUM(CASE WHEN event_type='deposit' THEN amount_usdt ELSE -amount_usdt END), 0) AS net FROM capital_events"
-    ).fetchone()
-    return float(row["net"]) if row else 0.0
+    rows = db.execute("SELECT id, event_type, amount_usdt FROM capital_events").fetchall()
+    bad_ids = [r["id"] for r in rows if not math.isfinite(r["amount_usdt"])]
+    if bad_ids:
+        logging.getLogger(__name__).warning(
+            "capital_events rows with non-finite amount_usdt excluded from net: %s", bad_ids
+        )
+    return sum(
+        r["amount_usdt"] if r["event_type"] == "deposit" else -r["amount_usdt"]
+        for r in rows
+        if math.isfinite(r["amount_usdt"])
+    )
 
 
 def has_capital_event_for_broker(broker_id: str) -> bool:
