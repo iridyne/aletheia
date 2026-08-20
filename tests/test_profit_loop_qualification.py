@@ -128,6 +128,7 @@ def test_artifact_is_hashed_and_reproducible(monkeypatch):
     r2 = compile_qualification_verdict(registration=_REGISTRATION)
     assert r1["content_hash"]
     assert len(r1["content_hash"]) == 64  # SHA-256 hex
+    assert r1["content_hash"] == r2["content_hash"], "identical inputs must produce identical content_hash"
 
 
 def test_artifact_includes_registration_hash(monkeypatch):

@@ -305,9 +305,8 @@ def compile_qualification_verdict(
         "gates": gates,
         "funnel": funnel,
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
     }
-    artifact["content_hash"] = sha256_json(
-        {k: v for k, v in artifact.items() if k != "content_hash"}
-    )
+    # content_hash covers only stable evidence; generated_at is envelope metadata added after.
+    artifact["content_hash"] = sha256_json(artifact)
+    artifact["generated_at"] = datetime.now(timezone.utc).isoformat()
     return artifact
