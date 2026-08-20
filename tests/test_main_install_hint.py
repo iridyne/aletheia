@@ -1,6 +1,7 @@
 """Tests for the post-command install hint in aletheia.main."""
 from __future__ import annotations
 
+import re
 import subprocess
 from io import StringIO
 from pathlib import Path
@@ -162,9 +163,10 @@ def test_hint_eof_on_stdin_does_not_crash(monkeypatch, tmp_path):
 def test_install_subcommand_in_main_app_help(monkeypatch, tmp_path):
     result = runner.invoke(main_mod.app, ["install", "--help"])
     assert result.exit_code == 0
-    assert "--force" in result.output
-    assert "--yes" in result.output
-    assert "--no-update-shell" in result.output
+    clean = re.sub(r'\x1b\[[0-9;]*m', '', result.output)
+    assert "--force" in clean
+    assert "--yes" in clean
+    assert "--no-update-shell" in clean
 
 
 @pytest.mark.tier_unit
