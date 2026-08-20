@@ -1852,11 +1852,10 @@ def _check_correlation_exposure(
                 ))
 
         # With N=2 positions the same-family share is 50% or 100%, so 60% is a
-        # coin-flip, not a risk signal. Skip until the portfolio is deep enough.
+        # coin-flip, not a risk signal. Skip concentration until portfolio is deep
+        # enough — but portfolio BTC-beta is an independent hard guard and always runs.
         mode_policy = cfg.risk.live if _is_live(proposal.execution_mode) else cfg.risk.demo
         min_n = mode_policy.correlation.min_positions_for_concentration
-        if len(existing_exposures) < min_n:
-            return []
 
         prop_notional = 0.0
         if proposal.price and proposal.quantity:
@@ -1868,41 +1867,42 @@ def _check_correlation_exposure(
         ]
 
         # ── Sector concentration ──────────────────────────────────────────────
-        # Resolve all families in one read so a reservation cannot disappear
-        # between per-row lookups and a database failure cannot look like "none".
-        opportunity_ids = sorted({
-            opportunity_id
-            for _, _, opportunity_id in all_exposures
-            if opportunity_id
-        })
-        families: dict[str, str] = {}
-        if opportunity_ids:
-            placeholders = ",".join("?" for _ in opportunity_ids)
-            rows = get_db().execute(
-                f"SELECT id, scanner_family FROM opportunities WHERE id IN ({placeholders})",
-                opportunity_ids,
-            ).fetchall()
-            families = {
-                str(row[0]): str(row[1])
-                for row in rows
-                if row[0] and row[1]
-            }
+        if len(existing_exposures) >= min_n:
+            # Resolve all families in one read so a reservation cannot disappear
+            # between per-row lookups and a database failure cannot look like "none".
+            opportunity_ids = sorted({
+                opportunity_id
+                for _, _, opportunity_id in all_exposures
+                if opportunity_id
+            })
+            families: dict[str, str] = {}
+            if opportunity_ids:
+                placeholders = ",".join("?" for _ in opportunity_ids)
+                rows = get_db().execute(
+                    f"SELECT id, scanner_family FROM opportunities WHERE id IN ({placeholders})",
+                    opportunity_ids,
+                ).fetchall()
+                families = {
+                    str(row[0]): str(row[1])
+                    for row in rows
+                    if row[0] and row[1]
+                }
 
-        prop_family = families.get(str(proposal.opportunity_id))
-        if prop_family:
-            total_notional = sum(notional for _, notional, _ in all_exposures)
-            if total_notional > 0:
-                family_notional = sum(
-                    notional
-                    for _, notional, opportunity_id in all_exposures
-                    if families.get(str(opportunity_id)) == prop_family
-                )
-                sector_pct = (family_notional / total_notional) * 100
-                max_pct = getattr(risk, "max_sector_concentration_pct", 60.0)
-                if sector_pct > max_pct:
-                    violations.append(
-                        f"sector_concentration:{prop_family}:{sector_pct:.0f}%>{max_pct:.0f}%"
+            prop_family = families.get(str(proposal.opportunity_id))
+            if prop_family:
+                total_notional = sum(notional for _, notional, _ in all_exposures)
+                if total_notional > 0:
+                    family_notional = sum(
+                        notional
+                        for _, notional, opportunity_id in all_exposures
+                        if families.get(str(opportunity_id)) == prop_family
                     )
+                    sector_pct = (family_notional / total_notional) * 100
+                    max_pct = getattr(risk, "max_sector_concentration_pct", 60.0)
+                    if sector_pct > max_pct:
+                        violations.append(
+                            f"sector_concentration:{prop_family}:{sector_pct:.0f}%>{max_pct:.0f}%"
+                        )
 
         # ── Portfolio BTC beta ────────────────────────────────────────────────
         max_beta = getattr(risk, "max_portfolio_beta", 3.0)
