@@ -2,9 +2,9 @@
 
 The source updater itself necessarily starts under the pre-update interpreter.
 After ``git pull`` that process may still hold old modules and old Pydantic model
-objects in ``sys.modules``.  Any operation whose semantics belong to the target
+objects in ``sys.modules``. Any operation whose semantics belong to the target
 checkout therefore runs in a fresh child interpreter rooted at the on-disk
-project.  The helpers here deliberately pass only primitive values across that
+project. The helpers here deliberately pass only primitive values across that
 boundary; no pre-pull config/model object is ever serialized into target state.
 """
 
@@ -14,6 +14,8 @@ import json
 from pathlib import Path
 import subprocess
 from typing import Any
+
+from aletheia.gateway.pidfile import _no_window_kwargs
 
 _RESULT_PREFIX = "ALETHEIA_TARGET_FRESH_RESULT="
 
@@ -34,6 +36,7 @@ def _run_json_script(
             text=True,
             timeout=timeout,
             env=env,
+            **_no_window_kwargs(),
         )
     except Exception as exc:
         return {
@@ -127,7 +130,7 @@ def persist_current_commit(
     """Persist only ``cfg.update.current_commit`` using target-loaded config code.
 
     ``mutate_config`` acquires the cross-process config writer permit before
-    loading the latest committed config.  This prevents the pre-pull updater
+    loading the latest committed config. This prevents the pre-pull updater
     from overwriting target-side schema migrations or concurrent settings with a
     stale whole-config snapshot.
     """
