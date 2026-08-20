@@ -421,7 +421,11 @@ def test_correlation_guards_include_unmaterialized_entry_exposure(
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
     monkeypatch.setattr(eng, "_portfolio_drawdown_scale", lambda _mode: 1.0)
     monkeypatch.setattr(eng, "_check_lesson_constraints", lambda _proposal: [])
-    monkeypatch.setattr(eng, "_lookup_beta", lambda _symbol: 4.0)
+    # BTC beta low enough to pass alone; ETH beta pushes the combined portfolio over the limit.
+    monkeypatch.setattr(
+        eng, "_lookup_beta",
+        lambda sym: 1.5 if sym == "BTC/USDT" else 5.0,
+    )
     monkeypatch.setattr(
         "aletheia.data.price_feed.get_fresh_price_for_protective_close",
         lambda symbol, market_type, *, venue: 100.0,
@@ -632,6 +636,53 @@ def test_sector_concentration_isolated_by_live_demo_pool(
     ), (
         f"{proposal_mode} concentration was diluted by {other_pool_mode}: "
         f"{after_other_pool_exposure!r}"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "RE-B04c",
+        "risk_engine_contract",
+        "§2 check #16",
+        "L2b",
+        "Portfolio beta is enforced independently of the sector-concentration depth gate; "
+        "beta fires when existing exposures are below min_positions_for_concentration.",
+        status="implemented",
+    ),
+)
+def test_beta_enforced_below_concentration_depth_gate(monkeypatch):
+    """Beta guard must fire even when the portfolio is too shallow for sector concentration."""
+    import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage.models import TradeProposal
+    from unittest.mock import patch
+
+    cfg = AletheiaConfig()
+    cfg.risk.correlation_guard_enabled = True
+    cfg.risk.max_portfolio_beta = 3.0
+    cfg.risk.demo.correlation.min_positions_for_concentration = 4
+    monkeypatch.setattr(eng, "_lookup_beta", lambda _symbol: 4.0)
+
+    with patch("aletheia.storage.repositories.list_all_open_positions", return_value=[]):
+        violations = eng._check_correlation_exposure(
+            TradeProposal(
+                symbol="BTC/USDT",
+                market_type="spot",
+                direction="long",
+                execution_mode="paper_internal",
+                quantity=1.0,
+                price=100.0,
+            ),
+            cfg,
+            unresolved_entries=[],
+            pre_order_entries=[],
+        )
+
+    assert any(v.startswith("portfolio_beta:") for v in violations), (
+        f"portfolio_beta must fire below concentration depth gate; got {violations!r}"
+    )
+    assert not any(v.startswith("sector_concentration:") for v in violations), (
+        f"sector_concentration must not fire below depth gate; got {violations!r}"
     )
 
 
