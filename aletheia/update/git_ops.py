@@ -6,6 +6,7 @@ Operates on the repository that contains the installed source, NOT the data dir.
 """
 
 import logging
+import os
 import shutil
 import subprocess
 

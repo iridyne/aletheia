@@ -297,6 +297,93 @@ def test_install_uv_dir_bin_failure(monkeypatch, tmp_path):
     assert "Could not locate" in result.output
 
 
+# ---------------------------------------------------------------------------
+# Uninstall tests
+# ---------------------------------------------------------------------------
+
+def _make_uninstall_app():
+    import typer
+    _app = typer.Typer()
+    _app.command()(install_cli.uninstall)
+    return _app
+
+
+@pytest.mark.tier_unit
+def test_uninstall_removes_managed_shim(monkeypatch, tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = install_cli._shim_path(bin_dir)
+    shim.write_text(f"#!/bin/sh\n# {install_cli._MARKER}\nexec uv run ...\n")
+    monkeypatch.setattr(install_cli.subprocess, "run", _make_fake_run(bin_dir))
+    monkeypatch.setenv("PATH", "/usr/bin")
+
+    result = runner.invoke(_make_uninstall_app(), ["--yes"])
+
+    assert result.exit_code == 0, result.output
+    assert not shim.exists()
+    assert "Removed" in result.output
+
+
+@pytest.mark.tier_unit
+def test_uninstall_nothing_to_do(monkeypatch, tmp_path):
+    bin_dir = tmp_path / "bin"
+    monkeypatch.setattr(install_cli.subprocess, "run", _make_fake_run(bin_dir))
+
+    result = runner.invoke(_make_uninstall_app(), ["--yes"])
+
+    assert result.exit_code == 0
+    assert "nothing to uninstall" in result.output
+
+
+@pytest.mark.tier_unit
+def test_uninstall_refuses_unmanaged_shim(monkeypatch, tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = install_cli._shim_path(bin_dir)
+    shim.write_text("#!/bin/sh\necho external\n")
+    monkeypatch.setattr(install_cli.subprocess, "run", _make_fake_run(bin_dir))
+
+    result = runner.invoke(_make_uninstall_app(), ["--yes"])
+
+    assert result.exit_code == 2
+    assert shim.exists()
+
+
+@pytest.mark.tier_unit
+def test_uninstall_removes_asked_marker(monkeypatch, tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = install_cli._shim_path(bin_dir)
+    shim.write_text(f"#!/bin/sh\n# {install_cli._MARKER}\nexec uv run ...\n")
+    asked = tmp_path / ".aletheia_install_asked"
+    asked.touch()
+    monkeypatch.setattr(install_cli.subprocess, "run", _make_fake_run(bin_dir))
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setenv("PATH", "/usr/bin")
+
+    result = runner.invoke(_make_uninstall_app(), ["--yes"])
+
+    assert result.exit_code == 0
+    assert not shim.exists()
+    assert not asked.exists()
+
+
+@pytest.mark.tier_unit
+def test_uninstall_non_interactive_skips_prompt(monkeypatch, tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = install_cli._shim_path(bin_dir)
+    shim.write_text(f"#!/bin/sh\n# {install_cli._MARKER}\nexec uv run ...\n")
+    monkeypatch.setattr(install_cli.subprocess, "run", _make_fake_run(bin_dir))
+    monkeypatch.setattr(install_cli, "_is_interactive", lambda: False)
+    monkeypatch.setenv("PATH", "/usr/bin")
+
+    result = runner.invoke(_make_uninstall_app(), [])  # no --yes
+
+    assert result.exit_code == 0
+    assert not shim.exists()
+
+
 @pytest.mark.tier_unit
 def test_install_moved_checkout_updates_managed_shim(monkeypatch, tmp_path):
     """Reinstalling after moving the clone should update the shim to the new root."""

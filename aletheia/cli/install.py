@@ -111,6 +111,56 @@ def _run_update_shell() -> int:
     return result.returncode
 
 
+def uninstall(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+) -> None:
+    """Remove the global `aletheia` command shim installed by `aletheia install`."""
+    bin_result = subprocess.run(
+        ["uv", "tool", "dir", "--bin"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if bin_result.returncode:
+        typer.echo("Could not locate uv's executable directory.", err=True)
+        raise typer.Exit(bin_result.returncode)
+
+    bin_dir = Path(bin_result.stdout.strip())
+    shim = _shim_path(bin_dir)
+
+    if not shim.exists():
+        typer.echo("No aletheia shim found — nothing to uninstall.")
+        return
+
+    if not _is_managed_shim(shim):
+        typer.echo(
+            f"Refusing to remove {shim}: not an Aletheia-managed shim.\n"
+            "Remove it manually if intended.",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    if not yes and _is_interactive():
+        if not typer.confirm(f"Remove {shim}?", default=True):
+            typer.echo("Aborted.")
+            raise typer.Exit(0)
+
+    shim.unlink()
+    typer.echo(f"Removed {shim}.")
+
+    asked = Path.home() / ".aletheia_install_asked"
+    if asked.exists():
+        asked.unlink()
+        typer.echo("Removed ~/.aletheia_install_asked.")
+
+    if _path_contains(bin_dir, os.environ.get("PATH", "")):
+        typer.echo(
+            f"\nNote: {bin_dir} is still on PATH (managed by uv, shared with other tools).\n"
+            "To remove it, edit your shell profile or run `uv tool update-shell` "
+            "after removing all uv-managed tools."
+        )
+
+
 @app.command()
 def install(
     force: bool = typer.Option(

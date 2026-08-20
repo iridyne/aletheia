@@ -149,7 +149,7 @@ def test_preflight_proof_gap_cannot_be_erased_by_healthy_postflight(monkeypatch)
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart: {
+        lambda *, restart, progress=None: {
             "applied": True,
             "mode": "development",
             "old_commit": "old-sha",

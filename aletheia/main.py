@@ -24,7 +24,7 @@ from aletheia.cli.knowledge_cmd import knowledge_app
 from aletheia.cli.guard_cmd import guard_app
 from aletheia.cli.doctor_cmd import doctor_app
 from aletheia.cli.audit_cmd import audit_app
-from aletheia.cli.install import install as _run_install, _is_interactive
+from aletheia.cli.install import install as _run_install, uninstall as _run_uninstall, _is_interactive
 from aletheia.cli.operator import agent_app
 from aletheia.cli.tunnel import tunnel_app
 from aletheia.cli.inspect_cmd import inspect_app
@@ -52,6 +52,7 @@ app = typer.Typer(
 app.add_typer(gateway_app, name="gateway", help="Gateway lifecycle commands.")
 app.add_typer(doctor_app, name="doctor", help="Probe this machine's real state (single source of truth).")
 app.command(name="install", help="Install a global `aletheia` command shim.")(_run_install)
+app.command(name="uninstall", help="Remove the global `aletheia` command shim.")(_run_uninstall)
 app.add_typer(audit_app, name="audit", help="Audit trail verification (hash chain integrity).")
 app.add_typer(agent_app, name="agent", help="Operator Agent control-plane commands.")
 app.add_typer(runtime_app, name="runtime", help="PI runtime continuity commands.")

@@ -258,7 +258,7 @@ def test_cli_update_runs_full_source_deployment_without_subcommand(
 
     seen = {}
 
-    def apply(*, restart):
+    def apply(*, restart, progress=None):
         seen["restart"] = restart
         return {
             "applied": True,
@@ -287,7 +287,7 @@ def test_cli_update_same_source_commit_reports_noop(monkeypatch):
     monkeypatch.setattr(
         continuity,
         "apply_update_with_continuity",
-        lambda *, restart: {
+        lambda *, restart, progress=None: {
             "applied": True,
             "old_commit": "same111",
             "new_commit": "same111",
@@ -314,7 +314,7 @@ def test_cli_update_restart_reports_runtime_version_transition(monkeypatch):
     monkeypatch.setattr(
         continuity,
         "apply_update_with_continuity",
-        lambda *, restart: {
+        lambda *, restart, progress=None: {
             "applied": True,
             "old_commit": "new22222",
             "new_commit": "new22222",
@@ -343,7 +343,7 @@ def test_cli_update_same_source_commit_failure_is_not_labeled_updated(monkeypatc
     monkeypatch.setattr(
         continuity,
         "apply_update_with_continuity",
-        lambda *, restart: {
+        lambda *, restart, progress=None: {
             "applied": True,
             "old_commit": "same111",
             "new_commit": "same111",
