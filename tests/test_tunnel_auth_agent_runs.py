@@ -379,3 +379,82 @@ async def test_duplicate_enqueue_same_agent_returns_409(client, tmp_path, monkey
     assert body["detail"]["error"] == "agent_already_queued"
     assert body["detail"]["run_id"] == existing_run.id
     assert body["detail"]["agent_name"] == "research_agent"
+
+
+# ---------------------------------------------------------------------------
+# Operator-service provenance (issue #1102)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_operator_service_run_has_trigger_type_operator_service(client, tmp_path, monkeypatch):
+    """Service-authenticated call via X-Aletheia-Operator-Service → trigger_type='operator_service'."""
+    import aletheia.server.operator_service_auth as service_auth
+
+    _enable_tunnel(tmp_path)
+    fake = _fake_manager_patch(monkeypatch)
+    monkeypatch.setattr(service_auth, "is_valid_operator_service_token", lambda t: t == "svc-token")
+
+    response = await client.post(
+        "/api/agent-runs/start",
+        json={"agent_name": "research_agent"},
+        headers={"X-Aletheia-Operator-Service": "svc-token"},
+    )
+    assert response.status_code == 202
+    assert response.json()["trigger_type"] == "operator_service"
+    assert fake.enqueued[0].trigger_type == "operator_service"
+
+
+@pytest.mark.anyio
+async def test_operator_service_trigger_type_is_not_interactive_priority():
+    """operator_service trigger_type must not map to INTERACTIVE inference priority."""
+    from aletheia.model_provider.broker import priority_for_agent, InferencePriority
+
+    p = priority_for_agent("research_agent", "operator_service")
+    assert p != InferencePriority.INTERACTIVE, (
+        "operator_service runs must not consume INTERACTIVE priority"
+    )
+
+
+def test_operator_service_runs_excluded_from_manual_runs_by_agent():
+    """operator_service trigger_type must not appear in manual_runs_by_agent evidence."""
+    runs = [
+        {"id": "r1", "agent_name": "research_agent", "trigger_type": "operator_service"},
+        {"id": "r2", "agent_name": "research_agent", "trigger_type": "operator_service"},
+        {"id": "r3", "agent_name": "market_observer", "trigger_type": "operator_service"},
+    ]
+    manual_runs_by_agent: dict = {}
+    for run in runs:
+        if str(run.get("trigger_type") or "") != "manual":
+            continue
+        manual_runs_by_agent.setdefault(run["agent_name"], []).append(run)
+    assert manual_runs_by_agent == {}, (
+        "operator_service runs must not feed manual schedule-demand evidence"
+    )
+
+
+@pytest.mark.anyio
+async def test_owner_run_remains_manual_owner(client, tmp_path, monkeypatch):
+    """tunnel_authenticated (owner) → still trigger_type='manual_owner', unchanged."""
+    secret = _enable_tunnel(tmp_path)
+    fake = _fake_manager_patch(monkeypatch)
+
+    response = await client.post(
+        "/api/agent-runs/start",
+        json={"agent_name": "research_agent"},
+        headers={"X-Aletheia-Token": secret},
+    )
+    assert response.status_code == 202
+    assert fake.enqueued[0].trigger_type == "manual_owner"
+
+
+@pytest.mark.anyio
+async def test_local_run_remains_manual(client, tmp_path, monkeypatch):
+    """Local unauthenticated call → still trigger_type='manual', unchanged."""
+    fake = _fake_manager_patch(monkeypatch)
+
+    response = await client.post(
+        "/api/agent-runs/start",
+        json={"agent_name": "research_agent"},
+    )
+    assert response.status_code == 202
+    assert fake.enqueued[0].trigger_type == "manual"

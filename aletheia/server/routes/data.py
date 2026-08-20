@@ -426,10 +426,17 @@ def start_agent_run(req: StartAgentRequest, request: Request):
                 },
             )
 
-    # Actor attribution: authenticated tunnel callers are recorded as "owner";
-    # local dashboard calls (tunnel disabled) are recorded as "dashboard".
+    # Actor attribution: service-delegated Operator calls are recorded as
+    # "operator_service"; authenticated tunnel owner calls as "manual_owner";
+    # local dashboard calls (no auth) as "manual".
+    _is_operator_service = getattr(request.state, "operator_service_authenticated", False)
     _is_tunnel_auth = getattr(request.state, "tunnel_authenticated", False)
-    trigger_type = "manual_owner" if _is_tunnel_auth else "manual"
+    if _is_operator_service:
+        trigger_type = "operator_service"
+    elif _is_tunnel_auth:
+        trigger_type = "manual_owner"
+    else:
+        trigger_type = "manual"
 
     manager = get_agent_job_manager()
     try:
