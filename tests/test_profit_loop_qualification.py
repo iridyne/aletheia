@@ -156,3 +156,62 @@ def test_cli_command_emits_versioned_json(monkeypatch, tmp_path):
         "minimum_profitable_loop_rejected",
         "insufficient_data",
     }
+
+
+def test_identity_filter_prevents_epoch_pooling(monkeypatch):
+    """Two profitable epochs in the same window: only the registered one contributes."""
+    # epoch-A: highly profitable but NOT the registered runtime session
+    epoch_a = [
+        {
+            "realized_pnl": 10.0,
+            "opened_at": "2026-01-02T00:00:00+00:00",
+            "closed_at": f"2026-01-{2 + i:02d}T12:00:00+00:00",
+            "execution_mode": "paper_internal",
+            "runtime_session_id": "session-other",
+        }
+        for i in range(6)
+    ]
+    # epoch-B: unprofitable, IS the registered session (session-001)
+    epoch_b = [
+        {
+            "realized_pnl": -3.0,
+            "opened_at": "2026-01-02T00:00:00+00:00",
+            "closed_at": f"2026-01-{10 + i:02d}T12:00:00+00:00",
+            "execution_mode": "paper_internal",
+            "runtime_session_id": "session-001",
+        }
+        for i in range(4)
+    ]
+
+    def _mock_eligible(*, runtime_session_id=None, **_):
+        pool = epoch_a + epoch_b
+        if runtime_session_id is not None:
+            pool = [r for r in pool if r.get("runtime_session_id") == runtime_session_id]
+        return pool
+
+    monkeypatch.setattr(qual_module, "eligible_strategy_outcomes", _mock_eligible)
+    monkeypatch.setattr(
+        qual_module,
+        "build_outcome_cohort_summary",
+        lambda **kw: {
+            "raw_event_count": len(_mock_eligible(**kw)),
+            "eligible_outcome_count": len(_mock_eligible(**kw)),
+            "excluded_outcome_count": 0,
+            "outcome_exclusion_reasons": {},
+        },
+    )
+
+    result = compile_qualification_verdict(registration=_REGISTRATION, cutoff_at=_CUTOFF)
+    # Without identity filter the pooled epochs would net 60 - 12 = +48 (proven).
+    # With identity filter only epoch-B contributes: net = -12 → rejected.
+    assert result["verdict"] == "minimum_profitable_loop_rejected"
+    assert result["metrics"]["total_eligible_closes"] == 4
+    assert result["metrics"]["net_realized_pnl"] < 0
+    assert result["funnel"]["identity_mismatched_count"] == 6
+
+
+def test_missing_runtime_session_id_raises():
+    reg = {k: v for k, v in _REGISTRATION.items() if k != "runtime_session_id"}
+    import pytest
+    with pytest.raises(ValueError, match="runtime_session_id"):
+        compile_qualification_verdict(registration=reg, cutoff_at=_CUTOFF)
