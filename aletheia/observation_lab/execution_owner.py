@@ -41,10 +41,14 @@ import logging
 
 logger = logging.getLogger("aletheia.observation_lab.execution_owner")
 
-# Sentinel used when config loading fails. ``main`` is the safe fallback —
-# it preserves backward compatibility. A malformed config never silently
-# hands ownership to a Worker that may not exist.
+# ``main`` is the backward-compatible default for legacy configs that have no
+# ``observation`` section at all.  It is NOT used when config loading fails —
+# that case returns ``_OWNER_UNAVAILABLE`` so neither side can claim authority.
 _DEFAULT_OWNER = "main"
+
+# Returned when config cannot be loaded or the configured owner is invalid.
+# Neither Main nor Worker may claim authority when ownership is uncertain.
+_OWNER_UNAVAILABLE = "unknown"
 
 _VALID_OWNERS = frozenset({"main", "worker"})
 
@@ -54,26 +58,32 @@ class ObservationOwnerError(RuntimeError):
 
 
 def get_execution_owner() -> str:
-    """Return the configured owner, defaulting to ``main`` on any load error.
+    """Return the configured owner.
 
-    Reads via ``aletheia.config.loader.load_config`` — same code path every
-    other subsystem uses. Load failures are logged at DEBUG (not warning:
-    this function is called from hot scheduler paths) and treated as
-    ``main`` so a broken config never accidentally silences Main-side
-    execution.
+    Returns ``"main"`` when config loads successfully but has no
+    ``observation`` section (backward compatibility with legacy deploys).
+
+    Returns ``"unknown"`` on any config load/parse/validation failure, or
+    when ``observation.execution_owner`` is set to an unrecognised value.
+    Callers must treat ``"unknown"`` as fail-closed: neither Main nor Worker
+    may claim authority under uncertainty.
     """
     try:
         from aletheia.config.loader import load_config
 
         cfg = load_config()
-    except Exception as exc:  # pragma: no cover - defensive config load
-        logger.debug("execution_owner: load_config failed → default main: %s", exc)
-        return _DEFAULT_OWNER
+    except Exception as exc:
+        logger.warning("execution_owner: load_config failed → owner_unavailable: %s", exc)
+        return _OWNER_UNAVAILABLE
     observation = getattr(cfg, "observation", None)
     if observation is None:
+        # Legacy config with no observation section: Main owns by default.
         return _DEFAULT_OWNER
     owner = str(getattr(observation, "execution_owner", _DEFAULT_OWNER) or _DEFAULT_OWNER)
-    return owner if owner in _VALID_OWNERS else _DEFAULT_OWNER
+    if owner not in _VALID_OWNERS:
+        logger.warning("execution_owner: unrecognised value %r → owner_unavailable", owner)
+        return _OWNER_UNAVAILABLE
+    return owner
 
 
 def is_main_owner() -> bool:
@@ -93,6 +103,12 @@ def require_worker_owner(*, action: str) -> None:
     message so a misconfigured Worker sees exactly what refused to run.
     """
     owner = get_execution_owner()
+    if owner == _OWNER_UNAVAILABLE:
+        raise ObservationOwnerError(
+            f"{action}: refusing to run — observation.execution_owner could not be "
+            f"read or validated (owner_unavailable). A config read failure does not "
+            f"grant Worker execution authority; fix the config and retry."
+        )
     if owner != "worker":
         raise ObservationOwnerError(
             f"{action}: refusing to run — observation.execution_owner={owner!r} "
@@ -102,12 +118,16 @@ def require_worker_owner(*, action: str) -> None:
 
 
 def require_main_or_absent(*, action: str) -> None:
-    """Fail closed on the Main side when Worker owns the cycle.
+    """Fail closed on the Main side when Worker owns the cycle, or when
+    ownership cannot be determined.
 
     Used at every Main-side execution seam so a stray manual invocation
     can't produce a duplicate pass while the Worker also runs. The reason
     string names Worker as the current owner so operators fix config, not
     code.
+
+    A config read failure (``owner_unavailable``) is also treated as
+    fail-closed: uncertainty never manufactures Main authority.
     """
     owner = get_execution_owner()
     if owner == "worker":
@@ -115,6 +135,12 @@ def require_main_or_absent(*, action: str) -> None:
             f"{action}: refusing to run — observation.execution_owner=worker. "
             f"The Observer Worker owns the cycle; run it via its systemd timer "
             f"or ``aletheia observe run`` from the observer checkout."
+        )
+    if owner == _OWNER_UNAVAILABLE:
+        raise ObservationOwnerError(
+            f"{action}: refusing to run — observation.execution_owner could not be "
+            f"read or validated (owner_unavailable). A config read failure does not "
+            f"grant Main execution authority; fix the config and restart."
         )
 
 
@@ -125,4 +151,5 @@ __all__ = [
     "is_worker_owner",
     "require_worker_owner",
     "require_main_or_absent",
+    "_OWNER_UNAVAILABLE",
 ]
