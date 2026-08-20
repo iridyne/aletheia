@@ -1923,8 +1923,11 @@ def test_public_account_leverage_counts_unresolved_and_pre_order_exposure(monkey
     result = eng.check_account_leverage(cfg, execution_mode="okx_demo")
 
     assert result["status"] == "available"
-    assert result["ratio"] == 3.0
-    assert result["violation"] is True
+    # same_account_order: notional = 1.0 * 100.0 = 100.0 (leverage is not multiplied in)
+    # same_account_pre_order: notional = 1.0 * 100.0 = 100.0
+    # ratio = 200.0 / 100.0 = 2.0; cap = 2.5 → no violation
+    assert result["ratio"] == 2.0
+    assert result["violation"] is False
 
 
 @pytest.mark.parametrize(
@@ -2036,6 +2039,92 @@ def test_futures_context_keeps_unavailable_account_leverage_empty(monkeypatch):
     result = _build_futures_context({"features": [], "positions": []}, cfg)
 
     assert result["account_leverage_ratio"] is None
+
+
+def test_account_leverage_is_gross_notional_over_equity_not_leverage_squared(monkeypatch):
+    """Regression for issue #1164: qty*price is already gross notional; a second
+    *leverage multiply turns account leverage into a leverage-squared metric that
+    deadlocks valid leveraged proposals.
+
+    Fixture: equity=1_000, notional=4_000 (qty=40, price=100), leverage=20x.
+    Correct ratio = 4_000 / 1_000 = 4.0x.  Buggy ratio was 4_000*20 / 1_000 = 80x.
+    """
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+    from aletheia.storage.models import TradeProposal
+
+    equity = 1_000.0
+    cfg = load_config().model_copy(deep=True)
+    cfg.risk.max_account_leverage_demo = 10.0  # 4.0x is valid, 80x would have been rejected
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        execution_mode="okx_demo", quantity=40.0, price=100.0, leverage=20,
+    )
+
+    # Path 1: proposal only — admission gate must pass
+    monkeypatch.setattr(eng, "list_all_open_positions", lambda: [])
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: equity)
+    violations = eng._check_account_leverage_ratio(
+        proposal, cfg, unresolved_entries=[], pre_order_entries=[],
+    )
+    assert violations == [], f"4.0x proposal rejected at 10x cap: {violations}"
+
+    # Path 2: open Position — monitor must report ratio=4.0
+    monkeypatch.setattr(
+        eng, "list_all_open_positions",
+        lambda: [{"symbol": "BTC/USDT", "market_type": "usdt_futures",
+                  "execution_mode": "okx_demo", "quantity": 40.0,
+                  "entry_price": 100.0, "leverage": 20}],
+    )
+    monkeypatch.setattr(eng, "_unresolved_entry_reservations", lambda: [])
+    monkeypatch.setattr(eng, "_pre_order_entry_reservations", lambda **_: [])
+    result = eng.check_account_leverage(cfg, execution_mode="okx_demo")
+    assert result["status"] == "available"
+    assert result["ratio"] == 4.0
+    assert result["violation"] is False
+
+    # Path 3: unresolved entry Order — monitor must report ratio=4.0
+    monkeypatch.setattr(eng, "list_all_open_positions", lambda: [])
+    monkeypatch.setattr(eng, "_unresolved_entry_reservations", lambda: [
+        eng._UnresolvedEntryReservation(
+            order_id="test-order", symbol="BTC/USDT", market_type="usdt_futures",
+            execution_mode="okx_demo", opportunity_id=None,
+            price=100.0, leverage=20.0, order_quantity=40.0,
+            persisted_fill_quantity=0.0, remaining_quantity=40.0,
+            reserved_quantity=40.0, has_open_position=False,
+        )
+    ])
+    result = eng.check_account_leverage(cfg, execution_mode="okx_demo")
+    assert result["status"] == "available"
+    assert result["ratio"] == 4.0
+    assert result["violation"] is False
+
+    # Path 4: pre-Order reservation — monitor must report ratio=4.0
+    monkeypatch.setattr(eng, "_unresolved_entry_reservations", lambda: [])
+    monkeypatch.setattr(eng, "_pre_order_entry_reservations", lambda **_: [
+        eng._PreOrderEntryReservation(
+            proposal_id="test-reservation", symbol="BTC/USDT", market_type="usdt_futures",
+            execution_mode="okx_demo", opportunity_id=None,
+            price=100.0, leverage=20.0, reserved_quantity=40.0,
+        )
+    ])
+    result = eng.check_account_leverage(cfg, execution_mode="okx_demo")
+    assert result["status"] == "available"
+    assert result["ratio"] == 4.0
+    assert result["violation"] is False
+
+    # True 10.01x gross-notional/equity case still rejects at the 10x cap
+    monkeypatch.setattr(eng, "_unresolved_entry_reservations", lambda: [])
+    monkeypatch.setattr(eng, "_pre_order_entry_reservations", lambda **_: [])
+    over_cap_proposal = TradeProposal(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        execution_mode="okx_demo", quantity=100.1, price=100.0, leverage=20,
+    )  # notional = 10_010, ratio = 10.01 > 10.0 cap
+    violations = eng._check_account_leverage_ratio(
+        over_cap_proposal, cfg, unresolved_entries=[], pre_order_entries=[],
+    )
+    assert any(v.startswith("account_leverage_ratio:") for v in violations)
 
 
 # ---------------------------------------------------------------------------

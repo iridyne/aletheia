@@ -2100,7 +2100,7 @@ def _check_account_leverage_ratio(
 ) -> list[str]:
     """Reject if adding this trade would push account leverage ratio above cap.
 
-    account_leverage = sum(|pos_notional| * pos_leverage) / equity
+    account_leverage = sum(|pos_notional|) / equity
     Every exposure row and the equity denominator must belong to the same account
     pool.  Missing account equity is not zero exposure and cannot be guessed from a
     configured starting balance, so it rejects with a stable availability token.
@@ -2121,7 +2121,7 @@ def _check_account_leverage_ratio(
                 qty, _entry_price, price, lev = _validated_position_exposure(p)
             except _InvalidPositionExposure as exc:
                 return [_invalid_position_exposure_violation(p, exc.field_category)]
-            position_exposure = abs(qty * price) * lev
+            position_exposure = abs(qty * price)
             weighted_notional += position_exposure
             if not math.isfinite(weighted_notional):
                 return [_invalid_position_exposure_violation(p, "account_exposure")]
@@ -2159,8 +2159,7 @@ def _check_account_leverage_ratio(
                 return ["account_leverage_check_error:invalid_entry_reservation"]
 
         if proposal.price and proposal.quantity:
-            prop_lev = float(proposal.leverage or 1)
-            weighted_notional += abs(proposal.price * proposal.quantity) * prop_lev
+            weighted_notional += abs(proposal.price * proposal.quantity)
 
         equity = _account_equity(proposal.execution_mode, cfg)
         if not equity or equity <= 0:
@@ -2492,7 +2491,7 @@ def _relevant_positions(open_positions: list, execution_mode: str) -> list:
 def _entry_reservation_weighted_notional(
     entry: _UnresolvedEntryReservation | _PreOrderEntryReservation,
 ) -> float:
-    """Return one reservation's leverage-weighted exposure or reject bad authority.
+    """Return one reservation's gross-notional exposure or reject bad authority.
 
     An unresolved Order can legitimately have zero remaining quantity only after an
     open Position represents its full persisted Fill.  A pre-Order reservation must
@@ -2517,7 +2516,7 @@ def _entry_reservation_weighted_notional(
         or leverage <= 0
     ):
         raise ValueError("invalid entry reservation exposure")
-    weighted_notional = abs(quantity * price) * leverage
+    weighted_notional = abs(quantity * price)
     if not math.isfinite(weighted_notional):
         raise ValueError("invalid entry reservation exposure")
     return weighted_notional
@@ -2589,8 +2588,7 @@ def check_account_leverage(cfg=None, execution_mode: str | None = None) -> dict:
                 },
             )
         notional = abs(qty * price)
-        position_exposure = notional * lev
-        if not math.isfinite(notional) or not math.isfinite(position_exposure):
+        if not math.isfinite(notional):
             return _unavailable_account_leverage_result(
                 cap=max_ratio,
                 reason="invalid_position_exposure",
@@ -2599,7 +2597,7 @@ def check_account_leverage(cfg=None, execution_mode: str | None = None) -> dict:
                     "position_id": _safe_position_id(p),
                 },
             )
-        weighted_notional += position_exposure
+        weighted_notional += notional
         if not math.isfinite(weighted_notional):
             return _unavailable_account_leverage_result(
                 cap=max_ratio,
