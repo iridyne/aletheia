@@ -1326,6 +1326,22 @@ class UpdateConfig(BaseModel):
     current_commit: str | None = None
 
 
+class EmitDedupConfig(BaseModel):
+    """Cross-lifecycle dedup guards for universe signal emission (#1325)."""
+
+    enabled: bool = False
+    # W1: Repeat score decay — effective_score = raw × factor^k
+    repeat_decay_enabled: bool = False
+    repeat_decay_factor: float = Field(default=0.85, ge=0.5, le=0.99)
+    repeat_decay_window_hours: float = Field(default=6.0, ge=1.0, le=24.0)
+    # W2: Terminal cooldown — suppress if (symbol, direction, family) emitted within N min
+    terminal_cooldown_enabled: bool = False
+    terminal_cooldown_minutes: int = Field(default=60, ge=10, le=360)
+    # W3: Coarse fingerprint memory — suppress if same bucket seen within window
+    fingerprint_memory_enabled: bool = False
+    fingerprint_memory_window_hours: float = Field(default=6.0, ge=1.0, le=24.0)
+
+
 class UniverseConfig(BaseModel):
     enabled: bool = True
     refresh_interval_min: int = 10
@@ -1389,6 +1405,16 @@ class UniverseConfig(BaseModel):
         "volatile_penalty": 10.0,
         "sideways_trend_penalty": 25.0, "sideways_reversion_bonus": 15.0,
     })
+    # Entry TTL — how long an opportunity's valid_until window stays open for
+    # execution consideration. Consolidated from per-family _FAMILY_TTL (#1325).
+    # Previously each family had its own TTL (30m…24h) which mixed two semantics:
+    # "how long the signal is fresh enough to act on" vs "how long to keep the
+    # symbol on the watchlist". Scanner refreshes every 10 min, so 15 min covers
+    # one missed refresh + ranker processing latency (measured p75=25 min).
+    entry_ttl_sec: int = Field(default=900, ge=300, le=3600)
+    # Cross-lifecycle emission dedup guards (#1325). Default off; each guard
+    # ships in its own week: W1=repeat_decay, W2=terminal_cooldown, W3=fingerprint.
+    emit_dedup: EmitDedupConfig = Field(default_factory=EmitDedupConfig)
 
 
 class RegimeConfig(BaseModel):

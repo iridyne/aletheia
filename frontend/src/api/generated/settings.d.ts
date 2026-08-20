@@ -165,6 +165,52 @@ export interface components {
             prompt_guardrail_detection_enabled: boolean;
         };
         /**
+         * EmitDedupConfig
+         * @description Cross-lifecycle dedup guards for universe signal emission (#1325).
+         */
+        EmitDedupConfig: {
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Fingerprint Memory Enabled
+             * @default false
+             */
+            fingerprint_memory_enabled: boolean;
+            /**
+             * Fingerprint Memory Window Hours
+             * @default 6
+             */
+            fingerprint_memory_window_hours: number;
+            /**
+             * Repeat Decay Enabled
+             * @default false
+             */
+            repeat_decay_enabled: boolean;
+            /**
+             * Repeat Decay Factor
+             * @default 0.85
+             */
+            repeat_decay_factor: number;
+            /**
+             * Repeat Decay Window Hours
+             * @default 6
+             */
+            repeat_decay_window_hours: number;
+            /**
+             * Terminal Cooldown Enabled
+             * @default false
+             */
+            terminal_cooldown_enabled: boolean;
+            /**
+             * Terminal Cooldown Minutes
+             * @default 60
+             */
+            terminal_cooldown_minutes: number;
+        };
+        /**
          * EventTriggerConfig
          * @description Real-time-ish event detection on price_feed ticks.
          */
@@ -2212,11 +2258,17 @@ export interface components {
              * @default 10
              */
             core_pool_size: number;
+            emit_dedup?: components["schemas"]["EmitDedupConfig"];
             /**
              * Enabled
              * @default true
              */
             enabled: boolean;
+            /**
+             * Entry Ttl Sec
+             * @default 900
+             */
+            entry_ttl_sec: number;
             /**
              * Explore Ratio
              * @default 0.2

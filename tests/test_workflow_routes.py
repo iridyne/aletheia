@@ -394,6 +394,7 @@ async def test_portfolio_endpoint(client, monkeypatch):
 
     repo.insert_position(Position(symbol="SOLUSDT", market_type="spot", direction="long",
                                   quantity=10.0, entry_price=150.0, execution_mode="bitget_demo"))
+    repo.insert_market_snapshot(MarketSnapshot(symbol="SOLUSDT", market_type="spot", price=160.0, exchange="bitget"))
     resp = await client.get("/api/portfolio")
     assert resp.status_code == 200
     data = resp.json()

@@ -37,9 +37,13 @@ _FAMILY_CALIBRATION_HORIZON = {
 }
 _DEFAULT_CALIBRATION_HORIZON = "1h"
 
-# TTL by scanner family (seconds)
+# Legacy per-family membership TTL (seconds). No longer drives entry_ttl_sec
+# (now unified via config.universe.entry_ttl_sec). Retained only for the
+# soft-penalty decay in paper_trader_ranker, which uses family-specific TTL
+# as the half-life denominator. Will be removed once ranker switches to
+# config-driven entry_ttl_sec (#1325).
 _FAMILY_TTL = {
-    "momentum": 1800,       # 30 min — fast signals
+    "momentum": 1800,       # 30 min
     "mean_reversion": 3600, # 1 hour
     "volatility": 7200,     # 2 hours
     "derivatives": 14400,   # 4 hours
@@ -529,7 +533,7 @@ def allocate_universe(
     2. Apply family quotas (regime-aware — see resolve_family_quota) so no single
        family exceeds its share
     3. Split into exploit (by score) and explore (random from remainder)
-    4. Assign TTL per family
+    4. Assign entry TTL from config (unified across all families, #1325)
     5. Cap at max_candidates
     """
     if not scored:
@@ -613,7 +617,7 @@ def allocate_universe(
     if decorate_selected:
         for item in final:
             family = item.get("scanner_family", "momentum")
-            item["ttl_sec"] = _FAMILY_TTL.get(family, 3600)
+            item["ttl_sec"] = cfg.entry_ttl_sec
 
             # Guard: only mark execution_eligible if there is live price data within the
             # last 2 hours. Symbols with zero snapshots (e.g. NATGAS/USDT) would otherwise
