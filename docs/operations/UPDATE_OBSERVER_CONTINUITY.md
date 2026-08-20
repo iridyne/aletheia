@@ -33,6 +33,19 @@ The continuity layer fails closed when it can directly prove a structural deploy
 
 A joint-checkpoint mismatch caused only by the time-dependent active-manifest set is warning-only. This matches the canonical Observation runner, which records and re-anchors such lifecycle drift instead of treating normal manifest expiry/activation as a deployment fault.
 
+## Target-loaded post-pull boundary
+
+The interactive updater process necessarily starts under the pre-update checkout. After `git pull`, its existing Python objects and `sys.modules` entries are therefore treated as stale for target-owned semantics.
+
+After the source switch:
+
+- smoke policy is imported and executed in a fresh interpreter rooted at the target checkout;
+- dashboard artifact validation is imported from the target checkout in a fresh interpreter;
+- `update.current_commit` is persisted by target-loaded `mutate_config`, which acquires the config writer permit and reloads the latest durable config before changing that one field;
+- the pre-pull `AletheiaConfig` object is never whole-saved after the source switch.
+
+This prevents a schema-changing target release from being followed by a stale pre-pull config serialization that overwrites target migrations or unrelated concurrent settings. If target-side commit metadata cannot be persisted, the source update remains applied, but continuity is `unproven` and no verified claim is emitted.
+
 ## Post-restart health proof
 
 The interactive source transaction polls target-loaded postflight projections for up to 120 seconds. This covers the existing five-second health cache and the normal scheduler startup warmup (including the delayed first Market Observer pass) instead of assuming health must settle within four seconds.

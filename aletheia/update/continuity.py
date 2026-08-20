@@ -625,10 +625,19 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
         restart=restart,
     )
 
+    metadata_proof_gaps = (
+        ["update_metadata_persist_unverified"]
+        if result.get("metadata_persisted") is False
+        else []
+    )
     # A verified postflight cannot erase evidence that was already missing
-    # before mutation. Carry preflight proof gaps into the final verdict.
+    # before mutation, nor can it ignore target-side metadata persistence loss.
     combined_proof_gaps = sorted(
-        set((preflight.get("proof_gaps") or []) + (comparison.get("proof_gaps") or []))
+        set(
+            (preflight.get("proof_gaps") or [])
+            + (comparison.get("proof_gaps") or [])
+            + metadata_proof_gaps
+        )
     )
     comparison["proof_gaps"] = combined_proof_gaps
     comparison["ok"] = not comparison["failures"] and not combined_proof_gaps
