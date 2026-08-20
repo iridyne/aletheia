@@ -1,159 +1,181 @@
 # Aletheia Trading OS
 
-Local-first, file-based, AI-native, self-learning agentic trading system —
-paper by default, live only behind an explicit human unlock.
+Aletheia is an internal, local-first AI trading system that turns market evidence into **risk-gated trading decisions, paper execution, cost-complete outcomes, and measurable learning evidence**.
 
-> **Running it unattended?** See **[docs/operations/runbooks/RUNBOOK.md](docs/operations/runbooks/RUNBOOK.md)** —
-> going live for paper trading, the brakes, self-upgrade, and health monitoring.
-> For the phase-by-phase local runtime hardening plan, see
-> **[docs/operations/architecture/STABILITY_TARGET_ARCHITECTURE.md](docs/operations/architecture/STABILITY_TARGET_ARCHITECTURE.md)**.
+The currently supported core is intentionally narrow: **crypto spot/perpetual + `paper_internal`**. Aletheia is not claiming a general live-trading platform, autonomous profit engine, or production support for every research surface that exists in the repository.
 
-## For AI agents
+| Current truth | Status |
+| --- | --- |
+| Active market | Crypto spot + perpetual |
+| Supported execution | `paper_internal` |
+| Entry decision authority | System Operator |
+| Risk authority | Risk Engine, mandatory before execution |
+| Outcome standard | Causally linked, cost-complete `genuine_outcome` |
+| Learning | Measurement is active; behavioral influence is experiment/owner-gated |
+| Live trading | Outside the Supported core; off by default |
+| Release model | **Rolling update** — current commit and runtime evidence matter more than a product version number |
 
-If you are an AI agent (Claude, Codex, or any autonomous system) working in
-this repo, **read [`AGENTS.md`](AGENTS.md) first** — it is the mandatory root
-instruction file, not an optional style guide. When your session is inside
-Orca, also run `orca skills get orca-cli` and read
-[`docs/operations/development/ORCA_CLI_WORKFLOW.md`](docs/operations/development/ORCA_CLI_WORKFLOW.md)
-before any repo-mutating action.
+The canonical support contracts are [`ACTIVE_RUNTIME_SCOPE.md`](docs/product/ACTIVE_RUNTIME_SCOPE.md) and [`CAPABILITY_GROUND_TRUTH.md`](docs/product/CAPABILITY_GROUND_TRUTH.md). This README is orientation, not a broader capability promise.
 
-## Quick start (humans)
+## Start here
+
+### Humans
 
 ```bash
-git clone <repo>
+git clone git@github.com:iridyne/aletheia.git
 cd aletheia
 uv run aletheia-install
-aletheia gateway start   # dashboard at http://127.0.0.1:8787
+aletheia gateway start
 ```
 
-`aletheia-install` writes a small reroute command into
-[uv's tool bin](https://docs.astral.sh/uv/concepts/tools/) so that `aletheia
-...` from any directory delegates back to this checkout's lockfile and virtual
-environment. If the tool bin directory is not yet on `PATH`, the installer
-will offer to run `uv tool update-shell` for you — open a new terminal
-afterwards. Rerun the installer after moving the clone to update the shim.
+Open `http://127.0.0.1:8787`. Configure model providers, exchange credentials, runtime settings, and any explicit live authority from the dashboard Settings page.
 
-`uv run aletheia-install` is always safe to rerun and never prompts in CI
-(`--yes` to auto-accept PATH setup, `--no-update-shell` to skip it entirely).
+`aletheia-install` registers a small shim in uv's tool bin so `aletheia ...` can be used from any directory while still executing against this checkout's lockfile and environment. It is safe to rerun after moving the repository or changing shell setup.
 
-Configure everything (model provider, exchange credentials, agent runtime,
-live-trading unlock) **inside the dashboard's Settings page** — full
-step-by-step in the runbook. Live trading stays disabled until you explicitly
-unlock it.
-
-The CLI is the bootstrap surface only:
+Useful commands:
 
 ```bash
-uv run aletheia gateway start | restart | enable-autostart
-uv run aletheia doctor    # single source of truth: real local state
+aletheia gateway status
+aletheia gateway restart
+aletheia doctor
+aletheia observe list
+aletheia observe status <observation-id>
 ```
 
-## Dev preview
+For the shared operational runtime, unattended operation, recovery, update behavior, and safety procedures, use the [`Runbook`](docs/operations/runbooks/RUNBOOK.md). Do not infer shared-runtime state from a developer checkout.
 
-For UI-only iteration on a worktree, use Vite HMR on `http://127.0.0.1:5173`
-(read-only proxy to the stable `:8787` API by default). Contract, isolated
-backend, and Windows commands live in
-[Development preview](docs/operations/development/DEVELOPMENT_PREVIEW.md).
+### AI agents
 
-## Find your document
+**Read [`AGENTS.md`](AGENTS.md) before changing anything.** It is the repository-wide instruction router and trust-boundary contract.
 
-| Task | Read |
+When determining what Aletheia *currently* does, use this evidence order:
+
+1. Current runtime facts, latest code, executable tests, and persisted state.
+2. [`ACTIVE_RUNTIME_SCOPE.md`](docs/product/ACTIVE_RUNTIME_SCOPE.md) — what is allowed to count as the active trading mainline.
+3. [`CAPABILITY_GROUND_TRUTH.md`](docs/product/CAPABILITY_GROUND_TRUTH.md) — Supported / Implemented / Experimental capability status.
+4. Design contracts and research documents — intent and architecture, not automatic proof of active behavior.
+
+Do not promote an Experimental capability to Supported because code exists, a page renders, or a test passes. Do not reason about the system from a human-facing version label; identify the exact commit/runtime provenance when behavior matters.
+
+If working through Orca, also run `orca skills get orca-cli` and follow [`ORCA_CLI_WORKFLOW.md`](docs/operations/development/ORCA_CLI_WORKFLOW.md) before repo-mutating actions.
+
+## The active trading loop
+
+Aletheia is built around one durable causal chain. Scanners and research components may create evidence or opportunities, but they do not own execution authority.
+
+```mermaid
+flowchart TD
+    A[Market data and evidence] --> B[Universe / scanners]
+    B --> C[Opportunity]
+    C --> D[Paper Ranker admission]
+    D --> E[System Operator decision]
+    E -->|trade| F[Trade Proposal]
+    E -->|skip| X[Counterfactual / decision evidence]
+    F --> G[Risk Engine]
+    G -->|approved| H[Execution Gateway]
+    G -->|rejected| Y[Risk evidence]
+    H --> I[paper_internal execution]
+    I --> J[Order / Fill / Position]
+    J --> K[Protected close / settlement]
+    K --> L[Cost-complete genuine outcome]
+    L --> M[Attribution / review / learning measurement]
+    X --> M
+    Y --> M
+
+    C -. frozen observation inputs .-> O[Observation Lab]
+    L -. outcome evidence .-> O
+    O -. evidence only; zero production authority .-> M
+```
+
+Important boundaries:
+
+- The **System Operator** is the only supported native entry-strategy decision maker.
+- Every proposal must receive a persisted **Risk Engine** decision before execution.
+- Orders reach brokers/exchanges only through the **Execution Gateway**.
+- A position counts as a native genuine outcome only when its opportunity → proposal → risk → order → fill → position ancestry and economic settlement are valid.
+- Learning, guards, research, and Observation Lab evidence cannot bypass Risk, credentials, or live authority.
+
+For subsystem detail, use the [`System Architecture Guide`](docs/design/architecture/SYSTEM_ARCHITECTURE_GUIDE.md). The larger interactive architecture map remains available at the repository's architecture viewer, but the contracts above take precedence over diagrams.
+
+## Rolling update, not product-version thinking
+
+Aletheia follows a **rolling-update development model**. The project does not use a long-lived human-facing version line to describe what the system can do. `master` evolves continuously, and the meaningful identity of a running system is:
+
+**exact commit + runtime provenance + active runtime scope + capability ground truth**.
+
+Immutable tags or release artifacts may still be used as deployment checkpoints, rollback anchors, or transport identities. They are operational artifacts, not a promise that Aletheia should be understood as a sequence of feature-frozen product versions.
+
+This model is made practical by the **Observation Lab**. Prospective observations freeze the causal identity that matters to an experiment — treatment/control semantics, first-exposure inputs, outcome contract, and evaluation rule — instead of treating every unrelated `master` commit as a new experiment.
+
+```mermaid
+flowchart LR
+    A[Fast-moving master / runtime commits] --> B[Current runtime]
+    B --> C[Trading and evidence production]
+
+    D[Frozen Observation identity] --> E[Observation Lab cohort]
+    C --> E
+    E --> F[Append-only evaluation evidence]
+
+    A -. unrelated code change .-> E
+    G[Causal identity change] -->|fail closed / new cohort| D
+
+    F --> H[Human review / PR / policy admission]
+    H -. only explicit admission may change behavior .-> B
+```
+
+The rule is simple: **unrelated runtime churn should not destroy valid evidence; causal changes must create a new evidence identity.** Observation Lab itself has zero production mutation authority.
+
+See [`observation_lab_contract.md`](docs/design/contracts/observation_lab_contract.md) for the executable contract and [`EXPERIMENT_PROTOCOL.md`](docs/product/experiments/EXPERIMENT_PROTOCOL.md) for experiment/admission rules.
+
+## What is Supported vs outside the core
+
+The repository contains more than the supported product surface. That is intentional.
+
+| Area | Current position |
 | --- | --- |
-| Run the system, take it live, monitor health | [Runbook](docs/operations/runbooks/RUNBOOK.md) |
-| Contribute code or docs (human) | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Contribute code as an AI agent | [AGENTS.md](AGENTS.md) |
-| Understand the architecture | [System Architecture Guide](docs/design/architecture/SYSTEM_ARCHITECTURE_GUIDE.md) |
-| Report a vulnerability | [SECURITY.md](SECURITY.md) |
+| Local runtime, scheduler, market data, dynamic universe | Supported core |
+| Opportunity → System Operator → Risk → `paper_internal` | Supported core |
+| Position lifecycle, protective close, cost-complete outcome | Supported core |
+| PnL, trade attribution, funnel visibility | Supported core |
+| Observation Lab | Evidence/experiment infrastructure; zero trading authority |
+| Serenity research | Experimental, research-only |
+| Equity and prediction-market paths | Experimental / outside active crypto scope |
+| Exchange demo execution | Experimental / outside active support proof |
+| Live execution | Outside Supported core; explicit owner authority required |
+| Learning contribution / persona rollout | Measured and gated; qualification-dependent, not assumed effective |
 
-AGENTS.md contains the deeper *Read when needed* task-to-document routing.
-
-## Architecture
-
-> **[Open the complete interactive architecture map →](https://iridite.github.io/aletheia/docs/diagrams/interactive/)**
-> Drag to pan, use the wheel or pinch to zoom, and double-click to fit. GitHub
-> sanitizes executable content inside README Markdown, so the same D2-rendered
-> map opens in the repository's GitHub Pages viewer for full interaction.
-
-[![Complete Aletheia architecture map](docs/diagrams/rendered/readme_complete_architecture.svg)](https://iridite.github.io/aletheia/docs/diagrams/interactive/)
-
-Current support truth lives in
-[`ACTIVE_RUNTIME_SCOPE.md`](docs/product/ACTIVE_RUNTIME_SCOPE.md) and
-[`CAPABILITY_GROUND_TRUTH.md`](docs/product/CAPABILITY_GROUND_TRUTH.md);
-the summary below does not widen those contracts.
-
-- Python 3.12 backend (FastAPI + Typer CLI) with an active Bitget crypto
-  spot/perpetual evidence path
-- Local-first SQLite state plus JSONL/Markdown artifacts; secrets stay in the
-  OS keyring or encrypted secret store, never in config or logs
-- React/Vite dashboard served from localhost as the primary control surface
-- APScheduler and committed-event nudges drive bounded workers; System Operator
-  is the sole supported entry-strategy decision maker
-- Risk Engine approval always precedes Execution Gateway execution, and every
-  causal proposal/risk/order/fill/position link is persisted
-- The supported core execution mode is `paper_internal`; external demo/live
-  adapters remain outside the Supported core, and live is off by default
-
-### 1. System overview — one durable trading cognition loop
-
-![Aletheia system overview](docs/diagrams/rendered/readme_system_overview.svg)
-
-Aletheia is organized around a durable evidence loop, not a sequence of
-isolated LLM calls. Market facts, decisions, risk verdicts, fills, outcomes,
-reviews, and the learning evidence used by later decisions remain traceable in
-local state.
-
-### 2. Agent decision loop — signals advise, the System Operator decides
-
-![Aletheia agent decision loop](docs/diagrams/rendered/readme_agent_decision_loop.svg)
-
-Universe scanners, observers, and research workers may produce opportunities,
-but they cannot place orders. Candidate admission creates a durable
-`signal_pending` carrier; the System Operator hydrates that exact candidate,
-reads current state and relevant experience, and emits a terminal decision.
-
-### 3. Learning and controlled evolution — experience must earn influence
-
-![Aletheia learning and controlled evolution loop](docs/diagrams/rendered/readme_learning_evolution_loop.svg)
-
-Closed trades and untraded counterfactuals become reviewable evidence. Cases,
-lessons, memos, and guard candidates can affect future ranking or reasoning only
-through scope, integrity, contribution-measurement, and lifecycle gates. Draft
-skills do not activate themselves, and learning cannot bypass Risk or enable
-live trading.
-
-### 4. Execution and risk — every order crosses the same hard boundary
-
-![Aletheia execution and risk architecture](docs/diagrams/rendered/readme_execution_risk.svg)
-
-Every `TradeProposal` enters the Execution Gateway and receives a persisted
-RiskDecision before routing to paper, exchange-demo, or explicitly unlocked
-live execution. Proposal, decision, order, fill, position, settlement, and audit
-records retain their causal identity.
-
-### 5. End-to-end data flow — from market facts to net-outcome evidence
-
-![Aletheia end-to-end data flow](docs/diagrams/rendered/readme_data_flow.svg)
-
-The economically important chain is:
-
-```text
-market facts → opportunity → decision → risk → execution
-             → cost-complete net outcome → attribution → measured learning
-```
-
-The [System Architecture Guide](docs/design/architecture/SYSTEM_ARCHITECTURE_GUIDE.md)
-contains the deeper subsystem narrative. Editable D2 sources and rendering
-instructions live in [docs/diagrams](docs/diagrams/README.md).
+When this table and a deeper document disagree, the two canonical product contracts named at the top of this README win.
 
 ## Safety invariants
 
-- Live trading off by default (`live_disabled`); first unlock requires human action
-- Agents cannot call restricted tools, modify risk limits, credentials, or the gateway
-- Every config, permission, live-state, and trade action writes a JSONL audit event
-- API keys are write-only over the API and never returned to the client
+- Live trading is off by default and cannot be enabled by an agent learning loop.
+- Agents cannot expand their own tool, credential, Risk, Gateway, or live-unlock authority.
+- Risk approval always precedes execution.
+- Secrets are write-only through supported interfaces and must never be returned, logged, prompted, or committed.
+- Trading/config/permission actions are auditable; causal trade identity is persisted across the mainline.
+- Experimental evidence may inform review, but it does not silently mutate production behavior.
 
-## Tests
+## Find the right document
+
+| Need | Read |
+| --- | --- |
+| Operate, recover, update, or monitor the runtime | [`RUNBOOK.md`](docs/operations/runbooks/RUNBOOK.md) |
+| Know exactly what the active trading path is | [`ACTIVE_RUNTIME_SCOPE.md`](docs/product/ACTIVE_RUNTIME_SCOPE.md) |
+| Know whether a capability is Supported / Implemented / Experimental | [`CAPABILITY_GROUND_TRUTH.md`](docs/product/CAPABILITY_GROUND_TRUTH.md) |
+| Work as an AI coding/research agent | [`AGENTS.md`](AGENTS.md) |
+| Contribute as a human | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| Understand subsystem architecture | [`SYSTEM_ARCHITECTURE_GUIDE.md`](docs/design/architecture/SYSTEM_ARCHITECTURE_GUIDE.md) |
+| Understand rolling experiments | [`observation_lab_contract.md`](docs/design/contracts/observation_lab_contract.md) |
+| Report a vulnerability | [`SECURITY.md`](SECURITY.md) |
+
+`AGENTS.md` contains the deeper task-to-document routing. Load only the guides relevant to the task instead of bulk-reading the repository.
+
+## Development
+
+The backend is Python 3.12 with FastAPI/Typer, local SQLite state and append-only artifacts; the dashboard is React/Vite. The primary control surface is local-first.
 
 ```bash
-uv run pytest    # full local suite; use focused tests during narrow fixes
+uv run pytest
 ```
+
+Use focused tests while fixing narrow defects and the repository's CI/spec contracts for trust-boundary changes. For UI-only worktree iteration, see [`DEVELOPMENT_PREVIEW.md`](docs/operations/development/DEVELOPMENT_PREVIEW.md).
