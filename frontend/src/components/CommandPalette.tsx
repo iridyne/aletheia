@@ -15,6 +15,27 @@ interface CmdAction {
 
 type CommandActionResult = { ok: true } | { ok: false; error: string }
 
+type KillSwitchApiFn = (active: boolean, source: string, confirmRelease?: boolean) => Promise<{ active: boolean }>
+type RefetchFn = (filters: { queryKey: unknown[] }, opts: { throwOnError: boolean }) => Promise<unknown>
+type InvalidateFn = (filters: { queryKey: unknown[] }) => Promise<void>
+
+/** Exported for unit tests: execute the kill-switch transition and refetch authority. */
+export async function executeKillSwitch(
+  active: boolean,
+  setKillSwitchApi: KillSwitchApiFn,
+  refetch: RefetchFn,
+  invalidate: InvalidateFn,
+): Promise<void> {
+  const confirmed = await setKillSwitchApi(active, 'cmd_palette', !active)
+  if (active && confirmed.active !== true) throw new Error('Kill switch engage was not confirmed by backend')
+  if (!active && confirmed.active !== false) throw new Error('Kill switch release was not confirmed by backend')
+  await Promise.all([
+    refetch({ queryKey: ['kill-switch'] }, { throwOnError: true }),
+    refetch({ queryKey: ['risk-status'] }, { throwOnError: true }),
+    invalidate({ queryKey: ['ui-shell-bootstrap'] }),
+  ])
+}
+
 export async function runCommandAction(
   action: () => unknown | Promise<unknown>,
 ): Promise<CommandActionResult> {
@@ -68,15 +89,8 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
     setExecutingCommand(null)
   }, [])
 
-  const setKillSwitch = async (active: boolean) => {
-    const confirmedState = await api.setKillSwitch(active, 'cmd_palette', !active)
-    qc.setQueryData(['kill-switch'], confirmedState)
-    await Promise.all([
-      qc.invalidateQueries({ queryKey: ['kill-switch'] }),
-      qc.invalidateQueries({ queryKey: ['risk-status'] }),
-      qc.invalidateQueries({ queryKey: ['ui-shell-bootstrap'] }),
-    ])
-  }
+  const setKillSwitch = (active: boolean) =>
+    executeKillSwitch(active, api.setKillSwitch, qc.refetchQueries.bind(qc), qc.invalidateQueries.bind(qc))
 
   const setGatewayPaused = async (paused: boolean) => {
     await (paused ? api.pause() : api.resume())

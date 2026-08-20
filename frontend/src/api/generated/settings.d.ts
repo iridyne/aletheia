@@ -1267,10 +1267,10 @@ export interface components {
              */
             max_per_symbol_entries: number;
             /**
-             * Max Position Notional Usdt
+             * Max Position Margin Usdt
              * @default 50
              */
-            max_position_notional_usdt: number;
+            max_position_margin_usdt: number;
             /**
              * Max Total Exposure Pct
              * @default 5
@@ -1367,10 +1367,10 @@ export interface components {
              */
             max_daily_loss_pct: number;
             /**
-             * Max Demo Position Notional Usdt
+             * Max Demo Position Margin Usdt
              * @default 100000
              */
-            max_demo_position_notional_usdt: number;
+            max_demo_position_margin_usdt: number;
             /**
              * Max Demo Single Trade Risk Pct
              * @default 20
@@ -1422,10 +1422,10 @@ export interface components {
              */
             max_live_limited_cap_usdt: number;
             /**
-             * Max Live Position Notional Usdt
+             * Max Live Position Margin Usdt
              * @default 50
              */
-            max_live_position_notional_usdt: number;
+            max_live_position_margin_usdt: number;
             /**
              * Max Open Positions Demo
              * @default 200

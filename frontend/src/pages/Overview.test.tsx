@@ -29,7 +29,8 @@ describe('Overview semantic honesty', () => {
   it('RiskCard shows muted tone when shell data has not loaded', () => {
     // Unknown state (no data) must not show yellow (degraded) — it is unknown.
     // The tone expression must check !shell before assigning yellow.
-    expect(SRC).toContain('!shell ? \'muted\'')
+    expect(SRC).toContain('const unavailable = shellError || !shell || !risk')
+    expect(SRC).toContain('const tone = unavailable ? \'muted\'')
   })
 
   it('GoLiveScoreCard derives tone from backend traffic_light, not hardcoded yellow', () => {

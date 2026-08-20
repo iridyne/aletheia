@@ -13,8 +13,8 @@ def test_flat_risk_config_migrates_to_mode_policies_without_changing_values():
         "correlation_guard_enabled": False,
         "max_sector_concentration_pct": 55.0,
         "max_portfolio_beta": 2.5,
-        "max_demo_position_notional_usdt": 900.0,
-        "max_live_position_notional_usdt": 45.0,
+        "max_demo_position_margin_usdt": 900.0,
+        "max_live_position_margin_usdt": 45.0,
     })
 
     assert risk.schema_version == 3
@@ -50,7 +50,7 @@ def test_persisted_config_carrying_retired_absolute_cap_still_loads():
                 "base_source": "account_equity",
                 "base_usdt": 200.0,
                 "max_per_symbol_notional_usdt": 400.0,
-                "max_position_notional_usdt": 51200.0,
+                "max_position_margin_usdt": 51200.0,
                 "max_total_exposure_pct": 100.0,
             },
             "loss": {"max_single_trade_risk_pct": 20.0, "max_daily_loss_pct": 20.0},
@@ -126,7 +126,7 @@ def test_nested_risk_policy_rejects_unknown_fields():
 
     with pytest.raises(Exception, match="extra_forbidden"):
         RiskConfig.model_validate({
-            "demo": {"capital": {"max_position_notional_usdt_typo": 999}},
+            "demo": {"capital": {"max_position_margin_usdt_typo": 999}},
             "live": {},
         })
 

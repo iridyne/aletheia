@@ -796,7 +796,7 @@ async def test_live_policy_write_enforces_safety_ceilings(client):
         ("loss",        "max_daily_loss_pct",             20.1),
         ("loss",        "max_single_trade_risk_pct",      10.1),
         ("capital",     "max_total_exposure_pct",         50.1),
-        ("capital",     "max_position_notional_usdt",     100_001.0),
+        ("capital",     "max_position_margin_usdt",     100_001.0),
         ("capital",     "base_usdt",                      100_001.0),
         ("capital",     "max_per_symbol_entries",         21),
         ("margin",      "min_entry_liquidation_buffer_pct", 20.1),
@@ -845,7 +845,7 @@ async def test_live_policy_write_accepts_exact_boundary_values(client):
     at_ceiling["capital"] = {
         **live["capital"],
         "max_total_exposure_pct": 50.0,
-        "max_position_notional_usdt": 100_000.0,
+        "max_position_margin_usdt": 100_000.0,
         "base_usdt": 100_000.0,
         "max_per_symbol_entries": 20,
     }
