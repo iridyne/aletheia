@@ -167,8 +167,8 @@ function parseTab(value: string | null): Tab | null {
 export default function Settings() {
   const qc = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
-  const { data: status } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
-  const { data: settings, dataUpdatedAt: settingsUpdatedAt } = useQuery({
+  const { data: status, isPending: statusPending, refetch: refetchStatus } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
+  const { data: settings, dataUpdatedAt: settingsUpdatedAt, isPending: settingsPending, refetch: refetchSettings } = useQuery({
     queryKey: ['settings'],
     queryFn: api.getSettings,
     refetchInterval: 30_000,
@@ -366,7 +366,7 @@ export default function Settings() {
     if (next?.dataset.settingsDiscard === 'true') e.stopPropagation()
   }
 
-  if (!status || !settings) return (
+  if (statusPending || settingsPending) return (
     <div className="skeleton" style={{ maxWidth: '600px', paddingTop: 'var(--space-6)' }}>
       <div className="skeleton-bar" />
       <div className="skeleton-bar" />
@@ -376,6 +376,24 @@ export default function Settings() {
       <div className="skeleton-bar" />
     </div>
   )
+
+  if (!status || !settings) {
+    const failedAuthority = !status ? 'System status' : 'Settings configuration'
+    return (
+      <div className="settings-load-error" role="alert" style={{ maxWidth: '600px', paddingTop: 'var(--space-6)' }}>
+        <p style={{ color: 'var(--red)', marginBottom: 'var(--space-3)' }}>
+          Failed to load {failedAuthority}. The operator cannot configure or diagnose the system.
+        </p>
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => { void refetchStatus(); void refetchSettings() }}
+        >
+          Retry
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div>
