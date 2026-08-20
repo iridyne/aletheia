@@ -51,10 +51,38 @@ def remote_commit(branch: str = "master") -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
+def _https_fallback_url() -> str | None:
+    """Return HTTPS equivalent when origin is an SSH URL, else None."""
+    r = _git("remote", "get-url", "origin")
+    if r.returncode != 0:
+        return None
+    url = r.stdout.strip()
+    if not url.startswith("git@"):
+        return None
+    try:
+        host, path = url[4:].split(":", 1)
+        return f"https://{host}/{path}"
+    except ValueError:
+        return None
+
+
+def _fetch_with_https_fallback(*args: str) -> subprocess.CompletedProcess:
+    """git fetch, retrying with HTTPS when the SSH remote fails."""
+    r = _git("fetch", *args)
+    if r.returncode == 0:
+        return r
+    fallback = _https_fallback_url()
+    if not fallback:
+        return r
+    fb_args = tuple(fallback if a == "origin" else a for a in args)
+    r2 = _git("fetch", *fb_args)
+    return r2 if r2.returncode == 0 else r
+
+
 def fetch(branch: str = "master") -> dict:
     if not git_available():
         return {"ok": False, "reason": "git_unavailable"}
-    r = _git("fetch", "origin", branch)
+    r = _fetch_with_https_fallback("origin", branch)
     if r.returncode != 0:
         return {"ok": False, "reason": "fetch_failed", "stderr": r.stderr.strip()}
     return {"ok": True}
@@ -64,7 +92,7 @@ def fetch_release_tags() -> dict:
     """Fetch the master history and tags used by the source-runtime updater."""
     if not git_available():
         return {"ok": False, "reason": "git_unavailable"}
-    r = _git("fetch", "origin", "master", "--tags")
+    r = _fetch_with_https_fallback("origin", "master", "--tags")
     if r.returncode != 0:
         return {"ok": False, "reason": "fetch_failed", "stderr": r.stderr.strip()}
     return {"ok": True}
@@ -171,7 +199,7 @@ def pull(branch: str = "master") -> dict:
     # repository-wide mutable state and can be overwritten by another fetch
     # between subprocess calls.
     target_ref = f"refs/aletheia/update/{branch}"
-    r = _git("fetch", "--no-write-fetch-head", "origin", f"{branch}:{target_ref}")
+    r = _fetch_with_https_fallback("--no-write-fetch-head", "origin", f"{branch}:{target_ref}")
     if r.returncode != 0:
         return {"ok": False, "reason": "fetch_failed", "stderr": r.stderr.strip()}
     r = _git("rev-parse", "--verify", target_ref)
