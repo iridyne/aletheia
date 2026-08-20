@@ -17,7 +17,7 @@ import logging
 import random
 from typing import Any
 
-from aletheia.counterfactual.trades import list_deduped_shadows
+from aletheia.counterfactual.trades import _detect_window_epochs, list_deduped_shadows
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +276,26 @@ def build_propensity_report(
     errors: list[str] = []
     warnings: list[str] = []
     notes: list[str] = []
+
+    if policy_epoch_id is None:
+        try:
+            _epoch_id, _epoch_status = _detect_window_epochs(days=days)
+        except Exception:
+            _epoch_status, _epoch_id = "all_null", None
+        if _epoch_status == "mixed":
+            errors.append(
+                "mixed_policy_epoch: window spans multiple policy epochs; "
+                "re-run with explicit policy_epoch_id"
+            )
+            return {
+                "n_total": 0, "n_treated": 0, "n_control": 0,
+                "treatment_rate": None, "auc": None,
+                "feature_names": [], "coefficients": [], "propensity_stats": {},
+                "by_family": {}, "window_days": days, "k_folds": k_folds,
+                "notes": notes, "warnings": warnings, "errors": errors,
+            }
+        if _epoch_status == "single":
+            policy_epoch_id = _epoch_id
 
     rows = list_deduped_shadows(
         days=days,
