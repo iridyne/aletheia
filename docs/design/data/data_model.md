@@ -646,8 +646,10 @@ fingerprint note 区别于普通人工调账。
 Portfolio 和 paper-account 是从这些原件计算的读模型。只要所含关闭中有 `realized_pnl=NULL`：
 
 - realized 总数及对应 PortfolioSnapshot 字段保持 `NULL`，并由 API 返回 complete=false 与缺失数量；
-- paper 现金账本余额仍作为历史事实可见，但 `equity_usdt=NULL`、`available_balance_usdt=0`；
-- `economics_complete=false`，直到缺失成本和对应现金结算都补齐，不能把未知行按 0 求和。
+- paper 现金账本余额、`available_balance_usdt`（已确认现金减预留保证金）和 `equity_usdt`（已确认现金加
+  未实现损益）均保持有限值并可用；仅未结平仓的资金损益 delta 未知，已知余额不得被清零或置 null；
+- `economics_complete=false` 是监控信号，直到缺失成本和对应现金结算都补齐不能把未知行按 0 求和；
+  参见 `docs/design/contracts/execution_contract.md` §11.6（#316）。
 
 读模型还会重新核对历史 numeric `realized_pnl`，而不是只检查 NULL：方向、入场/退出价格、数量、
 entry/exit fee 和可信 funding 无法重算出相同净值时，`GET /positions` 与 CSV export 返回
