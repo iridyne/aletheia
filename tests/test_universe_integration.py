@@ -143,7 +143,13 @@ def test_pipeline_scorer_assigns_families():
     assert all(f in _VALID_FAMILIES for f in families_seen)
 
 
-def test_pipeline_ttl_varies_by_family():
+def test_pipeline_ttl_unified_across_families():
+    """Post-#1325: every family shares one entry_ttl_sec (was per-family TTL).
+
+    The old _FAMILY_TTL conflated membership display with entry-window validity;
+    consolidation means all opportunities carry the same 15-min entry window
+    regardless of scanner family.
+    """
     cfg = _make_cfg()
     features = _fake_features()
     filtered = apply_tradability_filters(features, cfg.universe)
@@ -155,12 +161,9 @@ def test_pipeline_ttl_varies_by_family():
         scored.append({**feat, **scanner_result, "total_score": total})
 
     allocated = allocate_universe(scored, cfg.universe)
-    if len(allocated) >= 2:
+    if allocated:
         ttls = set(item["ttl_sec"] for item in allocated)
-        # Different families → different TTLs (if multiple families selected)
-        families = set(item["scanner_family"] for item in allocated)
-        if len(families) > 1:
-            assert len(ttls) > 1
+        assert ttls == {cfg.universe.entry_ttl_sec}, ttls
 
 
 def test_market_observer_universe_integration():
