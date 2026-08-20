@@ -14,35 +14,21 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-from aletheia.config.loader import _PROJECT_ROOT, load_config, save_config
+from aletheia.config.loader import _PROJECT_ROOT, get_data_dir, load_config
 from aletheia.files.jsonl import write_audit
 from aletheia.gateway.pidfile import _no_window_kwargs
-from aletheia.update import git_ops
-from aletheia.update.smoke import run_smoke_check
+from aletheia.update import git_ops, target_fresh
 
-# #136: strip every exchange/API credential prefix the app reads from os.environ,
-# not just BITGET_. COINALYZE_/FRED_ are read from os.environ directly (coinalyze.py,
-# macro.py); OKX_/BINANCE_ are included for cross-broker parity.
 _SECRET_PREFIXES = (
-    "BITGET_",
-    "OKX_",
-    "BINANCE_",
-    "OPENAI_",
-    "ANTHROPIC_",
-    "LLM_",
-    "TELEGRAM_BOT_TOKEN",
-    "COINALYZE_",
-    "FRED_",
+    "BITGET_", "OKX_", "BINANCE_", "OPENAI_", "ANTHROPIC_", "LLM_",
+    "TELEGRAM_BOT_TOKEN", "COINALYZE_", "FRED_",
 )
 
 logger = logging.getLogger("aletheia.update.applier")
 
 
 def _packaged_module():
-    # All installed callers go through the safety facade. The low-level staging module
-    # remains an implementation detail and cannot be invoked by Web/CLI code directly.
     from aletheia.update import packaged_commands
-
     return packaged_commands
 
 
@@ -51,18 +37,13 @@ def _is_packaged() -> bool:
 
 
 def _safe_env() -> dict:
-    """Return os.environ with secret-bearing keys stripped."""
-
     return {
-        key: value
-        for key, value in os.environ.items()
+        key: value for key, value in os.environ.items()
         if not key.startswith(_SECRET_PREFIXES)
     }
 
 
 def update_progress() -> dict:
-    """Return durable local progress without performing a network check."""
-
     if _is_packaged():
         return _packaged_module().read_update_state()
     cfg = load_config()
@@ -78,8 +59,7 @@ def update_progress() -> dict:
 
 
 def check_for_update() -> dict:
-    """Fetch and report whether an update is available. Read-only."""
-
+    """Fetch and report whether an update is available. Read-only except metadata."""
     if _is_packaged():
         return _packaged_module().check_for_update()
 
@@ -92,7 +72,6 @@ def check_for_update() -> dict:
     branch = cfg.update.branch
     fetched = git_ops.fetch(branch)
     if not fetched.get("ok"):
-        # Never claim "up to date" on a fetch error (UI honesty).
         return {
             "ok": False,
             "reason": fetched.get("reason", "fetch_failed"),
@@ -102,27 +81,37 @@ def check_for_update() -> dict:
     cur = git_ops.current_commit()
     remote = git_ops.remote_commit(branch)
     behind = git_ops.behind_count(branch)
-    has_update = behind > 0
+    checked_at = datetime.now(timezone.utc).isoformat()
 
-    cfg.update.last_check_time = datetime.now(timezone.utc).isoformat()
-    cfg.update.current_commit = cur
-    cfg.update.last_known_remote_commit = remote
-    save_config(cfg)
+    # Never whole-save the snapshot loaded before network IO. Another process may
+    # have changed unrelated settings while fetch was in flight. Targeted mutation
+    # reloads the latest durable config under the cross-process writer permit.
+    from aletheia.config.loader import mutate_config
 
-    write_audit(
-        {
-            "actor": "human",
-            "source": "api",
-            "event_type": "update_checked",
-            "entity_type": "system_update",
-            "entity_id": cur,
-            "message": f"Update check on {branch}: behind={behind}",
-        }
-    )
+    def _record_check(latest) -> bool:
+        changed = (
+            latest.update.last_check_time != checked_at
+            or latest.update.current_commit != cur
+            or latest.update.last_known_remote_commit != remote
+        )
+        latest.update.last_check_time = checked_at
+        latest.update.current_commit = cur
+        latest.update.last_known_remote_commit = remote
+        return changed
+
+    mutate_config(_record_check)
+    write_audit({
+        "actor": "human",
+        "source": "api",
+        "event_type": "update_checked",
+        "entity_type": "system_update",
+        "entity_id": cur,
+        "message": f"Update check on {branch}: behind={behind}",
+    })
     return {
         "ok": True,
         "mode": "development",
-        "has_update": has_update,
+        "has_update": behind > 0,
         "behind_count": behind,
         "current_commit": cur,
         "remote_commit": remote,
@@ -131,8 +120,6 @@ def check_for_update() -> dict:
 
 
 def _reinstall_deps() -> dict:
-    """Reinstall the package (editable) so changed dependencies take effect."""
-
     env = _safe_env()
     for cmd in (["uv", "pip", "install", "-e", "."], ["pip", "install", "-e", "."]):
         try:
@@ -158,17 +145,23 @@ _PREVIOUS_DASHBOARD_STATIC = _PROJECT_ROOT / "aletheia" / ".dashboard_static-pre
 
 
 def _frontend_deps_changed(changed_files: list[str]) -> bool:
-    return any(path in {"frontend/package.json", "frontend/package-lock.json"} for path in changed_files)
+    return any(
+        path in {"frontend/package.json", "frontend/package-lock.json"}
+        for path in changed_files
+    )
 
 
 def _run_npm(args: list[str], *, env: dict) -> subprocess.CompletedProcess | None:
-    """Run npm, using its Windows command shim when present."""
     commands = ("npm.cmd", "npm") if os.name == "nt" else ("npm",)
     for command in commands:
         try:
             return subprocess.run(
-                [command, *args], cwd=str(_FRONTEND_DIR), capture_output=True, text=True,
-                env=env, **_no_window_kwargs(),
+                [command, *args],
+                cwd=str(_FRONTEND_DIR),
+                capture_output=True,
+                text=True,
+                env=env,
+                **_no_window_kwargs(),
             )
         except FileNotFoundError:
             continue
@@ -179,11 +172,14 @@ def _install_frontend_deps() -> dict:
     result = _run_npm(["ci"], env=_safe_env())
     if result is None:
         return {"ok": False, "reason": "npm_unavailable"}
-    return {"ok": result.returncode == 0, "reason": "npm_ci_failed" if result.returncode else None}
+    return {
+        "ok": result.returncode == 0,
+        "reason": "npm_ci_failed" if result.returncode else None,
+    }
 
 
 def _build_frontend() -> dict:
-    """Build into an unserved staging directory; do not mutate live UI yet."""
+    """Build staging output, then validate it with target-loaded Python code."""
     shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
     env = _safe_env()
     env["VITE_BUILD_OUT_DIR"] = str(_STAGED_DASHBOARD_STATIC)
@@ -193,17 +189,30 @@ def _build_frontend() -> dict:
     if result.returncode or not (_STAGED_DASHBOARD_STATIC / "index.html").is_file():
         shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
         return {"ok": False, "reason": "frontend_build_failed"}
-    from aletheia.gateway.preflight import dashboard_artifact_errors
 
-    artifact_errors = dashboard_artifact_errors(_STAGED_DASHBOARD_STATIC)
-    if artifact_errors:
+    validated = target_fresh.validate_dashboard_artifacts(
+        _STAGED_DASHBOARD_STATIC,
+        project_root=_PROJECT_ROOT,
+        env=_safe_env(),
+        python_executable=sys.executable,
+    )
+    if not validated.get("ok"):
         shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
-        return {"ok": False, "reason": "frontend_artifact_incomplete", "detail": artifact_errors}
+        if validated.get("errors"):
+            return {
+                "ok": False,
+                "reason": "frontend_artifact_incomplete",
+                "detail": validated.get("errors"),
+            }
+        return {
+            "ok": False,
+            "reason": "frontend_artifact_validation_failed",
+            "detail": validated.get("detail") or validated.get("reason"),
+        }
     return {"ok": True}
 
 
 def _activate_frontend_build() -> bool:
-    """Swap complete static output while the gateway is stopped."""
     shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
     if _DASHBOARD_STATIC.exists():
         _DASHBOARD_STATIC.replace(_PREVIOUS_DASHBOARD_STATIC)
@@ -245,52 +254,90 @@ def _restart_gateway() -> dict:
     return {"ok": True}
 
 
+def run_smoke_check() -> dict:
+    """Load and execute the target checkout's smoke policy in a fresh process."""
+    return target_fresh.run_smoke_check(
+        project_root=_PROJECT_ROOT,
+        env=_safe_env(),
+        python_executable=sys.executable,
+    )
+
+
+def _persist_current_commit_fresh(commit: str) -> dict:
+    """Persist commit metadata without serializing a pre-pull config snapshot."""
+    return target_fresh.persist_current_commit(
+        commit,
+        project_root=_PROJECT_ROOT,
+        data_dir=get_data_dir(),
+        env=_safe_env(),
+        python_executable=sys.executable,
+    )
+
+
+def _metadata_fields(result: dict | None) -> dict:
+    result = result or {}
+    ok = result.get("ok") is True
+    return {
+        "metadata_persisted": ok,
+        "metadata_error": None if ok else (result.get("detail") or result.get("reason") or "unknown"),
+    }
+
+
+def _record_metadata_failure(commit: str, result: dict | None) -> None:
+    fields = _metadata_fields(result)
+    if fields["metadata_persisted"]:
+        return
+    write_audit({
+        "actor": "system",
+        "source": "updater",
+        "event_type": "update_metadata_persist_failed",
+        "entity_type": "system_update",
+        "entity_id": commit or "unknown",
+        "message": (
+            "Source state changed successfully, but target-loaded update metadata "
+            f"could not be persisted: {fields['metadata_error']}"
+        ),
+    })
+
+
 def apply_update(*, restart: bool = False) -> dict:
     """Apply an update according to the current execution mode."""
-
     if _is_packaged():
         try:
             result = _packaged_module().request_update()
         except Exception as exc:
-            reason = getattr(exc, "reason", "packaged_update_request_failed")
             return {
                 "accepted": False,
                 "applied": False,
                 "mode": "packaged",
-                "reason": reason,
+                "reason": getattr(exc, "reason", "packaged_update_request_failed"),
                 "message": str(exc),
             }
-        write_audit(
-            {
-                "actor": "human",
-                "source": "api",
-                "event_type": "packaged_update_requested",
-                "entity_type": "system_update",
-                "entity_id": str(result.get("operation_id") or "unknown"),
-                "message": result.get("message") or "Packaged update requested",
-            }
-        )
+        write_audit({
+            "actor": "human",
+            "source": "api",
+            "event_type": "packaged_update_requested",
+            "entity_type": "system_update",
+            "entity_id": str(result.get("operation_id") or "unknown"),
+            "message": result.get("message") or "Packaged update requested",
+        })
         return {"mode": "packaged", **result}
 
+    # This object is PRE-PULL ONLY. It is used for eligibility and branch
+    # selection, then deliberately never written after source switches.
     cfg = load_config()
     if not cfg.update.enabled:
         return {"applied": False, "reason": "update_disabled", "mode": "development"}
     if not git_ops.git_available():
         return {"applied": False, "reason": "git_unavailable", "mode": "development"}
-
     branch = cfg.update.branch
 
     if git_ops.is_worktree_dirty():
-        write_audit(
-            {
-                "actor": "human",
-                "source": "api",
-                "event_type": "update_blocked",
-                "entity_type": "system_update",
-                "entity_id": git_ops.current_commit(),
-                "message": "Update blocked: uncommitted local changes in source worktree",
-            }
-        )
+        write_audit({
+            "actor": "human", "source": "api", "event_type": "update_blocked",
+            "entity_type": "system_update", "entity_id": git_ops.current_commit(),
+            "message": "Update blocked: uncommitted local changes in source worktree",
+        })
         return {
             "applied": False,
             "reason": "dirty_worktree",
@@ -300,19 +347,14 @@ def apply_update(*, restart: bool = False) -> dict:
 
     current_branch = git_ops.current_branch()
     if current_branch != branch:
-        write_audit(
-            {
-                "actor": "human",
-                "source": "api",
-                "event_type": "update_blocked",
-                "entity_type": "system_update",
-                "entity_id": git_ops.current_commit(),
-                "message": (
-                    "Update blocked: source checkout branch "
-                    f"{current_branch or 'detached'} does not match configured branch {branch}"
-                ),
-            }
-        )
+        write_audit({
+            "actor": "human", "source": "api", "event_type": "update_blocked",
+            "entity_type": "system_update", "entity_id": git_ops.current_commit(),
+            "message": (
+                "Update blocked: source checkout branch "
+                f"{current_branch or 'detached'} does not match configured branch {branch}"
+            ),
+        })
         return {
             "applied": False,
             "reason": "wrong_branch",
@@ -326,27 +368,17 @@ def apply_update(*, restart: bool = False) -> dict:
     old = git_ops.current_commit()
     pulled = git_ops.pull(branch)
     if not pulled.get("ok"):
-        write_audit(
-            {
-                "actor": "human",
-                "source": "api",
-                "event_type": "update_failed",
-                "entity_type": "system_update",
-                "entity_id": old,
-                "message": f"Update failed: {pulled.get('reason')}",
-            }
-        )
+        write_audit({
+            "actor": "human", "source": "api", "event_type": "update_failed",
+            "entity_type": "system_update", "entity_id": old,
+            "message": f"Update failed: {pulled.get('reason')}",
+        })
         return {
             "applied": False,
             "reason": pulled.get("reason", "pull_failed"),
             "mode": "development",
         }
 
-    # Use the SHA that was pinned inside pull() at fetch time (the exact
-    # origin/<branch> ref at the moment of `git fetch`), not a second
-    # current_commit() call.  A second read is a mutable ref: origin/master
-    # can advance between the merge and this call, making config disagree
-    # with the actual on-disk HEAD that was built and smoke-checked.
     new = pulled.get("remote_commit") or git_ops.current_commit()
     if not new:
         return {"applied": False, "reason": "new_commit_unavailable", "mode": "development"}
@@ -354,6 +386,7 @@ def apply_update(*, restart: bool = False) -> dict:
     python_deps_changed = bool({"pyproject.toml", "uv.lock"}.intersection(changed_files))
     frontend_deps_changed = _frontend_deps_changed(changed_files)
     deps_reinstalled = False
+
     if python_deps_changed:
         install = _reinstall_deps()
         if not install.get("ok"):
@@ -375,38 +408,27 @@ def apply_update(*, restart: bool = False) -> dict:
                 _install_frontend_deps()
             return {"applied": False, "reason": build["reason"], "mode": "development"}
 
-    # Smoke-verify the pulled code before committing to it. On failure, roll back
-    # to the recorded pre-pull commit (user-authorized controlled rollback) so a
-    # bad update can never brick the gateway.
     smoke = run_smoke_check()
     if not smoke.get("ok"):
         rollback = git_ops.reset_hard(old)
         shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
         if python_deps_changed:
-            _reinstall_deps()  # restore old deps to match the reverted code
+            _reinstall_deps()
         if restart and frontend_deps_changed:
             _install_frontend_deps()
         if not rollback.get("ok"):
-            # Record the actual on-disk state after the failed reset. It may be
-            # the attempted commit, the old commit, or another concurrent value.
             actual_head = git_ops.current_commit() or ""
-            cfg.update.current_commit = actual_head
-            save_config(cfg)
-            write_audit(
-                {
-                    "actor": "human",
-                    "source": "api",
-                    "event_type": "update_rollback_failed",
-                    "entity_type": "system_update",
-                    "entity_id": new,
-                    "before": {"commit": old},
-                    "after": {"commit": actual_head},
-                    "message": (
-                        f"Rollback FAILED after smoke failure at {smoke.get('stage')}: "
-                        f"{rollback.get('reason')}; on-disk HEAD is {actual_head}"
-                    ),
-                }
-            )
+            metadata = _persist_current_commit_fresh(actual_head)
+            _record_metadata_failure(actual_head, metadata)
+            write_audit({
+                "actor": "human", "source": "api", "event_type": "update_rollback_failed",
+                "entity_type": "system_update", "entity_id": new,
+                "before": {"commit": old}, "after": {"commit": actual_head},
+                "message": (
+                    f"Rollback FAILED after smoke failure at {smoke.get('stage')}: "
+                    f"{rollback.get('reason')}; on-disk HEAD is {actual_head}"
+                ),
+            })
             return {
                 "applied": False,
                 "rolled_back": False,
@@ -421,24 +443,19 @@ def apply_update(*, restart: bool = False) -> dict:
                     "Smoke check failed AND rollback failed — the gateway is "
                     f"on unverified code at {actual_head}. Manual intervention required."
                 ),
+                **_metadata_fields(metadata),
             }
-        cfg.update.current_commit = old
-        save_config(cfg)
-        write_audit(
-            {
-                "actor": "human",
-                "source": "api",
-                "event_type": "update_rolled_back",
-                "entity_type": "system_update",
-                "entity_id": old,
-                "before": {"commit": new},
-                "after": {"commit": old},
-                "message": (
-                    f"Update rolled back: smoke failed at {smoke.get('stage')}: "
-                    f"{smoke.get('detail')}"
-                ),
-            }
-        )
+        metadata = _persist_current_commit_fresh(old)
+        _record_metadata_failure(old, metadata)
+        write_audit({
+            "actor": "human", "source": "api", "event_type": "update_rolled_back",
+            "entity_type": "system_update", "entity_id": old,
+            "before": {"commit": new}, "after": {"commit": old},
+            "message": (
+                f"Update rolled back: smoke failed at {smoke.get('stage')}: "
+                f"{smoke.get('detail')}"
+            ),
+        })
         return {
             "applied": False,
             "rolled_back": True,
@@ -448,6 +465,7 @@ def apply_update(*, restart: bool = False) -> dict:
             "old_commit": old,
             "attempted_commit": new,
             "message": "Update rolled back after smoke check failed. No restart needed.",
+            **_metadata_fields(metadata),
         }
 
     frontend_built = False
@@ -457,23 +475,18 @@ def apply_update(*, restart: bool = False) -> dict:
         restarted = _restart_gateway()
         if not restarted.get("ok"):
             if "aletheia/storage/migrations.py" in changed_files:
-                cfg.update.current_commit = new
-                save_config(cfg)
-                write_audit(
-                    {
-                        "actor": "human",
-                        "source": "api",
-                        "event_type": "update_restart_failed_after_schema_change",
-                        "entity_type": "system_update",
-                        "entity_id": new,
-                        "before": {"commit": old},
-                        "after": {"commit": new},
-                        "message": (
-                            "Gateway restart failed after a schema-bearing update; "
-                            "new code was retained because database migrations are not reversible"
-                        ),
-                    }
-                )
+                metadata = _persist_current_commit_fresh(new)
+                _record_metadata_failure(new, metadata)
+                write_audit({
+                    "actor": "human", "source": "api",
+                    "event_type": "update_restart_failed_after_schema_change",
+                    "entity_type": "system_update", "entity_id": new,
+                    "before": {"commit": old}, "after": {"commit": new},
+                    "message": (
+                        "Gateway restart failed after a schema-bearing update; "
+                        "new code was retained because database migrations are not reversible"
+                    ),
+                })
                 return {
                     "applied": False,
                     "rolled_back": False,
@@ -483,18 +496,18 @@ def apply_update(*, restart: bool = False) -> dict:
                     "attempted_commit": new,
                     "restart_error": restarted.get("reason"),
                     "message": "New code retained; inspect migration and gateway logs, then retry start.",
+                    **_metadata_fields(metadata),
                 }
+
             _restore_frontend_build(had_previous_static)
             rollback = git_ops.reset_hard(old)
             if python_deps_changed:
                 _reinstall_deps()
             if frontend_deps_changed:
                 _install_frontend_deps()
-            # Always inspect disk after the rollback attempt. A failed reset can
-            # leave any HEAD, not necessarily the attempted new commit.
             actual_head_after_rollback = git_ops.current_commit() or ""
-            cfg.update.current_commit = actual_head_after_rollback
-            save_config(cfg)
+            metadata = _persist_current_commit_fresh(actual_head_after_rollback)
+            _record_metadata_failure(actual_head_after_rollback, metadata)
             recovery = _restart_gateway() if rollback.get("ok") else {"ok": False}
             return {
                 "applied": False,
@@ -505,27 +518,22 @@ def apply_update(*, restart: bool = False) -> dict:
                 "attempted_commit": new,
                 "actual_head": actual_head_after_rollback,
                 "recovery_started": bool(recovery.get("ok")),
+                **_metadata_fields(metadata),
             }
         shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)
 
-    cfg.update.current_commit = new
-    save_config(cfg)
-
-    write_audit(
-        {
-            "actor": "human",
-            "source": "api",
-            "event_type": "update_applied",
-            "entity_type": "system_update",
-            "entity_id": new,
-            "before": {"commit": old},
-            "after": {"commit": new},
-            "message": (
-                f"Updated {old[:8]} -> {new[:8]} "
-                f"(deps_reinstalled={deps_reinstalled}, frontend_built={frontend_built}, restart={restart})"
-            ),
-        }
-    )
+    metadata = _persist_current_commit_fresh(new)
+    _record_metadata_failure(new, metadata)
+    write_audit({
+        "actor": "human", "source": "api", "event_type": "update_applied",
+        "entity_type": "system_update", "entity_id": new,
+        "before": {"commit": old}, "after": {"commit": new},
+        "message": (
+            f"Updated {old[:8]} -> {new[:8]} "
+            f"(deps_reinstalled={deps_reinstalled}, frontend_built={frontend_built}, restart={restart}, "
+            f"metadata_persisted={metadata.get('ok') is True})"
+        ),
+    })
     return {
         "applied": True,
         "mode": "development",
@@ -536,13 +544,16 @@ def apply_update(*, restart: bool = False) -> dict:
         "restart_requested": restart,
         "restart_completed": restart,
         "restart_required": not restart,
-        "message": "Update applied and gateway restarted." if restart else "Update applied. Restart the gateway to load the new code.",
+        "message": (
+            "Update applied and gateway restarted."
+            if restart else
+            "Update applied. Restart the gateway to load the new code."
+        ),
+        **_metadata_fields(metadata),
     }
 
 
 def rollback_update() -> dict:
-    """Request rollback to the previous installed release."""
-
     if not _is_packaged():
         return {
             "accepted": False,
