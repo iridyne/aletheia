@@ -525,6 +525,7 @@ _T1_SOURCE_KINDS = (
     "prediction",
     "hyperliquid",
     "position_x",
+    "options_structure",
 )
 
 
@@ -589,6 +590,20 @@ def _record_observer_context_artifacts(
     return artifacts
 
 
+def _options_structure_sources(structures: dict[str, dict]) -> list[dict]:
+    return [
+        {
+            "id": row.get("id"),
+            "symbol": sym,
+            "source": row.get("source"),
+            "gex_convention": row.get("gex_convention"),
+            "observed_at": row.get("observed_at"),
+        }
+        for sym, row in (structures or {}).items()
+        if row.get("id")
+    ]
+
+
 def _bounded_rendered_sources(sources: dict[str, list[dict]]) -> dict[str, list[dict]]:
     limits = {
         "news": 3,
@@ -597,6 +612,7 @@ def _bounded_rendered_sources(sources: dict[str, list[dict]]) -> dict[str, list[
         "prediction": 3,
         "hyperliquid": 3,
         "position_x": 1,
+        "options_structure": 2,
     }
     bounded: dict[str, list[dict]] = {}
     for kind in _T1_SOURCE_KINDS:
@@ -907,6 +923,7 @@ async def _prefetch_symbol(
                 }
             )
 
+        enrichment_sources["options_structure"] = _options_structure_sources(db_cache.options_structures)
         enriched = render_enriched_context_md(
             [symbol],
             tradability,
@@ -919,7 +936,7 @@ async def _prefetch_symbol(
         )
         if enriched:
             context = context + "\n\n" + enriched
-            for kind in ("macro", "onchain", "hyperliquid", "position_x"):
+            for kind in ("macro", "onchain", "hyperliquid", "position_x", "options_structure"):
                 rendered_sources[kind] = enrichment_sources[kind]
     except Exception as _e:
         logger.debug("[MO prefetch] %s: enriched context skipped: %s", symbol, _e)
@@ -1287,6 +1304,12 @@ async def _analyze_symbol(
                     }
                 )
 
+            _opt_structs = {
+                sym: row
+                for sym, row in repo.batch_options_structures(["BTC", "ETH"]).items()
+                if fresh_row(row, "options_structure")
+            }
+            enrichment_sources["options_structure"] = _options_structure_sources(_opt_structs)
             enriched = render_enriched_context_md(
                 [symbol],
                 tradability,
@@ -1295,15 +1318,11 @@ async def _analyze_symbol(
                 onchain=onchain_rows,
                 xvenue_funding=xvenue_funding,
                 perp_structure=perp_structure,
-                options_structure={
-                    sym: row
-                    for sym, row in repo.batch_options_structures(["BTC", "ETH"]).items()
-                    if fresh_row(row, "options_structure")
-                } or None,
+                options_structure=_opt_structs or None,
             )
             if enriched:
                 context = context + "\n\n" + enriched
-                for kind in ("macro", "onchain", "hyperliquid", "position_x"):
+                for kind in ("macro", "onchain", "hyperliquid", "position_x", "options_structure"):
                     rendered_sources[kind] = enrichment_sources[kind]
             _step_times["enriched_context"] = _time.monotonic() - _t0
             logger.debug(

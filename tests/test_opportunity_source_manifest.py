@@ -707,6 +707,17 @@ async def test_observer_t1_names_only_sources_rendered_for_the_exact_instrument(
             "total_usd": 1_000_000,
             "observed_at": now,
         }],
+        options_structures={
+            "BTC": {
+                "id": "options-rendered",
+                "symbol": "BTC",
+                "source": "deribit_public",
+                "gex_convention": "v1_retail_call_minus_put",
+                "gamma_regime": "positive",
+                "net_gex_estimate": 1_000_000.0,
+                "observed_at": now,
+            }
+        },
     )
 
     async def technical_context(*_args, **_kwargs):
@@ -748,6 +759,7 @@ async def test_observer_t1_names_only_sources_rendered_for_the_exact_instrument(
         "prediction": ["prediction-rendered"],
         "hyperliquid": ["funding-rendered", "oi-rendered"],
         "position_x": ["position-x-rendered"],
+        "options_structure": ["options-rendered"],
     }
 
     manifest = observer._opportunity_evidence_manifest(
