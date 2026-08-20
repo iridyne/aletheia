@@ -254,6 +254,9 @@ def render_enriched_context_md(
             dist = row.get("nearest_gamma_wall_distance")
             if dist is not None:
                 parts.append(f"nearest wall {dist:.1f}% from spot")
+            obs = (row.get("observed_at") or "")[:16]
+            if obs:
+                parts.append(f"as-of {obs}")
             if parts:
                 opt_rows.append(f"{currency}: " + "; ".join(parts))
         if opt_rows:

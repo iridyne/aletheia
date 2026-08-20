@@ -745,7 +745,11 @@ def _batch_prefetch_db(symbols: list[str]) -> _DbCache:
         news=repo.batch_news(symbols, news_since),
         onchain_rows=fresh_rows(repo.latest_onchain_snapshots(limit=3), "onchain"),
         open_interest_hl=repo.batch_open_interest(symbols, "hyperliquid"),
-        options_structures=repo.batch_options_structures(["BTC", "ETH"]),
+        options_structures={
+            sym: row
+            for sym, row in repo.batch_options_structures(["BTC", "ETH"]).items()
+            if fresh_row(row, "options_structure")
+        },
     )
 
 
@@ -1291,7 +1295,11 @@ async def _analyze_symbol(
                 onchain=onchain_rows,
                 xvenue_funding=xvenue_funding,
                 perp_structure=perp_structure,
-                options_structure=repo.batch_options_structures(["BTC", "ETH"]) or None,
+                options_structure={
+                    sym: row
+                    for sym, row in repo.batch_options_structures(["BTC", "ETH"]).items()
+                    if fresh_row(row, "options_structure")
+                } or None,
             )
             if enriched:
                 context = context + "\n\n" + enriched
