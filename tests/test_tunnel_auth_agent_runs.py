@@ -287,6 +287,65 @@ async def test_all_allowlisted_agents_accepted_locally(client, tmp_path, monkeyp
 
 
 # ---------------------------------------------------------------------------
+# Registry integrity: every allowlisted agent must resolve via get_agent_fn
+# ---------------------------------------------------------------------------
+
+def test_all_allowlisted_agents_resolve_via_registry():
+    """Every entry in _MANUAL_AGENT_ALLOWLIST must resolve without ValueError.
+
+    This test does NOT monkeypatch get_agent_fn — it calls the real registry so
+    a stale allowlist entry (module exists but no @register_agent, or missing module)
+    causes the test to fail at the resolution step rather than at the user's click.
+    """
+    from aletheia.server.routes.data import _MANUAL_AGENT_ALLOWLIST
+    from aletheia.agents import get_agent_fn
+
+    for name in _MANUAL_AGENT_ALLOWLIST:
+        try:
+            fn = get_agent_fn(name)
+        except ValueError as exc:
+            raise AssertionError(
+                f"Agent '{name}' is in _MANUAL_AGENT_ALLOWLIST but not registered: {exc}"
+            ) from exc
+        assert callable(fn), f"get_agent_fn('{name}') returned non-callable {fn!r}"
+
+
+@pytest.mark.anyio
+async def test_agent_catalog_returns_only_resolvable_names(client, tmp_path, monkeypatch):
+    """GET /api/agents/catalog lists only agents that are callable in the real registry."""
+    from aletheia.agents import get_agent_fn
+
+    response = await client.get("/api/agents/catalog")
+    assert response.status_code == 200
+    catalog = response.json()
+    assert "agents" in catalog
+    for entry in catalog["agents"]:
+        name = entry["name"]
+        try:
+            fn = get_agent_fn(name)
+        except ValueError as exc:
+            raise AssertionError(
+                f"Catalog exposes '{name}' but it is not callable: {exc}"
+            ) from exc
+        assert callable(fn)
+    # strategy_designer was never registered and must not appear
+    names = {e["name"] for e in catalog["agents"]}
+    assert "strategy_designer" not in names, "strategy_designer must not appear in the catalog"
+
+
+@pytest.mark.anyio
+async def test_strategy_designer_returns_403(client, tmp_path, monkeypatch):
+    """strategy_designer was never registered and must always return 403."""
+    monkeypatch.setattr("aletheia.server.routes.data._ensure_db", lambda: None)
+    response = await client.post(
+        "/api/agent-runs/start",
+        json={"agent_name": "strategy_designer"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["error"] == "agent_not_in_manual_allowlist"
+
+
+# ---------------------------------------------------------------------------
 # Gate check for behavior-producing agents
 # ---------------------------------------------------------------------------
 
