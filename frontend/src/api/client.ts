@@ -431,6 +431,15 @@ export async function fetchJson<T>(
 	}
 }
 
+export async function getWsTicket(): Promise<string | null> {
+	try {
+		const data = await fetchJson<{ ticket: string }>("/ws/ticket");
+		return data.ticket ?? null;
+	} catch {
+		return null;
+	}
+}
+
 function post<T>(path: string, body?: unknown): Promise<T> {
 	return fetchJson<T>(path, {
 		method: "POST",

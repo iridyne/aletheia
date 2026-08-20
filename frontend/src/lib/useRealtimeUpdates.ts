@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { getWsTicket } from '../api/client'
 import { positionKeys } from './queryKeys'
 
 /**
@@ -197,11 +198,14 @@ export function useRealtimeUpdates(enabled = true): RealtimeStatus {
       }, retryDelay)
     }
 
-    function connect(reconnecting = false) {
+    async function connect(reconnecting = false) {
       if (dead || document.visibilityState === 'hidden' || ws) return
       updateStatus({ state: reconnecting ? 'reconnecting' : 'connecting' })
+      const ticket = await getWsTicket()
+      if (dead || document.visibilityState === 'hidden' || ws) return
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const socket = new WebSocket(`${proto}//${window.location.host}/api/ws`)
+      const qs = ticket ? `?ticket=${encodeURIComponent(ticket)}` : ''
+      const socket = new WebSocket(`${proto}//${window.location.host}/api/ws${qs}`)
       ws = socket
 
       socket.onopen = () => {
