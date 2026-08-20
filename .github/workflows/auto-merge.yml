@@ -4,11 +4,6 @@ on:
   pull_request_target:
     branches: [master]
     types: [opened, reopened, ready_for_review, edited, synchronize, labeled, unlabeled, closed]
-  pull_request_review:
-    branches: [master]
-    types: [submitted, dismissed]
-  issue_comment:
-    types: [created, edited]
   workflow_run:
     workflows: [Aletheia CI]
     types: [completed]
@@ -30,23 +25,6 @@ jobs:
         github.event.action != 'closed'
       ) ||
       (
-        github.event_name == 'pull_request_review' &&
-        (
-          github.event.action == 'dismissed' ||
-          github.event.review.user.login == 'chatgpt-codex-connector' ||
-          github.event.review.user.login == 'chatgpt-codex-connector[bot]'
-        )
-      ) ||
-      (
-        github.event_name == 'issue_comment' &&
-        github.event.issue.pull_request &&
-        (
-          startsWith(github.event.comment.body, '/codex-triage ') ||
-          github.event.comment.user.login == 'chatgpt-codex-connector' ||
-          github.event.comment.user.login == 'chatgpt-codex-connector[bot]'
-        )
-      ) ||
-      (
         github.event_name == 'workflow_run' &&
         github.event.workflow_run.event == 'pull_request' &&
         github.event.workflow_run.conclusion == 'success'
@@ -62,55 +40,12 @@ jobs:
         with:
           retries: 3
           script: |
-            const connectorLogin = 'chatgpt-codex-connector';
-            const normalizeLogin = (login) => String(login || '').replace(/\[bot\]$/, '');
-            const isConnectorLogin = (login) => normalizeLogin(login) === connectorLogin;
-            const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
-            const triagePattern = /^\/codex-triage ([0-9a-f]{40}) (clean|complete)$/;
-            const reviewedCommitPattern = /Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i;
-            const resolveReviewedCommitSha = async (body) => {
-              const match = String(body || '').match(reviewedCommitPattern);
-              if (!match) return null;
-              try {
-                const {data: commit} = await github.rest.repos.getCommit({
-                  ...context.repo,
-                  ref: match[1],
-                });
-                return commit.sha;
-              } catch (error) {
-                core.info(`could not resolve Connector reviewed commit ${match[1]}: ${error}`);
-                return null;
-              }
-            };
             const eventName = context.eventName;
             const payload = context.payload;
             let pullRequestNumbers = [];
 
             if (eventName === 'pull_request_target') {
               pullRequestNumbers = [payload.pull_request.number];
-            } else if (eventName === 'pull_request_review') {
-              if (payload.action !== 'dismissed' && !isConnectorLogin(payload.review.user?.login)) return;
-              pullRequestNumbers = [payload.pull_request.number];
-            } else if (eventName === 'issue_comment') {
-              if (isConnectorLogin(payload.comment.user?.login)) {
-                pullRequestNumbers = [payload.issue.number];
-              } else {
-                if (!trustedAssociations.has(payload.comment.author_association)) {
-                  core.info('ignoring Codex triage acknowledgement from an untrusted author');
-                  return;
-                }
-                const {data: commenterPermission} = await github.rest.repos.getCollaboratorPermissionLevel({
-                  ...context.repo,
-                  username: payload.comment.user?.login,
-                });
-                if (!new Set(['admin', 'maintain', 'write']).has(commenterPermission.permission)) {
-                  core.info('ignoring Codex triage acknowledgement without write permission');
-                  return;
-                }
-                const [command] = String(payload.comment.body || '').replace(/\r/g, '').split('\n');
-                if (!triagePattern.test(command.trim())) return;
-                pullRequestNumbers = [payload.issue.number];
-              }
             } else if (eventName === 'workflow_run') {
               pullRequestNumbers = payload.workflow_run.pull_requests.map(({number}) => number);
             }
@@ -129,34 +64,11 @@ jobs:
                 continue;
               }
               if (
-                eventName === 'pull_request_review' &&
-                payload.review.commit_id !== pullRequest.head.sha
-              ) {
-                core.info('ignoring Connector review for a superseded head');
-                continue;
-              }
-              if (
                 eventName === 'workflow_run' &&
                 payload.workflow_run.head_sha !== pullRequest.head.sha
               ) {
                 core.info('ignoring CI completion for a superseded head');
                 continue;
-              }
-              if (eventName === 'issue_comment') {
-                if (isConnectorLogin(payload.comment.user?.login)) {
-                  const reviewedCommitSha = await resolveReviewedCommitSha(payload.comment.body);
-                  if (reviewedCommitSha !== pullRequest.head.sha) {
-                    core.info('ignoring Connector completion for a superseded or unbound head');
-                    continue;
-                  }
-                } else {
-                  const [command] = String(payload.comment.body || '').replace(/\r/g, '').split('\n');
-                  const acknowledgement = command.trim().match(triagePattern);
-                  if (!acknowledgement || acknowledgement[1] !== pullRequest.head.sha) {
-                    core.info('ignoring Codex triage acknowledgement for a superseded head');
-                    continue;
-                  }
-                }
               }
               const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
                 ...context.repo,
@@ -398,6 +310,8 @@ jobs:
                   }
                   mergeCommit { oid }
                   mergedBy { login }
+                  headRefName
+                  isCrossRepository
                 }
               }
             }`;
@@ -449,6 +363,22 @@ jobs:
                 );
               }
               return failures;
+            };
+            const deleteHeadBranch = async (pullRequest) => {
+              if (pullRequest.isCrossRepository) return;
+              try {
+                await github.rest.git.deleteRef({
+                  ...context.repo,
+                  ref: `heads/${pullRequest.headRefName}`,
+                });
+                core.info(`deleted head branch ${pullRequest.headRefName}`);
+              } catch (error) {
+                if (error.status === 422 || error.status === 404) {
+                  core.info(`branch ${pullRequest.headRefName} already removed`);
+                } else {
+                  core.warning(`could not delete branch ${pullRequest.headRefName}: ${error}`);
+                }
+              }
             };
             const dispatchRelease = async (pullRequest, mergeCommitSha) => {
               if (!releaseAfterMerge) return;
@@ -549,106 +479,16 @@ jobs:
               }
 
               // Native auto-merge survives synchronize events and could merge a new
-              // head before the Connector responds. Ordinary pull requests therefore
-              // use only this exact-SHA, event-driven merge path.
+              // head before CI finishes. Use only this exact-SHA, event-driven merge path.
               await disableAutoMerge(pullRequest);
               if (pullRequest.labels.nodes.some(({name}) => name === 'do-not-auto-merge')) {
                 core.info('do-not-auto-merge holds this pull request');
                 return;
               }
 
-              const connectorLogin = 'chatgpt-codex-connector';
-              const normalizeLogin = (login) => String(login || '').replace(/\[bot\]$/, '');
-              const isConnectorLogin = (login) => normalizeLogin(login) === connectorLogin;
-              const trustedAssociations = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
-              const triagePattern = /^\/codex-triage ([0-9a-f]{40}) (clean|complete)$/;
-              const reviewedCommitPattern = /Reviewed commit:[^`]*`([0-9a-f]{7,40})`/i;
-              const resolveReviewedCommitSha = async (body) => {
-                const match = String(body || '').match(reviewedCommitPattern);
-                if (!match) return null;
-                try {
-                  const {data: commit} = await github.rest.repos.getCommit({
-                    ...context.repo,
-                    ref: match[1],
-                  });
-                  return commit.sha;
-                } catch (error) {
-                  core.info(`could not resolve Connector reviewed commit ${match[1]}: ${error}`);
-                  return null;
-                }
-              };
-              const allReviews = await github.paginate(github.rest.pulls.listReviews, {
-                ...context.repo,
-                pull_number: pullRequest.number,
-                per_page: 100,
-              });
-              const exactHeadReviews = allReviews
-                .filter((review) =>
-                  isConnectorLogin(review.user?.login) &&
-                  review.commit_id === expectedHeadSha &&
-                  review.submitted_at &&
-                  review.state !== 'DISMISSED'
-                )
-                .map((review) => ({submittedAt: review.submitted_at}));
-              const acknowledgements = pullRequest.comments.nodes.flatMap((comment) => {
-                if (!trustedAssociations.has(comment.authorAssociation)) return [];
-                const [command, ...detailLines] = String(comment.body || '')
-                  .replace(/\r/g, '')
-                  .split('\n');
-                const match = command.trim().match(triagePattern);
-                const details = detailLines.join('\n').trim();
-                if (!match || match[1] !== expectedHeadSha || !details) return [];
-                return [{
-                  disposition: match[2],
-                  createdAt: comment.createdAt,
-                }];
-              });
-              const connectorCleanCandidates = pullRequest.comments.nodes.filter((comment) =>
-                isConnectorLogin(comment.author?.login) &&
-                /Didn't find any major issues\./i.test(String(comment.body || ''))
-              );
-              let connectorCleanExactHead = false;
-              for (const comment of connectorCleanCandidates) {
-                const reviewedCommitSha = await resolveReviewedCommitSha(comment.body);
-                if (reviewedCommitSha === expectedHeadSha) {
-                  connectorCleanExactHead = true;
-                  break;
-                }
-              }
-
-              if (exactHeadReviews.length === 0) {
-                if (
-                  !connectorCleanExactHead &&
-                  !acknowledgements.some(({disposition}) => disposition === 'clean')
-                ) {
-                  core.info(
-                    `waiting for exact-head Connector completion on ${expectedHeadSha}; ` +
-                    'a clean Connector result will resume this PR automatically',
-                  );
-                  return;
-                }
-              } else {
-                const latestReviewAt = exactHeadReviews
-                  .map(({submittedAt}) => submittedAt)
-                  .sort()
-                  .at(-1);
-                const triageComplete = acknowledgements.some((acknowledgement) =>
-                  acknowledgement.disposition === 'complete' &&
-                  acknowledgement.createdAt >= latestReviewAt
-                );
-                if (!triageComplete) {
-                  core.info(
-                    `waiting for P1/P2 triage on ${expectedHeadSha}; an authorized maintainer ` +
-                    `must comment "/codex-triage ${expectedHeadSha} complete" after the exact-head ` +
-                    `review and document every confirmed, false-positive, or deferred finding`,
-                  );
-                  return;
-                }
-              }
-
               if (pullRequest.mergeStateStatus !== 'CLEAN') {
                 core.info(
-                  `exact-head Connector gate passed; waiting for an event after pull request ` +
+                  `CI gate passed; waiting for an event after pull request ` +
                   `status ${pullRequest.mergeStateStatus}`,
                 );
                 return;
@@ -665,6 +505,7 @@ jobs:
                 );
               }
               await closeLinkedIssues(pullRequest);
+              await deleteHeadBranch(pullRequest);
               return;
             }
 
@@ -759,6 +600,7 @@ jobs:
                   mergeResult.data.sha,
                 );
                 await cleanupPromise;
+                await deleteHeadBranch(pullRequest);
                 return;
               }
               if (pullRequest.autoMergeRequest) {
