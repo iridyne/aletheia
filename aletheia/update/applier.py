@@ -524,12 +524,30 @@ def apply_update(*, restart: bool = False) -> dict:
 
     metadata = _persist_current_commit_fresh(new)
     _record_metadata_failure(new, metadata)
+    source_changed = old != new
+    if restart:
+        message = (
+            "Update applied and gateway restarted."
+            if source_changed
+            else "Source already up to date; gateway restarted."
+        )
+    else:
+        message = (
+            "Update applied. Restart the gateway to load the new code."
+            if source_changed
+            else "Source already up to date; no source restart was requested."
+        )
     write_audit({
         "actor": "human", "source": "api", "event_type": "update_applied",
         "entity_type": "system_update", "entity_id": new,
         "before": {"commit": old}, "after": {"commit": new},
         "message": (
-            f"Updated {old[:8]} -> {new[:8]} "
+            (
+                f"Updated {old[:8]} -> {new[:8]}"
+                if source_changed
+                else f"Source already at {new[:8]}"
+            )
+            + " "
             f"(deps_reinstalled={deps_reinstalled}, frontend_built={frontend_built}, restart={restart}, "
             f"metadata_persisted={metadata.get('ok') is True})"
         ),
@@ -539,16 +557,13 @@ def apply_update(*, restart: bool = False) -> dict:
         "mode": "development",
         "old_commit": old,
         "new_commit": new,
+        "source_changed": source_changed,
         "deps_reinstalled": deps_reinstalled,
         "frontend_built": frontend_built,
         "restart_requested": restart,
         "restart_completed": restart,
         "restart_required": not restart,
-        "message": (
-            "Update applied and gateway restarted."
-            if restart else
-            "Update applied. Restart the gateway to load the new code."
-        ),
+        "message": message,
         **_metadata_fields(metadata),
     }
 

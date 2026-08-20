@@ -92,3 +92,9 @@ The existing unattended Fedora Paper release path remains:
 ```bash
 uv run aletheia update auto run
 ```
+
+For source-checkout updates with restart enabled, the CLI reports the live
+Gateway boot commit as the pre-update version when it is available. This keeps
+the output honest when the source checkout is already at the target but the
+running Gateway is still on an older commit; no-source-change runs are reported
+as `Already up to date` rather than as an update from a commit to itself.

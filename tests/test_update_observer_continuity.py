@@ -403,7 +403,36 @@ def test_wrapper_preserves_existing_applier_and_uses_fresh_postflight(monkeypatc
     assert result["applied"] is True
     assert result["continuity_verified"] is True
     assert result["continuity_state"] == "verified"
+    assert result["runtime_old_commit"] == "old111"
     assert result["continuity"]["comparison"]["postflight_capture_source"] == "fresh_target_process"
+
+
+def test_wrapper_uses_runtime_boot_commit_when_source_is_already_current(monkeypatch):
+    from aletheia.update import applier, continuity
+
+    before = _snapshot(disk_sha="target-sha", gateway_sha="old-sha", capture_source="in_process")
+    after = _snapshot(disk_sha="target-sha", gateway_sha="target-sha")
+    monkeypatch.setattr(continuity, "capture_update_continuity", lambda: before)
+    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda: after)
+    monkeypatch.setattr(
+        applier,
+        "apply_update",
+        lambda *, restart: {
+            "applied": True,
+            "mode": "development",
+            "old_commit": "target-sha",
+            "new_commit": "target-sha",
+            "source_changed": False,
+            "deps_reinstalled": False,
+        },
+    )
+    monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
+
+    result = continuity.apply_update_with_continuity(restart=True)
+
+    assert result["runtime_old_commit"] == "old-sha"
+    assert result["old_commit"] == "target-sha"
+    assert result["new_commit"] == "target-sha"
 
 
 def test_wrapper_does_not_call_applier_when_preflight_fails(monkeypatch):
