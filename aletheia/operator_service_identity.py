@@ -19,7 +19,7 @@ import hmac
 import secrets
 import threading
 
-from aletheia.config.secrets import get_secret, set_secret
+from aletheia.config.secrets import _file_get, set_secret
 
 OPERATOR_SERVICE_SECRET_KEY = "operator_service_token"
 OPERATOR_SERVICE_ENV = "ALETHEIA_OPERATOR_SERVICE_TOKEN"
@@ -31,7 +31,10 @@ _live_shell_token: str | None = None
 
 
 def _load_persisted() -> str | None:
-    token = get_secret(OPERATOR_SERVICE_SECRET_KEY)
+    # Use _file_get, not get_secret: the encrypted file is the authoritative store for
+    # this machine-generated credential. get_secret() would prefer a potentially stale
+    # OS keyring copy when a prior set_password() write failed silently (issue #1104).
+    token = _file_get(OPERATOR_SERVICE_SECRET_KEY)
     if token is None:
         return None
     token = token.strip()

@@ -144,10 +144,11 @@ def _reset_token_registry(monkeypatch):
 
 
 def _mock_secret_store(monkeypatch):
-    import aletheia.config.secrets as secrets_mod
+    import aletheia.operator_service_identity as osi
     store: dict = {}
-    monkeypatch.setattr(secrets_mod, "get_secret", lambda k: store.get(k))
-    monkeypatch.setattr(secrets_mod, "set_secret", lambda k, v: store.update({k: v}))
+    # Patch the names as bound in the osi module (where rotate/load actually call them).
+    monkeypatch.setattr(osi, "set_secret", lambda k, v: store.update({k: v}))
+    monkeypatch.setattr(osi, "_file_get", lambda k: store.get(k))
     return store
 
 
@@ -217,3 +218,57 @@ def test_multiple_shadow_runs_have_independent_credentials(monkeypatch):
     assert osi.is_valid_operator_service_token(tokens[0])
     assert not osi.is_valid_operator_service_token(tokens[1])
     assert osi.is_valid_operator_service_token(tokens[2])
+
+
+# ---------------------------------------------------------------------------
+# Cross-store authority (issue #1104)
+# ---------------------------------------------------------------------------
+
+def test_stale_keyring_does_not_override_file_after_rotation(monkeypatch):
+    """Existing keyring value + failed set_password() must not cause current_operator_service_token()
+    to return a different value from the rotated/injected token (issue #1104)."""
+    import aletheia.operator_service_identity as osi
+    import aletheia.config.secrets as secrets_mod
+    _reset_token_registry(monkeypatch)
+
+    file_store: dict[str, str] = {}
+    # Patch osi module names (where rotate/load actually call them).
+    monkeypatch.setattr(osi, "set_secret", lambda k, v: file_store.update({k: v}))
+    monkeypatch.setattr(osi, "_file_get", lambda k: file_store.get(k))
+    # Verify stale get_secret is not consulted — _load_persisted now uses _file_get.
+    monkeypatch.setattr(secrets_mod, "get_secret", lambda k: "stale-keyring-token-A")
+
+    new_token = osi.rotate_operator_service_token()
+    confirmed = osi.current_operator_service_token()
+
+    assert confirmed == new_token, "current_operator_service_token must match rotated token"
+    assert confirmed != "stale-keyring-token-A", "stale keyring value must not bleed through"
+
+
+def test_successful_rotation_current_token_matches_injected(monkeypatch):
+    """Successful rotation: current_operator_service_token() must equal the returned token."""
+    import aletheia.operator_service_identity as osi
+    _reset_token_registry(monkeypatch)
+    _mock_secret_store(monkeypatch)
+
+    new_token = osi.rotate_operator_service_token()
+    confirmed = osi.current_operator_service_token()
+
+    assert confirmed == new_token
+
+
+def test_rotation_file_write_failure_surfaces_error(monkeypatch):
+    """If set_secret raises, rotate_operator_service_token must propagate the error rather
+    than returning a token that the backend cannot verify."""
+    import pytest
+    import aletheia.operator_service_identity as osi
+    _reset_token_registry(monkeypatch)
+    monkeypatch.setattr(osi, "_file_get", lambda k: None)
+
+    def _raise(k, v):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(osi, "set_secret", _raise)
+
+    with pytest.raises(OSError):
+        osi.rotate_operator_service_token()
