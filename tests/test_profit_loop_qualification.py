@@ -84,6 +84,46 @@ def test_proven_verdict_all_gates_pass(monkeypatch):
     assert result["content_hash"]
 
 
+def test_zero_loss_cohort_proven(monkeypatch):
+    """All-win cohort (zero losses) must pass the profit_factor gate (#1148)."""
+    pnls = [1.0] * 10 + [0.5] * 5  # spread across 15 days, no losses
+    _patch_outcomes(monkeypatch, pnls)
+    result = compile_qualification_verdict(registration=_REGISTRATION)
+    assert result["verdict"] == "minimum_profitable_loop_proven"
+    assert result["metrics"]["profit_factor"] is None  # serialised as null (no_losses)
+    assert result["metrics"]["profit_factor_state"] == "no_losses"
+    assert result["gates"]["profit_factor_above_1"]["pass"] is True
+
+
+def test_zero_loss_artifact_is_json_safe(monkeypatch):
+    """Zero-loss cohort artifact must be serialisable as standards-compliant JSON."""
+    import json as _json
+    _patch_outcomes(monkeypatch, [1.0] * 10)
+    result = compile_qualification_verdict(registration=_REGISTRATION)
+    serialised = _json.dumps(result, allow_nan=False)  # raises on Infinity / NaN
+    decoded = _json.loads(serialised)
+    assert decoded["metrics"]["profit_factor_state"] == "no_losses"
+
+
+def test_all_losses_cohort_rejected(monkeypatch):
+    """All-loss cohort: net_pnl_positive and profit_factor_above_1 both fail."""
+    _patch_outcomes(monkeypatch, [-1.0] * 5)
+    result = compile_qualification_verdict(registration=_REGISTRATION)
+    assert result["verdict"] == "minimum_profitable_loop_rejected"
+    failed = result["gates"]["failed_gates"]
+    assert "net_pnl_positive" in failed
+    assert "profit_factor_above_1" in failed
+
+
+def test_flat_trades_only_rejected(monkeypatch):
+    """All-flat cohort (no wins, no losses): profit_factor_state='no_trades', gate fails."""
+    _patch_outcomes(monkeypatch, [0.0] * 5)
+    result = compile_qualification_verdict(registration=_REGISTRATION)
+    assert result["verdict"] == "minimum_profitable_loop_rejected"
+    assert result["metrics"]["profit_factor_state"] == "no_trades"
+    assert result["gates"]["profit_factor_above_1"]["pass"] is False
+
+
 def test_rejected_verdict_negative_pnl(monkeypatch):
     _patch_outcomes(monkeypatch, [-5.0, -3.0, 1.0, -2.0])
     result = compile_qualification_verdict(registration=_REGISTRATION)

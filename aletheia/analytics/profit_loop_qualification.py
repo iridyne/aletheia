@@ -198,9 +198,18 @@ def compile_qualification_verdict(
     top1_conc, top5_conc = _concentration_values(ordered_pnls)
     eligible_days = len(dates)
 
+    # JSON-safe profit factor: inf (zero-loss) → None with explicit state field.
+    pf_no_losses = profit_factor is not None and math.isinf(float(profit_factor))
+    pf_serializable = None if pf_no_losses else profit_factor
+    pf_state: str | None = (
+        "no_losses" if pf_no_losses else
+        ("no_trades" if profit_factor is None else None)
+    )
+
     metrics: dict[str, Any] = {
         "net_realized_pnl": net_pnl,
-        "profit_factor": profit_factor,
+        "profit_factor": pf_serializable,
+        "profit_factor_state": pf_state,
         "win_count": win_count,
         "loss_count": loss_count,
         "flat_count": flat_count,
@@ -230,8 +239,6 @@ def compile_qualification_verdict(
     def _gate(pass_: bool | None, value: Any, threshold: str) -> dict[str, Any]:
         return {"pass": pass_, "value": value, "threshold": threshold}
 
-    pf_finite = profit_factor is not None and math.isfinite(float(profit_factor))
-
     gates: dict[str, Any] = {
         "has_eligible_outcomes": _gate(
             len(ordered_pnls) > 0, len(ordered_pnls), "> 0"
@@ -240,8 +247,8 @@ def compile_qualification_verdict(
             net_pnl > 0 if ordered_pnls else False, net_pnl, "> 0"
         ),
         "profit_factor_above_1": _gate(
-            bool(profit_factor is not None and pf_finite and float(profit_factor) > 1.0),
-            profit_factor,
+            bool(profit_factor is not None and float(profit_factor) > 1.0),
+            pf_serializable,
             "> 1.0",
         ),
         "multiple_eligible_days": _gate(
