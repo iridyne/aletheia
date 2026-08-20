@@ -380,7 +380,7 @@ def test_wrapper_preserves_existing_applier_and_uses_fresh_postflight(monkeypatc
     monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda: after)
     seen = {}
 
-    def apply_update(*, restart):
+    def apply_update(*, restart, progress=None):
         seen["restart"] = restart
         return {
             "applied": True,
@@ -417,7 +417,7 @@ def test_wrapper_uses_runtime_boot_commit_when_source_is_already_current(monkeyp
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart: {
+        lambda *, restart, progress=None: {
             "applied": True,
             "mode": "development",
             "old_commit": "target-sha",
@@ -473,7 +473,7 @@ def test_wrapper_reports_unproven_without_claiming_failure(monkeypatch):
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart: {
+        lambda *, restart, progress=None: {
             "applied": True,
             "mode": "development",
             "old_commit": "old111",
@@ -514,7 +514,7 @@ def test_wrapper_reports_postflight_failure_without_claiming_rollback(monkeypatc
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart: {
+        lambda *, restart, progress=None: {
             "applied": True,
             "mode": "development",
             "old_commit": "old111",
