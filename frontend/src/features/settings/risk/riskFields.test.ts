@@ -26,7 +26,7 @@ const policy: RiskPolicyDraft = {
     base_source: 'account_equity',
     base_usdt: 100,
     max_position_notional_usdt: 50,
-    max_per_symbol_notional_usdt: 400,
+    max_per_symbol_entries: 3,
     max_total_exposure_pct: 5,
   },
   loss: { max_single_trade_risk_pct: 0.25, max_daily_loss_pct: 1 },

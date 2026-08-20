@@ -1606,7 +1606,7 @@ class RiskConfigUpdate(SettingsRequest):
     max_live_limited_cap_usdt: Optional[float] = None
     starting_capital_usdt: Optional[float] = None
     max_demo_position_notional_usdt: Optional[float] = None
-    max_per_symbol_notional_usdt: Optional[float] = None
+    max_per_symbol_entries: Optional[int] = None
     max_demo_single_trade_risk_pct: Optional[float] = None
     max_futures_leverage_live: Optional[int] = None
     max_futures_leverage_demo: Optional[int] = None
@@ -1655,7 +1655,8 @@ _RISK_BOUNDS: dict[str, tuple[float, float]] = {
     "max_live_position_notional_usdt": (1.0, 100_000.0),
     "max_live_limited_cap_usdt": (1.0, 100_000.0),
     "starting_capital_usdt": (1.0, 100_000.0),
-    "max_per_symbol_notional_usdt": (0.0, 100_000.0),
+    # A count of full-size entries, not a currency amount. 0 disables check #19.
+    "max_per_symbol_entries": (0, 20),
     "max_futures_leverage_live": (1, 20),
     "max_futures_leverage_demo": (1, 125),
     "max_leverage_major_demo": (1, 20),
@@ -1743,7 +1744,7 @@ def _validate_mode_policy(policy: ModeRiskPolicy) -> None:
     numeric = {
         "capital.base_usdt": policy.capital.base_usdt,
         "capital.max_position_notional_usdt": policy.capital.max_position_notional_usdt,
-        "capital.max_per_symbol_notional_usdt": policy.capital.max_per_symbol_notional_usdt,
+        "capital.max_per_symbol_entries": policy.capital.max_per_symbol_entries,
         "capital.max_total_exposure_pct": policy.capital.max_total_exposure_pct,
         "loss.max_single_trade_risk_pct": policy.loss.max_single_trade_risk_pct,
         "loss.max_daily_loss_pct": policy.loss.max_daily_loss_pct,
@@ -1771,8 +1772,8 @@ def _validate_mode_policy(policy: ModeRiskPolicy) -> None:
         invalid.append("capital.base_usdt")
     if policy.capital.max_position_notional_usdt <= 0:
         invalid.append("capital.max_position_notional_usdt")
-    if policy.capital.max_per_symbol_notional_usdt <= 0:
-        invalid.append("capital.max_per_symbol_notional_usdt")
+    # A count, where 0 legitimately means "check #19 disabled" — so only
+    # negatives are invalid here (the numeric sweep above already covers that).
     if policy.loss.max_single_trade_risk_pct <= 0:
         invalid.append("loss.max_single_trade_risk_pct")
     if policy.loss.max_daily_loss_pct <= 0:

@@ -512,7 +512,15 @@ class RiskCapitalPolicy(StrictRiskPolicyModel):
     base_source: Literal["account_equity", "custom"] = "account_equity"
     base_usdt: float = 100.0
     max_position_notional_usdt: float = 50.0
-    max_per_symbol_notional_usdt: float = 400.0
+    # Per-symbol cumulative bound (CUM-ADD), expressed as a COUNT of full-size
+    # entries — never a currency amount. Same-symbol adds average-merge into ONE
+    # position, so the single-position cap does not bound repeated accumulation.
+    # The engine derives the USD ceiling from the same formula sizing uses
+    # (capital_base × per_trade_risk_pct × leverage × this count), so a first
+    # entry is always exactly 1/N of the cap and can never be rejected by it at
+    # any account size or leverage. A hardcoded dollar cap silently goes stale as
+    # equity grows; a count cannot. 0 disables the check.
+    max_per_symbol_entries: int = 3
     max_total_exposure_pct: float = 5.0
 
 
@@ -545,6 +553,7 @@ class RiskCorrelationPolicy(StrictRiskPolicyModel):
     enabled: bool = True
     max_sector_concentration_pct: float = 60.0
     max_portfolio_beta: float = 3.0
+    min_positions_for_concentration: int = 4
 
 
 class RiskExitPolicy(StrictRiskPolicyModel):
@@ -588,11 +597,16 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
                 f"max_{suffix}_position_notional_usdt",
                 50.0 if is_live else 100_000.0,
             ),
-            "max_per_symbol_notional_usdt": data.get(
-                "max_per_symbol_notional_usdt", 400.0
-            ),
+            "max_per_symbol_entries": data.get("max_per_symbol_entries", 3),
+            # Demo default 0 = disabled. This check bounds TOTAL NOTIONAL against
+            # equity, i.e. it is a leverage cap wearing a percentage: at 100% it
+            # pins the account to 1.0x while `leverage.account_cap` says 10x, and
+            # the tighter, leverage-BLIND one silently won. #17 bounds the same
+            # ratio correctly (sum(notional x leverage) / equity), so keeping both
+            # only means one of them is dead weight. Live keeps its 5% envelope,
+            # where 1.0x-equivalent exposure is the intended conservatism.
             "max_total_exposure_pct": data.get(
-                "max_total_live_exposure_pct", 5.0 if is_live else 100.0
+                "max_total_live_exposure_pct", 5.0 if is_live else 0.0
             ),
         },
         "loss": {
@@ -694,9 +708,24 @@ class RiskConfig(BaseModel):
     @classmethod
     def migrate_flat_policies(cls, value):
         data = dict(value or {})
+        # `max_per_symbol_notional_usdt` became `max_per_symbol_entries` (a count).
+        # The policy models are extra="forbid", so a persisted config still
+        # carrying the retired key would fail validation and take the whole
+        # runtime down — it must be dropped here, before model construction.
+        # The old absolute value is deliberately NOT converted: a dollar ceiling
+        # carries no information about how many entries it was meant to allow,
+        # and the stale value is exactly what this migration exists to retire.
+        data.pop("max_per_symbol_notional_usdt", None)
         for mode in ("demo", "live"):
-            base = _legacy_mode_policy(data, mode)
             override = data.get(mode)
+            if isinstance(override, dict):
+                capital = override.get("capital")
+                if isinstance(capital, dict):
+                    capital = dict(capital)
+                    capital.pop("max_per_symbol_notional_usdt", None)
+                    override = {**override, "capital": capital}
+                    data[mode] = override
+            base = _legacy_mode_policy(data, mode)
             data[mode] = (
                 _merge_policy(base, override)
                 if isinstance(override, dict)
@@ -768,7 +797,7 @@ class RiskConfig(BaseModel):
             ),
         }
         shared_paths = {
-            "max_per_symbol_notional_usdt": ("capital", "max_per_symbol_notional_usdt"),
+            "max_per_symbol_entries": ("capital", "max_per_symbol_entries"),
             "max_daily_loss_pct": ("loss", "max_daily_loss_pct"),
             "futures_margin_warning_ratio": ("margin", "warning_ratio"),
             "futures_margin_force_close_ratio": ("margin", "block_ratio"),
@@ -822,12 +851,14 @@ class RiskConfig(BaseModel):
     # Default demo configured ceiling/fallback. Exchange-backed demo orders use
     # the lower of this value and the demo account's cached available USDT.
     max_demo_position_notional_usdt: float = 100_000.0
-    # Per-symbol cumulative notional cap (CUM-ADD). Same-symbol+direction adds
-    # average-merge into ONE position, so repeated adds can grow a position past the
-    # single-trade cap. This bounds TOTAL open notional per symbol (across positions,
-    # both demo and live). 0 disables. Set above the single-position caps so it only
-    # catches genuine runaway accumulation, not a normal first entry.
-    max_per_symbol_notional_usdt: float = 400.0
+    # Per-symbol cumulative bound (CUM-ADD), as a COUNT of full-size entries.
+    # Same-symbol+direction adds average-merge into ONE position, so repeated adds
+    # can grow a position past the single-trade cap. The engine derives the USD
+    # ceiling from sizing's own formula, so this stays correct at any account size
+    # and any leverage. Replaced the former absolute `max_per_symbol_notional_usdt`,
+    # whose fixed $400 came to reject every normal first entry once equity passed
+    # $400 / (per_trade_risk_pct × leverage). 0 disables.
+    max_per_symbol_entries: int = 3
     max_demo_single_trade_risk_pct: float = 20.0
     max_futures_leverage_live: int = 2
     max_futures_leverage_demo: int = 125

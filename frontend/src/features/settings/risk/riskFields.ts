@@ -35,7 +35,7 @@ export const RISK_DEMO = [
 ] as const satisfies readonly LegacyNumField[]
 
 export const RISK_SHARED = [
-  { key: 'max_per_symbol_notional_usdt', label: 'Max per-symbol notional (cumulative)', unit: 'USDT', min: 0, max: 100000, step: 10 },
+  { key: 'max_per_symbol_entries', label: 'Max per-symbol entries (cumulative)', unit: 'entries', min: 0, max: 20, step: 1, isInt: true },
 ] as const satisfies readonly LegacyNumField[]
 
 export const RISK_BOOLS = [
@@ -78,7 +78,7 @@ export const RISK_MARGIN = [
 
 export const RISK_POLICY_NUM_FIELDS = [
   { key: 'capital.max_position_notional_usdt', label: 'Position notional cap', unit: 'USDT', min: 1, step: 1 },
-  { key: 'capital.max_per_symbol_notional_usdt', label: 'Per-symbol cumulative cap', unit: 'USDT', min: 0, step: 10 },
+  { key: 'capital.max_per_symbol_entries', label: 'Per-symbol cumulative entries', unit: 'entries', min: 0, step: 1, isInt: true },
   { key: 'capital.max_total_exposure_pct', label: 'Total exposure cap', unit: '%', min: 0, step: 0.5 },
   { key: 'loss.max_single_trade_risk_pct', label: 'Per-trade cost/risk budget', unit: '%', min: 0.01, step: 0.01 },
   { key: 'loss.max_daily_loss_pct', label: 'Daily loss', unit: '%', min: 0.1, step: 0.1 },

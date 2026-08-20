@@ -946,6 +946,8 @@ def _evaluate_proposal_locked(
     drawdown_scale = _portfolio_drawdown_scale(proposal.execution_mode)
     if proposal.quantity and proposal.price:
         notional = proposal.quantity * proposal.price
+        lev = max(1.0, float(proposal.leverage or 1))
+        margin_required = notional / lev
         position_cap = _effective_position_notional_cap(
             risk,
             proposal.execution_mode,
@@ -955,13 +957,13 @@ def _evaluate_proposal_locked(
         else:
             effective_cap = position_cap * drawdown_scale
             if _is_live(proposal.execution_mode):
-                if notional > effective_cap:
+                if margin_required > effective_cap:
                     violations.append(
-                        f"exceeds_max_position_notional:{notional}>{effective_cap}"
+                        f"exceeds_max_position_notional:{margin_required}>{effective_cap}"
                     )
-            elif notional > effective_cap:
+            elif margin_required > effective_cap:
                 violations.append(
-                    f"exceeds_demo_position_notional:{notional}>{effective_cap}"
+                    f"exceeds_demo_position_notional:{margin_required}>{effective_cap}"
                 )
 
     # 6. Max open positions
@@ -1263,8 +1265,21 @@ def _evaluate_proposal_locked(
     #     into one position (paper_broker / live brokers), so the single-position cap
     #     (#5) does not bound repeated accumulation. Sum existing open notional for this
     #     symbol in the same live/demo class + the proposed notional; reject if over cap.
-    per_symbol_cap = getattr(risk, "max_per_symbol_notional_usdt", 0.0)
-    if per_symbol_cap and per_symbol_cap > 0 and proposal.price and proposal.quantity:
+    #
+    #     The ceiling is DERIVED from the same formula proposal sizing uses, times a
+    #     configured count of full-size entries. A first entry is therefore always
+    #     exactly 1/N of the cap and can never trip this check, at any account size
+    #     and any leverage. The former absolute `max_per_symbol_notional_usdt` ($400)
+    #     had no such guarantee: once equity passed $400/(20%×3x)=$666.67 it rejected
+    #     every normal first entry, which is how this deadlocked a live paper account.
+    per_symbol_entries = int(getattr(risk, "max_per_symbol_entries", 0) or 0)
+    per_symbol_cap = _derive_per_symbol_cap(
+        capital_base,
+        float(risk.max_single_trade_risk_pct),
+        float(proposal.leverage or 1),
+        per_symbol_entries,
+    )
+    if per_symbol_cap > 0 and proposal.price and proposal.quantity:
         prop_is_live = _is_live(proposal.execution_mode)
         existing_sym_notional = 0.0
         for p in open_positions:
@@ -1286,9 +1301,13 @@ def _evaluate_proposal_locked(
             existing_sym_notional += abs(entry.reserved_quantity * entry.price)
         projected = existing_sym_notional + abs(proposal.price * proposal.quantity)
         if projected > per_symbol_cap:
+            # 2 decimals, not 0: the previous ":.0f" rendered a genuine $1.12
+            # breach as "401>400", which reads like a display bug and cost real
+            # diagnosis time. Carry the entry count so the cap is reproducible.
             violations.append(
                 f"exceeds_per_symbol_notional:{proposal.symbol}:"
-                f"{projected:.0f}>{per_symbol_cap:.0f}"
+                f"{projected:.2f}>{per_symbol_cap:.2f}"
+                f"(entries={per_symbol_entries})"
             )
 
     return _persist_risk_result(
@@ -1832,9 +1851,11 @@ def _check_correlation_exposure(
                     entry.opportunity_id,
                 ))
 
-        # Preserve the original behavior: the first exposure is not rejected
-        # merely because it is, by definition, 100% of an empty portfolio.
-        if not existing_exposures:
+        # With N=2 positions the same-family share is 50% or 100%, so 60% is a
+        # coin-flip, not a risk signal. Skip until the portfolio is deep enough.
+        mode_policy = cfg.risk.live if _is_live(proposal.execution_mode) else cfg.risk.demo
+        min_n = mode_policy.correlation.min_positions_for_concentration
+        if len(existing_exposures) < min_n:
             return []
 
         prop_notional = 0.0
@@ -2338,6 +2359,72 @@ def account_equity_for_execution(execution_mode: str, cfg=None) -> float | None:
     paper/UTA cache rules or falling back to configured capital.
     """
     return _account_equity(execution_mode, cfg or load_config())
+
+
+def account_available_for_execution(execution_mode: str, cfg=None) -> float | None:
+    """Return the cached AVAILABLE balance for one execution account pool.
+
+    Sibling seam to ``account_equity_for_execution``.  Equity answers "how big is
+    this account"; available balance answers "how much of it is not already
+    pledged as margin".  Proposal sizing uses this one so each open position
+    shrinks the next entry instead of re-spending the same margin, and the Risk
+    Engine keeps using equity for its percentage denominators so caps do not
+    jitter as margin is consumed.
+
+    Returns ``None`` when the account snapshot cannot be read.  Callers must
+    fail closed on ``None``: configured capital is never a substitute for an
+    unavailable account authority.
+    """
+    del cfg  # accepted for signature symmetry; the resolver reads config itself
+    return _cached_available_balance_usdt(execution_mode)
+
+
+def _derive_per_symbol_cap(
+    capital_base: float,
+    per_trade_risk_pct: float,
+    leverage: float,
+    entries: int,
+) -> float:
+    """THE single definition of check #19's per-symbol ceiling.
+
+    Deliberately one function with two callers (check #19 and pyramid add-on
+    sizing).  A second copy of this arithmetic is how the retired absolute cap
+    drifted out of agreement with sizing in the first place, so the formula must
+    not be re-expressed anywhere else.
+
+    Returns 0.0 when the check is disabled or the denominator is unavailable —
+    callers treat 0.0 as "no ceiling to enforce".
+    """
+    if entries <= 0 or capital_base <= 0 or per_trade_risk_pct <= 0:
+        return 0.0
+    return capital_base * (per_trade_risk_pct / 100.0) * max(1.0, leverage) * entries
+
+
+def per_symbol_notional_ceiling(
+    execution_mode: str, *, leverage: float = 1.0, cfg=None
+) -> float:
+    """Public read-only view of check #19's ceiling for one execution pool.
+
+    Lets add-on/pyramid sizing stay inside the same bound the Risk Engine will
+    enforce, without duplicating the formula or the mode-policy resolution.
+    Returns 0.0 when unavailable or disabled.
+    """
+    from aletheia.risk.policy import resolve_risk_policy
+
+    cfg = cfg or load_config()
+    try:
+        policy = resolve_risk_policy(cfg, execution_mode).policy
+    except Exception:
+        return 0.0
+    capital_base, _reason = _resolve_capital_base(execution_mode, policy, cfg)
+    if capital_base is None:
+        return 0.0
+    return _derive_per_symbol_cap(
+        capital_base,
+        float(policy.loss.max_single_trade_risk_pct),
+        float(leverage or 1),
+        int(policy.capital.max_per_symbol_entries or 0),
+    )
 
 
 def _resolve_capital_base(execution_mode: str, policy, cfg) -> tuple[float | None, str | None]:

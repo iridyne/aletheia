@@ -50,7 +50,7 @@ class RiskPolicyView:
             "starting_capital_usdt": self._policy.capital.base_usdt,
             "max_live_position_notional_usdt": self._policy.capital.max_position_notional_usdt,
             "max_demo_position_notional_usdt": self._policy.capital.max_position_notional_usdt,
-            "max_per_symbol_notional_usdt": self._policy.capital.max_per_symbol_notional_usdt,
+            "max_per_symbol_entries": self._policy.capital.max_per_symbol_entries,
             "max_total_live_exposure_pct": self._policy.capital.max_total_exposure_pct,
             "max_daily_loss_pct": self._policy.loss.max_daily_loss_pct,
             "max_single_trade_risk_pct": self._policy.loss.max_single_trade_risk_pct,

@@ -13,18 +13,18 @@ def _cfg(per_trade_risk_pct: float):
     )
 
 
-def test_account_equity_risk_budget_is_cost_then_futures_notional():
-    from aletheia.trading.sizing import account_equity_risk_budget_size
+def test_available_balance_risk_budget_is_cost_then_futures_notional():
+    from aletheia.trading.sizing import available_balance_risk_budget_size
 
     trace = {}
-    assert account_equity_risk_budget_size(
+    assert available_balance_risk_budget_size(
         600.0, 2.0, leverage=3, sizing_trace=trace
     ) == 36.0
-    assert account_equity_risk_budget_size(200.0, 2.0, leverage=3) == 12.0
+    assert available_balance_risk_budget_size(200.0, 2.0, leverage=3) == 12.0
     assert trace == {
-        "policy_version": "account-equity-risk-budget/v1",
-        "value_source": "risk_policy_account_equity",
-        "account_equity_usdt": 600.0,
+        "policy_version": "available-balance-risk-budget/v1",
+        "value_source": "risk_policy_available_balance",
+        "available_balance_usdt": 600.0,
         "per_trade_risk_pct": 2.0,
         "cost_budget_usdt": 12.0,
         "leverage": 3.0,
@@ -40,7 +40,7 @@ def test_active_operator_sizing_does_not_use_strategy_sample_scaling(monkeypatch
     cfg = _cfg(2.0)
     monkeypatch.setattr(
         risk_engine,
-        "account_equity_for_execution",
+        "account_available_for_execution",
         lambda execution_mode, cfg: 600.0,
     )
     monkeypatch.setattr(
@@ -74,13 +74,13 @@ def test_active_operator_sizing_does_not_use_strategy_sample_scaling(monkeypatch
     assert trace["target_notional_usdt"] == 36.0
 
 
-def test_account_equity_risk_budget_rejects_invalid_authority_values():
-    from aletheia.trading.sizing import account_equity_risk_budget_size
+def test_available_balance_risk_budget_rejects_invalid_authority_values():
+    from aletheia.trading.sizing import available_balance_risk_budget_size
 
-    with pytest.raises(ValueError, match="invalid_account_equity_risk_budget"):
-        account_equity_risk_budget_size(0, 2, leverage=3)
-    with pytest.raises(ValueError, match="invalid_account_equity_risk_budget"):
-        account_equity_risk_budget_size(600, 2, leverage=0)
+    with pytest.raises(ValueError, match="invalid_available_balance_risk_budget"):
+        available_balance_risk_budget_size(0, 2, leverage=3)
+    with pytest.raises(ValueError, match="invalid_available_balance_risk_budget"):
+        available_balance_risk_budget_size(600, 2, leverage=0)
 
 
 def test_operator_learning_epoch_carries_sizing_policy_identity(monkeypatch):
@@ -119,8 +119,8 @@ def test_operator_learning_epoch_carries_sizing_policy_identity(monkeypatch):
     )
 
     assert epoch.effective_values["operator_sizing_policy"] == {
-        "policy_version": "account-equity-risk-budget/v1",
-        "account_equity_authority": True,
+        "policy_version": "available-balance-risk-budget/v1",
+        "sizing_basis": "available_balance",
         "per_trade_risk_source": "risk_policy.loss.max_single_trade_risk_pct",
         "futures_notional_source": "cost_budget_times_effective_leverage",
         "demo_per_trade_risk_pct": 2.0,
@@ -155,7 +155,7 @@ def test_prepared_operator_proposal_recomputes_notional_from_final_leverage(
     monkeypatch.setattr(config_loader, "load_config", lambda: cfg)
     monkeypatch.setattr(
         risk_engine,
-        "account_equity_for_execution",
+        "account_available_for_execution",
         lambda execution_mode, cfg: equity["value"],
     )
     monkeypatch.setattr(
@@ -259,3 +259,47 @@ def test_prepared_operator_proposal_recomputes_notional_from_final_leverage(
                 tiny_decision, "paper_internal"
             )
         )
+
+
+def test_successive_entries_shrink_so_margin_never_exhausts():
+    """The reason the base is available balance and not equity.
+
+    Sizing from equity gives every entry the same full budget, so N entries
+    pledge N x the per-trade margin and the portfolio over-commits. Sizing from
+    available balance makes each entry shrink the next, converging instead.
+    """
+    from aletheia.trading.sizing import available_balance_risk_budget_size
+
+    equity = 668.52648937
+    risk_pct, leverage = 20.0, 3.0
+
+    available = equity
+    margin_used = 0.0
+    notionals = []
+    for _ in range(8):
+        notional = available_balance_risk_budget_size(
+            available, risk_pct, leverage=leverage
+        )
+        margin = notional / leverage
+        notionals.append(notional)
+        margin_used += margin
+        available = equity - margin_used
+
+    # Each entry is strictly smaller than the one before it.
+    assert all(b < a for a, b in zip(notionals, notionals[1:])), notionals
+    # The first entry still matches the equity-based number (nothing pledged yet).
+    assert notionals[0] == round(equity * (risk_pct / 100.0) * leverage, 8)
+    # Margin converges below equity — the property equity-based sizing lacked,
+    # where 5 entries would have pledged 100% of the account.
+    assert margin_used < equity
+    assert available > 0
+
+
+def test_zero_available_balance_is_rejected_not_silently_sized():
+    """A fully-committed account must fail loudly, never fall back to equity."""
+    import pytest
+
+    from aletheia.trading.sizing import available_balance_risk_budget_size
+
+    with pytest.raises(ValueError, match="invalid_available_balance_risk_budget"):
+        available_balance_risk_budget_size(0.0, 20.0, leverage=3)

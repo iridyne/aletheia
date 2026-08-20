@@ -71,7 +71,7 @@ def test_authoritative_risk_decision_identity_includes_policy_hash(tmp_path, mon
     assert first.approved is True
 
     cfg = load_config()
-    cfg.risk.demo.capital.max_per_symbol_notional_usdt += 1
+    cfg.risk.demo.capital.max_per_symbol_entries += 1
     cfg.risk.demo.revision += 1
     save_config(cfg)
 

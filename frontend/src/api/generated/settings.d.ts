@@ -1262,10 +1262,10 @@ export interface components {
              */
             base_usdt: number;
             /**
-             * Max Per Symbol Notional Usdt
-             * @default 400
+             * Max Per Symbol Entries
+             * @default 3
              */
-            max_per_symbol_notional_usdt: number;
+            max_per_symbol_entries: number;
             /**
              * Max Position Notional Usdt
              * @default 50
@@ -1437,10 +1437,10 @@ export interface components {
              */
             max_open_positions_live: number;
             /**
-             * Max Per Symbol Notional Usdt
-             * @default 400
+             * Max Per Symbol Entries
+             * @default 3
              */
-            max_per_symbol_notional_usdt: number;
+            max_per_symbol_entries: number;
             /**
              * Max Portfolio Beta
              * @default 3
@@ -1516,6 +1516,11 @@ export interface components {
              * @default 60
              */
             max_sector_concentration_pct: number;
+            /**
+             * Min Positions For Concentration
+             * @default 4
+             */
+            min_positions_for_concentration: number;
         };
         /** RiskEligibilityPolicy */
         RiskEligibilityPolicy: {

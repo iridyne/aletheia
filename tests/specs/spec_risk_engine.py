@@ -416,7 +416,8 @@ def test_correlation_guards_include_unmaterialized_entry_exposure(
     cfg.risk.max_portfolio_beta = 3.0
     cfg.risk.max_open_positions_demo = 10
     cfg.risk.max_demo_position_notional_usdt = 100_000.0
-    cfg.risk.max_per_symbol_notional_usdt = 100_000.0
+    cfg.risk.max_per_symbol_entries = 20
+    cfg.risk.demo.correlation.min_positions_for_concentration = 1
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
     monkeypatch.setattr(eng, "_portfolio_drawdown_scale", lambda _mode: 1.0)
     monkeypatch.setattr(eng, "_check_lesson_constraints", lambda _proposal: [])
@@ -544,6 +545,8 @@ def test_sector_concentration_isolated_by_live_demo_pool(
     cfg = AletheiaConfig()
     cfg.risk.correlation_guard_enabled = True
     cfg.risk.max_sector_concentration_pct = 60.0
+    cfg.risk.demo.correlation.min_positions_for_concentration = 1
+    cfg.risk.live.correlation.min_positions_for_concentration = 1
     monkeypatch.setattr(eng, "_lookup_beta", lambda _symbol: None)
 
     existing_opportunity = Opportunity(
@@ -967,7 +970,7 @@ def test_local_paper_balance_reader_failure_rejects_authoritative_proposal(
     cfg.agent.permission_mode = "Paper"
     cfg.risk.max_demo_position_notional_usdt = 200.0
     cfg.risk.max_open_positions_demo = 10
-    cfg.risk.max_per_symbol_notional_usdt = 10_000.0
+    cfg.risk.max_per_symbol_entries = 20
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
     monkeypatch.setattr(eng, "_portfolio_drawdown_scale", lambda _mode: 1.0)
     monkeypatch.setattr(eng, "_check_lesson_constraints", lambda _proposal: [])
@@ -2043,16 +2046,24 @@ def test_futures_context_keeps_unavailable_account_leverage_empty(monkeypatch):
 @spec_claim(
     SpecClaim("RE-B15", "risk_engine_contract", "§19 per-symbol cap", "L2b",
               "Cumulative open-position notional for a symbol + the proposed notional "
-              "may not exceed risk.max_per_symbol_notional_usdt. Averaging-merge grows "
-              "ONE position past the single-trade cap, so repeated adds need a bound."),
+              "may not exceed a ceiling DERIVED from sizing's own formula "
+              "(capital_base x per_trade_risk_pct x leverage x "
+              "risk.max_per_symbol_entries). Averaging-merge grows ONE position past "
+              "the single-trade cap, so repeated adds need a bound — but the bound "
+              "must scale with the account, or it eventually rejects first entries."),
 )
-def test_per_symbol_cumulative_notional_cap():
+def test_per_symbol_cumulative_notional_cap(monkeypatch):
     import aletheia.risk.engine as eng
     from aletheia.storage.models import Position, TradeProposal
     from aletheia.storage import repositories as repo
-    from aletheia.config.loader import load_config
 
-    cap = load_config().risk.max_per_symbol_notional_usdt
+    # The ceiling now derives from account equity, so the denominator must exist.
+    # Without it `_resolve_capital_base` fails closed and every percentage limit
+    # (including this one) reports no ceiling — the proposal is then rejected by
+    # `capital_base_unavailable` instead, which is a different claim.
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 1_000.0)
+
+    cap = eng.per_symbol_notional_ceiling("okx_demo", leverage=1)
     assert cap > 0, "per-symbol cap must be enabled by default"
 
     # Existing demo position at 80% of the cap.
@@ -2081,6 +2092,41 @@ def test_per_symbol_cumulative_notional_cap():
     repo.insert_trade_proposal(under)
     res_under = eng.evaluate_proposal(under)
     assert not any("exceeds_per_symbol_notional" in v for v in res_under.violations), res_under.violations
+
+
+@spec_claim(
+    SpecClaim("RE-B15b", "risk_engine_contract", "§19 first entry admitted", "L2b",
+              "A normal first entry on an unheld symbol is NEVER rejected by §19, at "
+              "any account size or leverage. §19 bounds ACCUMULATION; sizing already "
+              "bounds a single entry. A fixed-dollar ceiling could not honour this: at "
+              "equity above cap/(risk_pct x leverage) it rejected every first entry and "
+              "deadlocked the account at zero positions."),
+)
+def test_per_symbol_cap_never_rejects_a_first_entry(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.storage.models import TradeProposal
+    from aletheia.storage import repositories as repo
+    from aletheia.config.loader import load_config
+
+    # The equity that triggered the real deadlock on the paper deployment.
+    equity = 668.52648937
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: equity)
+
+    policy = load_config().risk.demo
+    risk_pct = float(policy.loss.max_single_trade_risk_pct)
+    for leverage in (1, 3, 5):
+        # Exactly what sizing would produce for a first entry at this leverage.
+        notional = equity * (risk_pct / 100.0) * leverage
+        first = TradeProposal(
+            symbol=f"FIRST{leverage}/USDT", market_type="usdt_futures",
+            direction="long", execution_mode="okx_demo",
+            quantity=notional / 100.0, price=100.0, leverage=leverage,
+        )
+        repo.insert_trade_proposal(first)
+        res = eng.evaluate_proposal(first)
+        assert not any(
+            "exceeds_per_symbol_notional" in v for v in res.violations
+        ), (leverage, notional, res.violations)
 
 
 # ---------------------------------------------------------------------------
@@ -2713,3 +2759,65 @@ def test_paper_internal_proposal_not_rejected_during_funding_settler_window(
         f"effective_cap must not collapse to 0.0 during settler window; "
         f"violations: {result.violations}"
     )
+
+
+@spec_claim(
+    SpecClaim("RE-B05c", "risk_engine_contract", "§2 check #5 pledged cash", "L2b",
+              "Check #5 compares margin_required (notional / leverage) against the "
+              "position cap, not raw notional. Comparing notional to the available-balance "
+              "cap silently caps effective leverage at 1/per_trade_risk_pct (e.g. 5x at "
+              "20% risk) even when the demo policy allows 20x for majors."),
+)
+def test_position_cap_bounds_pledged_cash_not_raw_notional(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.storage.models import TradeProposal
+    from aletheia.storage import repositories as repo
+
+    available = 668.52648937
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: available)
+    monkeypatch.setattr(eng, "_cached_available_balance_usdt", lambda *_: available)
+
+    # 20% of balance at 6x: $802 notional but only $134 pledged margin.
+    # Before the fix, $802 > $668 → rejected. After fix, $134 < $668 → passes.
+    notional = available * 0.20 * 6
+    assert notional > available, "precondition: notional exceeds available at 6x"
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        execution_mode="okx_demo", quantity=notional / 60000.0, price=60000.0,
+        leverage=6,
+    )
+    repo.insert_trade_proposal(proposal)
+    result = eng.evaluate_proposal(proposal)
+
+    assert not any(
+        "exceeds_demo_position_notional" in v for v in result.violations
+    ), result.violations
+
+
+@spec_claim(
+    SpecClaim("RE-B05d", "risk_engine_contract", "§2 check #5 insolvent entry rejected", "L2b",
+              "The pledged-cash comparison still rejects a position whose margin exceeds "
+              "available balance — the unit fix widens the leverage range, not the solvency floor."),
+)
+def test_position_cap_still_rejects_margin_beyond_available_cash(monkeypatch):
+    import aletheia.risk.engine as eng
+    from aletheia.storage.models import TradeProposal
+    from aletheia.storage import repositories as repo
+
+    available = 100.0
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 10_000.0)
+    monkeypatch.setattr(eng, "_cached_available_balance_usdt", lambda *_: available)
+
+    # $600 margin required (notional $1200 at 2x) against $100 available → rejected.
+    proposal = TradeProposal(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        execution_mode="okx_demo", quantity=1200.0 / 60000.0, price=60000.0,
+        leverage=2,
+    )
+    repo.insert_trade_proposal(proposal)
+    result = eng.evaluate_proposal(proposal)
+
+    assert any(
+        "exceeds_demo_position_notional" in v for v in result.violations
+    ), result.violations

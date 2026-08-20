@@ -706,7 +706,7 @@ def test_pyramid_plan(tmp_path, monkeypatch):
     cfg.trading.persona_sizing_enabled = True
     cfg.trading.active_persona = "roll"   # max_adds init 2, add_fraction init 0.5
     cfg.trading.persona_pyramid_add_trigger_pct = 1.0
-    cfg.risk.max_per_symbol_notional_usdt = 400.0
+    cfg.risk.max_per_symbol_entries = 4
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
 
     winner = {"entry_price": 100.0, "quantity": 1.0, "unrealized_pnl": 5.0}  # +5% → past trigger
@@ -777,20 +777,25 @@ def test_pyramid_plan(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim("PS-S12", "persona_sizing", "§4.2 risk envelope stays the outer bound", "L2c",
               "Invariant: persona/learning only produce DECISION INPUTS. The pyramid "
-              "hard-cap never lets base+adds exceed max_per_symbol_notional_usdt — the "
-              "risk envelope is immutable regardless of persona/learning state."),
+              "hard-cap never lets base+adds exceed the derived per-symbol ceiling — "
+              "the risk envelope is immutable regardless of persona/learning state, and "
+              "is read through the Risk Engine's own seam so it cannot disagree with §19."),
 )
 def test_pyramid_never_exceeds_exposure_cap(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
+    import aletheia.risk.engine as eng
     from aletheia.trading import sizing_policy
 
     cfg = AletheiaConfig()
     cfg.trading.persona_sizing_enabled = True
     cfg.trading.persona_pyramid_enabled = True
     cfg.trading.active_persona = "roll"
-    cfg.risk.max_per_symbol_notional_usdt = 300.0
+    # Derived ceiling = equity x risk_pct x leverage x entries = 1000 x 10% x 1 x 3 = 300
+    cfg.risk.max_per_symbol_entries = 3
+    cfg.risk.demo.loss.max_single_trade_risk_pct = 10.0
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 1_000.0)
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
 
     base = {"entry_price": 100.0, "quantity": 1.0, "unrealized_pnl": 10.0}  # base 100
