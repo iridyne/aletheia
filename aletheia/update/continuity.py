@@ -501,7 +501,12 @@ def compare_update_continuity(
         else:
             health_status = gateway.get("health_status")
             if health_status == "degraded":
-                failures.append("main_health_degraded")
+                before_health = (before.get("gateway") or {}).get("health_status")
+                if before_health == "degraded":
+                    # Pre-existing degradation: the update did not cause it.
+                    warnings.append("main_health_degraded")
+                else:
+                    failures.append("main_health_degraded")
             elif health_status != "healthy":
                 proof_gaps.append("main_health_not_verified")
 
