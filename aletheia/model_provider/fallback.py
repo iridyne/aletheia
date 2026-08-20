@@ -453,7 +453,7 @@ async def complete_with_fallback(
     """Complete with request-level model fallback on transient model errors."""
     cfg = load_config()
     resolved_provider_name = provider_name or cfg.models.default_provider
-    provider = provider or provider_router.get_provider(resolved_provider_name)
+    provider = provider or await provider_router.get_provider_async(resolved_provider_name)
     _observe_would_block(cfg, request, provider, resolved_provider_name)
     _observe_prompt_guardrail(cfg, request)
     _enforce_budget_if_configured(cfg, request)

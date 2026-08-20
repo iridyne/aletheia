@@ -16,7 +16,7 @@ from typing import Literal
 from aletheia.model_provider.base import ModelRequest, StreamChunk
 from aletheia.model_provider.base import model_json_schema_payload
 from aletheia.model_provider.inference_contract import InferenceCall, build_inference_call
-from aletheia.model_provider.router import get_provider
+from aletheia.model_provider.router import get_provider_async, get_provider
 from aletheia.model_provider.fallback import BudgetExceededError, complete_with_fallback
 
 logger = logging.getLogger("aletheia.agents")
@@ -281,7 +281,7 @@ async def llm_complete(
     )
     _record_call_started(inference_call, context_artifacts, context_symbol)
     try:
-        provider_instance = get_provider(provider_name)
+        provider_instance = await get_provider_async(provider_name)
         resp = await complete_with_fallback(
             ModelRequest(
                 messages=messages,
@@ -672,7 +672,7 @@ async def llm_structured(
         return None, error
 
     try:
-        provider_instance = get_provider(provider_name)
+        provider_instance = await get_provider_async(provider_name)
         schema_dict = model_json_schema_payload(schema)
         schema_json = json.dumps(schema_dict)
         base_messages = [
@@ -999,7 +999,7 @@ async def llm_stream(
     )
     _record_call_started(inference_call, None, None)
     try:
-        provider_instance = get_provider(provider_name)
+        provider_instance = await get_provider_async(provider_name)
         from aletheia.config.loader import load_config
         from aletheia.model_provider.broker import brokered_stream
 

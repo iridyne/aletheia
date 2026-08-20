@@ -6,6 +6,12 @@ prompt, endpoint, model name, or credential material.
 
 from __future__ import annotations
 
+
+async def _make_async_provider(provider):
+    """Helper for tests: wrap sync mock provider in async."""
+    return provider
+
+
 import json
 from unittest.mock import patch
 
@@ -41,7 +47,7 @@ async def _run_failed_structured_fixture(content: str) -> tuple[str, dict]:
 
     with (
         patch.object(helpers, "complete_with_fallback", complete),
-        patch.object(helpers, "get_provider", lambda _name: object()),
+        patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(object())),
         patch.object(helpers, "_record_llm"),
     ):
         data, error = await helpers.llm_structured(
