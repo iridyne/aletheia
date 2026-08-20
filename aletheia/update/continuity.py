@@ -317,6 +317,34 @@ def _checkpoint_preflight_verdict(checkpoint: dict[str, Any]) -> tuple[str | Non
     return ("warning", "observation_checkpoint_changed")
 
 
+_PREFLIGHT_HINTS: dict[str, tuple[str, str]] = {
+    "observation_checkpoint_app_migration_drift": (
+        "DB migrations ran since the last observation checkpoint was recorded",
+        "aletheia observe checkpoint",
+    ),
+    "observation_owner_invalid": (
+        "Observation owner field is missing or unrecognised",
+        "aletheia observe overview --json",
+    ),
+    "observation_runtime_owner_mismatch": (
+        "Runtime observation owner does not match the stored owner",
+        "aletheia observe overview --json",
+    ),
+    "duplicate_observation_cycle_owner": (
+        "More than one observation cycle owner detected",
+        "aletheia observe overview --json",
+    ),
+}
+
+
+def _preflight_failure_message(failures: list[str]) -> tuple[str, str]:
+    """Return (human-readable detail, fix hint) for a preflight failure list."""
+    if len(failures) == 1 and failures[0] in _PREFLIGHT_HINTS:
+        detail, fix = _PREFLIGHT_HINTS[failures[0]]
+        return detail, fix
+    return ", ".join(failures), ""
+
+
 def evaluate_preflight(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Fail only on directly observed structural pre-existing integrity faults."""
     failures: list[str] = []
@@ -592,11 +620,14 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
             "Source update blocked by Observer structural preflight",
             continuity={"preflight": preflight, "before": before},
         )
+        failures = preflight["failures"]
+        message, fix_hint = _preflight_failure_message(failures)
         return {
             "applied": False,
             "mode": "development",
             "reason": "observer_preflight_failed",
-            "message": ", ".join(preflight["failures"]),
+            "message": message,
+            "fix_hint": fix_hint,
             "continuity_verified": False,
             "continuity_state": "failed",
             "continuity": {"preflight": preflight, "before": before},
