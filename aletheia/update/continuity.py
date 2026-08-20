@@ -613,6 +613,18 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
             "continuity": {"preflight": preflight, "before": before},
         }
 
+    # Re-anchor the observation checkpoint immediately after migrations run so
+    # the next preflight sees the current migration state instead of the
+    # pre-update one (which would trigger observation_checkpoint_app_migration_drift).
+    try:
+        from aletheia.observation_lab.checkpoint import (
+            compute_joint_checkpoint,
+            save_joint_checkpoint,
+        )
+        save_joint_checkpoint(compute_joint_checkpoint())
+    except Exception:
+        pass  # non-fatal: postflight captures current state regardless
+
     before_gateway = before.get("gateway") or {}
     before_control = before.get("control") or {}
     # `current_commit` can already reflect a newer disk checkout while the
