@@ -375,6 +375,12 @@ class _ProxyFallbackTransport(httpx.AsyncBaseTransport):
             if response.status_code in self._PROXY_ERROR_CODES:
                 invalidate_proxy_cache()
                 logger.debug("Proxy returned %d for %s — retrying direct", response.status_code, request.url)
+                try:
+                    await response.aread()
+                except Exception:
+                    pass
+                finally:
+                    await response.aclose()
                 return await self._direct_transport.handle_async_request(request)
             return response
         except (httpx.ProxyError, httpx.ConnectError, httpx.ConnectTimeout) as e:
