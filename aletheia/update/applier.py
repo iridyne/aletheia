@@ -300,7 +300,7 @@ def _record_metadata_failure(commit: str, result: dict | None) -> None:
     })
 
 
-def apply_update(*, restart: bool = False) -> dict:
+def apply_update(*, restart: bool = False, progress=None) -> dict:
     """Apply an update according to the current execution mode."""
     if _is_packaged():
         try:
@@ -365,6 +365,8 @@ def apply_update(*, restart: bool = False) -> dict:
             ),
         }
 
+    if progress:
+        progress("Fetching latest commits")
     old = git_ops.current_commit()
     pulled = git_ops.pull(branch)
     if not pulled.get("ok"):
@@ -388,17 +390,23 @@ def apply_update(*, restart: bool = False) -> dict:
     deps_reinstalled = False
 
     if python_deps_changed:
+        if progress:
+            progress("Reinstalling Python dependencies")
         install = _reinstall_deps()
         if not install.get("ok"):
             git_ops.reset_hard(old)
             return {"applied": False, "reason": "python_dependency_install_failed", "mode": "development"}
         deps_reinstalled = True
     if restart and frontend_deps_changed:
+        if progress:
+            progress("Updating frontend packages")
         install = _install_frontend_deps()
         if not install.get("ok"):
             git_ops.reset_hard(old)
             return {"applied": False, "reason": install["reason"], "mode": "development"}
     if restart:
+        if progress:
+            progress("Building dashboard")
         build = _build_frontend()
         if not build.get("ok"):
             git_ops.reset_hard(old)
@@ -408,6 +416,8 @@ def apply_update(*, restart: bool = False) -> dict:
                 _install_frontend_deps()
             return {"applied": False, "reason": build["reason"], "mode": "development"}
 
+    if progress:
+        progress("Running smoke check")
     smoke = run_smoke_check()
     if not smoke.get("ok"):
         rollback = git_ops.reset_hard(old)
@@ -472,6 +482,8 @@ def apply_update(*, restart: bool = False) -> dict:
     if restart:
         had_previous_static = _activate_frontend_build()
         frontend_built = True
+        if progress:
+            progress("Restarting gateway")
         restarted = _restart_gateway()
         if not restarted.get("ok"):
             if "aletheia/storage/migrations.py" in changed_files:
