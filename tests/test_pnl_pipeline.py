@@ -101,7 +101,7 @@ def test_exchange_upnl_is_scoped_to_its_broker_and_duplicate_is_rejected(db, mon
             direction="long", quantity=1.0, entry_price=100.0,
             execution_mode=mode,
         ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [
@@ -136,7 +136,7 @@ def test_paper_internal_never_consumes_exchange_upnl(
         entry_price=100.0,
         execution_mode="paper_internal",
     ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [{
@@ -190,7 +190,7 @@ def test_exchange_upnl_market_type_mismatch_falls_back_to_local_estimate(
         entry_price=100.0,
         execution_mode="okx_demo",
     ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [{
@@ -246,7 +246,7 @@ def test_exchange_aggregate_upnl_is_not_reused_across_local_positions(
         entry_price=120.0,
         execution_mode="bitget_demo",
     ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [{
@@ -301,7 +301,7 @@ def test_exchange_upnl_account_fingerprint_mismatch_falls_back_and_is_labeled(
         entry_price=100.0,
         execution_mode="okx_demo",
     ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [{
@@ -353,7 +353,7 @@ def test_exchange_position_identity_disambiguates_same_instrument_rows(
                 "broker_position_id": broker_position_id,
             }),
         ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [
@@ -414,7 +414,7 @@ def test_duplicate_local_broker_position_identity_falls_back(
                 "broker_position_id": "venue-duplicate",
             }),
         ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [{
@@ -453,7 +453,7 @@ def test_exchange_exact_short_does_not_inherit_long_upnl(
         entry_price=100.0,
         execution_mode="okx_demo",
     ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 90.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 90.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [
@@ -530,7 +530,7 @@ def test_stale_exchange_upnl_is_not_applied_or_persisted(
         entry_price=100.0,
         execution_mode="okx_demo",
     ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": age_seconds,
         "positions": [{
@@ -548,6 +548,87 @@ def test_stale_exchange_upnl_is_not_applied_or_persisted(
     stored = repo._select_one("positions", "upnl-stale-okx")
     assert stored is not None
     assert stored["unrealized_pnl"] == 10.0
+
+
+# ---------- Issue #1174: exact instrument identity for mark-to-market ----------
+
+class TestMarkExactInstrumentIdentity:
+    """Spot and perp positions sharing a symbol must be marked independently.
+
+    Regression proof for #1174: the scheduler must not persist a symbol-only
+    price as current_price; missing exact marks must leave the DB row unchanged.
+    """
+
+    def test_spot_and_perp_marked_independently(self, db, monkeypatch):
+        from datetime import datetime, timezone
+        from aletheia.data import price_feed
+        from aletheia.portfolio import pnl
+
+        now = datetime.now(timezone.utc)
+        fake_cache = {
+            ("binance", "BTC/USDT", "spot"): {
+                "price": 65_000.0, "ts": now, "market_type": "spot", "exchange": "binance",
+            },
+            ("binance", "BTC/USDT", "perp"): {
+                "price": 64_500.0, "ts": now, "market_type": "perp", "exchange": "binance",
+            },
+        }
+        monkeypatch.setattr(price_feed, "_instrument_price_cache", fake_cache)
+
+        monkeypatch.setattr("aletheia.config.loader.load_config", lambda **_: type(
+            "C", (), {"market_data": type("M", (), {"ccxt_exchange": "binance"})()}
+        )())
+
+        repo.insert_position(Position(
+            id="spot-pos", symbol="BTC/USDT", market_type="spot",
+            direction="long", quantity=1.0, entry_price=64_000.0,
+            execution_mode="paper_internal",
+        ))
+        repo.insert_position(Position(
+            id="perp-pos", symbol="BTC/USDT", market_type="usdt_futures",
+            direction="long", quantity=1.0, entry_price=64_000.0,
+            execution_mode="paper_internal",
+        ))
+
+        monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: {})
+        marked = {row["id"]: row for row in pnl.mark_positions_to_market(persist=True)}
+
+        assert marked["spot-pos"]["current_price"] == 65_000.0
+        assert marked["perp-pos"]["current_price"] == 64_500.0
+        assert marked["spot-pos"]["unrealized_pnl"] == pytest.approx(1_000.0)
+        assert marked["perp-pos"]["unrealized_pnl"] == pytest.approx(500.0)
+
+        stored_spot = repo._select_one("positions", "spot-pos")
+        stored_perp = repo._select_one("positions", "perp-pos")
+        assert stored_spot["current_price"] == 65_000.0
+        assert stored_perp["current_price"] == 64_500.0
+
+    def test_missing_exact_mark_does_not_overwrite_current_price(self, db, monkeypatch):
+        """When no exact mark is available, current_price must not be updated."""
+        from aletheia.data import price_feed
+        from aletheia.portfolio import pnl
+
+        monkeypatch.setattr("aletheia.config.loader.load_config", lambda **_: type(
+            "C", (), {"market_data": type("M", (), {"ccxt_exchange": "binance"})()}
+        )())
+        # Empty instrument cache — no exact mark available.
+        monkeypatch.setattr(price_feed, "_instrument_price_cache", {})
+        monkeypatch.setattr(price_feed, "_price_cache", {})
+
+        repo.insert_position(Position(
+            id="no-mark-pos", symbol="BTC/USDT", market_type="spot",
+            direction="long", quantity=1.0, entry_price=100.0,
+            execution_mode="paper_internal",
+            current_price=99.0,
+        ))
+        monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: {})
+        [marked] = pnl.mark_positions_to_market(persist=True)
+
+        # In-memory row uses current_price fallback.
+        assert marked["current_price"] == 99.0
+        # DB row must NOT be overwritten with a guessed value.
+        stored = repo._select_one("positions", "no-mark-pos")
+        assert stored["current_price"] == 99.0  # unchanged from pre-existing value
 
 
 # ---------- P1-2: compute_portfolio realized_pnl respects execution_mode ----------
