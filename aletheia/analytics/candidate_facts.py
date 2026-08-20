@@ -171,6 +171,128 @@ def _terminal(
     return "traded"
 
 
+def candidate_coverage_counts(
+    db: Any,
+    *,
+    horizon: str = "24h",
+    lower: datetime,
+    upper: datetime,
+) -> dict[str, Any]:
+    """Window-bounded candidate/outcome counts for status probes.
+
+    Unlike :func:`build_candidate_facts`, this never materializes the full
+    ``filter_decisions`` / ``filter_decision_batches`` /
+    ``filter_candidate_outcomes`` tables: it streams only window-scoped rows
+    and retains candidate identities (not full fact dicts), so it stays safe
+    on small-memory runtimes even when the evidence tables hold millions of
+    candidates. Semantics mirror the full report restricted to ``[lower, upper]``:
+
+    - ``candidate_units``: distinct candidate identities whose first exposure
+      falls in the window. For decision rows the first exposure is the earliest
+      ``evaluated_at`` across all rows of the identity (matching the grouped
+      ``event_at`` of the full report); batch facts keep their
+      ``batch_id:sequence`` fallback identity and are counted when their own
+      timestamp lies in the window;
+    - ``settled_outcome_units``: window candidates whose fixed-horizon outcome is
+      settled and settled no later than ``upper``;
+    - ``unavailable_units``: window batches with malformed payloads or a declared
+      candidate count that does not match the decoded facts;
+    - ``unknown_timestamp_units``: decisions whose timestamp is missing or
+      unparseable (table-wide, since such rows cannot be attributed to any
+      window), matching the full report's unknown-timestamp accounting.
+    """
+    if horizon not in _FIXED_HORIZONS:
+        raise ValueError(f"unsupported fixed horizon: {horizon}")
+    if lower.tzinfo is None or upper.tzinfo is None or lower > upper:
+        raise ValueError("invalid_coverage_window")
+    lower_iso = lower.astimezone(timezone.utc).isoformat()
+    upper_iso = upper.astimezone(timezone.utc).isoformat()
+
+    identities: set[str] = set()
+    cursor = db.execute(
+        "SELECT COALESCE(NULLIF(outcome_candidate_key, ''), "
+        "NULLIF(candidate_key, ''), CAST(id AS TEXT)) AS identity "
+        "FROM filter_decisions "
+        "WHERE datetime(evaluated_at) IS NOT NULL "
+        "GROUP BY identity "
+        "HAVING MIN(datetime(evaluated_at)) >= datetime(?) "
+        "AND MIN(datetime(evaluated_at)) <= datetime(?)",
+        (lower_iso, upper_iso),
+    )
+    for row in cursor:
+        identities.add(str(row[0]))
+
+    unknown_row = db.execute(
+        "SELECT COUNT(*) AS unknown FROM filter_decisions "
+        "WHERE datetime(evaluated_at) IS NULL"
+    ).fetchone()
+    unknown_timestamp_units = int((unknown_row[0] if unknown_row is not None else 0) or 0)
+
+    unavailable_units = 0
+    batch_cursor = db.execute(
+        "SELECT id, candidate_count, candidate_facts, evaluated_at "
+        "FROM filter_decision_batches "
+        "WHERE datetime(evaluated_at) >= datetime(?) "
+        "AND datetime(evaluated_at) <= datetime(?) "
+        "ORDER BY datetime(evaluated_at), rowid",
+        (lower_iso, upper_iso),
+    )
+    for batch in batch_cursor:
+        batch_id = str(batch["id"])
+        try:
+            raw_facts = decode_filter_decision_batch(str(batch["candidate_facts"] or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            unavailable_units += 1
+            continue
+        declared_count = batch["candidate_count"]
+        if declared_count is not None:
+            try:
+                declared_count = int(declared_count)
+            except (TypeError, ValueError, OverflowError):
+                declared_count = None
+            if declared_count is None or declared_count < 0 or declared_count != len(raw_facts):
+                unavailable_units += 1
+                continue
+        for sequence, raw in enumerate(raw_facts):
+            if not isinstance(raw, dict):
+                continue
+            fact_at = _utc(raw.get("evaluated_at")) or _utc(batch["evaluated_at"])
+            if fact_at is None or not (lower <= fact_at <= upper):
+                continue
+            identities.add(
+                str(
+                    raw.get("outcome_candidate_key")
+                    or raw.get("candidate_key")
+                    or f"{batch_id}:{sequence}"
+                )
+            )
+
+    settled_keys: set[str] = set()
+    outcome_cursor = db.execute(
+        "SELECT outcome_candidate_key FROM filter_candidate_outcomes "
+        "WHERE horizon=? AND status='settled' "
+        "AND datetime(entry_ts) <= datetime(?) "
+        "AND (settled_at IS NULL OR datetime(settled_at) <= datetime(?))",
+        (horizon, upper_iso, upper_iso),
+    )
+    for row in outcome_cursor:
+        key = str(row[0])
+        if key in identities:
+            settled_keys.add(key)
+
+    candidate_count = len(identities)
+    settled_count = len(settled_keys)
+    return {
+        "fixed_horizon": horizon,
+        "window": {"lower": lower_iso, "upper": upper_iso},
+        "candidate_units": candidate_count,
+        "settled_outcome_units": settled_count,
+        "outcome_coverage": settled_count / candidate_count if candidate_count else None,
+        "unavailable_units": unavailable_units,
+        "unknown_timestamp_units": unknown_timestamp_units,
+    }
+
+
 def build_candidate_facts(
     *,
     horizon: str = "24h",
