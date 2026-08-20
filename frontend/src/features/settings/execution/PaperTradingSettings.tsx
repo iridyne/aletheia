@@ -112,8 +112,8 @@ export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQue
 
 export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty: boolean) => void }) {
   const qc = useQueryClient()
-  const { data: events = [] } = useQuery({ queryKey: ['capital-events'], queryFn: api.getCapitalEvents })
-  const { data: netData } = useQuery({ queryKey: ['capital-net-deposits'], queryFn: api.getNetDeposits })
+  const { data: events, isLoading: eventsLoading, isError: eventsError, refetch: refetchEvents } = useQuery({ queryKey: ['capital-events'], queryFn: api.getCapitalEvents })
+  const { data: netData, isLoading: netLoading, isError: netError, refetch: refetchNet } = useQuery({ queryKey: ['capital-net-deposits'], queryFn: api.getNetDeposits })
   const [brokerId, setBrokerId] = useState('')
   const [eventType, setEventType] = useState<'deposit' | 'withdraw'>('deposit')
   const [amount, setAmount] = useState('')
@@ -141,7 +141,12 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
     onError: (e: any) => setMsg(e.message || 'Failed'),
   })
 
-  const netDeposits = netData?.net_deposits_usdt ?? 0
+  const netDepositsDisplay = netLoading
+    ? 'loading…'
+    : netError
+      ? 'not available'
+      : `${Number(netData?.net_deposits_usdt ?? 0).toFixed(2)} USDT`
+
   useSettingsDraftLifecycle({
     id: 'capital-events',
     dirty: brokerId !== '' || eventType !== 'deposit' || amount !== '' || note !== '',
@@ -152,7 +157,10 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
 
   return (
     <div>
-      <p className="text-muted text-sm mb-2">Net deposits: <strong>{netDeposits.toFixed(2)} USDT</strong></p>
+      <p className="text-muted text-sm mb-2">
+        Net deposits: <strong>{netDepositsDisplay}</strong>
+        {netError && <button className="btn-inline-retry" onClick={() => refetchNet()}>Retry</button>}
+      </p>
       <div className="capital-form">
         <select value={eventType} onChange={e => setEventType(e.target.value as any)}>
           <option value="deposit">Deposit</option>
@@ -164,7 +172,14 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
         <button className="btn btn-primary" disabled={!amount || parseFloat(amount) <= 0} onClick={() => mutation.mutate()}>Record</button>
       </div>
       {msg && <p className="save-msg mt-1">{msg}</p>}
-      {(events as any[]).length > 0 && (
+      {eventsLoading && <p className="hint mt-2">Loading capital events…</p>}
+      {eventsError && (
+        <p className="hint mt-2">
+          Capital events unavailable.{' '}
+          <button className="btn-inline-retry" onClick={() => refetchEvents()}>Retry</button>
+        </p>
+      )}
+      {!eventsLoading && !eventsError && (events as any[]).length > 0 && (
         <table className="mini-table mt-2">
           <thead><tr><th>Date</th><th>Type</th><th>Broker</th><th>Amount</th><th>Note</th></tr></thead>
           <tbody>
