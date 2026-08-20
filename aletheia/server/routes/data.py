@@ -372,6 +372,26 @@ _MANUAL_AGENT_ALLOWLIST: dict[str, dict] = {
     "paper_trader": {"side_effect_class": "behavior", "cost_class": "medium", "gate_check": True},
 }
 
+# Caller-specific capability guard for the Operator service identity (Issue #1100).
+# Operator service callers are restricted to this subset of _MANUAL_AGENT_ALLOWLIST.
+# New entries in _MANUAL_AGENT_ALLOWLIST do NOT automatically expand service authority —
+# explicit addition here is required.
+_OPERATOR_SERVICE_AGENT_ALLOWLIST: frozenset[str] = frozenset({
+    "market_observer",
+    "equity_observer",
+    "stock_observer",
+    "prediction_observer",
+    "divergence_scanner",
+    "research_agent",
+    "research_worker",
+    "post_trade_reviewer",
+    "risk_critic",
+    "lesson_reviewer",
+    "dreaming_agent",
+    "portfolio_agent",
+    "paper_trader_ranker",
+})
+
 
 class StartAgentRequest(BaseModel):
     agent_name: str = "market_observer"
@@ -402,6 +422,20 @@ def start_agent_run(req: StartAgentRequest, request: Request):
                 "allowed": sorted(_MANUAL_AGENT_ALLOWLIST),
             },
         )
+
+    # Caller-specific capability gate: the Operator service identity is restricted to
+    # non-behavior-producing specialists only. This is checked after the manual allowlist
+    # so the service caller must pass both guards.
+    if getattr(request.state, "operator_service_authenticated", False):
+        if req.agent_name not in _OPERATOR_SERVICE_AGENT_ALLOWLIST:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "agent_not_in_service_allowlist",
+                    "agent_name": req.agent_name,
+                    "allowed": sorted(_OPERATOR_SERVICE_AGENT_ALLOWLIST),
+                },
+            )
 
     meta = _MANUAL_AGENT_ALLOWLIST[req.agent_name]
 
