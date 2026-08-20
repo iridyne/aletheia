@@ -80,7 +80,18 @@ async def test_frontdoor_serves_static_without_backend(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_frontdoor_infra_status_stays_available_when_backend_down(tmp_path):
+async def test_frontdoor_infra_status_stays_available_when_backend_down(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import aletheia.config.loader as _loader
+
+    monkeypatch.setattr(
+        _loader, "load_config",
+        lambda **_kw: SimpleNamespace(
+            tunnel=SimpleNamespace(enabled=False),
+            remote_control=SimpleNamespace(enabled=False, require_token=False),
+        ),
+    )
+
     from aletheia.gateway.frontdoor import create_app
 
     app = create_app(static_dir=_static_fixture(tmp_path), backend_url="http://127.0.0.1:9")
@@ -95,7 +106,18 @@ async def test_frontdoor_infra_status_stays_available_when_backend_down(tmp_path
 
 
 @pytest.mark.anyio
-async def test_frontdoor_backend_route_file_can_switch_without_restart(tmp_path):
+async def test_frontdoor_backend_route_file_can_switch_without_restart(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import aletheia.config.loader as _loader
+
+    monkeypatch.setattr(
+        _loader, "load_config",
+        lambda **_kw: SimpleNamespace(
+            tunnel=SimpleNamespace(enabled=False),
+            remote_control=SimpleNamespace(enabled=False, require_token=False),
+        ),
+    )
+
     from aletheia.gateway.frontdoor import create_app
     from aletheia.gateway.frontdoor_route import write_frontdoor_route
 
@@ -112,14 +134,14 @@ async def test_frontdoor_backend_route_file_can_switch_without_restart(tmp_path)
         route_path=route_path,
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
-        first = await client.get("/_infra/livez")
+        first = await client.get("/_infra/status")
         write_frontdoor_route(
             backend_base_url="http://127.0.0.1:8789",
             runtime_id="runtime-b",
             path=route_path,
             reason="test-b",
         )
-        second = await client.get("/_infra/livez")
+        second = await client.get("/_infra/status")
 
     assert first.json()["backend_base_url"] == "http://127.0.0.1:8788"
     assert second.json()["backend_base_url"] == "http://127.0.0.1:8789"
@@ -127,7 +149,18 @@ async def test_frontdoor_backend_route_file_can_switch_without_restart(tmp_path)
 
 
 @pytest.mark.anyio
-async def test_frontdoor_api_returns_structured_503_when_backend_down(tmp_path):
+async def test_frontdoor_api_returns_structured_503_when_backend_down(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import aletheia.config.loader as _loader
+
+    monkeypatch.setattr(
+        _loader, "load_config",
+        lambda **_kw: SimpleNamespace(
+            tunnel=SimpleNamespace(enabled=False),
+            remote_control=SimpleNamespace(enabled=False, require_token=False),
+        ),
+    )
+
     from aletheia.gateway.frontdoor import create_app
 
     app = create_app(static_dir=_static_fixture(tmp_path), backend_url="http://127.0.0.1:9")
@@ -161,7 +194,7 @@ async def test_frontdoor_readyz_fails_only_when_static_missing(tmp_path):
         root = await client.get("/")
 
     assert resp.status_code == 503
-    assert resp.json()["static_index"] is False
+    assert resp.json()["ok"] is False
     assert root.status_code == 503
     assert "dashboard assets are unavailable" in root.text.lower()
 
@@ -351,3 +384,107 @@ async def test_proxy_stream_interrupted_ends_cleanly(tmp_path, monkeypatch):
     # The interruption was recorded as a diagnostics event.
     codes = [e["code"] for e in list_infra_events()]
     assert "proxy_stream_interrupted" in codes
+
+
+@pytest.mark.anyio
+async def test_frontdoor_livez_and_readyz_return_minimal_schema(tmp_path):
+    from aletheia.gateway.frontdoor import create_app
+
+    app = create_app(static_dir=_static_fixture(tmp_path), backend_url="http://127.0.0.1:9")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        livez = await client.get("/_infra/livez")
+        readyz = await client.get("/_infra/readyz")
+
+    for resp in (livez, readyz):
+        data = resp.json()
+        assert resp.status_code == 200
+        assert data["ok"] is True
+        assert data["role"] == "frontdoor"
+        assert "version" in data
+        # No private implementation details in public liveness responses.
+        for private_key in ("static_dir", "backend_base_url", "backend_route", "pid", "events"):
+            assert private_key not in data, f"private field '{private_key}' must not appear in {resp.url.path}"
+
+
+@pytest.mark.anyio
+async def test_frontdoor_status_requires_auth_when_remote_active(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import aletheia.config.loader as _loader
+    import aletheia.config.secrets as _secrets
+    from aletheia.gateway.frontdoor import create_app
+
+    TOKEN = "owner-secret-tok"
+    monkeypatch.setattr(
+        _loader, "load_config",
+        lambda **_kw: SimpleNamespace(
+            tunnel=SimpleNamespace(enabled=True),
+            remote_control=SimpleNamespace(enabled=False, require_token=False),
+        ),
+    )
+    monkeypatch.setattr(_secrets, "get_secret", lambda key: TOKEN if "token" in key else None)
+
+    app = create_app(static_dir=_static_fixture(tmp_path), backend_url="http://127.0.0.1:9")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        anon = await client.get("/_infra/status")
+        wrong_token = await client.get("/_infra/status", headers={"X-Aletheia-Token": "wrong"})
+        authed = await client.get("/_infra/status", headers={"X-Aletheia-Token": TOKEN})
+        # Public liveness must remain accessible with no auth.
+        livez = await client.get("/_infra/livez")
+        readyz = await client.get("/_infra/readyz")
+
+    assert anon.status_code == 401
+    assert wrong_token.status_code == 401
+    assert authed.status_code == 200
+    assert authed.json()["role"] == "frontdoor"
+    assert livez.status_code == 200
+    assert readyz.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_frontdoor_doctor_requires_auth_and_forwards_token(tmp_path, monkeypatch):
+    import httpx
+    from types import SimpleNamespace
+    import aletheia.config.loader as _loader
+    import aletheia.config.secrets as _secrets
+    from aletheia.gateway import frontdoor
+
+    TOKEN = "doctor-owner-tok"
+    monkeypatch.setattr(
+        _loader, "load_config",
+        lambda **_kw: SimpleNamespace(
+            tunnel=SimpleNamespace(enabled=True),
+            remote_control=SimpleNamespace(enabled=False, require_token=False),
+        ),
+    )
+    monkeypatch.setattr(_secrets, "get_secret", lambda key: TOKEN if "token" in key else None)
+
+    captured: dict = {}
+
+    class _FakeResponse:
+        status_code = 200
+        headers = httpx.Headers([("content-type", "application/json")])
+
+        async def aiter_raw(self):
+            yield b'{"ok":true}'
+
+        async def aclose(self):
+            pass
+
+    class _FakeClient:
+        def build_request(self, method, url, *, headers=None, **kwargs):
+            captured["headers"] = dict(headers or {})
+            return httpx.Request(method, url, headers=headers)
+
+        async def send(self, request, *, stream=False):
+            return _FakeResponse()
+
+    monkeypatch.setattr(frontdoor, "_get_proxy_client", lambda: _FakeClient())
+
+    app = frontdoor.create_app(static_dir=_static_fixture(tmp_path), backend_url="http://127.0.0.1:9")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        anon = await client.get("/_infra/doctor")
+        authed = await client.get("/_infra/doctor", headers={"X-Aletheia-Token": TOKEN})
+
+    assert anon.status_code == 401
+    assert authed.status_code == 200
+    assert captured.get("headers", {}).get("x-aletheia-token") == TOKEN
