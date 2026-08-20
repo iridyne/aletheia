@@ -314,13 +314,14 @@ class ImportService:
         try:
             with _db_transaction():
                 for table_name, rows in insert_queue:
-                    quoted_cols = ", ".join(f'"{c}"' for c in rows[0].keys())
-                    placeholders = ", ".join(["?"] * len(rows[0]))
+                    columns = tuple(rows[0].keys())
+                    quoted_cols = ", ".join(f'"{c}"' for c in columns)
+                    placeholders = ", ".join(["?"] * len(columns))
                     for row in rows:
                         db.execute(
                             f'INSERT INTO "{table_name}" ({quoted_cols}) '
                             f"VALUES ({placeholders})",
-                            list(row.values()),
+                            [row[c] for c in columns],
                         )
                     result.new_rows[table_name] = len(rows)
         except Exception as exc:
