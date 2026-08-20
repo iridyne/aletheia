@@ -113,6 +113,52 @@ def wait_http_ready(base_url: str, *, timeout_sec: float = 10.0) -> bool:
     return False
 
 
+def live_probe_shadow(runtime: dict, *, timeout_sec: float = 3.0) -> dict:
+    """Verify shadow process identity and readiness at promotion boundary.
+
+    Returns probe result with 'alive', 'ready', 'pid_match', 'base_url_match'.
+    All MUST be True for safe promotion.
+    """
+    import os
+    metadata = dict((runtime or {}).get("metadata") or {})
+    gateway_process = metadata.get("gateway_process") or {}
+    expected_pid = gateway_process.get("pid")
+    expected_base_url = gateway_process.get("base_url")
+
+    if not expected_pid or not expected_base_url:
+        return {
+            "alive": False,
+            "ready": False,
+            "pid_match": False,
+            "base_url_match": False,
+            "reason": "no_pid_or_base_url_recorded",
+        }
+
+    try:
+        os.kill(int(expected_pid), 0)
+        pid_alive = True
+    except (ProcessLookupError, OSError):
+        pid_alive = False
+
+    if not pid_alive:
+        return {
+            "alive": False,
+            "ready": False,
+            "pid_match": False,
+            "base_url_match": False,
+            "reason": f"pid_{expected_pid}_not_running",
+        }
+
+    http_ready = wait_http_ready(expected_base_url, timeout_sec=timeout_sec)
+    return {
+        "alive": pid_alive,
+        "ready": http_ready,
+        "pid_match": True,
+        "base_url_match": True,
+        "reason": "ok" if http_ready else "http_not_ready",
+    }
+
+
 def _runtime_log_path(runtime_id: str, mode: str) -> Path:
     safe_id = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in runtime_id)
     path = get_data_dir() / "logs" / f"runtime-{mode}-{safe_id}.log"
