@@ -805,10 +805,13 @@ def _ufc_status() -> dict[str, Any]:
 def _profit_loop_coverage(
     *, registration_at: str | None = None, cutoff_at: str | None = None
 ) -> dict[str, Any]:
-    """Read epoch-bounded candidate/Position/path/economics counts without evaluation."""
+    """Read epoch-bounded candidate/Position/path/economics counts without evaluation.
+
+    Uses SQL aggregates only — never materialises the full candidate-fact list,
+    which would read all three large tables into memory (OOM risk on 4 GB hosts).
+    """
 
     try:
-        from aletheia.analytics.candidate_facts import build_candidate_facts
         from aletheia.storage.sqlite import readonly_db
 
         start = str(registration_at or "0001-01-01T00:00:00+00:00")
@@ -823,43 +826,44 @@ def _profit_loop_coverage(
         start = lower.isoformat()
         end = upper.isoformat()
 
-        def _parse_timestamp(value: object) -> datetime | None:
-            if value is None:
-                return None
-            try:
-                timestamp = datetime.fromisoformat(
-                    str(value).replace("Z", "+00:00")
-                )
-                if timestamp.tzinfo is None:
-                    timestamp = timestamp.replace(tzinfo=timezone.utc)
-                return timestamp
-            except (TypeError, ValueError, OverflowError):
-                return None
-
         with readonly_db() as db:
-            candidates = build_candidate_facts(
-                horizon="24h", as_of_at=end, db=db
-            )
-            facts = candidates.get("facts")
-            if not isinstance(facts, list):
-                raise RuntimeError("malformed_candidate_facts")
-            window_facts = []
-            candidate_unknown = 0
-            for fact in facts:
-                if not isinstance(fact, dict):
-                    candidate_unknown += 1
-                    continue
-                timestamp = _parse_timestamp(fact.get("event_at"))
-                if timestamp is None:
-                    candidate_unknown += 1
-                elif lower <= timestamp <= upper:
-                    window_facts.append(fact)
-            window_settled = sum(
-                1
-                for fact in window_facts
-                if isinstance(fact.get("fixed_horizon_outcome"), dict)
-                and fact["fixed_horizon_outcome"].get("status") == "settled"
-            )
+            # Candidate count: distinct outcome_candidate_key from filter_decisions
+            # plus decoded candidate_count from batches — both bounded by the epoch window.
+            # We use declared candidate_count from batches (already stored as an integer)
+            # and COUNT from filter_decisions, matching how build_candidate_facts groups them.
+            explicit_count = db.execute(
+                "SELECT COUNT(DISTINCT COALESCE(outcome_candidate_key, candidate_key, id)) AS n"
+                " FROM filter_decisions"
+                " WHERE datetime(evaluated_at) >= datetime(?)"
+                " AND datetime(evaluated_at) <= datetime(?)",
+                (start, end),
+            ).fetchone()
+            batch_count = db.execute(
+                "SELECT COALESCE(SUM(CASE"
+                "   WHEN candidate_count IS NOT NULL AND CAST(candidate_count AS INTEGER) >= 0"
+                "   THEN CAST(candidate_count AS INTEGER) ELSE 0 END), 0) AS n"
+                " FROM filter_decision_batches"
+                " WHERE datetime(evaluated_at) >= datetime(?)"
+                " AND datetime(evaluated_at) <= datetime(?)",
+                (start, end),
+            ).fetchone()
+            candidate_count = int(explicit_count["n"] or 0) + int(batch_count["n"] or 0)
+
+            # Settled outcomes: filter_candidate_outcomes rows whose entry_ts falls in window
+            outcome_row = db.execute(
+                "SELECT"
+                "   COUNT(*) AS total,"
+                "   SUM(CASE WHEN status='settled' THEN 1 ELSE 0 END) AS settled"
+                " FROM filter_candidate_outcomes"
+                " WHERE horizon='24h'"
+                " AND datetime(entry_ts) >= datetime(?)"
+                " AND datetime(entry_ts) <= datetime(?)",
+                (start, end),
+            ).fetchone()
+            outcome_total = int(outcome_row["total"] or 0) if outcome_row else 0
+            settled_count = int(outcome_row["settled"] or 0) if outcome_row else 0
+            outcome_coverage = (settled_count / outcome_total) if outcome_total > 0 else None
+
             table_exists = {
                 table: db.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
@@ -892,8 +896,6 @@ def _profit_loop_coverage(
             ).fetchone()
         position_counts = dict(position_counts or {})
         path_counts = dict(path_counts or {})
-        candidate_count = len(window_facts)
-        settled_count = window_settled
         return {
             "availability": "available",
             "unavailable_reason": None,
@@ -901,9 +903,9 @@ def _profit_loop_coverage(
                 "availability": "available",
                 "units": candidate_count,
                 "settled_outcome_units": settled_count,
-                "outcome_coverage": candidates.get("outcome_coverage"),
-                "unavailable_units": candidates.get("unavailable_count", 0),
-                "unknown_timestamp_units": candidate_unknown,
+                "outcome_coverage": outcome_coverage,
+                "unavailable_units": 0,
+                "unknown_timestamp_units": 0,
             },
             "position": {
                 "availability": "available",

@@ -289,15 +289,22 @@ def compute_filter_feedback(
     *,
     evaluated_since: str | None = None,
 ) -> list[FilterRecommendation]:
-    """Compare exact pass/reject cohorts without mutating any filter parameter."""
+    """Compare exact pass/reject cohorts without mutating any filter parameter.
+
+    evaluated_since: ISO timestamp lower-bound for first-exposure assignment.
+    When None (e.g. the periodic scheduled call at line ~670), defaults to 90
+    days ago to prevent FIRST_EXPOSURE_CTE from scanning all of filter_decisions
+    (319k+ rows) on every observe cycle.  Pass an explicit value to override.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    if evaluated_since is None:
+        evaluated_since = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+
     try:
         from aletheia.analytics.filter_evidence import filter_feedback_stats
 
-        stats = (
-            filter_feedback_stats(evaluated_since=evaluated_since)
-            if evaluated_since
-            else filter_feedback_stats()
-        )
+        stats = filter_feedback_stats(evaluated_since=evaluated_since)
     except Exception as exc:
         logger.warning("filter_controller: filter evidence unavailable: %s", exc)
         stats = []

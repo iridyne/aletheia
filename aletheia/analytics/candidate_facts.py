@@ -72,7 +72,10 @@ def _batch_facts(
     exclusions: list[dict[str, Any]] = []
     for batch in _rows(
         db,
-        "SELECT * FROM filter_decision_batches ORDER BY datetime(evaluated_at), rowid",
+        "SELECT * FROM filter_decision_batches"
+        " WHERE datetime(evaluated_at) <= datetime(?)"
+        " ORDER BY datetime(evaluated_at), rowid",
+        (cutoff.isoformat(),),
     ):
         if not _visible(batch, cutoff):
             continue
@@ -180,7 +183,10 @@ def build_candidate_facts(
     cutoff = _utc(as_of_at) or datetime.now(timezone.utc)
     explicit = _rows(
         source,
-        "SELECT * FROM filter_decisions ORDER BY datetime(evaluated_at), sequence_no, rowid",
+        "SELECT * FROM filter_decisions"
+        " WHERE datetime(evaluated_at) <= datetime(?)"
+        " ORDER BY datetime(evaluated_at), sequence_no, rowid",
+        (cutoff.isoformat(),),
     )
     filter_rows = [{**row, "source_table": "filter_decisions"} for row in explicit if _visible(row, cutoff)]
     batch_rows, batch_exclusions = _batch_facts(source, cutoff)
@@ -193,8 +199,10 @@ def build_candidate_facts(
 
     outcomes = _rows(
         source,
-        "SELECT * FROM filter_candidate_outcomes WHERE horizon=? ORDER BY datetime(entry_ts), rowid",
-        (horizon,),
+        "SELECT * FROM filter_candidate_outcomes"
+        " WHERE horizon=? AND (entry_ts IS NULL OR datetime(entry_ts) <= datetime(?))"
+        " ORDER BY datetime(entry_ts), rowid",
+        (horizon, cutoff.isoformat()),
     )
     outcome_by_key = {
         str(row["outcome_candidate_key"]): row

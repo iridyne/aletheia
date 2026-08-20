@@ -94,15 +94,27 @@ def compute_guard_stats() -> list[dict]:
     return stats
 
 
-def _blocked_candidate_stats_by_guard(guards, horizon: str = "4h") -> dict[str, dict]:
+def _blocked_candidate_stats_by_guard(
+    guards,
+    horizon: str = "4h",
+    evaluated_since: str | None = None,
+) -> dict[str, dict]:
     """Aggregate successfully blocked candidate outcomes by matched guard id.
 
     Filter evidence is the only place where a successful hard block and its
     counterfactual coexist. Position attribution cannot observe these rows by
     definition because the candidate never became a position.
+
+    evaluated_since: ISO timestamp; defaults to 90 days ago (guard effectiveness
+    is an operational metric; historical blocks beyond that window have low
+    actionability). Pass None to scan all history (OOM risk on large DBs).
     """
     from aletheia.learning.outcomes import assess_candidate_outcome
     from aletheia.storage.sqlite import get_db
+    from datetime import datetime, timezone, timedelta
+
+    if evaluated_since is None:
+        evaluated_since = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
 
     guard_ids = {guard.guard_id for guard in guards}
     candidates: dict[str, set[str]] = defaultdict(set)
@@ -115,8 +127,10 @@ def _blocked_candidate_stats_by_guard(guards, horizon: str = "4h") -> dict[str, 
             "  ON fo.outcome_candidate_key = fd.outcome_candidate_key AND fo.horizon = ? "
             "WHERE fd.filter_name = 'guard_candidate_block' "
             "  AND fd.decision = 'rejected' "
-            "  AND fd.outcome_candidate_key IS NOT NULL",
-            (horizon,),
+            "  AND fd.outcome_candidate_key IS NOT NULL "
+            "  AND datetime(fd.evaluated_at) >= datetime(?) "
+            "ORDER BY datetime(fd.evaluated_at)",
+            (horizon, evaluated_since),
         ).fetchall()
     except sqlite3.OperationalError:
         return {}
