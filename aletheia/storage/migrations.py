@@ -4844,6 +4844,17 @@ _OPTIONS_MARKET_STRUCTURE_CHECKSUM = hashlib.sha256(
     (_OPTIONS_MARKET_STRUCTURE_SQL + "\noptions_market_structure_v1").encode("utf-8")
 ).hexdigest()
 
+# Null historical gamma_flip_estimate values that were computed with the wrong
+# cumulative-strike algorithm (PR #1154); corrected to spot-sweep in issue #1161.
+_GAMMA_FLIP_RESET_SQL = """\
+UPDATE options_market_structure_snapshots
+    SET gamma_flip_estimate = NULL
+    WHERE gamma_flip_estimate IS NOT NULL;
+"""
+_GAMMA_FLIP_RESET_CHECKSUM = hashlib.sha256(
+    (_GAMMA_FLIP_RESET_SQL + "\ngamma_flip_reset_v1").encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -4949,6 +4960,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260819_0035_options_market_structure_v36": (
         "BTC/ETH Deribit options GEX and gamma-structure snapshot table"
+    ),
+    "20260820_0036_gamma_flip_reset_v37": (
+        "Null historical gamma_flip_estimate values computed with incorrect cumulative-strike algorithm"
     ),
 }
 
@@ -5250,6 +5264,11 @@ def _apply_options_market_structure_v36(db: sqlite3.Connection) -> None:
     """Add options_market_structure_snapshots for Deribit GEX/gamma support factors."""
     db.executescript(_OPTIONS_MARKET_STRUCTURE_SQL)
     db.execute("PRAGMA optimize")
+
+
+def _apply_gamma_flip_reset_v37(db: sqlite3.Connection) -> None:
+    """Null historical gamma_flip_estimate rows computed with incorrect cumulative-strike algorithm."""
+    db.executescript(_GAMMA_FLIP_RESET_SQL)
 
 
 def _apply_learning_hypothesis_identity_v24(db: sqlite3.Connection) -> None:
@@ -5805,6 +5824,12 @@ _MIGRATIONS = (
         checksum=_OPTIONS_MARKET_STRUCTURE_CHECKSUM,
         schema_version="aletheia-sqlite-v36",
         apply=_apply_options_market_structure_v36,
+    ),
+    MigrationStep(
+        migration_id="20260820_0036_gamma_flip_reset_v37",
+        checksum=_GAMMA_FLIP_RESET_CHECKSUM,
+        schema_version="aletheia-sqlite-v37",
+        apply=_apply_gamma_flip_reset_v37,
     ),
 )
 
