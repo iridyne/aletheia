@@ -204,47 +204,88 @@ def _pending_paper_close(
     ))
 
 
-def test_null_realized_pnl_uses_conservative_estimate_not_blocking():
-    """paper_internal closes with realized_pnl=NULL use a conservative estimate.
+def test_null_realized_pnl_makes_daily_loss_unavailable():
+    """paper_internal closes with realized_pnl=NULL make the daily-loss snapshot unavailable.
 
-    The risk engine must not be blocked by unresolved funding computation; instead
-    the daily-loss check proceeds with gross−fees (funding=0, gains capped at 0).
+    Unknown futures funding has no finite conservative lower bound; treating it as zero
+    would understate loss and delay the mode brake.  The authority must fail closed.
     """
     from aletheia.portfolio.account_loss import authoritative_account_realized_loss
 
-    # Short that lost money (price went up) — gross loss estimate is negative.
-    # exit=102, entry=100, qty=0.1 → gross = (100-102)*0.1 = -0.2
-    # fees = 0.001+0.001 = 0.002 → estimate = min(0, -0.2-0.002) = -0.202
     _pending_paper_close("pending-1", entry_price=100.0, exit_price=102.0,
                          quantity=0.1, direction="short")
 
     snapshot = authoritative_account_realized_loss("paper_internal")
-    assert snapshot.available is True, f"Expected available, got: {snapshot.reason}"
-    assert snapshot.source == "paper_account_ledger_partial_estimate"
-    assert snapshot.reason == "available_with_conservative_estimates"
-    assert snapshot.realized_pnl_usdt is not None
-    assert snapshot.realized_pnl_usdt < 0.0  # conservative estimate is a loss
-    assert abs(snapshot.realized_pnl_usdt - (-0.202)) < 1e-6
+    assert snapshot.available is False
+    assert snapshot.reason == "pending_funding_economics"
+    assert snapshot.realized_pnl_usdt is None
 
 
-def test_null_realized_pnl_combined_with_settled_returns_sum():
-    """A mix of settled and pending closes produces a combined conservative total."""
+def test_null_realized_pnl_with_settled_rows_still_unavailable():
+    """A mix of settled and pending closes keeps the daily-loss snapshot unavailable.
+
+    The pending funding leg invalidates the daily-loss total even when other settled
+    closes are known exactly.
+    """
     from aletheia.portfolio.account_loss import authoritative_account_realized_loss
     from aletheia.portfolio.paper_account import ensure_paper_account
 
     ensure_paper_account()
-    # Settled close: -3.0 verified via the normal close path + ledger entry
     _closed_position("settled-mix", -3.0)
-    # Pending close: short that gained (price dropped) → gross gain capped at 0
-    # exit=95, entry=100, qty=0.1 → gross = (100-95)*0.1 = +0.5 → capped to 0
     _pending_paper_close("pending-mix", entry_price=100.0, exit_price=95.0,
                          quantity=0.1, direction="short")
 
     snapshot = authoritative_account_realized_loss("paper_internal")
-    assert snapshot.available is True
-    assert snapshot.source == "paper_account_ledger_partial_estimate"
-    # settled contribution = -3.0; conservative contribution = 0.0 (gain capped)
-    assert abs(snapshot.realized_pnl_usdt - (-3.0)) < 1e-6
+    assert snapshot.available is False
+    assert snapshot.reason == "pending_funding_economics"
+    assert snapshot.realized_pnl_usdt is None
+
+
+def test_pending_funding_economics_blocks_risk_fail_closed():
+    """Risk emits account_loss_unavailable:pending_funding_economics for unresolved funding."""
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+
+    cfg = load_config()
+    cfg.risk.kill_switch_enabled_demo = True
+    save_config(cfg)
+    _pending_paper_close("pending-risk", entry_price=100.0, exit_price=102.0,
+                         quantity=0.1, direction="short")
+
+    proposal = _proposal()
+    repo.insert_trade_proposal(proposal)
+    result = evaluate_proposal(proposal)
+    assert "account_loss_unavailable:pending_funding_economics" in result.violations
+    assert not any(v.startswith("max_daily_loss_exceeded") for v in result.violations)
+
+
+def test_funding_materialization_restores_daily_loss_availability():
+    """After funding settles, the exact net amount becomes available."""
+    from aletheia.portfolio.account_loss import authoritative_account_realized_loss
+    from aletheia.portfolio.paper_account import ensure_paper_account, settle_position_closed
+    from aletheia.storage import repositories as repo
+
+    ensure_paper_account()
+    _pending_paper_close("pending-settle", entry_price=100.0, exit_price=102.0,
+                         quantity=0.1, direction="short")
+
+    # Before settlement: unavailable
+    before = authoritative_account_realized_loss("paper_internal")
+    assert before.available is False
+    assert before.reason == "pending_funding_economics"
+
+    # Funding materializes: gross=-0.2, fees=0.002, funding_cost=0.05 → net=-0.252
+    # Must set positions.realized_pnl before writing the ledger entry so that
+    # _paper_ledger_snapshot's validity check (p.realized_pnl IS NULL) passes.
+    repo.update_position("pending-settle", realized_pnl=-0.252)
+    settle_position_closed("pending-settle", -0.252)
+
+    after = authoritative_account_realized_loss("paper_internal")
+    assert after.available is True
+    assert after.source == "paper_account_ledger"
+    assert abs(after.realized_pnl_usdt - (-0.252)) < 1e-6
+    assert abs(after.loss_usdt - 0.252) < 1e-6
 
 
 def _orphaned_paper_close(position_id: str, realized_pnl: float) -> None:
