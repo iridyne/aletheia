@@ -2833,12 +2833,10 @@ def get_family_scorecard():
     """Per-scanner_family performance statistics (win_rate, expectancy, alpha)."""
     _ensure_db()
     from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
-    from aletheia.analytics.family_scorecard import compute_family_scorecard
+    from aletheia.analytics.family_scorecard import compute_family_scorecard_with_epoch
 
-    return {
-        "families": compute_family_scorecard(),
-        **build_outcome_cohort_summary(),
-    }
+    scorecard = compute_family_scorecard_with_epoch()
+    return {**scorecard, **build_outcome_cohort_summary()}
 
 
 @router.get("/analytics/shadow-trades")
