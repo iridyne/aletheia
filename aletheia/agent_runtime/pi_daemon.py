@@ -232,8 +232,13 @@ async def reconfigure_pi_daemon(
         if not gate_allows_startup(cfg):
             logger.info("pi_daemon: enable blocked by startup_behavior_gate")
             return {"configured": True, "running": False, "blocker": "startup_behavior_gate"}
-    except Exception:
-        pass  # permissive on gate-check failure
+    except Exception as exc:
+        logger.warning("pi_daemon: startup_behavior_gate evaluation failed: %s", exc)
+        return {
+            "configured": True,
+            "running": False,
+            "blocker": "startup_behavior_gate_error",
+        }
 
     if cfg.runtime.paused:
         return {"configured": True, "running": False, "blocker": "runtime_paused"}
