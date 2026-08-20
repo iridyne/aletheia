@@ -3946,7 +3946,7 @@ _DC_HEALTH_TICK: ContextVar[int | None] = ContextVar("dc_health_tick", default=N
 # scheduler persists them. Their successful call status is therefore recorded
 # by the caller after storage, rather than eagerly inside _bounded().
 _PERSISTENCE_GATED_COLLECTOR_HEALTH = frozenset(
-    {"derivatives", "hyperliquid", "defillama"}
+    {"derivatives", "hyperliquid", "defillama", "options_structure"}
 )
 
 
@@ -4461,6 +4461,17 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
             domain,
             "failed" if persist_error else classify_collector_result(result),
             error_code=persist_error,
+        )
+
+    if "options_structure" in wave_two:
+        options_persist_error = next(
+            (code for code in context_error_codes if code.startswith("options_structure_")),
+            None,
+        )
+        _record_collector_health(
+            "options_structure",
+            "failed" if options_persist_error else classify_collector_result(options_result),
+            error_code=options_persist_error,
         )
 
     # Sparse derivatives history is useful but must never spend the two-minute
