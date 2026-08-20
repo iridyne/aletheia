@@ -33,12 +33,13 @@ def _utcnow() -> str:
 class BackupManifest:
     """Metadata for a backup bundle."""
 
-    def __init__(self, backup_id: str, created_at: str, data_dir: str, file_count: int, total_bytes: int):
+    def __init__(self, backup_id: str, created_at: str, data_dir: str, file_count: int, total_bytes: int, config_status: str = "absent"):
         self.backup_id = backup_id
         self.created_at = created_at
         self.data_dir = data_dir
         self.file_count = file_count
         self.total_bytes = total_bytes
+        self.config_status = config_status
 
     def to_dict(self) -> dict:
         return {
@@ -47,6 +48,7 @@ class BackupManifest:
             "data_dir": self.data_dir,
             "file_count": self.file_count,
             "total_bytes": self.total_bytes,
+            "config_status": self.config_status,
         }
 
 
@@ -144,12 +146,23 @@ class BackupService:
                 file_count += 1
                 total_bytes += dst.stat().st_size
 
-            # Copy config
+            # Copy config with credential redaction — never raw-copy (#1175).
+            from aletheia.config.redact import redact_config_dict
             config_path = self._data_dir / "config.yaml"
+            config_status = "absent"
             if config_path.exists():
-                shutil.copy2(config_path, staging / "config.yaml")
-                file_count += 1
-                total_bytes += config_path.stat().st_size
+                dst_config = staging / "config.yaml"
+                try:
+                    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+                    dst_config.write_text(
+                        yaml.safe_dump(redact_config_dict(data), default_flow_style=False, sort_keys=False),
+                        encoding="utf-8",
+                    )
+                    file_count += 1
+                    total_bytes += dst_config.stat().st_size
+                    config_status = "redacted"
+                except Exception:
+                    config_status = "omitted"
 
             # Copy events dir
             events_dir = self._data_dir / "events"
@@ -205,6 +218,7 @@ class BackupService:
                 data_dir=str(self._data_dir),
                 file_count=file_count,
                 total_bytes=total_bytes,
+                config_status=config_status,
             )
             (staging / "manifest.yaml").write_text(
                 yaml.dump(manifest.to_dict(), default_flow_style=False, allow_unicode=True),
