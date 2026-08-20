@@ -3,11 +3,10 @@
 Read-only. Never writes to DB, modifies config, or grants behavior authority.
 Resolves Issue #988: prove or reject the minimum net-profitable frozen policy cohort.
 
-The caller is responsible for:
-  1. Registering the cohort identity (registration dict) BEFORE the first
-     eligible prospective Position — the registration must not be written or
-     changed after outcome inspection begins.
-  2. Setting a fixed cutoff_at (stopping rule) before inspecting results.
+The registration dict must be written BEFORE the first eligible prospective
+Position and must not be changed after outcome inspection begins.  All required
+keys — including cutoff_at — must be present in the registration; supplying
+cutoff_at only at evaluation time is rejected to prevent optional stopping.
 """
 from __future__ import annotations
 
@@ -24,6 +23,20 @@ from aletheia.storage.hashing import sha256_json
 
 
 QUALIFICATION_CONTRACT_VERSION = "profit_loop_qualification/v1"
+
+# All keys that must be present and non-empty in the preregistered dict.
+# cutoff_at is included here so the stopping rule cannot be changed at runtime.
+REQUIRED_REGISTRATION_KEYS: tuple[str, ...] = (
+    "deploy_sha",
+    "runtime_session_id",
+    "execution_mode",
+    "policy_epoch_id",
+    "improvement_id",
+    "registration_at",
+    "stopping_rule",
+    "cost_model_id",
+    "cutoff_at",
+)
 
 # Preregistered decision thresholds — must not be adjusted after cohort start.
 _DEFAULT_CONCENTRATION_TOP1_CAP = 0.25
@@ -79,15 +92,14 @@ def _max_drawdown_from_peak(ordered_pnls: list[float]) -> float | None:
 def compile_qualification_verdict(
     *,
     registration: dict[str, Any],
-    cutoff_at: str,
 ) -> dict[str, Any]:
     """Evaluate a frozen policy cohort and return an immutable hashed verdict.
 
     Parameters
     ----------
     registration:
-        Pre-registered cohort identity.  Required keys (all others are preserved
-        verbatim in the artifact):
+        Pre-registered cohort identity.  Required keys (see REQUIRED_REGISTRATION_KEYS;
+        all others are preserved verbatim in the artifact):
           - deploy_sha          exact deployed commit hash
           - runtime_session_id  immutable Runtime Session identifier
           - execution_mode      "paper_internal" (only supported mode)
@@ -96,24 +108,43 @@ def compile_qualification_verdict(
           - registration_at     ISO-8601 start time (before first eligible Position)
           - stopping_rule       human-readable description of the stopping rule
           - cost_model_id       declared cost model for this cohort
+          - cutoff_at           frozen UTC evaluation cutoff (ISO-8601 with timezone);
+                                must be preregistered — supplying it only at CLI time
+                                is rejected to prevent optional stopping
         Optional keys:
           - max_drawdown_cap    float 0–1; required for the drawdown gate to be
                                 enforced rather than recorded-only
           - concentration_top1_cap   float (default 0.25)
           - concentration_top5_cap   float (default 0.50)
           - known_exclusions    list[str] of pre-declared integrity incidents
-    cutoff_at:
-        Frozen UTC evaluation cutoff (ISO-8601 with timezone).  Outcomes closed
-        strictly before this timestamp are eligible.  Must be fixed before any
-        outcome is inspected.
     """
-    execution_mode = str(registration.get("execution_mode") or "paper_internal")
-    registration_at = registration.get("registration_at")
-    runtime_session_id = registration.get("runtime_session_id")
-    if not runtime_session_id:
+    # ------------------------------------------------------------------
+    # Validate required registration fields
+    # ------------------------------------------------------------------
+    missing = [k for k in REQUIRED_REGISTRATION_KEYS if not registration.get(k)]
+    if missing:
         raise ValueError(
-            "registration must include runtime_session_id; "
-            "cannot prove cohort identity without it"
+            f"registration missing required keys: {missing!r}; "
+            "all fields including cutoff_at must be preregistered before outcome inspection"
+        )
+
+    cutoff_at = str(registration["cutoff_at"])
+    registration_at = str(registration["registration_at"])
+    runtime_session_id = str(registration["runtime_session_id"])
+    execution_mode = str(registration["execution_mode"])
+
+    # Temporal consistency: registration must precede the declared stopping rule.
+    try:
+        reg_dt = datetime.fromisoformat(registration_at.replace("Z", "+00:00"))
+        cut_dt = datetime.fromisoformat(cutoff_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            f"registration_at or cutoff_at is not a valid ISO-8601 timestamp: {exc}"
+        ) from exc
+    if reg_dt >= cut_dt:
+        raise ValueError(
+            f"registration_at ({registration_at!r}) must be strictly before "
+            f"cutoff_at ({cutoff_at!r}); preregistration cannot postdate the stopping rule"
         )
     max_drawdown_cap = _to_float(registration.get("max_drawdown_cap"))
     top1_cap = _to_float(registration.get("concentration_top1_cap")) or _DEFAULT_CONCENTRATION_TOP1_CAP
@@ -123,11 +154,11 @@ def compile_qualification_verdict(
     # Fetch eligible genuine outcomes for this cohort window
     # ------------------------------------------------------------------
     # Window filters (time + mode only) — used for mismatch counting.
-    window_kwargs: dict[str, Any] = {"execution_mode": execution_mode}
-    if registration_at:
-        window_kwargs["closed_after"] = registration_at
-    if cutoff_at:
-        window_kwargs["closed_before"] = cutoff_at
+    window_kwargs: dict[str, Any] = {
+        "execution_mode": execution_mode,
+        "closed_after": registration_at,
+        "closed_before": cutoff_at,
+    }
 
     # Identity-bound fetch: only rows that prove registration membership.
     fetch_kwargs: dict[str, Any] = {**window_kwargs, "runtime_session_id": runtime_session_id}
@@ -136,14 +167,10 @@ def compile_qualification_verdict(
 
     # Post-filter: only positions *opened* on or after the registration date
     # to exclude pre-policy positions that may close inside the window.
-    cohort_outcomes: list[dict[str, Any]]
-    if registration_at:
-        cohort_outcomes = [
-            row for row in all_outcomes
-            if str(row.get("opened_at") or "") >= registration_at
-        ]
-    else:
-        cohort_outcomes = list(all_outcomes)
+    cohort_outcomes = [
+        row for row in all_outcomes
+        if str(row.get("opened_at") or "") >= registration_at
+    ]
 
     exclusion_summary = build_outcome_cohort_summary(**fetch_kwargs)
     window_summary = build_outcome_cohort_summary(**window_kwargs)
@@ -265,11 +292,15 @@ def compile_qualification_verdict(
     # ------------------------------------------------------------------
     # Immutable artifact
     # ------------------------------------------------------------------
+    # registration_hash lets callers detect if the same session is re-evaluated
+    # with a different registration blob (different hash = different preregistration).
+    registration_hash = sha256_json(registration)
+
     artifact: dict[str, Any] = {
         "contract_version": QUALIFICATION_CONTRACT_VERSION,
         "verdict": verdict,
         "registration": registration,
-        "cutoff_at": cutoff_at,
+        "registration_hash": registration_hash,
         "metrics": metrics,
         "gates": gates,
         "funnel": funnel,
