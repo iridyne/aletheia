@@ -608,8 +608,11 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
             # ratio correctly (sum(notional x leverage) / equity), so keeping both
             # only means one of them is dead weight. Live keeps its 5% envelope,
             # where 1.0x-equivalent exposure is the intended conservatism.
-            "max_total_exposure_pct": data.get(
-                "max_total_live_exposure_pct", 5.0 if is_live else 0.0
+            # Live reads the flat max_total_live_exposure_pct override; demo is
+            # always 0.0 here because check #17 (account leverage) governs the same
+            # ratio correctly — the flat key must not bleed into demo's base.
+            "max_total_exposure_pct": (
+                data.get("max_total_live_exposure_pct", 5.0) if is_live else 0.0
             ),
         },
         "loss": {
@@ -703,7 +706,7 @@ def _merge_policy(base: dict, override: dict) -> dict:
 
 
 class RiskConfig(BaseModel):
-    schema_version: int = 3
+    schema_version: int = 4
     demo: ModeRiskPolicy
     live: ModeRiskPolicy
 
@@ -727,6 +730,25 @@ class RiskConfig(BaseModel):
             new_flat = f"max_{suffix}_position_margin_usdt"
             if old_flat in data and new_flat not in data:
                 data[new_flat] = data[old_flat]
+        # schema_version < 4 migration: demo.capital.max_total_exposure_pct was
+        # persisted as 100.0 by _legacy_mode_policy's old default, or 5.0 by the
+        # flat max_total_live_exposure_pct bleeding into demo. Both were bugs:
+        # 100.0 made check #12 a 1.0x leverage cap, 5.0 came from a live-only flat
+        # override polluting demo's base.  Check #17 governs the same ratio
+        # correctly, so demo defaults to 0 (disabled) as of schema_version 4.
+        # Persisted 100.0 or 5.0 on schema_version < 4 are unambiguously the old
+        # buggy defaults, not user choices — erase them so the code default (0.0)
+        # wins.  Any other value is kept as-is, including a freshly saved 100 or 5
+        # on schema_version 4.
+        incoming_version = int(data.get("schema_version", 0))
+        if incoming_version < 4:
+            demo_override = data.get("demo")
+            if isinstance(demo_override, dict):
+                capital = demo_override.get("capital")
+                val = capital.get("max_total_exposure_pct") if isinstance(capital, dict) else None
+                if val in (100.0, 5.0):
+                    capital = {k: v for k, v in capital.items() if k != "max_total_exposure_pct"}
+                    data["demo"] = {**demo_override, "capital": capital}
         for mode in ("demo", "live"):
             override = data.get(mode)
             if isinstance(override, dict):
@@ -751,7 +773,7 @@ class RiskConfig(BaseModel):
                 if isinstance(override, dict)
                 else base
             )
-        data["schema_version"] = 3
+        data["schema_version"] = 4
         return data
 
     def __setattr__(self, name: str, value) -> None:

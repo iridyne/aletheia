@@ -17,7 +17,7 @@ def test_flat_risk_config_migrates_to_mode_policies_without_changing_values():
         "max_live_position_margin_usdt": 45.0,
     })
 
-    assert risk.schema_version == 3
+    assert risk.schema_version == 4
     assert risk.demo.capital.base_source == "account_equity"
     assert risk.live.capital.base_source == "account_equity"
     assert risk.demo.loss.max_daily_loss_pct == 3.5
@@ -44,6 +44,7 @@ def test_persisted_config_carrying_retired_absolute_cap_still_loads():
     from aletheia.config.schema import RiskConfig
 
     risk = RiskConfig.model_validate({
+        "schema_version": 4,
         "max_per_symbol_notional_usdt": 400.0,
         "demo": {
             "capital": {
@@ -159,3 +160,33 @@ def test_explicit_total_exposure_pct_is_still_honoured():
     })
 
     assert risk.demo.capital.max_total_exposure_pct == 250.0
+
+
+def test_v3_persisted_100_total_exposure_migrates_to_disabled():
+    """schema_version < 4 configs with demo max_total_exposure_pct == 100.0 are
+    the old default, not a user choice — migration resets them to 0.0 so every
+    existing runtime gets the fix automatically on next load without manual edits.
+    A non-100 value on the same old version is left untouched.
+    """
+    from aletheia.config.schema import RiskConfig
+
+    # The exact shape Fedora Paper had when this bug was diagnosed.
+    old_fedora = RiskConfig.model_validate({
+        "schema_version": 3,
+        "demo": {
+            "capital": {"base_usdt": 200.0, "max_total_exposure_pct": 100.0},
+        },
+        "live": {},
+    })
+    assert old_fedora.schema_version == 4
+    assert old_fedora.demo.capital.max_total_exposure_pct == 0.0
+
+    # A non-100 value on schema_version 3 is a real operator choice — keep it.
+    non_default = RiskConfig.model_validate({
+        "schema_version": 3,
+        "demo": {
+            "capital": {"max_total_exposure_pct": 150.0},
+        },
+        "live": {},
+    })
+    assert non_default.demo.capital.max_total_exposure_pct == 150.0
