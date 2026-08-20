@@ -435,6 +435,7 @@ def raw_account_events(
     closed_after: str | None = None,
     closed_before: str | None = None,
     symbol: str | None = None,
+    runtime_session_id: str | None = None,
     limit: int = 10_000,
     db: Any = None,
 ) -> list[dict]:
@@ -463,6 +464,9 @@ def raw_account_events(
     if symbol is not None:
         conditions.append("p.symbol = ?")
         params.append(symbol)
+    if runtime_session_id is not None:
+        conditions.append("p.runtime_session_id = ?")
+        params.append(runtime_session_id)
     params.append(limit)
     rows = (db or get_db()).execute(
         """

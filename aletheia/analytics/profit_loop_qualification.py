@@ -109,6 +109,12 @@ def compile_qualification_verdict(
     """
     execution_mode = str(registration.get("execution_mode") or "paper_internal")
     registration_at = registration.get("registration_at")
+    runtime_session_id = registration.get("runtime_session_id")
+    if not runtime_session_id:
+        raise ValueError(
+            "registration must include runtime_session_id; "
+            "cannot prove cohort identity without it"
+        )
     max_drawdown_cap = _to_float(registration.get("max_drawdown_cap"))
     top1_cap = _to_float(registration.get("concentration_top1_cap")) or _DEFAULT_CONCENTRATION_TOP1_CAP
     top5_cap = _to_float(registration.get("concentration_top5_cap")) or _DEFAULT_CONCENTRATION_TOP5_CAP
@@ -116,11 +122,15 @@ def compile_qualification_verdict(
     # ------------------------------------------------------------------
     # Fetch eligible genuine outcomes for this cohort window
     # ------------------------------------------------------------------
-    fetch_kwargs: dict[str, Any] = {"execution_mode": execution_mode}
+    # Window filters (time + mode only) — used for mismatch counting.
+    window_kwargs: dict[str, Any] = {"execution_mode": execution_mode}
     if registration_at:
-        fetch_kwargs["closed_after"] = registration_at
+        window_kwargs["closed_after"] = registration_at
     if cutoff_at:
-        fetch_kwargs["closed_before"] = cutoff_at
+        window_kwargs["closed_before"] = cutoff_at
+
+    # Identity-bound fetch: only rows that prove registration membership.
+    fetch_kwargs: dict[str, Any] = {**window_kwargs, "runtime_session_id": runtime_session_id}
 
     all_outcomes = eligible_strategy_outcomes(**fetch_kwargs)
 
@@ -136,6 +146,7 @@ def compile_qualification_verdict(
         cohort_outcomes = list(all_outcomes)
 
     exclusion_summary = build_outcome_cohort_summary(**fetch_kwargs)
+    window_summary = build_outcome_cohort_summary(**window_kwargs)
 
     # ------------------------------------------------------------------
     # Metrics
@@ -173,12 +184,15 @@ def compile_qualification_verdict(
         "top5_abs_concentration": top5_conc,
     }
 
+    window_raw = window_summary.get("raw_event_count") or 0
+    identity_raw = exclusion_summary.get("raw_event_count") or 0
     funnel: dict[str, Any] = {
         "raw_event_count": exclusion_summary.get("raw_event_count"),
         "eligible_outcome_count": exclusion_summary.get("eligible_outcome_count"),
         "excluded_outcome_count": exclusion_summary.get("excluded_outcome_count"),
         "cohort_filtered_count": len(ordered_pnls),
         "pre_policy_excluded_count": len(all_outcomes) - len(cohort_outcomes),
+        "identity_mismatched_count": window_raw - identity_raw,
         "outcome_exclusion_reasons": exclusion_summary.get("outcome_exclusion_reasons", {}),
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
     }
