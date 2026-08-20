@@ -132,7 +132,9 @@ def persist_current_commit(
     ``mutate_config`` acquires the cross-process config writer permit before
     loading the latest committed config. This prevents the pre-pull updater
     from overwriting target-side schema migrations or concurrent settings with a
-    stale whole-config snapshot.
+    stale whole-config snapshot. A successful child write also invalidates the
+    updater process's local config cache so any later diagnostic read cannot
+    return the pre-write snapshot.
     """
     child_env = dict(env)
     child_env["ALETHEIA_DATA_DIR"] = str(data_dir)
@@ -147,13 +149,23 @@ def persist_current_commit(
         "changed = mutate_config(_apply)\n"
         f"print({_RESULT_PREFIX!r} + json.dumps({{'ok': True, 'changed': bool(changed)}}, sort_keys=True))\n"
     )
-    return _run_json_script(
+    result = _run_json_script(
         script,
         project_root=project_root,
         env=child_env,
         python_executable=python_executable,
         timeout=30,
     )
+    if result.get("ok") is True:
+        try:
+            from aletheia.config import loader as config_loader
+
+            config_loader._invalidate_config_cache()  # noqa: SLF001
+        except Exception:
+            # The disk write already succeeded. Cache invalidation is a local
+            # coherence aid and must not relabel durable persistence as failed.
+            pass
+    return result
 
 
 __all__ = [
