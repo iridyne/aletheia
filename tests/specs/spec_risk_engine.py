@@ -415,7 +415,7 @@ def test_correlation_guards_include_unmaterialized_entry_exposure(
     cfg.risk.max_sector_concentration_pct = 60.0
     cfg.risk.max_portfolio_beta = 3.0
     cfg.risk.max_open_positions_demo = 10
-    cfg.risk.max_demo_position_notional_usdt = 100_000.0
+    cfg.risk.max_demo_position_margin_usdt = 100_000.0
     cfg.risk.max_per_symbol_entries = 20
     cfg.risk.demo.correlation.min_positions_for_concentration = 1
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
@@ -870,13 +870,13 @@ def test_observe_mode_rejects_non_paper(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# RE-B09 — §2 check #5: demo notional cap
+# RE-B09 — §2 check #5: demo margin cap
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim("RE-B09", "risk_engine_contract", "§2 check #5", "L2b",
-              "exceeds_demo_position_notional fires when proposal notional > max_demo_position_notional_usdt"),
+              "exceeds_demo_position_margin fires when proposal margin > max_demo_position_margin_usdt"),
 )
 def test_demo_notional_cap_fires(tmp_path, monkeypatch):
     from aletheia.config.schema import AletheiaConfig
@@ -888,7 +888,7 @@ def test_demo_notional_cap_fires(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
 
     cfg = AletheiaConfig()
-    cfg.risk.max_demo_position_notional_usdt = 100.0
+    cfg.risk.max_demo_position_margin_usdt = 100.0
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
 
     # notional = 1.0 * 200.0 = 200 > 100
@@ -900,8 +900,8 @@ def test_demo_notional_cap_fires(tmp_path, monkeypatch):
     result = evaluate_proposal(p)
 
     assert not result.approved
-    assert any("exceeds_demo_position_notional" in v for v in result.violations), (
-        f"Expected exceeds_demo_position_notional violation, got: {result.violations}"
+    assert any("exceeds_demo_position_margin" in v for v in result.violations), (
+        f"Expected exceeds_demo_position_margin violation, got: {result.violations}"
     )
 
 
@@ -920,8 +920,8 @@ def test_account_balance_tightens_matching_mode_cap(tmp_path, monkeypatch):
 
     _setup_db(tmp_path, monkeypatch)
     cfg = AletheiaConfig()
-    cfg.risk.max_demo_position_notional_usdt = 200.0
-    cfg.risk.max_live_position_notional_usdt = 50.0
+    cfg.risk.max_demo_position_margin_usdt = 200.0
+    cfg.risk.max_live_position_margin_usdt = 50.0
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
 
     def cached_state(mode):
@@ -929,9 +929,9 @@ def test_account_balance_tightens_matching_mode_cap(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sync, "get_cached_state", cached_state)
 
-    assert eng._effective_position_notional_cap(cfg.risk, "bitget_demo") == 80.0
-    assert eng._effective_position_notional_cap(cfg.risk, "bitget_live_limited") == 30.0
-    assert eng._effective_position_notional_cap(cfg.risk, "paper_internal") == 200.0
+    assert eng._effective_position_margin_cap(cfg.risk, "bitget_demo") == 80.0
+    assert eng._effective_position_margin_cap(cfg.risk, "bitget_live_limited") == 30.0
+    assert eng._effective_position_margin_cap(cfg.risk, "paper_internal") == 200.0
 
     proposal = TradeProposal(
         symbol="ETH/USDT", market_type="spot", direction="long",
@@ -939,7 +939,7 @@ def test_account_balance_tightens_matching_mode_cap(tmp_path, monkeypatch):
     )
     repo.insert_trade_proposal(proposal)
     result = eng.evaluate_proposal(proposal)
-    assert any(v == "exceeds_demo_position_notional:100.0>80.0" for v in result.violations)
+    assert any(v == "exceeds_demo_position_margin:100.0>80.0" for v in result.violations)
 
 
 @spec_claim(
@@ -968,7 +968,7 @@ def test_local_paper_balance_reader_failure_rejects_authoritative_proposal(
     _setup_db(tmp_path, monkeypatch)
     cfg = AletheiaConfig()
     cfg.agent.permission_mode = "Paper"
-    cfg.risk.max_demo_position_notional_usdt = 200.0
+    cfg.risk.max_demo_position_margin_usdt = 200.0
     cfg.risk.max_open_positions_demo = 10
     cfg.risk.max_per_symbol_entries = 20
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
@@ -983,8 +983,8 @@ def test_local_paper_balance_reader_failure_rejects_authoritative_proposal(
     # External accounts intentionally keep the existing advisory-cache fallback.
     monkeypatch.setattr(sync, "get_cached_state", _balance_failure)
     assert (
-        eng._effective_position_notional_cap(cfg.risk, "bitget_demo")
-        == cfg.risk.max_demo_position_notional_usdt
+        eng._effective_position_margin_cap(cfg.risk, "bitget_demo")
+        == cfg.risk.max_demo_position_margin_usdt
     )
 
     proposal = TradeProposal(
@@ -1038,7 +1038,7 @@ def test_max_open_demo_positions_blocks(tmp_path, monkeypatch):
     cfg = AletheiaConfig()
     cfg.risk.max_open_positions_demo = 2
     # Give enough notional headroom so only position count triggers
-    cfg.risk.max_demo_position_notional_usdt = 10_000.0
+    cfg.risk.max_demo_position_margin_usdt = 10_000.0
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
 
     # Insert 2 open paper positions (reaching the limit)
@@ -1235,7 +1235,7 @@ def test_demo_daily_loss_uses_demo_capital_base(tmp_path, monkeypatch):
     cfg.risk.demo.capital.base_source = "custom"
     cfg.risk.demo.capital.base_usdt = 10000.0
     cfg.risk.demo.loss.max_daily_loss_pct = 1.0
-    cfg.risk.demo.capital.max_position_notional_usdt = 10000.0
+    cfg.risk.demo.capital.max_position_margin_usdt = 10000.0
     cfg.risk.live.capital.base_source = "custom"
     cfg.risk.live.capital.base_usdt = 100.0
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
@@ -2753,7 +2753,7 @@ def test_re_b17_check14_is_family_evidence_gate():
         "L2b",
         "A paper_internal proposal submitted within the funding-settler window "
         "(economics_complete=False) must not be rejected with account_equity_unavailable "
-        "or exceeds_demo_position_notional:X>0.0 when the account has sufficient cash (#316).",
+        "or exceeds_demo_position_margin:X>0.0 when the account has sufficient cash (#316).",
         status="implemented",
     ),
 )
@@ -2842,7 +2842,7 @@ def test_paper_internal_proposal_not_rejected_during_funding_settler_window(
         f"account_equity_unavailable must not fire during settler window; "
         f"violations: {result.violations}"
     )
-    assert "exceeds_demo_position_notional" not in violation_strings or (
+    assert "exceeds_demo_position_margin" not in violation_strings or (
         ">0.0" not in violation_strings
     ), (
         f"effective_cap must not collapse to 0.0 during settler window; "
@@ -2880,7 +2880,7 @@ def test_position_cap_bounds_pledged_cash_not_raw_notional(monkeypatch):
     result = eng.evaluate_proposal(proposal)
 
     assert not any(
-        "exceeds_demo_position_notional" in v for v in result.violations
+        "exceeds_demo_position_margin" in v for v in result.violations
     ), result.violations
 
 
@@ -2908,5 +2908,5 @@ def test_position_cap_still_rejects_margin_beyond_available_cash(monkeypatch):
     result = eng.evaluate_proposal(proposal)
 
     assert any(
-        "exceeds_demo_position_notional" in v for v in result.violations
+        "exceeds_demo_position_margin" in v for v in result.violations
     ), result.violations

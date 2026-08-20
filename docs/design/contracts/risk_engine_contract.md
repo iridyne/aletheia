@@ -55,7 +55,7 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 | 2b | Complete Entry Plan | 每个 native 本地纸面 market 入场及 native exchange limit 入场必须在 Risk 前固定有限正数的 entry/stop/take-profit/risk_reward；多空几何正确，risk_reward 必须等于 `round(abs(tp-entry)/abs(entry-stop), 2)` 且该结果必须在包含边界的 `[1.00, 10.00]` 合理性包络内。exchange market close/reduce 与 adopted chain 豁免 | —（Proposal immutable fields） | `incomplete_entry_plan:{fields}` / `entry_plan_geometry:*` / `entry_plan_risk_reward_mismatch` / `entry_plan_risk_reward_outside_envelope` | engine.py check #2b/#2c |
 | 3 | Live State | 非 `live_disabled` | `live.state` | `live_disabled` | :99 |
 | 4 | Permission Mode | Observe 仅 paper_internal | `agent.permission_mode` | `permission_mode_insufficient:{mode}` | :104 |
-| 5 | Max Position Notional | live/demo 配置上限与对应账户的本地可用 USDT 取较小值，再应用回撤缩放；`paper_internal` 必须读取本地纸面账户账本，读取失败不可退回配置资金。Demo 默认 100,000 USDT，设置 API 只保留正数下限、不施加应用层最大值；live 边界不变 | `risk.max_{live/demo}_position_notional_usdt` + local exchange-account cache / paper-account ledger | `exceeds_max_position_notional:{n}>{cap}` (live path); `exceeds_demo_position_notional:{n}>{cap}` (demo path); `paper_account_balance_unavailable` | :109 |
+| 5 | Max Position Margin | live/demo 配置上限与对应账户的本地可用 USDT 取较小值，再应用回撤缩放；`paper_internal` 必须读取本地纸面账户账本，读取失败不可退回配置资金。Demo 默认 100,000 USDT，设置 API 只保留正数下限、不施加应用层最大值；live 边界不变 | `risk.max_{live/demo}_position_margin_usdt` + local exchange-account cache / paper-account ledger | `exceeds_max_position_margin:{n}>{cap}` (live path); `exceeds_demo_position_margin:{n}>{cap}` (demo path); `paper_account_balance_unavailable` | :109 |
 | 6 | Max Open Positions | live/demo 持仓数；demo 默认 200，设置 API 只保留正整数下限 | `risk.max_open_positions_{live/demo}` | `max_{live/demo}_positions_reached:{n}` | :127 |
 | 6b | Cross-pool Symbol Dedup | 同 live/demo 池内同标的禁止重复开仓(防跨 broker 重复) | —(始终启用) | `symbol_already_open:{sym}` | :141 |
 | 7 | Short Allowed | 方向合法 | `risk.allow_short_{live/demo}` | `short_not_allowed_{live/demo}` | :138 |
@@ -189,7 +189,7 @@ policy version：`available-balance-risk-budget/v1`（换代用于隔离 learnin
 历史路径 `vol_target_size()` 已无生产调用者，保留为 helper；`trading.default_notional_usdt=25`、`vol_kelly_cap_fraction` 等为旧版兼容字段，不影响当前权威路径。
 
 **关键契约**：sizing 计算结果**不是**最终下单量；它仍须通过 §2 第 5 关
-(Max Position Notional)。sizing 提交期望 notional，Risk Engine 只能批准或拒绝，
+(Max Position Margin)。sizing 提交期望 notional，Risk Engine 只能批准或拒绝，
 不会把超限请求优化或裁剪成另一个仓位。
 
 ---

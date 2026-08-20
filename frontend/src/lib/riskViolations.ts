@@ -92,7 +92,7 @@ export function formatViolation(raw: string): FormattedViolation {
   if (code === 'symbol_not_allowed') return { label: 'Symbol not in whitelist', detail: arg, severity }
   if (code === 'permission_mode_insufficient' || code === 'permission_mode_not_live_eligible')
     return { label: 'Permission mode insufficient', detail: arg, severity }
-  if (code === 'exceeds_max_position_notional' || code === 'exceeds_demo_position_notional') {
+  if (code === 'exceeds_max_position_margin' || code === 'exceeds_demo_position_margin') {
     const [n, cap] = gt(arg)
     return { label: 'Position size over cap', detail: `${fmtUsd(n)} > ${fmtUsd(cap)} cap`, severity }
   }

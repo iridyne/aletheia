@@ -696,7 +696,7 @@ async def test_risk_config_saves_per_symbol_entry_count(client):
 async def test_demo_risk_config_has_no_application_level_upper_caps(client):
     """Paper limits may exceed the old UI ceilings while retaining positive minima."""
     uncapped = {
-        "max_demo_position_notional_usdt": 250_000.0,
+        "max_demo_position_margin_usdt": 250_000.0,
         "max_demo_single_trade_risk_pct": 50.0,
         "max_open_positions_demo": 500,
         "max_account_leverage_demo": 25.0,
@@ -773,7 +773,7 @@ async def test_risk_policy_reset_defaults_is_mode_scoped_and_revision_guarded(cl
     body = reset.json()
     assert body["demo"]["revision"] == demo["revision"] + 1
     assert body["demo"]["policy_id"] == demo["policy_id"]
-    assert body["demo"]["capital"]["max_position_notional_usdt"] == 100_000.0
+    assert body["demo"]["capital"]["max_position_margin_usdt"] == 100_000.0
     assert body["live"] == live
 
     stale = await client.post(

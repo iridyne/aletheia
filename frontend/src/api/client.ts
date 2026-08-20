@@ -1959,10 +1959,10 @@ export const api = {
 			max_daily_loss_pct: number;
 			max_single_trade_risk_pct: number;
 			max_total_live_exposure_pct: number;
-			max_live_position_notional_usdt: number;
+			max_live_position_margin_usdt: number;
 			max_live_limited_cap_usdt: number;
 			starting_capital_usdt: number;
-			max_demo_position_notional_usdt: number;
+			max_demo_position_margin_usdt: number;
 			max_demo_single_trade_risk_pct: number;
 			max_futures_leverage_live: number;
 			max_futures_leverage_demo: number;

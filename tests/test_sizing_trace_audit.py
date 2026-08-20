@@ -28,7 +28,7 @@ def _cfg(
             personas={},
         ),
         risk=SimpleNamespace(
-            max_demo_position_notional_usdt=risk_cap,
+            max_demo_position_margin_usdt=risk_cap,
             max_demo_single_trade_risk_pct=2.0,
             max_leverage_major_demo=5,
             max_leverage_mid_demo=3,
@@ -196,7 +196,7 @@ def test_sizing_trace_detects_risk_cap(monkeypatch):
     _patch_cfg(monkeypatch, _cfg(risk_cap=5.0))
     db = get_db()
     _insert_proposal(db, 1, notional=5.0, conviction=80, status="rejected")
-    _insert_risk_rejection(db, 1, "max_demo_position_notional_usdt")
+    _insert_risk_rejection(db, 1, "max_demo_position_margin_usdt")
     db.commit()
 
     report = build_sizing_trace_audit(hours=24, min_sample_size=1)

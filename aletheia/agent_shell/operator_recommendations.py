@@ -422,38 +422,38 @@ def _risk_boundary_change_from_violation(violation: str, proposal: dict | None, 
 
     parsed = _parse_numeric_threshold_violation(
         violation,
-        "exceeds_demo_position_notional:",
+        "exceeds_demo_position_margin:",
     )
     if parsed is not None:
         if resolved.mode != "demo":
             return None
         actual, _ = parsed
-        current = float(risk.max_demo_position_notional_usdt or 0.0)
+        current = float(risk.max_demo_position_margin_usdt or 0.0)
         suggested = _round_up(max(actual, current), 2)
         if suggested <= current:
             return None
         return candidate(
-            boundary_key="max_demo_position_notional_usdt",
-            violation_kind="exceeds_demo_position_notional",
+            boundary_key="max_demo_position_margin_usdt",
+            violation_kind="exceeds_demo_position_margin",
             current_value=current,
             suggested_value=suggested,
         )
 
     parsed = _parse_numeric_threshold_violation(
         violation,
-        "exceeds_max_position_notional:",
+        "exceeds_max_position_margin:",
     )
     if parsed is not None:
         if resolved.mode != "live":
             return None
         actual, _ = parsed
-        current = float(risk.max_live_position_notional_usdt or 0.0)
+        current = float(risk.max_live_position_margin_usdt or 0.0)
         suggested = _round_up(max(actual, current), 2)
         if suggested <= current:
             return None
         return candidate(
-            boundary_key="max_live_position_notional_usdt",
-            violation_kind="exceeds_max_position_notional",
+            boundary_key="max_live_position_margin_usdt",
+            violation_kind="exceeds_max_position_margin",
             current_value=current,
             suggested_value=suggested,
         )

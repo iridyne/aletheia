@@ -511,7 +511,7 @@ class RiskCapitalPolicy(StrictRiskPolicyModel):
     # this default is merged underneath every persisted override.
     base_source: Literal["account_equity", "custom"] = "account_equity"
     base_usdt: float = 100.0
-    max_position_notional_usdt: float = 50.0
+    max_position_margin_usdt: float = 50.0
     # Per-symbol cumulative bound (CUM-ADD), expressed as a COUNT of full-size
     # entries — never a currency amount. Same-symbol adds average-merge into ONE
     # position, so the single-position cap does not bound repeated accumulation.
@@ -593,9 +593,12 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
                 "max_live_limited_cap_usdt" if is_live else "starting_capital_usdt",
                 100.0,
             ),
-            "max_position_notional_usdt": data.get(
-                f"max_{suffix}_position_notional_usdt",
-                50.0 if is_live else 100_000.0,
+            "max_position_margin_usdt": data.get(
+                f"max_{suffix}_position_margin_usdt",
+                data.get(
+                    f"max_{suffix}_position_notional_usdt",
+                    50.0 if is_live else 100_000.0,
+                ),
             ),
             "max_per_symbol_entries": data.get("max_per_symbol_entries", 3),
             # Demo default 0 = disabled. This check bounds TOTAL NOTIONAL against
@@ -716,6 +719,14 @@ class RiskConfig(BaseModel):
         # carries no information about how many entries it was meant to allow,
         # and the stale value is exactly what this migration exists to retire.
         data.pop("max_per_symbol_notional_usdt", None)
+        # Flat legacy field rename: max_{live/demo}_position_notional_usdt →
+        # max_{live/demo}_position_margin_usdt. Keep the old key in data so
+        # _legacy_mode_policy can still read it; add the new key for the flat field.
+        for suffix, default in (("live", 50.0), ("demo", 100_000.0)):
+            old_flat = f"max_{suffix}_position_notional_usdt"
+            new_flat = f"max_{suffix}_position_margin_usdt"
+            if old_flat in data and new_flat not in data:
+                data[new_flat] = data[old_flat]
         for mode in ("demo", "live"):
             override = data.get(mode)
             if isinstance(override, dict):
@@ -723,6 +734,15 @@ class RiskConfig(BaseModel):
                 if isinstance(capital, dict):
                     capital = dict(capital)
                     capital.pop("max_per_symbol_notional_usdt", None)
+                    old_val = capital.pop("max_position_notional_usdt", None)
+                    if old_val is not None:
+                        new_val = capital.get("max_position_margin_usdt")
+                        if new_val is not None and new_val != old_val:
+                            raise ValueError(
+                                f"{mode}.capital: conflicting max_position_notional_usdt "
+                                f"({old_val}) and max_position_margin_usdt ({new_val})"
+                            )
+                        capital.setdefault("max_position_margin_usdt", old_val)
                     override = {**override, "capital": capital}
                     data[mode] = override
             base = _legacy_mode_policy(data, mode)
@@ -743,10 +763,16 @@ class RiskConfig(BaseModel):
             "max_live_limited_cap_usdt": ("live", "capital", "base_usdt"),
             "starting_capital_usdt": ("demo", "capital", "base_usdt"),
             "max_live_position_notional_usdt": (
-                "live", "capital", "max_position_notional_usdt",
+                "live", "capital", "max_position_margin_usdt",
             ),
             "max_demo_position_notional_usdt": (
-                "demo", "capital", "max_position_notional_usdt",
+                "demo", "capital", "max_position_margin_usdt",
+            ),
+            "max_live_position_margin_usdt": (
+                "live", "capital", "max_position_margin_usdt",
+            ),
+            "max_demo_position_margin_usdt": (
+                "demo", "capital", "max_position_margin_usdt",
             ),
             "max_total_live_exposure_pct": (
                 "live", "capital", "max_total_exposure_pct",
@@ -842,7 +868,7 @@ class RiskConfig(BaseModel):
     max_total_live_exposure_pct: float = 5.0
     # Hard ceiling and fallback when the matching account has no local balance
     # snapshot. Exchange-backed orders use min(this value, available USDT).
-    max_live_position_notional_usdt: float = 50.0
+    max_live_position_margin_usdt: float = 50.0
     max_live_limited_cap_usdt: float = 100.0
     # Paper/demo boundaries remain explicit Risk Engine inputs even though their
     # dashboard/API controls do not impose application-level maximums. Account
@@ -850,7 +876,7 @@ class RiskConfig(BaseModel):
     starting_capital_usdt: float = 100.0
     # Default demo configured ceiling/fallback. Exchange-backed demo orders use
     # the lower of this value and the demo account's cached available USDT.
-    max_demo_position_notional_usdt: float = 100_000.0
+    max_demo_position_margin_usdt: float = 100_000.0
     # Per-symbol cumulative bound (CUM-ADD), as a COUNT of full-size entries.
     # Same-symbol+direction adds average-merge into ONE position, so repeated adds
     # can grow a position past the single-trade cap. The engine derives the USD

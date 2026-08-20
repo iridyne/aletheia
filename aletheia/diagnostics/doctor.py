@@ -701,7 +701,7 @@ def _probe_config_gates(report: Report) -> None:
                f"live.state={cfg.live.state}, exchange.mode={cfg.exchange.mode}, "
                f"paper_execution_mode={getattr(cfg.exchange, 'paper_execution_mode', '?')}")
 
-    demo_cap = getattr(cfg.risk, "max_demo_position_notional_usdt", None)
+    demo_cap = getattr(cfg.risk, "max_demo_position_margin_usdt", None)
     paper_mode = getattr(cfg.exchange, "paper_execution_mode", "")
     if (
         cfg.exchange.mode == "demo"
@@ -710,9 +710,9 @@ def _probe_config_gates(report: Report) -> None:
         and float(demo_cap) <= 0
     ):
         report.add(
-            "config.demo_notional_cap",
+            "config.demo_margin_cap",
             "blocker",
-            f"max_demo_position_notional_usdt={float(demo_cap):g} — every paper/demo proposal is rejected",
+            f"max_demo_position_margin_usdt={float(demo_cap):g} — every paper/demo proposal is rejected",
             "set a positive paper/demo notional cap in Settings → Risk Limits after human review",
         )
 

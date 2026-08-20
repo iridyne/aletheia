@@ -25,7 +25,7 @@ const policy: RiskPolicyDraft = {
   capital: {
     base_source: 'account_equity',
     base_usdt: 100,
-    max_position_notional_usdt: 50,
+    max_position_margin_usdt: 50,
     max_per_symbol_entries: 3,
     max_total_exposure_pct: 5,
   },

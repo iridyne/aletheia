@@ -70,7 +70,7 @@ CRITICAL_RISK_TOKENS = {
     "live_disabled",
     "kill_switch_active",
     "account_mode_mismatch",
-    "exceeds_max_position_notional",
+    "exceeds_max_position_margin",
     "exceeds_single_trade_risk",
     "max_daily_loss_exceeded",
     "stale_market_data",

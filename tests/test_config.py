@@ -66,7 +66,7 @@ def test_bootstrap_creates_dirs(tmp_path):
 
 def test_risk_defaults_conservative():
     cfg = AletheiaConfig()
-    assert cfg.risk.max_live_position_notional_usdt == 50.0
+    assert cfg.risk.max_live_position_margin_usdt == 50.0
     assert cfg.risk.max_live_limited_cap_usdt == 100.0
     assert cfg.risk.max_futures_leverage_live == 2
     assert cfg.risk.allowed_exchange == "paper_internal"

@@ -124,7 +124,7 @@ async def test_runtime_operator_surface_respects_operator_permission_mode():
     cfg.runtime.scheduler_enabled = True
     cfg.exchange.mode = "demo"
     cfg.risk.max_daily_loss_pct = 1.0
-    cfg.risk.max_demo_position_notional_usdt = 200.0
+    cfg.risk.max_demo_position_margin_usdt = 200.0
     cfg.risk.max_open_positions_demo = 6
 
     with patch("aletheia.agent_shell.sessions.create_session", return_value=("session-1", 0.0)), \
@@ -169,7 +169,7 @@ async def test_runtime_operator_surface_is_still_bounded_by_worker_global_safety
     cfg.runtime.scheduler_enabled = True
     cfg.exchange.mode = "demo"
     cfg.risk.max_daily_loss_pct = 1.0
-    cfg.risk.max_demo_position_notional_usdt = 200.0
+    cfg.risk.max_demo_position_margin_usdt = 200.0
     cfg.risk.max_open_positions_demo = 6
 
     with patch("aletheia.agent_shell.sessions.create_session", return_value=("session-1", 0.0)), \
@@ -216,7 +216,7 @@ async def test_runtime_operator_surface_executes_only_when_operator_and_worker_a
     cfg.runtime.scheduler_enabled = True
     cfg.exchange.mode = "demo"
     cfg.risk.max_daily_loss_pct = 1.0
-    cfg.risk.max_demo_position_notional_usdt = 200.0
+    cfg.risk.max_demo_position_margin_usdt = 200.0
     cfg.risk.max_open_positions_demo = 6
     mocked_handler = AsyncMock(return_value={"created": True, "id": "note-1", "title": "Test"})
 

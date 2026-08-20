@@ -22,13 +22,13 @@ export const RISK_LIVE = [
   { key: 'max_total_live_exposure_pct',   label: 'Max total exposure',      unit: '%',    min: 1,    max: 50,     step: 0.5 },
   { key: 'starting_capital_usdt',         label: 'Starting capital',        unit: 'USDT', min: 1,    max: 100000, step: 1 },
   { key: 'max_live_limited_cap_usdt',     label: 'Live cap',                unit: 'USDT', min: 1,    max: 100000, step: 1 },
-  { key: 'max_live_position_notional_usdt', label: 'Position hard ceiling', unit: 'USDT', min: 1,    max: 100000, step: 1 },
+  { key: 'max_live_position_margin_usdt', label: 'Position margin cap', unit: 'USDT', min: 1,    max: 100000, step: 1 },
   { key: 'max_futures_leverage_live',     label: 'Max leverage',            unit: 'x',    min: 1,    max: 20,     step: 1, isInt: true },
   { key: 'max_open_positions_live',       label: 'Max open positions',      unit: '',     min: 1,    max: 50,     step: 1, isInt: true },
 ] as const satisfies readonly LegacyNumField[]
 
 export const RISK_DEMO = [
-  { key: 'max_demo_position_notional_usdt', label: 'Max position notional', unit: 'USDT', min: 1,    step: 1 },
+  { key: 'max_demo_position_margin_usdt', label: 'Max position margin', unit: 'USDT', min: 1,    step: 1 },
   { key: 'max_demo_single_trade_risk_pct',  label: 'Per-trade cost/risk budget', unit: '%', min: 0.01, step: 0.01 },
   { key: 'max_futures_leverage_demo',       label: 'Max leverage',          unit: 'x',    min: 1,    max: 125,    step: 1, isInt: true },
   { key: 'max_open_positions_demo',         label: 'Max open positions',    unit: '',     min: 1,    step: 1, isInt: true },
@@ -77,7 +77,7 @@ export const RISK_MARGIN = [
 ] as const satisfies readonly LegacyNumField[]
 
 export const RISK_POLICY_NUM_FIELDS = [
-  { key: 'capital.max_position_notional_usdt', label: 'Position notional cap', unit: 'USDT', min: 1, step: 1 },
+  { key: 'capital.max_position_margin_usdt', label: 'Position margin cap', unit: 'USDT', min: 1, step: 1 },
   { key: 'capital.max_per_symbol_entries', label: 'Per-symbol cumulative entries', unit: 'entries', min: 0, step: 1, isInt: true },
   { key: 'capital.max_total_exposure_pct', label: 'Total exposure cap', unit: '%', min: 0, step: 0.5 },
   { key: 'loss.max_single_trade_risk_pct', label: 'Per-trade cost/risk budget', unit: '%', min: 0.01, step: 0.01 },

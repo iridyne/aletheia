@@ -28,8 +28,8 @@ def test_flat_risk_config_migrates_to_mode_policies_without_changing_values():
     assert risk.live.margin.block_ratio == 0.8
     assert risk.demo.correlation.enabled is False
     assert risk.live.correlation.max_portfolio_beta == 2.5
-    assert risk.demo.capital.max_position_notional_usdt == 900.0
-    assert risk.live.capital.max_position_notional_usdt == 45.0
+    assert risk.demo.capital.max_position_margin_usdt == 900.0
+    assert risk.live.capital.max_position_margin_usdt == 45.0
 
 
 def test_persisted_config_carrying_retired_absolute_cap_still_loads():
@@ -65,7 +65,7 @@ def test_persisted_config_carrying_retired_absolute_cap_still_loads():
     assert risk.demo.capital.max_per_symbol_entries == 3
     assert risk.live.capital.max_per_symbol_entries == 3
     # Every other persisted value on the same nested object survives untouched.
-    assert risk.demo.capital.max_position_notional_usdt == 51200.0
+    assert risk.demo.capital.max_position_margin_usdt == 51200.0
     assert risk.demo.capital.max_total_exposure_pct == 100.0
     assert risk.demo.capital.base_usdt == 200.0
     assert risk.demo.loss.max_single_trade_risk_pct == 20.0

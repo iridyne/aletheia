@@ -1983,7 +1983,7 @@ async def test_runtime_handle_status_query():
     cfg.runtime.scheduler_enabled = True
     cfg.exchange.mode = "demo"
     cfg.risk.max_daily_loss_pct = 1.0
-    cfg.risk.max_demo_position_notional_usdt = 200.0
+    cfg.risk.max_demo_position_margin_usdt = 200.0
     cfg.risk.max_open_positions_demo = 6
 
     with patch("aletheia.agent_shell.sessions.get_db", return_value=db), \
@@ -2978,7 +2978,7 @@ async def test_propose_risk_boundary_change_creates_artifact(tmp_path, monkeypat
             "policy_id": demo_policy.policy_id,
             "policy_revision": demo_policy.revision,
             "policy_hash": risk_policy_hash(demo_policy),
-            "changes": {"max_demo_position_notional_usdt": 300.0},
+            "changes": {"max_demo_position_margin_usdt": 300.0},
             "rationale": "Paper sizing is too restrictive for current symbol set.",
         }
     )
@@ -2990,7 +2990,7 @@ async def test_propose_risk_boundary_change_creates_artifact(tmp_path, monkeypat
     assert artifacts[0]["content"]["policy_id"] == demo_policy.policy_id
     assert artifacts[0]["content"]["policy_revision"] == demo_policy.revision
     assert artifacts[0]["content"]["policy_hash"] == risk_policy_hash(demo_policy)
-    assert artifacts[0]["content"]["changes"]["max_demo_position_notional_usdt"] == 300.0
+    assert artifacts[0]["content"]["changes"]["max_demo_position_margin_usdt"] == 300.0
 
 
 @pytest.mark.asyncio

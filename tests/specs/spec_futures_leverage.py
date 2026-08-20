@@ -22,7 +22,7 @@ def test_config_schema_futures_fields():
     from aletheia.config.schema import RiskConfig, ExchangeConfig
 
     risk = RiskConfig()
-    assert risk.max_demo_position_notional_usdt == 100_000.0
+    assert risk.max_demo_position_margin_usdt == 100_000.0
     assert risk.max_demo_single_trade_risk_pct == 20.0
     assert risk.max_futures_leverage_demo == 125
     assert risk.max_open_positions_demo == 200
