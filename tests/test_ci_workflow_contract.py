@@ -566,8 +566,6 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
 
     assert set(triggers) == {
         "pull_request_target",
-        "pull_request_review",
-        "issue_comment",
         "workflow_run",
         "repository_dispatch",
     }
@@ -582,11 +580,6 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "unlabeled",
         "closed",
     ]
-    assert triggers["pull_request_review"] == {
-        "branches": ["master"],
-        "types": ["submitted", "dismissed"],
-    }
-    assert triggers["issue_comment"]["types"] == ["created", "edited"]
     assert triggers["workflow_run"] == {
         "workflows": ["Aletheia CI"],
         "types": ["completed"],
@@ -608,11 +601,6 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     schedule_guard = schedule["if"]
     assert "event_name == 'pull_request_target'" in schedule_guard
     assert "action != 'closed'" in schedule_guard
-    assert "event_name == 'pull_request_review'" in schedule_guard
-    assert "chatgpt-codex-connector" in schedule_guard
-    assert "chatgpt-codex-connector[bot]" in schedule_guard
-    assert "event_name == 'issue_comment'" in schedule_guard
-    assert "startsWith(github.event.comment.body, '/codex-triage ')" in schedule_guard
     assert "event_name == 'workflow_run'" in schedule_guard
     assert "workflow_run.conclusion == 'success'" in schedule_guard
     assert schedule["permissions"] == {
@@ -628,16 +616,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     schedule_script = schedule_step["with"]["script"]
     assert "createDispatchEvent" in schedule_script
     assert "auto_merge_update" in schedule_script
-    assert "payload.review.commit_id !== pullRequest.head.sha" in schedule_script
-    assert "normalizeLogin" in schedule_script
-    assert "payload.action !== 'dismissed'" in schedule_script
-    assert "isConnectorLogin(payload.review.user?.login)" in schedule_script
     assert "payload.workflow_run.head_sha !== pullRequest.head.sha" in schedule_script
-    assert "trustedAssociations" in schedule_script
-    assert "getCollaboratorPermissionLevel" in schedule_script
-    assert "commenterPermission.permission" in schedule_script
-    assert "/codex-triage ([0-9a-f]{40}) (clean|complete)" in schedule_script
-    assert "acknowledgement[1] !== pullRequest.head.sha" in schedule_script
     assert "do-not-auto-merge" in schedule_script
     assert "github.rest.pulls.listFiles" in schedule_script
     assert "previous_filename" in schedule_script
@@ -725,20 +704,8 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "event_type: 'release_candidate_merged'" in update_script
 
     assert "reviews(last: 100)" not in update_script
-    assert "comments(last: 100)" in update_script
-    assert "github.paginate(github.rest.pulls.listReviews" in update_script
-    assert "review.commit_id === expectedHeadSha" in update_script
-    assert "review.state !== 'DISMISSED'" in update_script
-    assert "chatgpt-codex-connector" in update_script
-    assert "normalizeLogin" in update_script
-    assert "isConnectorLogin(review.user?.login)" in update_script
-    assert "trustedAssociations" in update_script
-    assert "github.rest.repos.getCommit" in update_script
-    assert "reviewedCommitSha === expectedHeadSha" in update_script
-    assert "disposition === 'clean'" in update_script
-    assert "disposition === 'complete'" in update_script
-    assert "acknowledgement.createdAt >= latestReviewAt" in update_script
-    assert "document every confirmed, false-positive, or deferred finding" in update_script
+    assert "chatgpt-codex-connector" not in update_script
+    assert "codex-triage" not in update_script
     assert "github.rest.pulls.listFiles" in update_script
     assert "merge-authority workflow changes require an explicit manual merge" in update_script
     assert "previous_filename" in update_script
