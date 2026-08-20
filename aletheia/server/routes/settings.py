@@ -404,7 +404,7 @@ def get_settings() -> SettingsResponse:
 
 
 @router.post("/trading-mandate")
-async def set_trading_mandate(req: TradingMandateRequest):
+def set_trading_mandate(req: TradingMandateRequest):
     from aletheia.trading.trading_mandate import TradingMandateConfig, resolve_trading_mandate
 
     candidate = TradingMandateConfig.model_validate(
@@ -611,7 +611,7 @@ class AutonomousLearningRequest(SettingsRequest):
 
 
 @router.post("/autonomous-learning")
-async def set_autonomous_learning(req: AutonomousLearningRequest):
+def set_autonomous_learning(req: AutonomousLearningRequest):
     cfg = load_config()
     old = cfg.agent.autonomous_learning
     cfg.agent.autonomous_learning = req.enabled
@@ -629,7 +629,7 @@ class BypassDistressGateRequest(SettingsRequest):
 
 
 @router.post("/bypass-distress-gate")
-async def set_bypass_distress_gate(req: BypassDistressGateRequest):
+def set_bypass_distress_gate(req: BypassDistressGateRequest):
     cfg = load_config()
     old = cfg.agent.bypass_distress_gate
     cfg.agent.bypass_distress_gate = req.enabled
@@ -672,7 +672,7 @@ def _require_exchange_divergence_confirmation(alignment, confirmed: bool) -> Non
 
 
 @router.post("/exchange-markets")
-async def set_exchange_markets(req: ExchangeMarketsRequest):
+def set_exchange_markets(req: ExchangeMarketsRequest):
     if not req.spot and not req.usdt_futures:
         raise HTTPException(400, "At least one market must be enabled")
     if req.paper_execution_mode is not None and req.paper_execution_mode not in {"bitget_demo", "paper_internal", "binance_testnet", "okx_demo", "binance_live", "okx_live"}:
@@ -724,7 +724,7 @@ class PrimaryExchangeRequest(SettingsRequest):
 
 
 @router.post("/primary-exchange")
-async def set_primary_exchange(req: PrimaryExchangeRequest):
+def set_primary_exchange(req: PrimaryExchangeRequest):
     """Atomically set primary exchange across data, execution, and risk axes."""
     eid = req.exchange_id.strip().lower()
     valid = set(_EXCHANGE_UNIFICATION_MAP.keys()) | {"paper_internal"}
@@ -822,7 +822,7 @@ def update_economics_config(req: EconomicsConfigUpdate):
 
 
 @router.post("/runtime")
-async def update_runtime_config(req: RuntimeConfigUpdate):
+def update_runtime_config(req: RuntimeConfigUpdate):
     cfg = load_config()
     old = cfg.runtime.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -890,7 +890,7 @@ class AppConfigUpdate(SettingsRequest):
 
 
 @router.post("/app")
-async def update_app_config(req: AppConfigUpdate):
+def update_app_config(req: AppConfigUpdate):
     cfg = load_config()
     old = cfg.app.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -1003,7 +1003,7 @@ _SERENITY_BOUNDS: dict[str, tuple[float, float]] = {
 
 
 @router.post("/serenity")
-async def update_serenity_config(req: SerenityConfigUpdate):
+def update_serenity_config(req: SerenityConfigUpdate):
     cfg = load_config()
     old = cfg.serenity.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -1230,7 +1230,7 @@ class AdmitTrialRequest(SettingsRequest):
 
 
 @router.post("/learning/experiments/{experiment_id}/admit-trial")
-async def admit_learning_trial(experiment_id: str, req: AdmitTrialRequest):
+def admit_learning_trial(experiment_id: str, req: AdmitTrialRequest):
     """Admit a shadow experiment to paper_10 trial. Change-management boundary."""
     from aletheia.learning.lifecycle import _execute_trial_admission
     result = _execute_trial_admission(
@@ -1259,7 +1259,7 @@ class OperatorConfigUpdate(SettingsRequest):
 
 
 @router.post("/operator")
-async def update_operator_config(req: OperatorConfigUpdate):
+def update_operator_config(req: OperatorConfigUpdate):
     cfg = load_config()
     old = cfg.operator.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -1286,7 +1286,7 @@ class RegimeConfigUpdate(SettingsRequest):
 
 
 @router.post("/regime")
-async def update_regime_config(req: RegimeConfigUpdate):
+def update_regime_config(req: RegimeConfigUpdate):
     cfg = load_config()
     old = cfg.regime.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -1312,7 +1312,7 @@ class GuardConfigUpdate(SettingsRequest):
 
 
 @router.post("/guard")
-async def update_guard_config(req: GuardConfigUpdate):
+def update_guard_config(req: GuardConfigUpdate):
     cfg = load_config()
     old = cfg.guard.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -1389,7 +1389,7 @@ _HEALTH_BOUNDS: dict[str, tuple[float, float]] = {
 
 
 @router.post("/health-config")
-async def update_health_config(req: HealthConfigUpdate):
+def update_health_config(req: HealthConfigUpdate):
     cfg = load_config()
     old = cfg.health.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -1438,7 +1438,7 @@ _RETENTION_BOUNDS: dict[str, tuple[float, float]] = {
 
 
 @router.post("/retention")
-async def update_retention_config(req: RetentionConfigUpdate):
+def update_retention_config(req: RetentionConfigUpdate):
     cfg = load_config()
     old = cfg.retention.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -1515,7 +1515,7 @@ class WebhookConfigUpdate(SettingsRequest):
 
 
 @router.post("/webhook")
-async def update_webhook_config(req: WebhookConfigUpdate):
+def update_webhook_config(req: WebhookConfigUpdate):
     cfg = load_config()
     old = cfg.webhook.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -1540,7 +1540,7 @@ class UpdateConfigUpdate(SettingsRequest):
 
 
 @router.post("/update-config")
-async def update_update_config(req: UpdateConfigUpdate):
+def update_update_config(req: UpdateConfigUpdate):
     cfg = load_config()
     old = {"enabled": cfg.update.enabled, "branch": cfg.update.branch}
     if req.enabled is not None:
@@ -1560,7 +1560,7 @@ async def update_update_config(req: UpdateConfigUpdate):
 
 
 @router.post("/permission-mode")
-async def set_permission_mode(req: PermissionModeRequest):
+def set_permission_mode(req: PermissionModeRequest):
     if req.mode not in VALID_PERMISSION_MODES:
         raise HTTPException(400, f"Invalid mode. Choose from: {sorted(VALID_PERMISSION_MODES)}")
     cfg = load_config()
@@ -1579,7 +1579,7 @@ async def set_permission_mode(req: PermissionModeRequest):
 
 
 @router.post("/exchange-mode")
-async def set_exchange_mode(req: ExchangeModeRequest):
+def set_exchange_mode(req: ExchangeModeRequest):
     if req.mode not in ("demo", "live"):
         raise HTTPException(400, "Mode must be 'demo' or 'live'")
     cfg = load_config()
@@ -1678,7 +1678,7 @@ _RISK_BOUNDS: dict[str, tuple[float, float]] = {
 
 
 @router.post("/risk")
-async def update_risk_config(req: RiskConfigUpdate):
+def update_risk_config(req: RiskConfigUpdate):
     """Update editable risk limits. Immutable fields are rejected."""
     cfg = load_config()
     old = cfg.risk.model_dump(mode="json")
@@ -1853,12 +1853,12 @@ class RiskPolicyResetRequest(SettingsRequest):
 
 
 @router.get("/risk-policies")
-async def get_risk_policies():
+def get_risk_policies():
     return _policy_payload(load_config())
 
 
 @router.post("/risk-policies/compare")
-async def compare_risk_policies(req: RiskPolicyCopyRequest):
+def compare_risk_policies(req: RiskPolicyCopyRequest):
     cfg = load_config()
     source = getattr(cfg.risk, req.source).model_dump(mode="json")
     target = getattr(cfg.risk, req.target).model_dump(mode="json")
@@ -1866,7 +1866,7 @@ async def compare_risk_policies(req: RiskPolicyCopyRequest):
 
 
 @router.post("/risk-policies/copy")
-async def copy_risk_policy(req: RiskPolicyCopyRequest):
+def copy_risk_policy(req: RiskPolicyCopyRequest):
     if req.source == req.target:
         raise HTTPException(400, "source and target policies must differ")
     if not req.confirm_target_replacement:
@@ -1905,7 +1905,7 @@ async def copy_risk_policy(req: RiskPolicyCopyRequest):
 
 
 @router.put("/risk-policies/{mode}")
-async def replace_risk_policy(mode: RiskMode, req: RiskPolicyReplaceRequest):
+def replace_risk_policy(mode: RiskMode, req: RiskPolicyReplaceRequest):
     if not req.confirm_target_replacement:
         raise HTTPException(422, "Policy replacement requires explicit confirmation")
     cfg = load_config()
@@ -1938,7 +1938,7 @@ async def replace_risk_policy(mode: RiskMode, req: RiskPolicyReplaceRequest):
 
 
 @router.post("/risk-policies/{mode}/reset-defaults")
-async def reset_risk_policy(mode: RiskMode, req: RiskPolicyResetRequest):
+def reset_risk_policy(mode: RiskMode, req: RiskPolicyResetRequest):
     if not req.confirm_target_replacement:
         raise HTTPException(422, "Policy replacement requires explicit confirmation")
     cfg = load_config()
@@ -1983,7 +1983,7 @@ class SymbolsUpdate(SettingsRequest):
 
 
 @router.post("/symbols")
-async def update_tradable_symbols(req: SymbolsUpdate):
+def update_tradable_symbols(req: SymbolsUpdate):
     """Update symbol filter mode and list. Risk and exchange are updated atomically."""
     if req.mode not in VALID_SYMBOL_FILTER_MODES:
         raise HTTPException(400, f"mode must be one of {sorted(VALID_SYMBOL_FILTER_MODES)}")
@@ -2031,7 +2031,7 @@ class EquitiesConfigUpdate(SettingsRequest):
 
 
 @router.post("/equities")
-async def update_observed_equities(req: EquitiesConfigUpdate):
+def update_observed_equities(req: EquitiesConfigUpdate):
     """Update US equity tickers observed by equity_observer (observation-only, not traded)."""
     normalized = list(dict.fromkeys(t.strip().upper() for t in req.tickers if t.strip()))
     cfg = load_config()
@@ -2238,7 +2238,7 @@ _MARKET_DATA_PROVIDERS = {"ccxt", "bitget"}
 
 
 @router.post("/market-data")
-async def update_market_data_config(req: MarketDataConfigUpdate):
+def update_market_data_config(req: MarketDataConfigUpdate):
     """Update market data source parameters."""
     cfg = load_config()
     old = cfg.market_data.model_dump(mode="json")
@@ -2333,7 +2333,7 @@ _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
 
 
 @router.post("/universe")
-async def update_universe_config(req: UniverseConfigUpdate):
+def update_universe_config(req: UniverseConfigUpdate):
     """Update universe generator parameters."""
     cfg = load_config()
     old = cfg.universe.model_dump(mode="json")
@@ -2428,7 +2428,7 @@ class StrategyFactoryConfigUpdate(BaseModel):
 
 
 @router.post("/strategy_factory")
-async def update_strategy_factory_config(req: StrategyFactoryConfigUpdate):
+def update_strategy_factory_config(req: StrategyFactoryConfigUpdate):
     """Strategy Factory subsystem was removed with Position C (2026-07-02).
 
     This endpoint is kept for backward compatibility but performs no mutation and
@@ -2468,7 +2468,7 @@ class RemoteControlConfigUpdate(SettingsRequest):
 
 
 @router.get("/remote-control/interfaces")
-async def get_remote_control_interfaces():
+def get_remote_control_interfaces():
     from aletheia.gateway.network import discover_ipv4_interfaces
     return {"interfaces": discover_ipv4_interfaces()}
 
@@ -2481,7 +2481,7 @@ async def get_tunnel_status():
 
 
 @router.post("/tunnel")
-async def update_tunnel_config(req: TunnelConfigUpdate):
+def update_tunnel_config(req: TunnelConfigUpdate):
     cfg = load_config()
     old = cfg.tunnel.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -2499,7 +2499,7 @@ async def update_tunnel_config(req: TunnelConfigUpdate):
 
 
 @router.post("/remote-control")
-async def update_remote_control_config(req: RemoteControlConfigUpdate):
+def update_remote_control_config(req: RemoteControlConfigUpdate):
     """Save the independent remote-control switch and optional write-only API token."""
     cfg = load_config()
     old_enabled = cfg.remote_control.enabled
@@ -2574,7 +2574,7 @@ class NetworkConfigUpdate(SettingsRequest):
 
 
 @router.post("/network")
-async def update_network_config(req: NetworkConfigUpdate):
+def update_network_config(req: NetworkConfigUpdate):
     """Update global proxy configuration and apply it to the running process."""
     cfg = load_config()
     old = cfg.network.model_dump(mode="json")
@@ -2709,7 +2709,7 @@ _EVENT_TRIGGER_BOUNDS: dict[str, tuple[float, float]] = {
 
 
 @router.post("/event_triggers")
-async def update_event_trigger_config(req: EventTriggerConfigUpdate):
+def update_event_trigger_config(req: EventTriggerConfigUpdate):
     """Update event-driven trigger thresholds."""
     cfg = load_config()
     old = cfg.event_triggers.model_dump(mode="json")

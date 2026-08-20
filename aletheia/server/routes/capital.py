@@ -17,19 +17,19 @@ class CapitalEventRequest(BaseModel):
 
 
 @router.get("/net-deposits")
-async def get_net_deposits():
+def get_net_deposits():
     net = repo.get_net_deposits()
     first_at = repo.get_first_capital_event_time()
     return {"net_deposits_usdt": net, "first_event_at": first_at}
 
 
 @router.get("/events")
-async def list_events():
+def list_events():
     return repo.list_capital_events()
 
 
 @router.post("/events")
-async def create_event(body: CapitalEventRequest):
+def create_event(body: CapitalEventRequest):
     if body.event_type not in ("deposit", "withdraw"):
         raise HTTPException(400, "event_type must be 'deposit' or 'withdraw'")
 
