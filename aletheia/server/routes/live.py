@@ -148,7 +148,7 @@ async def live_unlock(req: LiveUnlockRequest):
             "live_execution_identity": _public_evidence(preflight),
         },
         "live_execution_identity": _public_evidence(preflight),
-        "message": "Live trading unlocked to live_limited by human confirmation after selected-account preflight; PI operator elevated to Auto",
+        "message": "Live trading unlocked to live_limited by human confirmation after selected-account preflight; System Operator elevated to Auto",
     })
     if not audit_ok:
         raise HTTPException(
@@ -204,12 +204,12 @@ async def live_lock():
             "operator_permission_mode": "ReadOnly",
             "live_execution_identity": None,
         },
-        "message": "Live trading locked; PI operator reset to ReadOnly",
+        "message": "Live trading locked; System Operator reset to ReadOnly",
     })
 
     cfg.live.state = "live_disabled"
     cfg.live.unlock_evidence = None
-    # §4b symmetry: locking live must reset PI operator back to ReadOnly so the
+    # §4b symmetry: locking live must reset System Operator back to ReadOnly so the
     # Auto authority granted by live_unlock does not persist after locking.
     cfg.operator.permission_mode = "ReadOnly"
     save_config(cfg)
