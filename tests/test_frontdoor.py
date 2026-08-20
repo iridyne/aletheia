@@ -184,7 +184,8 @@ async def test_frontdoor_api_returns_structured_503_when_backend_down(tmp_path, 
 
 
 @pytest.mark.anyio
-async def test_frontdoor_readyz_fails_only_when_static_missing(tmp_path):
+async def test_frontdoor_readyz_fails_when_static_missing(tmp_path):
+    """Frontdoor /readyz returns 503 when static assets are unavailable."""
     from aletheia.gateway.frontdoor import create_app
 
     missing_static = tmp_path / "missing"
@@ -194,9 +195,31 @@ async def test_frontdoor_readyz_fails_only_when_static_missing(tmp_path):
         root = await client.get("/")
 
     assert resp.status_code == 503
-    assert resp.json()["ok"] is False
+    data = resp.json()
+    assert data["ok"] is False
+    assert data["detail"] == "static_unavailable"
     assert root.status_code == 503
     assert "dashboard assets are unavailable" in root.text.lower()
+
+
+@pytest.mark.anyio
+async def test_frontdoor_readyz_fails_when_backend_down(tmp_path):
+    """Regression: frontdoor /readyz returns 503 when backend is unreachable (issue #1202)."""
+    from aletheia.gateway.frontdoor import create_app
+
+    app = create_app(static_dir=_static_fixture(tmp_path), backend_url="http://127.0.0.1:9")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        livez = await client.get("/_infra/livez")
+        readyz = await client.get("/_infra/readyz")
+
+    # Livez remains 200 for a live frontdoor process
+    assert livez.status_code == 200
+    assert livez.json()["ok"] is True
+    # Readyz returns 503 when backend is unreachable
+    assert readyz.status_code == 503
+    data = readyz.json()
+    assert data["ok"] is False
+    assert data["detail"] == "backend_unavailable"
 
 
 def test_frontdoor_websocket_scope_rejected_without_assertion_error(tmp_path):
@@ -387,8 +410,15 @@ async def test_proxy_stream_interrupted_ends_cleanly(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_frontdoor_livez_and_readyz_return_minimal_schema(tmp_path):
+async def test_frontdoor_livez_and_readyz_return_minimal_schema(tmp_path, monkeypatch):
     from aletheia.gateway.frontdoor import create_app
+    import aletheia.gateway.frontdoor as _fd
+
+    # Mock backend as ready so readyz can succeed
+    async def _mock_probe(backend_url: str) -> dict:
+        return {"ready": True, "status_code": 200, "last_seen_at": "2026-01-01T00:00:00Z"}
+
+    monkeypatch.setattr(_fd, "_probe_backend", _mock_probe)
 
     app = create_app(static_dir=_static_fixture(tmp_path), backend_url="http://127.0.0.1:9")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
@@ -437,7 +467,8 @@ async def test_frontdoor_status_requires_auth_when_remote_active(tmp_path, monke
     assert authed.status_code == 200
     assert authed.json()["role"] == "frontdoor"
     assert livez.status_code == 200
-    assert readyz.status_code == 200
+    # readyz must not require auth; backend unreachable so non-2xx expected here
+    assert readyz.status_code != 401
 
 
 @pytest.mark.anyio
