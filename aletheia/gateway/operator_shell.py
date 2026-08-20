@@ -1,6 +1,7 @@
 """Operator shell spawn helpers and supervision."""
 
 from contextlib import contextmanager
+import hmac
 import json
 import os
 import platform
@@ -459,6 +460,16 @@ def spawn_operator_shell(
         # shells get an independent ephemeral token so live-shell rotation cannot
         # invalidate a concurrent shadow run.
         service_token = issue_session_token() if once else rotate_operator_service_token()
+        if not once:
+            # Verify the persisted credential matches the injected token before the child
+            # is launched.  A mismatch means the credential store is inconsistent and the
+            # child would be unauthorized by construction (issue #1104).
+            _confirmed = current_operator_service_token()
+            if not _confirmed or not hmac.compare_digest(_confirmed, service_token):
+                raise RuntimeError(
+                    "service_token_store_mismatch: persisted token diverges from injected "
+                    "token; spawn aborted to prevent unauthorized child"
+                )
         env = os.environ.copy()
         env.update(
             _build_operator_shell_env(
