@@ -193,7 +193,7 @@ def test_market_data_stale_snapshot_triggers_risk_violation(tmp_path, monkeypatc
     cfg.live.state = "live_enabled"
     cfg.exchange.mode = "live"
     cfg.agent.permission_mode = "Full"
-    cfg.risk.max_live_position_notional_usdt = 1_000_000.0
+    cfg.risk.max_live_position_margin_usdt = 1_000_000.0
     cfg.risk.max_total_live_exposure_pct = 100.0
     cfg.risk.max_daily_loss_pct = 99.0
     cfg.risk.live.capital.base_source = "custom"

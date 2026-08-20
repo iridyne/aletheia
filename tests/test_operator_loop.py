@@ -31,7 +31,7 @@ def _make_config(tmp_path):
         "runtime": {"paused": False, "kill_switch_active": False},
         "agent": {"permission_mode": "Paper"},
         "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 3.0},
-        "risk": {"max_demo_position_notional_usdt": 200.0},
+        "risk": {"max_demo_position_margin_usdt": 200.0},
         "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
     }
     (tmp_path / "config.yaml").write_text(yaml.dump(cfg), encoding="utf-8")
@@ -58,7 +58,7 @@ class TestBuildSystemAssessment:
             "runtime": {"paused": False, "kill_switch_active": True},
             "agent": {"permission_mode": "Paper"},
             "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 3.0},
-            "risk": {"max_demo_position_notional_usdt": 200.0},
+            "risk": {"max_demo_position_margin_usdt": 200.0},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         import aletheia.config.loader as loader
@@ -354,7 +354,7 @@ class TestCapitalAllocation:
             "runtime": {"paused": False, "kill_switch_active": False},
             "agent": {"permission_mode": "Paper"},
             "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 3.0},
-            "risk": {"max_demo_position_notional_usdt": 25.0},
+            "risk": {"max_demo_position_margin_usdt": 25.0},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
@@ -450,7 +450,7 @@ class TestRunOperatorLoop:
             "runtime": {"paused": True, "kill_switch_active": False},
             "agent": {"permission_mode": "Paper"},
             "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 3.0},
-            "risk": {"max_demo_position_notional_usdt": 200.0},
+            "risk": {"max_demo_position_margin_usdt": 200.0},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         import aletheia.config.loader as loader
@@ -526,7 +526,7 @@ class TestParamDrift:
             "runtime": {"paused": False, "kill_switch_active": False},
             "agent": {"permission_mode": "Paper"},
             "trading": {"min_confidence_to_trade": "high", "default_stop_loss_pct": 3.0},
-            "risk": {"max_demo_position_notional_usdt": 200.0},
+            "risk": {"max_demo_position_margin_usdt": 200.0},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
@@ -546,12 +546,12 @@ class TestParamDrift:
             "runtime": {"paused": False, "kill_switch_active": False},
             "agent": {"permission_mode": "Paper"},
             "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 3.0},
-            "risk": {"max_demo_position_notional_usdt": 100.0},
+            "risk": {"max_demo_position_margin_usdt": 100.0},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
         from aletheia.agent_shell.operator_loop import _get_param_drift
-        assert _get_param_drift("max_demo_position_notional_usdt") == "tightened"
+        assert _get_param_drift("max_demo_position_margin_usdt") == "tightened"
 
 
 class TestLoosenRules:
@@ -572,7 +572,7 @@ class TestLoosenRules:
             hours_since_last_trade=4.0,
             win_rate_7d=9.5,
             param_drift={"min_confidence_to_trade": "tightened",
-                         "max_demo_position_notional_usdt": "neutral",
+                         "max_demo_position_margin_usdt": "neutral",
                          "default_stop_loss_pct": "neutral"},
         )
         actions = decide_actions(assessment)
@@ -595,7 +595,7 @@ class TestLoosenRules:
             trades_24h=0,
             hours_since_last_trade=15.0,
             param_drift={"min_confidence_to_trade": "neutral",
-                         "max_demo_position_notional_usdt": "neutral",
+                         "max_demo_position_margin_usdt": "neutral",
                          "default_stop_loss_pct": "neutral"},
         )
         actions = decide_actions(assessment)
@@ -619,7 +619,7 @@ class TestLoosenRules:
             profit_factor_7d=2.0,
             win_rate_7d=60.0,
             param_drift={"min_confidence_to_trade": "neutral",
-                         "max_demo_position_notional_usdt": "tightened",
+                         "max_demo_position_margin_usdt": "tightened",
                          "default_stop_loss_pct": "neutral"},
         )
         actions = decide_actions(assessment)
@@ -644,7 +644,7 @@ class TestLoosenRules:
             profit_factor_7d=2.0,
             win_rate_7d=30.0,
             param_drift={"min_confidence_to_trade": "neutral",
-                         "max_demo_position_notional_usdt": "tightened",
+                         "max_demo_position_margin_usdt": "tightened",
                          "default_stop_loss_pct": "neutral"},
         )
         actions = decide_actions(assessment)
@@ -667,7 +667,7 @@ class TestLoosenRules:
             win_rate_7d=60.0,
             exit_composition_7d={"take_profit": 8, "stop_loss": 2},
             param_drift={"min_confidence_to_trade": "neutral",
-                         "max_demo_position_notional_usdt": "neutral",
+                         "max_demo_position_margin_usdt": "neutral",
                          "default_stop_loss_pct": "tightened"},
         )
         actions = decide_actions(assessment)
@@ -691,7 +691,7 @@ class TestLoosenRules:
             trades_48h=8,
             win_rate_7d=50.0,
             param_drift={"min_confidence_to_trade": "tightened",
-                         "max_demo_position_notional_usdt": "neutral",
+                         "max_demo_position_margin_usdt": "neutral",
                          "default_stop_loss_pct": "neutral"},
         )
         actions = decide_actions(assessment)
@@ -715,7 +715,7 @@ class TestLoosenRules:
             trades_48h=8,
             win_rate_7d=50.0,
             param_drift={"min_confidence_to_trade": "tightened",
-                         "max_demo_position_notional_usdt": "tightened",
+                         "max_demo_position_margin_usdt": "tightened",
                          "default_stop_loss_pct": "tightened"},
         )
         actions = decide_actions(assessment)
@@ -796,7 +796,7 @@ class TestLoosenHandlers:
             "runtime": {"paused": False, "kill_switch_active": False},
             "agent": {"permission_mode": "Paper"},
             "trading": {"min_confidence_to_trade": "high", "default_stop_loss_pct": 3.0},
-            "risk": {"max_demo_position_notional_usdt": 200.0},
+            "risk": {"max_demo_position_margin_usdt": 200.0},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
@@ -817,7 +817,7 @@ class TestLoosenHandlers:
             "runtime": {"paused": False, "kill_switch_active": False},
             "agent": {"permission_mode": "Paper"},
             "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 3.0},
-            "risk": {"max_demo_position_notional_usdt": 180.0},
+            "risk": {"max_demo_position_margin_usdt": 180.0},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
@@ -840,7 +840,7 @@ class TestLoosenHandlers:
             "runtime": {"paused": False, "kill_switch_active": False},
             "agent": {"permission_mode": "Paper"},
             "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 1.0},
-            "risk": {"max_demo_position_notional_usdt": 200.0},
+            "risk": {"max_demo_position_margin_usdt": 200.0},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")

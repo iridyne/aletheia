@@ -1507,7 +1507,7 @@ _RISK_VIOLATION_HINTS: dict[str, tuple[str, str]] = {
     "symbol_blocked":                      ("warning",  "Symbol is on the blocked list."),
     "symbol_not_allowed":                  ("warning",  "Symbol is not in the allowed whitelist."),
     "permission_mode_insufficient":        ("warning",  "Permission mode is insufficient for this action."),
-    "exceeds_max_position_notional":       ("warning",  "Position size exceeds the notional cap."),
+    "exceeds_max_position_margin":         ("warning",  "Position margin exceeds the cap."),
     "max_live_positions_reached":          ("warning",  "Maximum number of open live positions reached."),
     "exceeds_max_leverage":                ("warning",  "Leverage exceeds the configured cap."),
     "max_total_live_exposure_exceeded":    ("warning",  "Total live exposure exceeds the cap."),

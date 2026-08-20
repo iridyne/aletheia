@@ -1602,10 +1602,10 @@ class RiskConfigUpdate(SettingsRequest):
     max_daily_loss_pct: Optional[float] = None
     max_single_trade_risk_pct: Optional[float] = None
     max_total_live_exposure_pct: Optional[float] = None
-    max_live_position_notional_usdt: Optional[float] = None
+    max_live_position_margin_usdt: Optional[float] = None
     max_live_limited_cap_usdt: Optional[float] = None
     starting_capital_usdt: Optional[float] = None
-    max_demo_position_notional_usdt: Optional[float] = None
+    max_demo_position_margin_usdt: Optional[float] = None
     max_per_symbol_entries: Optional[int] = None
     max_demo_single_trade_risk_pct: Optional[float] = None
     max_futures_leverage_live: Optional[int] = None
@@ -1642,7 +1642,7 @@ _RISK_IMMUTABLE = {"allowed_exchange", "require_risk_check_for_all_orders"}
 # They remain positive, finite typed values and continue to pass through every
 # Risk Engine check; exchange-backed leverage retains venue-compatible bounds.
 _RISK_MINIMUMS: dict[str, float] = {
-    "max_demo_position_notional_usdt": 1.0,
+    "max_demo_position_margin_usdt": 1.0,
     "max_demo_single_trade_risk_pct": 0.01,
     "max_account_leverage_demo": 1.0,
     "max_open_positions_demo": 1.0,
@@ -1652,7 +1652,7 @@ _RISK_BOUNDS: dict[str, tuple[float, float]] = {
     "max_daily_loss_pct": (0.1, 20.0),
     "max_single_trade_risk_pct": (0.01, 10.0),
     "max_total_live_exposure_pct": (1.0, 50.0),
-    "max_live_position_notional_usdt": (1.0, 100_000.0),
+    "max_live_position_margin_usdt": (1.0, 100_000.0),
     "max_live_limited_cap_usdt": (1.0, 100_000.0),
     "starting_capital_usdt": (1.0, 100_000.0),
     # A count of full-size entries, not a currency amount. 0 disables check #19.
@@ -1774,7 +1774,7 @@ def _validate_mode_policy(mode: str, policy: ModeRiskPolicy) -> None:
 
     numeric = {
         "capital.base_usdt": policy.capital.base_usdt,
-        "capital.max_position_notional_usdt": policy.capital.max_position_notional_usdt,
+        "capital.max_position_margin_usdt": policy.capital.max_position_margin_usdt,
         "capital.max_per_symbol_entries": policy.capital.max_per_symbol_entries,
         "capital.max_total_exposure_pct": policy.capital.max_total_exposure_pct,
         "loss.max_single_trade_risk_pct": policy.loss.max_single_trade_risk_pct,
@@ -1805,8 +1805,8 @@ def _validate_mode_policy(mode: str, policy: ModeRiskPolicy) -> None:
         invalid.append("positions.max_open_positions")
     if policy.capital.base_usdt <= 0:
         invalid.append("capital.base_usdt")
-    if policy.capital.max_position_notional_usdt <= 0:
-        invalid.append("capital.max_position_notional_usdt")
+    if policy.capital.max_position_margin_usdt <= 0:
+        invalid.append("capital.max_position_margin_usdt")
     # A count, where 0 legitimately means "check #19 disabled" — so only
     # negatives are invalid here (the numeric sweep above already covers that).
     if policy.loss.max_single_trade_risk_pct <= 0:

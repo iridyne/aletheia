@@ -523,15 +523,20 @@ def _cached_available_balance_usdt(execution_mode: str) -> float | None:
         return None
 
 
-def _effective_position_notional_cap(
+def _position_margin_usage(notional: float, leverage: float) -> float:
+    """Pledged cash for a proposal: abs(notional) / leverage (spot: 1x, so notional-equals-cash)."""
+    return abs(notional) / max(1.0, leverage)
+
+
+def _effective_position_margin_cap(
     risk,
     execution_mode: str,
 ) -> float | None:
-    """Return the hard position cap tightened by the matching account balance."""
+    """Return the hard position margin cap tightened by the matching account balance."""
     configured_cap = (
-        risk.max_live_position_notional_usdt
+        risk.max_live_position_margin_usdt
         if _is_live(execution_mode)
-        else risk.max_demo_position_notional_usdt
+        else risk.max_demo_position_margin_usdt
     )
     available = _cached_available_balance_usdt(execution_mode)
     if available is None:
@@ -947,8 +952,8 @@ def _evaluate_proposal_locked(
     if proposal.quantity and proposal.price:
         notional = proposal.quantity * proposal.price
         lev = max(1.0, float(proposal.leverage or 1))
-        margin_required = notional / lev
-        position_cap = _effective_position_notional_cap(
+        margin_required = _position_margin_usage(notional, lev)
+        position_cap = _effective_position_margin_cap(
             risk,
             proposal.execution_mode,
         )
@@ -959,11 +964,11 @@ def _evaluate_proposal_locked(
             if _is_live(proposal.execution_mode):
                 if margin_required > effective_cap:
                     violations.append(
-                        f"exceeds_max_position_notional:{margin_required}>{effective_cap}"
+                        f"exceeds_max_position_margin:{margin_required}>{effective_cap}"
                     )
             elif margin_required > effective_cap:
                 violations.append(
-                    f"exceeds_demo_position_notional:{margin_required}>{effective_cap}"
+                    f"exceeds_demo_position_margin:{margin_required}>{effective_cap}"
                 )
 
     # 6. Max open positions

@@ -4,7 +4,7 @@ owner: operator-control-loop
 domain: paper-sizing-liveness
 initial_state:
   now: "2026-07-13T04:00:00+00:00"
-  max_demo_position_notional_usdt: 100.0
+  max_demo_position_margin_usdt: 100.0
   signal_win_rate_24h: 60.0
   win_rate_7d: 80.0
   hours_since_last_fill: 1.0

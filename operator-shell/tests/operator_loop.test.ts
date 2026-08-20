@@ -1549,14 +1549,14 @@ test('recommendation engine surfaces risk boundary change proposals from backend
         {
           id: 'risk-1',
           proposal_id: 'proposal-1',
-          violations: ['exceeds_demo_position_notional:300.0>200.0'],
+          violations: ['exceeds_demo_position_margin:300.0>200.0'],
         },
       ],
       recent_risk_boundary_proposals: [],
       needs_operator_risk_boundary_proposals: [
         {
           boundary_key: 'max_demo_position_notional_usdt',
-          violation_kind: 'exceeds_demo_position_notional',
+          violation_kind: 'exceeds_demo_position_margin',
           risk_mode: 'demo',
           policy_id: 'demo-policy',
           policy_revision: 2,
@@ -1568,8 +1568,8 @@ test('recommendation engine surfaces risk boundary change proposals from backend
             max_demo_position_notional_usdt: 300,
           },
           summary:
-            'Recent risk rejections repeatedly hit the demo position-notional cap and should be proposed for human review.',
-          sample_violations: ['exceeds_demo_position_notional:300.0>200.0'],
+            'Recent risk rejections repeatedly hit the demo position-margin cap and should be proposed for human review.',
+          sample_violations: ['exceeds_demo_position_margin:300.0>200.0'],
           decision_ids: ['risk-1', 'risk-2'],
         },
       ],
@@ -6268,20 +6268,20 @@ test('operator loop materializes proposal-only risk boundary decisions through t
         id: 'risk-1',
         proposal_id: 'proposal-1',
         approved: false,
-        violations: ['exceeds_demo_position_notional:300.0>200.0'],
+        violations: ['exceeds_demo_position_margin:300.0>200.0'],
       },
       {
         id: 'risk-2',
         proposal_id: 'proposal-2',
         approved: false,
-        violations: ['exceeds_demo_position_notional:300.0>200.0'],
+        violations: ['exceeds_demo_position_margin:300.0>200.0'],
       },
     ],
     recent_risk_boundary_proposals: [],
     needs_operator_risk_boundary_proposals: [
       {
         boundary_key: 'max_demo_position_notional_usdt',
-        violation_kind: 'exceeds_demo_position_notional',
+        violation_kind: 'exceeds_demo_position_margin',
         risk_mode: 'demo',
         policy_id: 'demo-policy',
         policy_revision: 2,
@@ -6293,8 +6293,8 @@ test('operator loop materializes proposal-only risk boundary decisions through t
           max_demo_position_notional_usdt: 300,
         },
         summary:
-          'Recent risk rejections repeatedly hit the demo position-notional cap and should be proposed for human review.',
-        sample_violations: ['exceeds_demo_position_notional:300.0>200.0'],
+          'Recent risk rejections repeatedly hit the demo position-margin cap and should be proposed for human review.',
+        sample_violations: ['exceeds_demo_position_margin:300.0>200.0'],
         decision_ids: ['risk-1', 'risk-2'],
       },
     ],

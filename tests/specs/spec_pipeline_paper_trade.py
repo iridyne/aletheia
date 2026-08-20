@@ -176,7 +176,7 @@ def test_paper_trader_ranker_filters_low_score(tmp_path, monkeypatch):
             "default_stop_loss_pct": 2.0,
             "default_notional_usdt": 25.0,
         },
-        "risk": {"max_demo_position_notional_usdt": 200.0},
+        "risk": {"max_demo_position_margin_usdt": 200.0},
         "exchange": {"paper_execution_mode": "paper_internal"},
     }
     (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")

@@ -57,7 +57,7 @@ def test_level_action_sets_exist():
     SpecClaim(
         "OL-S02", "operator_layer", "§param_registry keys", "L2a",
         "PARAM_REGISTRY dict exists with required keys: min_confidence_to_trade, "
-        "default_stop_loss_pct, max_demo_position_notional_usdt",
+        "default_stop_loss_pct, max_demo_position_margin_usdt",
     ),
 )
 def test_param_registry_required_keys():
@@ -70,7 +70,7 @@ def test_param_registry_required_keys():
     required_keys = {
         "min_confidence_to_trade",
         "default_stop_loss_pct",
-        "max_demo_position_notional_usdt",
+        "max_demo_position_margin_usdt",
     }
     missing = required_keys - set(ol.PARAM_REGISTRY.keys())
     assert not missing, f"PARAM_REGISTRY missing required keys: {missing}"
@@ -306,7 +306,7 @@ def test_bounded_neutral_recoveries_are_the_only_level1_loosen_exceptions():
     spec = ol.PARAM_REGISTRY["min_confidence_to_trade"]
     assert spec.neutral == "medium"
     assert spec.ladder == ["speculative", "medium", "high"]
-    sizing = ol.PARAM_REGISTRY["max_demo_position_notional_usdt"]
+    sizing = ol.PARAM_REGISTRY["max_demo_position_margin_usdt"]
     assert sizing.neutral == 200.0
     assert sizing.tighten_direction == "down"
 

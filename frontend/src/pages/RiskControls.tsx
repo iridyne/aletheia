@@ -154,7 +154,7 @@ export default function RiskControls() {
   const equity = Number((portfolio as any)?.exchange_equity_usdt) || Number((portfolio as any)?.total_value_usdt) || 0
   const positionsCount = Number((portfolio as any)?.positions_count) || (positions as any[]).length || 0
   const posCap = Number(activePolicy?.positions?.max_open_positions) || null
-  const notionalCap = Number(activePolicy?.capital?.max_position_notional_usdt) || null
+  const marginCap = Number(activePolicy?.capital?.max_position_margin_usdt) || null
   const dailyLossPct = Number(activePolicy?.loss?.max_daily_loss_pct) || null
   const dailyLossCapUsdt = (dailyLossPct != null && equity > 0) ? equity * dailyLossPct / 100 : null
   const todayPnlRaw = (portfolio as any)?.today_pnl
@@ -163,17 +163,18 @@ export default function RiskControls() {
     ? todayPnlParsed
     : null
   const todayLoss = todayPnl == null ? null : todayPnl < 0 ? Math.abs(todayPnl) : 0
-  // positions API has no notional field — derive from quantity × current_price, open only.
-  const largestPos = (positions as any[]).reduce((m, p) => {
+  // Derive margin (pledged cash) per position: notional / leverage. Spot leverage = 1.
+  const largestMargin = (positions as any[]).reduce((m, p) => {
     if (p?.status && p.status !== 'open') return m
     const qty = Math.abs(Number(p?.quantity) || 0)
     const px  = Number(p?.current_price) || Number(p?.entry_price) || 0
-    return Math.max(m, qty * px)
+    const lev = Math.max(1, Number(p?.leverage) || 1)
+    return Math.max(m, (qty * px) / lev)
   }, 0)
 
   const headroomRows = [
     posCap != null && { label: 'Open positions', used: positionsCount, cap: posCap, fmtUsed: (v: number) => String(Math.round(v)), fmtCap: (v: number) => String(Math.round(v)) },
-    notionalCap != null && { label: 'Largest position', used: largestPos, cap: notionalCap, fmtUsed: (v: number) => `$${v.toFixed(1)}`, fmtCap: (v: number) => `$${v.toFixed(0)}` },
+    marginCap != null && { label: 'Position margin', used: largestMargin, cap: marginCap, fmtUsed: (v: number) => `$${v.toFixed(1)}`, fmtCap: (v: number) => `$${v.toFixed(0)}` },
     dailyLossCapUsdt != null && { label: 'Daily loss', used: todayLoss, cap: dailyLossCapUsdt, fmtUsed: (v: number) => `$${v.toFixed(1)}`, fmtCap: (v: number) => `$${v.toFixed(0)}` },
   ].filter(Boolean) as { label: string; used: number | null; cap: number; fmtUsed: (v: number) => string; fmtCap: (v: number) => string }[]
 
@@ -464,7 +465,7 @@ const LIMIT_GROUPS: LimitGroup[] = [
   {
     title: 'Position sizing',
     rows: [
-      { label: 'Position notional cap', pair: ['live.capital.max_position_notional_usdt', 'demo.capital.max_position_notional_usdt'] },
+      { label: 'Position margin cap', pair: ['live.capital.max_position_margin_usdt', 'demo.capital.max_position_margin_usdt'] },
       { label: 'Per-symbol cumulative entries', pair: ['live.capital.max_per_symbol_entries', 'demo.capital.max_per_symbol_entries'] },
       { label: 'Per-trade cost/risk budget', pair: ['live.loss.max_single_trade_risk_pct', 'demo.loss.max_single_trade_risk_pct'] },
       { label: 'Max open positions', pair: ['live.positions.max_open_positions', 'demo.positions.max_open_positions'] },

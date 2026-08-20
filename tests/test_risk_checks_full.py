@@ -482,18 +482,18 @@ def test_live_family_edge_selects_matching_market_type(monkeypatch):
 # --- demo/paper bounds (§2.3: paper evidence must be built from bounded trades) ---
 
 def test_demo_position_notional_bounded(tmp_path, monkeypatch):
-    """A paper order above the demo notional cap is rejected (was unbounded)."""
+    """A paper order above the demo margin cap is rejected (was unbounded)."""
     setup_env(tmp_path, monkeypatch)
-    # default max_demo_position_notional_usdt = 200; 0.01 * 60000 = 600 > 200
+    # default max_demo_position_margin_usdt = 200; 0.01 * 60000 = 600 > 200
     p = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
         execution_mode="paper_internal", quantity=0.01, price=60000,
     )
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
-    assert any("exceeds_demo_position_notional" in v for v in result.violations)
-    # Distinct token: it must NOT masquerade as the live notional violation.
-    assert not any("exceeds_max_position_notional" in v for v in result.violations)
+    assert any("exceeds_demo_position_margin" in v for v in result.violations)
+    # Distinct token: it must NOT masquerade as the live margin violation.
+    assert not any("exceeds_max_position_margin" in v for v in result.violations)
 
 
 def test_demo_single_trade_risk_bounded(tmp_path, monkeypatch):

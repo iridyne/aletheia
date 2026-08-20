@@ -132,7 +132,7 @@ class TestRiskEngineSeam:
         """Proposal exceeding max notional is rejected."""
         from aletheia.config.loader import load_config
         cfg = load_config()
-        monkeypatch.setattr(cfg.risk, "max_demo_position_notional_usdt", 10.0)
+        monkeypatch.setattr(cfg.risk, "max_demo_position_margin_usdt", 10.0)
 
         proposal = TradeProposal(
             symbol="ETH/USDT",
@@ -150,7 +150,7 @@ class TestRiskEngineSeam:
         result = evaluate_proposal(proposal)
         assert result.approved is False
         assert any(
-            violation.startswith("exceeds_demo_position_notional:")
+            violation.startswith("exceeds_demo_position_margin:")
             for violation in result.violations
         ), result.violations
 

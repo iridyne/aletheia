@@ -152,7 +152,7 @@ async def test_risk_summary_surfaces_due_boundary_change_after_repeated_adjustab
     from aletheia.risk.policy import risk_policy_hash
 
     cfg = load_config()
-    cfg.risk.demo.capital.max_position_notional_usdt = 200.0
+    cfg.risk.demo.capital.max_position_margin_usdt = 200.0
     save_config(cfg)
     demo_policy = cfg.risk.demo
     identity = {
@@ -184,7 +184,7 @@ async def test_risk_summary_surfaces_due_boundary_change_after_repeated_adjustab
             proposal_id=first.id,
             approved=False,
             **identity,
-            violations='["exceeds_demo_position_notional:300.0>200.0"]',
+            violations='["exceeds_demo_position_margin:300.0>200.0"]',
             message="Rejected",
         )
     )
@@ -193,7 +193,7 @@ async def test_risk_summary_surfaces_due_boundary_change_after_repeated_adjustab
             proposal_id=second.id,
             approved=False,
             **identity,
-            violations='["exceeds_demo_position_notional:300.0>200.0"]',
+            violations='["exceeds_demo_position_margin:300.0>200.0"]',
             message="Rejected",
         )
     )
@@ -204,8 +204,8 @@ async def test_risk_summary_surfaces_due_boundary_change_after_repeated_adjustab
     payload = resp.json()
     due = payload["needs_operator_risk_boundary_proposals"]
     assert len(due) == 1
-    assert due[0]["boundary_key"] == "max_demo_position_notional_usdt"
-    assert due[0]["changes"]["max_demo_position_notional_usdt"] == 300.0
+    assert due[0]["boundary_key"] == "max_demo_position_margin_usdt"
+    assert due[0]["changes"]["max_demo_position_margin_usdt"] == 300.0
 
 
 @pytest.mark.anyio
@@ -235,7 +235,7 @@ async def test_risk_summary_suppresses_due_boundary_change_when_recent_proposal_
             proposal_id=proposal.id,
             approved=False,
             **identity,
-            violations='["exceeds_demo_position_notional:300.0>200.0"]',
+            violations='["exceeds_demo_position_margin:300.0>200.0"]',
             message="Rejected",
         )
     )
@@ -244,7 +244,7 @@ async def test_risk_summary_suppresses_due_boundary_change_when_recent_proposal_
             proposal_id=proposal.id,
             approved=False,
             **identity,
-            violations='["exceeds_demo_position_notional:300.0>200.0"]',
+            violations='["exceeds_demo_position_margin:300.0>200.0"]',
             message="Rejected again",
         )
     )
@@ -259,7 +259,7 @@ async def test_risk_summary_suppresses_due_boundary_change_when_recent_proposal_
             "policy_revision": demo_policy.revision,
             "policy_hash": risk_policy_hash(demo_policy),
             "changes": {
-                "max_demo_position_notional_usdt": 300.0,
+                "max_demo_position_margin_usdt": 300.0,
             },
             "requires_human_approval": True,
         },
