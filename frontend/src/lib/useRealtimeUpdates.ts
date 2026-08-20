@@ -202,7 +202,7 @@ export function useRealtimeUpdates(enabled = true): RealtimeStatus {
       if (dead || document.visibilityState === 'hidden' || ws) return
       updateStatus({ state: reconnecting ? 'reconnecting' : 'connecting' })
       const ticket = await getWsTicket()
-      if (dead || document.visibilityState === 'hidden' || ws) return
+      if (dead || document.hidden || ws) return
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const qs = ticket ? `?ticket=${encodeURIComponent(ticket)}` : ''
       const socket = new WebSocket(`${proto}//${window.location.host}/api/ws${qs}`)
