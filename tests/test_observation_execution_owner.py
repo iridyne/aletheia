@@ -332,9 +332,9 @@ def test_execution_owner_is_config_driven_not_binary_driven():
         "aletheia.config.loader.load_config",
         side_effect=RuntimeError("simulated broken config"),
     ):
-        # Malformed config → safe fallback to ``main`` (never accidentally
-        # hands cycle to Worker that may not exist).
-        assert get_execution_owner() == "main"
+        # Config load failure → owner_unavailable (NOT "main").
+        # Uncertainty must never manufacture authority for either side.
+        assert get_execution_owner() == "unknown"
 
     with patch(
         "aletheia.config.loader.load_config",
@@ -343,3 +343,70 @@ def test_execution_owner_is_config_driven_not_binary_driven():
         })(),
     ):
         assert get_execution_owner() == "worker"
+
+    # Legacy config with no observation section → "main" (backward compat).
+    with patch(
+        "aletheia.config.loader.load_config",
+        return_value=type("Cfg", (), {"observation": None})(),
+    ):
+        assert get_execution_owner() == "main"
+
+
+# ─── (Issue #1147) config-read failure must not grant Main authority ──────────
+
+
+def test_config_read_failure_returns_owner_unavailable():
+    """A load_config failure must return 'unknown', not 'main'."""
+    from aletheia.observation_lab.execution_owner import get_execution_owner
+
+    for exc_type in (RuntimeError, OSError, ValueError):
+        with patch(
+            "aletheia.config.loader.load_config",
+            side_effect=exc_type("broken"),
+        ):
+            assert get_execution_owner() == "unknown", (
+                f"Expected 'unknown' on {exc_type.__name__}, got something else"
+            )
+
+
+def test_require_main_or_absent_fails_closed_on_owner_unavailable():
+    """Main must not be allowed to execute when ownership cannot be read."""
+    from aletheia.observation_lab.execution_owner import (
+        ObservationOwnerError,
+        require_main_or_absent,
+    )
+
+    with patch(
+        "aletheia.config.loader.load_config",
+        side_effect=RuntimeError("transient read error"),
+    ):
+        with pytest.raises(ObservationOwnerError, match="owner_unavailable"):
+            require_main_or_absent(action="test action")
+
+
+def test_require_worker_owner_fails_closed_on_owner_unavailable():
+    """Worker CLI must not be allowed to run when ownership cannot be read."""
+    from aletheia.observation_lab.execution_owner import (
+        ObservationOwnerError,
+        require_worker_owner,
+    )
+
+    with patch(
+        "aletheia.config.loader.load_config",
+        side_effect=RuntimeError("transient read error"),
+    ):
+        with pytest.raises(ObservationOwnerError, match="owner_unavailable"):
+            require_worker_owner(action="observe run")
+
+
+def test_invalid_explicit_owner_returns_owner_unavailable():
+    """An explicitly set but unrecognised owner value must be treated as unavailable."""
+    from aletheia.observation_lab.execution_owner import get_execution_owner
+
+    with patch(
+        "aletheia.config.loader.load_config",
+        return_value=type("Cfg", (), {
+            "observation": type("Obs", (), {"execution_owner": "both"}),
+        })(),
+    ):
+        assert get_execution_owner() == "unknown"
