@@ -112,7 +112,7 @@ function SystemCard({ shell, coverage }: { shell?: ShellBootstrap; coverage?: Ov
       : exchange?.execution_exchange || exchange?.data_exchange || 'not available'
   const coverageAvailable = coverage?.availability === 'available'
   const rows = [
-    ['Gateway', shell?.gateway?.running ? 'green' : shell ? 'red' : 'muted', shell ? (shell.gateway?.paused ? 'paused' : 'running') : 'not available'],
+    ['Gateway', shell?.gateway?.running ? 'green' : !shell ? 'muted' : 'red', shell ? (shell.gateway?.paused ? 'paused' : 'running') : 'not available'],
     ['Scheduler', scheduler?.running ? 'green' : scheduler ? 'yellow' : 'muted', scheduler?.state || 'not available'],
     ['Connectivity', shell?.connectivity?.state === 'reachable' ? 'green' : 'muted', shell?.connectivity?.state || 'deferred'],
     ['Exchange', exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted', exchangeLabel],
