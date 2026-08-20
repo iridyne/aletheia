@@ -79,15 +79,30 @@ def _run_update(*, restart: bool) -> None:
 
     continuity_state = result.get("continuity_state")
     comparison = (result.get("continuity") or {}).get("comparison") or {}
+    old_commit = str(result.get("old_commit") or "")
+    new_commit = str(result.get("new_commit") or "")
+    source_changed = result.get("source_changed")
+    if source_changed is None:
+        source_changed = old_commit != new_commit
+    runtime_old_commit = str(result.get("runtime_old_commit") or "")
+    display_old_commit = runtime_old_commit if restart and runtime_old_commit else old_commit
+    display_changed = bool(
+        new_commit and display_old_commit and display_old_commit != new_commit
+    )
+    source_label = (new_commit or display_old_commit or "unknown")[:8]
 
     # Only directly observed structural breakage is a failed deployment. Missing
     # evidence is surfaced as UNPROVEN without rewriting an already-applied
     # source update into a false hard failure.
     if continuity_state == "failed":
         failures = comparison.get("failures") or []
+        update_label = (
+            f"Updated {display_old_commit[:8]} -> {new_commit[:8]}"
+            if display_changed
+            else f"Source unchanged at {source_label}"
+        )
         typer.echo(
-            f"Updated {result['old_commit'][:8]} -> {result['new_commit'][:8]}, "
-            "but Observer continuity verification FAILED.",
+            f"{update_label}, but Observer continuity verification FAILED.",
             err=True,
         )
         if failures:
@@ -95,16 +110,27 @@ def _run_update(*, restart: bool) -> None:
         if result.get("message"):
             typer.echo(f"  {result['message']}", err=True)
         typer.echo(
-            "  Source update remains applied; inspect `aletheia control status --json` "
+            (
+                "  Source update remains applied;"
+                if source_changed
+                else "  Source checkout is unchanged;"
+            )
+            + " inspect `aletheia control status --json` "
             "and `aletheia observe overview --json` before further mutation.",
             err=True,
         )
         raise typer.Exit(1)
 
-    typer.echo(
-        f"Updated {result['old_commit'][:8]} -> {result['new_commit'][:8]} "
-        f"(deps reinstalled: {result['deps_reinstalled']})."
-    )
+    if display_changed:
+        typer.echo(
+            f"Updated {display_old_commit[:8]} -> {new_commit[:8]} "
+            f"(deps reinstalled: {result['deps_reinstalled']})."
+        )
+    else:
+        typer.echo(
+            f"Already up to date at {source_label} "
+            f"(deps reinstalled: {result['deps_reinstalled']})."
+        )
     if restart:
         typer.echo("Gateway restarted and readiness verified.")
     else:

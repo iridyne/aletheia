@@ -278,6 +278,90 @@ def test_cli_update_runs_full_source_deployment_without_subcommand(
     assert "Gateway restarted and readiness verified." in result.output
 
 
+def test_cli_update_same_source_commit_reports_noop(monkeypatch):
+    from aletheia.cli import update_cmd
+    from aletheia.update import continuity
+    from typer.testing import CliRunner
+
+    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
+    monkeypatch.setattr(
+        continuity,
+        "apply_update_with_continuity",
+        lambda *, restart: {
+            "applied": True,
+            "old_commit": "same111",
+            "new_commit": "same111",
+            "deps_reinstalled": False,
+            "continuity_state": "verified",
+            "continuity_verified": True,
+            "continuity": {"comparison": {"main_health_status": "healthy"}},
+        },
+    )
+
+    result = CliRunner().invoke(update_cmd.update_app, [])
+
+    assert result.exit_code == 0
+    assert "Already up to date at same111" in result.output
+    assert "Updated same111 -> same111" not in result.output
+
+
+def test_cli_update_restart_reports_runtime_version_transition(monkeypatch):
+    from aletheia.cli import update_cmd
+    from aletheia.update import continuity
+    from typer.testing import CliRunner
+
+    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
+    monkeypatch.setattr(
+        continuity,
+        "apply_update_with_continuity",
+        lambda *, restart: {
+            "applied": True,
+            "old_commit": "new22222",
+            "new_commit": "new22222",
+            "runtime_old_commit": "old11111",
+            "source_changed": False,
+            "deps_reinstalled": False,
+            "continuity_state": "verified",
+            "continuity_verified": True,
+            "continuity": {"comparison": {"main_health_status": "healthy"}},
+        },
+    )
+
+    result = CliRunner().invoke(update_cmd.update_app, [])
+
+    assert result.exit_code == 0
+    assert "Updated old11111 -> new22222" in result.output
+    assert "Already up to date at new22222" not in result.output
+
+
+def test_cli_update_same_source_commit_failure_is_not_labeled_updated(monkeypatch):
+    from aletheia.cli import update_cmd
+    from aletheia.update import continuity
+    from typer.testing import CliRunner
+
+    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
+    monkeypatch.setattr(
+        continuity,
+        "apply_update_with_continuity",
+        lambda *, restart: {
+            "applied": True,
+            "old_commit": "same111",
+            "new_commit": "same111",
+            "deps_reinstalled": False,
+            "continuity_state": "failed",
+            "continuity_verified": False,
+            "continuity": {"comparison": {"failures": ["main_health_degraded"]}},
+        },
+    )
+
+    result = CliRunner().invoke(update_cmd.update_app, [])
+
+    assert result.exit_code == 1
+    assert "Source unchanged at same111" in result.output
+    assert "Updated same111 -> same111" not in result.output
+    assert "Source update remains applied" not in result.output
+
+
 def test_cli_update_without_subcommand_stages_packaged_release(monkeypatch):
     from aletheia.cli import update_cmd
     from aletheia.update import packaged_commands

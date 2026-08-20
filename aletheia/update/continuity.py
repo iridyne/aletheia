@@ -606,6 +606,17 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
             "continuity": {"preflight": preflight, "before": before},
         }
 
+    before_gateway = before.get("gateway") or {}
+    before_control = before.get("control") or {}
+    # `current_commit` can already reflect a newer disk checkout while the
+    # running process is still on its older boot commit.
+    runtime_old_commit = (
+        before_gateway.get("boot_commit")
+        or before_control.get("running_sha")
+        or before_gateway.get("current_commit")
+    )
+    result = {**result, "runtime_old_commit": runtime_old_commit}
+
     target = result.get("new_commit")
     expected_target = (
         str(target) if result.get("mode") == "development" and target else None
