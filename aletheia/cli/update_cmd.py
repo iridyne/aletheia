@@ -96,13 +96,15 @@ def _tty_phase_fail(phase: str) -> None:
     sys.stdout.flush()
 
 
-def _tty_error(code: str, phase: str, detail: str) -> None:
+def _tty_error(code: str, phase: str, detail: str, fix: str = "") -> None:
     sys.stdout.write(f"\n  {_RED}{_BOLD}✗  Update failed:{_R}  {_BOLD}{code}{_R}\n\n")
     sys.stdout.write(f"    {_DIM}code    {_R}{code}\n")
     if phase:
         sys.stdout.write(f"    {_DIM}phase   {_R}{phase}\n")
     if detail:
         sys.stdout.write(f"    {_DIM}detail  {_R}{detail}\n")
+    if fix:
+        sys.stdout.write(f"    {_DIM}fix     {_R}{fix}\n")
     sys.stdout.write("\n")
     sys.stdout.flush()
 
@@ -188,6 +190,7 @@ def _run_update(*, restart: bool) -> None:
                 result.get("reason", "unknown"),
                 last_phase,
                 result.get("message") or "",
+                fix=result.get("fix_hint") or "",
             )
         else:
             typer.echo(f"Update not applied: {result.get('reason')}")
