@@ -2496,8 +2496,8 @@ def _probe_concentration(report: Report) -> None:
                            f"historical concentration residue: {detail}; newest top-bucket fill {_fmt_age(top_age)}")
             else:
                 report.add("loop.concentration", "warn",
-                           f"PI single-bet bias: {detail}",
-                           "highly correlated exposure — PI may be making one bet "
+                           f"Trading Decision bias: {detail}",
+                           "highly correlated exposure — System Operator may be making one bet "
                            "repeatedly; check trade_proposals for direction diversity")
         elif top_pct > 40:
             report.add("loop.concentration", "info",
@@ -2565,7 +2565,7 @@ def _probe_startup_behavior_gate(report: Report) -> None:
 
 
 def _probe_operator_loop(report: Report) -> None:
-    """PI Operator Loop liveness — checks if it has run within expected cadence."""
+    """System Operator governance loop liveness — checks if it has run within expected cadence."""
     try:
         from aletheia.config.loader import load_config
         cfg = load_config()
@@ -3017,7 +3017,7 @@ def _probe_content_proposal_bias(report: Report) -> None:
         else:
             report.add("content.proposal_bias", "warn",
                        f"proposal-layer directional bias: {detail}",
-                       "PI proposes almost exclusively one direction (pre-risk) — check trading_decision "
+                       "System Operator proposes almost exclusively one direction (pre-risk) — check trading_decision "
                        "for a stuck regime read or one-sided signal inputs")
     else:
         report.add("content.proposal_bias", "ok", detail)

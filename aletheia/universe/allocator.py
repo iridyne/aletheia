@@ -422,7 +422,7 @@ def compute_total_score(
                 feat["learning_candidate_key"] = candidate_key
                 feat["learning_exposure_id"] = influence.exposure_id
                 feat["learning_target_horizon"] = horizon
-    # Operator-adjustable per-family weight. The PI Operator writes
+    # Operator-adjustable per-family weight. The System Operator writes
     # cfg.scanner_weights via _action_adjust_scanner_weight (OL-C09) and the UI
     # shows it, but scoring never consumed it — the manual bias was inert. Empty
     # dict (default) → 1.0 for every family, preserving current behavior.
@@ -617,7 +617,7 @@ def allocate_universe(
 
             # Guard: only mark execution_eligible if there is live price data within the
             # last 2 hours. Symbols with zero snapshots (e.g. NATGAS/USDT) would otherwise
-            # reach PI Agent as tradeable but fail silently at proposal submission.
+            # reach the Trading Decision daemon as tradeable but fail silently at proposal submission.
             _sym = item.get("symbol", "")
             _has_live_price = has_fresh_market_snapshot(_sym, item.get("market_type", "spot"))
 

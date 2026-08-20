@@ -1566,7 +1566,7 @@ def init_scheduler() -> BackgroundScheduler | None:
         id="daily_summary", misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
     )
 
-    # PI Operator Loop — system governance assessment + auto-actions every 4h.
+    # System Operator governance loop — system assessment + auto-actions every 4h.
     _scheduler.add_job(
         _guarded("pi_operator_loop", _run_operator_loop), "cron",
         hour="0,4,8,12,16,20", minute=15,
@@ -2569,7 +2569,7 @@ def _run_pi_trading_decision():
 
 
 def _run_operator_loop():
-    """PI Operator Loop — system-level assessment + auto-actions (4h cadence)."""
+    """System Operator governance loop — system-level assessment + auto-actions (4h cadence)."""
     cfg = load_config()
     if cfg.runtime.paused:
         return

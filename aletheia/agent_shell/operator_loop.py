@@ -1,4 +1,4 @@
-"""PI Operator Loop — autonomous system governance at 4h cadence.
+"""System Operator — autonomous system governance at 4h cadence.
 
 The Operator is a Supervisor, not an Executor:
 - Consumes outputs from bottom-level scheduled jobs
@@ -943,7 +943,7 @@ def _action_notify(action: OperatorAction) -> dict:
     logger.info("operator: notify — %s", message[:200])
     try:
         from aletheia.notifications import notify_operator as _notify
-        _notify("PI Operator", message[:500], level="info")
+        _notify("System Operator", message[:500], level="info")
     except Exception as e:
         logger.warning("operator: notification dispatch failed: %s", e)
         return {
