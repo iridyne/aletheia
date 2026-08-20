@@ -674,8 +674,9 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
             # columns that the following v25 migration reads. The current tail
             # includes v31 (persona rollout), v32 (uPnL identity), v33
             # (Observation Lab frozen units), v34 (EX-04 live authorization
-            # ref), and v35 (momentum-short exhaustion shadow).
-            for step in migrations._MIGRATIONS[:-13]
+            # ref), v35 (momentum-short exhaustion shadow), v36 (options
+            # market structure), and v37 (gamma-flip reset).
+            for step in migrations._MIGRATIONS[:-14]
         ],
     )
     connection.commit()
@@ -693,8 +694,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260819_0035_options_market_structure_v36",
-        "aletheia-sqlite-v36",
+        "20260820_0036_gamma_flip_reset_v37",
+        "aletheia-sqlite-v37",
     )
     health_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(learning_job_health)")
