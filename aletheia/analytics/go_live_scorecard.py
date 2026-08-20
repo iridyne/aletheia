@@ -10,6 +10,16 @@ from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.analytics.learning_window import outcome_window_metadata
 
 
+def _scorecard_execution_mode() -> str:
+    """Return the execution_mode that the current config is running under."""
+    try:
+        from aletheia.config.loader import load_config
+        cfg = load_config()
+        return str(getattr(cfg.exchange, "paper_execution_mode", "") or "paper_internal") or "paper_internal"
+    except Exception:
+        return "paper_internal"
+
+
 def compute_scorecard(*, live_evidence: dict | None = None) -> dict:
     """Compute the go-live readiness scorecard. Pure read-only, no side effects."""
     criteria = [
@@ -56,7 +66,7 @@ def _genuine_closed_pnls(order_by_closed_at: bool = False) -> list[float]:
     Reconciler orphan sweeps, maintenance closes, legacy rows and incomplete economics
     are not verified outcomes; counting them pollutes PF / win-rate / drawdown / volume.
     """
-    rows = eligible_strategy_outcomes()
+    rows = eligible_strategy_outcomes(execution_mode=_scorecard_execution_mode())
     if not order_by_closed_at:
         rows = list(reversed(rows))
     return [float(row["realized_pnl"]) for row in rows]
@@ -152,7 +162,7 @@ def check_kill_condition_consecutive_rounds(window_days: int = 14) -> dict:
     Two consecutive kill rounds → recommend terminating the experiment.
     """
     try:
-        rows = list(reversed(eligible_strategy_outcomes()))
+        rows = list(reversed(eligible_strategy_outcomes(execution_mode=_scorecard_execution_mode())))
         if not rows:
             return {"consecutive_kill_rounds": 0, "kill_threshold": 0.5, "window_days": window_days}
 
@@ -190,7 +200,7 @@ def compute_pnl_by_trade_school() -> dict:
     Returns {trade_school: {"profit_factor": float, "win_rate": float, "count": int}}.
     """
     try:
-        rows = eligible_strategy_outcomes()
+        rows = eligible_strategy_outcomes(execution_mode=_scorecard_execution_mode())
         result: dict = {}
         from collections import defaultdict
         buckets: dict = defaultdict(list)
