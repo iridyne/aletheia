@@ -573,8 +573,10 @@ def capture_update_continuity_until_settled(
     return after
 
 
-def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
+def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dict[str, Any]:
     """Run the existing source updater with Observer pre/postflight verification."""
+    if progress:
+        progress("Running preflight checks")
     before = capture_update_continuity()
     preflight = evaluate_preflight(before)
     if not preflight["ok"]:
@@ -597,7 +599,7 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
 
     from aletheia.update.applier import apply_update
 
-    result = apply_update(restart=restart)
+    result = apply_update(restart=restart, progress=progress)
     if not result.get("applied"):
         return {
             **result,
@@ -622,6 +624,8 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
         str(target) if result.get("mode") == "development" and target else None
     )
 
+    if progress:
+        progress("Verifying continuity")
     if expected_target and restart:
         after = capture_update_continuity_until_settled(expected_target)
     elif expected_target:
