@@ -349,6 +349,102 @@ async def test_kill_switch_does_not_block_observe_agent(client, tmp_path, monkey
 # Idempotency / duplicate-click prevention
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Operator service identity capability restriction (Issue #1100)
+# ---------------------------------------------------------------------------
+
+def _enable_remote_control(tmp_path, monkeypatch, secret: str = "SVCTOKEN99"):
+    """Enable remote_control auth so the service-identity middleware runs."""
+    import aletheia.config.secrets as secrets_mod
+    import aletheia.server.operator_service_auth as service_auth
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.remote_control.enabled = True
+    cfg.remote_control.require_token = True
+    save_config(cfg)
+
+    store = {"remote_control_api_token": "owner-token"}
+    monkeypatch.setattr(secrets_mod, "get_secret", lambda k: store.get(k))
+    monkeypatch.setattr(service_auth, "is_valid_operator_service_token", lambda t: t == secret)
+    return secret
+
+
+@pytest.mark.anyio
+async def test_service_credential_can_start_approved_specialist(client, tmp_path, monkeypatch):
+    """Service credential can enqueue a specialist in _OPERATOR_SERVICE_AGENT_ALLOWLIST."""
+    svc_token = _enable_remote_control(tmp_path, monkeypatch)
+    fake = _fake_manager_patch(monkeypatch)
+
+    response = await client.post(
+        "/api/agent-runs/start",
+        json={"agent_name": "market_observer"},
+        headers={"X-Aletheia-Operator-Service": svc_token},
+    )
+    assert response.status_code == 202, response.text
+    assert len(fake.enqueued) == 1
+
+
+@pytest.mark.anyio
+async def test_service_credential_blocked_from_paper_trader(client, tmp_path, monkeypatch):
+    """Service credential must receive 403 for paper_trader (behavior-producing)."""
+    svc_token = _enable_remote_control(tmp_path, monkeypatch)
+    fake = _fake_manager_patch(monkeypatch)
+
+    response = await client.post(
+        "/api/agent-runs/start",
+        json={"agent_name": "paper_trader"},
+        headers={"X-Aletheia-Operator-Service": svc_token},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["error"] == "agent_not_in_service_allowlist"
+    assert fake.enqueued == []
+
+
+@pytest.mark.anyio
+async def test_manual_allowlist_expansion_does_not_grant_service_authority(client, tmp_path, monkeypatch):
+    """A hypothetical new manual-only agent outside _OPERATOR_SERVICE_AGENT_ALLOWLIST is denied to service callers."""
+    from aletheia.server.routes.data import _MANUAL_AGENT_ALLOWLIST, _OPERATOR_SERVICE_AGENT_ALLOWLIST
+
+    # Verify the invariant at the allowlist level rather than patching the module.
+    manual_only = set(_MANUAL_AGENT_ALLOWLIST) - set(_OPERATOR_SERVICE_AGENT_ALLOWLIST)
+    assert manual_only, "Test precondition: at least one manual-only agent must exist (paper_trader)"
+
+    svc_token = _enable_remote_control(tmp_path, monkeypatch)
+    fake = _fake_manager_patch(monkeypatch)
+
+    for agent_name in manual_only:
+        response = await client.post(
+            "/api/agent-runs/start",
+            json={"agent_name": agent_name},
+            headers={"X-Aletheia-Operator-Service": svc_token},
+        )
+        assert response.status_code == 403, (
+            f"Agent '{agent_name}' is in _MANUAL_AGENT_ALLOWLIST but not _OPERATOR_SERVICE_AGENT_ALLOWLIST "
+            f"and must return 403 for service callers"
+        )
+    assert fake.enqueued == []
+
+
+@pytest.mark.anyio
+async def test_owner_token_can_still_start_paper_trader(client, tmp_path, monkeypatch):
+    """Owner-authenticated (remote_control token) callers retain the ability to start paper_trader."""
+    _enable_remote_control(tmp_path, monkeypatch)
+    fake = _fake_manager_patch(monkeypatch)
+
+    response = await client.post(
+        "/api/agent-runs/start",
+        json={"agent_name": "paper_trader"},
+        headers={"X-Aletheia-Token": "owner-token"},
+    )
+    # gate_check may fire 503 depending on runtime state, but must not 403
+    assert response.status_code != 403, "Owner must not be blocked by service allowlist"
+
+
+# ---------------------------------------------------------------------------
+# Idempotency / duplicate-click prevention
+# ---------------------------------------------------------------------------
+
 @pytest.mark.anyio
 async def test_duplicate_enqueue_same_agent_returns_409(client, tmp_path, monkeypatch):
     """Enqueuing the same agent while it's already pending → 409 with run_id."""
