@@ -8,6 +8,8 @@ import threading
 
 import typer
 
+from aletheia.update.continuity import describe_failure_code as _desc
+
 _BRA  = "⣾⣽⣻⢿⡿⣟⣯⣷"
 _R    = "\033[0m"
 _BOLD = "\033[1m"
@@ -229,9 +231,8 @@ def _run_update(*, restart: bool) -> None:
             err=True,
         )
         if failures:
-            typer.echo(f"  failures: {', '.join(str(item) for item in failures)}", err=True)
-        if result.get("message"):
-            typer.echo(f"  {result['message']}", err=True)
+            for item in failures:
+                typer.echo(f"  ✗ {_desc(str(item))}", err=True)
         typer.echo(
             (
                 "  Source update remains applied;"
@@ -269,12 +270,8 @@ def _run_update(*, restart: bool) -> None:
             err=True,
         )
         if proof_gaps:
-            typer.echo(
-                f"  proof gaps: {', '.join(str(item) for item in proof_gaps)}",
-                err=True,
-            )
-        if result.get("message"):
-            typer.echo(f"  {result['message']}", err=True)
+            for item in proof_gaps:
+                typer.echo(f"  · {_desc(str(item))}", err=True)
         return
 
     if result.get("continuity_verified") is True:
