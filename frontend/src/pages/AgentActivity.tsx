@@ -36,12 +36,6 @@ import {
 const runCol = createColumnHelper<AgentRun>()
 const oppCol = createColumnHelper<Opportunity>()
 
-const AGENTS = [
-  'market_observer', 'research_agent', 'strategy_designer',
-  'risk_critic', 'portfolio_agent', 'post_trade_reviewer', 'dreaming_agent',
-  'prediction_observer', 'stock_observer',
-]
-
 function parseJson(raw: string | null): any[] {
   if (!raw) return []
   try { return JSON.parse(raw) } catch { return [] }
@@ -108,6 +102,8 @@ function RunsTab({ runs }: { runs: AgentRun[] }) {
   const qc = useQueryClient()
   const { toast } = useToast()
   const [selected, setSelected] = useState<AgentRun | null>(null)
+  const { data: catalog } = useQuery({ queryKey: ['agent-catalog'], queryFn: api.getAgentCatalog })
+  const agents = catalog?.agents ?? []
   const run = useMutation({
     mutationFn: (name: string) => api.startAgentRun(name).then(r => ({ name, r })),
     onSuccess: ({ name }) => { toast('success', `${name} started`); qc.invalidateQueries({ queryKey: ['agent-runs'] }) },
@@ -119,8 +115,8 @@ function RunsTab({ runs }: { runs: AgentRun[] }) {
       <Card>
         <h3>Run an agent now</h3>
         <div className="flex flex-wrap gap-1">
-          {AGENTS.map(a => (
-            <Button key={a} variant="secondary" onClick={() => run.mutate(a)} disabled={run.isPending}>{a}</Button>
+          {agents.map(a => (
+            <Button key={a.name} variant="secondary" onClick={() => run.mutate(a.name)} disabled={run.isPending}>{a.name}</Button>
           ))}
         </div>
       </Card>

@@ -359,15 +359,12 @@ _MANUAL_AGENT_ALLOWLIST: dict[str, dict] = {
     "divergence_scanner": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
     # Research / analysis — uses LLM, writes knowledge/insight artifacts only
     "research_agent": {"side_effect_class": "research", "cost_class": "high", "gate_check": False},
-    "research_worker": {"side_effect_class": "research", "cost_class": "high", "gate_check": False},
     # Review / critique — uses LLM, writes review/lesson/signal artifacts
     "post_trade_reviewer": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "risk_critic": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "lesson_reviewer": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "dreaming_agent": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "portfolio_agent": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
-    # Ranking — deterministic, no LLM, no orders
-    "paper_trader_ranker": {"side_effect_class": "rank", "cost_class": "low", "gate_check": False},
     # Behavior-producing — creates paper proposals/orders; respects kill-switch and pause
     "paper_trader": {"side_effect_class": "behavior", "cost_class": "medium", "gate_check": True},
 }
@@ -383,14 +380,23 @@ _OPERATOR_SERVICE_AGENT_ALLOWLIST: frozenset[str] = frozenset({
     "prediction_observer",
     "divergence_scanner",
     "research_agent",
-    "research_worker",
     "post_trade_reviewer",
     "risk_critic",
     "lesson_reviewer",
     "dreaming_agent",
     "portfolio_agent",
-    "paper_trader_ranker",
 })
+
+
+@router.get("/agents/catalog")
+def get_agents_catalog():
+    """Read-only catalog of agents that may be triggered manually from the Dashboard."""
+    return {
+        "agents": [
+            {"name": name, **meta}
+            for name, meta in _MANUAL_AGENT_ALLOWLIST.items()
+        ]
+    }
 
 
 class StartAgentRequest(BaseModel):
