@@ -92,6 +92,7 @@ export const RISK_POLICY_NUM_FIELDS = [
   { key: 'margin.runtime_liquidation_buffer_pct', label: 'Runtime liquidation buffer', unit: '%', min: 0, step: 0.5 },
   { key: 'correlation.max_sector_concentration_pct', label: 'Sector concentration', unit: '%', min: 0, step: 1 },
   { key: 'correlation.max_portfolio_beta', label: 'Portfolio BTC beta', unit: '', min: 0, step: 0.1 },
+  { key: 'correlation.min_positions_for_concentration', label: 'Min positions for concentration check', unit: '', min: 1, max: 200, step: 1, isInt: true },
   { key: 'exits.catastrophic_stop_pct', label: 'Catastrophic stop', unit: '%', min: 0, step: 0.5 },
   { key: 'exits.catastrophic_stop_pct_serenity', label: 'Serenity catastrophic stop', unit: '%', min: 0, step: 0.5 },
   { key: 'exits.horizon_hard_backstop_mult', label: 'Horizon hard backstop', unit: 'x', min: 1, step: 0.5 },

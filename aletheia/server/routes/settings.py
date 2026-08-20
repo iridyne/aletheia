@@ -1738,7 +1738,38 @@ def _policy_diff(source: dict, target: dict, prefix: str = "") -> list[dict]:
     return rows
 
 
-def _validate_mode_policy(policy: ModeRiskPolicy) -> None:
+# Canonical safety ceilings for every Live nested-policy write path.
+# Demo fields are intentionally uncapped at the application layer; only
+# exchange-backed leverage and structural (finite/positive) constraints apply.
+_LIVE_POLICY_BOUNDS: dict[str, tuple[float, float]] = {
+    "loss.max_daily_loss_pct":                     (0.1,   20.0),
+    "loss.max_single_trade_risk_pct":              (0.01,  10.0),
+    "capital.max_total_exposure_pct":              (1.0,   50.0),
+    "capital.max_position_notional_usdt":          (1.0,   100_000.0),
+    "capital.base_usdt":                           (1.0,   100_000.0),
+    "capital.max_per_symbol_entries":              (0,     20),
+    "leverage.futures_cap":                        (1,     20),
+    "leverage.major_cap":                          (1,     10),
+    "leverage.mid_cap":                            (1,     5),
+    "leverage.alt_cap":                            (1,     3),
+    "leverage.account_cap":                        (1.0,   5.0),
+    "margin.min_entry_liquidation_buffer_pct":     (1.0,   20.0),
+    "margin.runtime_liquidation_buffer_pct":       (1.0,   20.0),
+    "margin.warning_ratio":                        (0.3,   0.95),
+    "margin.block_ratio":                          (0.5,   0.99),
+    "positions.max_open_positions":                (1,     50),
+    "correlation.max_sector_concentration_pct":    (10.0,  100.0),
+    "correlation.max_portfolio_beta":              (0.5,   10.0),
+    "correlation.min_positions_for_concentration": (1,     200),
+}
+
+
+def _policy_get(policy: ModeRiskPolicy, path: str) -> float:
+    parent, _, child = path.partition(".")
+    return float(getattr(getattr(policy, parent), child))
+
+
+def _validate_mode_policy(mode: str, policy: ModeRiskPolicy) -> None:
     import math
 
     numeric = {
@@ -1758,9 +1789,13 @@ def _validate_mode_policy(policy: ModeRiskPolicy) -> None:
             policy.margin.min_entry_liquidation_buffer_pct,
         "margin.runtime_liquidation_buffer_pct":
             policy.margin.runtime_liquidation_buffer_pct,
+        "margin.warning_ratio": policy.margin.warning_ratio,
+        "margin.block_ratio": policy.margin.block_ratio,
         "correlation.max_sector_concentration_pct":
             policy.correlation.max_sector_concentration_pct,
         "correlation.max_portfolio_beta": policy.correlation.max_portfolio_beta,
+        "correlation.min_positions_for_concentration":
+            policy.correlation.min_positions_for_concentration,
     }
     invalid = [
         path for path, value in numeric.items()
@@ -1787,6 +1822,10 @@ def _validate_mode_policy(policy: ModeRiskPolicy) -> None:
     }.items():
         if value < 1:
             invalid.append(path)
+    if mode == "live":
+        for path, (lo, hi) in _LIVE_POLICY_BOUNDS.items():
+            if not (lo <= _policy_get(policy, path) <= hi):
+                invalid.append(path)
     if invalid:
         raise HTTPException(400, f"Invalid risk policy fields: {sorted(set(invalid))}")
 
@@ -1848,7 +1887,7 @@ async def copy_risk_policy(req: RiskPolicyCopyRequest):
         **common,
         "revision": target.revision + 1,
     })
-    _validate_mode_policy(replacement)
+    _validate_mode_policy(req.target, replacement)
     setattr(cfg.risk, req.target, replacement)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
@@ -1881,7 +1920,7 @@ async def replace_risk_policy(mode: RiskMode, req: RiskPolicyReplaceRequest):
         },
         deep=True,
     )
-    _validate_mode_policy(replacement)
+    _validate_mode_policy(mode, replacement)
     setattr(cfg.risk, mode, replacement)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
@@ -1914,7 +1953,7 @@ async def reset_risk_policy(mode: RiskMode, req: RiskPolicyResetRequest):
         },
         deep=True,
     )
-    _validate_mode_policy(replacement)
+    _validate_mode_policy(mode, replacement)
     setattr(cfg.risk, mode, replacement)
     save_config(cfg)
     from aletheia.files.jsonl import write_audit

@@ -722,6 +722,30 @@ async def test_risk_policy_copy_is_revision_guarded_and_preserves_live_identity(
     assert demo["capital"]["base_source"] == "account_equity"
     assert live["capital"]["base_source"] == "account_equity"
 
+    # Default Demo has leverage (125x futures, 200 positions, 20% per-trade risk) that
+    # exceeds Live ceilings. First bring Demo within Live bounds so the copy succeeds.
+    safe_demo = {k: v for k, v in demo.items() if k != "policy_hash"}
+    safe_demo["leverage"] = live["leverage"]
+    safe_demo["positions"] = live["positions"]
+    safe_demo["loss"] = live["loss"]
+    safe_demo["capital"] = live["capital"]
+    safe_demo["margin"] = live["margin"]
+    safe_demo["correlation"] = live["correlation"]
+    put = await client.put(
+        "/api/settings/risk-policies/demo",
+        json={
+            "policy": safe_demo,
+            "expected_revision": demo["revision"],
+            "confirm_target_replacement": True,
+            "reason": "set safe demo for copy test",
+        },
+    )
+    assert put.status_code == 200, put.text
+
+    policies = (await client.get("/api/settings/risk-policies")).json()
+    demo = policies["demo"]
+    live = policies["live"]
+
     copied = await client.post(
         "/api/settings/risk-policies/copy",
         json={
@@ -752,6 +776,189 @@ async def test_risk_policy_copy_is_revision_guarded_and_preserves_live_identity(
         },
     )
     assert stale.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_live_policy_write_enforces_safety_ceilings(client):
+    """PUT /risk-policies/live rejects values above each Live ceiling (Class A fix)."""
+    policies = (await client.get("/api/settings/risk-policies")).json()
+    live = policies["live"]
+    rev = live["revision"]
+
+    over_limit_cases = [
+        # (nested path, over-limit value, sub-key to set)
+        ("leverage",    "futures_cap",                    21),
+        ("leverage",    "major_cap",                      11),
+        ("leverage",    "mid_cap",                        6),
+        ("leverage",    "alt_cap",                        4),
+        ("leverage",    "account_cap",                    5.1),
+        ("positions",   "max_open_positions",             51),
+        ("loss",        "max_daily_loss_pct",             20.1),
+        ("loss",        "max_single_trade_risk_pct",      10.1),
+        ("capital",     "max_total_exposure_pct",         50.1),
+        ("capital",     "max_position_notional_usdt",     100_001.0),
+        ("capital",     "base_usdt",                      100_001.0),
+        ("capital",     "max_per_symbol_entries",         21),
+        ("margin",      "min_entry_liquidation_buffer_pct", 20.1),
+        ("margin",      "runtime_liquidation_buffer_pct",   20.1),
+        ("margin",      "warning_ratio",                  0.96),
+        ("margin",      "block_ratio",                    1.0),
+        ("correlation", "max_sector_concentration_pct",   100.1),
+        ("correlation", "max_portfolio_beta",             10.1),
+        ("correlation", "min_positions_for_concentration", 201),
+    ]
+
+    for group, field, bad_value in over_limit_cases:
+        policy = {k: v for k, v in live.items() if k != "policy_hash"}
+        policy[group] = {**live[group], field: bad_value}
+        resp = await client.put(
+            "/api/settings/risk-policies/live",
+            json={
+                "policy": policy,
+                "expected_revision": rev,
+                "confirm_target_replacement": True,
+                "reason": f"over-limit test: {group}.{field}={bad_value}",
+            },
+        )
+        assert resp.status_code == 400, (
+            f"{group}.{field}={bad_value} should be rejected, got {resp.status_code}: {resp.text}"
+        )
+
+    # Config must be unchanged after all rejected writes.
+    after = (await client.get("/api/settings/risk-policies")).json()
+    assert after["live"]["revision"] == rev
+
+
+@pytest.mark.anyio
+async def test_live_policy_write_accepts_exact_boundary_values(client):
+    """Exact ceiling values are valid and must return 200."""
+    policies = (await client.get("/api/settings/risk-policies")).json()
+    live = policies["live"]
+    rev = live["revision"]
+
+    at_ceiling = {k: v for k, v in live.items() if k != "policy_hash"}
+    at_ceiling["leverage"] = {
+        "futures_cap": 20, "major_cap": 10, "mid_cap": 5, "alt_cap": 3, "account_cap": 5.0,
+    }
+    at_ceiling["positions"] = {"max_open_positions": 50, "allow_short": True}
+    at_ceiling["loss"] = {"max_daily_loss_pct": 20.0, "max_single_trade_risk_pct": 10.0}
+    at_ceiling["capital"] = {
+        **live["capital"],
+        "max_total_exposure_pct": 50.0,
+        "max_position_notional_usdt": 100_000.0,
+        "base_usdt": 100_000.0,
+        "max_per_symbol_entries": 20,
+    }
+    at_ceiling["margin"] = {
+        "warning_ratio": 0.95,
+        "block_ratio": 0.99,
+        "min_entry_liquidation_buffer_pct": 20.0,
+        "runtime_liquidation_buffer_pct": 20.0,
+    }
+    at_ceiling["correlation"] = {
+        **live["correlation"],
+        "max_sector_concentration_pct": 100.0,
+        "max_portfolio_beta": 10.0,
+        "min_positions_for_concentration": 200,
+    }
+    resp = await client.put(
+        "/api/settings/risk-policies/live",
+        json={
+            "policy": at_ceiling,
+            "expected_revision": rev,
+            "confirm_target_replacement": True,
+            "reason": "at-ceiling acceptance test",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["live"]["revision"] == rev + 1
+
+
+@pytest.mark.anyio
+async def test_copy_demo_to_live_rejects_when_demo_exceeds_live_ceilings(client):
+    """Default Demo has 125x leverage; copy Demo→Live must return 400."""
+    policies = (await client.get("/api/settings/risk-policies")).json()
+    demo = policies["demo"]
+    live = policies["live"]
+
+    # Default Demo has leverage/positions/risk far above Live bounds.
+    resp = await client.post(
+        "/api/settings/risk-policies/copy",
+        json={
+            "source": "demo",
+            "target": "live",
+            "source_revision": demo["revision"],
+            "target_revision": live["revision"],
+            "confirm_target_replacement": True,
+            "reason": "should fail",
+        },
+    )
+    assert resp.status_code == 400, resp.text
+
+    # Live must be unchanged.
+    after = (await client.get("/api/settings/risk-policies")).json()
+    assert after["live"]["revision"] == live["revision"]
+
+
+@pytest.mark.anyio
+async def test_demo_policy_write_allows_values_above_live_ceilings(client):
+    """Demo has no application-level upper caps; high values must be accepted."""
+    policies = (await client.get("/api/settings/risk-policies")).json()
+    demo = policies["demo"]
+    rev = demo["revision"]
+
+    high_demo = {k: v for k, v in demo.items() if k != "policy_hash"}
+    high_demo["leverage"] = {
+        "futures_cap": 125, "major_cap": 20, "mid_cap": 10, "alt_cap": 5, "account_cap": 10.0,
+    }
+    high_demo["positions"] = {"max_open_positions": 200, "allow_short": True}
+    high_demo["loss"] = {"max_daily_loss_pct": 20.0, "max_single_trade_risk_pct": 20.0}
+    resp = await client.put(
+        "/api/settings/risk-policies/demo",
+        json={
+            "policy": high_demo,
+            "expected_revision": rev,
+            "confirm_target_replacement": True,
+            "reason": "demo high-value test",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.anyio
+async def test_min_positions_for_concentration_is_validated_for_live(client):
+    """correlation.min_positions_for_concentration: out-of-range → 400 for Live."""
+    policies = (await client.get("/api/settings/risk-policies")).json()
+    live = policies["live"]
+    rev = live["revision"]
+
+    for bad_val in (0, 201):
+        policy = {k: v for k, v in live.items() if k != "policy_hash"}
+        policy["correlation"] = {**live["correlation"], "min_positions_for_concentration": bad_val}
+        resp = await client.put(
+            "/api/settings/risk-policies/live",
+            json={
+                "policy": policy,
+                "expected_revision": rev,
+                "confirm_target_replacement": True,
+                "reason": f"bad min_positions={bad_val}",
+            },
+        )
+        assert resp.status_code == 400, f"Expected 400 for min_positions={bad_val}"
+
+    # In-range must pass.
+    policy = {k: v for k, v in live.items() if k != "policy_hash"}
+    policy["correlation"] = {**live["correlation"], "min_positions_for_concentration": 10}
+    resp = await client.put(
+        "/api/settings/risk-policies/live",
+        json={
+            "policy": policy,
+            "expected_revision": rev,
+            "confirm_target_replacement": True,
+            "reason": "valid min_positions=10",
+        },
+    )
+    assert resp.status_code == 200, resp.text
 
 
 @pytest.mark.anyio
