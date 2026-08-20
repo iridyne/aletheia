@@ -236,7 +236,12 @@ class EventStore:
             return True
         except sqlite3.IntegrityError:
             if event.idempotency_key:
-                return False  # TOCTOU race on idempotency_key — caller fetches existing
+                winner = db.execute(
+                    "SELECT event_id FROM ps_event_log WHERE idempotency_key = ?",
+                    (event.idempotency_key,),
+                ).fetchone()
+                if winner:
+                    return False  # confirmed TOCTOU race on idempotency_key
             raise
 
     def _mirror_pending(self, event_id: str) -> bool:
