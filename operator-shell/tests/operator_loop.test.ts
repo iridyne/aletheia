@@ -6595,3 +6595,92 @@ test('pi runtime adapter handles fetch errors gracefully', async () => {
     globalThis.fetch = originalFetch
   }
 })
+
+test('recommendation engine surfaces scheduler failure cluster when two or more distinct agents fail in recent window', () => {
+  const engine = new RecommendationEngine()
+  const now = new Date().toISOString()
+  const recentAgentRuns: AgentRunSummary[] = [
+    { id: 'r1', agent_name: 'market_observer', trigger_type: 'scheduled', started_at: now, ended_at: now, status: 'failed' },
+    { id: 'r2', agent_name: 'paper_trader', trigger_type: 'scheduled', started_at: now, ended_at: now, status: 'error' },
+  ]
+  const recommendations = engine.list(
+    makeSnapshot(),
+    undefined, undefined, undefined,
+    recentAgentRuns,
+  )
+  const cluster = recommendations.find(item => item.kind === 'scheduler_failure_cluster')
+  assert.ok(cluster, 'scheduler_failure_cluster recommendation should be produced')
+  assert.equal(cluster?.severity, 'high')
+  assert.equal(cluster?.taskType, 'pi_reasoning_session')
+  assert.equal(cluster?.metadata?.failing_agent_count, 2)
+  assert.deepEqual(cluster?.metadata?.failing_agents, ['market_observer', 'paper_trader'])
+})
+
+test('recommendation engine does not surface scheduler failure cluster when only one agent fails', () => {
+  const engine = new RecommendationEngine()
+  const now = new Date().toISOString()
+  const recentAgentRuns: AgentRunSummary[] = [
+    { id: 'r1', agent_name: 'market_observer', trigger_type: 'scheduled', started_at: now, ended_at: now, status: 'failed' },
+    { id: 'r2', agent_name: 'market_observer', trigger_type: 'scheduled', started_at: now, ended_at: now, status: 'failed' },
+  ]
+  const recommendations = engine.list(
+    makeSnapshot(),
+    undefined, undefined, undefined,
+    recentAgentRuns,
+  )
+  assert.equal(
+    recommendations.some(item => item.kind === 'scheduler_failure_cluster'),
+    false,
+    'should not fire when only one distinct agent fails',
+  )
+})
+
+test('recommendation engine surfaces open position rate spike when current count exceeds 2x baseline average', () => {
+  const engine = new RecommendationEngine()
+  const base = new Date(Date.now() - 60 * 60 * 1000)
+  const makeSnapshot_ = (minsAgo: number, count: number): PortfolioSnapshotRecord => ({
+    id: `snap-${minsAgo}`,
+    total_value_usdt: 1000,
+    unrealized_pnl: 0,
+    realized_pnl: 0,
+    positions_count: count,
+    execution_mode: 'paper',
+    snapshot_at: new Date(base.getTime() - minsAgo * 60 * 1000).toISOString(),
+  })
+  // current = 10 positions; baseline avg = 3 (snapshots at 10/20/30 mins ago)
+  const portfolioHistory = [
+    makeSnapshot_(0, 10),  // most recent
+    makeSnapshot_(10, 3),
+    makeSnapshot_(20, 3),
+    makeSnapshot_(30, 3),
+  ]
+  const recommendations = engine.list(
+    makeSnapshot(),
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    undefined, portfolioHistory,
+  )
+  const spike = recommendations.find(item => item.kind === 'open_position_rate_spike')
+  assert.ok(spike, 'open_position_rate_spike recommendation should be produced')
+  assert.equal(spike?.metadata?.current_count, 10)
+  assert.equal(spike?.metadata?.baseline_avg, 3)
+  assert.equal(spike?.taskType, 'pi_reasoning_session')
+})
+
+test('recommendation engine does not surface open position spike with insufficient portfolio history', () => {
+  const engine = new RecommendationEngine()
+  const now = new Date().toISOString()
+  const portfolioHistory: PortfolioSnapshotRecord[] = [
+    { id: 'snap-1', total_value_usdt: 1000, unrealized_pnl: 0, realized_pnl: 0, positions_count: 10, execution_mode: 'paper', snapshot_at: now },
+    { id: 'snap-2', total_value_usdt: 1000, unrealized_pnl: 0, realized_pnl: 0, positions_count: 2, execution_mode: 'paper', snapshot_at: now },
+  ]
+  const recommendations = engine.list(
+    makeSnapshot(),
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    undefined, portfolioHistory,
+  )
+  assert.equal(
+    recommendations.some(item => item.kind === 'open_position_rate_spike'),
+    false,
+    'should not fire with fewer than 4 snapshots (1 current + 3 baseline)',
+  )
+})
