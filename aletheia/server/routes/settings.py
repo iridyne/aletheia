@@ -1745,7 +1745,7 @@ _LIVE_POLICY_BOUNDS: dict[str, tuple[float, float]] = {
     "loss.max_daily_loss_pct":                     (0.1,   20.0),
     "loss.max_single_trade_risk_pct":              (0.01,  10.0),
     "capital.max_total_exposure_pct":              (1.0,   50.0),
-    "capital.max_position_notional_usdt":          (1.0,   100_000.0),
+    "capital.max_position_margin_usdt":            (1.0,   100_000.0),
     "capital.base_usdt":                           (1.0,   100_000.0),
     "capital.max_per_symbol_entries":              (0,     20),
     "leverage.futures_cap":                        (1,     20),
