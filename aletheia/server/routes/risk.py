@@ -12,13 +12,13 @@ router = APIRouter(prefix="/api/risk", tags=["risk"])
 
 
 @router.get("/boundaries")
-async def get_risk_boundaries():
+def get_risk_boundaries():
     """Return the hard risk limits for display. Read-only over the API."""
     return load_config().risk.model_dump()
 
 
 @router.get("/kill-switch")
-async def kill_switch_status():
+def kill_switch_status():
     return {"active": kill_switch.is_active()}
 
 
@@ -31,12 +31,12 @@ def _brake_status() -> dict:
 
 
 @router.get("/brakes")
-async def brakes_status():
+def brakes_status():
     return _brake_status()
 
 
 @router.get("/status")
-async def risk_status():
+def risk_status():
     cfg = load_config()
     from aletheia.agent_runtime.pause_ownership import (
         active_pause_blocker_names,
@@ -90,7 +90,7 @@ async def risk_status():
 
 
 @router.get("/summary")
-async def risk_summary():
+def risk_summary():
     """Operator-facing summary of recent risk rejections and pending proposal-worthy boundary changes."""
     return build_risk_summary()
 
@@ -104,7 +104,7 @@ class KillSwitchRequest(BaseModel):
 
 
 @router.post("/kill-switch")
-async def set_kill_switch(req: KillSwitchRequest):
+def set_kill_switch(req: KillSwitchRequest):
     """Engage or release the global trading brake (human action).
 
     Release is guarded: active=False without confirm_release=True returns 422. The
@@ -124,7 +124,7 @@ async def set_kill_switch(req: KillSwitchRequest):
 
 
 @router.post("/brakes/{scope}")
-async def set_mode_brake(scope: str, req: KillSwitchRequest):
+def set_mode_brake(scope: str, req: KillSwitchRequest):
     if scope not in {"global", "demo", "live"}:
         raise HTTPException(404, "Unknown trading brake scope")
     if req.active:
@@ -140,7 +140,7 @@ async def set_mode_brake(scope: str, req: KillSwitchRequest):
 
 
 @router.get("/account-leverage")
-async def account_leverage():
+def account_leverage():
     """Current account-level leverage ratio and margin status."""
     from aletheia.risk.engine import check_account_leverage
     cfg = load_config()

@@ -70,13 +70,13 @@ def _path_is_within(candidate: Path, root: Path) -> bool:
 
 
 @router.get("/gateway/status")
-async def get_gateway_status():
+def get_gateway_status():
     """PS recovery status is unavailable until its lifecycle is wired."""
     return {"status": "not_available", "freeze_reason": None}
 
 
 @router.get("/gateway/sessions")
-async def list_gateway_sessions(limit: int = Query(default=10, le=50)):
+def list_gateway_sessions(limit: int = Query(default=10, le=50)):
     """Recent gateway sessions."""
     from aletheia.storage.sqlite import get_db
 
@@ -88,7 +88,7 @@ async def list_gateway_sessions(limit: int = Query(default=10, le=50)):
 
 
 @router.get("/gateway/reconciliation-reports")
-async def list_reconciliation_reports(limit: int = Query(default=10, le=50)):
+def list_reconciliation_reports(limit: int = Query(default=10, le=50)):
     """Recent reconciliation reports."""
     from aletheia.storage.sqlite import get_db
 
@@ -103,7 +103,7 @@ async def list_reconciliation_reports(limit: int = Query(default=10, le=50)):
 
 
 @router.get("/events")
-async def list_events(
+def list_events(
     aggregate_type: str | None = None,
     aggregate_id: str | None = None,
     event_type: str | None = None,
@@ -126,7 +126,7 @@ async def list_events(
 
 
 @router.get("/orders")
-async def list_orders(status: str | None = None, mode: str = "paper", limit: int = Query(default=50, le=200)):
+def list_orders(status: str | None = None, mode: str = "paper", limit: int = Query(default=50, le=200)):
     """Query persisted orders."""
     from aletheia.storage.sqlite import get_db
 
@@ -143,7 +143,7 @@ async def list_orders(status: str | None = None, mode: str = "paper", limit: int
 
 
 @router.get("/positions")
-async def list_positions(mode: str = "paper", status: str | None = None):
+def list_positions(mode: str = "paper", status: str | None = None):
     """Query persisted positions."""
     from aletheia.storage.sqlite import get_db
 
@@ -248,7 +248,7 @@ def import_bundle(req: ImportRequest):
 
 
 @router.get("/lessons")
-async def list_lessons(status: str | None = None, limit: int = Query(default=50, le=200)):
+def list_lessons(status: str | None = None, limit: int = Query(default=50, le=200)):
     """List lessons."""
     from aletheia.learning.lessons import LessonStore
 
@@ -258,7 +258,7 @@ async def list_lessons(status: str | None = None, limit: int = Query(default=50,
 
 
 @router.get("/lessons/{lesson_id}")
-async def get_lesson(lesson_id: str):
+def get_lesson(lesson_id: str):
     """Get a single lesson."""
     from aletheia.learning.lessons import LessonStore
 
@@ -277,7 +277,7 @@ def _lesson_or_404(store, lesson_id: str):
 
 
 @router.post("/lessons/{lesson_id}/accept")
-async def accept_lesson(lesson_id: str):
+def accept_lesson(lesson_id: str):
     """Accept a proposed lesson into dry-run review."""
     from aletheia.learning.lessons import LessonStore
 
@@ -288,7 +288,7 @@ async def accept_lesson(lesson_id: str):
 
 
 @router.post("/lessons/{lesson_id}/reject")
-async def reject_lesson(lesson_id: str):
+def reject_lesson(lesson_id: str):
     """Reject a lesson so it no longer enters the promotion path."""
     from aletheia.learning.lessons import LessonStore
 
@@ -299,7 +299,7 @@ async def reject_lesson(lesson_id: str):
 
 
 @router.post("/lessons/{lesson_id}/archive")
-async def archive_lesson(lesson_id: str):
+def archive_lesson(lesson_id: str):
     """Archive a superseded lesson without deleting its record."""
     from aletheia.learning.lessons import LessonStore
 
@@ -313,7 +313,7 @@ async def archive_lesson(lesson_id: str):
 
 
 @router.get("/skills")
-async def list_skills(scope: str | None = None, status: str | None = None, limit: int = Query(default=50, le=200)):
+def list_skills(scope: str | None = None, status: str | None = None, limit: int = Query(default=50, le=200)):
     """List skills."""
     from aletheia.learning.skills import SkillStore
 
@@ -326,7 +326,7 @@ async def list_skills(scope: str | None = None, status: str | None = None, limit
 
 
 @router.get("/policies")
-async def list_policies():
+def list_policies():
     """List all policy types."""
     from aletheia.policies.store import PolicyStore
 
@@ -335,7 +335,7 @@ async def list_policies():
 
 
 @router.get("/policies/diff")
-async def diff_policy(from_id: str = Query(...), to_id: str = Query(...)):
+def diff_policy(from_id: str = Query(...), to_id: str = Query(...)):
     """Diff two policy versions by their IDs."""
     from aletheia.policies.diff import diff_policy_versions
 
@@ -346,7 +346,7 @@ async def diff_policy(from_id: str = Query(...), to_id: str = Query(...)):
 
 
 @router.get("/policies/{policy_type}")
-async def get_policy(policy_type: str):
+def get_policy(policy_type: str):
     """Get current version of a policy type."""
     from aletheia.policies.store import PolicyStore
 
@@ -358,7 +358,7 @@ async def get_policy(policy_type: str):
 
 
 @router.get("/policies/{policy_type}/versions")
-async def list_policy_versions(policy_type: str):
+def list_policy_versions(policy_type: str):
     """List all versions of a policy type."""
     from aletheia.policies.store import PolicyStore
 
