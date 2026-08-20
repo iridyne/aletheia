@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -27,20 +28,23 @@ def _path_contains(directory: Path, path_value: str) -> bool:
     )
 
 
-def _shim_path(bin_dir: Path) -> Path:
-    return bin_dir / ("aletheia.cmd" if os.name == "nt" else "aletheia")
+def _shim_path(bin_dir: Path, *, platform: str = os.name) -> Path:
+    return bin_dir / ("aletheia.cmd" if platform == "nt" else "aletheia")
 
 
-def _shim_content(root: Path) -> str:
-    if os.name == "nt":
+def _shim_content(root: Path, *, platform: str = os.name) -> str:
+    root_str = str(root).rstrip("/\\")
+    if platform == "nt":
+        # Double-quote the project path so paths with spaces and parentheses
+        # work in CMD. Windows file paths cannot contain literal " characters.
         return (
             f"@rem {_MARKER}\r\n"
             "@echo off\r\n"
-            f"uv run --project {root} -- aletheia %*\r\n"
+            f'uv run --project "{root_str}" -- aletheia %*\r\n'
         )
     return (
         f"#!/bin/sh\n# {_MARKER}\n"
-        f"exec uv run --project {shlex.quote(str(root))} -- aletheia \"$@\"\n"
+        f"exec uv run --project {shlex.quote(root_str)} -- aletheia \"$@\"\n"
     )
 
 
@@ -49,6 +53,10 @@ def _is_managed_shim(path: Path) -> bool:
         return _MARKER in path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return False
+
+
+def _is_interactive() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
 
 
 def _write_shim(path: Path, content: str) -> None:
@@ -72,12 +80,53 @@ def _write_shim(path: Path, content: str) -> None:
         raise
 
 
+def _verify_shim(shim: Path, root: Path) -> bool:
+    if not shim.exists():
+        return False
+    try:
+        content = shim.read_text(encoding="utf-8")
+        root_str = str(root).rstrip("/\\")
+        return _MARKER in content and root_str in content
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def _run_update_shell() -> int:
+    result = subprocess.run(
+        ["uv", "tool", "update-shell"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        typer.echo(
+            f"Warning: `uv tool update-shell` failed:\n{result.stderr.strip()}",
+            err=True,
+        )
+    else:
+        typer.echo(
+            "PATH configuration updated.\n"
+            "Open a new terminal, then run:\n\n    aletheia doctor"
+        )
+    return result.returncode
+
+
 @app.command()
 def install(
     force: bool = typer.Option(
         False,
         "--force",
         help="Replace an existing executable that is not an Aletheia uv shim.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Auto-accept PATH setup via `uv tool update-shell` (for CI/automation).",
+    ),
+    no_update_shell: bool = typer.Option(
+        False,
+        "--no-update-shell",
+        help="Install the shim but never modify shell PATH configuration.",
     ),
 ) -> None:
     """Make `aletheia` reroute to this checkout's locked uv environment."""
@@ -101,13 +150,48 @@ def install(
         )
         raise typer.Exit(2)
 
-    _write_shim(shim, _shim_content(project_root()))
+    root = project_root()
+    _write_shim(shim, _shim_content(root))
+
+    if not _verify_shim(shim, root):
+        typer.echo("Shim verification failed after install.", err=True)
+        raise typer.Exit(1)
+
     typer.echo(f"Aletheia CLI shim installed at {shim}.")
-    if not _path_contains(bin_dir, os.environ.get("PATH", "")):
+
+    if _path_contains(bin_dir, os.environ.get("PATH", "")):
+        typer.echo("You can now run `aletheia` from any directory.")
+        return
+
+    if no_update_shell:
         typer.echo(
-            "That directory is not on PATH yet. Run `uv tool update-shell`, "
-            "then open a new shell.",
+            f"Note: {bin_dir} is not on PATH. "
+            "Add it manually or run `uv tool update-shell` and open a new terminal.",
             err=True,
         )
+        return
+
+    if yes:
+        _run_update_shell()
+        return
+
+    if not _is_interactive():
+        typer.echo(
+            f"Note: {bin_dir} is not on PATH. "
+            "Run `uv tool update-shell`, then open a new terminal.",
+            err=True,
+        )
+        return
+
+    typer.echo(
+        f"\nAletheia's command directory is not currently on PATH:\n  {bin_dir}\n"
+    )
+    if typer.confirm(
+        "Add it to your shell PATH using `uv tool update-shell`?", default=True
+    ):
+        _run_update_shell()
     else:
-        typer.echo("You can now run `aletheia` from any directory.")
+        typer.echo(
+            "Skipped. Run `uv tool update-shell` manually, then open a new terminal.",
+            err=True,
+        )

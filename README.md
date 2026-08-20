@@ -20,7 +20,8 @@ before any repo-mutating action.
 ## Quick start (humans)
 
 ```bash
-uv sync
+git clone <repo>
+cd aletheia
 uv run aletheia-install
 aletheia gateway start   # dashboard at http://127.0.0.1:8787
 ```
@@ -28,8 +29,12 @@ aletheia gateway start   # dashboard at http://127.0.0.1:8787
 `aletheia-install` writes a small reroute command into
 [uv's tool bin](https://docs.astral.sh/uv/concepts/tools/) so that `aletheia
 ...` from any directory delegates back to this checkout's lockfile and virtual
-environment. Rerun the installer after moving the clone; if uv reports its
-tool bin is not on `PATH`, run `uv tool update-shell` once and open a new shell.
+environment. If the tool bin directory is not yet on `PATH`, the installer
+will offer to run `uv tool update-shell` for you — open a new terminal
+afterwards. Rerun the installer after moving the clone to update the shim.
+
+`uv run aletheia-install` is always safe to rerun and never prompts in CI
+(`--yes` to auto-accept PATH setup, `--no-update-shell` to skip it entirely).
 
 Configure everything (model provider, exchange credentials, agent runtime,
 live-trading unlock) **inside the dashboard's Settings page** — full

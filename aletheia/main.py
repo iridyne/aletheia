@@ -1,6 +1,9 @@
 """CLI entrypoint for Aletheia Trading OS."""
 
+import atexit
+import sys
 import typer
+from pathlib import Path
 
 # Windows: enforce SelectorEventLoop before any CLI command calls asyncio.run()
 # (doctor / data backfill / model probe / bitget sync, etc.). See §17 in
@@ -21,6 +24,7 @@ from aletheia.cli.knowledge_cmd import knowledge_app
 from aletheia.cli.guard_cmd import guard_app
 from aletheia.cli.doctor_cmd import doctor_app
 from aletheia.cli.audit_cmd import audit_app
+from aletheia.cli.install import install as _run_install, _is_interactive
 from aletheia.cli.operator import agent_app
 from aletheia.cli.tunnel import tunnel_app
 from aletheia.cli.inspect_cmd import inspect_app
@@ -47,6 +51,7 @@ app = typer.Typer(
 # Bootstrap surface — keep on the CLI: these do what a not-yet-running web UI cannot.
 app.add_typer(gateway_app, name="gateway", help="Gateway lifecycle commands.")
 app.add_typer(doctor_app, name="doctor", help="Probe this machine's real state (single source of truth).")
+app.command(name="install", help="Install a global `aletheia` command shim.")(_run_install)
 app.add_typer(audit_app, name="audit", help="Audit trail verification (hash chain integrity).")
 app.add_typer(agent_app, name="agent", help="Operator Agent control-plane commands.")
 app.add_typer(runtime_app, name="runtime", help="PI runtime continuity commands.")
@@ -91,6 +96,49 @@ def version():
     from aletheia import __version__
 
     typer.echo(f"Aletheia Trading OS v{__version__}")
+
+
+# Evaluated at import time so the atexit handler can use it.
+_RAN_INSTALL: bool = sys.argv[1:2] == ["install"]
+
+
+def _install_asked_path() -> Path:
+    return Path.home() / ".aletheia_install_asked"
+
+
+def _entry_point() -> None:
+    atexit.register(_post_command_hint)
+    app()
+
+
+def _post_command_hint() -> None:
+    try:
+        _do_post_command_hint()
+    except Exception:
+        pass
+
+
+def _do_post_command_hint() -> None:
+    asked = _install_asked_path()
+    if asked.exists():
+        return
+    if _RAN_INSTALL:
+        asked.touch()
+        return
+    if not _is_interactive():
+        return
+    sys.stdout.write("\nInstall a global `aletheia` command? [Y/n] ")
+    sys.stdout.flush()
+    try:
+        answer = sys.stdin.readline().strip().lower()
+    except (EOFError, OSError):
+        return
+    asked.touch()
+    if answer in ("", "y", "yes"):
+        try:
+            _run_install(force=False, yes=True, no_update_shell=False)
+        except SystemExit:
+            pass
 
 
 if __name__ == "__main__":
