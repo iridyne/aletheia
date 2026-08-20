@@ -171,7 +171,7 @@ def test_runtime_service_candidate_shadow_promote_and_rollback(tmp_path, monkeyp
             "base_url": "http://127.0.0.1:8877",
         }
 
-    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher)
+    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher, shadow_live_prober=_fake_prober)
     candidate = svc.prepare_candidate(
         actor="human",
         cause="test-candidate",
@@ -241,6 +241,11 @@ def _fail_write(**_kw):
     raise OSError("disk full")
 
 
+def _fake_prober(_runtime):
+    """Stub prober for tests: always returns alive + ready."""
+    return {"alive": True, "ready": True, "pid_match": True, "base_url_match": True, "reason": "ok"}
+
+
 def test_promote_route_write_failure_leaves_no_split_brain(tmp_path, monkeypatch):
     """#1105: promote() must not durably commit CURRENT when Frontdoor write fails."""
     import aletheia.storage.sqlite as sq
@@ -252,7 +257,7 @@ def test_promote_route_write_failure_leaves_no_split_brain(tmp_path, monkeypatch
     def fake_launcher(runtime):
         return {"attempted": True, "started": True, "pid": 9001, "host": "127.0.0.1", "port": 8900, "base_url": "http://127.0.0.1:8900"}
 
-    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher)
+    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher, shadow_live_prober=_fake_prober)
     ready = _make_ready_candidate(svc, suffix="split1")
 
     monkeypatch.setattr(svc_mod, "write_frontdoor_route", _fail_write)
@@ -297,7 +302,7 @@ def test_rollback_route_write_failure_preserves_checkpoint(tmp_path, monkeypatch
         port = next(ports)
         return {"attempted": True, "started": True, "pid": 9000 + port, "host": "127.0.0.1", "port": port, "base_url": f"http://127.0.0.1:{port}"}
 
-    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher)
+    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher, shadow_live_prober=_fake_prober)
 
     # Promote runtime A → A has gateway_process.base_url
     ready_a = _make_ready_candidate(svc, suffix="rba01")
@@ -345,7 +350,7 @@ def test_promote_activation_failure_raises_transition_error(tmp_path, monkeypatc
     def fake_launcher(runtime):
         return {"attempted": True, "started": True, "pid": 9003, "host": "127.0.0.1", "port": 8902, "base_url": "http://127.0.0.1:8902"}
 
-    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher)
+    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher, shadow_live_prober=_fake_prober)
     ready = _make_ready_candidate(svc, suffix="api409")
 
     monkeypatch.setattr(svc_mod, "write_frontdoor_route", _fail_write)
@@ -364,7 +369,7 @@ def test_successful_promote_route_readback_matches_current_runtime_id(tmp_path, 
     def fake_launcher(runtime):
         return {"attempted": True, "started": True, "pid": 9004, "host": "127.0.0.1", "port": 8903, "base_url": "http://127.0.0.1:8903"}
 
-    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher)
+    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher, shadow_live_prober=_fake_prober)
     ready = _make_ready_candidate(svc, suffix="readback")
     svc.promote(ready["runtime_id"], actor="test", cause="readback-test")
 
@@ -479,6 +484,9 @@ def _mock_shadow_gateway(monkeypatch) -> None:
 
     from aletheia.server.routes import runtime as _routes_runtime
     monkeypatch.setattr(_routes_runtime, "spawn_shadow_gateway", fake_spawn)
+
+    # Also stub live_probe_shadow for promotion (issue #1201 fix)
+    monkeypatch.setattr(_routes_runtime, "live_probe_shadow", _fake_prober)
 
     # The shadow route also imports spawn_shadow_operator_shell inline via
     # `from aletheia.gateway.operator_shell import spawn_shadow_operator_shell`.
@@ -818,3 +826,43 @@ def test_shadow_runtime_context_skips_scheduler_and_pidfile(monkeypatch):
     assert context["runtime_mode"] == "shadow"
     assert server_app.should_start_background_services(context) is False
     assert server_app.should_write_gateway_pidfile(context) is False
+
+
+def test_promote_rejects_dead_shadow_process(tmp_path, monkeypatch):
+    """#1201: promote must reject when shadow PID is not running."""
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.runtime_continuity.service import RuntimeContinuityService, RuntimeTransitionError
+
+    def fake_launcher(runtime):
+        return {"attempted": True, "started": True, "pid": 99999, "host": "127.0.0.1", "port": 8910, "base_url": "http://127.0.0.1:8910"}
+
+    def failing_prober(_runtime):
+        # Simulate shadow process died after validation: PID not found
+        return {"alive": False, "ready": False, "pid_match": False, "base_url_match": False, "reason": "pid_99999_not_running"}
+
+    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher, shadow_live_prober=failing_prober)
+    ready = _make_ready_candidate(svc, suffix="dead-shadow")
+
+    with pytest.raises(RuntimeTransitionError, match="shadow_process_not_ready:pid_99999_not_running"):
+        svc.promote(ready["runtime_id"], actor="test", cause="1201-regression-dead")
+
+
+def test_promote_rejects_shadow_http_not_ready(tmp_path, monkeypatch):
+    """#1201: promote must reject when shadow HTTP check fails."""
+    setup_env(tmp_path, monkeypatch)
+
+    from aletheia.runtime_continuity.service import RuntimeContinuityService, RuntimeTransitionError
+
+    def fake_launcher(runtime):
+        return {"attempted": True, "started": True, "pid": 99998, "host": "127.0.0.1", "port": 8911, "base_url": "http://127.0.0.1:8911"}
+
+    def http_not_ready_prober(_runtime):
+        # Simulate shadow process alive but HTTP endpoints not responding
+        return {"alive": True, "ready": False, "pid_match": True, "base_url_match": True, "reason": "http_not_ready"}
+
+    svc = RuntimeContinuityService(lock_ttl_sec=30, enabled=True, shadow_gateway_launcher=fake_launcher, shadow_live_prober=http_not_ready_prober)
+    ready = _make_ready_candidate(svc, suffix="http-fail")
+
+    with pytest.raises(RuntimeTransitionError, match="shadow_process_not_ready:http_not_ready"):
+        svc.promote(ready["runtime_id"], actor="test", cause="1201-regression-http")
