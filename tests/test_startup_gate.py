@@ -329,7 +329,6 @@ def test_retry_all_attempts_fail(tmp_path, monkeypatch):
     assert result["any_usable"] is False
     assert result["attempts"] == 3
 
-
 # --- 8. notification is called on pause ---
 
 def test_notification_called_on_pause(tmp_path, monkeypatch):

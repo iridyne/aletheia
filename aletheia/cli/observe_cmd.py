@@ -386,7 +386,12 @@ def run_worker_pass(
     lab_windows = payload.get("lab_windows") or {}
     ufc = payload.get("ufc_shadow_equivalence") or {}
 
-    if quiet and pass_status == "success":
+    # ponytail: quiet suppresses clean passes, but mismatches/errors are signal
+    has_signal = (
+        (lab_windows.get("windows_errored") or 0) > 0
+        or (ufc.get("mismatched") or 0) > 0
+    )
+    if quiet and pass_status == "success" and not has_signal:
         # Clean pass — stay silent so systemd journal only carries signal.
         raise typer.Exit(code=0)
 
