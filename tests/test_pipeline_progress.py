@@ -219,3 +219,97 @@ def test_proposal_stats_use_producer_commit_not_content_hash(tmp_path, monkeypat
     )
     assert result["count"] == 2
     assert result["newest_created_at"] == created
+
+
+def test_query_failure_renders_unavailable_not_zero(tmp_path, monkeypatch):
+    """Regression for #1238: query failures MUST NOT substitute zero-valued data.
+
+    When a section query fails (schema drift, missing table, malformed SQL),
+    `summarize` MUST mark that section `unavailable` and NEVER emit numeric zero
+    or empty dict that looks like a successful empty measurement.
+    """
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    _insert_epoch(
+        conn,
+        "epoch-test",
+        "system_operator_skip_remediation",
+        (now - timedelta(hours=1)).isoformat(),
+    )
+    conn.commit()
+
+    # Force a query failure by dropping a required table.  The exact surface
+    # is irrelevant; any section query can fail for any reason (missing column,
+    # schema drift, permission, lock timeout).  We'll drop operator_evaluation_events
+    # to trigger defer_events + active_defer failures.
+    conn.execute("DROP TABLE operator_evaluation_events")
+    conn.commit()
+
+    from aletheia.diagnostics.pipeline_progress import summarize
+
+    result = summarize(hours=12)
+
+    # The snapshot must succeed; partial diagnostics remain available.
+    assert result is not None
+    assert "section_status" in result
+    ss = result["section_status"]
+
+    # defer_events and active_defer sections MUST be marked unavailable.
+    assert ss["defer_events"]["status"] == "unavailable"
+    assert ss["defer_events"]["reason"] is not None
+    assert ss["active_defer"]["status"] == "unavailable"
+    assert ss["active_defer"]["reason"] is not None
+
+    # Unavailable operator sub-fields MUST be None, never zero.
+    op = result["operator"]
+    assert op["operator_defer"] is None, "operator_defer must be None when defer_events unavailable"
+    assert op["operator_defer_market_quiet"] is None
+    assert op["operator_defer_candidate_specific"] is None
+    assert op["defer_rate"] is None
+    assert op["oldest_active_defer_age_seconds"] is None
+
+    # Other successful sections remain available.
+    assert ss["opportunities"]["status"] == "available"
+    assert ss["operator"]["status"] == "available"
+
+
+def test_partial_success_keeps_available_sections(tmp_path, monkeypatch):
+    """When one section fails, others remain usable with explicit availability."""
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    _insert_epoch(
+        conn,
+        "epoch-test",
+        "system_operator_skip_remediation",
+        (now - timedelta(hours=1)).isoformat(),
+    )
+    conn.execute(
+        "INSERT INTO opportunities (id,symbol,market,status,"
+        "producer_commit,created_at) VALUES (?,?,?,?,?,?)",
+        (
+            "opp-1",
+            "BTC/USDT",
+            "usdt_futures",
+            "open",
+            "commit-test",
+            now.isoformat(),
+        ),
+    )
+    conn.commit()
+
+    # Drop proposals table to trigger one section failure.
+    conn.execute("DROP TABLE trade_proposals")
+    conn.commit()
+
+    from aletheia.diagnostics.pipeline_progress import summarize
+
+    result = summarize(hours=12, producer_commit="commit-test")
+
+    ss = result["section_status"]
+    # proposals unavailable
+    assert ss["proposals"]["status"] == "unavailable"
+    assert result["proposals"] is None
+
+    # opportunities available
+    assert ss["opportunities"]["status"] == "available"
+    assert result["opportunities"]["open"] == 1

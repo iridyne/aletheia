@@ -473,7 +473,10 @@ export interface components {
              */
             supervisor_restart_window_sec: number;
         };
-        /** HistoricalDataConfig */
+        /**
+         * HistoricalDataConfig
+         * @description Local OHLCV storage and bulk download settings.
+         */
         HistoricalDataConfig: {
             /**
              * Active Universe Backfill Enabled

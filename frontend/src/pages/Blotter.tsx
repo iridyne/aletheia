@@ -214,28 +214,35 @@ function CandidatesPanel() {
   // hover. The counts come straight from
   // /opportunity-funnel/current-snapshot's `counts` block (backed by
   // pipeline_progress._active_defer_stats). Rendered as a native `title` so
-  // there is no new UI state — the yellow chip already exists.
+  // there is no new UI state — the yellow chip already exists.  Null defer fields
+  // mean the backing query failed — render N/A, never zero.
   const c = current.counts
+  const deferFieldsAvailable =
+    c.market_quiet_defers != null &&
+    c.candidate_specific_defers != null &&
+    c.defer_rate != null
   const showDeferTip =
     (current.counts.deferred_candidates > 0 ||
-      current.counts.market_quiet_defers > 0 ||
-      current.counts.candidate_specific_defers > 0)
+      (c.market_quiet_defers != null && c.market_quiet_defers > 0) ||
+      (c.candidate_specific_defers != null && c.candidate_specific_defers > 0))
   const oldestMin =
     c.oldest_defer_age_seconds != null
       ? Math.round(c.oldest_defer_age_seconds / 60)
       : null
-  const deferTipLines = showDeferTip
+  const deferTipLines = showDeferTip && deferFieldsAvailable
     ? [
         `Live defers · market-quiet ${c.market_quiet_defers}`
           + ` / candidate-specific ${c.candidate_specific_defers}`,
         oldestMin != null ? `Oldest live defer · ${oldestMin}m ago` : null,
-        `12h defer rate · ${(c.defer_rate * 100).toFixed(0)}%`,
+        `12h defer rate · ${(c.defer_rate! * 100).toFixed(0)}%`,
         c.queue_capacity != null
           ? `Queue capacity · ${current.counts.queued_candidates}/${c.queue_capacity}`
           : null,
       ]
         .filter(Boolean)
         .join('\n')
+    : !deferFieldsAvailable
+    ? 'Defer diagnostics unavailable — the backing query failed.'
     : ''
 
   return (

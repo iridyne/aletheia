@@ -1736,10 +1736,11 @@ export const api = {
 					// Layer-1 observability: reason-class breakdown over LIVE defers
 					// (defer_until > now), 12h defer_rate, oldest live-defer age in
 					// seconds, and the (currently static) queue capacity from
-					// paper_trader._PENDING_SIGNAL_QUEUE_CAPACITY.
-					market_quiet_defers: number;
-					candidate_specific_defers: number;
-					defer_rate: number;
+					// paper_trader._PENDING_SIGNAL_QUEUE_CAPACITY.  These fields are
+					// null when the backing query fails, never zero.
+					market_quiet_defers: number | null;
+					candidate_specific_defers: number | null;
+					defer_rate: number | null;
 					oldest_defer_age_seconds: number | null;
 					queue_capacity: number | null;
 				};

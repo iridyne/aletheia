@@ -1625,8 +1625,6 @@ class PiDaemonConfig(BaseModel):
     """
     model_config = ConfigDict(validate_assignment=True)
 
-    model_config = ConfigDict(validate_assignment=True)
-
     enabled: bool = True
     debounce_sec: float = Field(default=2.0, ge=0.0, le=60.0)
     cooldown_sec: float = Field(default=45.0, ge=0.0, le=600.0)
