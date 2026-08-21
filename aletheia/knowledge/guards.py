@@ -17,7 +17,7 @@ from aletheia.knowledge.frontmatter import parse_frontmatter
 
 
 class ActiveGuardLoadError(RuntimeError):
-    """Raised when an active guard file cannot be parsed; callers must fail closed."""
+    """Raised when an active guard file cannot be parsed; callers must fail closed. (#1244)"""
 
 
 logger = logging.getLogger("aletheia.knowledge.guards")
@@ -266,8 +266,6 @@ def load_trading_guards(
                 guards.append(guard)
             except Exception as e:
                 if status == "active":
-                    # #1244: active guard load failure must fail closed — a partial
-                    # active set is worse than no set. Raise so callers can reject.
                     raise ActiveGuardLoadError(
                         f"active guard load failed: {path}: {e}"
                     ) from e
