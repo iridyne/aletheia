@@ -646,6 +646,7 @@ export default function CommandCenter() {
   const { data: operatorEvents = [] } = useQuery<OperatorEvent[]>({
     queryKey: ['operator-events'],
     queryFn: () => api.getOperatorEvents({ limit: 100 }),
+    refetchInterval: 8000,
   })
   const { data: runtimeStatus } = useQuery<RuntimeStatus>({
     queryKey: ['operator-runtime'],
@@ -717,35 +718,6 @@ export default function CommandCenter() {
     queryFn: () => api.getOperatorCommands({ query: deferredHistoryFilter.trim(), limit: 50 }),
     enabled: deferredHistoryFilter.trim().length > 0,
   })
-
-  useEffect(() => {
-    const stream = new EventSource('/api/operator/events/stream?limit=100')
-
-    const handleOperatorEvent = (event: MessageEvent<string>) => {
-      const parsed = JSON.parse(event.data) as OperatorEvent
-      startTransition(() => {
-        qc.setQueryData<OperatorEvent[]>(['operator-events'], current =>
-          mergeEvents(current || [], parsed),
-        )
-      })
-      void qc.invalidateQueries({ queryKey: ['operator-status'] })
-      void qc.invalidateQueries({ queryKey: ['operator-extensions'] })
-      void qc.invalidateQueries({ queryKey: ['operator-sessions'] })
-      void qc.invalidateQueries({ queryKey: ['operator-tasks'] })
-      void qc.invalidateQueries({ queryKey: ['operator-recommendations'] })
-      void qc.invalidateQueries({ queryKey: ['operator-commands'] })
-      void qc.invalidateQueries({ queryKey: ['operator-session'] })
-      void qc.invalidateQueries({ queryKey: ['operator-events', 'session'] })
-      void qc.invalidateQueries({ queryKey: ['operator-events', 'task'] })
-      void qc.invalidateQueries({ queryKey: ['operator-context'] })
-    }
-
-    stream.addEventListener('operator_event', handleOperatorEvent as EventListener)
-    return () => {
-      stream.removeEventListener('operator_event', handleOperatorEvent as EventListener)
-      stream.close()
-    }
-  }, [qc])
 
   const { toast } = useToast()
   const commandMut = useMutation({

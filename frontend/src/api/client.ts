@@ -440,6 +440,38 @@ export async function getWsTicket(): Promise<string | null> {
 	}
 }
 
+export async function downloadBlob(
+	url: string,
+	method: 'GET' | 'POST' = 'GET',
+	body?: unknown,
+): Promise<{ blob: Blob; filename: string }> {
+	const timeoutCtrl = new AbortController();
+	const timer = setTimeout(() => timeoutCtrl.abort(), _FETCH_TIMEOUT_MS);
+
+	try {
+		const res = await fetch(`${BASE}${url}`, {
+			method,
+			headers: {
+				'Content-Type': 'application/json',
+				...remoteControlHeaders(),
+			},
+			body: body ? JSON.stringify(body) : undefined,
+			signal: timeoutCtrl.signal,
+		});
+
+		if (!res.ok) throw parseApiError(res.status, await res.text(), res.headers);
+
+		const blob = await res.blob();
+		const cd = res.headers.get('Content-Disposition') ?? '';
+		const match = cd.match(/filename="([^"]+)"/);
+		const filename = match?.[1] ?? url.split('/').pop()?.split('?')[0] ?? 'download';
+
+		return { blob, filename };
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 function post<T>(path: string, body?: unknown): Promise<T> {
 	return fetchJson<T>(path, {
 		method: "POST",
@@ -2298,7 +2330,7 @@ export const api = {
 			`/proposals/${id}/risk-decision`,
 		),
 	getTrades: () => fetchJson<MarketTrade[]>("/trades"),
-	exportTradesCsv: () => `${BASE}/trades/export?fmt=csv`,
+	exportTradesCsv: () => downloadBlob('/trades/export?fmt=csv'),
 	getPositions: () => fetchJson<Position[]>("/positions"),
 	getPositionsReconciliation: () =>
 		fetchJson<import("../types").PositionsReconciliation>(
@@ -2961,22 +2993,11 @@ export const api = {
 				row_count: number;
 			}>;
 		}>("/export/catalog"),
-	downloadExport: async (body: {
+	downloadExport: (body: {
 		preset?: string;
 		include_datasets?: string[];
 		include_config?: boolean;
-	}) => {
-		const res = await fetch(`${BASE}/export/download`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(body),
-		});
-		if (!res.ok) throw new Error(await res.text());
-		const blob = await res.blob();
-		const cd = res.headers.get("Content-Disposition") ?? "";
-		const match = cd.match(/filename="([^"]+)"/);
-		return { blob, filename: match?.[1] ?? "aletheia_export.zip" };
-	},
+	}) => downloadBlob('/export/download', 'POST', body),
 };
 
 export interface TradeStatsSource {

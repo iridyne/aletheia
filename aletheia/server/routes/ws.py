@@ -270,11 +270,26 @@ async def ws_realtime(
 ) -> None:
     """
     Push-notification WebSocket.  Pushes category names only (no data payloads).
-    Requires a valid ?ticket= when Remote Control owner auth is active.
+    When Remote Control owner auth is active, accepts either:
+      - a valid single-use ?ticket= (for browser clients, via GET /api/ws/ticket)
+      - a valid X-Aletheia-Token header (for non-browser API clients or proxies)
     """
     if _ws_remote_auth_required():
-        if not ticket or not _consume_ws_ticket(ticket):
-            await ws.close(code=4403)
+        authenticated = False
+        # Option 1: Ticket (browser WebSocket API can't set headers)
+        if ticket and _consume_ws_ticket(ticket):
+            authenticated = True
+        # Option 2: X-Aletheia-Token header (non-browser clients, gateways)
+        if not authenticated:
+            from aletheia.config.secrets import get_secret
+            import hmac as _hmac
+            expected = get_secret("remote_control_api_token") or get_secret("tunnel_api_token")
+            if expected:
+                token = ws.headers.get("x-aletheia-token", "")
+                if _hmac.compare_digest(token, expected):
+                    authenticated = True
+        if not authenticated:
+            await ws.close(code=4401)
             return
     if len(_hub.clients) >= _MAX_WS_CLIENTS:
         await ws.close(code=1013)

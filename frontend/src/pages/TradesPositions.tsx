@@ -359,6 +359,24 @@ export default function TradesPositions() {
 	const ordersAvailable = !ordersPending && !ordersError && orders != null
 	const reconAvailable = !reconPending && !reconError && reconciliation != null
 	const [sel, setSel] = useState<Selection>(null);
+	const [csvExporting, setCsvExporting] = useState(false);
+	const { toast } = useToast();
+	const handleExportCsv = async () => {
+		setCsvExporting(true);
+		try {
+			const { blob, filename } = await api.exportTradesCsv();
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = filename;
+			a.click();
+			URL.revokeObjectURL(url);
+		} catch (e: any) {
+			toast('error', `Export failed: ${e.message}`);
+		} finally {
+			setCsvExporting(false);
+		}
+	};
 
 	// useManualClose: row-inline close button. Closing from the drawer shares the
 	// same hook so both paths invalidate the same query keys and show the same toast.
@@ -523,13 +541,13 @@ export default function TradesPositions() {
 											<span className="text-muted text-sm">
 												click a row for the causal chain
 											</span>
-											<a
-												href={api.exportTradesCsv()}
-												download
+											<button
+												onClick={handleExportCsv}
+												disabled={csvExporting}
 												className="btn btn-secondary btn-sm ml-auto"
 											>
-												Export CSV
-											</a>
+												{csvExporting ? 'Exporting…' : 'Export CSV'}
+											</button>
 										</div>
 										<Card>
 											<DataTable
