@@ -464,3 +464,152 @@ def test_render_report_shows_persistent_section(monkeypatch):
     assert "streak=4/6" in rendered
     assert "signal=+0.1875" in rendered
     assert "rejected mean" in rendered
+
+
+# ─── Issue #1240: Failed evidence passes return success ──────────────────────
+
+def test_observe_pass_status_success_when_all_clean(monkeypatch):
+    """Clean pass → pass_status=success, pass_reason=None."""
+    monkeypatch.setattr(fc, "compute_filter_feedback", lambda min_samples=20: [])
+    monkeypatch.setattr(
+        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "aletheia.counterfactual.filter_experiments.register_replay_ready_experiments",
+        lambda replays: {"registered": 0, "already_registered": 0, "skipped": 0},
+    )
+    monkeypatch.setattr(
+        "aletheia.observation_lab.runner.run_lab_windows",
+        lambda: {
+            "windows_run": 2,
+            "windows_errored": 0,
+            "results": {
+                "filter_shadow_evaluate": {"frozen_units_captured": 0},
+                "ufc_shadow_equivalence": {
+                    "checked": 10, "matched": 10, "mismatched": 0, "skipped": 0,
+                },
+            },
+        },
+    )
+    summary = fc.run_controller_observe()
+    assert summary["pass_status"] == "success"
+    assert summary["pass_reason"] is None
+
+
+def test_observe_pass_status_failed_when_persist_fails(monkeypatch):
+    """DB persistence exception → pass_status=failed."""
+    monkeypatch.setattr(fc, "compute_filter_feedback", lambda min_samples=20: [
+        type("Rec", (), {
+            "filter_name": "family_ttl",
+            "scanner_family": "momentum",
+            "stage": "entry",
+            "current_value": 10,
+            "suggested_direction": "loosen",
+            "verdict": "hold",
+            "error_signal": 0.1,
+            "n_samples": 20,
+            "reasoning": "test",
+            "filter_version": "v1",
+            "direction": "long",
+            "market_type": "spot",
+            "horizon": "4h",
+            "passed_n": 10,
+            "rejected_n": 10,
+            "passed_shrunk_avg_net": 0.01,
+            "rejected_shrunk_avg_net": -0.01,
+            "outcome_coverage": 1.0,
+        })(),
+    ])
+
+    def fail_transaction():
+        class FakeTxn:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                raise RuntimeError("DB locked")
+        return FakeTxn()
+
+    monkeypatch.setattr(
+        "aletheia.storage.repositories.transaction",
+        fail_transaction,
+    )
+    monkeypatch.setattr(
+        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "aletheia.counterfactual.filter_experiments.register_replay_ready_experiments",
+        lambda replays: {"registered": 0, "already_registered": 0, "skipped": 0},
+    )
+    monkeypatch.setattr(
+        "aletheia.observation_lab.runner.run_lab_windows",
+        lambda: {
+            "windows_run": 0, "windows_errored": 0,
+            "results": {
+                "ufc_shadow_equivalence": {
+                    "checked": 0, "matched": 0, "mismatched": 0, "skipped": 0,
+                },
+            },
+        },
+    )
+    summary = fc.run_controller_observe()
+    assert summary["pass_status"] == "failed"
+    assert summary["pass_reason"] == "recommendation persistence failed"
+    assert summary["recommendations_written"] == 0
+
+
+def test_observe_pass_status_partial_when_lab_windows_errored(monkeypatch):
+    """Lab window errors → pass_status=partial."""
+    monkeypatch.setattr(fc, "compute_filter_feedback", lambda min_samples=20: [])
+    monkeypatch.setattr(
+        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "aletheia.counterfactual.filter_experiments.register_replay_ready_experiments",
+        lambda replays: {"registered": 0, "already_registered": 0, "skipped": 0},
+    )
+    monkeypatch.setattr(
+        "aletheia.observation_lab.runner.run_lab_windows",
+        lambda: {
+            "windows_run": 3,
+            "windows_errored": 2,
+            "results": {
+                "ufc_shadow_equivalence": {
+                    "checked": 5, "matched": 5, "mismatched": 0, "skipped": 0,
+                },
+            },
+        },
+    )
+    summary = fc.run_controller_observe()
+    assert summary["pass_status"] == "partial"
+    assert summary["pass_reason"] == "2 lab windows errored"
+
+
+def test_observe_pass_status_partial_when_ufc_mismatch(monkeypatch):
+    """UFC shadow equivalence mismatch → pass_status=partial."""
+    monkeypatch.setattr(fc, "compute_filter_feedback", lambda min_samples=20: [])
+    monkeypatch.setattr(
+        "aletheia.counterfactual.filter_replay.build_bounded_filter_replays",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "aletheia.counterfactual.filter_experiments.register_replay_ready_experiments",
+        lambda replays: {"registered": 0, "already_registered": 0, "skipped": 0},
+    )
+    monkeypatch.setattr(
+        "aletheia.observation_lab.runner.run_lab_windows",
+        lambda: {
+            "windows_run": 2,
+            "windows_errored": 0,
+            "results": {
+                "ufc_shadow_equivalence": {
+                    "checked": 12, "matched": 9, "mismatched": 3, "skipped": 0,
+                },
+            },
+        },
+    )
+    summary = fc.run_controller_observe()
+    assert summary["pass_status"] == "partial"
+    assert "UFC shadow equivalence: 3 mismatched" in summary["pass_reason"]
