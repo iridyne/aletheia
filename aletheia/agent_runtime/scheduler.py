@@ -1890,6 +1890,7 @@ def notify_paper_trader(source: str = "unknown") -> bool:
         if "paper_trader" in _selectively_paused_jobs:
             _pending_wake_jobs.add("paper_trader")
             return False
+        _PAPER_TRADER_WAKE_STATE["last_nudge_mono"] = now_mono
         if not _arm_paper_trader_job():
             return False
         return True

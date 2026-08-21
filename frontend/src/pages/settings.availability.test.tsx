@@ -9,6 +9,7 @@ vi.mock('@tanstack/react-query', () => ({
 }))
 vi.mock('react-router-dom', () => ({
   useSearchParams: vi.fn(() => [new URLSearchParams(), vi.fn()]),
+  useBlocker: vi.fn(() => ({ state: 'unblocked' })),
 }))
 vi.mock('../api/client', () => ({
   api: { getStatus: vi.fn(), getSettings: vi.fn() },
