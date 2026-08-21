@@ -56,7 +56,8 @@ class TelegramBot:
         if parse_mode:
             payload["parse_mode"] = parse_mode
         async with httpx_client(timeout=10) as client:
-            await client.post(self._api_url("sendMessage"), json=payload)
+            resp = await client.post(self._api_url("sendMessage"), json=payload)
+            resp.raise_for_status()
 
     def _is_authorized(self, chat_id: int) -> bool:
         return self._authorization_error(chat_id) is None

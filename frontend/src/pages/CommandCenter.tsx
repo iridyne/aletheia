@@ -560,7 +560,7 @@ function HeartbeatZone({
                     </td>
                     <td className="text-right text-xs text-muted">
                       {p?.total_value_usdt
-                        ? fmtPct((Math.abs(Number(pnl)) / Number(p.total_value_usdt)) * 100)
+                        ? fmtPct((Math.abs(Number(pnl)) / Number(p.total_value_usdt)) * 100, { scale: 'percent' })
                         : ''}
                     </td>
                   </tr>
