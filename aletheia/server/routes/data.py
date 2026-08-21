@@ -1390,7 +1390,7 @@ def get_strategy_summary():
 @router.get("/market/snapshots")
 def get_market_snapshots(
     symbol: str | None = None,
-    limit: int = 200,
+    limit: int = Query(default=200, ge=1, le=1000),
     exchange: str = "",
 ):
     """Return market snapshots.
@@ -1398,6 +1398,8 @@ def get_market_snapshots(
     Optional filters:
     - symbol: canonical BTC/USDT format
     - exchange: source exchange name (e.g. "binance", "bybit")
+
+    ``limit`` is clamped to 1..1000; values outside this range return 422.
     """
     _ensure_db()
     return repo.list_market_snapshots(symbol=symbol, limit=limit, exchange=exchange)

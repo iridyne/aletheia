@@ -286,7 +286,7 @@ def _select_all(
     sql = f"SELECT * FROM {table}"
     if where:
         sql += f" WHERE {where}"
-    sql += f" ORDER BY {order} LIMIT {limit}"
+    sql += f" ORDER BY {order} LIMIT {max(1, limit)}"
     rows = db.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
 
