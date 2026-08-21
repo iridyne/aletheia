@@ -1701,7 +1701,10 @@ def resume_scheduler() -> bool:
             return False
 
         if _scheduler is None:
-            init_scheduler()
+            try:
+                init_scheduler()
+            except Exception:
+                pass  # scheduler disabled or init failed; treat as resumed
             if _scheduler is None:
                 logger.warning(
                     "resume_scheduler: scheduler unavailable (disabled or init failed)"
