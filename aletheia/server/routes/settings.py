@@ -968,13 +968,6 @@ class PiDaemonConfigUpdate(SettingsRequest):
     heartbeat_sec: Optional[float] = None
 
 
-_PI_DAEMON_BOUNDS: dict[str, tuple[float, float]] = {
-    "debounce_sec": (0.0, 60.0),
-    "cooldown_sec": (0.0, 600.0),
-    "heartbeat_sec": (60.0, 3600.0),
-}
-
-
 @router.post("/pi_daemon")
 async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
     """Update System Operator daemon configuration.
@@ -986,15 +979,11 @@ async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
     naming registry). Any consumer parsing audit events must accept the legacy
     keys; new UI copy uses "System Operator daemon".
     """
+    from aletheia.config.schema import PiDaemonConfig
     cfg = load_config()
     old = cfg.pi_daemon.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        if field in _PI_DAEMON_BOUNDS:
-            lo, hi = _PI_DAEMON_BOUNDS[field]
-            if not (lo <= value <= hi):
-                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
-        setattr(cfg.pi_daemon, field, value)
+    cfg.pi_daemon = _validated_settings_section(PiDaemonConfig, old, updates, name="PiDaemonConfig")
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "pi_daemon_config_changed",
@@ -1415,37 +1404,13 @@ class HealthConfigUpdate(SettingsRequest):
     startup_gate_recheck_interval_sec: Optional[int] = None
 
 
-_HEALTH_BOUNDS: dict[str, tuple[float, float]] = {
-    "max_agent_failure_ratio": (0.0, 1.0),
-    "llm_unavailable_alert_after": (1, 100),
-    "market_data_max_staleness_min": (5, 1440),
-    "supervisor_max_restarts": (1, 50),
-    "supervisor_restart_window_sec": (60, 86400),
-    "supervisor_backoff_cap_sec": (5, 3600),
-    "self_heal_min_interval_sec": (300, 86400),
-    "self_heal_max_per_hour": (0, 12),
-    "startup_gate_max_retries": (1, 10),
-    "startup_gate_retry_delay_sec": (5, 120),
-    "auto_resume_interval_sec": (30, 3600),
-    "exchange_probe_interval_sec": (10, 300),
-    "exchange_probe_failure_threshold": (1, 20),
-    "exchange_auto_resume_interval_sec": (10, 600),
-    "exchange_auto_resume_success_threshold": (1, 10),
-    "startup_gate_recheck_interval_sec": (5, 3600),
-}
-
-
 @router.post("/health-config")
 def update_health_config(req: HealthConfigUpdate):
+    from aletheia.config.schema import HealthConfig
     cfg = load_config()
     old = cfg.health.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        if field in _HEALTH_BOUNDS:
-            lo, hi = _HEALTH_BOUNDS[field]
-            if not (lo <= value <= hi):
-                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
-        setattr(cfg.health, field, value)
+    cfg.health = _validated_settings_section(HealthConfig, old, updates, name="HealthConfig")
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "health_config_changed",
@@ -2733,28 +2698,14 @@ class HistoricalDataConfigUpdate(SettingsRequest):
     active_universe_backfill_max_pairs_per_run: int | None = None
 
 
-_HIST_DATA_BOUNDS: dict[str, tuple[float, float]] = {
-    "max_bars_per_pair": (1_000, 200_000),
-    "default_months": (1, 24),
-    "nightly_backfill_hour_cst": (0, 23),
-    "min_bars_for_backtest": (30, 5_000),
-    "active_universe_backfill_interval_minutes": (5, 60),
-    "active_universe_backfill_max_pairs_per_run": (1, 10),
-}
-
-
 @router.post("/historical_data")
 async def update_historical_data_config(req: HistoricalDataConfigUpdate):
     """Update historical OHLCV data management settings."""
+    from aletheia.config.schema import HistoricalDataConfig
     cfg = load_config()
     old = cfg.historical_data.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        if field in _HIST_DATA_BOUNDS:
-            lo, hi = _HIST_DATA_BOUNDS[field]
-            if not (lo <= value <= hi):
-                raise HTTPException(400, f"'{field}' must be between {int(lo)} and {int(hi)}")
-        setattr(cfg.historical_data, field, value)
+    cfg.historical_data = _validated_settings_section(HistoricalDataConfig, old, updates, name="HistoricalDataConfig")
     save_config(cfg)
 
     _SCHEDULER_FIELDS = {
@@ -2844,18 +2795,11 @@ class NewsConfigUpdate(SettingsRequest):
 
 @router.post("/news")
 async def update_news_config(req: NewsConfigUpdate):
+    from aletheia.config.schema import NewsConfig
     cfg = load_config()
     old = cfg.news.model_dump(mode="json")
-    if req.enabled is not None:
-        cfg.news.enabled = req.enabled
-    if req.fetch_interval_minutes is not None:
-        if not (5 <= req.fetch_interval_minutes <= 120):
-            raise HTTPException(400, "fetch_interval_minutes must be 5-120")
-        cfg.news.fetch_interval_minutes = req.fetch_interval_minutes
-    if req.retention_days is not None:
-        if not (1 <= req.retention_days <= 90):
-            raise HTTPException(400, "retention_days must be 1-90")
-        cfg.news.retention_days = req.retention_days
+    updates = req.model_dump(exclude_none=True, exclude={"feeds"})
+    cfg.news = _validated_settings_section(NewsConfig, old, updates, name="NewsConfig")
     if req.feeds is not None:
         from aletheia.config.schema import NewsFeedEntry
         cfg.news.feeds = [NewsFeedEntry(**f.model_dump()) for f in req.feeds]

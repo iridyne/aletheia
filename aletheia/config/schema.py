@@ -976,18 +976,20 @@ class WebhookConfig(BaseModel):
 
 
 class HealthConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     enabled: bool = True
     alert_via_telegram: bool = True
     alert_via_windows_toast: bool = True
-    max_agent_failure_ratio: float = 0.5
-    llm_unavailable_alert_after: int = 3
+    max_agent_failure_ratio: float = Field(default=0.5, ge=0.0, le=1.0)
+    llm_unavailable_alert_after: int = Field(default=3, ge=1, le=100)
     # Silent-degradation guard: flag the market-data feed as stale when the newest
     # snapshot is older than this (market data is collected every 5 min).
-    market_data_max_staleness_min: int = 30
+    market_data_max_staleness_min: int = Field(default=30, ge=5, le=1440)
     # Gateway supervisor (process self-healing).
-    supervisor_max_restarts: int = 5
-    supervisor_restart_window_sec: int = 600
-    supervisor_backoff_cap_sec: int = 60
+    supervisor_max_restarts: int = Field(default=5, ge=1, le=50)
+    supervisor_restart_window_sec: int = Field(default=600, ge=60, le=86400)
+    supervisor_backoff_cap_sec: int = Field(default=60, ge=5, le=3600)
     # --- Deterministic self-heal: the health-check job ACTS on the signals it
     # already computes (NO LLM). Closes the gap where /api/health flagged stale
     # code for 11h but nothing consumed the signal to restart.
@@ -995,8 +997,8 @@ class HealthConfig(BaseModel):
     # min_interval (30m) is deliberately > supervisor_restart_window_sec (600s):
     # two self-heal restarts can never fall inside one supervisor window, so
     # self-heal alone can never exhaust the supervisor's give-up budget.
-    self_heal_min_interval_sec: int = 1800    # >= 30 min between any two self-heal restarts
-    self_heal_max_per_hour: int = 2           # hard ceiling on self-heal restarts/hour
+    self_heal_min_interval_sec: int = Field(default=1800, ge=300, le=86400)
+    self_heal_max_per_hour: int = Field(default=2, ge=0, le=12)
     self_heal_code_drift: bool = True         # restart on code_updated_pending_restart (self-terminating)
     self_heal_market_data: bool = True        # restart on market_data_stale (rate-limited; external root cause)
     self_heal_port_cleanup: bool = True       # clean orphan/port-holder PIDs (cleanup, not restart)
@@ -1013,23 +1015,25 @@ class HealthConfig(BaseModel):
     # that opted in keep their setting because loader.load_config merges on top
     # of user-supplied values.
     require_llm_at_startup: bool = False
-    startup_gate_max_retries: int = 3
-    startup_gate_retry_delay_sec: int = 15
+    startup_gate_max_retries: int = Field(default=3, ge=1, le=10)
+    startup_gate_retry_delay_sec: int = Field(default=15, ge=5, le=120)
     # Auto-resume: when startup gate pauses the system, periodically probe LLM
     # and auto-resume when connectivity is restored.
     auto_resume_enabled: bool = True
-    auto_resume_interval_sec: int = 300
+    auto_resume_interval_sec: int = Field(default=300, ge=30, le=3600)
     # Stall detection: after this many consecutive failed probes, escalate to
     # operator with root-cause classification (secret_missing vs network vs auth).
-    auto_resume_stall_threshold: int = 6
-    auto_resume_stall_backoff_factor: float = 2.0
-    auto_resume_max_interval_sec: int = 1800
+    auto_resume_stall_threshold: int = Field(default=6, ge=1, le=100)
+    # backoff_factor must be > 1.0 to actually back off; le=10 caps runaway growth.
+    auto_resume_stall_backoff_factor: float = Field(default=2.0, gt=0.0, le=10.0)
+    # max_interval must be >= 1 to prevent a zero/negative sleep in the loop.
+    auto_resume_max_interval_sec: int = Field(default=1800, ge=1, le=86400)
     # Exchange connectivity monitor: detect network outages and auto-pause/resume.
-    exchange_probe_interval_sec: int = 60
-    exchange_probe_failure_threshold: int = 3
-    exchange_auto_resume_interval_sec: int = 60
-    exchange_auto_resume_success_threshold: int = 2
-    exchange_stall_threshold: int = 30
+    exchange_probe_interval_sec: int = Field(default=60, ge=10, le=300)
+    exchange_probe_failure_threshold: int = Field(default=3, ge=1, le=20)
+    exchange_auto_resume_interval_sec: int = Field(default=60, ge=10, le=600)
+    exchange_auto_resume_success_threshold: int = Field(default=2, ge=1, le=10)
+    exchange_stall_threshold: int = Field(default=30, ge=1, le=100)
     # Layered pause: when True, pause only AI-dependent jobs (observer, trader,
     # operator) while keeping data-collection jobs running. This prevents data
     # gaps during LLM outages. When False, all jobs are halted (legacy behavior).
@@ -1045,7 +1049,7 @@ class HealthConfig(BaseModel):
     # require_llm_at_startup. See agent_runtime/startup_behavior_gate.py.
     startup_behavior_gate_enabled: bool = False
     # How often the startup-gate recheck loop re-evaluates while blocked.
-    startup_gate_recheck_interval_sec: int = 60
+    startup_gate_recheck_interval_sec: int = Field(default=60, ge=5, le=3600)
 
 
 class RetentionConfig(BaseModel):
@@ -1435,13 +1439,14 @@ class RegimeConfig(BaseModel):
 
 
 class HistoricalDataConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
     """Local OHLCV storage and bulk download settings."""
     enabled: bool = True
-    max_bars_per_pair: int = 50_000
-    default_months: int = 6
+    max_bars_per_pair: int = Field(default=50_000, ge=1_000, le=200_000)
+    default_months: int = Field(default=6, ge=1, le=24)
     nightly_backfill_enabled: bool = True
-    nightly_backfill_hour_cst: int = 3
-    min_bars_for_backtest: int = 200
+    nightly_backfill_hour_cst: int = Field(default=3, ge=0, le=23)
+    min_bars_for_backtest: int = Field(default=200, ge=30, le=5_000)
     active_universe_backfill_enabled: bool = True
     active_universe_backfill_interval_minutes: int = Field(default=10, ge=5, le=60)
     active_universe_backfill_max_pairs_per_run: int = Field(default=3, ge=1, le=10)
@@ -1578,6 +1583,7 @@ class NetworkConfig(BaseModel):
 
 
 class PiDaemonConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
     """System Operator daemon configuration.
 
     #97 note (2026-07-07): the class name and the top-level config field
@@ -1597,9 +1603,9 @@ class PiDaemonConfig(BaseModel):
     """
 
     enabled: bool = True
-    debounce_sec: float = 2.0      # collect burst signals before evaluating
-    cooldown_sec: float = 45.0     # minimum gap between evaluation cycles
-    heartbeat_sec: float = 60.0    # fallback polling interval (safety net)
+    debounce_sec: float = Field(default=2.0, ge=0.0, le=60.0)
+    cooldown_sec: float = Field(default=45.0, ge=0.0, le=600.0)
+    heartbeat_sec: float = Field(default=60.0, ge=60.0, le=3600.0)
 
 
 class NewsFeedEntry(BaseModel):
@@ -1628,9 +1634,10 @@ _DEFAULT_NEWS_FEEDS: list[dict] = [
 
 
 class NewsConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
     enabled: bool = True
-    fetch_interval_minutes: int = 15
-    retention_days: int = 7
+    fetch_interval_minutes: int = Field(default=15, ge=5, le=120)
+    retention_days: int = Field(default=7, ge=1, le=90)
     feeds: list[NewsFeedEntry] = Field(default_factory=lambda: [NewsFeedEntry(**f) for f in _DEFAULT_NEWS_FEEDS])
 
 
