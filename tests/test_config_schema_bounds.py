@@ -117,9 +117,12 @@ def test_health_exchange_probe_interval_sec_bounds():
 
 
 def test_health_auto_resume_stall_backoff_factor_bounds():
-    """auto_resume_stall_backoff_factor must be > 0; 0 creates a busy recovery loop."""
-    HealthConfig(auto_resume_stall_backoff_factor=0.1)
-    HealthConfig(auto_resume_stall_backoff_factor=10.0)
+    """backoff_factor >= 1.0 ensures each stall escalation never shrinks the interval."""
+    HealthConfig(auto_resume_stall_backoff_factor=1.0)   # no-backoff edge
+    HealthConfig(auto_resume_stall_backoff_factor=2.0)   # typical doubling
+    HealthConfig(auto_resume_stall_backoff_factor=10.0)  # upper bound
+    with pytest.raises(ValidationError, match="auto_resume_stall_backoff_factor"):
+        HealthConfig(auto_resume_stall_backoff_factor=0.999)  # fractional — shrinks interval
     with pytest.raises(ValidationError, match="auto_resume_stall_backoff_factor"):
         HealthConfig(auto_resume_stall_backoff_factor=0.0)
     with pytest.raises(ValidationError, match="auto_resume_stall_backoff_factor"):
