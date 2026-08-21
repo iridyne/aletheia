@@ -298,3 +298,81 @@ def test_candidate_facts_resolve_serenity_opportunity_by_decision_source():
     fact = next(item for item in report["facts"] if item["fact_id"] == "serenity-outcome")
     assert fact["funnel"]["opportunity_reached"] is True
     assert fact["identity"]["pi_decision_id"] == "serenity-decision"
+
+
+def test_candidate_facts_utc_sort_prefers_earlier_utc_row_over_later_offset_string():
+    """#1266 — two rows with same candidate_key but offset timestamps: earlier UTC wins."""
+    db = _db()
+    # "2026-08-12T23:59:00-00:30" = 2026-08-13T00:29:00Z (lexically "-00:30" sorts BEFORE "+00:00")
+    # "2026-08-13T00:01:00+00:00" = 2026-08-13T00:01:00Z  (UTC-earlier — should be first_exposure)
+    db.execute(
+        "INSERT INTO filter_decisions "
+        "(id, candidate_key, candidate_kind, outcome_candidate_key, opportunity_id, proposal_id,"
+        " filter_name, stage, sequence_no, decision, reason_code, evaluated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "filter-tz-late", "candidate-tz", "opportunity",
+            "outcome-tz", None, None,
+            "ranker", "selection", 10, "passed", "eligible",
+            "2026-08-12T23:59:00-00:30",  # UTC 00:29:00 — lexically first "-" < "+" but UTC-later
+        ),
+    )
+    db.execute(
+        "INSERT INTO filter_decisions "
+        "(id, candidate_key, candidate_kind, outcome_candidate_key, opportunity_id, proposal_id,"
+        " filter_name, stage, sequence_no, decision, reason_code, evaluated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "filter-tz-early", "candidate-tz", "opportunity",
+            "outcome-tz", None, None,
+            "ranker", "selection", 0, "passed", "eligible",
+            "2026-08-13T00:01:00+00:00",  # UTC 00:01:00 — UTC-earlier, must be first_exposure
+        ),
+    )
+
+    report = candidate_facts.build_candidate_facts(horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db)
+
+    fact = next(item for item in report["facts"] if item["fact_id"] == "outcome-tz")
+    # first_exposure must be the UTC-earlier row (00:01), not the lexically-earlier "-00:30" row
+    assert fact["first_exposure"]["id"] == "filter-tz-early"
+
+
+def test_candidate_facts_scrubs_post_cutoff_fill_from_order():
+    """#1267 — order created before cutoff but filled after: must not show as traded."""
+    db = _db()
+    # Replace the existing order so filled_at is after our cutoff
+    db.execute("ALTER TABLE orders ADD COLUMN filled_at TEXT")
+    db.execute(
+        "UPDATE orders SET filled_at='2026-08-13T01:00:00+00:00' WHERE id='order-traded'"
+    )
+
+    # Use cutoff at 00:30 — order created at 00:00:40 is visible, filled_at 01:00 is after cutoff
+    report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-13T00:30:00+00:00", db=db
+    )
+
+    fact = next(item for item in report["facts"] if "traded" in item["fact_id"])
+    assert fact["terminal_state"] != "traded"
+    assert fact["funnel"]["position_reached"] is False
+
+
+def test_candidate_facts_rejects_invalid_as_of_at():
+    """#1250 — non-empty unparsable as_of_at raises ValueError."""
+    db = _db()
+    try:
+        candidate_facts.build_candidate_facts(horizon="24h", as_of_at="not-a-date", db=db)
+        raise AssertionError("expected ValueError")
+    except ValueError as exc:
+        assert "invalid as_of_at" in str(exc)
+
+
+def test_candidate_facts_snapshot_consistency():
+    """#1262 — two calls on same DB must observe same row counts (snapshot isolation)."""
+    db = _db()
+    report1 = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db
+    )
+    # A second call must return the same candidate_count (snapshot seen consistently)
+    report2 = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db
+    )
+    assert report1["candidate_count"] == report2["candidate_count"]
+    assert report1["facts"][0]["fact_id"] == report2["facts"][0]["fact_id"]
