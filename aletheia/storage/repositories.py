@@ -5335,6 +5335,67 @@ def fail_unclaimed_serenity_research_run(
     )
     return cursor.rowcount == 1
 
+def admit_serenity_research_run(
+    *,
+    run_id: str,
+    idempotency_key: str | None,
+    trigger_type: str,
+    mode: str,
+    parent_run_id: str | None = None,
+    profile_snapshot_id: str | None = None,
+    brief_snapshot: str | None = None,
+    focus_theme_id: str | None = None,
+    retry_count: int = 0,
+    created_at: str,
+    updated_at: str,
+) -> dict:
+    """Atomically admit one new Serenity research run if the active slot is free.
+
+    Returns:
+        {"admitted": True, "run_id": str} on success
+        {"admitted": False, "reason": "occupied"} if active slot is occupied
+        {"admitted": False, "existing_run": dict} if idempotency match (deduplicated winner)
+    """
+    with transaction(immediate=True):
+        db = get_db()
+        # Check idempotency first (deduplicated winner)
+        if idempotency_key is not None:
+            existing = db.execute(
+                "SELECT * FROM serenity_research_runs WHERE idempotency_key = ?",
+                (idempotency_key,)
+            ).fetchone()
+            if existing:
+                return {"admitted": False, "existing_run": dict(existing)}
+
+        # Check active slot
+        active_count = db.execute(
+            "SELECT COUNT(*) FROM serenity_research_runs "
+            "WHERE status IN ('queued', 'running', 'cancel_requested', 'waiting_retry')"
+        ).fetchone()[0]
+        if active_count >= 1:
+            return {"admitted": False, "reason": "occupied"}
+
+        # Insert new run
+        try:
+            execute_write(
+                "INSERT INTO serenity_research_runs "
+                "(id, idempotency_key, trigger_type, mode, status, parent_run_id, "
+                "profile_snapshot_id, brief_snapshot, focus_theme_id, retry_count, "
+                "created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run_id, idempotency_key, trigger_type, mode, parent_run_id,
+                    profile_snapshot_id, brief_snapshot, focus_theme_id, retry_count,
+                    created_at, updated_at
+                )
+            )
+            return {"admitted": True, "run_id": run_id}
+        except sqlite3.IntegrityError:
+            # Race on UNIQUE constraint (active slot or idempotency_key)
+            return {"admitted": False, "reason": "occupied"}
+
+
+
 
 def request_serenity_research_run_cancel(run_id: str, *, now: str) -> tuple[str | None, bool]:
     """Cancel queued work or request cooperative cancellation of running work."""

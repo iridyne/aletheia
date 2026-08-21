@@ -1163,9 +1163,24 @@ def _schedule_auto_retry(run_id: str, run: dict, retry_count: int) -> None:
                     retry_count=retry_count + 1,
                     idempotency_key=f"serenity-retry:{run_id}:{retry_count + 1}",
                 )
-                stored, deduplicated = repo.insert_serenity_research_retry(new_run)
-                if not deduplicated:
-                    enqueue_research_run(stored["id"])
+                result = repo.admit_serenity_research_run(
+                    run_id=new_run.id,
+                    idempotency_key=new_run.idempotency_key,
+                    trigger_type=new_run.trigger_type,
+                    mode=new_run.mode,
+                    parent_run_id=run_id,
+                    profile_snapshot_id=new_run.profile_snapshot_id,
+                    brief_snapshot=new_run.brief_snapshot,
+                    focus_theme_id=new_run.focus_theme_id,
+                    retry_count=retry_count + 1,
+                    created_at=new_run.created_at,
+                    updated_at=new_run.updated_at,
+                )
+                if result["admitted"]:
+                    enqueue_research_run(result["run_id"])
+                else:
+                    logger.info("Auto-retry deferred: slot occupied")
+
 
             _scheduler.add_job(
                 _retry_job, "date", run_date=run_time,

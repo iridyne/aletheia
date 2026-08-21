@@ -42,6 +42,9 @@ from aletheia.storage.repositories import (
 
 logger = logging.getLogger("aletheia.agents.paper_trader")
 
+class SignalQueueOwnershipUnavailable(RuntimeError):
+    """Raised when a queue ownership predicate cannot be evaluated; admission must fail closed."""
+
 _BASE_NOTIONAL_USDT = 25.0  # legacy fallback; prefer cfg.trading.default_notional_usdt
 _ATR_TARGET_PCT = 1.5  # legacy fallback; prefer cfg.trading.vol_target_pct
 _RECENT_SIGNAL_COOLDOWN_MINUTES = 30
@@ -183,8 +186,8 @@ def _recent_signal_pairs(
             (r["symbol"], r["direction"], _market_identity(r["market_type"]))
             for r in rows
         }
-    except Exception:
-        return set()
+    except Exception as e:
+        raise SignalQueueOwnershipUnavailable(f"recent_signal_pairs read failed: {e}") from e
 
 
 def _active_signal_setups() -> set[tuple[str, str, str, str]]:
@@ -231,8 +234,8 @@ def _active_signal_setups() -> set[tuple[str, str, str, str]]:
             for row in rows
             if row[0] and row[1]
         }
-    except Exception:
-        return set()
+    except Exception as e:
+        raise SignalQueueOwnershipUnavailable(f"active_signal_setups read failed: {e}") from e
 
 
 def _operator_evaluated_opportunity_ids(

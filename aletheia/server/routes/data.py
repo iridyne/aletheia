@@ -2308,15 +2308,6 @@ def create_serenity_run(body: dict):
     save_to_profile = body.get("saveToProfile", False)
     idempotency_key = body.get("idempotencyKey")
 
-    if idempotency_key:
-        existing = repo.get_serenity_research_run_by_idempotency_key(idempotency_key)
-        if existing:
-            return {"runId": existing["id"], "status": existing["status"], "deduplicated": True}
-
-    active = repo.get_active_serenity_research_run()
-    if active:
-        raise HTTPException(409, "A research run is already active")
-
     profile_snapshot_id = None
     if brief:
         parsed = _parse_brief_to_profile(brief)
@@ -2360,13 +2351,28 @@ def create_serenity_run(body: dict):
         profile_snapshot_id=profile_snapshot_id,
         brief_snapshot=brief,
     )
-    repo.insert_serenity_research_run(run)
+    result = repo.admit_serenity_research_run(
+        run_id=run.id,
+        idempotency_key=idempotency_key,
+        trigger_type=trigger_type,
+        mode=mode,
+        profile_snapshot_id=profile_snapshot_id,
+        brief_snapshot=brief,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+    )
+    if not result["admitted"]:
+        if "existing_run" in result:
+            existing = result["existing_run"]
+            return {"runId": existing["id"], "status": existing["status"], "deduplicated": True}
+        raise HTTPException(409, detail={"error": "active_run_exists"})
 
     from aletheia.agents.research_worker import enqueue_research_run
 
-    enqueue_research_run(run.id)
+    enqueue_research_run(result["run_id"])
 
-    return {"runId": run.id, "status": "queued"}
+    return {"runId": result["run_id"], "status": "queued"}
+
 
 
 @router.get("/serenity/runs")
@@ -2454,19 +2460,30 @@ def retry_serenity_run(run_id: str):
         retry_count=retry_count,
         idempotency_key=f"serenity-retry:{run_id}:{retry_count}",
     )
-    stored, deduplicated = repo.insert_serenity_research_retry(new_run)
+    result = repo.admit_serenity_research_run(
+        run_id=new_run.id,
+        idempotency_key=new_run.idempotency_key,
+        trigger_type=new_run.trigger_type,
+        mode=new_run.mode,
+        parent_run_id=run_id,
+        profile_snapshot_id=new_run.profile_snapshot_id,
+        brief_snapshot=new_run.brief_snapshot,
+        focus_theme_id=new_run.focus_theme_id,
+        retry_count=retry_count,
+        created_at=new_run.created_at,
+        updated_at=new_run.updated_at,
+    )
+    if not result["admitted"]:
+        if "existing_run" in result:
+            existing = result["existing_run"]
+            return {"runId": existing["id"], "status": existing["status"], "parentRunId": run_id, "deduplicated": True}
+        raise HTTPException(409, detail={"error": "active_run_exists"})
 
-    if not deduplicated:
-        from aletheia.agents.research_worker import enqueue_research_run
+    from aletheia.agents.research_worker import enqueue_research_run
+    enqueue_research_run(result["run_id"])
 
-        enqueue_research_run(stored["id"])
+    return {"runId": result["run_id"], "status": "queued", "parentRunId": run_id, "deduplicated": False}
 
-    return {
-        "runId": stored["id"],
-        "status": stored["status"],
-        "parentRunId": run_id,
-        "deduplicated": deduplicated,
-    }
 
 
 @router.post("/serenity/runs/{run_id}/cancel")
@@ -2619,10 +2636,6 @@ def post_serenity_theme_deep_dive(theme_id: str, body: dict):
     if not theme:
         raise HTTPException(404, "Theme not found")
 
-    active = repo.get_active_serenity_research_run()
-    if active:
-        raise HTTPException(409, "A research run is already active")
-
     brief = body.get("brief", f"Deep dive into theme: {theme['name']}")
     run = SerenityResearchRun(
         trigger_type="focused",
@@ -2631,7 +2644,23 @@ def post_serenity_theme_deep_dive(theme_id: str, body: dict):
         focus_theme_id=theme_id,
         brief_snapshot=brief,
     )
-    repo.insert_serenity_research_run(run)
+    result = repo.admit_serenity_research_run(
+        run_id=run.id,
+        idempotency_key=None,
+        trigger_type=run.trigger_type,
+        mode=run.mode,
+        focus_theme_id=theme_id,
+        brief_snapshot=brief,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+    )
+    if not result["admitted"]:
+        raise HTTPException(409, detail={"error": "active_run_exists"})
+
+    from aletheia.agents.research_worker import enqueue_research_run
+    enqueue_research_run(result["run_id"])
+    return {"runId": result["run_id"], "status": "queued"}
+
 
     from aletheia.agents.research_worker import enqueue_research_run
 

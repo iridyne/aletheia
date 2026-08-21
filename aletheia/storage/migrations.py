@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v37"
+SCHEMA_VERSION = "aletheia-sqlite-v39"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4705,6 +4705,19 @@ _SERENITY_RETRY_IDEMPOTENCY_CHECKSUM = hashlib.sha256(
     _SERENITY_RETRY_IDEMPOTENCY_SQL.encode("utf-8")
 ).hexdigest()
 
+_SERENITY_ACTIVE_SLOT_SQL = (
+    "DROP INDEX IF EXISTS idx_research_runs_idempotency; "
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_runs_idempotency_unique "
+    "ON serenity_research_runs(idempotency_key) WHERE idempotency_key IS NOT NULL; "
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_research_runs_active_slot "
+    "ON serenity_research_runs(1) "
+    "WHERE status IN ('queued', 'running', 'cancel_requested', 'waiting_retry');"
+)
+_SERENITY_ACTIVE_SLOT_CHECKSUM = hashlib.sha256(
+    _SERENITY_ACTIVE_SLOT_SQL.encode("utf-8")
+).hexdigest()
+
+
 _PERSONA_ROLLOUT_SQL = (
     "CREATE TABLE IF NOT EXISTS persona_rollouts ("
     "rollout_id TEXT PRIMARY KEY,"
@@ -4963,6 +4976,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260820_0036_gamma_flip_reset_v37": (
         "Null historical gamma_flip_estimate values computed with incorrect cumulative-strike algorithm"
+    ),
+    "20260821_0037_serenity_active_slot_v39": (
+        "atomic Serenity single-run slot: partial unique index on active statuses and idempotency_key"
     ),
 }
 
@@ -5269,6 +5285,12 @@ def _apply_options_market_structure_v36(db: sqlite3.Connection) -> None:
 def _apply_gamma_flip_reset_v37(db: sqlite3.Connection) -> None:
     """Null historical gamma_flip_estimate rows computed with incorrect cumulative-strike algorithm."""
     db.executescript(_GAMMA_FLIP_RESET_SQL)
+
+
+def _apply_serenity_active_slot_v38(db: sqlite3.Connection) -> None:
+    """Enforce single-run atomic admission via partial unique indexes."""
+    db.executescript(_SERENITY_ACTIVE_SLOT_SQL)
+    db.execute("PRAGMA optimize")
 
 
 def _apply_learning_hypothesis_identity_v24(db: sqlite3.Connection) -> None:
@@ -5830,6 +5852,12 @@ _MIGRATIONS = (
         checksum=_GAMMA_FLIP_RESET_CHECKSUM,
         schema_version="aletheia-sqlite-v37",
         apply=_apply_gamma_flip_reset_v37,
+    ),
+    MigrationStep(
+        migration_id="20260821_0037_serenity_active_slot_v39",
+        checksum=_SERENITY_ACTIVE_SLOT_CHECKSUM,
+        schema_version="aletheia-sqlite-v39",
+        apply=_apply_serenity_active_slot_v38,
     ),
 )
 

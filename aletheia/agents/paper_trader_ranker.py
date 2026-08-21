@@ -531,13 +531,30 @@ def _evaluate_candidate(
     guard_state, guard_reason = _guard_evaluation_applicability()
     guard_eval = None
     if guard_state == "enabled":
-        guard_eval = _evaluate_guards_safe(
-            opp, universe_member, factor_signal, direction, confidence,
-            strategy_has_ruleset, ruleset_entry_result, strategy_evidence,
-        )
-        if guard_eval is None:
-            guard_state = "error"
-            guard_reason = "guard_evaluation_failed"
+        try:
+            guard_eval = _evaluate_guards_safe(
+                opp, universe_member, factor_signal, direction, confidence,
+                strategy_has_ruleset, ruleset_entry_result, strategy_evidence,
+            )
+            if guard_eval is None:
+                guard_state = "error"
+                guard_reason = "guard_evaluation_failed"
+        except ActiveGuardLoadError as e:
+            # #1244: active guard set incomplete — reject candidate, do NOT pass at zero penalty.
+            logger.warning("Active guard load failed, rejecting candidate: %s", e)
+            _filter_step(
+                filter_trace, "guard_candidate_block", "rejected",
+                "guard_evaluation_unavailable",
+                inputs={}, parameters={"scope": "paper_entry"},
+            )
+            return _make_candidate(
+                opp, skip_reason="guard_evaluation_unavailable",
+                direction=direction, strategy_id=strategy_id,
+                strategy_has_ruleset=strategy_has_ruleset,
+                universe_member=universe_member, factor_signal=factor_signal,
+                strategy_evidence=strategy_evidence, guard_eval=None,
+                filter_trace=filter_trace,
+            )
     if guard_eval and guard_eval.blocked:
         blocked_ids = ",".join(h.guard_id for h in guard_eval.hits if h.block_candidate)
         _filter_step(

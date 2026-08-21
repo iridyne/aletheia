@@ -1018,22 +1018,31 @@ def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
         status="queued",
         idempotency_key=batch_key,
     )
-    repo.insert_serenity_research_run(run)
+    result = repo.admit_serenity_research_run(
+        run_id=run.id,
+        idempotency_key=batch_key,
+        trigger_type="scheduled",
+        mode="standard",
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+    )
+    if not result["admitted"]:
+        if "existing_run" in result:
+            return {"status": "already_attempted", "run_id": result["existing_run"]["id"], "batch_key": batch_key}
+        return {"status": "active", "run_id": None, "batch_key": batch_key}
+
     try:
         from aletheia.agents.research_worker import enqueue_research_run
-        enqueue_research_run(run.id)
+        enqueue_research_run(result["run_id"])
     except Exception as exc:
         failed_at = datetime.now(timezone.utc).isoformat()
         repo.update_serenity_research_run(
-            run.id,
-            status="failed",
-            error_type="enqueue_failed",
-            error_message=str(exc)[:500],
-            finished_at=failed_at,
-            updated_at=failed_at,
+            result["run_id"], status="failed", error_type="enqueue_failed",
+            error_message=str(exc)[:500], finished_at=failed_at, updated_at=failed_at,
         )
         raise
-    return {"status": "enqueued", "run_id": run.id, "batch_key": batch_key}
+    return {"status": "enqueued", "run_id": result["run_id"], "batch_key": batch_key}
+
 
 
 def _run_serenity_startup_catchup() -> None:
