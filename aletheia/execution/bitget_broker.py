@@ -124,10 +124,15 @@ def _client_mode_for_execution_mode(execution_mode: str) -> str:
 
 
 def _configured_bitget_profile() -> str:
-    """Return the configured Bitget profile (classic_v2 | uta_v3) from active config."""
-    from aletheia.config.loader import load_config
+    """Return the configured Bitget profile (classic_v2 | uta_v3).
 
-    return load_config().exchange.bitget_profile
+    Delegates to the shared resolver in ``exchanges.bitget.profile_config`` so
+    every construction site (execution, sync, reconciliation, adapters) reads
+    one source of truth and never drifts apart.
+    """
+    from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+
+    return configured_bitget_profile()
 
 
 def _guard_unresolved_submission(proposal_id: str, execution_mode: str) -> None:

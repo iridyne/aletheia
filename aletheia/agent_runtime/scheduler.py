@@ -2830,7 +2830,8 @@ def _tpsl_fill_check_body():
             if not account_candidates:
                 return {"materialized": [], "errors": []}
             account_mode = "demo" if execution_mode == "bitget_demo" else "live"
-            client = BitgetClient(mode=account_mode)
+            from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+            client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
             materialized = []
             errors = []
             try:

@@ -301,9 +301,11 @@ def materialize_broker_funding_economics(
 def _client_for_mode(execution_mode: str):
     if execution_mode in {"bitget_demo", "bitget_live_limited"}:
         from aletheia.exchanges.bitget.client import BitgetClient
+        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
 
         return BitgetClient(
-            mode="demo" if execution_mode == "bitget_demo" else "live"
+            mode="demo" if execution_mode == "bitget_demo" else "live",
+            profile=configured_bitget_profile(),
         )
     if execution_mode in {"okx_demo", "okx_live_limited"}:
         from aletheia.exchanges.okx.client import OKXClient

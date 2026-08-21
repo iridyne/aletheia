@@ -31,8 +31,10 @@ def _to_ms(value: str | None) -> int | None:
 def _client_for_mode(execution_mode: str):
     if execution_mode in {"bitget_demo", "bitget_live_limited"}:
         from aletheia.exchanges.bitget.client import BitgetClient
+        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
         return BitgetClient(
-            mode="live" if execution_mode == "bitget_live_limited" else "demo"
+            mode="live" if execution_mode == "bitget_live_limited" else "demo",
+            profile=configured_bitget_profile(),
         )
     if execution_mode in {"okx_demo", "okx_live_limited"}:
         from aletheia.exchanges.okx.client import OKXClient

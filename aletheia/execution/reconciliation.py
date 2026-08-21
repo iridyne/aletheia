@@ -1104,7 +1104,8 @@ def reconcile() -> dict:
             continue
         try:
             if filled_gap_client is None:
-                filled_gap_client = BitgetClient(mode="demo")
+                from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+                filled_gap_client = BitgetClient(mode="demo", profile=configured_bitget_profile())
             rows = _response_rows(
                 _run_coro(
                     filled_gap_client.get_order_fills(
@@ -1203,7 +1204,8 @@ def reconcile() -> dict:
         ]
         if not mode_orders:
             continue
-        client = BitgetClient(mode=account_mode)
+        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+        client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
         markets = sorted({str(order.get("market_type") or "spot") for order in mode_orders})
         open_rows: dict[str, list[dict]] = {}
         fill_rows: dict[str, list[dict]] = {}
