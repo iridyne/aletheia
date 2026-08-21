@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useBlocker } from 'react-router-dom'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
 import { hasUncontrolledDraft, isFallbackDraftControl, shouldBlockNavigation } from '../features/settings/dirtyGuard'
@@ -324,15 +324,23 @@ export default function Settings() {
     setIsTouched(false)
   }, [settingsUpdatedAt])
 
-  // Warn before a hard reload / tab close / cross-origin navigation. react-router's
-  // useBlocker cannot cover this case ("does not handle hard-reloads or cross-origin
-  // navigations") and additionally requires a data router, which this app does not use.
+  // Warn before a hard reload / tab close / cross-origin navigation.
+  // useBlocker (below) cannot cover this case ("does not handle hard-reloads or
+  // cross-origin navigations").
   useEffect(() => {
     if (!shouldBlockNavigation(dirtyRef.current.size, isTouched)) return
     const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault()
     window.addEventListener('beforeunload', onBeforeUnload)
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [isTouched, preciseDirtyCount])
+
+  // Block in-app SPA navigation when there are unsaved changes.
+  useBlocker(
+    () => {
+      if (!shouldBlockNavigation(dirtyRef.current.size, touchedRef.current)) return false
+      return !window.confirm('You have unsaved changes. Leave this page and discard them?')
+    }
+  )
 
   // `slug` is set when navigation came from a search result, so the deep-link
   // effect above can scroll to that section instead of leaving the operator at

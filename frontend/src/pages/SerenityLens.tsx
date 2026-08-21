@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
@@ -280,7 +281,11 @@ function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }
   const { data } = useQuery({
     queryKey: ['serenity-run-detail', runId],
     queryFn: () => api.getSerenityRunDetail(runId),
-    refetchInterval: 3000,
+    refetchInterval: (query) => {
+      if (!query.state.data) return 3000
+      const terminal = ['completed', 'failed', 'cancelled', 'error']
+      return terminal.includes(query.state.data.run?.status) ? false : 3000
+    },
   })
 
   const { data: artifacts } = useQuery({
@@ -776,9 +781,9 @@ function EvidenceTab() {
                 <td>
                   {e.title}
                   {e.source === 'prediction_market' && (
-                    <a href="/prediction" className="lens-cross-link" title="View in Prediction Lens">
+                    <Link to="/prediction-markets" className="lens-cross-link" title="View in Prediction Lens">
                       → Prediction Lens
-                    </a>
+                    </Link>
                   )}
                 </td>
                 <td>{e.tier}</td>

@@ -145,7 +145,7 @@ def get_trade_paths():
     return build_trade_path_rows(limit=200)
 
 
-@router.get("/trade-stats")
+@router.get("/trade-stats")  # TODO: add response_model for OpenAPI schema (#1187)
 def get_trade_stats():
     """Trade analytics: by-source and by-family aggregation for the Analytics panel."""
     from aletheia.analytics.trade_stats import build_trade_stats
@@ -296,7 +296,7 @@ def get_equity_curve(
     }
 
 
-@router.get("/trade-insights")
+@router.get("/trade-insights")  # TODO: add response_model for OpenAPI schema (#1187)
 def get_trade_insights():
     """Comprehensive trade insights for charts: equity curve, drawdown, direction split, etc."""
     from aletheia.analytics.trade_insights import build_trade_insights
@@ -492,7 +492,7 @@ _PF_GO_LINE = 1.5
 _WR_GO_LINE = 50.0
 
 
-@router.get("/round1-progress")
+@router.get("/round1-progress")  # TODO: add response_model for OpenAPI schema (#1187)
 def get_round1_progress():
     """Round 1 experiment progress vs the Go/Kill thresholds.
 
