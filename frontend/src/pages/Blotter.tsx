@@ -106,7 +106,7 @@ function StatusToken({ label, count, tone = 'muted', hint }: {
 }
 
 function StatusTokenStrip() {
-  const { data: funnel } = useQuery({
+  const { data: funnel, isPending: funnelPending, isError: funnelError } = useQuery({
     // Perf item 1: switch to the fast /current-snapshot endpoint so the
     // Blotter no longer pulls the heavy queued/reviewed/expired counts + the
     // candidate-supply snapshot payload just to render its top strip. Shared
@@ -116,13 +116,13 @@ function StatusTokenStrip() {
     refetchInterval: 30000,
     staleTime: 20000,
   })
-  const { data: proposals = [] } = useQuery({
+  const { data: proposals, isPending: proposalsPending, isError: proposalsError } = useQuery({
     queryKey: ['proposals'],
     queryFn: api.getProposals,
     refetchInterval: 15000,
     staleTime: 10000,
   })
-  const { data: decisions } = useQuery({
+  const { data: decisions, isPending: decisionsPending, isError: decisionsError } = useQuery({
     queryKey: ['operator-decisions', 24],
     queryFn: () => api.getOperatorDecisions(24, 200),
     refetchInterval: 30000,
@@ -130,27 +130,32 @@ function StatusTokenStrip() {
   })
 
   const counts = useMemo(() => {
-    // still_open used to be a top-level field on the full funnel response;
-    // it's identical to current.counts.open_opportunities, which the fast
-    // /current-snapshot endpoint returns as part of `current`.
-    const staged = funnel?.current?.counts?.open_opportunities ?? 0
-    const awaitingSignoff = (proposals as any[]).filter(p => p.status === 'pending').length
-    const working = funnel?.current?.ranker?.counts?.carrier_active ?? 0
-    const filledToday = decisions?.counts?.trade ?? 0
+    // Use null for unavailable sources so the display can distinguish failed reads from zero counts.
+    const staged = !funnelPending && !funnelError && funnel?.current?.counts?.open_opportunities != null
+      ? funnel.current.counts.open_opportunities
+      : null
+    const awaitingSignoff = !proposalsPending && !proposalsError && Array.isArray(proposals)
+      ? proposals.filter((p: unknown) => (p as {status?: string}).status === 'pending').length
+      : null
+    const working = !funnelPending && !funnelError && funnel?.current?.ranker?.counts?.carrier_active != null
+      ? funnel.current.ranker.counts.carrier_active
+      : null
+    const filledToday = !decisionsPending && !decisionsError && decisions?.counts?.trade != null
+      ? decisions.counts.trade
+      : null
     const c = decisions?.counts
-    const rejected24h = c
+    const rejected24h = !decisionsPending && !decisionsError && c
       ? (c.operator_skip ?? 0) + (c.portfolio_guard_reject ?? 0) + (c.user_reject ?? 0) + (c.auto_reject ?? 0) + (c.reject_unknown ?? 0)
-      : 0
+      : null
     return { staged, awaitingSignoff, working, filledToday, rejected24h }
-  }, [funnel, proposals, decisions])
-
+  }, [funnel, proposals, decisions, funnelPending, funnelError, proposalsPending, proposalsError, decisionsPending, decisionsError])
   return (
     <div className="bl-token-strip">
-      <StatusToken label="Staged"            count={counts.staged}          tone={counts.staged          > 0 ? 'accent' : 'muted'} hint="Candidates emitted, awaiting ranker review" />
-      <StatusToken label="Awaiting Sign-off" count={counts.awaitingSignoff} tone={counts.awaitingSignoff > 0 ? 'yellow' : 'muted'} hint="Proposals pending your approval" />
-      <StatusToken label="Working"           count={counts.working}         tone={counts.working         > 0 ? 'accent' : 'muted'} hint="Active carriers held by the ranker" />
-      <StatusToken label="Filled (today)"    count={counts.filledToday}     tone={counts.filledToday     > 0 ? 'green'  : 'muted'} hint="Trades filled in the last 24h" />
-      <StatusToken label="Rejected (24h)"    count={counts.rejected24h}     tone={counts.rejected24h     > 0 ? 'red'    : 'muted'} hint="Skips + rejects in the last 24h" />
+      <StatusToken label="Staged"            count={counts.staged == null ? '—' : counts.staged}          tone={counts.staged != null && counts.staged          > 0 ? 'accent' : 'muted'} hint="Candidates emitted, awaiting ranker review" />
+      <StatusToken label="Awaiting Sign-off" count={counts.awaitingSignoff == null ? '—' : counts.awaitingSignoff} tone={counts.awaitingSignoff != null && counts.awaitingSignoff > 0 ? 'yellow' : 'muted'} hint="Proposals pending your approval" />
+      <StatusToken label="Working"           count={counts.working == null ? '—' : counts.working}         tone={counts.working != null && counts.working         > 0 ? 'accent' : 'muted'} hint="Active carriers held by the ranker" />
+      <StatusToken label="Filled (today)"    count={counts.filledToday == null ? '—' : counts.filledToday}     tone={counts.filledToday != null && counts.filledToday     > 0 ? 'green'  : 'muted'} hint="Trades filled in the last 24h" />
+      <StatusToken label="Rejected (24h)"    count={counts.rejected24h == null ? '—' : counts.rejected24h}     tone={counts.rejected24h != null && counts.rejected24h     > 0 ? 'red'    : 'muted'} hint="Skips + rejects in the last 24h" />
     </div>
   )
 }
@@ -542,7 +547,7 @@ function CandidateLedger() {
     return Array.from(outcomeFilter).join(',')
   }, [outcomeFilter])
 
-  const { data, isLoading } = useQuery({
+  const { data, isPending, isError } = useQuery({
     queryKey: ['operator-decisions', hours, outcomeParam || 'all'],
     queryFn: () => api.getOperatorDecisions(hours, 200, { outcome: outcomeParam }),
     refetchInterval: 60000,
@@ -718,7 +723,7 @@ function CandidateLedger() {
         )}
       </div>
 
-      {isLoading && items.length === 0 ? (
+      {isPending && !data ? (
         <p className="text-muted text-sm mb-0">Loading candidate ledger…</p>
       ) : (
         <DataTable
@@ -731,6 +736,7 @@ function CandidateLedger() {
               ? 'No rows match the current filters.'
               : `No terminal decisions in the last ${hours < 24 ? `${hours}h` : `${hours / 24}D`}.`
           }
+          state={isError ? 'unavailable' : undefined}
         />
       )}
 

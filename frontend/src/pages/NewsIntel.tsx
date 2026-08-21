@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, useToast } from '../components/ui'
+import { DataStateMessage } from '../components/DataState'
 import { humanize, fmtTimestamp, stripHtml } from '../lib/format'
 
 type NewsItem = {
@@ -30,7 +31,7 @@ const SENTIMENT_TONE: Record<string, 'green' | 'red' | 'blue' | 'yellow'> = {
 
 export default function NewsIntel() {
   const qc = useQueryClient()
-  const { data: news = [] } = useQuery({ queryKey: ['news'], queryFn: () => api.getNews() })
+  const { data: news, isPending: newsPending, isError: newsError } = useQuery({ queryKey: ['news'], queryFn: () => api.getNews() })
   const [selected, setSelected] = useState<NewsItem | null>(null)
   const [analysis, setAnalysis] = useState<string | null>(null)
   const [filter, setFilter] = useState<string>('all')
@@ -74,7 +75,7 @@ export default function NewsIntel() {
     })
   }
 
-  const items = (news as NewsItem[]).filter(item => {
+  const items = Array.isArray(news) ? (news as NewsItem[]).filter(item => {
     if (filter === 'all') return true
     if (filter === 'new') return item.status === 'new'
     if (filter === 'reviewed') return item.status === 'reviewed'
@@ -82,7 +83,7 @@ export default function NewsIntel() {
     // bucket they only showed up under 'all'. Now filterable explicitly.
     if (filter === 'analyzed') return item.status === 'analyzed'
     return true
-  })
+  }) : []
 
   return (
     <div>
@@ -131,7 +132,11 @@ export default function NewsIntel() {
         </Card>
       )}
 
-      {items.length === 0 ? (
+      {newsError ? (
+        <Card>
+          <DataStateMessage state="unavailable" />
+        </Card>
+      ) : items.length === 0 ? (
         <Card>
           <p className="text-muted">No news items yet. News will appear here once the ingestion pipeline is configured or items are added manually via the API.</p>
         </Card>

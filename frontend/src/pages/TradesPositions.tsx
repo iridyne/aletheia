@@ -10,6 +10,7 @@ import type {
 	ThesisLineageRecord,
 } from "../types";
 import { DataTable, StatusBadge } from "../components/DataTable";
+import { DataStateMessage } from "../components/DataState";
 import {
 	DetailDrawer,
 	DrawerSection,
@@ -339,16 +340,16 @@ export default function TradesPositions() {
 	const navigate = useNavigate();
 	const [searchParams] = useSearchParams();
 	const initialTab = searchParams.get("tab") || "blotter";
-	const { data: positions = [] } = useQuery({
+	const { data: positions, isPending: positionsPending, isError: positionsError } = useQuery({
 		queryKey: positionKeys.all,
 		queryFn: api.getPositions,
 		...positionFreshness,
 	});
-	const { data: orders = [] } = useQuery({
+	const { data: orders, isPending: ordersPending, isError: ordersError } = useQuery({
 		queryKey: ["trades"],
 		queryFn: api.getTrades,
 	});
-	const { data: reconciliation } = useQuery({
+	const { data: reconciliation, isPending: reconciliationPending, isError: reconciliationError } = useQuery({
 		queryKey: positionKeys.reconciliation,
 		queryFn: api.getPositionsReconciliation,
 	});
@@ -360,10 +361,14 @@ export default function TradesPositions() {
 		setSel(null),
 	);
 
-	const allPos = positions as Position[];
+	const allPos = Array.isArray(positions) ? (positions as Position[]) : [];
 	const open = allPos.filter((p) => p.status === "open");
 	const closed = allPos.filter((p) => p.status !== "open");
-	const orderRows = orders as Order[];
+	const orderRows = Array.isArray(orders) ? (orders as Order[]) : [];
+
+	// Derive presentation state for independent queries.
+	const positionsState = positionsPending && !positions ? 'loading' : positionsError ? 'unavailable' : undefined;
+	const ordersState = ordersPending && !orders ? 'loading' : ordersError ? 'unavailable' : undefined;
 
 	// Per-position notional (local book), same formula as the backend exposure_by_symbol
 	// (pnl.py:248): quantity × (current_price ?? entry_price). Total over all open
@@ -448,7 +453,15 @@ export default function TradesPositions() {
 										<Badge tone="muted">flat</Badge>
 									)}
 								</div>
-								{open.length === 0 ? (
+								{positionsPending && !positions ? (
+									<Card>
+										<p className="text-muted text-sm">Loading positions…</p>
+									</Card>
+								) : positionsError ? (
+									<Card>
+										<DataStateMessage state="unavailable" />
+									</Card>
+								) : open.length === 0 ? (
 									<Card>
 										<p className="text-muted text-sm">No open positions.</p>
 									</Card>
@@ -471,6 +484,8 @@ export default function TradesPositions() {
 									external={reconciliation?.external ?? []}
 									orphaned={reconciliation?.orphaned ?? []}
 									syncStatus={reconciliation?.sync_status}
+									isPending={reconciliationPending}
+									isError={reconciliationError}
 								/>
 
 								{/* ORDERS & FILLS  |  CLOSED POSITIONS — side by side so realized PnL is
@@ -499,6 +514,7 @@ export default function TradesPositions() {
 												columns={orderColumns}
 												onRowClick={(o) => setSel({ kind: "order", order: o })}
 												emptyMessage="No orders yet."
+												state={ordersState}
 											/>
 										</Card>
 									</div>
@@ -570,10 +586,14 @@ function ReconciliationCard({
 	external,
 	orphaned,
 	syncStatus,
+	isPending,
+	isError,
 }: {
 	external: ReconcileItem[];
 	orphaned: ReconcileItem[];
 	syncStatus?: string;
+	isPending: boolean;
+	isError: boolean;
 }) {
 	// #117 fix: previously returned null whenever external.length + orphaned
 	// .length was 0 — including when syncStatus was 'stale' / 'error' /
@@ -584,7 +604,20 @@ function ReconciliationCard({
 	// just without the drift lists — the badge carries the honest state.
 	const hasDrift = external.length > 0 || orphaned.length > 0;
 	const isDegraded = syncStatus && !["ok", "unconfigured"].includes(syncStatus);
-	if (!hasDrift && !isDegraded) return null;
+	const shouldShow = hasDrift || isDegraded || isError;
+	if (!shouldShow) return null;
+
+	if (isError) {
+		return (
+			<Card>
+				<div className="blotter-section-head">
+					<h4 className="blotter-group-label">Account Reconciliation</h4>
+					<Badge tone="red">unavailable</Badge>
+				</div>
+				<DataStateMessage state="unavailable" />
+			</Card>
+		);
+	}
 
 	return (
 		<Card>

@@ -7,18 +7,18 @@ import { positionFreshness, positionKeys } from '../lib/queryKeys'
 
 export default function AccountSnapshot() {
   const navigate = useNavigate()
-  const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
-  const { data: positions = [] } = useQuery({ queryKey: positionKeys.all, queryFn: api.getPositions, ...positionFreshness })
-  const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
+  const { data: portfolio, isPending: portfolioPending, isError: portfolioError } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
+  const { data: positions, isPending: positionsPending, isError: positionsError } = useQuery({ queryKey: positionKeys.all, queryFn: api.getPositions, ...positionFreshness })
+  const { data: proposals, isPending: proposalsPending, isError: proposalsError } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
 
-  const openPositions = (positions as any[]).filter(p => p.status === 'open')
-  const pendingProposals = (proposals as any[]).filter(p => p.status === 'pending')
+  const openPositions = Array.isArray(positions) ? positions.filter((p: unknown) => (p as {status?: string}).status === 'open') : []
+  const pendingProposals = Array.isArray(proposals) ? proposals.filter((p: unknown) => (p as {status?: string}).status === 'pending') : []
 
-  const p = portfolio as any
+  const p = portfolio as Record<string, unknown> | undefined
 
   // total_value_usdt already prefers UTA unified > exchange_equity > local notional
-  const syncStatus: string = p?.exchange_sync_status ?? 'unconfigured'
-  const displayValue = fmtNum(p?.total_value_usdt)
+  const syncStatus: string = String(p?.exchange_sync_status ?? 'unconfigured')
+  const displayValue = fmtNum(p?.total_value_usdt as number | undefined)
   const syncCaveat =
     p?.uta_state != null
       ? 'unified · live'
@@ -71,14 +71,14 @@ export default function AccountSnapshot() {
       />
       <MetricTile
         label="Open Positions"
-        value={openPositions.length}
-        tone={openPositions.length > 0 ? 'neutral' : 'muted'}
+        value={positionsError ? 'not available' : openPositions.length}
+        tone={positionsError ? 'muted' : openPositions.length > 0 ? 'neutral' : 'muted'}
         onClick={() => navigate('/trades')}
       />
       <MetricTile
         label="Pending Proposals"
-        value={pendingProposals.length}
-        tone={pendingProposals.length > 0 ? 'neutral' : 'muted'}
+        value={proposalsError ? 'not available' : pendingProposals.length}
+        tone={proposalsError ? 'muted' : pendingProposals.length > 0 ? 'neutral' : 'muted'}
         onClick={() => navigate('/blotter')}
       />
     </div>
