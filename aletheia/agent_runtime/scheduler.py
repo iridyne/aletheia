@@ -3454,10 +3454,25 @@ def _run_filter_controller_observe():
             return
         from aletheia.analytics.filter_controller import run_controller_observe
         summary = run_controller_observe(min_samples=int(ctrl.min_samples_gate))
-        logger.info(
-            "filter_controller_observe: wrote %d recs (verdicts=%s)",
-            summary.get("recommendations_written", 0), summary.get("verdict_counts"),
-        )
+        # Issue #1240: record failure for partial/failed evidence passes so that
+        # systemd/health monitoring can distinguish a clean pass from one with
+        # missing or mismatched primary evidence (no exception needed to trigger it).
+        pass_status = summary.get("pass_status", "success")
+        pass_reason = summary.get("pass_reason")
+        if pass_status != "success":
+            logger.warning(
+                "filter_controller_observe: pass_status=%s reason=%s written=%d",
+                pass_status, pass_reason, summary.get("recommendations_written", 0),
+            )
+            _record_job_failure(
+                "filter_controller_observe",
+                f"{pass_status}: {pass_reason}",
+            )
+        else:
+            logger.info(
+                "filter_controller_observe: wrote %d recs (verdicts=%s)",
+                summary.get("recommendations_written", 0), summary.get("verdict_counts"),
+            )
     except Exception as e:
         logger.warning("filter_controller_observe job failed: %s", e)
         _record_job_failure("filter_controller_observe", str(e))
