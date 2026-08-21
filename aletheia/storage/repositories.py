@@ -6116,8 +6116,17 @@ def prune_filter_decision_batches(days: int = 30) -> int:
     return _delete_old_rows("filter_decision_batches", days)
 
 
+class ExperimentStateReadError(Exception):
+    """Raised when experiment state cannot be reliably read from storage."""
+    pass
+
+
 def min_open_experiment_exposure_at() -> str | None:
-    """Return the earliest durable exposure of an active open experiment."""
+    """Return the earliest durable exposure of an active open experiment.
+
+    Raises:
+        ExperimentStateReadError: If the query fails and state cannot be proven.
+    """
     db = get_db()
     try:
         row = db.execute(
@@ -6126,8 +6135,8 @@ def min_open_experiment_exposure_at() -> str | None:
             "ON x.experiment_id=e.experiment_id "
             "WHERE e.ended_at IS NULL AND e.status='active'"
         ).fetchone()
-    except Exception:
-        return None
+    except Exception as e:
+        raise ExperimentStateReadError(f"Failed to query experiment state: {e}") from e
     if not row:
         return None
     val = row["m"] if hasattr(row, "keys") else row[0]

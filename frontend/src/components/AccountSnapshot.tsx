@@ -7,12 +7,16 @@ import { positionFreshness, positionKeys } from '../lib/queryKeys'
 
 export default function AccountSnapshot() {
   const navigate = useNavigate()
-  const { data: portfolio } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
-  const { data: positions = [] } = useQuery({ queryKey: positionKeys.all, queryFn: api.getPositions, ...positionFreshness })
-  const { data: proposals = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
+  const { data: portfolio, isError: portfolioError } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
+  const { data: positions, isError: positionsError } = useQuery({ queryKey: positionKeys.all, queryFn: api.getPositions, ...positionFreshness })
+  const { data: proposals, isError: proposalsError } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
 
-  const openPositions = (positions as any[]).filter(p => p.status === 'open')
-  const pendingProposals = (proposals as any[]).filter(p => p.status === 'pending')
+  const positionsUnavailable = positionsError && positions == null
+  const proposalsUnavailable = proposalsError && proposals == null
+  const openPositions = positions ? positions.filter(p => p.status === 'open') : []
+  const pendingProposals = proposals
+    ? (proposals as unknown[]).filter((p: unknown) => typeof p === 'object' && p != null && (p as Record<string, unknown>).status === 'pending')
+    : []
 
   const p = portfolio as any
 
@@ -71,13 +75,13 @@ export default function AccountSnapshot() {
       />
       <MetricTile
         label="Open Positions"
-        value={openPositions.length}
+        value={positionsUnavailable ? 'not available' : openPositions.length}
         tone={openPositions.length > 0 ? 'neutral' : 'muted'}
         onClick={() => navigate('/trades')}
       />
       <MetricTile
         label="Pending Proposals"
-        value={pendingProposals.length}
+        value={proposalsUnavailable ? 'not available' : pendingProposals.length}
         tone={pendingProposals.length > 0 ? 'neutral' : 'muted'}
         onClick={() => navigate('/blotter')}
       />

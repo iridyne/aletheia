@@ -339,19 +339,25 @@ export default function TradesPositions() {
 	const navigate = useNavigate();
 	const [searchParams] = useSearchParams();
 	const initialTab = searchParams.get("tab") || "blotter";
-	const { data: positions = [] } = useQuery({
+	const { data: positions, isPending: positionsPending, isError: positionsError } = useQuery({
 		queryKey: positionKeys.all,
 		queryFn: api.getPositions,
 		...positionFreshness,
 	});
-	const { data: orders = [] } = useQuery({
+	const { data: orders, isPending: ordersPending, isError: ordersError } = useQuery({
 		queryKey: ["trades"],
 		queryFn: api.getTrades,
 	});
-	const { data: reconciliation } = useQuery({
+	const { data: reconciliation, isPending: reconPending, isError: reconError } = useQuery({
 		queryKey: positionKeys.reconciliation,
 		queryFn: api.getPositionsReconciliation,
 	});
+
+	const positionsArray = positions ?? []
+	const ordersArray = orders ?? []
+	const positionsAvailable = !positionsPending && !positionsError && positions != null
+	const ordersAvailable = !ordersPending && !ordersError && orders != null
+	const reconAvailable = !reconPending && !reconError && reconciliation != null
 	const [sel, setSel] = useState<Selection>(null);
 
 	// useManualClose: row-inline close button. Closing from the drawer shares the
@@ -360,10 +366,26 @@ export default function TradesPositions() {
 		setSel(null),
 	);
 
-	const allPos = positions as Position[];
+	const allPos = positionsArray as Position[];
 	const open = allPos.filter((p) => p.status === "open");
 	const closed = allPos.filter((p) => p.status !== "open");
-	const orderRows = orders as Order[];
+	const orderRows = ordersArray as Order[];
+
+	// Map query state → DataTable.state; initial error/no data → unavailable, success empty → empty, error with cached data → stale
+	const positionsState = positionsPending && positionsArray.length === 0
+		? 'loading'
+		: positionsError && positionsArray.length === 0
+			? 'unavailable'
+			: positionsError && positionsArray.length > 0
+				? 'stale'
+				: undefined
+	const ordersState = ordersPending && ordersArray.length === 0
+		? 'loading'
+		: ordersError && ordersArray.length === 0
+			? 'unavailable'
+			: ordersError && ordersArray.length > 0
+				? 'stale'
+				: undefined
 
 	// Per-position notional (local book), same formula as the backend exposure_by_symbol
 	// (pnl.py:248): quantity × (current_price ?? entry_price). Total over all open
@@ -433,44 +455,60 @@ export default function TradesPositions() {
 					{
 						id: "blotter",
 						label: "Blotter",
-						badge:
-							open.length > 0 ? (
-								<Badge tone="green">{open.length}</Badge>
-							) : undefined,
+					badge:
+						positionsAvailable && open.length > 0 ? (
+							<Badge tone="green">{open.length}</Badge>
+						) : undefined,
 						render: () => (
 							<>
 								{/* OPEN POSITIONS — the live book */}
 								<div className="blotter-section-head">
 									<h3>Open Positions</h3>
-									{open.length > 0 ? (
-										<Badge tone="green">{open.length}</Badge>
+									{positionsAvailable ? (
+										open.length > 0 ? (
+											<Badge tone="green">{open.length}</Badge>
+										) : (
+											<Badge tone="muted">flat</Badge>
+										)
 									) : (
-										<Badge tone="muted">flat</Badge>
+										<Badge tone="muted">not available</Badge>
 									)}
 								</div>
-								{open.length === 0 ? (
-									<Card>
-										<p className="text-muted text-sm">No open positions.</p>
-									</Card>
+								{positionsAvailable ? (
+									open.length === 0 ? (
+										<Card>
+											<p className="text-muted text-sm">No open positions.</p>
+										</Card>
+									) : (
+										<Card>
+											<DataTable
+												data={open}
+												columns={openColumnsWithExposure}
+												onRowClick={(p) =>
+													setSel({ kind: "position", position: p })
+												}
+												columnToggle
+												tableId="open-positions"
+												noWrap
+												state={positionsState}
+											/>
+										</Card>
+									)
 								) : (
 									<Card>
 										<DataTable
-											data={open}
+											data={[]}
 											columns={openColumnsWithExposure}
-											onRowClick={(p) =>
-												setSel({ kind: "position", position: p })
-											}
-											columnToggle
-											tableId="open-positions"
-											noWrap
+											state="unavailable"
 										/>
 									</Card>
 								)}
 
 								<ReconciliationCard
-									external={reconciliation?.external ?? []}
-									orphaned={reconciliation?.orphaned ?? []}
-									syncStatus={reconciliation?.sync_status}
+									external={reconAvailable ? reconciliation?.external ?? [] : []}
+									orphaned={reconAvailable ? reconciliation?.orphaned ?? [] : []}
+									syncStatus={reconAvailable ? reconciliation?.sync_status : undefined}
+									unavailable={!reconAvailable}
 								/>
 
 								{/* ORDERS & FILLS  |  CLOSED POSITIONS — side by side so realized PnL is
@@ -498,6 +536,7 @@ export default function TradesPositions() {
 												data={orderRows}
 												columns={orderColumns}
 												onRowClick={(o) => setSel({ kind: "order", order: o })}
+												state={ordersState}
 												emptyMessage="No orders yet."
 											/>
 										</Card>
@@ -570,10 +609,12 @@ function ReconciliationCard({
 	external,
 	orphaned,
 	syncStatus,
+	unavailable = false,
 }: {
 	external: ReconcileItem[];
 	orphaned: ReconcileItem[];
 	syncStatus?: string;
+	unavailable?: boolean;
 }) {
 	// #117 fix: previously returned null whenever external.length + orphaned
 	// .length was 0 — including when syncStatus was 'stale' / 'error' /
@@ -584,102 +625,116 @@ function ReconciliationCard({
 	// just without the drift lists — the badge carries the honest state.
 	const hasDrift = external.length > 0 || orphaned.length > 0;
 	const isDegraded = syncStatus && !["ok", "unconfigured"].includes(syncStatus);
-	if (!hasDrift && !isDegraded) return null;
+	if (!unavailable && !hasDrift && !isDegraded) return null;
 
 	return (
 		<Card>
 			<div className="blotter-section-head">
 				<h4 className="blotter-group-label">Account Reconciliation</h4>
-				{external.length > 0 && (
-					<Badge tone="yellow">{external.length} unmanaged</Badge>
-				)}
-				{orphaned.length > 0 && (
-					<Badge tone="muted">{orphaned.length} orphaned</Badge>
-				)}
-				{!hasDrift && isDegraded && (
-					<Badge tone={syncStatus === "stale" ? "yellow" : "red"}>
-						sync {syncStatus}
-					</Badge>
+				{unavailable ? (
+					<Badge tone="muted">not available</Badge>
+				) : (
+					<>
+						{external.length > 0 && (
+							<Badge tone="yellow">{external.length} unmanaged</Badge>
+						)}
+						{orphaned.length > 0 && (
+							<Badge tone="muted">{orphaned.length} orphaned</Badge>
+						)}
+						{!hasDrift && isDegraded && (
+							<Badge tone={syncStatus === "stale" ? "yellow" : "red"}>
+								sync {syncStatus}
+							</Badge>
+						)}
+					</>
 				)}
 			</div>
-			{!hasDrift && isDegraded && (
+			{unavailable ? (
 				<p className="text-muted text-sm">
-					No drift reported, but the exchange sync is{" "}
-					<strong>{syncStatus}</strong> — the "no drift" result may be based on
-					stale or missing data. Fix the sync source before treating the
-					reconciliation as complete.
+					Reconciliation unavailable. The read failed; this is not an empty result.
 				</p>
-			)}
-
-			{external.length > 0 && (
+			) : (
 				<>
-					<p className="text-muted text-sm mb-1">
-						On the exchange but <strong>not opened by Aletheia</strong> —
-						adoption candidates.
-						{syncStatus === "stale" && " (exchange view is stale)"}
-					</p>
-					<TableWrap>
-						<table>
-							<thead>
-								<tr>
-									<th>Symbol</th>
-									<th>Dir</th>
-									<th>Qty</th>
-									<th>Entry</th>
-									<th>uPnL</th>
-								</tr>
-							</thead>
-							<tbody>
-								{external.map((i, idx) => (
-									<tr key={`ext-${i.symbol}-${i.direction}-${idx}`}>
-										<td className="mono">
-											{fmtSymbol(i.symbol, i.market_type)}
-										</td>
-										<td>{humanize(i.direction)}</td>
-										<td className="mono">{fmtNum(i.exchange?.quantity)}</td>
-										<td className="mono">{fmtNum(i.exchange?.entry_price)}</td>
-										<td>{pnlCell(i.exchange?.unrealized_pnl)}</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</TableWrap>
-				</>
-			)}
+					{!hasDrift && isDegraded && (
+						<p className="text-muted text-sm">
+							No drift reported, but the exchange sync is{" "}
+							<strong>{syncStatus}</strong> — the "no drift" result may be based on
+							stale or missing data. Fix the sync source before treating the
+							reconciliation as complete.
+						</p>
+					)}
 
-			{orphaned.length > 0 && (
-				<>
-					<p className="text-muted text-sm mt-3 mb-1">
-						Open in Aletheia's books but{" "}
-						<strong>no longer on the exchange</strong> — reconcile-close
-						candidates.
-					</p>
-					<TableWrap>
-						<table>
-							<thead>
-								<tr>
-									<th>Symbol</th>
-									<th>Dir</th>
-									<th>Qty</th>
-									<th>Entry</th>
-									<th>Mode</th>
-								</tr>
-							</thead>
-							<tbody>
-								{orphaned.map((i, idx) => (
-									<tr key={`orph-${i.symbol}-${i.direction}-${idx}`}>
-										<td className="mono">
-											{fmtSymbol(i.symbol, i.market_type)}
-										</td>
-										<td>{humanize(i.direction)}</td>
-										<td className="mono">{fmtNum(i.local?.quantity)}</td>
-										<td className="mono">{fmtNum(i.local?.entry_price)}</td>
-										<td>{humanize(i.local?.execution_mode)}</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</TableWrap>
+					{external.length > 0 && (
+						<>
+							<p className="text-muted text-sm mb-1">
+								On the exchange but <strong>not opened by Aletheia</strong> —
+								adoption candidates.
+								{syncStatus === "stale" && " (exchange view is stale)"}
+							</p>
+							<TableWrap>
+								<table>
+									<thead>
+										<tr>
+											<th>Symbol</th>
+											<th>Dir</th>
+											<th>Qty</th>
+											<th>Entry</th>
+											<th>uPnL</th>
+										</tr>
+									</thead>
+									<tbody>
+										{external.map((i, idx) => (
+											<tr key={`ext-${i.symbol}-${i.direction}-${idx}`}>
+												<td className="mono">
+													{fmtSymbol(i.symbol, i.market_type)}
+												</td>
+												<td>{humanize(i.direction)}</td>
+												<td className="mono">{fmtNum(i.exchange?.quantity)}</td>
+												<td className="mono">{fmtNum(i.exchange?.entry_price)}</td>
+												<td>{pnlCell(i.exchange?.unrealized_pnl)}</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</TableWrap>
+						</>
+					)}
+
+					{orphaned.length > 0 && (
+						<>
+							<p className="text-muted text-sm mt-3 mb-1">
+								Open in Aletheia's books but{" "}
+								<strong>no longer on the exchange</strong> — reconcile-close
+								candidates.
+							</p>
+							<TableWrap>
+								<table>
+									<thead>
+										<tr>
+											<th>Symbol</th>
+											<th>Dir</th>
+											<th>Qty</th>
+											<th>Entry</th>
+											<th>Mode</th>
+										</tr>
+									</thead>
+									<tbody>
+										{orphaned.map((i, idx) => (
+											<tr key={`orph-${i.symbol}-${i.direction}-${idx}`}>
+												<td className="mono">
+													{fmtSymbol(i.symbol, i.market_type)}
+												</td>
+												<td>{humanize(i.direction)}</td>
+												<td className="mono">{fmtNum(i.local?.quantity)}</td>
+												<td className="mono">{fmtNum(i.local?.entry_price)}</td>
+												<td>{humanize(i.local?.execution_mode)}</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</TableWrap>
+						</>
+					)}
 				</>
 			)}
 		</Card>

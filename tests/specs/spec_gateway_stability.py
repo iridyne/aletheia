@@ -18,6 +18,12 @@ Add this file to _import_all_specs() in tests/test_spec_conformance.py.
 
 from __future__ import annotations
 
+
+async def _make_async_provider(provider):
+    """Helper for tests: wrap sync mock provider in async."""
+    return provider
+
+
 import asyncio
 import inspect
 from pathlib import Path
@@ -155,7 +161,7 @@ def _patch_llm(monkeypatch_obj, responses):
         return responses[i]
 
     monkeypatch_obj.setattr(helpers, "complete_with_fallback", fake_complete)
-    monkeypatch_obj.setattr(helpers, "get_provider", lambda provider_name=None: object())
+    monkeypatch_obj.setattr(helpers, "get_provider_async", lambda provider_name=None: _make_async_provider(object()))
     monkeypatch_obj.setattr(helpers, "_record_llm", lambda ok: None)
     return calls
 
@@ -258,7 +264,7 @@ def test_llm_structured_repair_mode_on_final_attempt(monkeypatch):
         return _Resp('{"x": 42}')
 
     monkeypatch.setattr(helpers, "complete_with_fallback", fake_complete)
-    monkeypatch.setattr(helpers, "get_provider", lambda provider_name=None: object())
+    monkeypatch.setattr(helpers, "get_provider_async", lambda provider_name=None: _make_async_provider(object()))
     monkeypatch.setattr(helpers, "_record_llm", lambda ok: None)
 
     data, err = asyncio.run(helpers.llm_structured("sys", "user", schema=_Schema))
@@ -361,7 +367,7 @@ def test_llm_structured_cancels_hanging_provider_before_job_timeout(monkeypatch)
             raise
 
     monkeypatch.setattr(helpers, "complete_with_fallback", hang)
-    monkeypatch.setattr(helpers, "get_provider", lambda provider_name=None: object())
+    monkeypatch.setattr(helpers, "get_provider_async", lambda provider_name=None: _make_async_provider(object()))
     monkeypatch.setattr(helpers, "_record_llm", lambda ok: None)
     monkeypatch.setattr(helpers, "_LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC", 0.01)
 

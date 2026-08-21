@@ -6,6 +6,12 @@ unhealthy state (de-duped), and never fabricate a positive "healthy" push.
 
 import sqlite3
 
+
+async def _make_async_provider(provider):
+    """Helper for tests: wrap sync mock provider in async."""
+    return provider
+
+
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import AgentRun
@@ -287,7 +293,7 @@ async def test_llm_complete_reports_failure_then_success(tmp_path, monkeypatch):
         async def complete(self, req):
             raise RuntimeError("provider down")
 
-    monkeypatch.setattr(helpers, "get_provider", lambda name=None: _Boom())
+    monkeypatch.setattr(helpers, "get_provider_async", lambda name=None: _make_async_provider(_Boom()))
     content, err = await helpers.llm_complete(system="s", user="u")
     assert content is None and "llm_unavailable" in err
     assert health.get_llm_consecutive_failures() == 1
@@ -297,7 +303,7 @@ async def test_llm_complete_reports_failure_then_success(tmp_path, monkeypatch):
             class R: content = "hi"  # noqa: E701
             return R()
 
-    monkeypatch.setattr(helpers, "get_provider", lambda name=None: _Ok())
+    monkeypatch.setattr(helpers, "get_provider_async", lambda name=None: _make_async_provider(_Ok()))
     content, err = await helpers.llm_complete(system="s", user="u")
     assert content == "hi" and err is None
     assert health.get_llm_consecutive_failures() == 0

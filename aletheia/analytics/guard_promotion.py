@@ -86,7 +86,9 @@ def run_promotion_check() -> dict:
             "expired_deprecated": expired_deprecated,
         }
 
-    min_trades = guard_cfg.min_matching_trades
+    min_trades = getattr(guard_cfg, "min_matching_trades", None)
+    if not isinstance(min_trades, int) or isinstance(min_trades, bool) or min_trades < 1:
+        return {"skipped": True, "reason": "invalid min_matching_trades"}
     candidates = load_trading_guards(status="candidate")
     if not candidates:
         return {"promotions": 0, "deprecations": 0, "candidates_checked": 0}

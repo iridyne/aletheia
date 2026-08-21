@@ -3,6 +3,8 @@
 Critical security invariant: no GET ever returns a raw secret value.
 """
 
+from unittest.mock import patch
+
 import pytest  # pyright: ignore[reportMissingImports]
 from httpx import AsyncClient, ASGITransport
 
@@ -49,6 +51,22 @@ async def test_get_model_config(client):
     data = resp.json()
     assert "openai_compatible" in data["providers"]
     assert data["providers"]["openai_compatible"]["api_key"]["configured"] is False
+
+
+@pytest.mark.anyio
+async def test_guard_settings_reject_nonpositive_min_matching_trades(client):
+    from aletheia.config.loader import load_config
+
+    before = load_config().guard.min_matching_trades
+    with patch("aletheia.files.jsonl.write_audit") as write_audit:
+        for value in (0, -1):
+            response = await client.post(
+                "/api/settings/guard", json={"min_matching_trades": value}
+            )
+            assert response.status_code == 422
+
+    assert load_config().guard.min_matching_trades == before
+    write_audit.assert_not_called()
 
 
 @pytest.mark.anyio
@@ -796,7 +814,7 @@ async def test_live_policy_write_enforces_safety_ceilings(client):
         ("loss",        "max_daily_loss_pct",             20.1),
         ("loss",        "max_single_trade_risk_pct",      10.1),
         ("capital",     "max_total_exposure_pct",         50.1),
-        ("capital",     "max_position_margin_usdt",     100_001.0),
+        ("capital",     "max_position_margin_usdt",       100_001.0),
         ("capital",     "base_usdt",                      100_001.0),
         ("capital",     "max_per_symbol_entries",         21),
         ("margin",      "min_entry_liquidation_buffer_pct", 20.1),

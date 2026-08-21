@@ -22,6 +22,8 @@ export interface FormattedViolation {
 
 const RISK_LABELS: Record<string, string> = {
   kill_switch_active: 'Kill switch engaged',
+  live_brake_active: 'Live trading halted',
+  demo_brake_active: 'Demo trading halted',
   spot_market_disabled: 'Spot market disabled',
   futures_market_disabled: 'Futures market disabled',
   live_disabled: 'Live trading disabled',
@@ -29,6 +31,26 @@ const RISK_LABELS: Record<string, string> = {
   short_not_allowed_live: 'Shorting not allowed (live)',
   short_not_allowed_demo: 'Shorting not allowed (demo)',
   max_single_trade_risk_missing_stop_price: 'Missing stop-loss price',
+  paper_account_balance_unavailable: 'Paper balance unavailable',
+  entry_risk_reservation_unavailable: 'Entry reservation unavailable',
+  unresolved_entry_exposure_unavailable: 'Unresolved exposure unavailable',
+  invalid_symbol_format: 'Invalid symbol format',
+  invalid_market_type: 'Invalid market type',
+  invalid_direction: 'Invalid direction',
+  invalid_order_type: 'Invalid order type',
+  invalid_quantity: 'Invalid quantity',
+  invalid_price: 'Invalid price',
+  invalid_leverage: 'Invalid leverage',
+  invalid_execution_mode: 'Invalid execution mode',
+  proposal_opportunity_symbol_mismatch: 'Opportunity symbol mismatch',
+  proposal_opportunity_market_mismatch: 'Opportunity market mismatch',
+  proposal_opportunity_direction_mismatch: 'Opportunity direction mismatch',
+  proposal_opportunity_not_found: 'Opportunity not found',
+  proposal_opportunity_ambiguous: 'Opportunity ambiguous',
+  proposal_opportunity_required: 'Opportunity required',
+  proposal_opportunity_check_error: 'Opportunity check error',
+  entry_plan_risk_reward_mismatch: 'Entry plan risk/reward mismatch',
+  risk_reward_outside_envelope: 'Risk/reward outside envelope',
 }
 
 const RISK_STATE_LABELS: Record<string, string> = {
@@ -69,10 +91,13 @@ export function formatViolation(raw: string): FormattedViolation {
   const idx = raw.indexOf(':')
   const code = idx === -1 ? raw : raw.slice(0, idx)
   const arg = idx === -1 ? '' : raw.slice(idx + 1)
-  const severity: RiskSeverity =
-    code === 'kill_switch_active' || code === 'max_daily_loss_exceeded' || code.startsWith('account_mode_mismatch')
-      ? 'block'
-      : 'warn'
+
+  // Default to block; only explicitly advisory codes are warnings
+  const isWarning =
+    code.startsWith('stale_market_data') ||
+    code === 'live_disabled_while_exchange_live' ||
+    code.startsWith('permission_mode_not_live_eligible')
+  const severity: RiskSeverity = isWarning ? 'warn' : 'block'
 
   const gt = (s: string): [number, number] => {
     const [a, b] = s.split('>')
@@ -111,6 +136,13 @@ export function formatViolation(raw: string): FormattedViolation {
   if (code === 'exceeds_single_trade_risk') {
     const [amt, max] = gt(arg)
     return { label: 'Single-trade risk over cap', detail: `${fmtUsd(amt)} > ${fmtUsd(max)} cap`, severity }
+  }
+  if (code.startsWith('entry_plan_geometry')) {
+    return { label: 'Entry plan geometry invalid', detail: arg || null, severity }
+  }
+  if (code.startsWith('incomplete_entry_plan')) {
+    const missing = arg.replace(/\+/g, ', ')
+    return { label: 'Entry plan incomplete', detail: `missing: ${missing}`, severity }
   }
   return { label: RISK_LABELS[code] || humanizeCode(code), detail: arg || null, severity }
 }

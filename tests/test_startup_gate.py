@@ -79,17 +79,17 @@ class _FakeProvider:
 
 
 def _patch_providers(monkeypatch, mapping: dict):
-    """Patch get_provider INSIDE startup_gate to return our fakes by name."""
-    from aletheia.agent_runtime import startup_gate
+    """Patch the async router boundary used by complete_with_fallback()."""
 
-    def fake_get_provider(name):
+    async def fake_get_provider(name):
         if name not in mapping:
             raise ValueError(f"Unknown provider: {name}")
         return mapping[name]
 
-    # startup_gate imports get_provider lazily from router; patch the source.
+    # The startup gate routes through complete_with_fallback(), which resolves
+    # providers via the async router path.
     import aletheia.model_provider.router as router
-    monkeypatch.setattr(router, "get_provider", fake_get_provider)
+    monkeypatch.setattr(router, "get_provider_async", fake_get_provider)
 
 
 # --- 1. all providers fail → any_usable False, each error reported ---

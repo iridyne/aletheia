@@ -17,6 +17,12 @@ This test locks in that helpers now pass provider_name= alongside provider=.
 
 from __future__ import annotations
 
+
+async def _make_async_provider(provider):
+    """Helper for tests: wrap sync mock provider in async."""
+    return provider
+
+
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -37,7 +43,7 @@ async def test_llm_complete_threads_provider_name_to_complete_with_fallback():
         return ModelResponse(content="ok", raw={})
 
     with patch.object(helpers, "complete_with_fallback", fake_complete_with_fallback):
-        with patch.object(helpers, "get_provider", lambda n: object()):
+        with patch.object(helpers, "get_provider_async", lambda n: _make_async_provider(object())):
             content, err = await helpers.llm_complete(
                 "sys", "user", provider="deep_provider_xyz",
             )
@@ -64,7 +70,7 @@ async def test_llm_complete_forwards_none_when_caller_did_not_specify():
         return ModelResponse(content="ok", raw={})
 
     with patch.object(helpers, "complete_with_fallback", fake_complete_with_fallback):
-        with patch.object(helpers, "get_provider", lambda n: object()):
+        with patch.object(helpers, "get_provider_async", lambda n: _make_async_provider(object())):
             await helpers.llm_complete("sys", "user")
 
     assert captured["provider_name"] is None
@@ -79,7 +85,7 @@ async def test_llm_complete_preserves_empty_exception_type():
         raise TimeoutError()
 
     with patch.object(helpers, "complete_with_fallback", timeout):
-        with patch.object(helpers, "get_provider", lambda _name: object()):
+        with patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(object())):
             content, err = await helpers.llm_complete("sys", "user")
 
     assert content is None
@@ -105,7 +111,7 @@ async def test_llm_structured_threads_provider_name_to_complete_with_fallback():
         return ModelResponse(content=json.dumps({"value": 42}), raw={"usage": {"completion_tokens": 5}})
 
     with patch.object(helpers, "complete_with_fallback", fake_complete_with_fallback):
-        with patch.object(helpers, "get_provider", lambda n: object()):
+        with patch.object(helpers, "get_provider_async", lambda n: _make_async_provider(object())):
             data, err = await helpers.llm_structured(
                 "sys", "user", schema=DummySchema, provider="deep_provider_xyz",
             )
@@ -138,7 +144,7 @@ async def test_llm_structured_threads_explicit_reasoning_effort_to_every_attempt
         return next(responses)
 
     with patch.object(helpers, "complete_with_fallback", fake_complete_with_fallback):
-        with patch.object(helpers, "get_provider", lambda _name: object()):
+        with patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(object())):
             data, err = await helpers.llm_structured(
                 "sys",
                 "user",
@@ -173,7 +179,7 @@ async def test_llm_structured_opt_in_defaults_survive_provider_failure():
         raise ConnectionError("offline")
 
     with patch.object(helpers, "complete_with_fallback", fail), \
-         patch.object(helpers, "get_provider", lambda _name: object()), \
+         patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(object())), \
          patch.object(helpers, "_record_llm"):
         data, err = await helpers.llm_structured(
             "sys", "user", schema=FallbackSchema, fallback_to_defaults=True,
@@ -206,7 +212,7 @@ async def test_llm_structured_repairs_valid_non_object_json():
         return next(responses)
 
     with patch.object(helpers, "complete_with_fallback", complete), \
-         patch.object(helpers, "get_provider", lambda _name: object()), \
+         patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(object())), \
          patch.object(helpers, "_record_llm"):
         data, err = await helpers.llm_structured("sys", "user", schema=ObjectSchema)
 
