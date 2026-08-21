@@ -188,11 +188,12 @@ def _order_present(order: dict, open_ids: set[str]) -> bool:
     )
 
 
-def _decide(order: dict) -> tuple[str, str] | None:
-    """Return (reason_code, kind) for an actionable Order, else None to skip.
+def _decide(order: dict) -> tuple[str, str, str] | None:
+    """Return (reason_code, kind, action) for an actionable Order, else None to skip.
 
-    kind is "cancel" for a plain orphan entry or "clear_pending_close" for a
-    stale close Order on an already-closed Position.
+    kind: "cancel" for a plain orphan entry, "clear_pending_close" for a stale close Order.
+    action: "cancelled" when we have authoritative venue proof the order is terminal;
+            "unresolved" when evidence is absent (log incident, no DB write).
     """
     age = _age_hours(order.get("created_at"))
     if age is None or age < _STALE_ORDER_SOFT_HOURS:
@@ -203,29 +204,43 @@ def _decide(order: dict) -> tuple[str, str] | None:
     # Stale close Order on an already-closed Position: safe to converge once old,
     # regardless of venue reachability — the Position is already terminal.
     if _stale_pending_close_position_id(order) is not None:
-        return ("stale_close_order_position_already_closed", "clear_pending_close")
+        return ("stale_close_order_position_already_closed", "clear_pending_close", "cancelled")
 
     open_ids = _exchange_open_order_ids(order)
     if open_ids is not None:
         if _order_present(order, open_ids):
             return None  # exchange still holds it open — never cancel
-        return ("stale_order_absent_on_exchange", "cancel")
+        # Absent from the live open-order list, but we have no explicit terminal
+        # status from the venue — mark unresolved, do not write cancelled.
+        return ("absent_from_open_list", "cancel", "unresolved")
 
     # Cannot verify against the venue (no reader / credentials / unreachable).
-    # Only the conservative hard-age fallback may act.
+    # Hard age reached, but still no authoritative proof → mark unresolved only.
     if age >= _STALE_ORDER_HARD_HOURS:
-        return ("stale_order_unverifiable_aged_out", "cancel")
+        return ("unverifiable_aged_out", "cancel", "unresolved")
     return None
 
 
-def _apply(order: dict, reason_code: str, kind: str) -> str | None:
-    """Compare-and-write the cancel under the SQLite writer slot.
+def _apply(order: dict, reason_code: str, kind: str, action: str) -> str | None:
+    """Compare-and-write the decision under the SQLite writer slot.
 
     Re-reads and re-verifies every guard inside BEGIN IMMEDIATE so a fill/close
     reconciliation materialized between _decide() and here can never be clobbered.
-    Returns the audit payload dict via a closure list, or None if nothing changed.
+    For action="unresolved", logs an incident without writing cancelled status.
+    For action="cancelled", writes the terminal state with full audit.
+    Returns the reason_code on success, else None.
     """
     oid = order["id"]
+
+    if action == "unresolved":
+        # No authoritative proof: log typed incident, do NOT write cancelled.
+        logger.warning(
+            "stale_order_cleanup: unresolved order %s (reason=%s) — "
+            "no authoritative proof of cancellation; skipping status write",
+            oid, reason_code,
+        )
+        return None
+
     cleared_position_id: str | None = None
     changed = False
     with repo.transaction(immediate=True):
@@ -350,9 +365,9 @@ def cleanup_stale_orphan_orders() -> dict:
         if decision is None:
             skipped += 1
             continue
-        reason_code, kind = decision
+        reason_code, kind, action = decision
         try:
-            applied = _apply(order, reason_code, kind)
+            applied = _apply(order, reason_code, kind, action)
         except Exception as exc:
             errors.append(f"apply_failed:{order.get('id')}")
             logger.warning(

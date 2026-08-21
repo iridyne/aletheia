@@ -1146,10 +1146,16 @@ def _evaluate_proposal_locked(
                 unresolved_entries,
                 pre_order_entries,
             )
-            projected = current_exposure + (proposal.price * proposal.quantity)
-            live_exposure_cap = risk.max_total_live_exposure_pct / 100.0 * capital_base
-            if live_exposure_cap > 0 and projected > live_exposure_cap:
-                violations.append(f"max_total_live_exposure_exceeded:{projected}>{live_exposure_cap}")
+            if current_exposure is None:
+                violations.append(
+                    "max_total_live_exposure_exceeded:"
+                    "account_exposure_check_error:invalid_position_data"
+                )
+            else:
+                projected = current_exposure + (proposal.price * proposal.quantity)
+                live_exposure_cap = risk.max_total_live_exposure_pct / 100.0 * capital_base
+                if live_exposure_cap > 0 and projected > live_exposure_cap:
+                    violations.append(f"max_total_live_exposure_exceeded:{projected}>{live_exposure_cap}")
 
         # 13. Keep the stop-loss loss cap as a hard safety guard. Proposal sizing
         # uses this same Risk-page percentage as the cost budget, but a wide stop
@@ -1225,17 +1231,23 @@ def _evaluate_proposal_locked(
                 unresolved_entries,
                 pre_order_entries,
             )
-            projected = current_exposure + (proposal.price * proposal.quantity)
-            demo_exposure_cap = (
-                resolved_policy.policy.capital.max_total_exposure_pct
-                / 100.0
-                * capital_base
-            )
-            if demo_exposure_cap > 0 and projected > demo_exposure_cap:
+            if current_exposure is None:
                 violations.append(
-                    "max_total_demo_exposure_exceeded:"
-                    f"{projected}>{demo_exposure_cap}"
+                    "max_total_live_exposure_exceeded:"
+                    "account_exposure_check_error:invalid_position_data"
                 )
+            else:
+                projected = current_exposure + (proposal.price * proposal.quantity)
+                demo_exposure_cap = (
+                    resolved_policy.policy.capital.max_total_exposure_pct
+                    / 100.0
+                    * capital_base
+                )
+                if demo_exposure_cap > 0 and projected > demo_exposure_cap:
+                    violations.append(
+                        "max_total_demo_exposure_exceeded:"
+                        f"{projected}>{demo_exposure_cap}"
+                    )
 
     # 15. Lesson-based constraints — accepted lessons with actionable recommendations
     #     can impose symbol/direction blocks learned from past failures.
@@ -1732,8 +1744,13 @@ def _current_account_exposure(
     execution_mode: str,
     unresolved_entries: list[_UnresolvedEntryReservation] | None = None,
     pre_order_entries: list[_PreOrderEntryReservation] | None = None,
-) -> float:
-    """Sum notional exposure using one account-equity denominator."""
+) -> float | None:
+    """Sum notional exposure using one account-equity denominator.
+
+    Returns None on any parse failure (unparsable quantity/price, non-finite
+    value) so callers can fail closed rather than silently treating bad data
+    as zero exposure.
+    """
     total = 0.0
     for row in list_all_open_positions():
         if not _account_pool_matches(
@@ -1744,9 +1761,12 @@ def _current_account_exposure(
         try:
             quantity = float(row.get("quantity") or 0.0)
             price = float(row.get("current_price") or row.get("entry_price") or 0.0)
-            total += abs(quantity * price)
+            contrib = abs(quantity * price)
         except (TypeError, ValueError):
-            continue
+            return None
+        if not math.isfinite(contrib):
+            return None
+        total += contrib
     if unresolved_entries is None:
         unresolved_entries = _unresolved_entry_reservations()
     for entry in unresolved_entries:
@@ -1765,13 +1785,15 @@ def _current_account_exposure(
         if entry.price is None or entry.reserved_quantity is None:
             continue
         total += abs(entry.reserved_quantity * entry.price)
+    if not math.isfinite(total):
+        return None
     return total
 
 
 def _current_live_exposure(
     unresolved_entries: list[_UnresolvedEntryReservation] | None = None,
     pre_order_entries: list[_PreOrderEntryReservation] | None = None,
-) -> float:
+) -> float | None:
     """Backward-compatible live-pool exposure projection."""
     return _current_account_exposure(
         "bitget_live_limited",

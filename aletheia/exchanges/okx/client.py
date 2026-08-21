@@ -135,26 +135,34 @@ class OKXClient:
             self._exchange.set_sandbox_mode(True)
         return self._exchange
 
-    async def _contract_size(self, ccxt_symbol: str) -> float:
-        """Return the contractSize for an OKX swap symbol (coins per contract).
+    async def _contract_size(self, ccxt_symbol: str, is_spot: bool = False) -> float:
+        """Return the contractSize for an OKX symbol.
 
-        CCXT's `amount` for OKX swaps is denominated in CONTRACTS, not coins.
-        Each contract represents `contractSize` coins (e.g. TRX=1000, ETH=0.1,
-        SOL=1, BTC=0.01). We store/risk/PnL everything in coin quantity, so the
-        order path divides coins→contracts and the read path multiplies back.
-        Defaults to 1.0 when markets are unavailable (safe for contractSize==1).
+        Spot orders always return 1.0 (no contract denomination).
+        Non-spot orders fail closed: raises RuntimeError if the metadata is
+        unavailable, missing, zero, negative, or non-finite, preventing an
+        order being placed with a silently wrong quantity.
         """
+        import math as _math
+        if is_spot:
+            return 1.0
         try:
             ex = self._ensure_exchange()
             if not ex.markets:
                 await ex.load_markets()
-                assert ex.markets is not None
-            m = ex.markets.get(ccxt_symbol) or {}
-            cs = m.get("contractSize")
-            return float(cs) if cs else 1.0
-        except Exception as e:
-            logger.warning("OKX contractSize lookup failed for %s: %s — defaulting to 1.0", ccxt_symbol, e)
-            return 1.0
+            markets = ex.markets or {}
+            market = markets.get(ccxt_symbol) or {}
+            cs = market.get("contractSize")
+            if cs is None:
+                raise RuntimeError(f"contractSize missing for {ccxt_symbol}")
+            val = float(cs)
+            if not _math.isfinite(val) or val <= 0:
+                raise RuntimeError(f"invalid contractSize {val} for {ccxt_symbol}")
+            return val
+        except Exception as exc:
+            raise RuntimeError(
+                f"OKX contract size unavailable for {ccxt_symbol}: {exc}"
+            ) from exc
 
     async def set_leverage(self, ccxt_symbol: str, leverage: int) -> None:
         """Set leverage for an OKX swap symbol before opening. Raises on failure.
@@ -204,8 +212,8 @@ class OKXClient:
             # Futures open: set intended leverage first (skip reduce-only closes). Fail-closed.
             if order.leverage and order.leverage > 1 and not order.reduce_only:
                 await self.set_leverage(ccxt_symbol, order.leverage)
-            contract_size = await self._contract_size(ccxt_symbol)
-            amount = order.quantity / contract_size if contract_size else order.quantity
+            contract_size = await self._contract_size(ccxt_symbol, is_spot=False)
+            amount = order.quantity / contract_size
             if order.reduce_only:
                 params["reduceOnly"] = True
 
@@ -314,8 +322,8 @@ class OKXClient:
 
         ccxt_symbol = okx_ccxt_symbol(market_type, symbol)
         ex = self._ensure_exchange()
-        contract_size = await self._contract_size(ccxt_symbol)
-        amount = quantity / contract_size if contract_size else quantity
+        contract_size = await self._contract_size(ccxt_symbol, is_spot=False)
+        amount = quantity / contract_size
 
         result: dict = {}
         # Two separate reduce-only market-trigger orders. CCXT-okx maps the unified

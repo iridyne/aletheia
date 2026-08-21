@@ -89,15 +89,14 @@ def _audit_count(oid: str) -> int:
     return int(row["c"])
 
 
-def test_pure_orphan_aged_out_cancelled(monkeypatch):
-    """okx_demo orphan past the hard window, unverifiable → cancelled + audited."""
+def test_pure_orphan_aged_out_unresolved(monkeypatch):
+    """okx_demo orphan past the hard window, unverifiable → unresolved, no DB write."""
     # No exchange reader for okx → verification returns None → aged-out path.
+    # Per #1421: no authoritative proof → must NOT mark cancelled.
     _seed_order(_order(oid="orphan-old", hours_ago=200))
     summary = soc.cleanup_stale_orphan_orders()
-    assert summary["cancelled"] == 1
-    assert _status("orphan-old") == "cancelled"
-    assert repo.get_order("orphan-old")["error_reason"] == "stale_order_unverifiable_aged_out"
-    assert _audit_count("orphan-old") == 1
+    assert summary["cancelled"] == 0
+    assert _status("orphan-old") == "submitted"  # unchanged — still unresolved
 
 
 def test_order_with_fill_is_never_cancelled():
@@ -166,13 +165,40 @@ def test_exchange_still_open_is_never_cancelled(monkeypatch):
     assert _status("still-open") == "submitted"
 
 
-def test_exchange_confirms_absent_cancels_before_hard_window(monkeypatch):
-    """Evidence path: venue reachable + order absent → cancel at the soft window."""
+def test_exchange_absent_from_open_list_leaves_unresolved(monkeypatch):
+    """Evidence path: venue reachable + order absent from open list → unresolved, no cancel.
+
+    Per #1421: absent from open-list is NOT authoritative proof of cancellation;
+    only an explicit cancelled/expired status from the venue warrants marking cancelled.
+    """
     _seed_order(_order(
         oid="gone", hours_ago=72, execution_mode="bitget_demo",
         exchange_order_id="ex-7",
     ))
     monkeypatch.setattr(soc, "_exchange_open_order_ids", lambda order: {"ex-other"})
     summary = soc.cleanup_stale_orphan_orders()
+    assert summary["cancelled"] == 0
+    assert _status("gone") == "submitted"  # unchanged — no authoritative cancellation proof
+
+
+def test_explicit_venue_cancelled_status_marks_cancelled(monkeypatch):
+    """Per #1421: ONLY mark cancelled when the venue explicitly says so.
+
+    _decide returns action='cancelled' only for clear_pending_close (position terminal).
+    For a plain order with explicit venue-cancelled status we simulate via patching.
+    """
+    _seed_order(_order(
+        oid="venue-cancelled", hours_ago=72, execution_mode="bitget_demo",
+        exchange_order_id="ex-8",
+    ))
+    # Simulate venue returning explicit terminal status by making _decide return "cancelled"
+    original_decide = soc._decide
+    def patched_decide(order):
+        if order.get("id") == "venue-cancelled":
+            return ("stale_order_absent_on_exchange", "cancel", "cancelled")
+        return original_decide(order)
+    monkeypatch.setattr(soc, "_decide", patched_decide)
+    summary = soc.cleanup_stale_orphan_orders()
     assert summary["cancelled"] == 1
-    assert repo.get_order("gone")["error_reason"] == "stale_order_absent_on_exchange"
+    assert _status("venue-cancelled") == "cancelled"
+    assert repo.get_order("venue-cancelled")["error_reason"] == "stale_order_absent_on_exchange"
