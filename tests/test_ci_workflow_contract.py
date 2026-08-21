@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import yaml
@@ -76,7 +77,6 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
         "review-core",
         "review-coverage",
         "review-node",
-        "review-operator-shell-windows",
         "review-native",
         "review",
         "unit",
@@ -163,8 +163,12 @@ def test_ci_runner_topology_and_minimum_permissions() -> None:
 
     assert workflow["permissions"] == {"contents": "read"}
 
-    # Scarce Fedora runners are reserved for authoritative Python regression.
+    # All CI tasks use the managed Fedora pool.
     for job_name in (
+        "review-core",
+        "review-coverage",
+        "review-node",
+        "review-native",
         "unit",
         "runtime-state-tests",
         "integration",
@@ -173,15 +177,7 @@ def test_ci_runner_topology_and_minimum_permissions() -> None:
     ):
         assert jobs[job_name]["runs-on"] == SELF_HOSTED
 
-    # Review control/surfaces are portable and must not compete for Fedora.
-    for job_name in (
-        "review-core",
-        "review-coverage",
-        "review-node",
-        "review-native",
-        "review",
-    ):
-        assert jobs[job_name]["runs-on"] == "ubuntu-24.04"
+    assert jobs["review"]["runs-on"] == SELF_HOSTED
 
     for job_name in (
         "review-core",
@@ -236,13 +232,23 @@ def test_review_optional_surfaces_are_job_gated_before_runner_allocation() -> No
         "review-core",
         "review-coverage",
         "review-node",
-        "review-operator-shell-windows",
         "review-native",
     ]
     assert "always()" in gate["if"]
     aggregate = _run_commands(gate)
     assert "CORE_RESULT" in aggregate
     assert "success|skipped" in aggregate
+
+
+def test_operator_shell_regression_uses_explicit_cross_platform_test_files() -> None:
+    package = json.loads(
+        (WORKFLOW_DIR.parent.parent / "operator-shell" / "package.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert package["scripts"]["test"] == (
+        "node --import tsx --test tests/operator_loop.test.ts tests/service_auth.test.ts"
+    )
 
 
 def test_third_party_actions_are_pinned_to_full_commit_shas() -> None:
@@ -487,7 +493,6 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
         "review-core",
         "review-coverage",
         "review-node",
-        "review-operator-shell-windows",
         "review-native",
     ]
     assert unit_job["name"] == "Python unit"
