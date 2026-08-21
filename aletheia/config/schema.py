@@ -1623,6 +1623,7 @@ class PiDaemonConfig(BaseModel):
         legacy REST path:      POST /api/settings/pi_daemon
         current product name:  "System Operator daemon"
     """
+    model_config = ConfigDict(validate_assignment=True)
 
     model_config = ConfigDict(validate_assignment=True)
 
