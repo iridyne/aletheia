@@ -177,21 +177,7 @@ def test_ci_runner_topology_and_minimum_permissions() -> None:
     ):
         assert jobs[job_name]["runs-on"] == SELF_HOSTED
 
-    # Review control/surfaces run on self-hosted or GitHub-hosted runners.
-    # When GitHub-hosted billing is unavailable, review jobs fall back to
-    # self-hosted (SELF_HOSTED label). Either value is acceptable.
-    _REVIEW_RUNNERS = {"ubuntu-24.04", str(SELF_HOSTED)}
-    for job_name in (
-        "review-core",
-        "review-coverage",
-        "review-node",
-        "review-native",
-        "review",
-    ):
-        runner = jobs[job_name]["runs-on"]
-        assert runner == "ubuntu-24.04" or runner == SELF_HOSTED, (
-            f"{job_name} runs-on must be ubuntu-24.04 or self-hosted, got {runner!r}"
-        )
+    assert jobs["review"]["runs-on"] == SELF_HOSTED
 
     for job_name in (
         "review-core",
