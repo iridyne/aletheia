@@ -570,7 +570,8 @@ def _exact_reviews(db: Any, position_id: str, cutoff: datetime) -> list[dict[str
     for row in _rows(
         db,
         "SELECT * FROM pi_decisions"
-        " WHERE json_extract(evidence_manifest_json, '$.position_review.target_position_id') = ?"
+        " WHERE json_valid(evidence_manifest_json)"
+        " AND json_extract(evidence_manifest_json, '$.position_review.target_position_id') = ?"
         " AND datetime(created_at) <= datetime(?)"
         " ORDER BY created_at, rowid",
         (position_id, cutoff.isoformat()),

@@ -1047,7 +1047,7 @@ class HealthConfig(BaseModel):
     # operator with root-cause classification (secret_missing vs network vs auth).
     auto_resume_stall_threshold: int = Field(default=6, ge=1, le=100)
     # backoff_factor must be > 1.0 to actually back off; le=10 caps runaway growth.
-    auto_resume_stall_backoff_factor: float = Field(default=2.0, gt=0.0, le=10.0)
+    auto_resume_stall_backoff_factor: float = Field(default=2.0, ge=1.0, le=10.0)
     # max_interval must be >= 1 to prevent a zero/negative sleep in the loop.
     auto_resume_max_interval_sec: int = Field(default=1800, ge=1, le=86400)
     # Exchange connectivity monitor: detect network outages and auto-pause/resume.

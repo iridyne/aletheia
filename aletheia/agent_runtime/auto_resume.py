@@ -159,9 +159,9 @@ async def _auto_resume_loop(interval_sec: int = 300) -> None:
                 cause = _classify_stall(probe_results)
                 _escalate_stall(cause, consecutive_failures)
                 last_escalation_at = consecutive_failures
-                current_interval = min(
+                current_interval = max(1, min(
                     int(current_interval * backoff_factor), max_interval
-                )
+                ))
                 logger.info(
                     "auto_resume: stall detected (cause=%s), backed off to %ds",
                     cause, current_interval,
@@ -181,9 +181,9 @@ async def _auto_resume_loop(interval_sec: int = 300) -> None:
             ):
                 _escalate_stall(cause, consecutive_failures)
                 last_escalation_at = consecutive_failures
-                current_interval = min(
+                current_interval = max(1, min(
                     int(current_interval * backoff_factor), max_interval
-                )
+                ))
                 logger.info(
                     "auto_resume: stall detected (cause=%s), backed off to %ds",
                     cause, current_interval,

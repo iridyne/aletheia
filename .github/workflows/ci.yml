@@ -1,3 +1,12 @@
+# RUNNER SECURITY CONTRACT (#1356)
+# All CI jobs currently use the shared self-hosted Fedora pool.
+# Required: PR-controlled jobs (review-*, unit, integration, etc.) MUST run on a
+# dedicated one-job ephemeral/JIT runner group that is destroyed after each job,
+# has no access to runtime credentials/secrets/keyring, and is isolated from the
+# privileged release-handoff job. See Issue #1356 for resolution path.
+# Until the ephemeral runner group is provisioned, treat CI evidence as potentially
+# contaminated by prior PR runs on the same host.
+
 name: Aletheia CI
 
 on:
