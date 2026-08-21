@@ -290,7 +290,7 @@ def test_retry_succeeds_on_second_attempt(tmp_path, monkeypatch):
 
     cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
     cfg.health.startup_gate_max_retries = 3
-    cfg.health.startup_gate_retry_delay_sec = 0
+    cfg.health.startup_gate_retry_delay_sec = 5
 
     call_count = {"n": 0}
     orig_probe_one = startup_gate._probe_one
@@ -317,7 +317,7 @@ def test_retry_all_attempts_fail(tmp_path, monkeypatch):
 
     cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
     cfg.health.startup_gate_max_retries = 3
-    cfg.health.startup_gate_retry_delay_sec = 0
+    cfg.health.startup_gate_retry_delay_sec = 5
 
     _patch_providers(monkeypatch, {
         "anthropic_compatible": _FakeProvider(exc=RuntimeError("timeout")),
@@ -337,7 +337,7 @@ def test_notification_called_on_pause(tmp_path, monkeypatch):
     cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
     cfg.runtime.paused = False
     cfg.health.startup_gate_max_retries = 1
-    cfg.health.startup_gate_retry_delay_sec = 0
+    cfg.health.startup_gate_retry_delay_sec = 5
     _patch_providers(monkeypatch, {
         "anthropic_compatible": _FakeProvider(exc=RuntimeError("connection failed")),
     })
@@ -643,7 +643,7 @@ def test_mixed_dns_and_non_dns_failures_still_retry(tmp_path, monkeypatch):
 
     cfg = _cfg_with({"a": True, "b": True}, "a")
     cfg.health.startup_gate_max_retries = 2
-    cfg.health.startup_gate_retry_delay_sec = 0
+    cfg.health.startup_gate_retry_delay_sec = 5
 
     _patch_providers(monkeypatch, {
         "a": _FakeProvider(exc=httpx.ConnectError("getaddrinfo failed")),

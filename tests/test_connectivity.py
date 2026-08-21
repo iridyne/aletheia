@@ -419,7 +419,7 @@ async def test_auto_resume_on_connectivity_restored(tmp_path, monkeypatch):
     cfg = load_config()
     cfg.exchange.name = "okx"
     _claim_connectivity_pause(cfg)
-    cfg.health.exchange_auto_resume_interval_sec = 0
+    cfg.health.exchange_auto_resume_interval_sec = 10
     cfg.health.exchange_auto_resume_success_threshold = 2
     save_config(cfg)
 
