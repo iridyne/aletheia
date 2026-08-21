@@ -1103,3 +1103,130 @@ class TestAutoDeposit:
 
         events = repo.list_capital_events()
         assert len(events) == 1
+
+
+# ---------- Issue #1247: today_raw_closed_realized_pnl fail-closed semantics ----------
+
+class TestTodayRawClosedRealizedPnl:
+    """today_raw_closed_realized_pnl / today_realized_pnl must return None when any
+    close today has incomplete economics (unavailable_count > 0).
+
+    The structured compute_portfolio path continues returning partial + completeness
+    metadata unchanged.
+    """
+
+    def _insert_complete_spot_close(
+        self,
+        *,
+        position_id: str,
+        realized_pnl: float,
+        execution_mode: str = "paper_internal",
+    ) -> None:
+        """Insert a spot close with fully-reproducible economics today (UTC)."""
+        from tests.test_outcome_closure import _insert_closed_position_via_producer
+
+        today = datetime.now(timezone.utc).isoformat()
+        _insert_closed_position_via_producer(
+            position_id=position_id,
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=1.0,
+            entry_price=100.0,
+            realized_pnl=realized_pnl,
+            execution_mode=execution_mode,
+            closed_at=today,
+        )
+
+    def _insert_incomplete_close(
+        self,
+        position_id: str,
+        *,
+        execution_mode: str = "paper_internal",
+    ) -> None:
+        """Insert a futures close with NULL funding (economics incomplete)."""
+        from aletheia.storage.models import Position
+        from aletheia.storage import repositories as repo
+
+        closed_at = datetime.now(timezone.utc).isoformat()
+        repo.insert_position(Position(
+            id=position_id,
+            symbol="ETH/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            quantity=0.1,
+            entry_price=100.0,
+            current_price=102.0,
+            execution_mode=execution_mode,
+            status="closed",
+            realized_pnl=None,
+            funding_cost=None,
+            funding_source="unavailable",
+            close_reason="max_hold",
+            close_category="neutral",
+            entry_fee=0.001,
+            exit_fee=0.001,
+            exit_price_source="exchange",
+            exit_fill_verified=True,
+            outcome_eligible=False,
+            outcome_exclusion_reason="incomplete_funding_economics",
+            outcome_semantics_version="oi-v1",
+            closed_at=closed_at,
+        ))
+
+    def test_all_complete_closes_returns_numeric_total(self, db):
+        """All closes complete: scalar returns the exact sum."""
+        from aletheia.portfolio.pnl import today_realized_pnl, today_raw_closed_realized_pnl
+
+        self._insert_complete_spot_close(position_id="c-all-1", realized_pnl=-5.0)
+        self._insert_complete_spot_close(position_id="c-all-2", realized_pnl=2.0)
+
+        result = today_realized_pnl()
+        assert result == pytest.approx(-3.0)
+        assert today_raw_closed_realized_pnl() == pytest.approx(-3.0)
+
+    def test_mixed_complete_and_incomplete_returns_none(self, db):
+        """One incomplete close contaminates the scalar: must return None."""
+        from aletheia.portfolio.pnl import today_realized_pnl, today_raw_closed_realized_pnl
+
+        self._insert_complete_spot_close(position_id="m-complete", realized_pnl=-5.0)
+        self._insert_incomplete_close("m-incomplete")
+
+        assert today_realized_pnl() is None
+        assert today_raw_closed_realized_pnl() is None
+
+    def test_no_closes_today_returns_zero(self, db):
+        """No closes today: scalar returns 0 (existing zero behavior unchanged)."""
+        from aletheia.portfolio.pnl import today_realized_pnl
+
+        assert today_realized_pnl() == pytest.approx(0.0)
+
+    def test_mixed_does_not_contaminate_other_mode(self, db):
+        """Incomplete close in mode A must not make mode B's scalar unavailable."""
+        from aletheia.portfolio.pnl import today_realized_pnl
+
+        self._insert_complete_spot_close(
+            position_id="mode-b-complete",
+            realized_pnl=-5.0,
+            execution_mode="bitget_demo",
+        )
+        self._insert_incomplete_close(
+            "mode-a-incomplete",
+            execution_mode="paper_internal",
+        )
+
+        # paper_internal has an incomplete close → None
+        assert today_realized_pnl(execution_mode="paper_internal") is None
+        # bitget_demo has only complete closes → numeric
+        assert today_realized_pnl(execution_mode="bitget_demo") == pytest.approx(-5.0)
+
+    def test_mixed_compute_portfolio_still_returns_partial_total_with_metadata(self, db):
+        """compute_portfolio structured path exposes partial sum + completeness flag."""
+        self._insert_complete_spot_close(position_id="p-complete", realized_pnl=-5.0)
+        self._insert_incomplete_close("p-incomplete")
+
+        portfolio = compute_portfolio()
+        assert portfolio["today_realized_pnl_complete"] is False
+        assert portfolio["today_realized_pnl_unavailable_count"] == 1
+        # partial sum still surfaces in the structured result
+        assert portfolio["today_realized_pnl"] == pytest.approx(-5.0)

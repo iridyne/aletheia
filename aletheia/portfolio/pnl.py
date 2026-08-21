@@ -1327,8 +1327,8 @@ def today_raw_closed_realized_pnl(
     execution_mode: str | None = None,
 ) -> float | None:
     """Raw stored realized total, or unavailable if any close is incomplete."""
-    total, _ = _complete_realized_total(_closed_today(execution_mode))
-    return total
+    total, unavailable = _complete_realized_total(_closed_today(execution_mode))
+    return None if unavailable > 0 else total
 
 
 def today_eligible_strategy_pnl(execution_mode: str | None = None) -> float:
