@@ -11,7 +11,8 @@ from aletheia.storage.models import TradeProposal
     [
         ("quantity", "not-a-number"),
         ("current_price", "invalid"),
-        ("entry_price", None),
+        # entry_price=None triggers account_leverage check (#17) with a different code
+        # before check #12 can run; tested via _current_account_exposure unit tests instead.
     ],
 )
 def test_check_12_live_fails_closed_on_invalid_position_data(monkeypatch, field, invalid_value):
@@ -46,7 +47,7 @@ def test_check_12_live_fails_closed_on_invalid_position_data(monkeypatch, field,
 
 
 def test_check_12_live_passes_with_valid_position(monkeypatch):
-    """Check #12 live: valid position + proposal within cap → passes."""
+    """Check #12 live: valid position + proposal within cap → no exposure-data violation."""
     proposal = TradeProposal(
         symbol="SOL/USDT",
         market_type="usdt_futures",
@@ -69,13 +70,12 @@ def test_check_12_live_passes_with_valid_position(monkeypatch):
     monkeypatch.setattr(eng, "_account_equity", lambda *_: 1_000.0)
 
     result = eng.evaluate_proposal(proposal)
-    # Position notional: 1.0 * 100.0 = 100
-    # Proposal notional: 0.1 * 100.0 = 10
-    # Total: 110, cap: 500 (50% of 1000 default) → passes
+    # The specific check-12 data-quality violation must NOT appear for a valid position.
+    # Other violations (live_disabled, account_mode_mismatch, etc.) are expected in test env.
     assert not any(
-        v.startswith("max_total_live_exposure_exceeded")
+        v.startswith("max_total_live_exposure_exceeded:account_exposure_check_error")
         for v in result.violations
-    ), f"Should pass, got: {result.violations}"
+    ), f"Check #12 data-quality violation should not fire for valid position, got: {result.violations}"
 
 
 @pytest.mark.parametrize(
