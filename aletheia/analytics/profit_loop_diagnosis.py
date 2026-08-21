@@ -260,18 +260,42 @@ def diagnose_position_fact(fact: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _group_returns(facts: Iterable[Mapping[str, Any]], predicate) -> list[float]:
+def _group_returns(facts: Iterable[Mapping[str, Any]], predicate) -> tuple[list[float], dict[str, int]]:
+    """Group returns from candidate facts, routing through shared eligibility assessor.
+
+    #1269: All rows must pass assess_candidate_outcome(), not direct settled+finite check.
+    Returns (eligible_values, rejection_reasons).
+    """
+    from aletheia.learning.outcomes import assess_candidate_outcome
+    
     values = []
+    rejection_reasons: dict[str, int] = {}
     for fact in facts:
         if not predicate(fact):
             continue
         outcome = fact.get("fixed_horizon_outcome")
-        if not isinstance(outcome, Mapping) or outcome.get("status") != "settled":
+        if not isinstance(outcome, Mapping):
+            rejection_reasons["missing_outcome"] = rejection_reasons.get("missing_outcome", 0) + 1
             continue
-        value = _finite(outcome.get("net_return_pct"))
-        if value is not None:
-            values.append(value)
-    return values
+        
+        # Build a row dict for assess_candidate_outcome
+        candidate_row = {
+            "status": outcome.get("status"),
+            "entry_ts": fact.get("first_exposure", {}).get("entry_ts") if isinstance(fact.get("first_exposure"), dict) else None,
+            "direction": fact.get("first_exposure", {}).get("direction") if isinstance(fact.get("first_exposure"), dict) else None,
+            "net_return_pct": outcome.get("net_return_pct"),
+            "cost_model_version": outcome.get("cost_model_version"),
+            "outcome_candidate_key": fact.get("outcome_candidate_key"),
+            "horizon": fact.get("fixed_horizon"),
+        }
+        
+        assessment = assess_candidate_outcome(candidate_row)
+        if assessment.eligible:
+            values.append(assessment.net_return_pct)
+        else:
+            rejection_reasons[assessment.reason] = rejection_reasons.get(assessment.reason, 0) + 1
+    
+    return values, rejection_reasons
 
 
 def _candidate_kind(fact: Mapping[str, Any]) -> str:
@@ -322,14 +346,25 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         ),
     }
     layers = {}
-    for layer, (baseline, observed) in comparisons.items():
+    total_eligible_all = 0
+    total_excluded_all = 0
+    for layer, ((baseline, baseline_rejected), (observed, observed_rejected)) in comparisons.items():
+        layer_eligible = len(baseline) + len(observed)
+        # Merge rejection reasons from both populations
+        all_rejected: dict[str, int] = {}
+        for src in (baseline_rejected, observed_rejected):
+            for reason, count in src.items():
+                all_rejected[reason] = all_rejected.get(reason, 0) + count
+        layer_excluded = sum(all_rejected.values())
         baseline_mean = statistics.fmean(baseline) if baseline else None
         observed_mean = statistics.fmean(observed) if observed else None
+        # #1269: all-ineligible groups → insufficient_data not directional
         layers[layer] = {
             "status": "directional" if baseline and observed else "insufficient_data",
-            "raw_count": len(baseline) + len(observed),
-            "eligible_count": len(baseline) + len(observed),
-            "excluded_count": max(0, len(facts) - len(baseline) - len(observed)),
+            "raw_count": layer_eligible + layer_excluded,
+            "eligible_count": layer_eligible,
+            "excluded_count": layer_excluded,
+            "exclusion_reasons": all_rejected,
             "baseline": baseline_mean,
             "observed": observed_mean,
             "delta_pct": (
@@ -338,6 +373,8 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
             "statistical_unit": "outcome_candidate_key",
             "economic_unit": "fixed_horizon_net_return_pct",
         }
+        total_eligible_all += layer_eligible
+        total_excluded_all += layer_excluded
     return {
         "contract_version": DIAGNOSIS_CONTRACT_VERSION,
         "fact_unit": "candidate_fact",
@@ -346,7 +383,8 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         "as_of_at": report.get("as_of_at"),
         "fixed_horizon": report.get("fixed_horizon"),
         "raw_count": len(facts),
-        "eligible_count": int(report.get("settled_outcome_count") or 0),
+        "eligible_count": total_eligible_all,
+        "excluded_count": total_excluded_all,
         "coverage": report.get("outcome_coverage"),
         "layers": layers,
     }

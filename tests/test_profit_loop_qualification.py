@@ -348,3 +348,130 @@ def test_identity_filter_prevents_epoch_pooling(monkeypatch):
     assert result["metrics"]["total_eligible_closes"] == 4
     assert result["metrics"]["net_realized_pnl"] < 0
     assert result["funnel"]["identity_mismatched_count"] == 6
+
+
+# ---------------------------------------------------------------------------
+# #1261 — UTC-normalized timestamp comparisons
+# ---------------------------------------------------------------------------
+
+def test_utc_equivalent_timestamps_all_included(monkeypatch):
+    """opened_at as Z, +00:00, and -05:00 (adjusted to UTC) all ≥ registration_at are included."""
+    # registration_at is 2026-01-01T00:00:00+00:00
+    # opened_at variants that are UTC-equal to 2026-01-02T12:00:00Z
+    variants = [
+        "2026-01-02T12:00:00Z",
+        "2026-01-02T12:00:00+00:00",
+        "2026-01-02T07:00:00-05:00",  # == 12:00 UTC
+    ]
+    outcomes = [
+        {
+            "realized_pnl": 1.0,
+            "opened_at": opened,
+            "closed_at": f"2026-01-0{3 + i}T12:00:00+00:00",
+            "execution_mode": "paper_internal",
+            "status": "closed",
+        }
+        for i, opened in enumerate(variants)
+    ]
+    monkeypatch.setattr(qual_module, "eligible_strategy_outcomes", lambda **_: outcomes)
+    monkeypatch.setattr(
+        qual_module,
+        "build_outcome_cohort_summary",
+        lambda **_: {"raw_event_count": 3, "eligible_outcome_count": 3,
+                     "excluded_outcome_count": 0, "outcome_exclusion_reasons": {}},
+    )
+    result = compile_qualification_verdict(registration=_REGISTRATION)
+    assert result["metrics"]["total_eligible_closes"] == 3
+
+
+def test_positive_offset_before_registration_excluded(monkeypatch):
+    """opened_at with positive offset whose UTC instant is before registration_at → excluded."""
+    # registration_at is 2026-01-01T00:00:00Z
+    # 2025-12-31T20:00:00-05:00 = 2026-01-01T01:00:00Z which is AFTER — use something before
+    # 2025-12-31T22:00:00+03:00 = 2025-12-31T19:00:00Z which is BEFORE registration_at
+    outcomes = [
+        {
+            "realized_pnl": 1.0,
+            "opened_at": "2025-12-31T22:00:00+03:00",  # UTC: 2025-12-31T19:00:00Z — before reg
+            "closed_at": "2026-01-03T12:00:00+00:00",
+            "execution_mode": "paper_internal",
+            "status": "closed",
+        }
+    ]
+    monkeypatch.setattr(qual_module, "eligible_strategy_outcomes", lambda **_: outcomes)
+    monkeypatch.setattr(
+        qual_module,
+        "build_outcome_cohort_summary",
+        lambda **_: {"raw_event_count": 1, "eligible_outcome_count": 1,
+                     "excluded_outcome_count": 0, "outcome_exclusion_reasons": {}},
+    )
+    result = compile_qualification_verdict(registration=_REGISTRATION)
+    assert result["metrics"]["total_eligible_closes"] == 0
+
+
+# ---------------------------------------------------------------------------
+# #1249 — Loss-first drawdown from starting_equity
+# ---------------------------------------------------------------------------
+
+def test_loss_first_drawdown_from_starting_equity(monkeypatch):
+    """[-1, -1, +5] cohort: drawdown correctly reflects loss from starting_equity."""
+    _patch_outcomes(monkeypatch, [-1.0, -1.0, 5.0])
+    # starting_equity=10: peak=10, trough=8 after two -1s, dd=2/10=0.2
+    result = compile_qualification_verdict(
+        registration=_REGISTRATION, starting_equity=10.0
+    )
+    assert result["metrics"]["max_drawdown_from_peak"] == pytest.approx(0.2)
+
+
+def test_loss_first_drawdown_from_zero_starting_equity(monkeypatch):
+    """[-1, -1, +5] cohort with no starting_equity: peak=3, trough computed correctly."""
+    _patch_outcomes(monkeypatch, [-1.0, -1.0, 5.0])
+    # starting_equity defaults to 0: peak goes to 3 (after +5), but drawdown from 0
+    # -1: equity=-1, peak=0, peak<=0 and equity<peak → max_dd=1.0
+    result = compile_qualification_verdict(registration=_REGISTRATION)
+    assert result["metrics"]["max_drawdown_from_peak"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# #1251 — Cohort truncation (10k cap)
+# ---------------------------------------------------------------------------
+
+def test_10001_rows_returns_insufficient_data(monkeypatch):
+    """If source_raw_event_count >= 10000 and loaded < source, return insufficient_data."""
+    # Simulate window summary reporting 10001 raw events
+    outcomes = _make_outcomes([1.0] * 5)
+
+    def _mock_eligible(**_):
+        return outcomes
+
+    def _mock_summary(**kw):
+        # window call (no runtime_session_id) reports 10001; identity call reports 5
+        if "runtime_session_id" not in kw:
+            return {"raw_event_count": 10001, "eligible_outcome_count": 10001,
+                    "excluded_outcome_count": 0, "outcome_exclusion_reasons": {}}
+        return {"raw_event_count": 5, "eligible_outcome_count": 5,
+                "excluded_outcome_count": 0, "outcome_exclusion_reasons": {}}
+
+    monkeypatch.setattr(qual_module, "eligible_strategy_outcomes", _mock_eligible)
+    monkeypatch.setattr(qual_module, "build_outcome_cohort_summary", _mock_summary)
+    result = compile_qualification_verdict(registration=_REGISTRATION)
+    assert result["verdict"] == "insufficient_data"
+    assert result["funnel"]["source_raw_event_count"] == 10001
+
+
+# ---------------------------------------------------------------------------
+# #1261 — Invalid registration_at fails closed
+# ---------------------------------------------------------------------------
+
+def test_invalid_registration_at_raises():
+    """Non-ISO or naive registration_at must raise ValueError (fail closed)."""
+    reg = {**_REGISTRATION, "registration_at": "not-a-date"}
+    with pytest.raises(ValueError):
+        compile_qualification_verdict(registration=reg)
+
+
+def test_naive_registration_at_raises():
+    """Naive timestamp (no timezone) in registration_at must raise ValueError."""
+    reg = {**_REGISTRATION, "registration_at": "2026-01-01T00:00:00"}
+    with pytest.raises(ValueError):
+        compile_qualification_verdict(registration=reg)

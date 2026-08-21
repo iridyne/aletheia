@@ -16,14 +16,28 @@ def build_trade_insights() -> dict:
     from aletheia.analytics.outcome_integrity import (
         build_outcome_cohort_summary,
         eligible_strategy_outcomes,
+        raw_account_events,
     )
 
     rows = eligible_strategy_outcomes(closed_after=_SINCE_UTC)
+    raw_rows = raw_account_events(closed_after=_SINCE_UTC, limit=10_000)
+    
+    # #1254: truncation metadata
+    source_total = len(raw_rows)
+    loaded_count = len(rows)
+    cohort_complete = loaded_count < 10_000
+    loaded_from = rows[0]["closed_at"] if rows else None
+    loaded_through = rows[-1]["closed_at"] if rows else None
 
     return {
         **build_outcome_cohort_summary(closed_after=_SINCE_UTC),
         "since":                  _SINCE_UTC,
-        "trade_count":            len(rows),
+        "trade_count":            loaded_count,
+        "source_total_raw_events": source_total,
+        "loaded_count":           loaded_count,
+        "cohort_complete":        cohort_complete,
+        "loaded_from":            loaded_from,
+        "loaded_through":         loaded_through,
         "equity_curve":           _equity_curve(rows),
         "drawdown_curve":         _drawdown_curve(rows),
         "by_direction":           _by_direction(rows),
@@ -247,9 +261,12 @@ def _pnl_distribution(rows) -> list[dict]:
 
 
 def _by_regime(rows) -> list[dict]:
+    from aletheia.regime.detector import REGIME_BULL, REGIME_BEAR, REGIME_SIDEWAYS, REGIME_VOLATILE
+
     buckets: dict[str, dict] = {}
     for r in rows:
-        regime = r["regime_tag"] or "unknown"
+        tag = r["regime_tag"]
+        regime = tag if tag and str(tag).strip() else "unknown"
         if regime not in buckets:
             buckets[regime] = {"trade_count": 0, "wins": 0, "total_pnl_pct": 0.0}
         b = buckets[regime]
@@ -258,8 +275,12 @@ def _by_regime(rows) -> list[dict]:
             b["wins"] += 1
         b["total_pnl_pct"] += _pnl_pct(r)
 
+    # #1259: canonical states always emitted; historical extras appended
+    canonical = [REGIME_BULL, REGIME_BEAR, REGIME_SIDEWAYS, REGIME_VOLATILE, "unknown"]
+    extras = sorted(k for k in buckets if k not in canonical)
+
     result = []
-    for regime in ("risk_on", "risk_off", "unknown"):
+    for regime in canonical + extras:
         b = buckets.get(regime, {"trade_count": 0, "wins": 0, "total_pnl_pct": 0.0})
         tc = b["trade_count"]
         result.append({
@@ -268,6 +289,10 @@ def _by_regime(rows) -> list[dict]:
             "win_rate": round(b["wins"] / tc * 100, 1) if tc else 0.0,
             "avg_pnl_pct": round(b["total_pnl_pct"] / tc, 2) if tc else 0.0,
         })
+
+    # Conservation: every input row must appear exactly once
+    assert sum(r["trade_count"] for r in result) == len(rows)
+
     return result
 
 
@@ -452,42 +477,104 @@ def _hold_duration_buckets(rows) -> list[dict]:
     return result
 
 
-def _r_multiple_distribution(rows) -> list[dict]:
-    """R-Multiple distribution (risk-normalized returns)."""
-    r_values: list[float] = []
-    for r in rows:
-        pnl = r["realized_pnl"] or 0.0
-        entry = r["entry_price"] or 0.0
-        stop = r["stop_price"] if "stop_price" in r.keys() else None
-        qty = r["quantity"] or 0.0
+def _r_multiple_distribution(rows) -> dict:
+    """R-Multiple distribution (risk-normalized returns).
 
-        if stop and entry and qty and stop != entry:
-            initial_risk = abs(entry - stop) * qty
-            if initial_risk > 0:
-                r_mult = pnl / initial_risk
-                r_values.append(r_mult)
-        elif entry and qty:
-            # Fallback: use 2% of notional as proxy risk
-            notional = entry * qty
-            proxy_risk = notional * 0.02
-            if proxy_risk > 0:
-                r_mult = pnl / proxy_risk
-                r_values.append(r_mult)
+    #1256: Only uses frozen verified initial risk from the position plan.
+    Rows without verified initial risk are counted as unavailable; 2%-of-notional
+    proxy is explicitly removed.
+    """
+    from aletheia.analytics.entry_exit_geometry import _initial_risk as _compute_initial_risk
+    from aletheia.storage import repositories as repo
+    try:
+        from aletheia.storage.sqlite import readonly_db
+        _db_context = readonly_db
+    except Exception:
+        _db_context = None
 
-    # Bins: <-3R, -3~-2, -2~-1, -1~0, 0~1, 1~2, 2~3, 3~5, >5R
     _BINS = [
         ("<-3R", -1e9, -3), ("-3R~-2R", -3, -2), ("-2R~-1R", -2, -1),
         ("-1R~0", -1, 0), ("0~+1R", 0, 1), ("+1R~+2R", 1, 2),
         ("+2R~+3R", 2, 3), ("+3R~+5R", 3, 5), (">+5R", 5, 1e9),
     ]
     counts = {label: 0 for label, _, _ in _BINS}
-    for rv in r_values:
-        for label, lo, hi in _BINS:
-            if lo <= rv < hi:
-                counts[label] += 1
-                break
+    unavailability_reasons: dict[str, int] = {}
+    eligible_r_count = 0
+    unavailable_r_count = 0
 
-    return [{"bin": label, "count": counts[label]} for label, _, _ in _BINS]
+    def _get_initial_risk_verified(row, db):
+        """Try to get verified initial risk from frozen plan evidence."""
+        try:
+            position_id = str(row.get("id") or row.get("position_id") or "")
+            position = (db or repo.get_db()).execute(
+                "SELECT * FROM positions WHERE id=?", (position_id,)
+            ).fetchone()
+            if position is None:
+                return None, "position_not_found"
+            position = dict(position)
+            proposal_id = position.get("proposal_id")
+            proposal = None
+            if proposal_id:
+                p_row = (db or repo.get_db()).execute(
+                    "SELECT * FROM trade_proposals WHERE id=?", (proposal_id,)
+                ).fetchone()
+                if p_row:
+                    proposal = dict(p_row)
+            plans_rows = (db or repo.get_db()).execute(
+                "SELECT * FROM position_exit_plan_versions WHERE position_id=? ORDER BY version ASC",
+                (position_id,),
+            ).fetchall()
+            plans = [dict(r) for r in plans_rows] if plans_rows else None
+
+            # Build a minimal geometry dict (we only need proposal_geometry_status)
+            # Use a simple proxy: if proposal fields are present, mark available
+            from aletheia.analytics.entry_exit_geometry import _proposal_geometry
+            geometry = _proposal_geometry(row if isinstance(row, dict) else dict(row), proposal, position, db=db)
+            result = _compute_initial_risk(row if isinstance(row, dict) else dict(row), position, proposal, plans, geometry, db=db)
+            if result.get("initial_risk_status") == "available":
+                return result.get("initial_risk_amount"), None
+            return None, result.get("initial_risk_reason", "unavailable")
+        except Exception as exc:
+            return None, f"read_error:{type(exc).__name__}"
+
+    db_ctx = None
+    try:
+        if _db_context is not None:
+            db_cm = _db_context()
+            db_ctx = db_cm.__enter__()
+    except Exception:
+        db_ctx = None
+        db_cm = None
+
+    try:
+        for r in rows:
+            pnl = r["realized_pnl"] or 0.0
+            initial_risk, reason = _get_initial_risk_verified(r, db_ctx)
+            if initial_risk is None or initial_risk <= 0:
+                reject_reason = reason or "initial_risk_unavailable"
+                unavailability_reasons[reject_reason] = unavailability_reasons.get(reject_reason, 0) + 1
+                unavailable_r_count += 1
+                continue
+            r_mult = pnl / initial_risk
+            eligible_r_count += 1
+            for label, lo, hi in _BINS:
+                if lo <= r_mult < hi:
+                    counts[label] += 1
+                    break
+    finally:
+        if db_ctx is not None and db_cm is not None:
+            try:
+                db_cm.__exit__(None, None, None)
+            except Exception:
+                pass
+
+    return {
+        "bins": [{"bin": label, "count": counts[label]} for label, _, _ in _BINS],
+        "eligible_r_multiple_count": eligible_r_count,
+        "unavailable_r_multiple_count": unavailable_r_count,
+        "unavailability_reasons": unavailability_reasons,
+    }
+
 
 
 def _reason_of(row) -> str:

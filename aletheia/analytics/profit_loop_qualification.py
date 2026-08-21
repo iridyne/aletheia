@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timezone
+from aletheia.analytics.profit_gradient_evidence import _parse_utc, _iso
 from typing import Any
 
 from aletheia.analytics.outcome_integrity import (
@@ -71,12 +72,16 @@ def _profit_factor(pnls: list[float]) -> float | None:
     return round(wins / losses, 6)
 
 
-def _max_drawdown_from_peak(ordered_pnls: list[float]) -> float | None:
-    """Max drawdown as fraction of peak cumulative equity."""
+def _max_drawdown_from_peak(ordered_pnls: list[float], starting_equity: float = 0.0) -> float | None:
+    """Max drawdown as fraction of peak cumulative equity.
+
+    starting_equity defaults to 0 so loss-first cohorts are captured correctly.
+    When peak is exactly 0 and equity goes negative, returns 1.0 (total loss from flat).
+    """
     if not ordered_pnls:
         return None
-    peak = 0.0
-    equity = 0.0
+    peak = starting_equity
+    equity = starting_equity
     max_dd = 0.0
     for pnl in ordered_pnls:
         equity += pnl
@@ -86,15 +91,18 @@ def _max_drawdown_from_peak(ordered_pnls: list[float]) -> float | None:
             dd = (peak - equity) / peak
             if dd > max_dd:
                 max_dd = dd
+        elif equity < peak:
+            # peak <= 0 and equity fell further: treat as full drawdown
+            max_dd = 1.0
     return round(max_dd, 6)
 
 
 def compile_qualification_verdict(
     *,
     registration: dict[str, Any],
+    starting_equity: float | None = None,
 ) -> dict[str, Any]:
     """Evaluate a frozen policy cohort and return an immutable hashed verdict.
-
     Parameters
     ----------
     registration:
@@ -134,67 +142,92 @@ def compile_qualification_verdict(
     execution_mode = str(registration["execution_mode"])
 
     # Temporal consistency: registration must precede the declared stopping rule.
-    try:
-        reg_dt = datetime.fromisoformat(registration_at.replace("Z", "+00:00"))
-        cut_dt = datetime.fromisoformat(cutoff_at.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ValueError(
-            f"registration_at or cutoff_at is not a valid ISO-8601 timestamp: {exc}"
-        ) from exc
+    reg_dt = _parse_utc(registration_at, field="registration_at")
+    cut_dt = _parse_utc(cutoff_at, field="cutoff_at")
     if reg_dt >= cut_dt:
         raise ValueError(
             f"registration_at ({registration_at!r}) must be strictly before "
             f"cutoff_at ({cutoff_at!r}); preregistration cannot postdate the stopping rule"
         )
-    max_drawdown_cap = _to_float(registration.get("max_drawdown_cap"))
+    # If starting_equity not provided, try pulling from registration; default 0 for loss-first support.
+    if starting_equity is None:
+        starting_equity = _to_float(registration.get("starting_equity"))
+    if starting_equity is None or not math.isfinite(starting_equity):
+        starting_equity = 0.0
     top1_cap = _to_float(registration.get("concentration_top1_cap")) or _DEFAULT_CONCENTRATION_TOP1_CAP
     top5_cap = _to_float(registration.get("concentration_top5_cap")) or _DEFAULT_CONCENTRATION_TOP5_CAP
+    max_drawdown_cap = _to_float(registration.get("max_drawdown_cap"))
 
     # ------------------------------------------------------------------
     # Fetch eligible genuine outcomes for this cohort window
     # ------------------------------------------------------------------
     # Window filters (time + mode only) — used for mismatch counting.
+    # Window filters (time + mode only) — used for mismatch counting.
     window_kwargs: dict[str, Any] = {
         "execution_mode": execution_mode,
-        "closed_after": registration_at,
-        "closed_before": cutoff_at,
+        "closed_after": reg_dt,
+        "closed_before": cut_dt,
     }
 
     # Identity-bound fetch: only rows that prove registration membership.
     fetch_kwargs: dict[str, Any] = {**window_kwargs, "runtime_session_id": runtime_session_id}
 
     all_outcomes = eligible_strategy_outcomes(**fetch_kwargs)
+    exclusion_summary = build_outcome_cohort_summary(**fetch_kwargs)
+    window_summary = build_outcome_cohort_summary(**window_kwargs)
+    source_raw_count = window_summary.get("raw_event_count") or 0
 
     # Post-filter: only positions *opened* on or after the registration date
     # to exclude pre-policy positions that may close inside the window.
     cohort_outcomes = [
         row for row in all_outcomes
-        if str(row.get("opened_at") or "") >= registration_at
+        if _parse_utc(row.get("opened_at") or "", field="opened_at") >= reg_dt
     ]
+    loaded_raw_count = len(cohort_outcomes)
 
-    exclusion_summary = build_outcome_cohort_summary(**fetch_kwargs)
-    window_summary = build_outcome_cohort_summary(**window_kwargs)
+    # If cohort is incomplete (10k limit clipped data), fail closed.
+    # Authority verdict requires a complete cohort.
+    if loaded_raw_count < source_raw_count and source_raw_count >= 10_000:
+        _partial_hash = sha256_json(registration)
+        return {
+            "contract_version": QUALIFICATION_CONTRACT_VERSION,
+            "verdict": "insufficient_data",
+            "registration": registration,
+            "registration_hash": _partial_hash,
+            "metrics": {"reason": "partial_cohort_cannot_prove"},
+            "gates": {},
+            "funnel": {
+                "source_raw_event_count": source_raw_count,
+                "loaded_raw_event_count": loaded_raw_count,
+                "cohort_complete": False,
+            },
+            "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+            "content_hash": "",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
 
     # ------------------------------------------------------------------
     # Metrics
     # ------------------------------------------------------------------
-    pnl_with_time: list[tuple[str, float]] = []
+    pnl_with_time: list[tuple[datetime, float]] = []
     for row in cohort_outcomes:
         pnl = _to_float(row.get("realized_pnl"))
         if pnl is None:
             continue
-        pnl_with_time.append((str(row.get("closed_at") or ""), pnl))
+        closed_dt = _parse_utc(row.get("closed_at") or "", field="closed_at")
+        pnl_with_time.append((closed_dt, pnl))
 
     pnl_with_time.sort(key=lambda x: x[0])
     ordered_pnls = [p for _, p in pnl_with_time]
-    dates = {ts[:10] for ts, _ in pnl_with_time if ts}
+    dates = {dt.date() for dt, _ in pnl_with_time}
 
     net_pnl = round(sum(ordered_pnls), 8) if ordered_pnls else 0.0
     profit_factor = _profit_factor(ordered_pnls)
     win_count = sum(1 for p in ordered_pnls if p > 0)
     loss_count = sum(1 for p in ordered_pnls if p < 0)
     flat_count = sum(1 for p in ordered_pnls if p == 0)
-    max_dd = _max_drawdown_from_peak(ordered_pnls)
+    max_dd = _max_drawdown_from_peak(ordered_pnls, starting_equity)
     top1_conc, top5_conc = _concentration_values(ordered_pnls)
     eligible_days = len(dates)
 
@@ -220,20 +253,19 @@ def compile_qualification_verdict(
         "top5_abs_concentration": top5_conc,
     }
 
-    window_raw = window_summary.get("raw_event_count") or 0
-    identity_raw = exclusion_summary.get("raw_event_count") or 0
     funnel: dict[str, Any] = {
         "raw_event_count": exclusion_summary.get("raw_event_count"),
         "eligible_outcome_count": exclusion_summary.get("eligible_outcome_count"),
         "excluded_outcome_count": exclusion_summary.get("excluded_outcome_count"),
         "cohort_filtered_count": len(ordered_pnls),
         "pre_policy_excluded_count": len(all_outcomes) - len(cohort_outcomes),
-        "identity_mismatched_count": window_raw - identity_raw,
+        "identity_mismatched_count": (window_summary.get("raw_event_count") or 0) - (exclusion_summary.get("raw_event_count") or 0),
         "outcome_exclusion_reasons": exclusion_summary.get("outcome_exclusion_reasons", {}),
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
+        "source_raw_event_count": source_raw_count,
+        "loaded_raw_event_count": loaded_raw_count,
+        "cohort_complete": loaded_raw_count >= source_raw_count or source_raw_count < 10_000,
     }
-
-    # ------------------------------------------------------------------
     # Decision gates
     # ------------------------------------------------------------------
     def _gate(pass_: bool | None, value: Any, threshold: str) -> dict[str, Any]:
@@ -269,7 +301,7 @@ def compile_qualification_verdict(
             f"<= {top5_cap}",
         ),
         "max_drawdown_bounded": (
-            _gate(max_dd is None or max_dd <= max_drawdown_cap, max_dd, f"<= {max_drawdown_cap}")
+            _gate(max_dd is not None and max_dd <= max_drawdown_cap, max_dd, f"<= {max_drawdown_cap}")
             if max_drawdown_cap is not None
             else _gate(None, max_dd, "cap not preregistered — recorded only")
         ),
