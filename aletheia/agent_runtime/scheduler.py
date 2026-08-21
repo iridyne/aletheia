@@ -1230,16 +1230,16 @@ def init_scheduler() -> BackgroundScheduler | None:
         minutes=MARKET_DATA_INTERVAL_MINUTES, id="market_data",
         misfire_grace_time=60, executor="io",
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("market_observer", _run_market_observer), "interval", minutes=10, id="market_observer",
         misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=75),
         executor="observer",
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("dreaming_daily", _run_dreaming_agent), "cron", hour=2, minute=0, id="dreaming_daily",
         misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("serenity_startup_catchup", _run_serenity_startup_catchup),
         "date",
         run_date=datetime.now() + timedelta(minutes=4),
@@ -1249,40 +1249,40 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
     # Evidence-gated review of the lessons dreaming produced — runs after the 2am
     # consolidation so it sees the night's fresh proposed lessons.
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("lesson_reviewer", _run_lesson_reviewer), "cron", hour=3, minute=0,
         id="lesson_reviewer", misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("insight_synthesizer", _run_insight_synthesizer), "cron", hour=2, minute=30,
         id="insight_synthesizer", misfire_grace_time=600, executor="agents", timezone="Asia/Shanghai",
     )
     # Repair at most the latest missed daily Learning window. Successful window
     # keys live in learning_job_health, so ordinary restarts do not duplicate work.
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("learning_startup_catchup", _run_learning_startup_catchup),
         "date", run_date=datetime.now() + timedelta(minutes=5),
         id="learning_startup_catchup", misfire_grace_time=None, executor="agents",
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("confidence_calibration", _run_confidence_calibration), "interval", hours=6,
         id="confidence_calibration", misfire_grace_time=300, executor="io",
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("reconciliation", _run_reconciliation), "interval", minutes=2, id="reconciliation",
         misfire_grace_time=60, executor="io",
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("portfolio_snapshot", _run_portfolio_snapshot), "interval", minutes=10, id="portfolio_snapshot",
         misfire_grace_time=120, executor="default",
         next_run_time=datetime.now() + timedelta(seconds=30),
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("exchange_sync", _run_exchange_sync), "interval", minutes=5, id="exchange_sync",
         misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=10),
         executor="io",
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("position_path_observer", _run_position_path_observer),
         "interval",
         minutes=5,
@@ -1295,7 +1295,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     # (60min TTL) ~20. Was 5-min (6 / 12), which combined with the change-suppression
     # TTL bug (fixed in repositories.refresh_active_snapshot_ttls) starved fast
     # families of review opportunities. Well below any SQLite/agent-executor budget.
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("paper_trader", _run_paper_trader), "interval", minutes=3, id="paper_trader",
         misfire_grace_time=60, executor="agents",
     )
@@ -1305,16 +1305,16 @@ def init_scheduler() -> BackgroundScheduler | None:
     # (that is the daemon's internal fallback-poll timeout, default 60s) — doing so made
     # this job fire every 1min, far more often than the contract's ~15min (A5 fix).
     _pi_fallback_min = 15
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("pi_trading_heartbeat", _run_pi_trading_decision), "interval", minutes=_pi_fallback_min,
         id="pi_trading_decision", misfire_grace_time=120,
         next_run_time=datetime.now() + timedelta(minutes=7), executor="agents",
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("price_feed", _run_price_feed), "interval", seconds=30, id="price_feed",
         misfire_grace_time=15, executor="fast_io",
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("connectivity_monitor", _run_connectivity_monitor), "interval",
         seconds=cfg.health.exchange_probe_interval_sec, id="connectivity_monitor",
         misfire_grace_time=15, next_run_time=datetime.now() + timedelta(seconds=10),
@@ -1325,16 +1325,16 @@ def init_scheduler() -> BackgroundScheduler | None:
     # window where a stop/target could be crossed and recover before the next
     # sampled mark.  Match the available mark cadence; this remains sampled-paper
     # semantics and does not claim exchange-native or tick-level triggering.
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("position_manager", _run_position_manager), "interval", seconds=30,
         id="position_manager", misfire_grace_time=60, executor="protective",
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("position_reconcile", _run_position_reconcile), "interval", minutes=5, id="position_reconcile",
         misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=20),
         executor="io",
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("tpsl_fill_check", _run_tpsl_fill_check), "interval", seconds=90, id="tpsl_fill_check",
         misfire_grace_time=30, next_run_time=datetime.now() + timedelta(seconds=45),
         executor="io",
@@ -1345,18 +1345,18 @@ def init_scheduler() -> BackgroundScheduler | None:
         # missed while the Gateway was offline. Run the same guarded job after
         # readiness, never inside Gateway cold start.
         cleanup_initial_run = datetime.now() + timedelta(minutes=5)
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("cleanup", _run_cleanup), "cron", hour=3, minute=17, id="cleanup",
         misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
         **({"next_run_time": cleanup_initial_run} if cleanup_initial_run else {}),
     )
     # Forward catch-up for shadow trades that the event-driven resolver missed
     # (parent positions with no opportunity_id). DB-only; cheap; bounded per run.
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("shadow_resolver", _run_shadow_resolver), "interval", hours=6,
         id="shadow_resolver", misfire_grace_time=300, executor="io",
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("outcome_hook_replay", _run_outcome_hook_replay),
         "interval",
         minutes=1,
@@ -1366,13 +1366,13 @@ def init_scheduler() -> BackgroundScheduler | None:
         executor="io",
         next_run_time=datetime.now() + timedelta(seconds=15),
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("health_check", _run_health_check), "interval", minutes=10, id="health_check",
         misfire_grace_time=120, executor="io",
     )
     # Persona rollout state machine: retained on the 8h schedule as a bounded
     # evidence recheck; it can only advance one exact step or refreeze.
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("persona_rollout", _run_persona_rollout), "interval", hours=8,
         id="persona_rollout", misfire_grace_time=600, executor="io",
     )
@@ -1393,7 +1393,7 @@ def init_scheduler() -> BackgroundScheduler | None:
         and getattr(cfg, "controller", None)
         and cfg.controller.shadow_enabled
     ):
-        _scheduler.add_job(
+        sched.add_job(
             _guarded("filter_controller_observe", _run_filter_controller_observe), "interval",
             hours=max(1, int(cfg.controller.observe_interval_hours)),
             id="filter_controller_observe", misfire_grace_time=600, executor="io",
@@ -1405,13 +1405,13 @@ def init_scheduler() -> BackgroundScheduler | None:
             "observation.execution_owner=worker (sibling aletheia-observer owns cycle)"
         )
     # News RSS feed collector — fetches enabled feeds every N minutes (default 15).
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("news_fetch", _run_news_fetch), "interval",
         minutes=cfg.news.fetch_interval_minutes, id="news_fetch",
         misfire_grace_time=120, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=30),
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("news_analyze", _run_news_analyze), "interval",
         minutes=5, id="news_analyze",
         misfire_grace_time=120, executor="agents",
@@ -1421,37 +1421,37 @@ def init_scheduler() -> BackgroundScheduler | None:
     # (14:30–21:00 UTC = 09:30–16:00 Eastern). Unified agent: yfinance daily bars
     # + Bitget xStocks real-time price cross-validation. Replaces stock_observer.
     # hour="14-21" so the last fire at 21:00 covers the closing auction (highest volume).
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("equity_observer", _run_equity_observer), "cron",
         day_of_week="mon-fri", hour="14-21", minute="*/30",
         id="equity_observer", misfire_grace_time=300, executor="agents", timezone="UTC",
     )
     # Prediction market observer — runs every 30 min around the clock.
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("prediction_observer", _run_prediction_observer), "interval", minutes=30,
         id="prediction_observer", misfire_grace_time=120, executor="agents",
     )
     # Post-trade reviewer — reviews closed positions every 4 hours.
     # Delay first run by 5 min so LLM-heavy jobs don't compete with market_data
     # at startup (ThreadPool=3, and LLM calls can block a slot for minutes).
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("post_trade_reviewer", _run_post_trade_reviewer), "interval", hours=4,
         id="post_trade_reviewer", misfire_grace_time=300,
         next_run_time=datetime.now() + timedelta(minutes=5), executor="agents",
     )
     # Risk critic — reviews risk decisions and writes lessons every 6 hours.
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("risk_critic", _run_risk_critic), "interval", hours=6,
         id="risk_critic", misfire_grace_time=300,
         next_run_time=datetime.now() + timedelta(minutes=10), executor="agents",
     )
     # Universe Generator — dynamic asset pool refresh.
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("universe_refresh", _run_universe_refresh), "interval", minutes=10,
         id="universe_refresh", misfire_grace_time=120, max_instances=1, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=90),
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded(
             "universe_scanner_audit_reconciler",
             _run_universe_scanner_audit_reconciler,
@@ -1463,19 +1463,19 @@ def init_scheduler() -> BackgroundScheduler | None:
     # Independent outcome settler — settles overdue forward-outcome rows that feed
     # the learning pipeline.  Runs unconditionally (not gated on universe.enabled)
     # so the attribution chain keeps ticking even when the universe scan is off.
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("outcome_settler", _run_outcome_settler), "interval", minutes=10,
         id="outcome_settler", misfire_grace_time=120, max_instances=1, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=120),
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("paper_funding_settler", _run_paper_funding_settler),
         "interval", minutes=30,
         id="paper_funding_settler", misfire_grace_time=120, max_instances=1,
         executor="io",
         next_run_time=datetime.now() + timedelta(minutes=3),
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("broker_funding_settler", _run_broker_funding_settler),
         "interval", minutes=30,
         id="broker_funding_settler", misfire_grace_time=120, max_instances=1,
@@ -1489,26 +1489,26 @@ def init_scheduler() -> BackgroundScheduler | None:
     _learning_evaluator_initial_run = _initial_learning_evaluator_run_time(
         _learning_interval,
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("learning_contribution_evaluator", _run_learning_contribution_evaluator),
         "interval", minutes=_learning_interval, id="learning_contribution_evaluator",
         misfire_grace_time=300, max_instances=1, coalesce=True,
         executor="learning_measurement",
         next_run_time=_learning_evaluator_initial_run,
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("learning_measurement_startup_catchup", _run_measurement_startup_catchup),
         "date", run_date=datetime.now() + timedelta(minutes=2),
         id="learning_measurement_startup_catchup", misfire_grace_time=None,
         executor="learning_measurement",
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("learning_lifecycle_controller", _run_learning_lifecycle_controller),
         "interval", minutes=_learning_interval, id="learning_lifecycle_controller",
         misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
         next_run_time=datetime.now() + timedelta(minutes=4),
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded(
             "learning_lifecycle_audit_reconciler",
             _run_learning_lifecycle_audit_reconciler,
@@ -1520,12 +1520,12 @@ def init_scheduler() -> BackgroundScheduler | None:
     # Core collector lane: primary-venue orderbook/funding/OI every two minutes.
     # Cross-venue and macro context has a separate job below so it cannot inherit
     # a consumed primary-venue deadline.
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("data_collectors", _run_data_collectors), "interval", minutes=2,
         id="data_collectors", misfire_grace_time=60,
         next_run_time=datetime.now() + timedelta(seconds=30), executor="io",
     )
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("data_collector_context", _run_data_collector_context),
         "interval", minutes=10, id="data_collector_context", misfire_grace_time=60,
         next_run_time=datetime.now() + timedelta(seconds=75), executor="io",
@@ -1533,13 +1533,13 @@ def init_scheduler() -> BackgroundScheduler | None:
     # Guard promotion — deterministic learning task (candidate guards → active).
     # Re-homed from the deleted backtest_orchestrator cycle (which used to drive it
     # via lifecycle_automation). Same daily 04:00 CST cadence, gated by runtime.paused.
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("guard_promotion", _run_guard_promotion), "cron", hour=4, minute=0,
         id="guard_promotion", misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
     )
     # Nightly OHLCV backfill — bulk-download history for universe + observed symbols.
     if cfg.historical_data.nightly_backfill_enabled:
-        _scheduler.add_job(
+        sched.add_job(
             _guarded("ohlcv_nightly_backfill", _run_ohlcv_nightly_backfill),
             "cron", hour=cfg.historical_data.nightly_backfill_hour_cst, minute=30,
             id="ohlcv_nightly_backfill", misfire_grace_time=600,
@@ -1549,7 +1549,7 @@ def init_scheduler() -> BackgroundScheduler | None:
         getattr(cfg.historical_data, "enabled", True)
         and getattr(cfg.historical_data, "active_universe_backfill_enabled", True)
     ):
-        _scheduler.add_job(
+        sched.add_job(
             _guarded("ohlcv_active_backfill", _run_active_ohlcv_backfill),
             "interval",
             minutes=getattr(
@@ -1561,20 +1561,20 @@ def init_scheduler() -> BackgroundScheduler | None:
             executor="io",
         )
     # OKX demo symbol list refresh — keeps the O(1) filter cache warm.
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("okx_demo_symbols", _run_okx_demo_symbols), "interval", hours=4,
         id="okx_demo_symbols", misfire_grace_time=600, executor="io",
         next_run_time=datetime.now() + timedelta(seconds=45),
     )
     # Daily PnL summary pushed to Telegram (configurable hour, CST/UTC+8).
     _summary_hour = cfg.telegram.daily_summary_hour_cst if hasattr(cfg.telegram, 'daily_summary_hour_cst') else 8
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("daily_summary", _run_daily_summary), "cron", hour=_summary_hour, minute=0,
         id="daily_summary", misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
     )
 
     # System Operator governance loop — system assessment + auto-actions every 4h.
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("pi_operator_loop", _run_operator_loop), "cron",
         hour="0,4,8,12,16,20", minute=15,
         id="pi_operator_loop", misfire_grace_time=3600, executor="agents",
@@ -1582,7 +1582,8 @@ def init_scheduler() -> BackgroundScheduler | None:
         timezone="Asia/Shanghai",
     )
 
-    _scheduler.start()
+    sched.start()
+    _scheduler = sched
     # If config says paused at boot, apply pause (layered or blanket).
     if cfg.runtime.paused:
         if cfg.health.layered_pause_enabled:

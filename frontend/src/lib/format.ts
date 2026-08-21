@@ -111,13 +111,17 @@ export function fmtSigned(
  */
 export function fmtPct(
   value: number | string | null | undefined,
-  opts?: { decimals?: number; dash?: string },
+  opts?: { decimals?: number; dash?: string; scale?: 'ratio' | 'percent' },
 ): string {
   const dash = opts?.dash ?? '—'
   if (value == null || value === '') return dash
   const n = Number(value)
   if (!Number.isFinite(n)) return dash
-  const pct = Math.abs(n) <= 1 ? n * 100 : n
+  // When scale is explicit, never guess. Legacy callers without scale use the
+  // magnitude heuristic (≤1 → ratio) so existing ratio call-sites are unchanged.
+  const pct = opts?.scale === 'percent' ? n
+    : opts?.scale === 'ratio' ? n * 100
+    : Math.abs(n) <= 1 ? n * 100 : n
   const d = opts?.decimals ?? 0
   return `${pct.toFixed(d)}%`
 }

@@ -73,7 +73,7 @@ function TokenComposition({ input, output, cached, reasoning }: { input: number 
 }
 
 function CoverageList({ axes }: { axes: Array<{ id: string; label: string; status: string; coverage_pct: number | null; reason: string | null }> }) {
-  return <Card className="usage-coverage-list">{axes.map(axis => <div className="usage-coverage-row" key={axis.id}><div><strong>{axis.label}</strong><span>{axis.reason ?? 'Measured for the selected window.'}</span></div><div className="usage-coverage-value"><span>{fmtPct(axis.coverage_pct, { decimals: 1, dash: 'N/A' })}</span><Badge tone={axis.status === 'available' ? 'green' : 'yellow'}>{axis.status === 'not_available' ? 'N/A' : axis.status}</Badge></div></div>)}</Card>
+  return <Card className="usage-coverage-list">{axes.map(axis => <div className="usage-coverage-row" key={axis.id}><div><strong>{axis.label}</strong><span>{axis.reason ?? 'Measured for the selected window.'}</span></div><div className="usage-coverage-value"><span>{fmtPct(axis.coverage_pct, { decimals: 1, dash: 'N/A', scale: 'percent' })}</span><Badge tone={axis.status === 'available' ? 'green' : 'yellow'}>{axis.status === 'not_available' ? 'N/A' : axis.status}</Badge></div></div>)}</Card>
 }
 
 export default function Usage() {
@@ -115,7 +115,7 @@ export default function Usage() {
   return (
     <div className="usage-page" aria-busy={fetching}>
       <PageHeader title="Usage insights" role={`Consumption, spend, reliability, attribution, and research yield for ${selectedLabel}. Estimates and unavailable facts remain explicitly labelled.`} actions={<div className="usage-header-actions">{fetching && <LoadingIndicator />}<div className="seg-toggle" aria-label="Usage time range">{DAY_OPTIONS.map(option => <Button key={option.days} variant="ghost" className={`seg-btn${days === option.days ? ' active' : ''}`} aria-pressed={days === option.days} onClick={() => setDays(option.days)}>{option.label}</Button>)}</div></div>} />
-      <div className="usage-context-bar"><span>{summary ? `${summary.window.started_at.slice(0, 16)} → ${summary.window.ended_at.slice(0, 16)} UTC` : selectedLabel}</span><span className="usage-quality"><Badge tone={qualityTone}>Data quality</Badge><span>Pricing {fmtPct(pricingCoverage, { decimals: 1, dash: 'pending' })}</span></span></div>
+      <div className="usage-context-bar"><span>{summary ? `${summary.window.started_at.slice(0, 16)} → ${summary.window.ended_at.slice(0, 16)} UTC` : selectedLabel}</span><span className="usage-quality"><Badge tone={qualityTone}>Data quality</Badge><span>Pricing {fmtPct(pricingCoverage, { decimals: 1, dash: 'pending', scale: 'percent' })}</span></span></div>
       {fetching && <p className="usage-fetch-note" role="status" aria-live="polite">Refreshing in stages. Available sections remain interactive.</p>}
       {error && <div className="lever-err" role="alert">Usage insights could not be loaded: {error.message}</div>}
 
@@ -127,7 +127,7 @@ export default function Usage() {
             <MetricTile label="Output tokens" value={count(summary.token_mix!.output_tokens)} context={summaryLabel} />
             <MetricTile label="Estimated cost" value={usd(summary.pricing!.estimated_cost_usd)} context={summaryLabel} />
             <MetricTile label="LLM calls" value={count(summary.token_mix!.event_count)} context={summaryLabel} />
-            <MetricTile label="Pricing coverage" value={fmtPct(summary.pricing!.pricing_coverage_pct, { decimals: 1 })} context={`${count(summary.pricing!.unknown_event_count)} unknown`} />
+            <MetricTile label="Pricing coverage" value={fmtPct(summary.pricing!.pricing_coverage_pct, { decimals: 1, scale: 'percent' })} context={`${count(summary.pricing!.unknown_event_count)} unknown`} />
           </div>
           <div className="usage-token-band">
             <TokenComposition input={summary.token_mix!.input_tokens} output={summary.token_mix!.output_tokens} cached={summary.token_mix!.cached_tokens} reasoning={summary.token_mix!.reasoning_tokens} />

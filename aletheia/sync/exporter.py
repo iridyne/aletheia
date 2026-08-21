@@ -98,9 +98,12 @@ class ExportService:
                 data = yaml.safe_load(config_src.read_text(encoding="utf-8")) or {}
                 redacted = _redact_config_dict(data)
                 dst.write_text(yaml.safe_dump(redacted, default_flow_style=False, sort_keys=False), encoding="utf-8")
-            except Exception:
-                # Fail closed: never fall back to copying the raw file (that would leak).
-                dst.write_text("# config.yaml omitted from export: could not parse to redact secrets\n", encoding="utf-8")
+            except Exception as exc:
+                # Fail closed: never copy the raw file (would leak secrets).
+                # Re-raise so the caller sees the failure rather than a misleading success.
+                raise RuntimeError(f"config export failed: {exc}") from exc
+        else:
+            raise RuntimeError(f"config.yaml not found at {config_src}")
 
     def _export_research(self, bundle_dir: Path, since: str | None) -> None:
         """Export evidence, claims, analyses, lessons, skills."""
