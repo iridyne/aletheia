@@ -312,3 +312,38 @@ def test_candidate_all_ineligible_yields_insufficient_data_not_directional():
     assert result["layers"]["Selection"]["observed"] is None
     assert result["layers"]["Selection"]["delta_pct"] is None
 
+
+
+def test_candidate_diagnosis_partial_status_on_unavailable_count():
+    """#1252: unavailable_count > 0 → status='partial', field propagated."""
+    report = {
+        "as_of_at": "2026-08-13T00:00:00+00:00",
+        "fixed_horizon": "24h",
+        "outcome_coverage": 0.8,
+        "unavailable_count": 2,
+        "unavailable_reasons": {"filter_timeout": 2},
+        "facts": [],
+    }
+
+    result = diagnosis.diagnose_candidate_report(report)
+
+    assert result["status"] == "partial", f"Expected 'partial', got {result.get('status')}"
+    assert result["unavailable_count"] == 2
+    assert result["unavailable_reasons"] == {"filter_timeout": 2}
+    assert "note" in result and "2" in result["note"]
+
+
+def test_candidate_diagnosis_complete_status_when_no_exclusions():
+    """#1252: unavailable_count == 0 → status='complete' (no note)."""
+    report = {
+        "as_of_at": "2026-08-13T00:00:00+00:00",
+        "fixed_horizon": "24h",
+        "outcome_coverage": 1.0,
+        "facts": [],
+    }
+
+    result = diagnosis.diagnose_candidate_report(report)
+
+    assert result["status"] == "complete", f"Expected 'complete', got {result.get('status')}"
+    assert result["unavailable_count"] == 0
+    assert "note" not in result

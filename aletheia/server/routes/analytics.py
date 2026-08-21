@@ -54,6 +54,15 @@ def _analytics_instant(value: str | None) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _safe_pf(gross_profit: float, gross_loss: float) -> dict:
+    """Return JSON-safe profit factor payload (never float('inf'))."""
+    if gross_profit == 0 and gross_loss == 0:
+        return {"value": None, "unbounded": False}
+    if gross_loss == 0:
+        return {"value": None, "unbounded": True}
+    return {"value": round(gross_profit / gross_loss, 4), "unbounded": False}
+
+
 def _policy_for_instant(epochs: list[dict], instant: str | None) -> str | None:
     decision_instant = _analytics_instant(instant)
     if decision_instant is None:
@@ -519,9 +528,7 @@ def get_round1_progress():
     gross_profit = float(row["gross_profit"] or 0)
     gross_loss = float(row["gross_loss"] or 0)
     win_rate = round(wins / closed * 100.0, 2) if closed else None
-    profit_factor = round(gross_profit / gross_loss, 4) if gross_loss > 0 else (
-        None if gross_profit == 0 else float("inf")
-    )
+    profit_factor = _safe_pf(gross_profit, gross_loss)
 
     # by_close_reason breakdown — judgement-critical: lets the UI / a Round 1
     # reviewer distinguish AI-driven exits (stop_loss / take_profit / pi_close /
@@ -560,7 +567,7 @@ def get_round1_progress():
     s_gp = float(strict["gp"])
     s_gl = float(strict["gl"])
     s_wins = int(strict["wins"])
-    strict_pf = round(s_gp / s_gl, 4) if s_gl > 0 else (None if s_gp == 0 else float("inf"))
+    strict_pf = _safe_pf(s_gp, s_gl)
     strict_wr = round(s_wins / s_n * 100.0, 2) if s_n else None
 
     # Half-strict: drop only units_bug_cleanup (Round 1 pre-bug cleanup), keep reconciler.
@@ -577,7 +584,7 @@ def get_round1_progress():
     hs_gp = float(hs["gp"])
     hs_gl = float(hs["gl"])
     hs_wins = int(hs["wins"])
-    hs_pf = round(hs_gp / hs_gl, 4) if hs_gl > 0 else (None if hs_gp == 0 else float("inf"))
+    hs_pf = _safe_pf(hs_gp, hs_gl)
     hs_wr = round(hs_wins / hs_n * 100.0, 2) if hs_n else None
 
     return {

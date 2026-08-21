@@ -168,11 +168,22 @@ def _profit_factor(rows) -> dict:
             gross_loss += abs(pnl)
             losses.append(pnl)
 
-    pf = round(gross_profit / gross_loss, 2) if gross_loss > 0 else None
+    # Determine profit_factor_state
+    if gross_profit == 0 and gross_loss == 0:
+        pf = None
+        pf_state = "unavailable_no_outcomes"
+    elif gross_loss == 0:
+        pf = None
+        pf_state = "unbounded_no_losses"
+    else:
+        pf = round(gross_profit / gross_loss, 2)
+        pf_state = "finite"
+
     return {
         "gross_profit": round(gross_profit, 4),
         "gross_loss": round(gross_loss, 4),
         "profit_factor": pf,
+        "profit_factor_state": pf_state,
         "avg_win": round(sum(wins) / len(wins), 4) if wins else 0.0,
         "avg_loss": round(sum(losses) / len(losses), 4) if losses else 0.0,
         "largest_win": round(max(wins), 4) if wins else 0.0,
