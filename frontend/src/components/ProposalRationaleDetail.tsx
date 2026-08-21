@@ -16,37 +16,54 @@ import { parseDecisionRationale, stringList } from '../lib/decisionReasoning'
  * page has been superseded by /blotter (2026-07-18 migration) but AgentFeed
  * still needs this component to render proposal detail inside its own
  * drawer — moved here so the source of truth outlives the retired page.
+ *
+ * Uses the shared parseDecisionRationale() parser from decisionReasoning.ts
+ * to guarantee identical split behaviour across all callers.
  */
 
-export function ProposalRationaleDetail({ rationale }: { rationale: string | null }) {
-  const { thesis, meta } = useMemo(() => parseDecisionRationale(rationale), [rationale])
-  if (!rationale) return <p className="feed-thesis">No rationale provided.</p>
-  if (!meta) return <p className="feed-thesis">{thesis || 'No rationale provided.'}</p>
+// Keep the local interface for the structured rendering layer.
+interface DecisionMeta {
+  conviction?: number
+  debate_ran?: boolean
+  debate_bull?: number | null
+  debate_bear?: number | null
+  supporting?: unknown
+  opposing?: unknown
+  guards?: { guards_run?: number; blocks?: number; warnings?: number; details?: unknown[] }
+}
 
-  const conviction = typeof meta.conviction === 'number' ? meta.conviction : 0
-  const debateRan = Boolean(meta.debate_ran)
-  const bull = typeof meta.debate_bull === 'number' ? meta.debate_bull : null
-  const bear = typeof meta.debate_bear === 'number' ? meta.debate_bear : null
+export function ProposalRationaleDetail({ rationale }: { rationale: string | null }) {
+  const { thesis: text, meta: rawMeta } = useMemo(
+    () => parseDecisionRationale(rationale),
+    [rationale],
+  )
+  // Treat missing, non-object, or array JSON tails as absent.
+  const meta: DecisionMeta | null =
+    rawMeta !== null && typeof rawMeta === 'object' && !Array.isArray(rawMeta)
+      ? (rawMeta as DecisionMeta)
+      : null
+
+  if (!rationale) return <p className="feed-thesis">No rationale provided.</p>
+  if (!meta) return <p className="feed-thesis">{text || 'No rationale provided.'}</p>
+
   const supporting = stringList(meta.supporting)
   const opposing = stringList(meta.opposing)
-
-  // guards must have the expected shape; wrong-shaped → absent
-  const rawGuards = meta.guards
-  const guards = (
-    rawGuards !== null &&
-    typeof rawGuards === 'object' &&
-    !Array.isArray(rawGuards) &&
-    typeof (rawGuards as Record<string, unknown>).guards_run === 'number'
-  ) ? rawGuards as { guards_run: number; blocks: number; warnings: number; details: unknown[] } : null
+  const guards = meta.guards && typeof meta.guards === 'object' && !Array.isArray(meta.guards)
+    ? meta.guards
+    : null
+  const guardDetails: { guard?: unknown; reason?: unknown }[] =
+    Array.isArray(guards?.details)
+      ? (guards!.details as { guard?: unknown; reason?: unknown }[])
+      : []
 
   return (
     <div className="decision-detail">
-      <ConvictionMeter conviction={conviction} debateRan={debateRan}
-        bull={bull} bear={bear} />
+      <ConvictionMeter conviction={meta.conviction ?? 0} debateRan={meta.debate_ran ?? false}
+        bull={meta.debate_bull ?? null} bear={meta.debate_bear ?? null} />
 
       <div className="decision-section mt-2">
         <div className="decision-section-label">Thesis</div>
-        <p className="decision-thesis">{thesis}</p>
+        <p className="decision-thesis">{text}</p>
       </div>
 
       {supporting.length > 0 && (
@@ -71,14 +88,11 @@ export function ProposalRationaleDetail({ rationale }: { rationale: string | nul
         <div className="decision-section mt-2">
           <div className="decision-section-label">Risk Guards</div>
           <span className="text-muted text-sm">
-            {guards.guards_run} checked · {guards.blocks} blocked · {guards.warnings} warned
+            {guards.guards_run ?? 0} checked · {guards.blocks ?? 0} blocked · {guards.warnings ?? 0} warned
           </span>
-          {stringList(guards.details, 50).length > 0 && (
+          {guardDetails.length > 0 && (
             <ul className="decision-signal-list opposing">
-              {(Array.isArray(guards.details) ? guards.details : []).map((d: unknown, i: number) => {
-                const item = d !== null && typeof d === 'object' ? d as Record<string, unknown> : {}
-                return <li key={i}>{String(item.guard ?? '')}: {String(item.reason ?? '')}</li>
-              })}
+              {guardDetails.map((d, i) => <li key={i}>{String(d?.guard ?? '')}: {String(d?.reason ?? '')}</li>)}
             </ul>
           )}
         </div>
