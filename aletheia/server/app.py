@@ -967,6 +967,37 @@ async def _tunnel_auth_guard(request, call_next):
     return await call_next(request)
 
 
+# #1195: Shadow write-surface isolation — reject state mutations in shadow mode.
+_SHADOW_ALLOWLIST_PATHS = frozenset({"/api/health", "/api/status", "/api/ready"})
+
+
+@app.middleware("http")
+async def _shadow_write_guard(request, call_next):
+    """Reject mutation writes when runtime_mode='shadow'.
+
+    Policy (shadow mode):
+      - All non-GET requests to /api/* and /_infra/* paths are rejected with 403,
+        EXCEPT the minimal read-only allowlist in _SHADOW_ALLOWLIST_PATHS.
+      - GET requests pass through (read-only operations allowed in shadow).
+    Policy (current mode):
+      - No restrictions; all requests pass through.
+
+    This prevents a shadow runtime from inadvertently mutating database state
+    (orders, positions, config writes) before promotion to current.
+    """
+    if request.method != "GET":
+        runtime_mode = os.environ.get("ALETHEIA_RUNTIME_MODE", "current")
+        if runtime_mode == "shadow":
+            path = request.url.path
+            if (path.startswith("/api/") or path.startswith("/_infra/")) and path not in _SHADOW_ALLOWLIST_PATHS:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    {"detail": "Shadow runtime: write operations forbidden. Promote to current before mutations."},
+                    status_code=403,
+                )
+    return await call_next(request)
+
+
 def _diagnostic_env_enabled(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
