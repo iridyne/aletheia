@@ -1345,6 +1345,17 @@ CREATE TABLE IF NOT EXISTS runtime_sessions (
     shutdown_clean INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_runtime_sessions_runtime ON runtime_sessions (runtime_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS runtime_transition_intent (
+    id TEXT PRIMARY KEY,
+    fencing_token TEXT NOT NULL,
+    action TEXT NOT NULL,
+    old_route TEXT,
+    new_route TEXT,
+    state TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT
+);
 """
 
 _DATA_COLLECTORS_DDL = """

@@ -15,7 +15,7 @@ from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
-from aletheia.gateway.frontdoor_route import write_frontdoor_route
+from aletheia.gateway.frontdoor_route import read_frontdoor_route, write_frontdoor_route
 from aletheia.storage.migrations import assert_migrations_current
 from aletheia.storage.sqlite import get_db
 
@@ -142,6 +142,49 @@ class RuntimeContinuityService:
         # Optional override for tests; production uses live_probe_shadow from processes.
         self.shadow_live_prober = shadow_live_prober
         assert_migrations_current()
+        self.reconcile_pending_intents()
+
+    def reconcile_pending_intents(self) -> None:
+        """#1199: re-apply any pending transition intents so a crash between intent
+        creation and route file switch (or between switch and intent completion mark)
+        self-heals on the next boot or transition.
+        """
+        db = self._db()
+        pending = db.execute(
+            "SELECT * FROM runtime_transition_intent WHERE state = 'pending' ORDER BY created_at ASC"
+        ).fetchall()
+        for row in pending:
+            intent_id = row["id"]
+            new_route = row["new_route"]
+            try:
+                current_route = read_frontdoor_route()
+                if current_route and current_route.get("backend_base_url") == new_route:
+                    # Route file already switched; mark complete.
+                    db.execute(
+                        "UPDATE runtime_transition_intent SET state = 'complete', completed_at = ? WHERE id = ?",
+                        (_utc_now(), intent_id),
+                    )
+                    db.commit()
+                    logger.info("Reconciled pending intent %s: route file already matches new_route.", intent_id)
+                else:
+                    # Route file not switched; re-attempt idempotently.
+                    logger.warning("Reconciling pending intent %s: re-attempting route switch to %s", intent_id, new_route)
+                    # The write_frontdoor_route is idempotent; calling it again is safe.
+                    write_frontdoor_route(
+                        backend_base_url=new_route,
+                        runtime_id=str(row.get("action") or "unknown"),
+                        runtime_mode="current",
+                        runtime_state="current",
+                        reason="reconcile_pending_intent",
+                    )
+                    db.execute(
+                        "UPDATE runtime_transition_intent SET state = 'complete', completed_at = ? WHERE id = ?",
+                        (_utc_now(), intent_id),
+                    )
+                    db.commit()
+                    logger.info("Reconciled pending intent %s: route switch completed.", intent_id)
+            except Exception as exc:
+                logger.error("Failed to reconcile pending intent %s: %s", intent_id, exc, exc_info=True)
 
     def _db(self):
         return get_db()
@@ -201,17 +244,62 @@ class RuntimeContinuityService:
         )
         return event_id
 
-    def _apply_activation(self, activation: dict, *, actor: str, cause: str) -> None:
-        """Attempt Frontdoor route switch.
+    def _apply_activation(self, activation: dict, *, actor: str, cause: str, fencing_token: str | None = None) -> None:
+        """Attempt Frontdoor route switch with two-phase intent for #1199.
 
-        Raises RuntimeTransitionError on failure; does NOT commit — caller commits
-        all pending writes atomically after this returns successfully.
+        Phase 1: persist transition intent row (old_route, new_route, state=pending) — commit.
+        Phase 2: atomically replace the route file.
+        Phase 3: mark intent complete — commit.
+
+        On boot / before each transition, reconcile_pending_intents() re-applies any
+        state=pending intent idempotently so a crash between phase 1 and 3 self-heals.
+
+        Raises RuntimeTransitionError on failure; the two-phase persist means DB and
+        route file are always reconcilable regardless of crash timing.
         """
         if activation.get("strategy") != "frontdoor_route_switch":
             return
+        db = self._db()
+        old_route = read_frontdoor_route()
+        intent_id = _new_id("rt-intent")
+        ft = fencing_token or uuid4().hex
+        new_route_url = str(activation["backend_base_url"])
+        # Phase 1: record pending intent — commit before touching the route file.
+        if db.in_transaction:
+            db.execute("SAVEPOINT intent_write")
+        else:
+            db.execute("BEGIN")
+        try:
+            db.execute(
+                """
+                INSERT INTO runtime_transition_intent
+                    (id, fencing_token, action, old_route, new_route, state, created_at)
+                VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                """,
+                (
+                    intent_id,
+                    ft,
+                    str(activation.get("action") or "activate"),
+                    _json_dump(old_route),
+                    new_route_url,
+                    _utc_now(),
+                ),
+            )
+            if db.in_transaction:
+                db.execute("RELEASE intent_write")
+            db.execute("COMMIT")
+        except BaseException:
+            try:
+                if db.in_transaction:
+                    db.execute("ROLLBACK TO intent_write")
+                    db.execute("RELEASE intent_write")
+            except Exception:
+                pass
+            raise
+        # Phase 2: atomically replace route file.
         try:
             write_frontdoor_route(
-                backend_base_url=str(activation["backend_base_url"]),
+                backend_base_url=new_route_url,
                 runtime_id=str(activation["runtime_id"]),
                 runtime_mode="current",
                 runtime_state=RuntimeState.CURRENT.value,
@@ -220,14 +308,29 @@ class RuntimeContinuityService:
             )
         except Exception as exc:
             raise RuntimeTransitionError(f"frontdoor_route_switch_failed:{exc}") from exc
-        self._record_event(
-            runtime_id=str(activation["runtime_id"]),
-            event_type="frontdoor_route_switched",
-            phase="activation",
-            actor=actor,
-            cause=cause,
-            payload=activation,
-        )
+        # Phase 3: mark intent complete.
+        try:
+            db.execute("BEGIN")
+            db.execute(
+                "UPDATE runtime_transition_intent SET state = 'complete', completed_at = ? WHERE id = ?",
+                (_utc_now(), intent_id),
+            )
+            self._record_event(
+                runtime_id=str(activation["runtime_id"]),
+                event_type="frontdoor_route_switched",
+                phase="activation",
+                actor=actor,
+                cause=cause,
+                payload={**activation, "intent_id": intent_id},
+            )
+            db.execute("COMMIT")
+        except Exception:
+            # Best-effort: route file is already switched. Log and continue.
+            logger.warning("Failed to mark transition intent complete (intent_id=%s); will reconcile on next boot.", intent_id)
+            try:
+                db.execute("ROLLBACK")
+            except Exception:
+                pass
 
     def _current_runtime(self) -> dict | None:
         row = self._db().execute(
@@ -466,72 +569,101 @@ class RuntimeContinuityService:
         owner: str,
         force: bool = False,
     ) -> str:
+        # #1197: single unified key regardless of caller-supplied lock_name so
+        # promote and rollback share one atomic CAS row — no split-lock race.
         self._require_enabled("acquire_lock")
         db = self._db()
         now = _utc_now()
         expires = (datetime.now(timezone.utc) + timedelta(seconds=self.lock_ttl_sec)).isoformat().replace("+00:00", "Z")
         self._release_expired_locks(actor=owner)
-        existing = db.execute(
-            "SELECT * FROM runtime_exclusive_lock WHERE lock_name = ? AND released_at IS NULL",
-            (lock_name,),
-        ).fetchone()
-        if existing and _parse_ts(existing["expires_at"]) and _parse_ts(existing["expires_at"]) > datetime.now(timezone.utc):
-            if not force:
-                raise RuntimeTransitionError(
-                    f"runtime_lock_conflict:{lock_name}:owner={existing['owner']}"
-                )
         token = uuid4().hex
-        db.execute(
-            """
-            INSERT INTO runtime_exclusive_lock (
-                lock_name, runtime_id, owner, token, acquired_at, expires_at, released_at, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, NULL, '{}')
-            ON CONFLICT(lock_name) DO UPDATE SET
-                runtime_id = excluded.runtime_id,
-                owner = excluded.owner,
-                token = excluded.token,
-                acquired_at = excluded.acquired_at,
-                expires_at = excluded.expires_at,
-                released_at = NULL,
-                metadata = '{}'
-            """,
-            (lock_name, runtime_id, owner, token, now, expires),
-        )
-        self._record_event(
-            runtime_id=runtime_id,
-            event_type="runtime_lock_acquired",
-            phase="lock",
-            actor=owner,
-            cause=lock_name,
-            payload={"lock_name": lock_name, "expires_at": expires, "force": force},
-        )
-        db.commit()
+        # BEGIN IMMEDIATE: acquire the SQLite writer lock before the read so the
+        # check-and-set is truly atomic — no window between SELECT and INSERT.
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            existing = db.execute(
+                "SELECT * FROM runtime_exclusive_lock WHERE lock_name = 'runtime-transition' AND released_at IS NULL",
+            ).fetchone()
+            if existing and _parse_ts(existing["expires_at"]) and _parse_ts(existing["expires_at"]) > datetime.now(timezone.utc):
+                if not force:
+                    db.execute("ROLLBACK")
+                    raise RuntimeTransitionError(
+                        f"runtime_lock_conflict:runtime-transition:owner={existing['owner']}"
+                    )
+            db.execute(
+                """
+                INSERT INTO runtime_exclusive_lock (
+                    lock_name, runtime_id, owner, token, acquired_at, expires_at, released_at, metadata
+                ) VALUES ('runtime-transition', ?, ?, ?, ?, ?, NULL, '{}')
+                ON CONFLICT(lock_name) DO UPDATE SET
+                    runtime_id = excluded.runtime_id,
+                    owner = excluded.owner,
+                    token = excluded.token,
+                    acquired_at = excluded.acquired_at,
+                    expires_at = excluded.expires_at,
+                    released_at = NULL,
+                    metadata = '{}'
+                """,
+                (runtime_id, owner, token, now, expires),
+            )
+            self._record_event(
+                runtime_id=runtime_id,
+                event_type="runtime_lock_acquired",
+                phase="lock",
+                actor=owner,
+                cause="runtime-transition",
+                payload={"lock_name": "runtime-transition", "caller_key": lock_name, "expires_at": expires, "force": force},
+            )
+            db.execute("COMMIT")
+        except RuntimeTransitionError:
+            raise
+        except BaseException:
+            try:
+                db.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
         return token
 
     def release_lock(self, lock_name: str, token: str | None = None, *, actor: str = "system") -> None:
+        # #1198: release_lock runs in its OWN short transaction and never commits
+        # the caller's pending work — this was the bug where an exception mid-
+        # transition would cause release_lock (called from the except handler) to
+        # commit the partial transition state alongside the lock release.
         self._require_enabled("release_lock")
         db = self._db()
+        # If caller left an open transaction (e.g. BEGIN IMMEDIATE in acquire_lock
+        # was never closed due to exception path), ensure we start clean.
+        if db.in_transaction:
+            db.execute("ROLLBACK")
         row = db.execute(
-            "SELECT * FROM runtime_exclusive_lock WHERE lock_name = ? AND released_at IS NULL",
-            (lock_name,),
+            "SELECT * FROM runtime_exclusive_lock WHERE lock_name = 'runtime-transition' AND released_at IS NULL",
         ).fetchone()
         if row is None:
             return
         if token is not None and row["token"] != token:
-            raise RuntimeTransitionError(f"runtime_lock_token_mismatch:{lock_name}")
-        db.execute(
-            "UPDATE runtime_exclusive_lock SET released_at = ? WHERE lock_name = ?",
-            (_utc_now(), lock_name),
-        )
-        self._record_event(
-            runtime_id=row["runtime_id"],
-            event_type="runtime_lock_released",
-            phase="lock",
-            actor=actor,
-            cause=lock_name,
-            payload={"lock_name": lock_name},
-        )
-        db.commit()
+            raise RuntimeTransitionError(f"runtime_lock_token_mismatch:runtime-transition")
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            db.execute(
+                "UPDATE runtime_exclusive_lock SET released_at = ? WHERE lock_name = 'runtime-transition'",
+                (_utc_now(),),
+            )
+            self._record_event(
+                runtime_id=row["runtime_id"],
+                event_type="runtime_lock_released",
+                phase="lock",
+                actor=actor,
+                cause="runtime-transition",
+                payload={"lock_name": "runtime-transition", "caller_key": lock_name},
+            )
+            db.execute("COMMIT")
+        except BaseException:
+            try:
+                db.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
 
     def _clear_locks(self, *, actor: str, cause: str) -> None:
         rows = self._active_locks()
@@ -818,56 +950,71 @@ class RuntimeContinuityService:
                         runtime_id, probe,
                     )
                     raise RuntimeTransitionError(f"shadow_process_not_ready:{reason}")
+            # _apply_activation manages its own transactions (intent row + route file).
+            # Run it BEFORE the registry BEGIN IMMEDIATE to avoid nested transactions.
+            self._apply_activation(activation, actor=actor, cause=cause, fencing_token=token)
 
-            now = _utc_now()
-            checkpoint_id = _new_id("runtime-checkpoint")
-            promoted_metadata = dict(runtime.get("metadata") or {})
-            promoted_metadata["activation"] = activation
+            # #1198: wrap registry state writes in explicit BEGIN/COMMIT so an exception
+            # does ROLLBACK (discarding partial state) before release_lock.
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                now = _utc_now()
+                checkpoint_id = _new_id("runtime-checkpoint")
+                promoted_metadata = dict(runtime.get("metadata") or {})
+                promoted_metadata["activation"] = activation
 
-            # Attempt Frontdoor activation BEFORE any registry DB writes.
-            # If this raises, no DB state has changed — no split-brain is possible.
-            # ponytail: crash-after-route-write still leaves DB/Frontdoor split; full two-phase intent needed for that
-            self._apply_activation(activation, actor=actor, cause=cause)
+                db.execute(
+                    """
+                    INSERT INTO runtime_checkpoints (
+                        id, runtime_id, checkpoint_type, status, payload, created_at
+                    ) VALUES (?, ?, 'pre_promote', 'available', ?, ?)
+                    """,
+                    (
+                        checkpoint_id,
+                        current["runtime_id"],
+                        _json_dump({"previous_current": current, "promoting_runtime_id": runtime_id}),
+                        now,
+                    ),
+                )
+                db.execute(
+                    "UPDATE runtime_registry SET state = ?, mode = 'current', drained_at = ?, updated_at = ? "
+                    "WHERE runtime_id = ?",
+                    (RuntimeState.DRAINING.value, now, now, current["runtime_id"]),
+                )
+                # #1194: for supervisor_respawn, record restart_required intent — don't flip to CURRENT.
+                if activation.get("strategy") == "supervisor_respawn":
+                    promoted_metadata["transition_result"] = "restart_required"
+                    db.execute(
+                        "UPDATE runtime_registry SET state = ?, mode = 'shadow', metadata = ?, updated_at = ? "
+                        "WHERE runtime_id = ?",
+                        (RuntimeState.READY_TO_PROMOTE.value, _json_dump(promoted_metadata), now, runtime_id),
+                    )
+                else:
+                    db.execute(
+                        "UPDATE runtime_registry SET state = ?, mode = 'current', promoted_at = ?, "
+                        "metadata = ?, updated_at = ? "
+                        "WHERE runtime_id = ?",
+                        (RuntimeState.CURRENT.value, now, _json_dump(promoted_metadata), now, runtime_id),
+                    )
+                self._record_event(
+                    runtime_id=runtime_id,
+                    event_type="runtime_promoted",
+                    phase=RuntimeState.CURRENT.value if activation.get("strategy") == "frontdoor_route_switch" else "pending_restart",
+                    actor=actor,
+                    cause=cause,
+                    payload={
+                        "previous_runtime_id": current["runtime_id"],
+                        "checkpoint_id": checkpoint_id,
+                        "activation": activation,
+                    },
+                )
+                db.execute("COMMIT")
+            except BaseException:
+                db.execute("ROLLBACK")
+                raise
 
-            # Activation succeeded (or no-op for supervisor_respawn): persist the state transition.
-            db.execute(
-                """
-                INSERT INTO runtime_checkpoints (
-                    id, runtime_id, checkpoint_type, status, payload, created_at
-                ) VALUES (?, ?, 'pre_promote', 'available', ?, ?)
-                """,
-                (
-                    checkpoint_id,
-                    current["runtime_id"],
-                    _json_dump({"previous_current": current, "promoting_runtime_id": runtime_id}),
-                    now,
-                ),
-            )
-            db.execute(
-                "UPDATE runtime_registry SET state = ?, mode = 'current', drained_at = ?, updated_at = ? "
-                "WHERE runtime_id = ?",
-                (RuntimeState.DRAINING.value, now, now, current["runtime_id"]),
-            )
-            db.execute(
-                "UPDATE runtime_registry SET state = ?, mode = 'current', promoted_at = ?, "
-                "metadata = ?, updated_at = ? "
-                "WHERE runtime_id = ?",
-                (RuntimeState.CURRENT.value, now, _json_dump(promoted_metadata), now, runtime_id),
-            )
-            self._record_event(
-                runtime_id=runtime_id,
-                event_type="runtime_promoted",
-                phase=RuntimeState.CURRENT.value,
-                actor=actor,
-                cause=cause,
-                payload={
-                    "previous_runtime_id": current["runtime_id"],
-                    "checkpoint_id": checkpoint_id,
-                    "activation": activation,
-                },
-            )
+            # Lock release happens AFTER the transition commits or rolls back.
             self.release_lock("promote", token, actor=actor)
-            db.commit()
             return {
                 **self.status(),
                 "current": self._runtime(runtime_id),
@@ -876,6 +1023,8 @@ class RuntimeContinuityService:
                 "activation": activation,
             }
         except Exception:
+            # Best-effort lock release on any exception. release_lock now does its own
+            # clean transaction so it won't commit the caller's rolled-back work.
             try:
                 self.release_lock("promote", token, actor=actor)
             except Exception:
@@ -929,47 +1078,46 @@ class RuntimeContinuityService:
             activation = _activation_plan(runtime_id=target_runtime_id, action="rollback", runtime=target)
             target_metadata["activation"] = activation
 
-            # Attempt Frontdoor activation BEFORE any registry DB writes.
-            # If this raises, no DB state has changed — no split-brain is possible.
-            # ponytail: crash-after-route-write still leaves DB/Frontdoor split; full two-phase intent needed for that
-            self._apply_activation(activation, actor=actor, cause=cause)
-
-            # Activation succeeded (or no-op for supervisor_respawn): persist the state transition.
-            if current is not None:
-                db.execute(
-                    "UPDATE runtime_registry SET state = ?, rolled_back_at = ?, updated_at = ? "
-                    "WHERE runtime_id = ?",
-                    (RuntimeState.ROLLED_BACK.value, now, now, current["runtime_id"]),
-                )
-            db.execute(
-                "UPDATE runtime_registry SET state = ?, mode = 'current', promoted_at = ?, "
-                "metadata = ?, updated_at = ? "
-                "WHERE runtime_id = ?",
-                (RuntimeState.CURRENT.value, now, _json_dump(target_metadata), now, target_runtime_id),
-            )
-            db.execute(
-                "UPDATE runtime_checkpoints SET restored_at = ?, status = 'restored' WHERE id = ?",
-                (now, checkpoint["id"]),
-            )
-            self._clear_locks(actor=actor, cause=cause)
-            self._record_event(
-                runtime_id=target_runtime_id,
-                event_type="runtime_rolled_back",
-                phase=RuntimeState.CURRENT.value,
-                actor=actor,
-                cause=cause,
-                severity="warning",
-                payload={
-                    "checkpoint_id": checkpoint["id"],
-                    "rolled_back_runtime_id": current["runtime_id"] if current else None,
-                    "activation": activation,
-                },
-            )
+            # #1198: explicit transaction — ROLLBACK discards partial state before lock release
+            db.execute("BEGIN IMMEDIATE")
             try:
-                self.release_lock("rollback", token, actor=actor)
-            except Exception:
-                pass
-            db.commit()
+                self._apply_activation(activation, actor=actor, cause=cause, fencing_token=token)
+                if current is not None:
+                    db.execute(
+                        "UPDATE runtime_registry SET state = ?, rolled_back_at = ?, updated_at = ? "
+                        "WHERE runtime_id = ?",
+                        (RuntimeState.ROLLED_BACK.value, now, now, current["runtime_id"]),
+                    )
+                db.execute(
+                    "UPDATE runtime_registry SET state = ?, mode = 'current', promoted_at = ?, "
+                    "metadata = ?, updated_at = ? "
+                    "WHERE runtime_id = ?",
+                    (RuntimeState.CURRENT.value, now, _json_dump(target_metadata), now, target_runtime_id),
+                )
+                db.execute(
+                    "UPDATE runtime_checkpoints SET restored_at = ?, status = 'restored' WHERE id = ?",
+                    (now, checkpoint["id"]),
+                )
+                self._clear_locks(actor=actor, cause=cause)
+                self._record_event(
+                    runtime_id=target_runtime_id,
+                    event_type="runtime_rolled_back",
+                    phase=RuntimeState.CURRENT.value,
+                    actor=actor,
+                    cause=cause,
+                    severity="warning",
+                    payload={
+                        "checkpoint_id": checkpoint["id"],
+                        "rolled_back_runtime_id": current["runtime_id"] if current else None,
+                        "activation": activation,
+                    },
+                )
+                db.execute("COMMIT")
+            except BaseException:
+                db.execute("ROLLBACK")
+                raise
+
+            self.release_lock("rollback", token, actor=actor)
             return {
                 **self.status(),
                 "current": self._runtime(target_runtime_id),
