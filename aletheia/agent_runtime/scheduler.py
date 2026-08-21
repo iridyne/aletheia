@@ -3276,10 +3276,20 @@ def _run_cleanup():
                 )
         except Exception as capacity_err:  # noqa: BLE001 — observation only
             logger.debug("database capacity snapshot skipped: %s", capacity_err)
+        # Collect errors from structured prune results and report partial failure
+        prune_errors = {
+            k: v["error"]
+            for k, v in counts.items()
+            if isinstance(v, dict) and v.get("error") is not None
+        }
+        if prune_errors:
+            logger.warning("cleanup: prune failures: %s", prune_errors)
+            _record_job_failure("cleanup", f"prune errors: {prune_errors}")
         write_audit({
             "actor": "system", "source": "scheduler",
             "event_type": "data_pruned", "entity_type": "telemetry",
             "message": f"Pruned old telemetry: {counts}",
+            "metadata": {"prune_errors": prune_errors} if prune_errors else {},
         })
     except Exception as e:
         logger.warning("cleanup job failed: %s", e)

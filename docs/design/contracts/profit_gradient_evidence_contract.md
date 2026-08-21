@@ -1,6 +1,6 @@
 # Profit-gradient evidence compiler contract
 
-Status: implemented, read-only.  Contract: `profit_gradient_evidence/v1`.
+Status: implemented, read-only.  Contract: `profit_gradient_evidence/v2`.
 
 ## Producer
 
@@ -22,7 +22,7 @@ The artifact always contains:
 
 ```json
 {
-  "contract_version": "profit_gradient_evidence/v1",
+  "contract_version": "profit_gradient_evidence/v2",
   "registration": {},
   "evidence_context": {},
   "layer_samples": {},
@@ -72,7 +72,7 @@ recombination.
 ## Consumer
 
 `uv run aletheia inspect profit-gradient --evidence <FILE>` accepts only the
-outer compiler artifact `profit_gradient_evidence/v1`. It verifies the source
+outer compiler artifact `profit_gradient_evidence/v2`. It verifies the source
 bound `content_hash` before passing the frozen `layer_samples` and
 `evidence_context` to the selector, whose report contract is
 `profit_gradient/v3`. The selector's `automatic_behavior_change_authorized`

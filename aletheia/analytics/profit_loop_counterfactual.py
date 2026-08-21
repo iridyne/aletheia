@@ -178,7 +178,8 @@ def resolve_profit_loop_registration(fact: Mapping[str, Any]) -> dict[str, Any] 
         rows = (
             get_db()
             .execute(
-                "SELECT epoch_id, effective_values_json, started_at, ended_at "
+                "SELECT epoch_id, effective_values_json, effective_values_hash, "
+                "path_id, started_at, ended_at "
                 "FROM learning_policy_epochs WHERE epoch_kind=? "
                 "ORDER BY started_at, rowid",
                 ("evidence_anchor:profit_loop_observability",),
@@ -196,18 +197,18 @@ def resolve_profit_loop_registration(fact: Mapping[str, Any]) -> dict[str, Any] 
             return {"status": "not_evaluable", "reason": "registered_epoch_malformed"}
         if not isinstance(values, Mapping):
             return {"status": "not_evaluable", "reason": "registered_epoch_malformed"}
+        # Validate effective_values_hash matches recomputed hash
+        payload_canon = json.dumps(values, sort_keys=True, separators=(",", ":"))
+        recomputed_hash = hashlib.sha256(payload_canon.encode("utf-8")).hexdigest()
+        stored_hash = row.get("effective_values_hash")
+        if stored_hash != recomputed_hash:
+            return {"status": "not_evaluable", "reason": "effective_values_hash_mismatch"}
+        # Validate path_id matches expected profit-loop path
+        path_id = row.get("path_id")
+        if path_id != "profit_loop_observability":
+            return {"status": "not_evaluable", "reason": "path_id_mismatch"}
         if values.get("deploy_commit") == commit and values.get("behavior_fingerprint") == fingerprint:
             identity_matches.append((row, values))
-    if not identity_matches:
-        return {"status": "not_evaluable", "reason": "verified_deployment_registration_required"}
-    if len(identity_matches) != 1:
-        return {"status": "not_evaluable", "reason": "registered_epoch_conflict"}
-
-    expected_hash = profit_loop_registry_hash()
-    matches = [item for item in identity_matches if item[1].get("registry_hash") == expected_hash]
-    if not matches:
-        return {"status": "not_evaluable", "reason": "registered_registry_hash_mismatch"}
-    row, values = matches[0]
     registration_at = _parse_utc(row["started_at"])
     if registration_at is None:
         return {"status": "not_evaluable", "reason": "verified_deployment_registration_required"}

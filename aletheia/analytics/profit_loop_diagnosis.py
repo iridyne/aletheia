@@ -391,11 +391,18 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         }
         total_eligible_all += layer_eligible
         total_excluded_all += layer_excluded
-    return {
+    unavailable_count = int(report.get("unavailable_count", 0) or 0)
+    unavailable_reasons = report.get("unavailable_reasons") or {}
+    if not isinstance(unavailable_reasons, dict):
+        unavailable_reasons = {}
+    # When some candidates were excluded from the report, the diagnosis is partial.
+    top_status = "partial" if unavailable_count > 0 else "complete"
+    result: dict[str, Any] = {
         "contract_version": DIAGNOSIS_CONTRACT_VERSION,
         "fact_unit": "candidate_fact",
         "read_only": True,
         "behavior_changed": False,
+        "status": top_status,
         "as_of_at": (
             as_of_at.isoformat() if isinstance(as_of_at, datetime) else as_of_at
         ),
@@ -404,5 +411,13 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         "eligible_count": total_eligible_all,
         "excluded_count": total_excluded_all,
         "coverage": report.get("outcome_coverage"),
+        "unavailable_count": unavailable_count,
+        "unavailable_reasons": unavailable_reasons,
         "layers": layers,
     }
+    if unavailable_count > 0:
+        result["note"] = (
+            f"{unavailable_count} candidate(s) were unavailable at build time "
+            "and are excluded from layer counts; diagnosis is partial."
+        )
+    return result

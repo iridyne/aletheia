@@ -123,12 +123,12 @@ concentration, exclusions, and gate reasons. Its verdict is either
 ### Profit-gradient v3 comparison method
 
 The CLI accepts an outer compiler artifact with contract
-`profit_gradient_evidence/v1`; after source-bound verification, the selector
+`profit_gradient_evidence/v2`; after source-bound verification, the selector
 emits a `profit_gradient/v3` report with one `evidence_context.comparison_method`:
 
 ```json
 {
-  "contract_version": "profit_gradient_evidence/v1",
+  "contract_version": "profit_gradient_evidence/v2",
   "evidence_context": {
     "comparison_method":
     "prospective_randomized|paired_same_unit|deterministic_decomposition|directional_observational"
