@@ -4,7 +4,7 @@ import asyncio
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, ValidationError, field_validator
 
 from aletheia.config.loader import load_config, save_config
 from aletheia.config.schema import (
@@ -33,11 +33,14 @@ from aletheia.config.schema import (
     RuntimeConfig,
     SerenityConfig,
     StrategyFactoryConfig,
+    NotificationHour,
     TelegramConfig,
     TradingConfig,
     TunnelConfig,
     UniverseConfig,
     UpdateConfig,
+    WebhookConfig,
+    WebhookTimeoutSeconds,
     default_mode_risk_policy,
 )
 from aletheia.risk.policy import risk_policy_hash
@@ -135,6 +138,27 @@ class SettingsRequest(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
+
+
+def _validated_settings_section(section_type, before: dict[str, Any], updates: dict[str, Any], *, name: str):
+    """Validate the complete resulting config section before persistence."""
+    try:
+        return section_type.model_validate({**before, **updates})
+    except ValidationError as exc:
+        fields = sorted(
+            {
+                ".".join(str(part) for part in error.get("loc", ()))
+                for error in exc.errors()
+            }
+        )
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_configuration",
+                "message": f"{name} contains invalid values",
+                "fields": fields,
+            },
+        ) from exc
 
 
 class PermissionModeRequest(SettingsRequest):
@@ -1466,10 +1490,10 @@ class TelegramConfigUpdate(SettingsRequest):
     allowed_chat_ids: Optional[list[int]] = None
     notify_trade_fills: Optional[bool] = None
     notify_daily_summary: Optional[bool] = None
-    daily_summary_hour_cst: Optional[int] = None
+    daily_summary_hour_cst: Optional[NotificationHour] = None
     dnd_enabled: Optional[bool] = None
-    dnd_start_hour: Optional[int] = None
-    dnd_end_hour: Optional[int] = None
+    dnd_start_hour: Optional[NotificationHour] = None
+    dnd_end_hour: Optional[NotificationHour] = None
 
 
 @router.post("/telegram")
@@ -1477,8 +1501,13 @@ async def update_telegram_config(req: TelegramConfigUpdate):
     cfg = load_config()
     old = cfg.telegram.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        setattr(cfg.telegram, field, value)
+    candidate = _validated_settings_section(
+        TelegramConfig,
+        old,
+        updates,
+        name="telegram configuration",
+    )
+    cfg.telegram = candidate
     save_config(cfg)
 
     rescheduled = False
@@ -1488,9 +1517,31 @@ async def update_telegram_config(req: TelegramConfigUpdate):
     ):
         from aletheia.agent_runtime.scheduler import reschedule_telegram_summary
         from starlette.concurrency import run_in_threadpool
-        rescheduled = await run_in_threadpool(
-            reschedule_telegram_summary, cfg.telegram.daily_summary_hour_cst,
-        )
+        try:
+            rescheduled = await run_in_threadpool(
+                reschedule_telegram_summary, cfg.telegram.daily_summary_hour_cst,
+            )
+        except Exception:
+            rescheduled = False
+        if not rescheduled:
+            try:
+                cfg.telegram = TelegramConfig.model_validate(old)
+                save_config(cfg)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "code": "telegram_config_rollback_failed",
+                        "message": "Daily summary rescheduling failed and the previous Telegram configuration could not be restored.",
+                    },
+                ) from exc
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "telegram_summary_reschedule_failed",
+                    "message": "Daily summary rescheduling failed; the previous Telegram configuration was restored.",
+                },
+            )
 
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "telegram_config_changed",
@@ -1511,7 +1562,7 @@ class WebhookConfigUpdate(SettingsRequest):
     notify_trade_fills: Optional[bool] = None
     notify_alerts: Optional[bool] = None
     notify_daily_summary: Optional[bool] = None
-    timeout_sec: Optional[float] = None
+    timeout_sec: Optional[WebhookTimeoutSeconds] = None
 
 
 @router.post("/webhook")
@@ -1519,8 +1570,12 @@ def update_webhook_config(req: WebhookConfigUpdate):
     cfg = load_config()
     old = cfg.webhook.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        setattr(cfg.webhook, field, value)
+    cfg.webhook = _validated_settings_section(
+        WebhookConfig,
+        old,
+        updates,
+        name="webhook configuration",
+    )
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "webhook_config_changed",
