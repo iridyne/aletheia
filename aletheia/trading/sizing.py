@@ -68,8 +68,11 @@ def available_balance_risk_budget_size(
     target_notional = cost_budget * effective_leverage
     if not math.isfinite(cost_budget) or not math.isfinite(target_notional):
         raise ValueError("invalid_available_balance_risk_budget")
+    # Available-balance sizing extends any existing sizing_trace entries (e.g.
+    # leverage_policy_epoch_id, leverage_resolver) instead of clearing them.
+    # Caller-provided context survives as read-only; this helper appends only
+    # its own output keys.
     if sizing_trace is not None:
-        sizing_trace.clear()
         sizing_trace.update({
             "policy_version": AVAILABLE_BALANCE_RISK_BUDGET_POLICY_VERSION,
             "value_source": "risk_policy_available_balance",
@@ -253,7 +256,6 @@ def vol_target_size(
         "learned_calculation": learned_calculation,
     })
     if sizing_trace is not None:
-        sizing_trace.clear()
         sizing_trace.update(trace)
     return round(float(trace["actual_notional"]), 2)
 
