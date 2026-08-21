@@ -114,19 +114,25 @@ sed -i '' 's/correlation_guard_enabled: false/correlation_guard_enabled: true/' 
 ### 检查
 
 ```bash
-aletheia risk kill-switch status
+aletheia risk status
 # 或
 sqlite3 data/app.db "SELECT value FROM runtime_config WHERE key='kill_switch_active';"
 ```
 
+`aletheia risk status` 显示全局 kill switch、demo 和 live 制动器的状态，以及当前风险边界。
+
 ### 解除
 
 ```bash
-aletheia risk kill-switch deactivate
+aletheia risk resume
 ```
 
 kill switch 由人工激活，只能由人工解除（`actor="human"` 强制要求）。
 不会因 paper_internal 亏损自动激活（`kill_switch_enabled_demo = false`）。
+
+> **注意**：`aletheia risk` 只有 `status`、`kill`、`resume` 三个子命令，
+> 没有 `kill-switch` 嵌套命令组。全局制动器与 demo/live 风险边界共享同一
+> `risk status` 视图。
 
 ---
 
@@ -192,8 +198,8 @@ grep -q "correlation_guard_enabled: true" data/config.yaml && \
   echo "correlation_guard disabled"
 
 # 4. Kill switch（如果激活）
-aletheia risk kill-switch status
-# aletheia risk kill-switch deactivate  # 仅在 active 时执行
+aletheia risk status
+# aletheia risk resume  # 仅在 kill switch active 时执行
 ```
 
 ---
