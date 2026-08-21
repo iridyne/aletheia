@@ -9,8 +9,12 @@ This is a HARD control (guide §2.4, §21.3). The agent cannot deactivate it via
 any LLM-callable tool — only human/system actors through this module.
 """
 
-from aletheia.config.loader import load_config, save_config
-from aletheia.config.schema import BRAKE_OWNERS_BY_SCOPE
+from __future__ import annotations
+
+from typing import List, Optional, Tuple
+
+from aletheia.config.loader import load_config, mutate_config
+from aletheia.config.schema import BRAKE_OWNERS_BY_SCOPE, PauseOwnerLease
 from aletheia.files.jsonl import write_audit
 
 
@@ -46,18 +50,29 @@ def activate(
     field = _field(scope)
     owner = BRAKE_OWNERS_BY_SCOPE[scope]
     source = {"system": "risk_engine", "telegram": "telegram"}.get(actor, "dashboard")
+    # Use a capture list so Pyright can track the type narrowing out of the closure.
+    _out: List[Tuple[bool, PauseOwnerLease]] = []
     with _pause_transition_lock:
+        # Use mutate_config so we read the latest file under the write lock:
+        # a stale snapshot written after activate() cannot remove the brake.
+        def _do_activate(cfg):
+            was = bool(getattr(cfg.runtime, field))
+            current_lease = cfg.runtime.pause_owners.get(owner)
+            if current_lease is None or not current_lease.active:
+                acquired = cfg.runtime.acquire_pause(
+                    owner,
+                    reason=reason or f"{scope}_trading_brake_active",
+                    source=source,
+                    scope=scope,
+                )
+                _out.append((was, acquired))
+            else:
+                _out.append((was, current_lease))
+            return True  # changed
+
+        mutate_config(_do_activate)
+        was_active, lease = _out[0]
         cfg = load_config()
-        was_active = bool(getattr(cfg.runtime, field))
-        lease = cfg.runtime.pause_owners.get(owner)
-        if lease is None or not lease.active:
-            lease = cfg.runtime.acquire_pause(
-                owner,
-                reason=reason or f"{scope}_trading_brake_active",
-                source=source,
-                scope=scope,
-            )
-        save_config(cfg)
         if owner in active_pause_blocker_names(cfg):
             try:
                 from aletheia.agent_runtime.scheduler import pause_scheduler
@@ -99,11 +114,19 @@ def deactivate(actor: str = "human", scope: str = "global") -> None:
 
     field = _field(scope)
     owner = BRAKE_OWNERS_BY_SCOPE[scope]
+    release = None
+    # Use a capture list so Pyright can track types out of the closure.
+    _state: List[Tuple[bool, Optional[PauseOwnerLease]]] = []
     with _pause_transition_lock:
-        cfg = load_config()
-        was_active = bool(getattr(cfg.runtime, field))
-        lease = cfg.runtime.pause_owners.get(owner)
-        release = None
+        # Read the latest state under the write lock before deciding what to release.
+        def _read_state(cfg):
+            was = bool(getattr(cfg.runtime, field))
+            _state.append((was, cfg.runtime.pause_owners.get(owner)))
+            return False  # read-only; release_pauses will do its own save
+
+        mutate_config(_read_state)
+        was_active, lease = _state[0]
+
         if lease is not None and lease.active:
             release = release_pauses(
                 {owner: lease.generation if lease.generation is not None else ""},
@@ -112,8 +135,11 @@ def deactivate(actor: str = "human", scope: str = "global") -> None:
                 source={"system": "risk_engine", "telegram": "telegram"}.get(actor, "dashboard"),
             )
         else:
-            setattr(cfg.runtime, field, False)
-            save_config(cfg)
+            # No active lease — clear the field directly via mutate_config.
+            def _clear_field(cfg):
+                setattr(cfg.runtime, field, False)
+                return True
+            mutate_config(_clear_field)
         after_cfg = load_config()
         after_active = bool(getattr(after_cfg.runtime, field))
     write_audit({

@@ -605,8 +605,11 @@ def _preflight(args: argparse.Namespace, db: sqlite3.Connection, db_file: Path) 
     return report
 
 
-def _postflight_verify(db: sqlite3.Connection, baseline: dict[str, Any]) -> None:
-    """After DELETEs and after VACUUM: audit-chain + learning tables unchanged."""
+def _postflight_verify(db: sqlite3.Connection, baseline: dict[str, Any], backup_path: Path | None = None) -> None:
+    """After DELETEs and after VACUUM: audit-chain + learning tables unchanged.
+    
+    On failure, attempt to restore from backup_path if provided.
+    """
     for group_key, tables in (
         ("audit_chain", _AUDIT_CHAIN_TABLES),
         ("learning", _LEARNING_TABLES),
@@ -616,16 +619,39 @@ def _postflight_verify(db: sqlite3.Connection, baseline: dict[str, Any]) -> None
         for table, prior in expected.items():
             now = actual.get(table)
             if now != prior:
+                # Attempt restore before aborting
+                _attempt_restore_from_backup(db, backup_path)
                 raise SystemExit(
                     f"ABORT: {group_key}.{table} row count changed {prior} -> {now}. "
-                    "Restore from ~/.aletheia/app.db.pre-migration-backup NOW."
+                    f"Restore attempt completed. Check {backup_path or 'backup'} for recovery."
                 )
     integrity = db.execute("PRAGMA integrity_check").fetchall()
     if [row[0] for row in integrity] != ["ok"]:
+        _attempt_restore_from_backup(db, backup_path)
         raise SystemExit(f"ABORT: post-VACUUM integrity_check failed: {integrity}")
     fk = db.execute("PRAGMA foreign_key_check").fetchall()
     if fk:
+        _attempt_restore_from_backup(db, backup_path)
         raise SystemExit(f"ABORT: post-VACUUM foreign_key_check {len(fk)} rows.")
+
+
+def _attempt_restore_from_backup(db: sqlite3.Connection, backup_path: Path | None) -> None:
+    """Best-effort restore from verified backup on postflight failure."""
+    if not backup_path or not backup_path.exists():
+        print(f"RESTORE FAILED: backup not available at {backup_path}", file=sys.stderr)
+        return
+    try:
+        from aletheia.storage.sqlite import db_path
+        db_file = Path(db_path())
+        db.close()
+        shutil.copy2(backup_path, db_file)
+        restored = sqlite3.connect(str(db_file))
+        restored.execute("PRAGMA integrity_check").fetchone()
+        restored.close()
+        print(f"RESTORE SUCCESS: {backup_path} -> {db_file}")
+    except Exception as exc:
+        print(f"RESTORE FAILED: {exc}", file=sys.stderr)
+
 
 
 # --- Archive helpers -------------------------------------------------------
@@ -1020,7 +1046,27 @@ def run(args: argparse.Namespace) -> int:
             print(f"  {fn.__name__}: (skipped in dry-run — will run in --apply)")
         return 0
 
-    # Apply mode -----------------------------------------------------------
+    # Issue #1383: Create a pre-retention SQLite backup before first mutation.
+    # Use sqlite3.Connection.backup() API (WAL-safe, same pattern as exporter.py).
+    backup_path = db_file.parent / "app.db.pre-retention-backup"
+    if backup_path.exists():
+        backup_path.unlink()
+    print(f"Creating pre-retention backup at {backup_path}...")
+    backup_conn = sqlite3.connect(str(backup_path))
+    try:
+        db.backup(backup_conn)
+    finally:
+        backup_conn.close()
+    # Verify backup integrity before proceeding
+    verify_conn = sqlite3.connect(str(backup_path))
+    try:
+        verify_row = verify_conn.execute("PRAGMA integrity_check").fetchone()
+        if not verify_row or verify_row[0] != "ok":
+            raise SystemExit(f"ABORT: Backup integrity_check failed: {verify_row}")
+    finally:
+        verify_conn.close()
+    print(f"Backup created and verified: {backup_path}")
+
     total_pruned: dict[str, int] = {}
     archive_summary: dict[str, dict[str, Any]] = {}
     for target, rows, _est_mb in per_table_estimate:
@@ -1045,7 +1091,7 @@ def run(args: argparse.Namespace) -> int:
     print("retro_strip:", json.dumps(retro_strip, indent=2))
 
     # Post-DELETE, pre-VACUUM invariant.
-    _postflight_verify(db, preflight["baseline"])
+    _postflight_verify(db, preflight["baseline"], backup_path)
 
     # Drop the always-empty universe_feature_snapshots.raw column before
     # VACUUM so the freed bytes get reclaimed in the same pass. Idempotent.
@@ -1053,12 +1099,12 @@ def run(args: argparse.Namespace) -> int:
     print("universe_features_raw_migration:", json.dumps(raw_drop, indent=2))
     # Re-check invariants after the ALTER TABLE — DROP COLUMN rewrites the
     # table so an extra safety belt is worth the millisecond.
-    _postflight_verify(db, preflight["baseline"])
+    _postflight_verify(db, preflight["baseline"], backup_path)
 
     if args.vacuum or args.apply:
         vacuum_events = _vacuum_and_optimize(db)
         print("vacuum:", json.dumps(vacuum_events, indent=2))
-        _postflight_verify(db, preflight["baseline"])
+        _postflight_verify(db, preflight["baseline"], backup_path)
 
     # FS prunes.
     fs_summary: dict[str, Any] = {}
