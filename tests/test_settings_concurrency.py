@@ -252,8 +252,8 @@ def test_risk_policy_revision_check_inside_lock(tmp_path):
 
         # Simulate: concurrent writer increments risk policy revision before we read
         def advance_revision(cfg):
-            cfg.risk.paper = cfg.risk.paper.model_copy(
-                update={"revision": cfg.risk.paper.revision + 1}, deep=True
+            cfg.risk.demo = cfg.risk.demo.model_copy(
+                update={"revision": cfg.risk.demo.revision + 1}, deep=True
             )
             return True
 
@@ -261,13 +261,13 @@ def test_risk_policy_revision_check_inside_lock(tmp_path):
 
         # Read the fresh revision
         fresh = load_config()
-        new_rev = fresh.risk.paper.revision
+        new_rev = fresh.risk.demo.revision
 
         # A further mutation inside mutate_config sees the already-advanced revision
         seen_revision = None
         def check_revision(cfg):
             nonlocal seen_revision
-            seen_revision = cfg.risk.paper.revision
+            seen_revision = cfg.risk.demo.revision
             return False  # no write needed
 
         mutate_config(check_revision)

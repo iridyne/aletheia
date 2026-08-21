@@ -2211,7 +2211,9 @@ def _resolve_post_debate_leverage(
     decision.sizing_trace["leverage_resolver"] for audit.
 
     Returns the final leverage (or None for spot).
-    Falls back to 1x when required inputs are missing or invalid.
+    Raises DecisionUnavailable when required inputs (entry_price, stop_price,
+    stop_distance, account headroom) are missing — a futures proposal without
+    a complete entry plan must not be created.
     """
     if market_type != "usdt_futures":
         decision.leverage_advisory = decision.leverage
@@ -2229,29 +2231,31 @@ def _resolve_post_debate_leverage(
         cfg,
     )
 
-    def _fallback(reason: str) -> int:
-        decision.leverage = 1
-        decision.sizing_trace["leverage_resolver"] = {
-            "ai_advisory": ai_advisory,
-            "tier_cap": tier_cap,
-            "reason": reason,
-            "final": 1,
-        }
-        return 1
-
     # entry price from the context-bound mark (always present when trade reaches here)
     entry_mark = (trading_context.get("layer2") or {}).get("entry_mark") or {}
     entry_price = _valid_protective_price(entry_mark.get("price"))
     if entry_price is None:
-        return _fallback("missing_entry_price_fallback")
+        raise DecisionUnavailable(
+            "incomplete_entry_plan:entry_price",
+            stage="operator_entry_plan",
+            filter_trace=list(decision.filter_trace),
+        )
 
     stop_price = _valid_protective_price(decision.stop_price)
     if stop_price is None:
-        return _fallback("missing_stop_price_fallback")
+        raise DecisionUnavailable(
+            "incomplete_entry_plan:stop_price",
+            stage="operator_entry_plan",
+            filter_trace=list(decision.filter_trace),
+        )
 
     stop_pct = abs(entry_price - stop_price) / entry_price
     if stop_pct <= 0:
-        return _fallback("zero_stop_distance_fallback")
+        raise DecisionUnavailable(
+            "incomplete_entry_plan:zero_stop_distance",
+            stage="operator_entry_plan",
+            filter_trace=list(decision.filter_trace),
+        )
 
     # 1. Stop-distance safety: stop must fire before liquidation
     #    At leverage L, liquidation at ~1/L. Safety: stop_pct < liq_margin/L
@@ -2280,7 +2284,11 @@ def _resolve_post_debate_leverage(
     if account_lev_cap is not None and account_lev_ratio is not None:
         remaining = float(account_lev_cap) - float(account_lev_ratio)
         if remaining <= 0:
-            return _fallback("account_headroom_exhausted")
+            raise DecisionUnavailable(
+                "account_headroom_exhausted",
+                stage="operator_entry_plan",
+                filter_trace=list(decision.filter_trace),
+            )
         headroom_based = max(1, int(remaining))
 
     final = max(1, min(stop_based_max, conviction_based, atr_based, headroom_based, tier_cap))

@@ -90,7 +90,7 @@ def test_legacy_risk_policies_migrate_to_account_equity_capital_base():
         "live": {"capital": {"base_usdt": 678.0}},
     })
 
-    assert risk.schema_version == 3
+    assert risk.schema_version == 4
     assert risk.demo.capital.base_source == "account_equity"
     assert risk.live.capital.base_source == "account_equity"
     # Preserve the old values so switching to Custom remains reversible.

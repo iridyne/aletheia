@@ -1529,7 +1529,7 @@ export interface components {
             runtime_liquidation_monitor_enabled: boolean;
             /**
              * Schema Version
-             * @default 3
+             * @default 4
              */
             schema_version: number;
             /**
