@@ -1485,7 +1485,8 @@ class GuardConfig(BaseModel):
     # permanently shadow-only (see knowledge/guards.py guard_origin + evaluate_guards
     # seam); owner must explicitly opt in AND only manual/authorized guards promote.
     auto_promote_enabled: bool = False
-    min_matching_trades: int = 3
+    # Automatic lifecycle mutations require at least one clean trade as evidence.
+    min_matching_trades: int = Field(default=3, ge=1)
     max_score_penalty: float = 40.0
 
 

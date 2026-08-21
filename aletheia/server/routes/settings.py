@@ -1307,7 +1307,7 @@ class GuardConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
     enforce_in_paper_ranker: Optional[bool] = None
     auto_promote_enabled: Optional[bool] = None
-    min_matching_trades: Optional[int] = None
+    min_matching_trades: Optional[int] = Field(default=None, ge=1)
     max_score_penalty: Optional[float] = None
 
 
