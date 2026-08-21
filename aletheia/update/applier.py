@@ -119,23 +119,31 @@ def check_for_update() -> dict:
     }
 
 
+def _is_managed_venv() -> bool:
+    """True when running inside the project-managed venv (not a foreign Python)."""
+    venv = _PROJECT_ROOT / ".venv"
+    try:
+        return Path(sys.executable).resolve().is_relative_to(venv.resolve())
+    except Exception:
+        return False
+
 def _reinstall_deps() -> dict:
+    # #1206: enforce uv.lock — only uv sync --locked is authoritative; no pip fallback
     env = _safe_env()
-    for cmd in (["uv", "pip", "install", "-e", "."], ["pip", "install", "-e", "."]):
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(_PROJECT_ROOT),
-                capture_output=True,
-                text=True,
-                env=env,
-                **_no_window_kwargs(),
-            )
-            if result.returncode == 0:
-                return {"ok": True, "tool": cmd[0]}
-        except FileNotFoundError:
-            continue
-    return {"ok": False, "reason": "install_failed"}
+    try:
+        result = subprocess.run(
+            ["uv", "sync", "--locked"],
+            cwd=str(_PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            env=env,
+            **_no_window_kwargs(),
+        )
+        if result.returncode == 0:
+            return {"ok": True, "tool": "uv"}
+    except FileNotFoundError:
+        pass
+    return {"ok": False, "reason": "update_dependency_sync_failed"}
 
 
 _FRONTEND_DIR = _PROJECT_ROOT / "frontend"
@@ -303,6 +311,64 @@ def _record_metadata_failure(commit: str, result: dict | None) -> None:
     })
 
 
+def _rollback_update(
+    old: str,
+    new: str,
+    python_deps_changed: bool,
+    frontend_deps_changed: bool,
+    restart: bool,
+    failure_reason: str,
+    failure_detail: str | None = None,
+) -> dict:
+    """#1207: canonical verified rollback with environment restoration."""
+    rollback = git_ops.reset_hard(old)
+    shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
+    if python_deps_changed:
+        _reinstall_deps()
+    if restart and frontend_deps_changed:
+        _install_frontend_deps()
+    if not rollback.get("ok"):
+        actual_head = git_ops.current_commit() or ""
+        metadata = _persist_current_commit_fresh(actual_head)
+        _record_metadata_failure(actual_head, metadata)
+        write_audit({
+            "actor": "human", "source": "api", "event_type": "update_rollback_failed",
+            "entity_type": "system_update", "entity_id": new,
+            "before": {"commit": old}, "after": {"commit": actual_head},
+            "message": f"Rollback FAILED: {rollback.get('reason')}; on-disk HEAD is {actual_head}",
+        })
+        return {
+            "applied": False,
+            "rolled_back": False,
+            "reason": "rollback_failed",
+            "mode": "development",
+            "old_commit": old,
+            "attempted_commit": new,
+            "actual_head": actual_head,
+            "rollback_error": rollback.get("reason"),
+            "message": f"Rollback failed — on unverified code at {actual_head}. Manual intervention required.",
+            **_metadata_fields(metadata),
+        }
+    metadata = _persist_current_commit_fresh(old)
+    _record_metadata_failure(old, metadata)
+    write_audit({
+        "actor": "human", "source": "api", "event_type": "update_rolled_back",
+        "entity_type": "system_update", "entity_id": old,
+        "before": {"commit": new}, "after": {"commit": old},
+        "message": f"Update rolled back: {failure_reason}: {failure_detail or ''}",
+    })
+    return {
+        "applied": False,
+        "rolled_back": True,
+        "reason": failure_reason,
+        "mode": "development",
+        "old_commit": old,
+        "attempted_commit": new,
+        "message": f"Update rolled back: {failure_reason}. No restart needed.",
+        **_metadata_fields(metadata),
+    }
+
+
 def apply_update(*, restart: bool = False, progress=None) -> dict:
     """Apply an update according to the current execution mode."""
     if _is_packaged():
@@ -331,6 +397,9 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
     cfg = load_config()
     if not cfg.update.enabled:
         return {"applied": False, "reason": "update_disabled", "mode": "development"}
+    # #1206: refuse updates when not inside the project-managed venv
+    if not _is_managed_venv():
+        return {"applied": False, "reason": "update_wrong_interpreter", "mode": "development"}
     if not git_ops.git_available():
         return {"applied": False, "reason": "git_unavailable", "mode": "development"}
     branch = cfg.update.branch
@@ -398,89 +467,42 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
             progress("Reinstalling Python dependencies")
         install = _reinstall_deps()
         if not install.get("ok"):
-            git_ops.reset_hard(old)
-            return {"applied": False, "reason": "python_dependency_install_failed", "mode": "development"}
+            return _rollback_update(
+                old, new, python_deps_changed=False, frontend_deps_changed=frontend_deps_changed,
+                restart=restart, failure_reason=install.get("reason", "python_dependency_install_failed"),
+            )
         deps_reinstalled = True
     if restart and frontend_deps_changed:
         if progress:
             progress("Updating frontend packages")
         install = _install_frontend_deps()
         if not install.get("ok"):
-            git_ops.reset_hard(old)
-            return {"applied": False, "reason": install["reason"], "mode": "development"}
+            return _rollback_update(
+                old, new, python_deps_changed=python_deps_changed, frontend_deps_changed=False,
+                restart=restart, failure_reason=install["reason"],
+            )
     if restart:
         if progress:
             progress("Building dashboard")
         build = _build_frontend()
         if not build.get("ok"):
-            git_ops.reset_hard(old)
-            if python_deps_changed:
-                _reinstall_deps()
-            if frontend_deps_changed:
-                _install_frontend_deps()
-            return {"applied": False, "reason": build["reason"], "mode": "development"}
+            return _rollback_update(
+                old, new, python_deps_changed=python_deps_changed, frontend_deps_changed=frontend_deps_changed,
+                restart=restart, failure_reason=build["reason"],
+            )
 
     if progress:
         progress("Running smoke check")
     smoke = run_smoke_check()
     if not smoke.get("ok"):
-        rollback = git_ops.reset_hard(old)
-        shutil.rmtree(_STAGED_DASHBOARD_STATIC, ignore_errors=True)
-        if python_deps_changed:
-            _reinstall_deps()
-        if restart and frontend_deps_changed:
-            _install_frontend_deps()
-        if not rollback.get("ok"):
-            actual_head = git_ops.current_commit() or ""
-            metadata = _persist_current_commit_fresh(actual_head)
-            _record_metadata_failure(actual_head, metadata)
-            write_audit({
-                "actor": "human", "source": "api", "event_type": "update_rollback_failed",
-                "entity_type": "system_update", "entity_id": new,
-                "before": {"commit": old}, "after": {"commit": actual_head},
-                "message": (
-                    f"Rollback FAILED after smoke failure at {smoke.get('stage')}: "
-                    f"{rollback.get('reason')}; on-disk HEAD is {actual_head}"
-                ),
-            })
-            return {
-                "applied": False,
-                "rolled_back": False,
-                "reason": "rollback_failed",
-                "mode": "development",
-                "smoke_stage": smoke.get("stage"),
-                "old_commit": old,
-                "attempted_commit": new,
-                "actual_head": actual_head,
-                "rollback_error": rollback.get("reason"),
-                "message": (
-                    "Smoke check failed AND rollback failed — the gateway is "
-                    f"on unverified code at {actual_head}. Manual intervention required."
-                ),
-                **_metadata_fields(metadata),
-            }
-        metadata = _persist_current_commit_fresh(old)
-        _record_metadata_failure(old, metadata)
-        write_audit({
-            "actor": "human", "source": "api", "event_type": "update_rolled_back",
-            "entity_type": "system_update", "entity_id": old,
-            "before": {"commit": new}, "after": {"commit": old},
-            "message": (
-                f"Update rolled back: smoke failed at {smoke.get('stage')}: "
-                f"{smoke.get('detail')}"
-            ),
-        })
-        return {
-            "applied": False,
-            "rolled_back": True,
-            "reason": "smoke_failed",
-            "mode": "development",
-            "smoke_stage": smoke.get("stage"),
-            "old_commit": old,
-            "attempted_commit": new,
-            "message": "Update rolled back after smoke check failed. No restart needed.",
-            **_metadata_fields(metadata),
-        }
+        return _rollback_update(
+            old, new,
+            python_deps_changed=python_deps_changed,
+            frontend_deps_changed=frontend_deps_changed,
+            restart=restart,
+            failure_reason="smoke_failed",
+            failure_detail=f"stage={smoke.get('stage')}: {smoke.get('detail')}",
+        )
 
     frontend_built = False
     if restart:

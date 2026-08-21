@@ -28,7 +28,7 @@ from aletheia.storage.repositories import (
     get_universe_member,
     list_open_trade_opportunities,
 )
-from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation
+from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation, ActiveGuardLoadError
 from aletheia.regime.detector import get_current_regime, MarketRegime
 from aletheia.trading.instruments import tradable_symbols_from_config
 # Position C (2026-07-02): strategy rules-engine deleted. The ranker no longer
@@ -1222,13 +1222,16 @@ def _evaluate_guards_safe(
             "_opportunity_id": opportunity_id,
         })
 
-        max_penalty = guard_cfg.max_score_penalty if guard_cfg else 40.0
+        max_penalty = max(0.0, float(guard_cfg.max_score_penalty if guard_cfg else 40.0))
         result = evaluate_guards(ctx, scope="paper_entry")
 
         if result.total_penalty > max_penalty:
             result.total_penalty = max_penalty
 
         return result
+    except ActiveGuardLoadError:
+        # #1244: active guard set incomplete — must fail closed, not zero-penalty pass.
+        raise
     except Exception as e:
         logger.warning("Guard evaluation failed (non-fatal): %s", e)
         return None
