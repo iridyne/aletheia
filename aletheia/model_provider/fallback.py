@@ -311,14 +311,6 @@ async def _candidate_models(provider_name: str, provider: ModelProvider) -> list
     if pcfg is not None:
         candidates.extend(str(m).strip() for m in getattr(pcfg, "fallback_models", []) or [])
 
-    # Best effort: reuse the existing endpoint/model discovery path so the
-    # runtime learns the live catalogue instead of relying only on static config.
-    try:
-        detected = await provider_router.list_models_cached(provider_name, provider)
-        candidates.extend(str(m.get("slug") or "").strip() for m in detected if isinstance(m, dict))
-    except Exception as exc:  # noqa: BLE001 - detection is advisory only
-        logger.debug("model fallback list_models failed for %s: %s", provider_name, exc)
-
     seen: set[str] = set()
     ordered: list[str] = []
     for model in candidates:

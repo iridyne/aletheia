@@ -476,9 +476,9 @@ class ProviderConfig(BaseModel):
     verification_reason_code: str | None = None
     verification_detail: str | None = None
     # Request-level model fallback. When the configured model returns a
-    # transient capacity/rate-limit error, the runtime can try these models
-    # before giving up. If empty, the runtime may use list_models() detection as
-    # a best-effort catalogue. This never changes the persisted default model.
+    # transient capacity/rate-limit error, the runtime will try these fallback
+    # models in order before giving up. Discovered catalogue models are NOT
+    # used as automatic fallbacks; this is the complete ordered fallback list.
     model_fallback_enabled: bool = True
     fallback_models: list[str] = Field(default_factory=list)
     # Process-wide inference admission. Every completion for this Provider is
