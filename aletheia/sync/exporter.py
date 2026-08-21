@@ -60,7 +60,7 @@ class ExportService:
         bundle_dir.mkdir(parents=True, exist_ok=True)
 
         if mode == "config-only":
-            self._export_config(bundle_dir)
+            self._export_config(bundle_dir, required=True)
         elif mode == "research-pack":
             self._export_research(bundle_dir, since)
         elif mode == "proposal-pack":
@@ -88,8 +88,13 @@ class ExportService:
 
         return archive_path
 
-    def _export_config(self, bundle_dir: Path) -> None:
-        """Export config with credential-bearing fields redacted (keeps manifest secrets_included=False honest)."""
+    def _export_config(self, bundle_dir: Path, *, required: bool = False) -> None:
+        """Export config with credential-bearing fields redacted (keeps manifest secrets_included=False honest).
+
+        When required=True (config-only mode), a missing or unreadable config raises.
+        When required=False (included as part of full-backup/research), a missing config is
+        skipped silently; a readable but unparsable config still raises (secrets-leak risk).
+        """
         config_src = self._data_dir / "config.yaml"
         if config_src.exists():
             (bundle_dir / "config").mkdir(exist_ok=True)
@@ -99,10 +104,9 @@ class ExportService:
                 redacted = _redact_config_dict(data)
                 dst.write_text(yaml.safe_dump(redacted, default_flow_style=False, sort_keys=False), encoding="utf-8")
             except Exception as exc:
-                # Fail closed: never copy the raw file (would leak secrets).
-                # Re-raise so the caller sees the failure rather than a misleading success.
+                # Fail closed: never fall back to copying the raw file (that would leak).
                 raise RuntimeError(f"config export failed: {exc}") from exc
-        else:
+        elif required:
             raise RuntimeError(f"config.yaml not found at {config_src}")
 
     def _export_research(self, bundle_dir: Path, since: str | None) -> None:
