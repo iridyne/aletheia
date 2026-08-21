@@ -5,6 +5,7 @@ import { createColumnHelper } from '@tanstack/react-table'
 import { api } from '../api/client'
 import type { AgentRun, Opportunity } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
+import { type DataState } from '../components/DataState'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import Tabs from '../components/Tabs'
 import PageHeader from '../components/PageHeader'
@@ -75,12 +76,27 @@ const oppColumns = [
 ]
 
 export default function AgentActivity() {
-  const { data: runs = [] } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns })
-  const { data: opps = [] } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities })
+  const { data: runs, isPending: runsPending, isError: runsError } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns })
+  const { data: opps, isPending: oppsPending, isError: oppsError } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities })
 
-  const runRows = runs as AgentRun[]
-  const oppRows = opps as Opportunity[]
+  const runRows = (runs ?? []) as AgentRun[]
+  const oppRows = (opps ?? []) as Opportunity[]
   const openOpps = oppRows.filter(o => o.status === 'open' || o.status === 'pending').length
+
+  const runsState = runsPending && runRows.length === 0
+    ? 'loading'
+    : runsError && runRows.length === 0
+      ? 'unavailable'
+      : runsError && runRows.length > 0
+        ? 'stale'
+        : undefined
+  const oppsState = oppsPending && oppRows.length === 0
+    ? 'loading'
+    : oppsError && oppRows.length === 0
+      ? 'unavailable'
+      : oppsError && oppRows.length > 0
+        ? 'stale'
+        : undefined
 
   return (
     <div>
@@ -90,15 +106,15 @@ export default function AgentActivity() {
       />
       <Tabs
         tabs={[
-          { id: 'runs', label: 'Runs', badge: runRows.length || undefined, render: () => <RunsTab runs={runRows} /> },
-          { id: 'opps', label: 'Opportunities', badge: openOpps || undefined, render: () => <OpportunitiesTab opps={oppRows} /> },
+          { id: 'runs', label: 'Runs', badge: runRows.length || undefined, render: () => <RunsTab runs={runRows} state={runsState} /> },
+          { id: 'opps', label: 'Opportunities', badge: openOpps > 0 ? openOpps : undefined, render: () => <OpportunitiesTab opps={oppRows} state={oppsState} /> },
         ]}
       />
     </div>
   )
 }
 
-function RunsTab({ runs }: { runs: AgentRun[] }) {
+function RunsTab({ runs, state }: { runs: AgentRun[], state?: DataState }) {
   const qc = useQueryClient()
   const { toast } = useToast()
   const [selected, setSelected] = useState<AgentRun | null>(null)
@@ -121,9 +137,8 @@ function RunsTab({ runs }: { runs: AgentRun[] }) {
         </div>
       </Card>
       <Card>
-        <DataTable data={runs} columns={runColumns} onRowClick={setSelected} emptyMessage="No agent runs yet." />
+        <DataTable data={runs} columns={runColumns} onRowClick={setSelected} state={state} emptyMessage="No agent runs yet." />
       </Card>
-
       <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="Agent Run Detail">
         {selected && (
           <>
@@ -161,7 +176,7 @@ function RunsTab({ runs }: { runs: AgentRun[] }) {
   )
 }
 
-function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
+function OpportunitiesTab({ opps, state }: { opps: Opportunity[], state?: DataState }) {
   const navigate = useNavigate()
   const [selected, setSelected] = useState<Opportunity | null>(null)
   const [filter, setFilter] = useState<'all' | 'crypto' | 'equity' | 'prediction'>('all')
@@ -194,7 +209,7 @@ function OpportunitiesTab({ opps }: { opps: Opportunity[] }) {
             </Button>
           )}
         </div>
-        <DataTable data={filtered} columns={oppColumns} onRowClick={setSelected} emptyMessage="No opportunities yet." />
+        <DataTable data={filtered} columns={oppColumns} onRowClick={setSelected} state={state} emptyMessage="No opportunities yet." />
       </Card>
 
       <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="Opportunity Detail">
