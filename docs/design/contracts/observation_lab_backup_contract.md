@@ -13,6 +13,15 @@ New #1072 §"Storage and runtime boundary" (verbatim):
 
 This contract is what "one consistent evidence checkpoint" means in code.
 
+**Authority on mismatch:** joint-checkpoint mismatch is **diagnostic**, not a hard
+evidence-admission blocker. The runner logs a warning, preserves both the prior and
+current fingerprint in the pass summary, and continues executing windows. This is
+the authoritative behavior; `runner.py` is the reference implementation. The
+per-window invalidation escalation described in §5 is a Packet 2+ concern and is
+not yet enforced.
+
+This contract is what "one consistent evidence checkpoint" means in code.
+
 ## 1. The three files that must agree
 
 | File | Authority | What defines "state" |
@@ -47,7 +56,10 @@ Sorted + deduplicated so the fingerprint is order-independent. `canonical_json` 
 1. `verify_joint_checkpoint()` — compare fresh compute against the latest stored fingerprint.
 2. `ok=True, reason="first_checkpoint"` — the ledger is empty (fresh install). Continue and record.
 3. `ok=True, reason="fingerprint_match"` — no drift. Continue.
-4. `ok=False` — at least one input was restored to a different point than the others. **Affected Observations must fail closed as `invalidated`** with `invalidation_reason="joint_checkpoint_mismatch:<detail>"`. Do not fall back to any current live cohort.
+4. `ok=False` — at least one input was restored to a different point than the others.
+   **Diagnostic only:** the runner logs a warning and records both the prior and current
+   fingerprint in the pass summary (`prior_fingerprint` + `current_fingerprint`). Windows
+   continue; no hard block is applied in v1. Per-window invalidation is deferred to Packet 2+.
 
 ## 4. Why the fingerprint uses only these three inputs
 
@@ -59,14 +71,17 @@ Sorted + deduplicated so the fingerprint is order-independent. `canonical_json` 
 
 Once `verify_joint_checkpoint().ok is False` returns:
 
-- Every window whose active manifest set contains a hash NOT in the last stored fingerprint is **provably** running against an inconsistent view — mark those windows `invalidated`.
-- Every window whose active manifests are **all** in the stored fingerprint but the app.db head diverged is **suspect**: the fingerprint alone can't tell if the row-level facts those manifests depend on are still consistent. Owner review §7 rule applies: fail closed rather than pool across a discontinuity.
-- Verdict identity is immutable: invalidation appends an evaluation with `disposition="invalidated"`, it never rewrites history.
-
-## 6. What this contract does NOT do
-
-- No coordinated backup script. Backup tooling is out of Observation Lab scope; the contract only says "if the resulting state is inconsistent, the Lab must not silently proceed". A future ops task can add a `aletheia observe backup` command that snapshots all three inputs together with the fingerprint recorded.
-- No automatic recovery. On a mismatch the operator resolves it manually — either by rolling forward the lagging file or by declaring the mismatch acceptable (a deliberate ledger reset) and starting a new checkpoint chain. The Lab cannot know which is correct.
+- The runner records both `prior_fingerprint` (the last stored fingerprint) and
+  `current_fingerprint` (fresh compute) in the pass summary. Both identities are
+  preserved so operator review can compare them.
+- The runner does **not** block window execution or reject evidence in v1 — mismatch
+  is treated as a diagnostic signal. The `runner.py` behavior (continue with warning)
+  is authoritative.
+- Every window whose active manifest set contains a hash NOT in the last stored
+  fingerprint is **provably** running against an inconsistent view. Packet 2+ MAY
+  escalate this to per-window `invalidated` disposition.
+- Verdict identity is immutable: if escalation is added later, invalidation appends
+  an evaluation with `disposition="invalidated"`, it never rewrites history.
 - No enforcement of when to call verify. The Lab runner (`aletheia/observation_lab/runner.py`) is the natural caller and will invoke it once per pass in a follow-up; this PR ships the primitives.
 
 ## 7. Verification

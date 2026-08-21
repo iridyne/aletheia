@@ -1,6 +1,7 @@
 """Unit tests for aletheia.analytics.trade_attribution."""
 from __future__ import annotations
 
+import pytest
 from unittest.mock import patch
 
 from aletheia.analytics.trade_attribution import (
@@ -297,3 +298,86 @@ def test_attribution_labels_legacy_decision_context_not_recorded():
         "decision_learning_manifest",
     ):
         assert row[field] == "not recorded"
+
+
+# ---------------------------------------------------------------------------
+# AttributionReadError — fail-closed read contract (#1248)
+# ---------------------------------------------------------------------------
+
+def test_read_error_raises_attribution_read_error():
+    """DB engine error in _read_one raises AttributionReadError (not None)."""
+    import sqlite3
+    from aletheia.analytics.trade_attribution import AttributionReadError, _read_one
+
+    class FailingDB:
+        def execute(self, *args, **kwargs):
+            raise sqlite3.OperationalError("disk I/O error")
+
+    with pytest.raises(AttributionReadError):
+        _read_one(FailingDB(), "trade_proposals", "prop-1", None)
+
+
+def test_key_not_found_returns_none():
+    """Key not found (row missing) returns None — not an error."""
+    import sqlite3
+    from aletheia.analytics.trade_attribution import _read_one
+
+    class EmptyDB:
+        def execute(self, *args, **kwargs):
+            class Result:
+                def fetchone(self):
+                    return None
+            return Result()
+
+    result = _read_one(EmptyDB(), "trade_proposals", "missing-key", None)
+    assert result is None
+
+
+def test_safe_get_error_raises_attribution_read_error():
+    """_safe_get raises AttributionReadError when fallback fn raises."""
+    from aletheia.analytics.trade_attribution import AttributionReadError, _safe_get
+
+    def failing_fn(key):
+        raise OSError("connection failed")
+
+    with pytest.raises(AttributionReadError):
+        _safe_get(failing_fn, "some-key")
+
+
+def test_safe_get_not_found_returns_none():
+    """_safe_get returns None when fallback fn returns None."""
+    from aletheia.analytics.trade_attribution import _safe_get
+
+    result = _safe_get(lambda k: None, "some-key")
+    assert result is None
+
+
+def test_attribution_read_error_propagates_from_build_rows():
+    """AttributionReadError from a DB read escapes build_trade_attribution_rows."""
+    import sqlite3
+    from aletheia.analytics.trade_attribution import AttributionReadError
+
+    fake_position = {
+        "id": "pos-err", "symbol": "BTC/USDT", "market_type": "usdt_futures",
+        "direction": "long", "execution_mode": "paper",
+        "strategy_id": "strat-1", "opportunity_id": "opp-1",
+        "proposal_id": "prop-err", "order_id": "ord-1",
+        "entry_price": "50000", "current_price": "51000",
+        "quantity": "0.001", "realized_pnl": "1.0",
+        "close_reason": "take_profit", "status": "closed",
+    }
+
+    class FailingDB:
+        def execute(self, sql, params=()):
+            if "positions" in sql:
+                class R:
+                    def fetchall(self_):
+                        return []
+                return R()
+            raise sqlite3.OperationalError("disk I/O error")
+
+    with patch("aletheia.analytics.trade_attribution.eligible_strategy_outcomes", return_value=[fake_position]), \
+            patch("aletheia.analytics.trade_attribution.repo") as mock_repo:
+        mock_repo.get_trade_proposal.side_effect = sqlite3.OperationalError("disk I/O error")
+        with pytest.raises(AttributionReadError):
+            build_trade_attribution_rows(limit=10)

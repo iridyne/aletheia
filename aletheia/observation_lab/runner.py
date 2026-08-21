@@ -157,6 +157,10 @@ def _pass_checkpoint() -> dict[str, Any]:
 
         verdict = verify_joint_checkpoint()
         if not verdict.ok:
+            # Mismatch is DIAGNOSTIC — a warning that helps detect inconsistent restore
+            # events. The runner continues with a warning; it does NOT block the window pass.
+            # The prior fingerprint is preserved alongside the current one so both identities
+            # are available for operator review (see observation_lab_backup_contract.md §5).
             logger.warning(
                 "observation_lab.runner: joint checkpoint mismatch: %s",
                 verdict.reason,
@@ -167,6 +171,11 @@ def _pass_checkpoint() -> dict[str, Any]:
             "ok": bool(verdict.ok),
             "reason": verdict.reason,
             "current_fingerprint": current.joint_fingerprint,
+            # prior_fingerprint preserved on mismatch so both identities survive in
+            # the durable status without the runner silently replacing the old value.
+            "prior_fingerprint": (
+                verdict.last.joint_fingerprint if verdict.last is not None else None
+            ),
             "last_fingerprint": (
                 verdict.last.joint_fingerprint if verdict.last is not None else None
             ),

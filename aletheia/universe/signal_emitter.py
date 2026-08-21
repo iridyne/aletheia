@@ -66,6 +66,7 @@ _HIGH_CONF_THRESHOLD = 60.0
 
 # Regime bias threshold: if the direction's bias < this value, skip signal
 # unless score compensates (higher score can override weak regime alignment).
+# This default is used when no explicit threshold is passed to emit_deterministic_opportunities.
 _REGIME_BIAS_THRESHOLD = 0.30
 _OPPORTUNITY_EVIDENCE_VERSION = "opportunity-information-integrity-v1"
 
@@ -116,6 +117,7 @@ def _record_emission_decision(
     market_type: str,
     total_score: float | None,
     short_enabled: bool,
+    bias_threshold: float = _REGIME_BIAS_THRESHOLD,
     decision: str,
     reason_code: str,
     direction: str | None = None,
@@ -166,11 +168,10 @@ def _record_emission_decision(
             entry_spread_bps=member.get("spread_bps"),
             funding_rate_at_entry=member.get("funding_rate"),
             outcome_candidate_key=candidate_key,
-            inputs=input_snapshot,
             parameters={
                 "min_score": _MIN_SCORE,
                 "high_confidence_threshold": _HIGH_CONF_THRESHOLD,
-                "regime_bias_threshold": _REGIME_BIAS_THRESHOLD,
+                "regime_bias_threshold": bias_threshold,
                 "short_enabled": short_enabled,
             },
             raise_on_error=True,
@@ -201,6 +202,7 @@ def emit_deterministic_opportunities(
     regime=None,
     short_enabled: bool = True,
     allow_open_replacement: bool = False,
+    bias_threshold: float | None = None,
 ) -> int:
     """Generate one deterministic Opportunity per eligible high-scoring universe member.
 
@@ -226,6 +228,9 @@ def emit_deterministic_opportunities(
     )
 
     ensure_opportunity_information_policy_epoch()
+
+    # Resolve actual bias_threshold: caller's value or fallback to constant
+    _effective_threshold = bias_threshold if bias_threshold is not None else _REGIME_BIAS_THRESHOLD
     # Key by (symbol, market_type): the same symbol can appear as both spot and
     # perp in one refresh. Keying by symbol alone let one overwrite the other, so
     # an emitted opportunity could inherit funding/direction from the wrong market.
@@ -280,6 +285,7 @@ def emit_deterministic_opportunities(
                 market_type=market_type,
                 total_score=None,
                 short_enabled=short_enabled,
+                bias_threshold=_effective_threshold,
                 decision="error",
                 reason_code="invalid_total_score",
                 inputs={"raw_total_score_type": type(raw_total_score).__name__},
@@ -295,6 +301,7 @@ def emit_deterministic_opportunities(
                 market_type=market_type,
                 total_score=total_score,
                 short_enabled=short_enabled,
+                bias_threshold=_effective_threshold,
                 decision="error",
                 reason_code="member_identity_missing",
                 inputs={
@@ -313,6 +320,7 @@ def emit_deterministic_opportunities(
                 market_type=market_type,
                 total_score=total_score,
                 short_enabled=short_enabled,
+                bias_threshold=_effective_threshold,
                 decision="rejected",
                 reason_code="score_below_minimum",
             )
@@ -328,6 +336,7 @@ def emit_deterministic_opportunities(
                 market_type=market_type,
                 total_score=total_score,
                 short_enabled=short_enabled,
+                bias_threshold=_effective_threshold,
                 decision="rejected",
                 reason_code="feature_missing",
             )
@@ -354,6 +363,7 @@ def emit_deterministic_opportunities(
                 market_type=market_type,
                 total_score=total_score,
                 short_enabled=short_enabled,
+                bias_threshold=_effective_threshold,
                 decision="rejected",
                 reason_code=reason_code,
                 direction=counterfactual_direction,
@@ -383,17 +393,42 @@ def emit_deterministic_opportunities(
                     market_type=market_type,
                     total_score=total_score,
                     short_enabled=short_enabled,
+                    bias_threshold=_effective_threshold,
                     decision="rejected",
                     reason_code="factor_blocked",
                     direction=direction,
                     inputs={"factor_status": factor_sig.get("status")},
                 )
                 continue
-        except Exception:
-            pass
+        except Exception as _factor_exc:
+            from aletheia.analytics.trade_attribution import AttributionReadError
+            if isinstance(_factor_exc, AttributionReadError):
+                # Attribution source unavailable: record typed decision and skip
+                # signal. Never swallow — bare except hides lineage read failures.
+                logger.warning(
+                    "signal_emitter: attribution source unavailable for %s %s %s: %s",
+                    family, direction, symbol, _factor_exc,
+                )
+                _record_emission_decision(
+                    member=m,
+                    snapshot_id=snapshot_id,
+                    member_index=member_index,
+                    symbol=symbol,
+                    market_type=market_type,
+                    total_score=total_score,
+                    short_enabled=short_enabled,
+                    bias_threshold=_effective_threshold,
+                    decision="rejected",
+                    reason_code="factor_feedback_unavailable",
+                    direction=direction,
+                    inputs={"error": str(_factor_exc)[:200]},
+                )
+                continue
+            # Non-attribution exceptions re-raised to prevent silent data loss
+            raise
 
         # Regime bias gate: filter signals that conflict with current regime
-        if regime is not None and not _passes_regime_gate(direction, total_score, regime, short_enabled):
+        if regime is not None and not _passes_regime_gate(direction, total_score, regime, short_enabled, _effective_threshold):
             logger.debug(
                 "regime-filtered %s %s %s (regime=%s, bias=%.2f)",
                 family, direction, symbol, regime.state,
@@ -407,6 +442,7 @@ def emit_deterministic_opportunities(
                 market_type=market_type,
                 total_score=total_score,
                 short_enabled=short_enabled,
+                bias_threshold=_effective_threshold,
                 decision="rejected",
                 reason_code="regime_filtered",
                 direction=direction,
@@ -445,6 +481,7 @@ def emit_deterministic_opportunities(
                 market_type=market_type,
                 total_score=total_score,
                 short_enabled=short_enabled,
+                bias_threshold=_effective_threshold,
                 decision="passed",
                 reason_code="existing_opportunity_reused",
                 direction=direction,
@@ -482,6 +519,7 @@ def emit_deterministic_opportunities(
                     market_type=market_type,
                     total_score=total_score,
                     short_enabled=short_enabled,
+                    bias_threshold=_effective_threshold,
                     decision="rejected",
                     reason_code="live_duplicate_suppressed",
                     direction=direction,
@@ -521,6 +559,7 @@ def emit_deterministic_opportunities(
                         market_type=market_type,
                         total_score=total_score,
                         short_enabled=short_enabled,
+                        bias_threshold=_effective_threshold,
                         decision="rejected",
                         reason_code="active_defer_suppressed",
                         direction=direction,
@@ -608,6 +647,7 @@ def emit_deterministic_opportunities(
                         market_type=market_type,
                         total_score=total_score,
                         short_enabled=short_enabled,
+                        bias_threshold=_effective_threshold,
                         decision="passed",
                         reason_code="existing_opportunity_reused",
                         direction=direction,
@@ -624,6 +664,7 @@ def emit_deterministic_opportunities(
                         market_type=market_type,
                         total_score=total_score,
                         short_enabled=short_enabled,
+                        bias_threshold=_effective_threshold,
                         decision="passed",
                         reason_code="opportunity_emitted",
                         direction=direction,
@@ -649,6 +690,7 @@ def emit_deterministic_opportunities(
                 market_type=market_type,
                 total_score=total_score,
                 short_enabled=short_enabled,
+                bias_threshold=_effective_threshold,
                 decision="error",
                 reason_code="opportunity_insert_error",
                 direction=direction,
@@ -666,7 +708,13 @@ def emit_deterministic_opportunities(
     return created
 
 
-def _passes_regime_gate(direction: str, total_score: float, regime, short_enabled: bool = True) -> bool:
+def _passes_regime_gate(
+    direction: str,
+    total_score: float,
+    regime,
+    short_enabled: bool = True,
+    bias_threshold: float = _REGIME_BIAS_THRESHOLD,
+) -> bool:
     """Check if a signal's direction passes the regime bias gate.
 
     Logic:
@@ -684,7 +732,7 @@ def _passes_regime_gate(direction: str, total_score: float, regime, short_enable
 
     bias = regime.long_bias if direction == "long" else regime.short_bias
 
-    if bias >= _REGIME_BIAS_THRESHOLD:
+    if bias >= bias_threshold:
         return True
 
     # Strong signals can override weak regime alignment

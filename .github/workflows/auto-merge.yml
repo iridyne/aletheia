@@ -70,6 +70,11 @@ jobs:
                 core.info('ignoring CI completion for a superseded head');
                 continue;
               }
+              const labels = await github.paginate(github.rest.issues.listLabelsOnIssue, {
+                ...context.repo,
+                issue_number: pullRequest.number,
+                per_page: 100,
+              });
               const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
                 ...context.repo,
                 pull_number: pullRequest.number,
@@ -90,7 +95,7 @@ jobs:
               const operation = (
                 !changedFilesComplete ||
                 changesMergeAuthority ||
-                pullRequest.labels.some(({name}) => name === 'do-not-auto-merge')
+                labels.some(({name}) => name === 'do-not-auto-merge')
               ) ? 'disable' : 'enable';
               await github.rest.repos.createDispatchEvent({
                 ...context.repo,
@@ -291,7 +296,7 @@ jobs:
                   baseRefOid
                   mergeStateStatus
                   autoMergeRequest { enabledAt }
-                  labels(first: 20) { nodes { name } }
+                  labels(first: 100) { nodes { name } }
                   comments(last: 100) {
                     nodes {
                       author { login }
@@ -382,6 +387,21 @@ jobs:
             };
             const dispatchRelease = async (pullRequest, mergeCommitSha) => {
               if (!releaseAfterMerge) return;
+              // #1212: Idempotency guard — if the tag already exists, skip re-dispatch
+              // to prevent loss when cancel-in-progress races with the release event.
+              try {
+                const {data: tags} = await github.rest.git.listMatchingRefs({
+                  ...context.repo,
+                  ref: `tags/v`,
+                });
+                const tagExists = tags.some((t) => t.object?.sha === mergeCommitSha);
+                if (tagExists) {
+                  core.info(`release tag already exists for ${mergeCommitSha}; skipping dispatch`);
+                  return;
+                }
+              } catch (error) {
+                core.warning(`could not check for existing release tag: ${error}; proceeding with dispatch`);
+              }
               await github.rest.repos.createDispatchEvent({
                 ...context.repo,
                 event_type: 'release_candidate_merged',
@@ -391,6 +411,26 @@ jobs:
                   expected_base_sha: expectedBaseSha,
                 },
               });
+            };
+            const verifyAuthorPermission = async (pullRequest) => {
+              try {
+                const {data: permission} = await github.rest.repos.getCollaboratorPermissionLevel({
+                  ...context.repo,
+                  username: pullRequest.user?.login,
+                });
+                const validLevels = ['write', 'maintain', 'admin'];
+                if (!validLevels.includes(permission.permission)) {
+                  core.info(
+                    `PR author ${pullRequest.user?.login} has insufficient permission ` +
+                    `(${permission.permission}); auto-merge disabled`,
+                  );
+                  return false;
+                }
+                return true;
+              } catch (error) {
+                core.warning(`failed to verify PR author permission: ${error}`);
+                return false;
+              }
             };
             const disableAutoMerge = async (pullRequest) => {
               if (!pullRequest.autoMergeRequest) return;
@@ -483,6 +523,12 @@ jobs:
               await disableAutoMerge(pullRequest);
               if (pullRequest.labels.nodes.some(({name}) => name === 'do-not-auto-merge')) {
                 core.info('do-not-auto-merge holds this pull request');
+                return;
+              }
+
+              // #1211: Verify PR author still has write permission before merging
+              if (!await verifyAuthorPermission(pullRequest)) {
+                core.info('PR author permission verification failed; auto-merge aborted');
                 return;
               }
 
@@ -583,6 +629,12 @@ jobs:
                 pullRequest.mergeStateStatus === 'CLEAN' ||
                 (releaseAfterMerge && pullRequest.mergeStateStatus === 'UNSTABLE')
               ) {
+                // #1211: Verify PR author still has write permission before merging
+                if (!await verifyAuthorPermission(pullRequest)) {
+                  core.info('PR author permission verification failed; release merge aborted');
+                  return;
+                }
+
                 const mergeResult = await github.rest.pulls.merge({
                   ...context.repo,
                   pull_number: pullRequestNumber,
