@@ -1249,6 +1249,92 @@ def transition_queued_opportunity_to_open(oid: str) -> bool:
     return cur.rowcount == 1
 
 
+
+class ReplacementResult:
+    """Outcome of one atomic priority-replacement attempt.
+
+    Attributes
+    ----------
+    committed : bool
+        True when exactly one incumbent was evicted and one replacement was
+        installed in the same transaction.  False when any pre-condition or
+        write failed and the transaction was rolled back.
+    reason : str
+        Short token describing why the attempt was rejected or failed.
+        ``"ok"`` on success; ``"incumbent_not_queued"``, ``"replacement_not_open"``,
+        ``"write_error"`` otherwise.
+    evicted_id : str
+        The incumbent opportunity_id that was released (only meaningful when
+        *committed* is True).
+    """
+
+    __slots__ = ("committed", "reason", "evicted_id")
+
+    def __init__(self, committed: bool, reason: str, evicted_id: str = "") -> None:
+        self.committed = committed
+        self.reason = reason
+        self.evicted_id = evicted_id
+
+
+def atomic_replace_queued_carrier(
+    incumbent_id: str,
+    replacement_id: str,
+    eviction_decision: "PiDecision",  # type: ignore[name-defined]  # resolved at runtime
+    replacement_decision: "PiDecision",  # type: ignore[name-defined]
+    persist_enqueue_evidence_fn: "Callable[[], None]",  # type: ignore[name-defined]
+) -> "ReplacementResult":
+    """Release *incumbent_id* and claim *replacement_id* in one immediate transaction.
+
+    All writes (opportunity state transitions, pi_decisions, enqueue evidence)
+    are committed together or not at all.  If any pre-condition fails — the
+    incumbent is no longer queued, the replacement is no longer open — the whole
+    attempt is rejected without touching the database and the incumbent stays put.
+
+    Parameters
+    ----------
+    incumbent_id : str
+        opportunity_id of the queued carrier to evict.
+    replacement_id : str
+        opportunity_id of the open candidate to promote.
+    eviction_decision : PiDecision
+        Pre-built ``signal_queue_evicted`` decision record for the incumbent.
+    replacement_decision : PiDecision
+        Pre-built ``signal_pending`` decision record for the replacement.
+    persist_enqueue_evidence_fn : callable
+        Zero-argument callable that writes the enqueue evidence row inside the
+        transaction.  Must raise on error so the transaction rolls back cleanly.
+    """
+    from aletheia.storage.models import PiDecision  # local import avoids circulars
+
+    try:
+        with transaction(immediate=True):
+            # Verify incumbent still occupies a queue slot (CAS: queued→open).
+            evicted = execute_write(
+                "UPDATE opportunities SET status='open' WHERE id=? AND status='queued'",
+                (incumbent_id,),
+            )
+            if evicted.rowcount != 1:
+                raise _AtomicReplacementAbort("incumbent_not_queued")
+            # Verify replacement is still open (CAS: open→queued).
+            claimed = execute_write(
+                "UPDATE opportunities SET status='queued' WHERE id=? AND status='open'",
+                (replacement_id,),
+            )
+            if claimed.rowcount != 1:
+                raise _AtomicReplacementAbort("replacement_not_open")
+            insert_pi_decision(eviction_decision)
+            insert_pi_decision(replacement_decision)
+            persist_enqueue_evidence_fn()
+    except _AtomicReplacementAbort as exc:
+        return ReplacementResult(committed=False, reason=str(exc), evicted_id=incumbent_id)
+    except Exception:
+        return ReplacementResult(committed=False, reason="write_error", evicted_id=incumbent_id)
+    return ReplacementResult(committed=True, reason="ok", evicted_id=incumbent_id)
+
+
+class _AtomicReplacementAbort(Exception):
+    """Internal signal to abort an atomic replacement attempt cleanly."""
+
 def active_defer_opportunity_ids(now_iso: str | None = None) -> set[str]:
     """opportunity_id set whose most recent Operator observation is an active defer.
 
