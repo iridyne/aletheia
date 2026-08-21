@@ -102,7 +102,10 @@ def position_replay(
 
     from aletheia.analytics.position_replay import build_position_replay
 
-    report = build_position_replay(position_id, as_of_at=as_of_at)
+    try:
+        report = build_position_replay(position_id, as_of_at=as_of_at)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
     _output(report, json_output)
 
 
@@ -155,7 +158,10 @@ def candidate_facts(
 
     from aletheia.analytics.candidate_facts import build_candidate_facts
 
-    report = build_candidate_facts(horizon=horizon, as_of_at=as_of_at)
+    try:
+        report = build_candidate_facts(horizon=horizon, as_of_at=as_of_at)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
     _output(report, json_output)
 
 
@@ -170,7 +176,10 @@ def position_diagnosis(
     from aletheia.analytics.position_replay import build_position_replay
     from aletheia.analytics.profit_loop_diagnosis import diagnose_position_fact
 
-    fact = build_position_replay(position_id, as_of_at=as_of_at)
+    try:
+        fact = build_position_replay(position_id, as_of_at=as_of_at)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
     _output(diagnose_position_fact(fact), json_output)
 
 
@@ -185,7 +194,10 @@ def candidate_diagnosis(
     from aletheia.analytics.candidate_facts import build_candidate_facts
     from aletheia.analytics.profit_loop_diagnosis import diagnose_candidate_report
 
-    facts = build_candidate_facts(horizon=horizon, as_of_at=as_of_at)
+    try:
+        facts = build_candidate_facts(horizon=horizon, as_of_at=as_of_at)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
     _output(diagnose_candidate_report(facts), json_output)
 
 
@@ -213,7 +225,10 @@ def profit_counterfactual(
         raise typer.BadParameter("cost model must be a JSON object")
     cost_model = CostModel(**payload)
     if as_of_at is not None:
-        fact = build_position_replay(position_id, as_of_at=as_of_at)
+        try:
+            fact = build_position_replay(position_id, as_of_at=as_of_at)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc))
     else:
         fact = None
         first_failure = None

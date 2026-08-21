@@ -28,7 +28,7 @@ def _utc(value: str | datetime | None) -> datetime | None:
 
 
 def _visible(row: dict[str, Any], cutoff: datetime) -> bool:
-    for field in ("evaluated_at", "created_at", "entry_ts", "filled_at"):
+    for field in ("evaluated_at", "created_at", "entry_ts", "filled_at", "opened_at"):
         if row.get(field):
             value = _utc(row[field])
             return value is not None and value <= cutoff
@@ -179,8 +179,28 @@ def build_candidate_facts(
     """Build first-exposure facts for every durable candidate, including rejects."""
     if horizon not in _FIXED_HORIZONS:
         raise ValueError(f"unsupported fixed horizon: {horizon}")
+    if isinstance(as_of_at, str) and as_of_at != "" and _utc(as_of_at) is None:
+        raise ValueError("invalid as_of_at")
     source = db or repo.get_db()
+    explicit_cutoff = _utc(as_of_at) is not None
     cutoff = _utc(as_of_at) or datetime.now(timezone.utc)
+    started_txn = not getattr(source, "in_transaction", False)
+    if started_txn:
+        source.execute("BEGIN DEFERRED")
+    try:
+        return _build_candidate_facts_inner(horizon=horizon, cutoff=cutoff, explicit_cutoff=explicit_cutoff, source=source)
+    finally:
+        if started_txn:
+            source.execute("ROLLBACK")
+
+
+def _build_candidate_facts_inner(
+    *,
+    horizon: str,
+    cutoff: datetime,
+    explicit_cutoff: bool,
+    source: Any,
+) -> dict[str, Any]:
     explicit = _rows(
         source,
         "SELECT * FROM filter_decisions"
@@ -212,11 +232,18 @@ def build_candidate_facts(
 
     facts: list[dict[str, Any]] = []
     terminal_counts: defaultdict[str, int] = defaultdict(int)
-    for fact_id, rows in sorted(grouped.items(), key=lambda item: str(item[1][0].get("evaluated_at") or "")):
+    for fact_id, rows in sorted(
+        grouped.items(),
+        key=lambda item: (
+            _utc(item[1][0].get("evaluated_at")) or datetime.max.replace(tzinfo=timezone.utc),
+            item[1][0].get("sequence_no", 0),
+            str(item[1][0].get("id", "")),
+        ),
+    ):
         ordered = sorted(
             rows,
             key=lambda row: (
-                str(row.get("evaluated_at") or ""),
+                _utc(row.get("evaluated_at")) or datetime.max.replace(tzinfo=timezone.utc),
                 int(row.get("sequence_no") or 0),
                 str(row.get("id") or ""),
             ),
@@ -284,6 +311,16 @@ def build_candidate_facts(
         )
         orders = [row for row in orders if _visible(row, cutoff)]
         order = orders[0] if len(orders) == 1 else None
+        # #1267: scrub post-cutoff fill state from Orders visible before cutoff
+        if order is not None and explicit_cutoff:
+            filled_at = _utc(order.get("filled_at"))
+            if filled_at is not None and filled_at > cutoff:
+                order = {
+                    **order,
+                    "filled_at": None,
+                    "position_id": None,
+                    "status": "open",
+                }
         risk = _one(source, "risk_decisions", (order or {}).get("risk_decision_id"))
         if risk is not None and not _visible(risk, cutoff):
             risk = None
