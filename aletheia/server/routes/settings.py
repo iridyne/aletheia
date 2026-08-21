@@ -6,7 +6,7 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, ValidationError, field_validator
 
-from aletheia.config.loader import load_config, save_config
+from aletheia.config.loader import load_config, save_config, mutate_config, config_file_hash
 from aletheia.config.schema import (
     AgentConfig,
     AppConfig,
@@ -446,10 +446,15 @@ def set_trading_mandate(req: TradingMandateRequest):
     if resolution.status == "not_configured":
         candidate = TradingMandateConfig(enabled=False)
 
+    before = None
+    def mutator(cfg):
+        nonlocal before
+        before = _trading_mandate_view(cfg)
+        cfg.trading_mandate = candidate
+        return True
+
+    mutate_config(mutator)
     cfg = load_config()
-    before = _trading_mandate_view(cfg)
-    cfg.trading_mandate = candidate
-    save_config(cfg)
     after = _trading_mandate_view(cfg)
     from aletheia.files.jsonl import write_audit
 
@@ -703,35 +708,45 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
         raise HTTPException(400, "paper_execution_mode must be one of: bitget_demo, paper_internal, binance_testnet, okx_demo, binance_live, okx_live")
     if req.bitget_profile is not None and req.bitget_profile not in {"classic_v2", "uta_v3"}:
         raise HTTPException(400, "bitget_profile must be one of: classic_v2, uta_v3")
-    cfg = load_config()
-    old = cfg.exchange.model_dump(mode="json")
-    next_paper_mode = req.paper_execution_mode or cfg.exchange.paper_execution_mode
+    # Pre-validate outside the mutation lock to fail fast
+    cfg_check = load_config()
+    next_paper_mode = req.paper_execution_mode or cfg_check.exchange.paper_execution_mode
     _reject_live_identity_change(
-        cfg,
-        changed=(req.paper_execution_mode is not None and next_paper_mode != cfg.exchange.paper_execution_mode),
+        cfg_check,
+        changed=(req.paper_execution_mode is not None and next_paper_mode != cfg_check.exchange.paper_execution_mode),
     )
     from aletheia.config.exchange_alignment import exchange_alignment_for_values
     alignment = exchange_alignment_for_values(
         paper_execution_mode=next_paper_mode,
-        data_exchange=cfg.market_data.ccxt_exchange,
-        configured_exchange=cfg.exchange.name,
+        data_exchange=cfg_check.market_data.ccxt_exchange,
+        configured_exchange=cfg_check.exchange.name,
     )
-    if req.paper_execution_mode is not None and req.paper_execution_mode != cfg.exchange.paper_execution_mode:
+    if req.paper_execution_mode is not None and req.paper_execution_mode != cfg_check.exchange.paper_execution_mode:
         _require_exchange_divergence_confirmation(
             alignment, req.confirm_exchange_divergence,
         )
-    cfg.exchange.enabled_markets = {"spot": req.spot, "usdt_futures": req.usdt_futures}
-    if req.paper_execution_mode is not None:
-        cfg.exchange.paper_execution_mode = req.paper_execution_mode
-    if req.bitget_profile is not None:
-        cfg.exchange.bitget_profile = req.bitget_profile
-    save_config(cfg)
+
+    old = None
+    changed = False
+    def mutator(cfg):
+        nonlocal old, changed
+        old = cfg.exchange.model_dump(mode="json")
+        cfg.exchange.enabled_markets = {"spot": req.spot, "usdt_futures": req.usdt_futures}
+        if req.paper_execution_mode is not None:
+            cfg.exchange.paper_execution_mode = req.paper_execution_mode
+        if req.bitget_profile is not None:
+            cfg.exchange.bitget_profile = req.bitget_profile
+        changed = old != cfg.exchange.model_dump(mode="json")
+        return True
+
+    mutate_config(mutator)
+    cfg = load_config()
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "exchange_markets_changed",
                  "entity_type": "exchange_config", "before": old,
                  "after": cfg.exchange.model_dump(mode="json"),
                  "message": "exchange config updated"})
-    if old != cfg.exchange.model_dump(mode="json"):
+    if changed:
         _notify_ranker_config_change()
     return {**cfg.exchange.model_dump(mode="json"), "exchange_alignment": alignment.to_dict()}
 
@@ -755,43 +770,51 @@ def set_primary_exchange(req: PrimaryExchangeRequest):
     if eid not in valid:
         raise HTTPException(400, f"exchange_id must be one of: {sorted(valid)}")
 
-    cfg = load_config()
+    # Pre-validate outside the mutation lock
+    cfg_check = load_config()
     desired_paper_mode = (
         "paper_internal"
         if eid == "paper_internal"
         else _EXCHANGE_UNIFICATION_MAP[eid][1]
     )
     _reject_live_identity_change(
-        cfg,
+        cfg_check,
         changed=(
-            eid != str(cfg.exchange.name or "").lower()
-            or desired_paper_mode != cfg.exchange.paper_execution_mode
+            eid != str(cfg_check.exchange.name or "").lower()
+            or desired_paper_mode != cfg_check.exchange.paper_execution_mode
         ),
     )
-    old = {
-        "exchange.name": cfg.exchange.name,
-        "exchange.paper_execution_mode": cfg.exchange.paper_execution_mode,
-        "market_data.ccxt_exchange": cfg.market_data.ccxt_exchange,
-        "risk.allowed_exchange": cfg.risk.allowed_exchange,
-    }
 
-    if eid == "paper_internal":
-        cfg.exchange.paper_execution_mode = "paper_internal"
-    else:
-        ccxt_ex, paper_mode = _EXCHANGE_UNIFICATION_MAP[eid]
-        cfg.exchange.name = eid
-        cfg.market_data.ccxt_exchange = ccxt_ex
-        cfg.market_data.ccxt_fallback = ccxt_ex
-        cfg.exchange.paper_execution_mode = paper_mode
-        cfg.risk.allowed_exchange = eid
+    old = None
+    after = None
+    def mutator(cfg):
+        nonlocal old, after
+        old = {
+            "exchange.name": cfg.exchange.name,
+            "exchange.paper_execution_mode": cfg.exchange.paper_execution_mode,
+            "market_data.ccxt_exchange": cfg.market_data.ccxt_exchange,
+            "risk.allowed_exchange": cfg.risk.allowed_exchange,
+        }
 
-    save_config(cfg)
-    after = {
-        "exchange.name": cfg.exchange.name,
-        "exchange.paper_execution_mode": cfg.exchange.paper_execution_mode,
-        "market_data.ccxt_exchange": cfg.market_data.ccxt_exchange,
-        "risk.allowed_exchange": cfg.risk.allowed_exchange,
-    }
+        if eid == "paper_internal":
+            cfg.exchange.paper_execution_mode = "paper_internal"
+        else:
+            ccxt_ex, paper_mode = _EXCHANGE_UNIFICATION_MAP[eid]
+            cfg.exchange.name = eid
+            cfg.market_data.ccxt_exchange = ccxt_ex
+            cfg.market_data.ccxt_fallback = ccxt_ex
+            cfg.exchange.paper_execution_mode = paper_mode
+            cfg.risk.allowed_exchange = eid
+
+        after = {
+            "exchange.name": cfg.exchange.name,
+            "exchange.paper_execution_mode": cfg.exchange.paper_execution_mode,
+            "market_data.ccxt_exchange": cfg.market_data.ccxt_exchange,
+            "risk.allowed_exchange": cfg.risk.allowed_exchange,
+        }
+        return True
+
+    mutate_config(mutator)
     from aletheia.files.jsonl import write_audit
     write_audit({
         "actor": "human", "source": "dashboard",
@@ -1926,25 +1949,31 @@ def copy_risk_policy(req: RiskPolicyCopyRequest):
         raise HTTPException(400, "source and target policies must differ")
     if not req.confirm_target_replacement:
         raise HTTPException(422, "Policy replacement requires explicit confirmation")
-    cfg = load_config()
-    source = getattr(cfg.risk, req.source)
-    target = getattr(cfg.risk, req.target)
-    if source.revision != req.source_revision or target.revision != req.target_revision:
-        raise HTTPException(409, "policy_revision_conflict")
+    before = None
+    replacement = None
+    def mutator(cfg):
+        nonlocal before, replacement
+        source = getattr(cfg.risk, req.source)
+        target = getattr(cfg.risk, req.target)
+        if source.revision != req.source_revision or target.revision != req.target_revision:
+            raise HTTPException(409, "policy_revision_conflict")
 
-    before = target.model_dump(mode="json")
-    common = source.model_dump(
-        mode="json",
-        exclude={"policy_id", "revision", "eligibility"},
-    )
-    replacement = ModeRiskPolicy.model_validate({
-        **target.model_dump(mode="json"),
-        **common,
-        "revision": target.revision + 1,
-    })
-    _validate_mode_policy(req.target, replacement)
-    setattr(cfg.risk, req.target, replacement)
-    save_config(cfg)
+        before = target.model_dump(mode="json")
+        common = source.model_dump(
+            mode="json",
+            exclude={"policy_id", "revision", "eligibility"},
+        )
+        replacement = ModeRiskPolicy.model_validate({
+            **target.model_dump(mode="json"),
+            **common,
+            "revision": target.revision + 1,
+        })
+        _validate_mode_policy(req.target, replacement)
+        setattr(cfg.risk, req.target, replacement)
+        return True
+
+    mutate_config(mutator)
+    cfg = load_config()
     from aletheia.files.jsonl import write_audit
     write_audit({
         "actor": "human",
@@ -1963,21 +1992,26 @@ def copy_risk_policy(req: RiskPolicyCopyRequest):
 def replace_risk_policy(mode: RiskMode, req: RiskPolicyReplaceRequest):
     if not req.confirm_target_replacement:
         raise HTTPException(422, "Policy replacement requires explicit confirmation")
-    cfg = load_config()
-    current = getattr(cfg.risk, mode)
-    if current.revision != req.expected_revision:
-        raise HTTPException(409, "policy_revision_conflict")
-    replacement = req.policy.model_copy(
-        update={
-            "policy_id": current.policy_id,
-            "revision": current.revision + 1,
-            "eligibility": req.policy.eligibility if mode == "live" else None,
-        },
-        deep=True,
-    )
-    _validate_mode_policy(mode, replacement)
-    setattr(cfg.risk, mode, replacement)
-    save_config(cfg)
+    current = None
+    replacement = None
+    def mutator(cfg):
+        nonlocal current, replacement
+        current = getattr(cfg.risk, mode)
+        if current.revision != req.expected_revision:
+            raise HTTPException(409, "policy_revision_conflict")
+        replacement = req.policy.model_copy(
+            update={
+                "policy_id": current.policy_id,
+                "revision": current.revision + 1,
+                "eligibility": req.policy.eligibility if mode == "live" else None,
+            },
+            deep=True,
+        )
+        _validate_mode_policy(mode, replacement)
+        setattr(cfg.risk, mode, replacement)
+        return True
+
+    mutate_config(mutator)
     from aletheia.files.jsonl import write_audit
     write_audit({
         "actor": "human",
@@ -1989,28 +2023,33 @@ def replace_risk_policy(mode: RiskMode, req: RiskPolicyReplaceRequest):
         "after": replacement.model_dump(mode="json"),
         "message": f"{mode} policy replaced: {req.reason}",
     })
-    return _policy_payload(cfg)
+    return _policy_payload(load_config())
 
 
 @router.post("/risk-policies/{mode}/reset-defaults")
 def reset_risk_policy(mode: RiskMode, req: RiskPolicyResetRequest):
     if not req.confirm_target_replacement:
         raise HTTPException(422, "Policy replacement requires explicit confirmation")
-    cfg = load_config()
-    current = getattr(cfg.risk, mode)
-    if current.revision != req.expected_revision:
-        raise HTTPException(409, "policy_revision_conflict")
-    defaults = default_mode_risk_policy(mode)
-    replacement = defaults.model_copy(
-        update={
-            "policy_id": current.policy_id,
-            "revision": current.revision + 1,
-        },
-        deep=True,
-    )
-    _validate_mode_policy(mode, replacement)
-    setattr(cfg.risk, mode, replacement)
-    save_config(cfg)
+    current = None
+    replacement = None
+    def mutator(cfg):
+        nonlocal current, replacement
+        current = getattr(cfg.risk, mode)
+        if current.revision != req.expected_revision:
+            raise HTTPException(409, "policy_revision_conflict")
+        defaults = default_mode_risk_policy(mode)
+        replacement = defaults.model_copy(
+            update={
+                "policy_id": current.policy_id,
+                "revision": current.revision + 1,
+            },
+            deep=True,
+        )
+        _validate_mode_policy(mode, replacement)
+        setattr(cfg.risk, mode, replacement)
+        return True
+
+    mutate_config(mutator)
     from aletheia.files.jsonl import write_audit
     write_audit({
         "actor": "human",
@@ -2022,7 +2061,7 @@ def reset_risk_policy(mode: RiskMode, req: RiskPolicyResetRequest):
         "after": replacement.model_dump(mode="json"),
         "message": f"{mode} policy reset to defaults: {req.reason}",
     })
-    return _policy_payload(cfg)
+    return _policy_payload(load_config())
 
 
 # ---------------------------------------------------------------------------
