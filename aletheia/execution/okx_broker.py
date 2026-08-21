@@ -120,17 +120,19 @@ def _get_demo_symbols(market_type: str = "usdt_futures") -> frozenset | None:
     market_type "spot"                  → spot frozenset
 
     Returns None only when the initial load fails (fail-open: allow the order through).
+    Returns an empty frozenset when load succeeded but the venue has no products of
+    the requested market_type — a loaded absence is a known unavailable result, not
+    an unknown one, and must not be treated as fail-open.
     """
     global _okx_demo_symbols, _okx_demo_symbols_loaded_at
+    key = "spot" if market_type == "spot" else "swap"
     if _okx_demo_symbols is not None and (time.time() - _okx_demo_symbols_loaded_at) < _OKX_SYMBOLS_TTL:
-        key = "spot" if market_type == "spot" else "swap"
-        return _okx_demo_symbols.get(key)
+        return _okx_demo_symbols.get(key, frozenset())
     # Cache missing or stale — trigger a synchronous refresh
     refresh_okx_demo_symbols()
     if _okx_demo_symbols is None:
         return None  # refresh failed, fail-open
-    key = "spot" if market_type == "spot" else "swap"
-    return _okx_demo_symbols.get(key)
+    return _okx_demo_symbols.get(key, frozenset())
 
 
 def refresh_okx_demo_symbols() -> int:
