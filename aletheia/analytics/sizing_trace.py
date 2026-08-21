@@ -201,8 +201,13 @@ def _build_traces(db, cutoff: str, cfg) -> list[dict]:
         )
         proposal_notional = _notional(proposal.get("quantity"), proposal.get("price"))
         executed_notional = _executed_notional(db, proposal["id"], position)
-        risk = _risk_cap_hit(db, proposal["id"], proposal_notional, cfg)
+        execution_mode = str(proposal.get("execution_mode") or "demo")
         leverage = _first_number(position.get("leverage") if position else None, proposal.get("leverage"), 1)
+        risk = _risk_cap_hit(
+            db, proposal["id"], proposal_notional, cfg,
+            execution_mode=execution_mode,
+            leverage=leverage,
+        )
         reason, notes = _reason(
             cfg=cfg,
             conviction=conviction,
@@ -389,7 +394,12 @@ def _executed_notional(db, proposal_id: str, position: dict | None) -> float | N
     return None
 
 
-def _risk_cap_hit(db, proposal_id: str, proposal_notional: float | None, cfg) -> bool | None:
+def _risk_cap_hit(
+    db, proposal_id: str, proposal_notional: float | None, cfg,
+    *,
+    execution_mode: str | None = None,
+    leverage: float | None = None,
+) -> bool | None:
     rows = []
     if _table_exists(db, "risk_decisions"):
         rows = db.execute(
@@ -400,11 +410,21 @@ def _risk_cap_hit(db, proposal_id: str, proposal_notional: float | None, cfg) ->
         " ".join(str(x) for x in _json_list(row["violations"])) + " " + str(row["message"] or "")
         for row in rows
     ).lower()
+    # Persisted Risk-decision violation row is stronger evidence
     if any(token in text for token in ("max_demo_position_notional", "max_live_position_notional", "max_demo_position_margin", "max_live_position_margin", "single_trade_risk", "max_leverage", "account_leverage")):
         return True
-    cap = _float_or_none(getattr(cfg.risk, "max_demo_position_notional_usdt", None))
-    if cap is not None and proposal_notional is not None and proposal_notional >= cap:
-        return True
+    # Current-config projection (not historical intent) — use live margin policy
+    mode = (execution_mode or "demo").lower()
+    mode_cfg = getattr(cfg.risk, mode if mode in ("demo", "live") else "demo", None)
+    cap_margin = _float_or_none(
+        getattr(getattr(mode_cfg, "capital", None), "max_position_margin_usdt", None)
+    ) if mode_cfg is not None else None
+    if cap_margin is not None and proposal_notional is not None:
+        effective_lev = leverage if leverage and leverage > 0 else 1.0
+        # margin = notional / leverage; compare projected margin to cap
+        projected_margin = proposal_notional / effective_lev
+        if projected_margin >= cap_margin:
+            return True
     return False if rows or proposal_notional is not None else None
 
 
