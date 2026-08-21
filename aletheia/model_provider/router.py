@@ -437,8 +437,6 @@ def get_provider(name: str | None = None) -> ModelProvider:
 
     api_key = None
     if pcfg.api_key_secret_ref:
-        from aletheia.config.secrets import get_secret
-
         api_key = get_secret(pcfg.api_key_secret_ref)
 
     ptype = _resolve_type(name, pcfg)
@@ -566,8 +564,6 @@ async def get_provider_async(name: str | None = None) -> ModelProvider:
 
     api_key = None
     if pcfg.api_key_secret_ref:
-        from aletheia.config.secrets import get_secret
-
         api_key = get_secret(pcfg.api_key_secret_ref)
 
     ptype = _resolve_type(name, pcfg)
