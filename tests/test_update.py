@@ -593,8 +593,10 @@ def test_restart_gateway_uses_fresh_interpreter(monkeypatch):
     ]
     assert seen["cwd"] == str(applier._PROJECT_ROOT)
 
+    # exit 2 = slow start (do_start returned False: alive but readiness timed out).
+    # Not a failure — gateway is up, just slower than the 15s verification budget.
     monkeypatch.setattr(applier.subprocess, "run", lambda *_args, **_kwargs: _FakeProc(returncode=2))
-    assert applier._restart_gateway()["ok"] is False
+    assert applier._restart_gateway()["ok"] is True
 
 
 def test_apply_restart_discards_consumed_dashboard_backup(tmp_path, monkeypatch):
