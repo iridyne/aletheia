@@ -4,7 +4,10 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from aletheia.config.schema import AletheiaConfig, RiskConfig
+import pytest
+from pydantic import ValidationError
+
+from aletheia.config.schema import AletheiaConfig, GuardConfig, RiskConfig
 from aletheia.config.loader import load_config, save_config, bootstrap, ensure_data_dirs
 
 
@@ -21,6 +24,14 @@ def test_default_config_has_correct_values():
     assert cfg.exchange.symbol_list == []
     assert cfg.telegram.enabled is False
     assert cfg.controller.shadow_enabled is False
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_guard_min_matching_trades_requires_evidence(value):
+    with pytest.raises(ValidationError):
+        GuardConfig(min_matching_trades=value)
+    with pytest.raises(ValidationError):
+        AletheiaConfig.model_validate({"guard": {"min_matching_trades": value}})
 
 
 def test_default_news_feeds_include_official_sources():
