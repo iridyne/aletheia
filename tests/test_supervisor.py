@@ -753,7 +753,9 @@ def test_sigterm_tears_down_all_owned_descendants_subprocess(tmp_path):
 
         pid_file = data_dir / "gateway.pid"
         assert pid_file.exists()
-        assert int(pid_file.read_text().strip()) == proc.pid
+        pid_content = pid_file.read_text().strip()
+        actual_pid = json.loads(pid_content)["pid"] if pid_content.startswith("{") else int(pid_content)
+        assert actual_pid == proc.pid
 
         # Managed stop: SIGTERM the SUPERVISOR ONLY (not the group). Without the
         # fix its default disposition would kill it and orphan the children.

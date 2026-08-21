@@ -59,6 +59,7 @@ def test_do_stop_clears_pid_only_after_port_freed(tmp_path, monkeypatch, capsys)
     # guard suppresses them; tests must pin it like the _echo_safe tests do).
     monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
     pidfile.pid_path().write_text("4242", encoding="utf-8")
+    monkeypatch.setattr(lifecycle, "verify_pid_file", lambda pid: True)
     monkeypatch.setattr(lifecycle, "is_running", lambda: True)
     killed = []
     monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: killed.append(pid))
@@ -105,6 +106,7 @@ def test_do_stop_reports_when_port_stuck(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
     pidfile.pid_path().write_text("4242", encoding="utf-8")
+    monkeypatch.setattr(lifecycle, "verify_pid_file", lambda pid: True)
     monkeypatch.setattr(lifecycle, "is_running", lambda: True)
     monkeypatch.setattr(lifecycle, "kill_pid_tree", lambda pid: None)
     monkeypatch.setattr(lifecycle, "find_gateway_orphans", lambda: [])
