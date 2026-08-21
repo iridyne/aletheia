@@ -139,21 +139,12 @@ def runtime_shadow(payload: RuntimeTransitionRequest):
         raise HTTPException(status_code=404, detail="candidate_runtime_missing")
 
     def _run():
+        # service.start_shadow() is the single authority for launching shadow processes (#1485)
         started = svc.start_shadow(runtime_id, actor=_ROUTE_ACTOR, cause=payload.cause)
-        launch = {"attempted": False, "started": False}
-        try:
-            from aletheia.gateway.operator_shell import spawn_shadow_operator_shell
-
-            proc = spawn_shadow_operator_shell(load_config(), started["runtime_id"])
-            launch = {
-                "attempted": True,
-                "started": proc is not None,
-                "pid": getattr(proc, "pid", None) if proc is not None else None,
-            }
-        except Exception as exc:
-            launch = {"attempted": True, "started": False, "error": str(exc)}
         validated = svc.validate_shadow(started["runtime_id"], actor=_ROUTE_ACTOR, cause=payload.cause)
-        validated["shadow_process"] = launch
+        # Return registry metadata (includes gateway process report written by start_shadow)
+        metadata = validated.get("metadata") or {}
+        validated["shadow_process"] = metadata.get("gateway_process", {"attempted": False, "started": False})
         return _with_status_fields(validated, svc=svc, actor=_ROUTE_ACTOR, cause=payload.cause)
 
     return _handle_transition(_run)

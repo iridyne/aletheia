@@ -605,7 +605,7 @@ def _preflight(args: argparse.Namespace, db: sqlite3.Connection, db_file: Path) 
     return report
 
 
-def _postflight_verify(db: sqlite3.Connection, baseline: dict[str, Any]) -> None:
+def _postflight_verify(db: sqlite3.Connection, baseline: dict[str, Any], backup_path: Path | None = None) -> None:
     """After DELETEs and after VACUUM: audit-chain + learning tables unchanged."""
     for group_key, tables in (
         ("audit_chain", _AUDIT_CHAIN_TABLES),
@@ -616,10 +616,27 @@ def _postflight_verify(db: sqlite3.Connection, baseline: dict[str, Any]) -> None
         for table, prior in expected.items():
             now = actual.get(table)
             if now != prior:
-                raise SystemExit(
+                error_msg = (
                     f"ABORT: {group_key}.{table} row count changed {prior} -> {now}. "
-                    "Restore from ~/.aletheia/app.db.pre-migration-backup NOW."
+                    "Restore from ~/.aletheia/app.db.pre-retention-backup NOW."
                 )
+                # Attempt restore from pre-retention-backup if available
+                if backup_path and backup_path.exists():
+                    print(f"\n{error_msg}", file=sys.stderr)
+                    print("Attempting restore from pre-retention-backup...", file=sys.stderr)
+                    try:
+                        db.close()
+                        from aletheia.storage.sqlite import db_path as get_db_path
+                        target_db = Path(get_db_path())
+                        src_restore = sqlite3.connect(str(backup_path))
+                        dst_restore = sqlite3.connect(str(target_db))
+                        src_restore.backup(dst_restore)
+                        dst_restore.close()
+                        src_restore.close()
+                        print("Restored from pre-retention-backup successfully", file=sys.stderr)
+                    except Exception as re:
+                        print(f"Restore from pre-retention-backup failed: {re}", file=sys.stderr)
+                raise SystemExit(error_msg)
     integrity = db.execute("PRAGMA integrity_check").fetchall()
     if [row[0] for row in integrity] != ["ok"]:
         raise SystemExit(f"ABORT: post-VACUUM integrity_check failed: {integrity}")
@@ -1020,6 +1037,23 @@ def run(args: argparse.Namespace) -> int:
             print(f"  {fn.__name__}: (skipped in dry-run — will run in --apply)")
         return 0
 
+    # --- Pre-retention backup before first mutation (#1383) ---
+    # Must exist BEFORE any DELETE/UPDATE to allow restore on postflight failure.
+    backup_path = db_file.parent / "app.db.pre-retention-backup"
+    print(f"creating pre-retention backup: {backup_path}")
+    src_conn = sqlite3.connect(str(db_file))
+    dst_conn = sqlite3.connect(str(backup_path))
+    src_conn.backup(dst_conn)
+    dst_conn.close()
+    src_conn.close()
+    # Verify backup
+    verify_conn = sqlite3.connect(str(backup_path))
+    result = verify_conn.execute("PRAGMA integrity_check").fetchone()
+    verify_conn.close()
+    if result[0] != "ok":
+        raise RuntimeError(f"Pre-retention backup integrity check failed: {result}")
+    print(f"pre-retention backup verified: {backup_path}")
+
     # Apply mode -----------------------------------------------------------
     total_pruned: dict[str, int] = {}
     archive_summary: dict[str, dict[str, Any]] = {}
@@ -1045,7 +1079,7 @@ def run(args: argparse.Namespace) -> int:
     print("retro_strip:", json.dumps(retro_strip, indent=2))
 
     # Post-DELETE, pre-VACUUM invariant.
-    _postflight_verify(db, preflight["baseline"])
+    _postflight_verify(db, preflight["baseline"], backup_path)
 
     # Drop the always-empty universe_feature_snapshots.raw column before
     # VACUUM so the freed bytes get reclaimed in the same pass. Idempotent.
@@ -1053,12 +1087,12 @@ def run(args: argparse.Namespace) -> int:
     print("universe_features_raw_migration:", json.dumps(raw_drop, indent=2))
     # Re-check invariants after the ALTER TABLE — DROP COLUMN rewrites the
     # table so an extra safety belt is worth the millisecond.
-    _postflight_verify(db, preflight["baseline"])
+    _postflight_verify(db, preflight["baseline"], backup_path)
 
     if args.vacuum or args.apply:
         vacuum_events = _vacuum_and_optimize(db)
         print("vacuum:", json.dumps(vacuum_events, indent=2))
-        _postflight_verify(db, preflight["baseline"])
+        _postflight_verify(db, preflight["baseline"], backup_path)
 
     # FS prunes.
     fs_summary: dict[str, Any] = {}

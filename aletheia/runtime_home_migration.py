@@ -168,7 +168,15 @@ def _copy_to_staging(source: Path, staging: Path) -> None:
     for source_file, relative in _source_entries(source):
         destination = staging / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_file, destination)
+        # Use sqlite3.backup() for WAL-safe SQLite copy (#1385)
+        if source_file.name == "app.db":
+            src = sqlite3.connect(str(source_file))
+            dst = sqlite3.connect(str(destination))
+            src.backup(dst)
+            dst.close()
+            src.close()
+        else:
+            shutil.copy2(source_file, destination)
 
 
 def _sha256(path: Path) -> str:
