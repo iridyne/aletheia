@@ -418,8 +418,8 @@ jobs:
                   ...context.repo,
                   username: pullRequest.user?.login,
                 });
-                const validLevels = ['write', 'maintain', 'admin'];
-                if (!validLevels.includes(permission.permission)) {
+                const insufficientLevels = ['none', 'read', 'triage'];
+                if (insufficientLevels.includes(permission.permission)) {
                   core.info(
                     `PR author ${pullRequest.user?.login} has insufficient permission ` +
                     `(${permission.permission}); auto-merge disabled`,
