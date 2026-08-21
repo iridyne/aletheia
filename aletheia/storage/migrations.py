@@ -1345,17 +1345,6 @@ CREATE TABLE IF NOT EXISTS runtime_sessions (
     shutdown_clean INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_runtime_sessions_runtime ON runtime_sessions (runtime_id, started_at DESC);
-
-CREATE TABLE IF NOT EXISTS runtime_transition_intent (
-    id TEXT PRIMARY KEY,
-    fencing_token TEXT NOT NULL,
-    action TEXT NOT NULL,
-    old_route TEXT,
-    new_route TEXT,
-    state TEXT NOT NULL DEFAULT 'pending',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    completed_at TEXT
-);
 """
 
 _DATA_COLLECTORS_DDL = """
@@ -3312,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v38"
+SCHEMA_VERSION = "aletheia-sqlite-v39"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4871,6 +4860,22 @@ _PENDING_CLOSE_REASONING_CHECKSUM = hashlib.sha256(
     (_PENDING_CLOSE_REASONING_SQL + "\npending_close_reasoning_v1").encode("utf-8")
 ).hexdigest()
 
+_RUNTIME_TRANSITION_INTENT_SQL = """\
+CREATE TABLE IF NOT EXISTS runtime_transition_intent (
+    id TEXT PRIMARY KEY,
+    fencing_token TEXT NOT NULL,
+    action TEXT NOT NULL,
+    old_route TEXT,
+    new_route TEXT,
+    state TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT
+);
+"""
+_RUNTIME_TRANSITION_INTENT_CHECKSUM = hashlib.sha256(
+    (_RUNTIME_TRANSITION_INTENT_SQL + "\nruntime_transition_intent_v1").encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -4982,6 +4987,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260823_0037_pending_close_reasoning_v38": (
         "durable Operator rationale handoff for pending exchange closes"
+    ),
+    "20260821_0038_runtime_transition_intent_v39": (
+        "runtime transition intent table for atomic route-file/DB promotion protocol"
     ),
 }
 
@@ -5298,6 +5306,12 @@ def _apply_pending_close_reasoning_v38(db: sqlite3.Connection) -> None:
     }
     if "close_reasoning" not in existing:
         db.execute(_PENDING_CLOSE_REASONING_SQL)
+    db.execute("PRAGMA optimize")
+
+
+def _apply_runtime_transition_intent_v39(db: sqlite3.Connection) -> None:
+    """Add runtime_transition_intent table for atomic route-file/DB promotion protocol."""
+    db.executescript(_RUNTIME_TRANSITION_INTENT_SQL)
     db.execute("PRAGMA optimize")
 
 
@@ -5866,6 +5880,12 @@ _MIGRATIONS = (
         checksum=_PENDING_CLOSE_REASONING_CHECKSUM,
         schema_version="aletheia-sqlite-v38",
         apply=_apply_pending_close_reasoning_v38,
+    ),
+    MigrationStep(
+        migration_id="20260821_0038_runtime_transition_intent_v39",
+        checksum=_RUNTIME_TRANSITION_INTENT_CHECKSUM,
+        schema_version="aletheia-sqlite-v39",
+        apply=_apply_runtime_transition_intent_v39,
     ),
 )
 

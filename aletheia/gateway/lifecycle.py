@@ -13,7 +13,7 @@ from aletheia.config.loader import bootstrap, load_config, save_config, get_data
 from aletheia.gateway.pidfile import (
     is_running, read_pid, write_pid, clear_pid, pid_path,
     kill_pid_tree, port_in_use, wait_port_free, find_gateway_orphans,
-    find_port_holders,
+    find_port_holders, verify_pid_file,
 )
 from aletheia.gateway.network import local_frontdoor_host
 from aletheia.gateway.logs import tail_all_logs, log_path
@@ -608,6 +608,15 @@ def do_stop() -> None:
     killed_any = False
 
     if tracked:
+        # #1196: fail-closed — verify PID file JSON fields before sending any signal.
+        if not verify_pid_file(pid):
+            _echo_safe(
+                f"Gateway stop aborted: PID {pid} in pidfile cannot be verified "
+                "(missing or mismatched JSON fields). "
+                "Remove the stale pidfile manually and retry: "
+                f"`rm {pid_path()}`"
+            )
+            raise typer.Exit(1)
         kill_pid_tree(pid)          # supervisor + inner uvicorn (tree kill)
         killed_any = True
 

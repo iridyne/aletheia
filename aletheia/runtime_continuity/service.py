@@ -265,7 +265,8 @@ class RuntimeContinuityService:
         ft = fencing_token or uuid4().hex
         new_route_url = str(activation["backend_base_url"])
         # Phase 1: record pending intent — commit before touching the route file.
-        if db.in_transaction:
+        used_savepoint = db.in_transaction
+        if used_savepoint:
             db.execute("SAVEPOINT intent_write")
         else:
             db.execute("BEGIN")
@@ -285,14 +286,17 @@ class RuntimeContinuityService:
                     _utc_now(),
                 ),
             )
-            if db.in_transaction:
+            if used_savepoint:
                 db.execute("RELEASE intent_write")
-            db.execute("COMMIT")
+            else:
+                db.execute("COMMIT")
         except BaseException:
             try:
-                if db.in_transaction:
+                if used_savepoint:
                     db.execute("ROLLBACK TO intent_write")
                     db.execute("RELEASE intent_write")
+                else:
+                    db.execute("ROLLBACK")
             except Exception:
                 pass
             raise

@@ -866,3 +866,129 @@ def test_promote_rejects_shadow_http_not_ready(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeTransitionError, match="shadow_process_not_ready:http_not_ready"):
         svc.promote(ready["runtime_id"], actor="test", cause="1201-regression-http")
+import os
+
+
+# ---- #1195 Shadow write-surface isolation ----
+
+@pytest.mark.anyio
+async def test_shadow_mode_blocks_mutation_routes(monkeypatch):
+    """_shadow_write_guard returns 403 for non-GET /api/* in shadow mode."""
+    monkeypatch.setenv("ALETHEIA_RUNTIME_MODE", "shadow")
+    from aletheia.server import app as app_module
+    from aletheia.server.app import _shadow_write_guard, _SHADOW_ALLOWLIST_PATHS
+
+    blocked = []
+
+    class _MockURL:
+        path = "/api/settings/risk"
+
+    class _MockRequest:
+        method = "POST"
+        url = _MockURL()
+
+    async def _call_next(_req):
+        # Should never reach here in shadow mode for a mutation route
+        blocked.append(False)
+
+    resp = await _shadow_write_guard(_MockRequest(), _call_next)
+    assert resp.status_code == 403, f"Expected 403 from shadow guard, got {resp.status_code}"
+    import json as _json
+    assert "Shadow runtime" in _json.loads(resp.body)["detail"]
+    assert not blocked, "call_next must not be called for blocked mutations"
+
+
+@pytest.mark.anyio
+async def test_shadow_mode_allows_get_health(monkeypatch):
+    """GET requests pass through the shadow guard unchanged."""
+    monkeypatch.setenv("ALETHEIA_RUNTIME_MODE", "shadow")
+    from aletheia.server.app import _shadow_write_guard
+
+    class _MockURL:
+        path = "/api/health"
+
+    class _MockRequest:
+        method = "GET"
+        url = _MockURL()
+
+    passed = []
+
+    async def _call_next(_req):
+        passed.append(True)
+        from fastapi.responses import JSONResponse
+        return JSONResponse({}, status_code=200)
+
+    resp = await _shadow_write_guard(_MockRequest(), _call_next)
+    assert resp.status_code == 200, "GET must pass through shadow guard"
+    assert passed, "call_next must be called for GET requests"
+
+
+# ---- #1196 PID file fail-closed ----
+
+def test_verify_pid_file_valid(tmp_path, monkeypatch):
+    """verify_pid_file returns True when all 4 JSON fields match the running process."""
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    from aletheia.gateway import pidfile
+    pidfile.write_pid()  # writes JSON with real process fields
+    pid = pidfile.read_pid()
+    assert pid == os.getpid()
+    assert pidfile.verify_pid_file(pid) is True
+
+
+def test_verify_pid_file_missing_field(tmp_path, monkeypatch):
+    """verify_pid_file returns False when a required field is missing."""
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    import json as _json
+    from aletheia.gateway import pidfile
+    import os as _os
+    # Write incomplete record (missing boot_token)
+    incomplete = {"pid": _os.getpid(), "creation_time": 1234567890.0, "executable": "python"}
+    pidfile.pid_path().write_text(_json.dumps(incomplete), encoding="utf-8")
+    assert pidfile.verify_pid_file(_os.getpid()) is False
+
+
+def test_verify_pid_file_legacy_plain_int(tmp_path, monkeypatch):
+    """verify_pid_file returns False for legacy plain-int format (no JSON fields)."""
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    import os as _os
+    from aletheia.gateway import pidfile
+    pidfile.pid_path().write_text(str(_os.getpid()), encoding="utf-8")
+    assert pidfile.verify_pid_file(_os.getpid()) is False
+
+
+def test_stop_no_signal_on_unverified_pid(tmp_path, monkeypatch):
+    """do_stop must NOT call kill_pid_tree when verify_pid_file returns False."""
+    import aletheia.config.loader as loader
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    import aletheia.gateway.lifecycle as lc
+    import aletheia.gateway.pidfile as pf
+    import aletheia.gateway.service_control as sc
+
+    # Stub service_control.stop to return ok=False (no service) so we reach PID logic
+    monkeypatch.setattr(sc, "stop", lambda: {"ok": True})
+    monkeypatch.setattr(sc, "is_machine_selected", lambda: False)
+
+    # Write plain-int (unverifiable) pidfile
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    pf.pid_path().write_text("9999", encoding="utf-8")
+    # Patch lifecycle's imported names (already bound at import time)
+    monkeypatch.setattr(lc, "is_running", lambda: True)
+    monkeypatch.setattr(lc, "read_pid", lambda: 9999)
+    monkeypatch.setattr(pf, "verify_pid_file", lambda pid: False)
+
+    kill_calls = []
+    monkeypatch.setattr(lc, "kill_pid_tree", lambda pid: kill_calls.append(pid))
+    monkeypatch.setattr(lc, "_auto_stop_tunnel", lambda: None)
+
+    import pytest as _pytest
+    with _pytest.raises(Exception):  # typer.Exit(1) raises typer._click.exceptions.Exit
+        lc.do_stop()
+
+    assert kill_calls == [], f"kill_pid_tree must not be called on unverified PID, got {kill_calls}"
