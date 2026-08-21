@@ -1167,11 +1167,11 @@ class MarketAwareExitsConfig(BaseModel):
     enabled: bool = False
     min_hold_hours_before_market_exit: float = 0.5
     max_signal_age_min: float = 35.0
-    urgent_exit_score: int = 80
+    urgent_exit_score: int = Field(default=80, ge=50, le=100)
     urgent_exit_max_pnl_pct: float = -0.3
-    tighten_stop_score: int = 60
-    confidence_collapse_score: int = 30
-    tighten_atr_mult: float = 0.8
+    tighten_stop_score: int = Field(default=60, ge=30, le=90)
+    confidence_collapse_score: int = Field(default=30, ge=10, le=50)
+    tighten_atr_mult: float = Field(default=0.8, ge=0.3, le=2.0)
     tighten_pct: float = 0.8
 
 
@@ -1452,10 +1452,35 @@ class UniverseConfig(BaseModel):
     # ships in its own week: W1=repeat_decay, W2=terminal_cooldown, W3=fingerprint.
     emit_dedup: EmitDedupConfig = Field(default_factory=EmitDedupConfig)
 
+    @field_validator("family_quota", "family_quota_by_regime", mode="before")
+    @classmethod
+    def _validate_family_quotas(cls, v: object) -> object:
+        import math as _math
+        _FAMILIES = frozenset({"momentum", "mean_reversion", "volatility", "short_bias", "derivatives", "event"})
+        def _check_quota(quota: dict, label: str = "family_quota") -> None:
+            if not isinstance(quota, dict):
+                return
+            for k, val in quota.items():
+                if not isinstance(val, (int, float)) or not _math.isfinite(float(val)):
+                    raise ValueError(f"finite in {label}: value for '{k}' must be a finite number, got {val!r}")
+                if not (0.0 <= float(val) <= 1.0):
+                    raise ValueError(f"finite in {label}: value for '{k}' must be in [0, 1], got {val}")
+            total = sum(float(x) for x in quota.values())
+            if abs(total - 1.0) > 0.01:
+                raise ValueError(f"finite in {label}: values must sum to ~1.0, got {total:.4f}")
+        if isinstance(v, dict):
+            # family_quota_by_regime: dict[regime → dict[family → float]]
+            if v and all(isinstance(val, dict) for val in v.values()):
+                for regime, quota in v.items():
+                    _check_quota(quota, f"family_quota_by_regime[{regime}]")
+            else:
+                _check_quota(v)
+        return v
+
 
 class RegimeConfig(BaseModel):
     enabled: bool = True
-    min_hold_periods: int = 3
+    min_hold_periods: int = Field(default=3, ge=1, le=20)
     bias_threshold: float = 0.30
     short_enabled: bool = True
 
@@ -1525,7 +1550,7 @@ class GuardConfig(BaseModel):
     auto_promote_enabled: bool = False
     # Automatic lifecycle mutations require at least one clean trade as evidence.
     min_matching_trades: int = Field(default=3, ge=1)
-    max_score_penalty: float = 40.0
+    max_score_penalty: float = Field(default=40.0, ge=0.0, le=100.0)
 
 
 class TunnelConfig(BaseModel):

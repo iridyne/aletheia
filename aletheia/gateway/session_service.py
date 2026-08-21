@@ -264,17 +264,35 @@ def _start_windows() -> dict:
         changed = _change_windows(True)
         if not changed.get("ok"):
             return changed
+    # #1209: try/finally guarantees DISABLE is always attempted
+    started = None
+    disable_ok = True
     try:
         started = _managed._run_schtasks(["schtasks", "/Run", "/TN", WINDOWS_TASK_NAME])
-        restored = _change_windows(False) if restore_disabled else {"ok": True}
     except Exception as exc:
         return {**current, "ok": False, "reason": "schtasks_error", "detail": type(exc).__name__}
-    if started.returncode != 0:
+    finally:
+        if restore_disabled:
+            try:
+                restored = _change_windows(False)
+                disable_ok = bool(restored.get("ok"))
+            except Exception:
+                disable_ok = False
+    if started is not None and started.returncode != 0:
         reason = "access_denied" if _managed._is_access_denied(started.stderr) else "schtasks_error"
         return {**current, "ok": False, "reason": reason, "detail": (started.stderr or "").strip()[:200]}
-    if not restored.get("ok"):
-        return {**current, "ok": False, "reason": "partial_transition", "detail": "started but enablement could not be restored"}
-    return {**current, "ok": True, "running": True}
+    # Re-read actual state after all operations
+    after = _status_windows()
+    if not disable_ok:
+        # DISABLE failed: task is running but still enabled — partial_transition
+        return {
+            **after,
+            "ok": False,
+            "reason": "partial_transition",
+            "enabled": True,
+            "detail": "started but enable-state could not be restored",
+        }
+    return {**after, "ok": True, "running": True}
 
 
 def _stop_windows() -> dict:
