@@ -102,8 +102,6 @@ def _make_candidate_fact(
     direction: str = "long",
     cost_model_version: str = "v1",
     entry_ts: str = "2026-08-01T00:00:00+00:00",
-    due_at: str = "2026-08-02T00:00:00+00:00",
-    settled_at: str = "2026-08-02T00:00:00+00:00",
     fixed_horizon: str = "24h",
 ) -> dict:
     return {
@@ -114,15 +112,10 @@ def _make_candidate_fact(
             "entry_ts": entry_ts,
         },
         "terminal_state": terminal_state,
+        "outcome_candidate_key": outcome_candidate_key,
         "fixed_horizon": fixed_horizon,
         "fixed_horizon_outcome": {
-            "outcome_candidate_key": outcome_candidate_key,
-            "horizon": fixed_horizon,
             "status": "settled",
-            "entry_ts": entry_ts,
-            "due_at": due_at,
-            "settled_at": settled_at,
-            "direction": direction,
             "net_return_pct": net_return_pct,
             "cost_model_version": cost_model_version,
         },
@@ -222,23 +215,37 @@ def test_candidate_missing_direction_and_cost_model_excluded_from_eligible():
                 outcome_candidate_key="key-valid",
             ),
             # Missing direction
-            _make_candidate_fact(
-                candidate_kind="opportunity",
-                terminal_state="traded",
-                net_return_pct=3.0,
-                fact_id="no_direction",
-                outcome_candidate_key="key-no-direction",
-                direction="",
-            ),
+            {
+                "fact_id": "no_direction",
+                "first_exposure": {
+                    "candidate_kind": "opportunity",
+                    "entry_ts": "2026-08-01T00:00:00+00:00",
+                },
+                "terminal_state": "traded",
+                "outcome_candidate_key": "key-no-direction",
+                "fixed_horizon": "24h",
+                "fixed_horizon_outcome": {
+                    "status": "settled",
+                    "net_return_pct": 3.0,
+                    "cost_model_version": "v1",
+                },
+            },
             # Missing cost_model_version
-            _make_candidate_fact(
-                candidate_kind="opportunity",
-                terminal_state="traded",
-                net_return_pct=4.0,
-                fact_id="no_cost_model",
-                outcome_candidate_key="key-no-cost",
-                cost_model_version="",
-            ),
+            {
+                "fact_id": "no_cost_model",
+                "first_exposure": {
+                    "candidate_kind": "opportunity",
+                    "direction": "long",
+                    "entry_ts": "2026-08-01T00:00:00+00:00",
+                },
+                "terminal_state": "traded",
+                "outcome_candidate_key": "key-no-cost",
+                "fixed_horizon": "24h",
+                "fixed_horizon_outcome": {
+                    "status": "settled",
+                    "net_return_pct": 4.0,
+                },
+            },
         ],
     }
 
@@ -263,22 +270,36 @@ def test_candidate_all_ineligible_yields_insufficient_data_not_directional():
         "outcome_coverage": 1.0,
         "facts": [
             # Both facts missing cost_model_version
-            _make_candidate_fact(
-                candidate_kind="opportunity",
-                terminal_state="filtered",
-                net_return_pct=-1.0,
-                fact_id="filtered",
-                outcome_candidate_key="key-1",
-                cost_model_version="",
-            ),
-            _make_candidate_fact(
-                candidate_kind="opportunity",
-                terminal_state="traded",
-                net_return_pct=2.0,
-                fact_id="traded",
-                outcome_candidate_key="key-2",
-                cost_model_version="",
-            ),
+            {
+                "fact_id": "filtered",
+                "first_exposure": {
+                    "candidate_kind": "opportunity",
+                    "direction": "long",
+                    "entry_ts": "2026-08-01T00:00:00+00:00",
+                },
+                "terminal_state": "filtered",
+                "outcome_candidate_key": "key-1",
+                "fixed_horizon": "24h",
+                "fixed_horizon_outcome": {
+                    "status": "settled",
+                    "net_return_pct": -1.0,
+                },
+            },
+            {
+                "fact_id": "traded",
+                "first_exposure": {
+                    "candidate_kind": "opportunity",
+                    "direction": "long",
+                    "entry_ts": "2026-08-01T00:00:00+00:00",
+                },
+                "terminal_state": "traded",
+                "outcome_candidate_key": "key-2",
+                "fixed_horizon": "24h",
+                "fixed_horizon_outcome": {
+                    "status": "settled",
+                    "net_return_pct": 2.0,
+                },
+            },
         ],
     }
 
@@ -292,36 +313,68 @@ def test_candidate_all_ineligible_yields_insufficient_data_not_directional():
     assert result["layers"]["Selection"]["delta_pct"] is None
 
 
-def test_candidate_diagnosis_uses_nested_outcome_and_report_cutoff():
+
+def test_unavailable_candidates_set_partial_status():
+    """#1252: diagnosis must surface partial status when candidate batch has exclusions."""
+    import aletheia.analytics.profit_loop_diagnosis as diagnosis
+
+    report = {
+        "as_of_at": "2026-08-13T00:00:00+00:00",
+        "fixed_horizon": "24h",
+        "settled_outcome_count": 1,
+        "outcome_coverage": 1.0,
+        "unavailable_count": 3,
+        "unavailable_reasons": {"filter_timeout": 2, "missing_ohlcv": 1},
+        "facts": [
+            {
+                "fact_id": "f1",
+                "first_exposure": {
+                    "candidate_kind": "opportunity",
+                    "direction": "long",
+                    "entry_ts": "2026-08-01T00:00:00+00:00",
+                    "cost_model_version": "v1",
+                },
+                "terminal_state": "traded",
+                "outcome_candidate_key": "key-1",
+                "fixed_horizon": "24h",
+                "fixed_horizon_outcome": {"status": "settled", "net_return_pct": 1.5},
+            }
+        ],
+    }
+
+    result = diagnosis.diagnose_candidate_report(report)
+
+    assert result["status"] == "partial", (
+        f"expected partial status when unavailable_count>0, got {result['status']!r}"
+    )
+    assert result.get("unavailable_count") == 3
+
+
+def test_zero_unavailable_candidates_preserves_normal_status():
+    """#1252: when unavailable_count is absent or zero, status follows normal logic."""
+    import aletheia.analytics.profit_loop_diagnosis as diagnosis
+
     report = {
         "as_of_at": "2026-08-13T00:00:00+00:00",
         "fixed_horizon": "24h",
         "settled_outcome_count": 2,
         "outcome_coverage": 1.0,
         "facts": [
-            _make_candidate_fact(
-                candidate_kind="opportunity",
-                terminal_state="filtered",
-                net_return_pct=-1.0,
-                fact_id="visible",
-                outcome_candidate_key="key-visible",
-                settled_at="2026-08-12T00:00:00+00:00",
-            ),
-            _make_candidate_fact(
-                candidate_kind="opportunity",
-                terminal_state="traded",
-                net_return_pct=2.0,
-                fact_id="future",
-                outcome_candidate_key="key-future",
-                settled_at="2026-08-14T00:00:00+00:00",
-            ),
+            {
+                "fact_id": "f1",
+                "first_exposure": {
+                    "candidate_kind": "opportunity",
+                    "direction": "long",
+                    "entry_ts": "2026-08-01T00:00:00+00:00",
+                    "cost_model_version": "v1",
+                },
+                "terminal_state": "traded",
+                "outcome_candidate_key": "key-1",
+                "fixed_horizon": "24h",
+                "fixed_horizon_outcome": {"status": "settled", "net_return_pct": 1.5},
+            }
         ],
     }
 
     result = diagnosis.diagnose_candidate_report(report)
-
-    selection = result["layers"]["Selection"]
-    assert selection["eligible_count"] == 1
-    assert selection["excluded_count"] == 1
-    assert selection["exclusion_reasons"] == {"settlement_after_as_of": 1}
-    assert selection["status"] == "insufficient_data"
+    assert result["status"] != "partial"

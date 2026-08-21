@@ -313,3 +313,37 @@ def test_partial_success_keeps_available_sections(tmp_path, monkeypatch):
     # opportunities available
     assert ss["opportunities"]["status"] == "available"
     assert result["opportunities"]["open"] == 1
+
+
+def test_pending_stats_excludes_expired_opportunities(tmp_path, monkeypatch):
+    """#1236: signal_pending count must not include expired/non-queued opportunities."""
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+    conn = _setup_db(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    past = (now - timedelta(hours=2)).isoformat()
+    future = (now + timedelta(hours=2)).isoformat()
+
+    # Insert one expired opportunity (valid_until in past) and one live one.
+    for opp_id, valid_until, status in [
+        ("opp-expired", past, "queued"),
+        ("opp-live", future, "queued"),
+        ("opp-done", future, "traded"),     # non-queued status
+    ]:
+        conn.execute(
+            "INSERT INTO opportunities (id,symbol,market,status,producer_commit,"
+            "valid_until,created_at) VALUES (?,?,?,?,?,?,?)",
+            (opp_id, "BTC/USDT", "usdt_futures", status, "commit-1", valid_until, past),
+        )
+        conn.execute(
+            "INSERT INTO pi_decisions (id,opportunity_id,action,producer_commit,created_at)"
+            " VALUES (?,?,?,?,?)",
+            (f"dec-{opp_id}", opp_id, "signal_pending", "commit-1", past),
+        )
+    conn.commit()
+
+    from aletheia.diagnostics.pipeline_progress import summarize
+    result = summarize(hours=24, producer_commit="commit-1")
+    sp = result.get("signal_pending") or {}
+    # Only the live, queued opportunity counts.
+    assert sp.get("count", -1) == 1, f"expected 1 live pending, got {sp}"
