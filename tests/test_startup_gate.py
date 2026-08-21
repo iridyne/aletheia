@@ -83,14 +83,13 @@ def _patch_providers(monkeypatch, mapping: dict):
 
     async def fake_get_provider(name):
         if name not in mapping:
-            raise ValueError(f"Unknown provider: {name}")
+            raise ValueError(f"Cannot resolve provider type for: {name}")
         return mapping[name]
 
     # The startup gate routes through complete_with_fallback(), which resolves
     # providers via the async router path.
     import aletheia.model_provider.router as router
     monkeypatch.setattr(router, "get_provider_async", fake_get_provider)
-
 
 # --- 1. all providers fail → any_usable False, each error reported ---
 
@@ -168,7 +167,7 @@ def test_probe_never_raises_on_bad_provider(tmp_path, monkeypatch):
     result = asyncio.run(startup_gate.probe_llm_providers_at_startup(cfg))
     assert result["any_usable"] is False
     assert result["checked"] == 1
-    assert "Unknown provider" in result["results"][0]["error"]
+    assert "Cannot resolve provider type for" in result["results"][0]["error"]
 
 
 # --- 4b. no enabled providers → honest empty verdict ---
