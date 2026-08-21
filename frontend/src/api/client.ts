@@ -3092,6 +3092,7 @@ export interface ProfitFactorData {
 	gross_profit: number;
 	gross_loss: number;
 	profit_factor: number | null;
+	profit_factor_state?: 'finite' | 'unbounded_no_losses' | 'unavailable_no_outcomes';
 	avg_win: number;
 	avg_loss: number;
 	largest_win: number;

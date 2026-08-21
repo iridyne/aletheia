@@ -77,6 +77,9 @@ _LEARNING_EVALUATOR_RESTART_DELAY_SEC = 60
 
 # Track which jobs were selectively paused (for targeted resume).
 _selectively_paused_jobs: set[str] = set()
+# Track paper_trader nudges deferred by pause (wake on resume).
+_pending_wake_jobs: set[str] = set()
+
 
 # Hard time budgets for scheduler jobs that depend on external IO or LLM calls.
 # APScheduler's max_instances=1 prevents overlap, but it cannot recover a job
@@ -1719,6 +1722,12 @@ def resume_scheduler() -> bool:
                 len(_selectively_paused_jobs),
             )
             _selectively_paused_jobs.clear()
+        # Wake jobs that received notify calls during pause
+        if _pending_wake_jobs:
+            for job_id in list(_pending_wake_jobs):
+                _pending_wake_jobs.discard(job_id)
+                if job_id == "paper_trader":
+                    _arm_paper_trader_job()
         return True
 
 
@@ -1877,10 +1886,13 @@ def notify_paper_trader(source: str = "unknown") -> bool:
         last_nudge = float(_PAPER_TRADER_WAKE_STATE["last_nudge_mono"])
         if now_mono - last_nudge < _PAPER_TRADER_NUDGE_DEBOUNCE_SEC:
             return False
-        if not _arm_paper_trader_job():
+        # Check if paper_trader is selectively paused; defer wake if so
+        if "paper_trader" in _selectively_paused_jobs:
+            _pending_wake_jobs.add("paper_trader")
             return False
         _PAPER_TRADER_WAKE_STATE["last_nudge_mono"] = now_mono
-        logger.debug("paper_trader: nudged forward (source=%s)", source)
+        if not _arm_paper_trader_job():
+            return False
         return True
 
 
@@ -3274,15 +3286,16 @@ def _run_cleanup():
         _record_job_failure("cleanup", str(e))
 
 
-def _prune_news(cfg) -> int:
+def _prune_news(cfg) -> dict[str, int | str | None]:
     try:
         from aletheia.data.news_collector import prune_old_news
-        return prune_old_news(cfg.news.retention_days)
-    except Exception:
-        return 0
+        deleted = prune_old_news(cfg.news.retention_days)
+        return {"deleted": deleted, "error": None}
+    except Exception as e:
+        return {"deleted": 0, "error": str(e)}
 
 
-def _prune_session_logs(cfg) -> int:
+def _prune_session_logs(cfg) -> dict[str, int | str | None]:
     """DB-JOIN-based session-log prune (Agent 4). Falls back to the legacy
     file-only pruner if the DB-join variant is not yet importable. The
     operator's persistent main session id is threaded through as an extra
@@ -3293,27 +3306,29 @@ def _prune_session_logs(cfg) -> int:
         days = int(getattr(cfg.retention, "agent_shell_session_logs_days", 14))
         main_stem = str(getattr(getattr(cfg, "operator", None), "main_session_id", "") or "")
         extra = (main_stem,) if main_stem else ()
-        return prune_session_logs_db_join(days, extra_exempt_stems=extra)
-    except Exception:
+        deleted = prune_session_logs_db_join(days, extra_exempt_stems=extra)
+        return {"deleted": deleted, "error": None}
+    except Exception as e1:
         try:
             from aletheia.agent_shell.file_artifacts import prune_session_logs
             keep = (cfg.operator.main_session_id,)
-            return prune_session_logs(14, keep)
-        except Exception:
-            return 0
+            deleted = prune_session_logs(14, keep)
+            return {"deleted": deleted, "error": None}
+        except Exception as e2:
+            return {"deleted": 0, "error": str(e2)}
 
-
-def _prune_task_notes(cfg) -> int:
+def _prune_task_notes(cfg) -> dict[str, int | str | None]:
     """Task-notes filesystem prune (Agent 4) — joins agent_shell_tasks to
     unlink `.md` notes for finished tasks + orphan-sweeps stale files."""
     try:
         from aletheia.agent_shell.file_artifacts import prune_task_notes_db_join
-        return prune_task_notes_db_join(
+        deleted = prune_task_notes_db_join(
             days_completed=int(getattr(cfg.retention, "agent_shell_task_notes_completed_days", 7)),
             days_failed=int(getattr(cfg.retention, "agent_shell_task_notes_failed_days", 30)),
         )
-    except Exception:
-        return 0
+        return {"deleted": deleted, "error": None}
+    except Exception as e:
+        return {"deleted": 0, "error": str(e)}
 
 
 def _prune_backups(keep_recent: int) -> int:

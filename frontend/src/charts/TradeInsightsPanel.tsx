@@ -111,8 +111,22 @@ function DrawdownCurve({ data }: { data: TradeInsights['drawdown_curve'] }) {
 
 // ── 3a. Profit Factor card ────────────────────────────────────────────────────
 function ProfitFactorCard({ data }: { data: TradeInsights['profit_factor'] }) {
-  const pf = data.profit_factor
-  const pfColor = pf == null ? C.muted : pf >= 1.5 ? C.green : pf >= 1.0 ? C.yellow : C.red
+  const state = data.profit_factor_state
+  let displayValue: string
+  let pfColor: string
+  
+  if (state === 'unbounded_no_losses') {
+    displayValue = '∞'
+    pfColor = C.green
+  } else if (state === 'unavailable_no_outcomes' || data.profit_factor == null) {
+    displayValue = '—'
+    pfColor = C.muted
+  } else {
+    const pf = data.profit_factor
+    displayValue = pf.toFixed(2)
+    pfColor = pf >= 1.5 ? C.green : pf >= 1.0 ? C.yellow : C.red
+  }
+
   const barData = [
     { label: 'Avg Win', value: data.avg_win, color: C.green },
     { label: 'Avg Loss', value: Math.abs(data.avg_loss), color: C.red },
@@ -122,7 +136,7 @@ function ProfitFactorCard({ data }: { data: TradeInsights['profit_factor'] }) {
       <SectionLabel>Profit Factor</SectionLabel>
       <div className="insights-pf-grid">
         <div className="insights-pf-big" style={{ color: pfColor }}>
-          {pf != null ? pf.toFixed(2) : '—'}
+          {displayValue}
         </div>
         <div className="insights-pf-stats">
           <div><span className="insights-label">Gross Profit</span><span className="mono pos">{data.gross_profit.toFixed(4)}</span></div>

@@ -311,4 +311,3 @@ def test_candidate_all_ineligible_yields_insufficient_data_not_directional():
     assert result["layers"]["Selection"]["baseline"] is None
     assert result["layers"]["Selection"]["observed"] is None
     assert result["layers"]["Selection"]["delta_pct"] is None
-
