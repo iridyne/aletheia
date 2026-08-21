@@ -1461,8 +1461,9 @@ class RegimeConfig(BaseModel):
 
 
 class HistoricalDataConfig(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
     """Local OHLCV storage and bulk download settings."""
+
+    model_config = ConfigDict(validate_assignment=True)
     enabled: bool = True
     max_bars_per_pair: int = Field(default=50_000, ge=1_000, le=200_000)
     default_months: int = Field(default=6, ge=1, le=24)
@@ -1605,7 +1606,6 @@ class NetworkConfig(BaseModel):
 
 
 class PiDaemonConfig(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
     """System Operator daemon configuration.
 
     #97 note (2026-07-07): the class name and the top-level config field
@@ -1623,6 +1623,8 @@ class PiDaemonConfig(BaseModel):
         legacy REST path:      POST /api/settings/pi_daemon
         current product name:  "System Operator daemon"
     """
+
+    model_config = ConfigDict(validate_assignment=True)
 
     enabled: bool = True
     debounce_sec: float = Field(default=2.0, ge=0.0, le=60.0)
