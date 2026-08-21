@@ -646,7 +646,7 @@ class RuntimeContinuityService:
         if row is None:
             return
         if token is not None and row["token"] != token:
-            raise RuntimeTransitionError(f"runtime_lock_token_mismatch:runtime-transition")
+            raise RuntimeTransitionError("runtime_lock_token_mismatch:runtime-transition")
         db.execute("BEGIN IMMEDIATE")
         try:
             db.execute(
