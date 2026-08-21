@@ -1279,9 +1279,9 @@ class ReplacementResult:
 def atomic_replace_queued_carrier(
     incumbent_id: str,
     replacement_id: str,
-    eviction_decision: "PiDecision",  # type: ignore[name-defined]  # resolved at runtime
-    replacement_decision: "PiDecision",  # type: ignore[name-defined]
-    persist_enqueue_evidence_fn: "Callable[[], None]",  # type: ignore[name-defined]
+    eviction_decision: object,
+    replacement_decision: object,
+    persist_enqueue_evidence_fn: object,
 ) -> "ReplacementResult":
     """Release *incumbent_id* and claim *replacement_id* in one immediate transaction.
 
@@ -1304,7 +1304,7 @@ def atomic_replace_queued_carrier(
         Zero-argument callable that writes the enqueue evidence row inside the
         transaction.  Must raise on error so the transaction rolls back cleanly.
     """
-    from aletheia.storage.models import PiDecision  # local import avoids circulars
+    assert callable(persist_enqueue_evidence_fn), "persist_enqueue_evidence_fn must be callable"
 
     try:
         with transaction(immediate=True):
