@@ -606,6 +606,7 @@ jobs:
               client_payload: {
                 head_branch: context.ref.replace('refs/heads/', ''),
                 head_sha: context.sha,
+                source_run_id: context.runId,
               },
             });
 

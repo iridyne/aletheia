@@ -124,6 +124,31 @@ jobs:
           retries: 3
           script: |
             const run = context.payload.client_payload;
+            // #1416: verify the dispatch originated from a base-branch-controlled workflow run,
+            // not a PR-controlled candidate ci.yml with elevated permissions.
+            if (run.source_run_id) {
+              const {data: sourceRun} = await github.rest.actions.getWorkflowRun({
+                ...context.repo,
+                run_id: run.source_run_id,
+              });
+              const expectedWorkflow = '.github/workflows/ci.yml';
+              const actualWorkflow = sourceRun.path;
+              const sourceEvent = sourceRun.event;
+              const sourceHeadSha = sourceRun.head_sha;
+              if (
+                !actualWorkflow.endsWith(expectedWorkflow) ||
+                sourceEvent !== 'workflow_dispatch' ||
+                sourceHeadSha !== run.head_sha
+              ) {
+                core.setFailed(
+                  `dispatch provenance mismatch: workflow=${actualWorkflow} event=${sourceEvent} sha=${sourceHeadSha}`
+                );
+                return;
+              }
+            } else {
+              core.setFailed('release_candidate_verified dispatch missing source_run_id; provenance unverifiable');
+              return;
+            }
             const {data: pullRequests} = await github.rest.pulls.list({
               ...context.repo,
               state: 'open',
@@ -481,6 +506,10 @@ jobs:
               // Native auto-merge survives synchronize events and could merge a new
               // head before CI finishes. Use only this exact-SHA, event-driven merge path.
               await disableAutoMerge(pullRequest);
+              if (pullRequest.isCrossRepository) {
+                core.info('cross-repository fork PR is outside autonomous merge authority; skipping');
+                return;
+              }
               if (pullRequest.labels.nodes.some(({name}) => name === 'do-not-auto-merge')) {
                 core.info('do-not-auto-merge holds this pull request');
                 return;
@@ -525,6 +554,10 @@ jobs:
               }
               if (pullRequest.state !== 'OPEN') {
                 core.info('pull request is no longer open; no auto-merge update needed');
+                return;
+              }
+              if (pullRequest.isCrossRepository) {
+                core.info('cross-repository fork PR is outside autonomous merge authority; skipping');
                 return;
               }
               if (pullRequest.isDraft) {

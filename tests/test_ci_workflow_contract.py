@@ -837,3 +837,41 @@ def test_pr_runner_isolation_contract() -> None:
         "Resolution: configure dedicated pr-ephemeral runner group."
     )
     assert _KNOWN_GAP_1356  # always true — presence is the documentation
+
+
+def test_auto_merge_rejects_fork_prs_before_merge() -> None:
+    """#1415: isCrossRepository check must block fork PRs in both merge paths."""
+    workflow = _auto_merge_workflow()
+    update_script = ""
+    for job in workflow.get("jobs", {}).values():
+        for step in job.get("steps", []):
+            if isinstance(step, dict) and "script" in str(step.get("with", {})):
+                update_script += str(step.get("with", {}).get("script", ""))
+    assert "isCrossRepository" in update_script, (
+        "auto-merge update must check isCrossRepository before any pulls.merge call; "
+        "fork PRs must be rejected at both exact-head and release-after-merge paths"
+    )
+
+
+def test_release_candidate_dispatch_validates_source_run_id() -> None:
+    """#1416: release_candidate_verified receiver must validate source_run_id provenance."""
+    workflow = _auto_merge_workflow()
+    release_job = workflow.get("jobs", {}).get("release-candidate", {})
+    release_script = ""
+    for step in release_job.get("steps", []):
+        if isinstance(step, dict) and "script" in str(step.get("with", {})):
+            release_script += str(step.get("with", {}).get("script", ""))
+    assert "source_run_id" in release_script, (
+        "release-candidate job must verify source_run_id from dispatch payload "
+        "to prevent PR-controlled ci.yml from minting trusted dispatch events"
+    )
+
+    ci_workflow = _workflow()
+    handoff_job = ci_workflow.get("jobs", {}).get("release-candidate", {})
+    handoff_script = ""
+    for step in handoff_job.get("steps", []):
+        if isinstance(step, dict) and "script" in str(step.get("with", {})):
+            handoff_script += str(step.get("with", {}).get("script", ""))
+    assert "source_run_id" in handoff_script or "runId" in handoff_script, (
+        "ci.yml release-candidate dispatch must include source_run_id in client_payload"
+    )
