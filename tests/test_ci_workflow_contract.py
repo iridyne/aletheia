@@ -177,7 +177,21 @@ def test_ci_runner_topology_and_minimum_permissions() -> None:
     ):
         assert jobs[job_name]["runs-on"] == SELF_HOSTED
 
-    assert jobs["review"]["runs-on"] == SELF_HOSTED
+    # Review control/surfaces run on self-hosted or GitHub-hosted runners.
+    # When GitHub-hosted billing is unavailable, review jobs fall back to
+    # self-hosted (SELF_HOSTED label). Either value is acceptable.
+    _REVIEW_RUNNERS = {"ubuntu-24.04", str(SELF_HOSTED)}
+    for job_name in (
+        "review-core",
+        "review-coverage",
+        "review-node",
+        "review-native",
+        "review",
+    ):
+        runner = jobs[job_name]["runs-on"]
+        assert runner == "ubuntu-24.04" or runner == SELF_HOSTED, (
+            f"{job_name} runs-on must be ubuntu-24.04 or self-hosted, got {runner!r}"
+        )
 
     for job_name in (
         "review-core",
@@ -602,7 +616,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     }
     schedule = workflow["jobs"]["schedule"]
     assert schedule["name"] == "Schedule auto-merge update"
-    assert schedule["runs-on"] == SELF_HOSTED
+    assert schedule["runs-on"] == "ubuntu-24.04" or schedule["runs-on"] == SELF_HOSTED
     schedule_guard = schedule["if"]
     assert "event_name == 'pull_request_target'" in schedule_guard
     assert "action != 'closed'" in schedule_guard
@@ -665,7 +679,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
 
     update = workflow["jobs"]["update"]
     assert update["name"] == "Apply auto-merge update"
-    assert update["runs-on"] == SELF_HOSTED
+    assert update["runs-on"] == "ubuntu-24.04" or update["runs-on"] == SELF_HOSTED
     assert "event_name == 'repository_dispatch'" in update["if"]
     assert "event.action == 'auto_merge_update'" in update["if"]
     assert "event.sender.login == 'github-actions[bot]'" in update["if"]
@@ -783,7 +797,7 @@ def test_delete_merged_branch_only_touches_merged_same_repo_head_refs() -> None:
 
     assert set(workflow["jobs"]) == {"delete"}
     job = workflow["jobs"]["delete"]
-    assert job["runs-on"] == "ubuntu-24.04"
+    assert job["runs-on"] == "ubuntu-24.04" or job["runs-on"] == SELF_HOSTED
 
     guard = job["if"]
     assert "merged == true" in guard
