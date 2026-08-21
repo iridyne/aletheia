@@ -1189,7 +1189,11 @@ def init_scheduler() -> BackgroundScheduler | None:
     if _scheduler is not None:
         return _scheduler
 
-    cfg = load_config()
+    try:
+        cfg = load_config()
+    except Exception as exc:  # noqa: BLE001 — invalid persisted config must block startup
+        logger.error("Scheduler startup blocked by configuration blocker: %s", exc)
+        raise
     # Research workers are process-owned daemon threads. Their persisted active
     # rows are interrupted after any restart even when scheduling is disabled.
     _recover_interrupted_serenity_run()

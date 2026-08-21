@@ -3,15 +3,21 @@
 from collections.abc import Mapping
 from datetime import datetime, timezone
 import logging
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, PrivateAttr, field_validator, model_validator
 
 _logger = logging.getLogger("aletheia.config")
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _WILDCARD_HOSTS = {"0.0.0.0", "::"}
+
+# Shared settings types keep API requests and persisted config on the same
+# boundary.  A schedule hour is a wall-clock hour, while webhook timeouts must
+# remain finite because urllib rejects non-finite or non-positive deadlines.
+NotificationHour = Annotated[int, Field(ge=0, le=23)]
+WebhookTimeoutSeconds = Annotated[FiniteFloat, Field(ge=1.0, le=60.0)]
 
 
 class AppConfig(BaseModel):
@@ -945,24 +951,28 @@ class RiskConfig(BaseModel):
 
 
 class TelegramConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     enabled: bool = False
     allowed_chat_ids: list[int] = Field(default_factory=list)
     notify_trade_fills: bool = True
     notify_daily_summary: bool = True
-    daily_summary_hour_cst: int = 8
+    daily_summary_hour_cst: NotificationHour = 8
     dnd_enabled: bool = False
-    dnd_start_hour: int = 23
-    dnd_end_hour: int = 7
+    dnd_start_hour: NotificationHour = 23
+    dnd_end_hour: NotificationHour = 7
 
 
 class WebhookConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     enabled: bool = False
     url: str = ""
     secret: str = ""
     notify_trade_fills: bool = True
     notify_alerts: bool = True
     notify_daily_summary: bool = True
-    timeout_sec: float = 10.0
+    timeout_sec: WebhookTimeoutSeconds = 10.0
 
 
 class HealthConfig(BaseModel):
