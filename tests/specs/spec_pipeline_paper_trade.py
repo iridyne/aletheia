@@ -1035,6 +1035,246 @@ def test_priority_replacement_persists_eviction_without_terminalizing_source(
 
 @spec_claim(
     SpecClaim(
+        "PL-PT-24",
+        "pipeline_paper_trade",
+        "§2 priority replacement rollback when incumbent stale",
+        "L2b",
+        "When a planned replacement arrives and the incumbent is no longer queued, "
+        "the whole replacement is aborted and the stale plan is rejected without "
+        "polluting the queue with a partial write.",
+        status="implemented",
+    ),
+)
+def test_priority_replacement_rollback_when_incumbent_not_queued(tmp_path, monkeypatch):
+    """Atomic replacement rejects stale plans without partially persisting them."""
+    conn = _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import (
+        atomic_replace_queued_carrier,
+        insert_pi_decision,
+        transition_queued_opportunity_to_open,
+    )
+
+    incumbent_id = _insert_opportunity(conn, symbol="OLD/USDT", status="queued")
+    replacement_id = _insert_opportunity(conn, symbol="NEW/USDT", status="open")
+    insert_pi_decision(
+        PiDecision(
+            symbol="OLD/USDT",
+            direction="long",
+            market_type="spot",
+            action="signal_pending",
+            conviction=10,
+            opportunity_id=incumbent_id,
+        )
+    )
+    # Simulate a stale plan: the incumbent was already released by another process.
+    assert transition_queued_opportunity_to_open(incumbent_id), "pre-release failed"
+
+    eviction_dec = PiDecision(
+        opportunity_id=incumbent_id,
+        action="signal_queue_evicted",
+        conviction=0,
+        reasoning="test eviction",
+    )
+    replacement_dec = PiDecision(
+        symbol="NEW/USDT",
+        direction="long",
+        market_type="spot",
+        action="signal_pending",
+        conviction=80,
+        opportunity_id=replacement_id,
+    )
+
+    result = atomic_replace_queued_carrier(
+        incumbent_id=incumbent_id,
+        replacement_id=replacement_id,
+        eviction_decision=eviction_dec,
+        replacement_decision=replacement_dec,
+        persist_enqueue_evidence_fn=lambda: None,
+    )
+
+    assert not result.committed
+    assert result.reason == "incumbent_not_queued"
+    assert conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (incumbent_id,)
+    ).fetchone()[0] == "open"
+    assert conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (replacement_id,)
+    ).fetchone()[0] == "open"
+    evictions = conn.execute(
+        "SELECT 1 FROM pi_decisions WHERE action='signal_queue_evicted'"
+    ).fetchall()
+    assert len(evictions) == 0, "eviction decision leaked despite rollback"
+    pending = conn.execute(
+        "SELECT 1 FROM pi_decisions WHERE opportunity_id=? AND action='signal_pending'",
+        (replacement_id,),
+    ).fetchall()
+    assert len(pending) == 0, "replacement carrier leaked despite rollback"
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-25",
+        "pipeline_paper_trade",
+        "§2 priority replacement rollback when replacement not open",
+        "L2b",
+        "When a replacement candidate is no longer open (e.g. another agent "
+        "terminalized it), the whole replacement is aborted and the incumbent "
+        "stays queued.",
+        status="implemented",
+    ),
+)
+def test_priority_replacement_rollback_when_replacement_not_open(tmp_path, monkeypatch):
+    """Atomic replacement preserves incumbent when replacement claim fails."""
+    conn = _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import (
+        atomic_replace_queued_carrier,
+        insert_pi_decision,
+    )
+
+    incumbent_id = _insert_opportunity(conn, symbol="OLD/USDT", status="queued")
+    replacement_id = _insert_opportunity(conn, symbol="NEW/USDT", status="reviewed")
+    insert_pi_decision(
+        PiDecision(
+            symbol="OLD/USDT",
+            direction="long",
+            market_type="spot",
+            action="signal_pending",
+            conviction=10,
+            opportunity_id=incumbent_id,
+        )
+    )
+
+    eviction_dec = PiDecision(
+        opportunity_id=incumbent_id,
+        action="signal_queue_evicted",
+        conviction=0,
+        reasoning="test eviction",
+    )
+    replacement_dec = PiDecision(
+        symbol="NEW/USDT",
+        direction="long",
+        market_type="spot",
+        action="signal_pending",
+        conviction=80,
+        opportunity_id=replacement_id,
+    )
+
+    result = atomic_replace_queued_carrier(
+        incumbent_id=incumbent_id,
+        replacement_id=replacement_id,
+        eviction_decision=eviction_dec,
+        replacement_decision=replacement_dec,
+        persist_enqueue_evidence_fn=lambda: None,
+    )
+
+    assert not result.committed
+    assert result.reason == "replacement_not_open"
+    assert conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (incumbent_id,)
+    ).fetchone()[0] == "queued"
+    assert conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (replacement_id,)
+    ).fetchone()[0] == "reviewed"
+    evictions = conn.execute(
+        "SELECT 1 FROM pi_decisions WHERE action='signal_queue_evicted'"
+    ).fetchall()
+    assert len(evictions) == 0
+    pending_replacement = conn.execute(
+        "SELECT 1 FROM pi_decisions WHERE opportunity_id=? AND action='signal_pending'",
+        (replacement_id,),
+    ).fetchall()
+    assert len(pending_replacement) == 0
+    pending_incumbent = conn.execute(
+        "SELECT 1 FROM pi_decisions WHERE opportunity_id=? AND action='signal_pending'",
+        (incumbent_id,),
+    ).fetchall()
+    assert len(pending_incumbent) == 1, "incumbent carrier must remain untouched"
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-PT-26",
+        "pipeline_paper_trade",
+        "§2 priority replacement commits incumbent+replacement atomically",
+        "L2b",
+        "When both preconditions hold, exactly one incumbent is released and one "
+        "replacement is queued in the same transaction, leaving queue depth unchanged.",
+        status="implemented",
+    ),
+)
+def test_priority_replacement_commits_both_atomically(tmp_path, monkeypatch):
+    """Successful replacement installs both the eviction and the new carrier."""
+    conn = _setup_db(tmp_path, monkeypatch)
+
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import (
+        atomic_replace_queued_carrier,
+        insert_pi_decision,
+    )
+
+    incumbent_id = _insert_opportunity(conn, symbol="OLD/USDT", status="queued")
+    replacement_id = _insert_opportunity(conn, symbol="NEW/USDT", status="open")
+    insert_pi_decision(
+        PiDecision(
+            symbol="OLD/USDT",
+            direction="long",
+            market_type="spot",
+            action="signal_pending",
+            conviction=10,
+            opportunity_id=incumbent_id,
+        )
+    )
+
+    eviction_dec = PiDecision(
+        opportunity_id=incumbent_id,
+        action="signal_queue_evicted",
+        conviction=0,
+        reasoning="replaced by higher-score candidate",
+    )
+    replacement_dec = PiDecision(
+        symbol="NEW/USDT",
+        direction="long",
+        market_type="spot",
+        action="signal_pending",
+        conviction=80,
+        opportunity_id=replacement_id,
+    )
+
+    result = atomic_replace_queued_carrier(
+        incumbent_id=incumbent_id,
+        replacement_id=replacement_id,
+        eviction_decision=eviction_dec,
+        replacement_decision=replacement_dec,
+        persist_enqueue_evidence_fn=lambda: None,
+    )
+
+    assert result.committed
+    assert result.reason == "ok"
+    assert result.evicted_id == incumbent_id
+    assert conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (incumbent_id,)
+    ).fetchone()[0] == "open"
+    assert conn.execute(
+        "SELECT status FROM opportunities WHERE id=?", (replacement_id,)
+    ).fetchone()[0] == "queued"
+    evictions = conn.execute(
+        "SELECT opportunity_id FROM pi_decisions WHERE action='signal_queue_evicted'"
+    ).fetchall()
+    assert len(evictions) == 1
+    assert evictions[0]["opportunity_id"] == incumbent_id
+    pending_replacement = conn.execute(
+        "SELECT 1 FROM pi_decisions WHERE opportunity_id=? AND action='signal_pending'",
+        (replacement_id,),
+    ).fetchall()
+    assert len(pending_replacement) == 1
+
+
+@spec_claim(
+    SpecClaim(
         "PL-PT-22",
         "pipeline_paper_trade",
         "§2 priority replacement skips equal or lower score",
