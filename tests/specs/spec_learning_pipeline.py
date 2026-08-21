@@ -375,8 +375,8 @@ def test_synthetic_closures_excluded_from_corpus():
         result = tcb.build_case_studies(since_hours=9999)
 
     # Only the genuine take_profit close becomes a case study.
-    assert len(result) == 1
-    assert result[0]["case_study_id"] == "cs-real"
+    assert len(result["created"]) == 1
+    assert result["created"][0]["case_study_id"] == "cs-real"
     assert mk.call_count == 1, "synthetic closures must not reach create_trade_case_study"
 
 
