@@ -4,6 +4,8 @@ Classifies each factor as: watch / blocked_candidate / active / preferred.
 Used by PaperTrader v2 to avoid losing factors and prioritize winning ones.
 
 Read-only. No DB mutations. No LLM calls.
+
+Errors: raises AttributionReadError when attribution lineage is unreadable.
 """
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ from collections import Counter, defaultdict
 from typing import Any
 
 from aletheia.analytics.trade_attribution import (
+    AttributionReadError,
     build_trade_attribution_rows,
     confidence_bucket,
     factor_key,
@@ -140,7 +143,7 @@ def lookup_factor_signal(candidate: dict) -> dict:
     return _watch_signal(target_key)
 
 
-def _watch_signal(fk: str) -> dict:
+def _watch_signal(fk: str, *, reason: str = "no_history") -> dict:
     return {
         "factor_key": fk,
         "status": "watch",
@@ -150,7 +153,7 @@ def _watch_signal(fk: str) -> dict:
         "expectancy": None,
         "win_rate": None,
         "trade_count": 0,
-        "reason": "no_history",
+        "reason": reason,
     }
 
 

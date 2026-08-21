@@ -28,7 +28,7 @@ from aletheia.storage.repositories import (
     get_universe_member,
     list_open_trade_opportunities,
 )
-from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation, ActiveGuardLoadError
+from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation
 from aletheia.regime.detector import get_current_regime, MarketRegime
 from aletheia.trading.instruments import tradable_symbols_from_config
 # Position C (2026-07-02): strategy rules-engine deleted. The ranker no longer
@@ -496,7 +496,25 @@ def _evaluate_candidate(
         "confidence": confidence,
         "late_entry_penalty": universe_member.get("late_entry_penalty") if universe_member else None,
     }
-    factor_signal = lookup_factor_signal(candidate_for_factor)
+    try:
+        factor_signal = lookup_factor_signal(candidate_for_factor)
+    except Exception as _factor_exc:
+        from aletheia.analytics.trade_attribution import AttributionReadError
+        if isinstance(_factor_exc, AttributionReadError):
+            _filter_step(
+                filter_trace, "factor_feedback_unavailable", "rejected",
+                "attribution_source_unavailable",
+                inputs={"error": str(_factor_exc)[:200]},
+                parameters={},
+            )
+            return _make_candidate(
+                opp, skip_reason="attribution_source_unavailable",
+                direction=direction, strategy_id=strategy_id,
+                factor_signal=None,
+                universe_member=universe_member,
+                filter_trace=filter_trace,
+            )
+        raise
 
     # P1-4: hard_blocked can reject only through the central behavior inventory;
     # historical status or an inline ranker condition is never authority by itself.
@@ -1222,16 +1240,13 @@ def _evaluate_guards_safe(
             "_opportunity_id": opportunity_id,
         })
 
-        max_penalty = max(0.0, float(guard_cfg.max_score_penalty if guard_cfg else 40.0))
+        max_penalty = guard_cfg.max_score_penalty if guard_cfg else 40.0
         result = evaluate_guards(ctx, scope="paper_entry")
 
         if result.total_penalty > max_penalty:
             result.total_penalty = max_penalty
 
         return result
-    except ActiveGuardLoadError:
-        # #1244: active guard set incomplete — must fail closed, not zero-penalty pass.
-        raise
     except Exception as e:
         logger.warning("Guard evaluation failed (non-fatal): %s", e)
         return None

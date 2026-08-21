@@ -1317,7 +1317,7 @@ def update_operator_config(req: OperatorConfigUpdate):
 class RegimeConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
     min_hold_periods: Optional[int] = None
-    bias_threshold: Optional[float] = None
+    bias_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     short_enabled: Optional[bool] = None
 
 

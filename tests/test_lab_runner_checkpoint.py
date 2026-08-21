@@ -110,3 +110,47 @@ def test_runner_isolates_checkpoint_error_from_window_execution(clean_registry):
     assert summary["windows_run"] == 1
     assert summary["joint_checkpoint"]["ok"] is False
     assert "checkpoint_error" in summary["joint_checkpoint"]["reason"]
+
+
+def test_runner_preserves_both_fingerprints_on_mismatch(clean_registry):
+    """After mismatch, the summary contains both prior and current fingerprint."""
+    from aletheia.observation_lab.manifest import build_manifest, publish_manifest
+    from aletheia.observation_lab.runner import LabWindow, register_window, run_lab_windows
+
+    register_window(LabWindow(name="noop", kind="test", fn=lambda: {"status": "ok"}))
+
+    # First pass — baseline
+    first = run_lab_windows()
+    assert first["joint_checkpoint"]["ok"] is True
+    first_fp = first["joint_checkpoint"]["current_fingerprint"]
+
+    # Publish a manifest (creates drift)
+    manifest = build_manifest(
+        observation_id="drift-test",
+        generation=1,
+        spec_hash="s",
+        treatment_adapter_id="t",
+        treatment_adapter_version="v1",
+        assignment_policy="stable",
+        assignment_salt="salt",
+        assignment_unit_key_template="{k}",
+        allocation_pct=0.5,
+        control_payload={"m": 1.0},
+        treatment_payload={"m": 1.1},
+        eligible_population={"path_id": "test"},
+        behavior_contract_hash="bh",
+        interference_key="ifk",
+        composability_contract="exclusive",
+        effective_from="2020-01-01T00:00:00+00:00",
+        deterministic_baseline={"m": 1.0},
+        unavailable_fallback="baseline",
+    )
+    publish_manifest(manifest)
+
+    # Second pass sees the mismatch
+    second = run_lab_windows()
+    assert second["joint_checkpoint"]["ok"] is False
+    # Both fingerprints are preserved
+    assert second["joint_checkpoint"]["prior_fingerprint"] == first_fp
+    assert second["joint_checkpoint"]["current_fingerprint"] != first_fp
+    assert second["joint_checkpoint"]["last_fingerprint"] == first_fp  # backward compat

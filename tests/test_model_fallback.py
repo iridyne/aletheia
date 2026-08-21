@@ -92,22 +92,24 @@ async def test_complete_with_fallback_tries_configured_model_on_429(tmp_path, mo
 
 
 @pytest.mark.anyio
-async def test_complete_with_fallback_uses_detected_models_when_config_list_empty(tmp_path, monkeypatch):
+async def test_discovered_models_not_used_as_fallback(tmp_path, monkeypatch):
+    """Discovered catalogue models are no longer automatic fallback candidates."""
     _setup_config(tmp_path, monkeypatch, fallback_models=[])
     from aletheia.model_provider import fallback
 
     provider = FakeProvider(
         fail_models={"claude-primary": "502 Bad Gateway"},
-        detected=["claude-primary", "claude-detected"],
-    )
-    resp = await fallback.complete_with_fallback(
-        ModelRequest(messages=[{"role": "user", "content": "x"}]),
-        provider=provider,
+        detected=["claude-primary", "claude-detected", "claude-audio"],
     )
 
-    assert resp.content == "ok:claude-detected"
-    assert provider.calls == ["claude-primary", "claude-detected"]
+    with pytest.raises(RuntimeError, match="502"):
+        await fallback.complete_with_fallback(
+            ModelRequest(messages=[{"role": "user", "content": "x"}]),
+            provider=provider,
+        )
 
+    # Only primary was tried; discovered models were NOT attempted
+    assert provider.calls == ["claude-primary"]
 
 @pytest.mark.anyio
 async def test_complete_with_fallback_retries_after_connect_error(tmp_path, monkeypatch):
@@ -196,6 +198,26 @@ async def test_infra_events_expose_llm_cooldown(tmp_path, client, monkeypatch):
     codes = [e["code"] for e in resp.json()["events"]]
     assert "llm_model_cooldown" in codes
 
+
+@pytest.mark.anyio
+async def test_empty_fallback_models_no_catalogue_tried_on_429(tmp_path, monkeypatch):
+    """When fallback_models is empty, a primary 429 raises without trying any catalogue model."""
+    _setup_config(tmp_path, monkeypatch, fallback_models=[])
+    from aletheia.model_provider import fallback
+
+    provider = FakeProvider(
+        fail_models={"claude-primary": "429 Too Many Requests"},
+        detected=["claude-primary", "claude-embedding", "claude-audio"],
+    )
+
+    with pytest.raises(RuntimeError, match="429"):
+        await fallback.complete_with_fallback(
+            ModelRequest(messages=[{"role": "user", "content": "x"}]),
+            provider=provider,
+        )
+
+    # No catalogue models tried
+    assert provider.calls == ["claude-primary"]
 
 @pytest.mark.anyio
 async def test_complete_with_fallback_does_not_hide_non_transient_errors(tmp_path, monkeypatch):

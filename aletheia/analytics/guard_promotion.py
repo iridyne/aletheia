@@ -10,12 +10,29 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 
 from aletheia.config.loader import load_config, get_data_dir
 from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
 from aletheia.knowledge.guards import load_trading_guards, guard_origin
 
 logger = logging.getLogger("aletheia.analytics.guard_promotion")
+
+def _atomic_write(path, content: str) -> None:
+    """#1239: Write file atomically via same-directory temp + os.replace."""
+    parent = path.parent
+    fd, tmp = tempfile.mkstemp(dir=parent, prefix=".guard_write_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _notify_ranker_guard_change() -> None:
@@ -58,7 +75,7 @@ def _deprecate_expired_learned_guards() -> int:
                 new_meta = dict(meta)
                 new_meta["status"] = "deprecated"
                 new_meta.setdefault("deprecated_reason", "ttl_expired")
-                path.write_text(render_frontmatter(new_meta, body), encoding="utf-8")
+                _atomic_write(path, render_frontmatter(new_meta, body))
                 _update_candidate_row_status(path)
                 _record_guard_candidate_deprecated_event(gid, str(path))
                 deprecated += 1
@@ -236,10 +253,10 @@ def promote_guard_candidate_to_active(
                     source_meta["status"] = "deprecated"
                     source_meta["promoted_to"] = guard_id
                     source_meta["promotion_reason"] = reason
-                    path.write_text(render_frontmatter(source_meta, body), encoding="utf-8")
+                    _atomic_write(path, render_frontmatter(source_meta, body))
                     _update_candidate_row_status(path)
                 else:
-                    path.write_text(render_frontmatter(active_meta, body), encoding="utf-8")
+                    _atomic_write(path, render_frontmatter(active_meta, body))
                 _record_guard_promotion_event(
                     guard_id,
                     actor_type=actor_type,
@@ -325,12 +342,12 @@ def _update_guard_status(guard_id: str, new_status: str) -> bool:
 
                 meta["status"] = new_status
                 content = render_frontmatter(meta, body)
-                path.write_text(content, encoding="utf-8")
+                _atomic_write(path, content)
 
                 if new_status == "active" and search_dir == candidates_dir:
                     target = guards_dir / path.name
                     guards_dir.mkdir(parents=True, exist_ok=True)
-                    target.write_text(content, encoding="utf-8")
+                    _atomic_write(target, content)
                     path.unlink()
 
                 _notify_ranker_guard_change()
@@ -443,7 +460,7 @@ def downgrade_learned_guards_to_shadow(*, dry_run: bool = True) -> dict:
                 if "shadow-only" not in tags:
                     tags.append("shadow-only")
                 new_meta["tags"] = tags
-                path.write_text(render_frontmatter(new_meta, body), encoding="utf-8")
+                _atomic_write(path, render_frontmatter(new_meta, body))
                 _record_guard_downgrade_event(str(meta.get("guard_id")), before)
             except Exception as e:
                 logger.warning("Failed to downgrade guard at %s: %s", path, e)
@@ -514,7 +531,7 @@ def prune_learned_guard_candidates(*, dry_run: bool = True) -> dict:
                 new_meta = dict(meta)
                 new_meta["status"] = "deprecated"
                 new_meta.setdefault("deprecated_reason", "stale_shadow_candidate_cleanup")
-                path.write_text(render_frontmatter(new_meta, body), encoding="utf-8")
+                _atomic_write(path, render_frontmatter(new_meta, body))
                 _update_candidate_row_status(path)
                 _record_guard_candidate_deprecated_event(gid, str(path))
             except Exception as e:
