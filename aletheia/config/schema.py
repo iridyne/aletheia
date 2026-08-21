@@ -1461,8 +1461,9 @@ class RegimeConfig(BaseModel):
 
 
 class HistoricalDataConfig(BaseModel):
-    model_config = ConfigDict(validate_assignment=True)
     """Local OHLCV storage and bulk download settings."""
+
+    model_config = ConfigDict(validate_assignment=True)
     enabled: bool = True
     max_bars_per_pair: int = Field(default=50_000, ge=1_000, le=200_000)
     default_months: int = Field(default=6, ge=1, le=24)
