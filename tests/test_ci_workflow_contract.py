@@ -602,7 +602,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     }
     schedule = workflow["jobs"]["schedule"]
     assert schedule["name"] == "Schedule auto-merge update"
-    assert schedule["runs-on"] == "ubuntu-24.04"
+    assert schedule["runs-on"] == SELF_HOSTED
     schedule_guard = schedule["if"]
     assert "event_name == 'pull_request_target'" in schedule_guard
     assert "action != 'closed'" in schedule_guard
@@ -665,7 +665,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
 
     update = workflow["jobs"]["update"]
     assert update["name"] == "Apply auto-merge update"
-    assert update["runs-on"] == "ubuntu-24.04"
+    assert update["runs-on"] == SELF_HOSTED
     assert "event_name == 'repository_dispatch'" in update["if"]
     assert "event.action == 'auto_merge_update'" in update["if"]
     assert "event.sender.login == 'github-actions[bot]'" in update["if"]
