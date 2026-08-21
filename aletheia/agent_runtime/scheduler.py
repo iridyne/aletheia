@@ -1212,7 +1212,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     # Each job is wrapped by _run_job_guarded(), which rolls back leaked
     # per-thread transactions and closes thread-local SQLite connections at job
     # end so one failed job cannot pin the writer lock for the next jobs.
-    _scheduler = BackgroundScheduler(
+    sched = BackgroundScheduler(
         executors={
             name: APSchedulerThreadPoolExecutor(workers)
             for name, workers in _EXECUTOR_WORKERS.items()
@@ -1220,12 +1220,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         job_defaults={"coalesce": True, "max_instances": 1},
     )
     _scheduler_last_tick = None
-    _scheduler.add_listener(
+    sched.add_listener(
         _record_scheduler_tick,
         EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED,
     )
 
-    _scheduler.add_job(
+    sched.add_job(
         _guarded("market_data", _run_market_data), "interval",
         minutes=MARKET_DATA_INTERVAL_MINUTES, id="market_data",
         misfire_grace_time=60, executor="io",
