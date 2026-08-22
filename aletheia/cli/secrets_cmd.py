@@ -51,6 +51,16 @@ def set_cmd(key: str = typer.Argument(..., help="Secret key path, e.g. bitget.de
         )
         raise typer.Exit(1)
     value = typer.prompt(f"Value for '{key}'", hide_input=True, confirmation_prompt=True)
+    # #1605: re-read live state after the prompt — live may have been unlocked while
+    # the operator was typing. Fail closed if the selected live credential is now active.
+    cfg_after = load_config()
+    if cfg_after.live.state == "live_limited" and key.strip().lower().startswith(selected_live_prefix):
+        typer.echo(
+            "Error: live trading was unlocked while the prompt was open. "
+            "Lock live trading before rotating the selected live credentials.",
+            err=True,
+        )
+        raise typer.Exit(1)
     set_secret(key, value)
     from aletheia.files.jsonl import write_audit
     write_audit({

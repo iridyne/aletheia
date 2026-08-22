@@ -1352,6 +1352,14 @@ def _native_input_violations(proposal: TradeProposal) -> list[str]:
     if not symbol_is_canonical:
         violations.append("invalid_symbol_format")
 
+    # #1964: non-USDT quote assets are not supported — sizing, settlement, and
+    # accounting assume USDT throughout. Reject at the Risk boundary.
+    if has_canonical_shape and symbol_is_canonical:
+        _, _sep, quote = symbol.partition("/")
+        quote_base = quote.split(":")[0]  # strip settle suffix (BTC/USDT:USDT)
+        if quote_base.upper() not in ("USDT", "USDC") and ":" not in symbol:
+            # Spot non-USDT/USDC pairs are not currently supported
+            violations.append(f"unsupported_quote_currency:{quote_base}")
     if proposal.market_type not in _NATIVE_MARKET_TYPES:
         violations.append("invalid_market_type")
     if proposal.direction not in _NATIVE_DIRECTIONS:

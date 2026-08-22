@@ -11,6 +11,9 @@ import logging
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 import json
+import os
+import signal
+import time
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
@@ -60,10 +63,18 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex[:12]}"
 
 
-def _kill_shadow_process(runtime: dict) -> None:
-    """Terminate shadow gateway process if its PID is recorded."""
-    import os
-    import signal
+def _is_process_alive(pid: int) -> bool:
+    """Return True if the process is still running."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, OSError):
+        return False
+
+
+def _kill_shadow_process(runtime: dict, *, force: bool = False, timeout_seconds: float = 10.0) -> None:
+    """Terminate shadow gateway process; verify it actually stops. (#1998)"""
+    # time, os, signal imported at module level
     metadata = runtime.get("metadata")
     if isinstance(metadata, str):
         metadata = _json_load(metadata)
@@ -71,11 +82,32 @@ def _kill_shadow_process(runtime: dict) -> None:
     pid = gw.get("pid")
     if not pid:
         return
+    pid = int(pid)
+    if not _is_process_alive(pid):
+        return  # already gone
     try:
-        os.kill(int(pid), signal.SIGTERM)
-        logger.info("Killed shadow gateway process pid=%d for runtime %s", pid, runtime.get("runtime_id"))
+        os.kill(pid, signal.SIGTERM)
+        logger.info("Sent SIGTERM to shadow gateway pid=%d for runtime %s", pid, runtime.get("runtime_id"))
     except (ProcessLookupError, OSError):
-        pass
+        return  # already gone
+    # Poll liveness up to timeout_seconds
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if not _is_process_alive(pid):
+            logger.info("Shadow process pid=%d exited after SIGTERM", pid)
+            return
+        time.sleep(0.25)
+    # Timed out
+    if force:
+        try:
+            os.kill(pid, signal.SIGKILL)
+            logger.warning("Sent SIGKILL to shadow process pid=%d after timeout", pid)
+        except (ProcessLookupError, OSError):
+            pass
+    else:
+        raise RuntimeTransitionError(
+            f"process_still_alive_after_drain_timeout:{pid}"
+        )
 
 
 def _decode_row(row) -> dict | None:
@@ -209,6 +241,18 @@ class RuntimeContinuityService:
         """
         if activation.get("strategy") != "frontdoor_route_switch":
             return
+        # #1999: verify the target process is alive before writing the route.
+        # A stale/dead process must not become the current frontdoor target.
+        backend_pid = activation.get("backend_pid")
+        if backend_pid is not None:
+            try:
+                pid_int = int(backend_pid)
+                if not _is_process_alive(pid_int):
+                    raise RuntimeTransitionError(
+                        f"target_process_dead:pid={pid_int},runtime={activation.get('runtime_id')}"
+                    )
+            except (TypeError, ValueError):
+                pass  # pid not parseable — let write_frontdoor_route validate
         try:
             write_frontdoor_route(
                 backend_base_url=str(activation["backend_base_url"]),
@@ -218,6 +262,8 @@ class RuntimeContinuityService:
                 backend_pid=activation.get("backend_pid"),
                 reason=f"runtime_{activation.get('action') or 'activate'}",
             )
+        except RuntimeTransitionError:
+            raise
         except Exception as exc:
             raise RuntimeTransitionError(f"frontdoor_route_switch_failed:{exc}") from exc
         self._record_event(
@@ -889,7 +935,7 @@ class RuntimeContinuityService:
             raise RuntimeTransitionError(f"runtime_not_found:{runtime_id}")
         if runtime["state"] not in {RuntimeState.DRAINING.value, RuntimeState.CURRENT.value}:
             raise RuntimeTransitionError(f"runtime_not_draining:{runtime['state']}")
-        _kill_shadow_process(runtime)
+        _kill_shadow_process(runtime, force=force)
         state = RuntimeState.LEGACY_POSITION_MANAGER.value if force else RuntimeState.DRAINING.value
         now = _utc_now()
         self._db().execute(
