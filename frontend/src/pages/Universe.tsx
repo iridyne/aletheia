@@ -12,6 +12,7 @@ import { Badge, Button, Card, CardHeader } from '../components/ui'
 import { humanize, fmtTimestamp, fmtSymbol } from '../lib/format'
 
 const col = createColumnHelper<UniverseMember>()
+const EMPTY_UNIVERSE_MEMBERS: UniverseMember[] = []
 
 function parseJson(raw: string | null | undefined): any[] {
   if (!raw) return []
@@ -104,7 +105,7 @@ export default function Universe() {
     meta: { errorSurface: 'inline' },
   })
 
-  const members = data?.members ?? []
+  const members = data?.members ?? EMPTY_UNIVERSE_MEMBERS
   const snapshot = data?.snapshot
   const enabled = data?.enabled ?? false
   const isFallback = data?.fallback ?? true
