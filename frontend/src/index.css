@@ -205,8 +205,8 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   .sidebar-backdrop { display: none; }
 }
 @media (max-width: 700px) {
-  .sidebar { transform: translateX(-100%); transition: transform 0.2s ease; z-index: 50; width: 240px; }
-  .sidebar.open { transform: translateX(0); }
+  .sidebar { transform: translateX(-100%); visibility: hidden; transition: transform 0.2s ease, visibility 0s linear 0.2s; z-index: 50; width: 240px; }
+  .sidebar.open { transform: translateX(0); visibility: visible; transition-delay: 0s; }
   .content { margin-left: 0; }
   .layout.rail .sidebar { width: 240px; }
   .layout.rail .content { margin-left: 0; }
