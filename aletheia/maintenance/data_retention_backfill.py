@@ -624,6 +624,7 @@ def _postflight_verify(db: sqlite3.Connection, baseline: dict[str, Any], backup_
                 if backup_path and backup_path.exists():
                     print(f"\n{error_msg}", file=sys.stderr)
                     print("Attempting restore from pre-retention-backup...", file=sys.stderr)
+                    restore_ok = False
                     try:
                         db.close()
                         from aletheia.storage.sqlite import db_path as get_db_path
@@ -633,9 +634,15 @@ def _postflight_verify(db: sqlite3.Connection, baseline: dict[str, Any], backup_
                         src_restore.backup(dst_restore)
                         dst_restore.close()
                         src_restore.close()
-                        print("Restored from pre-retention-backup successfully", file=sys.stderr)
+                        print("Restored from pre-retention-backup successfully.", file=sys.stderr)
+                        restore_ok = True
                     except Exception as re:
                         print(f"Restore from pre-retention-backup failed: {re}", file=sys.stderr)
+                    if restore_ok:
+                        raise SystemExit(
+                            f"ABORT: {group_key}.{table} row count changed. "
+                            "Database has been restored from pre-retention-backup."
+                        )
                 raise SystemExit(error_msg)
     integrity = db.execute("PRAGMA integrity_check").fetchall()
     if [row[0] for row in integrity] != ["ok"]:
