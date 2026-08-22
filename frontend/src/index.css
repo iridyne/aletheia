@@ -276,7 +276,6 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 }
 .nav-group-label:hover { color: var(--muted); }
 .chev { font-size: 0.6rem; transition: transform 0.18s ease; }
-.chev-closed { transform: rotate(-90deg); }
 
 .sidebar nav a {
   display: flex; align-items: center; gap: 0.55rem;
