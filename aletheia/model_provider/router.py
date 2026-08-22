@@ -541,7 +541,6 @@ async def get_provider_async(name: str | None = None) -> ModelProvider:
                     )
                     return cached
                 if fresh_token:
-                    from aletheia.config.secrets import get_secret
                     ak = get_secret(pcfg.api_key_secret_ref) if pcfg.api_key_secret_ref else None
                     if ptype == "openai_native":
                         fresh_provider: ModelProvider = OpenAINativeProvider(
