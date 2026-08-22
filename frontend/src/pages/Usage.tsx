@@ -50,9 +50,11 @@ function LoadingIndicator() {
 }
 
 function InsightTable({ title, rows, empty }: { title: string; rows: UsageInsightsRow[]; empty: string }) {
-  const columns = useMemo<ColumnDef<UsageInsightsRow>[]>(() => Array.from(new Set(rows.flatMap(Object.keys))).map(key => ({ accessorKey: key, header: humanize(key), cell: ({ row }) => valueText(row.original[key]) })), [rows])
-  if (!rows.length || !columns.length) return <p className="hint">{empty}</p>
-  return <Card flush className="usage-table-card"><CardHeader title={`${title} (${rows.length.toLocaleString()})`} /><DataTable data={rows} columns={columns} pageSize={25} emptyMessage={empty} /></Card>
+  // #2063: guard against Python returning a dict instead of array
+  const safeRows = Array.isArray(rows) ? rows : []
+  const columns = useMemo<ColumnDef<UsageInsightsRow>[]>(() => Array.from(new Set(safeRows.flatMap(Object.keys))).map(key => ({ accessorKey: key, header: humanize(key), cell: ({ row }) => valueText(row.original[key]) })), [safeRows])
+  if (!safeRows.length || !columns.length) return <p className="hint">{empty}</p>
+  return <Card flush className="usage-table-card"><CardHeader title={`${title} (${safeRows.length.toLocaleString()})`} /><DataTable data={safeRows} columns={columns} pageSize={25} emptyMessage={empty} /></Card>
 }
 
 function Facts({ title, facts }: { title: string; facts: UsageInsightsRow | null }) {
@@ -73,7 +75,9 @@ function TokenComposition({ input, output, cached, reasoning }: { input: number 
 }
 
 function CoverageList({ axes }: { axes: Array<{ id: string; label: string; status: string; coverage_pct: number | null; reason: string | null }> }) {
-  return <Card className="usage-coverage-list">{axes.map(axis => <div className="usage-coverage-row" key={axis.id}><div><strong>{axis.label}</strong><span>{axis.reason ?? 'Measured for the selected window.'}</span></div><div className="usage-coverage-value"><span>{fmtPct(axis.coverage_pct, { decimals: 1, dash: 'N/A' })}</span><Badge tone={axis.status === 'available' ? 'green' : 'yellow'}>{axis.status === 'not_available' ? 'N/A' : axis.status}</Badge></div></div>)}</Card>
+  // #2063: guard against Python returning a dict instead of array
+  const safeAxes = Array.isArray(axes) ? axes : []
+  return <Card className="usage-coverage-list">{safeAxes.map(axis => <div className="usage-coverage-row" key={axis.id}><div><strong>{axis.label}</strong><span>{axis.reason ?? 'Measured for the selected window.'}</span></div><div className="usage-coverage-value"><span>{fmtPct(axis.coverage_pct, { decimals: 1, dash: 'N/A' })}</span><Badge tone={axis.status === 'available' ? 'green' : 'yellow'}>{axis.status === 'not_available' ? 'N/A' : axis.status}</Badge></div></div>)}</Card>
 }
 
 export default function Usage() {
@@ -104,13 +108,13 @@ export default function Usage() {
   const summaryLabel = windowLabel(summary?.window.days)
   const operationsLabel = windowLabel(operations?.window.days)
   const analysisLabel = windowLabel(analysis?.window.days)
-  const freshAxes = [...(!summaryQuery.isPlaceholderData ? summary?.coverage.axes ?? [] : []), ...(!operationsQuery.isPlaceholderData ? operations?.coverage.axes ?? [] : []), ...(!analysisQuery.isPlaceholderData ? analysis?.coverage.axes ?? [] : [])]
+  const freshAxes = [...(!summaryQuery.isPlaceholderData ? (Array.isArray(summary?.coverage?.axes) ? summary!.coverage.axes : []) : []), ...(!operationsQuery.isPlaceholderData ? (Array.isArray(operations?.coverage?.axes) ? operations!.coverage.axes : []) : []), ...(!analysisQuery.isPlaceholderData ? (Array.isArray(analysis?.coverage?.axes) ? analysis!.coverage.axes : []) : [])]
   const pricingCoverage = summary?.pricing?.pricing_coverage_pct
   const qualityTone = freshAxes.length === 8 && freshAxes.every(axis => axis.status === 'available') ? 'green' : 'yellow'
   const coverageStatus = freshAxes.length < 8 ? 'partial' : freshAxes.every(axis => axis.status === 'available') ? 'available' : freshAxes.every(axis => axis.status === 'not_available') ? 'not_available' : 'partial'
   const coverageReason = freshAxes.length < 8 ? 'Some coverage dimensions are still loading.' : coverageStatus === 'available' ? null : coverageStatus === 'not_available' ? 'No coverage dimension is measurable in this window.' : 'Some coverage dimensions are incomplete or unavailable.'
   const physical = summary?.reliability?.physical
-  const trendRows = operations?.trends?.daily ?? []
+  const trendRows = Array.isArray(operations?.trends?.daily) ? operations!.trends!.daily : []
 
   return (
     <div className="usage-page" aria-busy={fetching}>
