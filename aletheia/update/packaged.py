@@ -256,19 +256,35 @@ def _request_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
-def _read_url(url: str, *, timeout: float = 30.0) -> bytes:
+def _read_url(url: str, *, timeout: float = 30.0, send_auth: bool = False) -> bytes:
     parsed = urlparse(url)
     if parsed.scheme == "file":
         path = Path(parsed.path)
         return path.read_bytes()
     if parsed.scheme not in {"https", "http"}:
         raise PackagedUpdateError("update_url_scheme_unsupported", parsed.scheme)
+    # #1418: only send bearer token when the URL is from the configured feed base
+    headers = {}
+    if send_auth:
+        try:
+            feed_base = _feed_url()
+            feed_parsed = urlparse(feed_base)
+            if (parsed.scheme == feed_parsed.scheme and
+                    parsed.netloc == feed_parsed.netloc):
+                headers = _request_headers()
+            else:
+                import logging as _log
+                _log.getLogger(__name__).warning(
+                    "update: not sending auth token to %s (different host from feed base)", url
+                )
+        except Exception:
+            pass
     try:
         response = httpx.get(
             url,
             follow_redirects=True,
             timeout=timeout,
-            headers=_request_headers(),
+            headers=headers,
         )
         response.raise_for_status()
         return response.content
@@ -277,7 +293,7 @@ def _read_url(url: str, *, timeout: float = 30.0) -> bytes:
 
 
 def _verified_feed(*, feed_url: str | None = None, public_key_path: Path | None = None) -> dict[str, Any]:
-    raw = _read_url(feed_url or _feed_url())
+    raw = _read_url(feed_url or _feed_url(), send_auth=True)
     try:
         envelope = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -306,6 +322,25 @@ def _verified_feed(*, feed_url: str | None = None, public_key_path: Path | None 
         raise PackagedUpdateError("update_signed_payload_invalid_json") from exc
     if not isinstance(payload, dict) or payload.get("schema_version") != 1:
         raise PackagedUpdateError("update_signed_payload_schema_unsupported")
+    # #1427: reject feeds older than the last successfully applied update to
+    # prevent replay-downgrade attacks. Feed published_at must be > last updated_at.
+    try:
+        feed_pub = payload.get("published_at")
+        if isinstance(feed_pub, str):
+            feed_dt = datetime.fromisoformat(feed_pub.replace("Z", "+00:00"))
+            state = read_update_state()
+            last_updated = state.get("updated_at")
+            if isinstance(last_updated, str):
+                last_dt = datetime.fromisoformat(last_updated.replace("Z", "+00:00"))
+                if feed_dt < last_dt:
+                    raise PackagedUpdateError(
+                        "update_feed_replay_rejected",
+                        f"feed published_at {feed_pub} is older than last update {last_updated}",
+                    )
+    except PackagedUpdateError:
+        raise
+    except Exception:
+        pass  # timestamp parsing failures don't block update
     return payload
 
 

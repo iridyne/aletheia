@@ -120,22 +120,30 @@ def check_for_update() -> dict:
 
 
 def _reinstall_deps() -> dict:
+    """Reinstall dependencies using uv sync --locked.
+
+    #1206: always use --locked to enforce uv.lock (no pip fallback).
+    #1207: if sync fails, signal failure — caller must roll back code changes.
+    """
     env = _safe_env()
-    for cmd in (["uv", "pip", "install", "-e", "."], ["pip", "install", "-e", "."]):
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(_PROJECT_ROOT),
-                capture_output=True,
-                text=True,
-                env=env,
-                **_no_window_kwargs(),
-            )
-            if result.returncode == 0:
-                return {"ok": True, "tool": cmd[0]}
-        except FileNotFoundError:
-            continue
-    return {"ok": False, "reason": "install_failed"}
+    try:
+        result = subprocess.run(
+            ["uv", "sync", "--locked"],
+            cwd=str(_PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            env=env,
+            **_no_window_kwargs(),
+        )
+        if result.returncode == 0:
+            return {"ok": True, "tool": "uv"}
+        return {
+            "ok": False,
+            "reason": "uv_sync_failed",
+            "detail": result.stderr.strip()[-500:] if result.stderr else "",
+        }
+    except FileNotFoundError:
+        return {"ok": False, "reason": "uv_not_found"}
 
 
 _FRONTEND_DIR = _PROJECT_ROOT / "frontend"
