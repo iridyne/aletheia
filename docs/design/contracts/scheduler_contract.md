@@ -97,6 +97,7 @@ _EXECUTOR_WORKERS = {
 | 24 | `universe_refresh` | 436 | interval | minutes=10 | io | 600 | 120 |
 | 24a | `universe_scanner_audit_reconciler` | — | interval | minutes=5 | audit | 15 | 120 |
 | 24b | `funding_audit_reconciler` | — | interval | minutes=5 | audit | 15 | 120 |
+| 24c | `broker_funding_settler` | — | interval | minutes=30 | io | 120 | 120 |
 | 25 | `data_collectors` | 444 | interval | minutes=2 | io | 55 | 60 |
 | 25a | `data_collector_context` | 449 | interval | minutes=10 | io | 60 | 60 |
 | 26 | `guard_promotion` | — | cron | hour=4, minute=0, tz=Asia/Shanghai | io | — | 600 |
@@ -177,6 +178,28 @@ may become terminal after the bounded retry window; elapsed time or missing sour
 not structural proof. Durable scheduler success/failure is recorded by the normal guarded-job health
 path. Eligible results enqueue durable outcome hooks, and `outcome_hook_replay` remains their
 independent one-minute delivery path.
+
+### 3.3 Broker funding settlement
+
+`broker_funding_settler` runs every 30 minutes on `io`, starts four minutes after boot, is essential
+during layered pause, has `max_instances=1`, and is bounded by a 120-second async timeout. The reader
+loop is serial and never spans a SQLite transaction across `await`. Its default local classification
+budget is 100 candidates after a durable `(closed_at, rowid)` keyset cursor, while at most 50
+non-retention reader attempts consume broker I/O capacity. The scan wraps only after reaching the
+tail. Settler 与 adapter 复用同一无凭证 matching-venue retention preflight；它在 client
+初始化前抛出的 typed `BrokerFundingHistoryExpired` 只消耗 classification capacity，
+commits the fail-closed terminal Position state plus pending audit atomically, then continues to later
+rows. At the end of the bounded run, a singleton scheduling-only cursor CAS advances to the last
+checked row. Terminal rows leave the selector; transient/permission/identity/ledger failures remain
+retryable, consume broker I/O capacity, and reappear on a later rotation without permanently starving
+other rows or venues.
+
+The result distinguishes checked rows, broker I/O attempts, settled rows, retention-terminalized rows,
+stale CAS no-ops, still-pending rows, audit backlog, and type-only errors. Terminal classification is a
+successful fail-closed result, not settled PnL. Pending JSONL mirrors use the independent
+`funding_audit_reconciler`; backlog degrades `/api/health` and Doctor audit status, while the scheduler
+wrapper records process-local failure/infra alerts. Mirrors do not re-enter broker settlement or alter
+infrastructure readiness. General durable per-row job-health visibility remains owned by #1810.
 
 #### Owner-facing projection (target, no scheduling change)
 

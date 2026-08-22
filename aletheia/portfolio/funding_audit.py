@@ -11,6 +11,7 @@ from aletheia.storage.models import AuditEvent
 from aletheia.storage.sqlite import get_db
 
 _OUTBOX_EVENT_TYPES = (
+    "exchange_position_funding_history_expired",
     "exchange_position_funding_settled",
     "paper_position_economics_corrected",
     "paper_position_economics_repaired",

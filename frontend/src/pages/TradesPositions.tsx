@@ -41,6 +41,7 @@ import {
 	marketBadgeTone,
 	isPerpMarket,
 } from "../lib/format";
+import { fundingTerminalCopy } from "../lib/fundingStatus";
 import { positionFreshness, positionKeys } from "../lib/queryKeys";
 import TradeAnalyticsPanel from "../charts/TradeAnalyticsPanel";
 const TradeInsightsPanel = lazy(() => import("../charts/TradeInsightsPanel"));
@@ -190,16 +191,11 @@ const closedColumns = [
 			}
 			const reason =
 				row.original.realized_pnl_unavailable_reason || "economics unavailable";
-			// Terminal "gave up" state is distinct from an in-flight retry — the
-			// settler has stopped trying. Surface it in warning tone so the operator
-			// doesn't read "Incomplete Funding Economics" as "still working on it".
-			if (reason === "funding_permanently_unrecoverable") {
+			const terminal = fundingTerminalCopy(reason);
+			if (terminal) {
 				return (
-					<span
-						className="pnl-warning"
-						title="paper_funding_settler exhausted retries; realized_pnl stays NULL (never fabricated)"
-					>
-						funding lost
+					<span className="pnl-warning" title={terminal.title}>
+						{terminal.short}
 					</span>
 				);
 			}
@@ -884,10 +880,9 @@ function PositionDetail({
 					<DrawerField
 						label="Realized status"
 						value={
-							position.realized_pnl_unavailable_reason ===
-							"funding_permanently_unrecoverable"
-								? "funding lost — settler gave up (never fabricated)"
-								: humanize(
+							fundingTerminalCopy(
+								position.realized_pnl_unavailable_reason,
+							)?.detail ?? humanize(
 										position.realized_pnl_unavailable_reason ||
 											"economics unavailable",
 									)

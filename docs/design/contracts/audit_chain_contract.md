@@ -215,7 +215,7 @@ Durable lifecycle retry 遇到无终止换行的尾部时也遵守该约束：�
 | Agent Shell 命令执行（含拒绝） | `agent_shell_command` | `agent_shell/audit.py:37-44` |
 | 外部持仓认领（reconciler） | `position_adopted` | `portfolio/position_reconciler.py:361-382`；`after_state` 含 `commit_hash` + `parent_hash`（链入 §6.4 提案 hash chain，TaG P1-2） |
 | Learning lifecycle transition | `learning_lifecycle_transition` | `learning/lifecycle.py`；SQLite lifecycle event/state 先原子提交，JSONL mirror 使用 stable event id 幂等补写 |
-| Funding settlement/correction | `paper_position_funding_settled` / `paper_position_economics_repaired` / `paper_position_economics_corrected` / `exchange_position_funding_settled` | `portfolio/funding_audit.py`；会计事务内写 stable-ID SQLite audit，JSONL mirror 独立幂等补写 |
+| Funding settlement/correction/terminal classification | `paper_position_funding_settled` / `paper_position_economics_repaired` / `paper_position_economics_corrected` / `exchange_position_funding_settled` / `exchange_position_funding_history_expired` | `portfolio/funding_audit.py`；会计或 fail-closed terminal transaction 内写 stable-ID SQLite audit，JSONL mirror 独立幂等补写 |
 | 历史 filled Order 链恢复结果 | `order_reconciled` / `order_reconciliation_inconclusive` | `execution/reconciliation.py:_write_filled_gap_event`；同一 Order、结果类型和 reason 使用 stable event id，SQLite 与 JSONL 各自幂等收敛（§6.3b） |
 
 `FORBIDDEN_INTENTS` 集合中的意图（`agent_shell/registry.py:415-426`）在 `agent_shell/commands.py:167` 被拦截；被拦截时同路径写 `agent_shell_command` 审计记录，`message` 前缀为 `"DENIED"`。
@@ -260,6 +260,13 @@ audit ID。Position/PnL、close projection、paper cash、Outcome hook intent �
 猜测旧 JSONL 是否缺失。新 funding audit 从 `pending` 开始；失败转 `failed`，成功单调转
 `mirrored`。`funding_audit_reconciler` 每 5 分钟在专用 audit lane 有界处理 100 条。append 成功但
 ack 前崩溃时，重启通过所有轮转文件中的同一 stable ID 直接 ack，不追加第二条记录。
+
+`exchange_position_funding_history_expired` 使用
+`(position_id, event_type, broker-funding-retention-v1, funding_terminal_fingerprint)` 的同一 stable-ID
+机制。Position 只提交 NULL-economics exclusion reason 与 bounded terminal evidence；同一事务中的
+audit 从 `pending` 开始。broker 扫描不执行同步 JSONL mirror；独立的 `funding_audit_reconciler`
+随后有界镜像 pending audit。文件 stall/failure 因而不得阻止后续 recoverable Position 被访问，
+也不得重放 terminal state、close event、cash 或 hook。
 
 会计结果与镜像结果正交：`settled/repaired/corrected/already_current` 不因文件故障改写；调用方同时
 返回 `audit_mirror_status`。`already_current` 只愈合已有 pending audit，不为没有 stable audit 行的

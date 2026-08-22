@@ -51,6 +51,7 @@
 | 35a | news_analyze | 5min | agents | Independently analyze at most 3 news rows; each item and the whole job are bounded, and failures remain retry/failed rather than fabricated analyzed facts |
 | 36 | outcome_settler | 10min | io | Settle outstanding prediction / universe forward outcomes |
 | 36a | paper_funding_settler | 30min | io | Recover complete local-paper futures funding from persisted live/history evidence and atomically converge Position, close event, cash, eligibility, audit, and durable outcome hooks; read source I/O never spans the SQLite writer transaction |
+| 36b | broker_funding_settler | 30min | io | Recover private-ledger exchange funding with a 100-row classification budget and 50-attempt broker-I/O budget; typed retention expiry atomically becomes NULL-economics terminal state plus stable audit without blocking later venues |
 | 37 | learning_contribution_evaluator | interval `learning.evaluation_interval_minutes` (default 60) | learning_measurement | Sole scheduled contribution evaluator. Measure only: append deterministic cluster-based contribution verdicts and evaluator health even when autonomous Learning is off or runtime is paused |
 | 38 | learning_lifecycle_controller | interval `learning.evaluation_interval_minutes` (default 60) | io | Apply at most one owner-gated paper lifecycle action per current experiment; requires autonomous Learning, no pause/integrity incident, lifecycle automation, paper influence, and path allowlist |
 | 39 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
@@ -62,7 +63,7 @@
 Learning behavior jobs (rows 10–15, 26, 30–31, 38 and the Learning behavior catch-up) share
 `agent.autonomous_learning` as one backend gate. When disabled, no automatic producer,
 reviewer, promoter, controller, or learned rollout runs. Measurement-only
-`outcome_settler`, `paper_funding_settler`, `funding_audit_reconciler`,
+`outcome_settler`, `paper_funding_settler`, `broker_funding_settler`, `funding_audit_reconciler`,
 `outcome_hook_replay`, `shadow_resolver`, and
 `learning_contribution_evaluator` continue so disabling
 Learning does not erase or delay outcome truth. The evaluator never changes stages or authority;
@@ -80,12 +81,23 @@ settlements only as `local_simulation` evidence. It never labels age alone as st
 When evidence becomes complete it calls the single atomic materializer; downstream feedback is
 durably queued and independently retried by `outcome_hook_replay`.
 
+`broker_funding_settler` is exchange-accounting recovery, not order execution or a public-rate
+fallback. It performs serial matching-venue reads outside writer transactions. Settler 与 adapter
+复用的无凭证 retention preflight 在 client 初始化前运行；只有这个 typed boundary 可以把 verified NULL-economics close
+as `broker_funding_history_expired`; all other errors remain retryable. Terminalization writes no PnL,
+cash or hook and consumes no broker-I/O budget. A singleton durable `(closed_at, rowid)` keyset cursor
+starts each bounded scan after the last checked Position and wraps only at the tail. The cursor is
+scheduling state only: it rotates past terminalization conflicts and retryable prefixes across runs
+without changing Position owner state, adding concurrency, or widening broker authority.
+
 `funding_audit_reconciler` is audit delivery maintenance, not an accounting or trading job. New
 paper/broker funding settlements commit the authoritative SQLite audit with their economics and
 enroll only that audit for JSONL delivery. The essential reconciler starts one minute after boot,
 runs every five minutes on the isolated `audit` executor, and retries at most 100 oldest rows with a
-15-second bounded worker. Failure degrades audit/job health but never changes accounting status,
-replays cash/Position/hook facts, pauses scheduling, or changes infrastructure readiness.
+15-second bounded worker. Backlog degrades `/api/health` and Doctor audit status; the scheduler wrapper
+also records its process-local failure/infra alert. It never changes accounting status, replays
+cash/Position/hook facts, pauses scheduling, or changes infrastructure readiness. General durable
+per-row job-health semantics remain owned by #1810.
 
 ### OS Session-service Contract
 

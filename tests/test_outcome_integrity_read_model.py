@@ -345,11 +345,14 @@ def test_close_reason_compatibility_api_delegates_to_central_registry():
 # exact class of bug fixed in aa23804e / d20973d6.
 
 
-def test_position_realized_pnl_view_prefers_terminal_reason_over_incomplete():
-    """Q3-3: `outcome_exclusion_reason='funding_permanently_unrecoverable'`
-    wins over the generic `incomplete_funding_economics` fallback so the
-    frontend can render the distinct "funding lost" terminal badge instead
-    of the muted retry state. Pins pnl.py:1030-1036 elif ordering."""
+@pytest.mark.parametrize(
+    "terminal_reason",
+    ["funding_permanently_unrecoverable", "broker_funding_history_expired"],
+)
+def test_position_realized_pnl_view_prefers_terminal_reason_over_incomplete(
+    terminal_reason,
+):
+    """Terminal funding states remain distinct from an in-flight retry."""
     from aletheia.portfolio.pnl import position_realized_pnl_view
 
     terminal_row = _closed_row(
@@ -357,14 +360,14 @@ def test_position_realized_pnl_view_prefers_terminal_reason_over_incomplete():
         funding_cost=None,
         funding_source="unavailable",
         outcome_eligible=False,
-        outcome_exclusion_reason="funding_permanently_unrecoverable",
+        outcome_exclusion_reason=terminal_reason,
     )
     terminal_view = position_realized_pnl_view(terminal_row)
     assert terminal_view["realized_pnl"] is None
     assert terminal_view["realized_pnl_complete"] is False
     assert (
         terminal_view["realized_pnl_unavailable_reason"]
-        == "funding_permanently_unrecoverable"
+        == terminal_reason
     )
 
     # Companion negative case: an identical unsettled row WITHOUT the
@@ -387,28 +390,26 @@ def test_position_realized_pnl_view_prefers_terminal_reason_over_incomplete():
     )
 
 
-def test_classify_closure_preserves_funding_permanently_unrecoverable_reason():
-    """Q3-4: the terminal reason survives `classify_closure` intact, i.e.
-    it is present in the `OUTCOME_EXCLUSION_REASONS` whitelist. If a
-    refactor drops the whitelist entry, `classify_closure` collapses the
-    reason to 'not_marked_eligible' and every downstream consumer
-    (frontend badge, settler skip, OutcomeAssessment.reason) silently loses
-    the terminal signal — a hard-to-catch regression this one-line
-    assertion prevents."""
+@pytest.mark.parametrize(
+    "terminal_reason",
+    ["funding_permanently_unrecoverable", "broker_funding_history_expired"],
+)
+def test_classify_closure_preserves_terminal_funding_reason(terminal_reason):
+    """The shared closure cohort preserves terminal funding identities."""
     from aletheia.analytics.outcome_integrity import (
         OUTCOME_EXCLUSION_REASONS,
         assess_position_closure,
     )
 
-    assert "funding_permanently_unrecoverable" in OUTCOME_EXCLUSION_REASONS
+    assert terminal_reason in OUTCOME_EXCLUSION_REASONS
 
     terminal_row = _closed_row(
         realized_pnl=None,
         funding_cost=None,
         funding_source="unavailable",
         outcome_eligible=False,
-        outcome_exclusion_reason="funding_permanently_unrecoverable",
+        outcome_exclusion_reason=terminal_reason,
     )
     assessment = assess_position_closure(terminal_row)
     assert assessment.eligible is False
-    assert assessment.reason == "funding_permanently_unrecoverable"
+    assert assessment.reason == terminal_reason

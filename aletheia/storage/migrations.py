@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v38"
+SCHEMA_VERSION = "aletheia-sqlite-v39"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4874,6 +4874,18 @@ _FUNDING_AUDIT_OUTBOX_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+_BROKER_FUNDING_CURSOR_SQL = """
+CREATE TABLE IF NOT EXISTS broker_funding_settlement_cursor (
+    queue_id TEXT PRIMARY KEY CHECK (queue_id = 'exchange_funding'),
+    last_closed_at TEXT NOT NULL,
+    last_position_rowid INTEGER NOT NULL CHECK (last_position_rowid >= 0),
+    updated_at TEXT NOT NULL
+);
+"""
+_BROKER_FUNDING_CURSOR_CHECKSUM = hashlib.sha256(
+    (_BROKER_FUNDING_CURSOR_SQL + "\nbroker_funding_cursor_v1").encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -4985,6 +4997,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260823_0037_funding_audit_outbox_v38": (
         "durable JSONL mirror state for opt-in funding settlement audits"
+    ),
+    "20260823_0038_broker_funding_cursor_v39": (
+        "durable fair cursor for exchange funding settlement recovery"
     ),
 }
 
@@ -5303,6 +5318,11 @@ def _apply_funding_audit_outbox_v38(db: sqlite3.Connection) -> None:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
             existing.add(column)
     db.executescript(_FUNDING_AUDIT_OUTBOX_INDEX_SQL)
+
+
+def _apply_broker_funding_cursor_v39(db: sqlite3.Connection) -> None:
+    """Add one empty scheduling cursor without enrolling historical Positions."""
+    db.executescript(_BROKER_FUNDING_CURSOR_SQL)
 
 
 def _apply_learning_hypothesis_identity_v24(db: sqlite3.Connection) -> None:
@@ -5870,6 +5890,12 @@ _MIGRATIONS = (
         checksum=_FUNDING_AUDIT_OUTBOX_CHECKSUM,
         schema_version="aletheia-sqlite-v38",
         apply=_apply_funding_audit_outbox_v38,
+    ),
+    MigrationStep(
+        migration_id="20260823_0038_broker_funding_cursor_v39",
+        checksum=_BROKER_FUNDING_CURSOR_CHECKSUM,
+        schema_version="aletheia-sqlite-v39",
+        apply=_apply_broker_funding_cursor_v39,
     ),
 )
 

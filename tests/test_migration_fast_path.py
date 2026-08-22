@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 39)
+        f"aletheia-sqlite-v{version}" for version in range(2, 40)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v38"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v39"
     connection.close()
 
 
@@ -693,7 +693,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
             # (Observation Lab frozen units), v34 (EX-04 live authorization
             # ref), v35 (momentum-short exhaustion shadow), v36 (options
             # market structure), v37 (gamma-flip reset), and v38 (funding
-            # audit outbox). Anchor to the semantic migration instead of a
+            # audit outbox), and v39 (broker funding recovery cursor). Anchor to the semantic migration instead of a
             # tail length so a future additive migration cannot fake v24 as
             # already applied without its columns.
             for step in migrations._MIGRATIONS
@@ -715,8 +715,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260823_0037_funding_audit_outbox_v38",
-        "aletheia-sqlite-v38",
+        "20260823_0038_broker_funding_cursor_v39",
+        "aletheia-sqlite-v39",
     )
     audit_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(audit_events)")
@@ -732,6 +732,21 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         "jsonl_last_error_class, jsonl_mirrored_at "
         "FROM audit_events WHERE id='legacy-audit'"
     ).fetchone()) == (None, None, None, None)
+    cursor_columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(broker_funding_settlement_cursor)"
+        )
+    }
+    assert cursor_columns == {
+        "queue_id",
+        "last_closed_at",
+        "last_position_rowid",
+        "updated_at",
+    }
+    assert connection.execute(
+        "SELECT COUNT(*) FROM broker_funding_settlement_cursor"
+    ).fetchone()[0] == 0
     index_sql = connection.execute(
         "SELECT sql FROM sqlite_master WHERE type='index' "
         "AND name='idx_audit_events_jsonl_outbox'"

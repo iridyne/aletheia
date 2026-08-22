@@ -1309,11 +1309,14 @@ def position_realized_pnl_view(row: dict) -> dict:
         funding_cost=row.get("funding_cost"),
         funding_source=row.get("funding_source"),
     )
-    # A terminal "gave up" reason must win over the generic
-    # "incomplete_funding_economics" — the settler has stopped retrying and
-    # the UI needs to distinguish that from an in-flight retry (FUND-B).
+    # A terminal funding reason must win over the generic retry state so the
+    # UI does not claim a permanently unavailable ledger is still in flight.
+    from aletheia.analytics.outcome_integrity import (
+        TERMINAL_FUNDING_EXCLUSION_REASONS,
+    )
+
     stored_reason = str(row.get("outcome_exclusion_reason") or "")
-    if stored_reason == "funding_permanently_unrecoverable":
+    if stored_reason in TERMINAL_FUNDING_EXCLUSION_REASONS:
         reason = stored_reason
     elif market_type in {"spot", "usdt_futures"} and funding_cost is None:
         reason = "incomplete_funding_economics"

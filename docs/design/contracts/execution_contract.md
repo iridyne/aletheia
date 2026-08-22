@@ -592,6 +592,27 @@ exchange-backed futures 仍只接受对应账户私有账单的 `broker_ledger`�
 - 不写 `paper_account_events.position_closed`，不创建 eligible Outcome hook，也不进入 Attribution、
   Feedback 或 Learning。
 
+exchange funding recovery 只把共享的 matching-venue retention preflight（由 settler 与 adapter
+共同复用）在 credential-dependent client 初始化和首次 network await 前抛出的 typed
+`BrokerFundingHistoryExpired` 解释为 retention 终态；其他 malformed window、账户/币对 identity、
+权限、网络、publication delay 或 ledger 完整性失败继续保持可重试，不能按异常文本猜测终态。
+默认每轮从 durable `(closed_at, rowid)` keyset cursor 之后最多分类 100 个候选，并把 50 次
+非-expiry reader 尝试作为独立 broker-I/O 预算；到达队尾后才从头 wrap。已过 retention 的候选
+不消耗该 I/O 预算，因此 50 个 expired 旧行不能挡住同轮后续 venue 的 recoverable 行。每轮结束
+只把 scheduling cursor CAS 到最后 checked row；retryable/transient prefix 保持原 owner 状态，并在
+后续轮转中再次获得机会，而不会永久挡住其他 venue。
+
+retention 终态必须在短 SQLite transaction 内重新闭合原 Position 的 mode、symbol、opened/closed
+window、verified full close 和 NULL economics identity。成功只把
+`outcome_exclusion_reason` 改为 `broker_funding_history_expired`，并合并 bounded、无秘密的
+`reconciliation_evidence.funding_terminal`；`realized_pnl/funding_cost` 继续为 `NULL`，
+`funding_source='unavailable'`、`outcome_eligible=false`，close event、Fill、fee、quantity、cash 和
+Outcome hook 均不变。同一事务写入 stable-ID terminal audit/outbox；重启后 durable exclusion
+本身离开 selector，未能 terminalize 的 CAS/malformed conflict 则由 durable cursor 轮转越过。
+cursor 不授权或改变任何 Position 状态；conflict 不得覆盖现有 owner 状态。owner-facing read model
+与前端必须把该 terminal reason 显示为不可恢复的 private-ledger retention 终态，不能显示成仍在
+重试的 `incomplete_funding_economics`。
+
 因此本地 paper 账户继续以已结算的现金账本为权威，并明确返回
 `economics_complete=false` 和 `unsettled_closed_positions_count`。`available_balance_usdt` 仍反映
 已确认现金减预留资金，`equity_usdt` 仍反映已确认现金加未实现损益；两者都不补入这笔未完成的

@@ -398,7 +398,7 @@ class OKXClient:
         from aletheia.execution.broker_funding import (
             make_complete_ledger,
             normalize_okx_funding_rows,
-            require_retained_history,
+            require_broker_funding_history,
         )
 
         expected_mode = "okx_demo" if self._mode == "demo" else "okx_live_limited"
@@ -408,11 +408,7 @@ class OKXClient:
         end_ms = int(end_time_ms)
         if start_ms <= 0 or end_ms < start_ms:
             raise ValueError("OKX funding history window is invalid")
-        require_retained_history(
-            start_ms,
-            retention_days=90,
-            source="OKX account bills",
-        )
+        require_broker_funding_history(broker_id, start_ms)
 
         exchange = self._ensure_exchange()
         await exchange.load_markets()

@@ -22,6 +22,29 @@ class BrokerFundingIntegrityError(ValueError):
     """Private funding evidence is malformed, incomplete, or ambiguous."""
 
 
+class BrokerFundingHistoryExpired(BrokerFundingIntegrityError):
+    """The venue can no longer prove the requested private-ledger window."""
+
+    code = "broker_funding_history_expired"
+
+    def __init__(
+        self,
+        *,
+        source: str,
+        retention_days: int,
+        history_start_ms: int,
+        oldest_supported_ms: int,
+    ) -> None:
+        self.source = str(source)
+        self.retention_days = int(retention_days)
+        self.history_start_ms = int(history_start_ms)
+        self.oldest_supported_ms = int(oldest_supported_ms)
+        super().__init__(
+            f"{self.source} cannot prove funding history older than "
+            f"{self.retention_days} days"
+        )
+
+
 @dataclass(frozen=True)
 class BrokerFundingComputation:
     complete: bool
@@ -37,6 +60,15 @@ _MODE_ENVIRONMENTS = {
     "okx_live_limited": "live",
     "binance_testnet": "testnet",
     "binance_live_limited": "live",
+}
+
+_FUNDING_HISTORY_CONTRACTS = {
+    "bitget_demo": (90, "Bitget account bills"),
+    "bitget_live_limited": (90, "Bitget account bills"),
+    "okx_demo": (90, "OKX account bills"),
+    "okx_live_limited": (90, "OKX account bills"),
+    "binance_testnet": (90, "Binance income history"),
+    "binance_live_limited": (90, "Binance income history"),
 }
 
 
@@ -56,9 +88,43 @@ def require_retained_history(
     )
     oldest_supported_ms = observed_ms - int(retention_days) * 24 * 60 * 60 * 1000
     if start_ms < oldest_supported_ms:
-        raise BrokerFundingIntegrityError(
-            f"{source} cannot prove funding history older than {retention_days} days"
+        raise BrokerFundingHistoryExpired(
+            source=source,
+            retention_days=retention_days,
+            history_start_ms=start_ms,
+            oldest_supported_ms=oldest_supported_ms,
         )
+
+
+def require_broker_funding_history(
+    broker_id: str,
+    start_time_ms: object,
+    *,
+    now_ms: int | None = None,
+) -> None:
+    """Apply the matching venue's retention contract without loading credentials."""
+    try:
+        retention_days, source = _FUNDING_HISTORY_CONTRACTS[str(broker_id)]
+    except KeyError:
+        raise BrokerFundingIntegrityError(
+            f"unsupported broker funding mode: {broker_id}"
+        ) from None
+    require_retained_history(
+        start_time_ms,
+        retention_days=retention_days,
+        source=source,
+        now_ms=now_ms,
+    )
+
+
+def broker_funding_account_environment(broker_id: str) -> str:
+    """Return the non-secret account environment for one supported mode."""
+    try:
+        return _MODE_ENVIRONMENTS[str(broker_id)]
+    except KeyError:
+        raise BrokerFundingIntegrityError(
+            f"unsupported broker funding mode: {broker_id}"
+        ) from None
 
 
 def _utc(value: object) -> datetime | None:

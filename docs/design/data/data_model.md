@@ -41,7 +41,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 
 ## 3. Table Groups
 
-### A. Trading Core (22 tables)
+### A. Trading Core
 | Table | Purpose | Key columns | Written by |
 |-------|---------|-------------|------------|
 | `opportunities` | Scanner output -- trading signals; lifecycle is `open→queued→reviewed` or `open/queued→expired`; expired never regresses to reviewed | symbol, direction, confidence, key_observations (JSON), last_ranked_at, universe snapshot/member identity | market_observer |
@@ -53,6 +53,7 @@ market_snapshots --> opportunities --> trade_proposals --> risk_decisions
 | `orders` | Execution orders; native exchange entry `pending` is an unresolved Risk reservation, not zero exposure | symbol, side, quantity, order_type, status | execution gateway |
 | `fills` | Order fill confirmations | order_id, fill_price, fill_quantity, fee | broker adapter |
 | `positions` | Open/closed positions; a closed future may keep net economics unavailable. Delayed local funding materialization stores its versioned evidence fingerprint in reconciliation evidence. Market-aware evaluation remains advisory: its structured evidence records the exact venue/symbol/physical-market identity and source rows used for an Operator wake. | symbol, direction, entry_price, quantity, status, nullable realized_pnl, funding_cost, funding_source, **sizing_manifest** (hash-checked Persona/policy/step assignment copied from the Proposal), **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence), **exit_limit_source** ('human'|'system_operator'; author of a resting limit exit — selects human_limit_exit vs operator_limit_exit in close_reason for attribution honesty), **exit_plan_effective_at** (nullable projection to the current immutable ExitPlan; NULL means the dormant barrier has not been activated), **last_market_signal_evidence** (versioned JSON; exact position/signal identities, Opportunity/member/asset/Feature provenance, evaluation and delivery result) | position_manager / outcome closure / paper funding settler |
+| `broker_funding_settlement_cursor` | Singleton scheduling-only keyset for bounded exchange funding recovery; it rotates retryable/conflicting prefixes without changing Position owner state | queue_id=`exchange_funding`, last_closed_at, last_position_rowid, updated_at | broker_funding_settler |
 | `position_exit_plan_versions` | Retained, append-only resolved ExitPlan history. `(position_id, version)` is contiguous and immutable; insert atomically advances the nullable Position projection. | position_id, version, effective_at, resolved stop/take-profit/exit-limit, plan_json, plan_hash, provenance, created_at | protection repository + new/forward-adopted Paper runtime |
 | `position_protection_state` | One retained row per newly protected local-paper Position. It freezes exact instrument identity and monotonic cursors, preserves gap history, and projects first-trigger plus exact close linkage. | position_id, venue, canonical symbol, physical market_type, timeframe=1m, activated_at, cursor/gap/status, trigger_id, close Order/Fill linkage | protection repository + protective scheduler |
 | `position_protection_triggers` | Append-only first-barrier evidence. One immutable row per protected Position contains the exact 1-minute bar, resolved ExitPlan and deterministic collision policy. | trigger_id, position_id, exact instrument/bar/provider/hash, ExitPlan identity/barriers, hit flags/reason | protective scheduler + native paper close |
@@ -627,9 +628,9 @@ samples and is labelled provisional until it spans at least seven days.
 | `exit_price_source` | `broker_fill` / `local_fill` / `mark_fallback` / `unavailable` | `unavailable` |
 | `exit_fill_verified` | 是否有不可变 execution/broker fill 原件 | `false` |
 | `outcome_eligible` | 是否允许 judgement/behavior consumer 使用 | `false` |
-| `outcome_exclusion_reason` | 行政关闭、fill 未验证、旧干净窗、归因缺失等稳定原因 | `unclassified` |
+| `outcome_exclusion_reason` | 行政关闭、fill 未验证、旧干净窗、归因缺失等稳定原因；broker 私有 funding 窗已超出 retention 后使用 `broker_funding_history_expired` | `unclassified` |
 | `reconciliation_identity` | 无凭证的 broker/environment/account/instrument identity JSON | `NULL` |
-| `reconciliation_evidence` | observation/direct-query evidence 与确认版本 JSON；本地 funding 完成后含 `funding`、`funding_economics_fingerprint`、`funding_accounting_version=local-paper-funding-v2` | `NULL` |
+| `reconciliation_evidence` | observation/direct-query evidence 与确认版本 JSON；本地 funding 完成后含 `funding`、`funding_economics_fingerprint`、`funding_accounting_version=local-paper-funding-v2`；broker retention 终态含 bounded `funding_terminal` | `NULL` |
 | `outcome_semantics_version` | 生成 eligibility 的稳定语义版本 | `NULL` |
 | `funding_cost` | `broker_ledger` 的账户实际 funding，或 `local_simulation` 按完整结算快照窗与结算前已成交 entry Fill 名义额分段计算的确定性模拟值；正数为成本、负数为返还 | `NULL` |
 | `funding_source` | `not_applicable` / `broker_ledger` / `local_simulation` / `unavailable`；本地模拟的逐事件原件（active Fill ids/notional、事件成本和持有窗）在 `reconciliation_evidence.funding`，完整 handoff 由中央关闭入口复核 | `unavailable` |
@@ -642,6 +643,19 @@ canonical fingerprint，包括 close 时记录的 `seed_close_anchor`；历史 i
 在没有可信 broker ledger 或完整 local-simulation 时间窗时必须保留 `NULL`。这种关闭仍有真实 close Order/Fill 和 closed 生命周期，
 但固定为 `incomplete_funding_economics`、不得进入 eligible Outcome/outbox，也不得追加
 `paper_account_events.position_closed`。spot 明确写 funding `0/not_applicable`。
+
+matching-venue shared preflight 明确证明持仓窗早于其私有 ledger retention 时，Position 可以从
+`incomplete_funding_economics` 单调分类为 `broker_funding_history_expired`。这不新增字段或经济
+事实：`realized_pnl/funding_cost` 仍为 `NULL`，`funding_source` 仍为 `unavailable`，full close event
+的 `realized_pnl` 仍为 `NULL`。`reconciliation_evidence.funding_terminal` 只保存 Position/mode/symbol、
+持仓查询窗、venue source、retention days 和 `broker-funding-retention-v1`；不得保存异常文本、raw
+provider response 或凭证。原 evidence 必须是 object，CAS/malformed conflict 不得清空或覆盖。
+
+schema v39 migration `20260823_0038_broker_funding_cursor_v39` 新建空的
+`broker_funding_settlement_cursor`；不为历史 Position 回填或推断 cursor。settler 以
+`COALESCE(closed_at,'') + rowid` 为稳定 keyset，从已提交 cursor 之后读取 bounded page，抵达队尾后
+才 wrap。每轮只 CAS 最后 checked key；cursor 冲突至多导致安全 replay，不改变 funding、PnL、
+Outcome、audit、cash 或 Position lifecycle authority。
 
 `local-paper-funding-v2` 使用 `(exchange, canonical_symbol, UTC whole-second settlement)` 作为
 会计事件身份，只归一严格小于一秒的表示偏差。完整历史结算可作为 `historical_ledger` 恢复

@@ -27,6 +27,11 @@ MAINTENANCE_CLOSE_REASONS = frozenset({
 })
 SYNTHETIC_CLOSE_REASONS = ADMINISTRATIVE_CLOSE_REASONS | MAINTENANCE_CLOSE_REASONS
 
+TERMINAL_FUNDING_EXCLUSION_REASONS = frozenset({
+    "broker_funding_history_expired",
+    "funding_permanently_unrecoverable",
+})
+
 OUTCOME_EXCLUSION_REASONS = frozenset({
     "administrative_close",
     "maintenance_close",
@@ -42,18 +47,11 @@ OUTCOME_EXCLUSION_REASONS = frozenset({
     "missing_outcome_identity",
     "incomplete_realized_economics",
     "incomplete_funding_economics",
-    # Terminal state assigned by paper_funding_settler after
-    # _FUNDING_GIVE_UP_HOURS of retries — realized economics remain NULL
-    # (never fabricated) but the operator/consumer can distinguish it from
-    # an in-flight retry. Kept in this whitelist so classify_closure()
-    # surfaces the actual reason instead of collapsing to
-    # "not_marked_eligible".
-    "funding_permanently_unrecoverable",
     "pre_clean_window",
     "incident_window",
     "missing_attribution",
     "attribution_read_failed",
-})
+}) | TERMINAL_FUNDING_EXCLUSION_REASONS
 
 _VERIFIED_EXIT_PRICE_SOURCES = frozenset({"broker_fill", "local_fill"})
 _BROKER_LEDGER_EXECUTION_MODES = frozenset({
