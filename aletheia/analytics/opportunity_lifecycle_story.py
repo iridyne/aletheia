@@ -393,10 +393,14 @@ def _counterfactual(
         )
         if visible:
             row = visible[0]
+            from aletheia.analytics.outcome_semantics import outcome_values
+
             result["forward"][horizon] = {
                 "id": row.get("id"),
                 "forward_return_pct": row.get("forward_return_pct"),
-                "net_return_pct": row.get("net_return_pct"),
+                "net_return_pct": outcome_values(dict(row), direction)[
+                    "net_return_pct"
+                ],
                 "settled_at": row.get("settled_at"),
                 "status": row.get("status"),
             }

@@ -86,7 +86,13 @@ def _add_candidate(
             entry_ts=now.isoformat(),
             due_at=due_at.isoformat(),
             settled_at=None if is_pending else due_at.isoformat(),
+            directional_return_pct=None if is_pending else net + 0.2,
+            estimated_fee_pct=None if is_pending else 0.1,
+            estimated_spread_slippage_pct=None if is_pending else 0.1,
+            estimated_funding_pct=None if is_pending else 0.0,
             net_return_pct=None if is_pending else net,
+            min_tradable_edge_pct=None if is_pending else 0.05,
+            cost_model_version=None if is_pending else "test-v1",
             status="pending" if is_pending else "settled",
         ))
     insert_filter_candidate_outcomes_batch(rows)

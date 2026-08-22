@@ -14,6 +14,11 @@ def _insert_outcome(
     *,
     net_return_pct: object = 0.1,
     cost_model_version: object = "v1",
+    market_type: object = "spot",
+    directional_return_pct: object = 0.1,
+    estimated_fee_pct: object = 0.0,
+    estimated_spread_slippage_pct: object = 0.0,
+    estimated_funding_pct: object = 0.0,
 ) -> None:
     from aletheia.storage.sqlite import get_db
 
@@ -22,12 +27,15 @@ def _insert_outcome(
         "INSERT INTO universe_forward_outcomes "
         "(id, member_id, snapshot_id, symbol, scanner_family, market_type, direction, "
         "horizon, entry_price_usd, entry_ts, due_at, settled_at, forward_return_pct, "
-        "gross_return_pct, directional_return_pct, net_return_pct, "
+        "gross_return_pct, directional_return_pct, estimated_fee_pct, "
+        "estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, "
         "min_tradable_edge_pct, cost_model_version, status) "
-        "VALUES (?, ?, 'edge-snapshot', 'BTC/USDT', 'momentum', 'spot', 'long', "
-        "'24h', 100, ?, ?, ?, 0.1, 0.1, 0.1, ?, ?, ?, 'settled')",
+        "VALUES (?, ?, 'edge-snapshot', 'BTC/USDT', 'momentum', ?, 'long', "
+        "'24h', 100, ?, ?, ?, 0.1, 0.1, ?, ?, ?, ?, ?, ?, ?, 'settled')",
         (
-            outcome_id, f"member-{outcome_id}", now, now, now,
+            outcome_id, f"member-{outcome_id}", market_type, now, now, now,
+            directional_return_pct, estimated_fee_pct,
+            estimated_spread_slippage_pct, estimated_funding_pct,
             net_return_pct, edge, cost_model_version,
         ),
     )
@@ -53,6 +61,14 @@ def test_operator_diagnostics_exclude_incomplete_safety_edges():
     _insert_outcome("blob-cost-model", 0.05, cost_model_version=b"v1")
     _insert_outcome("malformed-net", 0.05, net_return_pct="malformed")
     _insert_outcome("blob-net", 0.05, net_return_pct=b"0.1")
+    _insert_outcome("missing-fee", 0.05, estimated_fee_pct=None)
+    _insert_outcome("mismatched-net", 0.05, net_return_pct=0.2)
+    _insert_outcome("unknown-market", 0.05, market_type="crypto")
+    _insert_outcome("blob-market", 0.05, market_type=b"spot")
+    _insert_outcome(
+        "spot-funding", 0.05, directional_return_pct=0.2,
+        estimated_funding_pct=0.1,
+    )
     get_db().commit()
 
     summary = _get_data_health_summary()

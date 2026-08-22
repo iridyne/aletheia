@@ -151,14 +151,15 @@ def _outcome(
     entry_dt = datetime.fromisoformat(entry.replace("Z", "+00:00"))
     due = (entry_dt + timedelta(hours=4)).isoformat()
     settled = (entry_dt + timedelta(hours=4, minutes=1)).isoformat()
+    directional = net + 0.2 if net is not None else None
     db.execute(
         "INSERT INTO universe_forward_outcomes "
         "(id, outcome_candidate_key, member_id, snapshot_id, symbol, venue, market_type, "
         "scanner_family, direction, horizon, entry_price_usd, entry_ts, due_at, settled_at, "
-        "net_return_pct, min_tradable_edge_pct, estimated_fee_pct, "
+        "directional_return_pct, net_return_pct, min_tradable_edge_pct, estimated_fee_pct, "
         "estimated_spread_slippage_pct, estimated_funding_pct, "
         "mae_pct, settlement_price_source, cost_model_version, status) "
-        "VALUES (?, ?, ?, ?, 'BTC/USDT', 'test', 'perp', 'momentum', 'long', ?, 100, ?, ?, ?, ?, ?, "
+        "VALUES (?, ?, ?, ?, 'BTC/USDT', 'test', 'perp', 'momentum', 'long', ?, 100, ?, ?, ?, ?, ?, ?, "
         "0.1, 0.1, 0.0, ?, ?, ?, ?)",
         (
             f"outcome-{candidate}-{horizon}-{suffix or 'primary'}",
@@ -169,6 +170,7 @@ def _outcome(
             entry,
             due,
             settled,
+            directional,
             net,
             min_tradable_edge_pct,
             mae,
@@ -199,14 +201,15 @@ def _filter_outcome(
     entry_dt = datetime.fromisoformat(entry.replace("Z", "+00:00"))
     due = (entry_dt + timedelta(hours=4)).isoformat()
     settled = (entry_dt + timedelta(hours=4, minutes=1)).isoformat()
+    directional = net + 0.2 if net is not None else None
     get_db().execute(
         "INSERT INTO filter_candidate_outcomes "
         "(id, outcome_candidate_key, venue, symbol, market_type, scanner_family, direction, "
         "horizon, allocation_selected, entry_price_usd, entry_ts, due_at, settled_at, "
-        "net_return_pct, min_tradable_edge_pct, "
+        "directional_return_pct, net_return_pct, min_tradable_edge_pct, "
         "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, mae_pct, "
         "settlement_price_source, cost_model_version, status) "
-        "VALUES (?, ?, 'test', 'BTC/USDT', 'perp', 'momentum', 'long', ?, ?, 100, ?, ?, ?, ?, ?, "
+        "VALUES (?, ?, 'test', 'BTC/USDT', 'perp', 'momentum', 'long', ?, ?, 100, ?, ?, ?, ?, ?, ?, "
         "0.1, 0.1, 0.0, ?, ?, ?, ?)",
         (
             f"filter-outcome-{candidate}-{horizon}-{suffix or 'primary'}",
@@ -216,6 +219,7 @@ def _filter_outcome(
             entry,
             due,
             settled,
+            directional,
             net,
             min_tradable_edge_pct,
             mae,

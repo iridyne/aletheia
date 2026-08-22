@@ -120,6 +120,7 @@ def _batch_scanner_weights_quota_stats(
     """
     try:
         from aletheia.analytics.filter_evidence import decode_filter_decision_batch
+        from aletheia.storage.repositories import complete_outcome_economics_sql
         from aletheia.storage.sqlite import get_db
     except Exception:
         return []
@@ -193,7 +194,9 @@ def _batch_scanner_weights_quota_stats(
             chunk = outcome_keys[offset : offset + 500]
             placeholders = ",".join("?" for _ in chunk)
             cursor = db.execute(
-                "SELECT outcome_candidate_key, horizon, status, net_return_pct "
+                "SELECT outcome_candidate_key, horizon, status, net_return_pct, "
+                f"CASE WHEN {complete_outcome_economics_sql()} "
+                "THEN 1 ELSE 0 END AS economics_complete "
                 "FROM filter_candidate_outcomes "
                 f"WHERE outcome_candidate_key IN ({placeholders})",
                 tuple(chunk),
@@ -217,7 +220,7 @@ def _batch_scanner_weights_quota_stats(
                 bucket["candidates"].add(key)
                 if (
                     outcome.get("status") == "settled"
-                    and outcome.get("net_return_pct") is not None
+                    and outcome.get("economics_complete") == 1
                 ):
                     net = float(outcome["net_return_pct"])
                     bucket["settled"].append(net)

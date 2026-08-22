@@ -81,16 +81,18 @@ def _insert_shadow(
     db.execute(
         "INSERT INTO filter_candidate_outcomes "
         "(id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
-        "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
-        "cost_model_version, status) "
+        "entry_price_usd, entry_ts, due_at, settled_at, directional_return_pct, "
+        "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+        "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
         "VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', '24h', 100, ?, ?, ?, ?, "
-        "'candidate-net-v1', 'settled')",
+        "0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
         (
             f"fco-{batch}-{rank}-{opp}",
             outcome_key,
             entry,
             _iso(hours_after=24),
             _iso(),
+            pnl + 0.2,
             pnl,
         ),
     )
@@ -136,11 +138,15 @@ def _insert_operator_candidate(
     db.execute(
         "INSERT INTO filter_candidate_outcomes "
         "(id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
-        "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
-        "cost_model_version, status) "
+        "entry_price_usd, entry_ts, due_at, settled_at, directional_return_pct, "
+        "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+        "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
         "VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', '24h', 100, ?, ?, ?, ?, "
-        "'candidate-net-v1', 'settled')",
-        (f"fco-operator-{decision}-{idx}", key, entry, _iso(hours_after=24), _iso(), pnl),
+        "0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
+        (
+            f"fco-operator-{decision}-{idx}", key, entry,
+            _iso(hours_after=24), _iso(), pnl + 0.2, pnl,
+        ),
     )
 
 
@@ -212,8 +218,12 @@ def _insert_prospective_control_cohort(
             db.execute(
                 "INSERT INTO filter_candidate_outcomes "
                 "(id, outcome_candidate_key, venue, symbol, market_type, direction, "
-                "horizon, entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, status) "
-                "VALUES (?, ?, 'okx', ?, 'spot', 'long', '1h', 100, ?, ?, ?, ?, 'settled')",
+                "horizon, entry_price_usd, entry_ts, due_at, settled_at, "
+                "directional_return_pct, estimated_fee_pct, "
+                "estimated_spread_slippage_pct, estimated_funding_pct, "
+                "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
+                "VALUES (?, ?, 'okx', ?, 'spot', 'long', '1h', 100, ?, ?, ?, ?, "
+                "0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
                 (
                     f"fco-{prefix}-{role}-{i}",
                     outcome_key,
@@ -221,6 +231,7 @@ def _insert_prospective_control_cohort(
                     entry,
                     due_at,
                     due_at,
+                    net_return + 0.2,
                     net_return,
                 ),
             )
@@ -477,13 +488,18 @@ def test_universe_alpha_prefers_prospective_control_cohort():
                 (f"aco-{role}-{i}", role, sym, entry, json.dumps({"due_at": due_at}), outcome_key),
             )
             db.execute(
-                "INSERT INTO filter_candidate_outcomes "
-                "(id, outcome_candidate_key, venue, symbol, market_type, direction, "
-                "horizon, entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, status) "
-                "VALUES (?, ?, 'okx', ?, 'spot', 'long', '1h', 100, ?, ?, ?, ?, 'settled')",
-                (
-                    f"fco-{role}-{i}", outcome_key, sym, entry, due_at, due_at,
-                    3.0 if role == "selected" else 0.0,
+                    "INSERT INTO filter_candidate_outcomes "
+                    "(id, outcome_candidate_key, venue, symbol, market_type, direction, "
+                    "horizon, entry_price_usd, entry_ts, due_at, settled_at, "
+                    "directional_return_pct, estimated_fee_pct, "
+                    "estimated_spread_slippage_pct, estimated_funding_pct, "
+                    "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
+                    "VALUES (?, ?, 'okx', ?, 'spot', 'long', '1h', 100, ?, ?, ?, ?, "
+                    "0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
+                    (
+                        f"fco-{role}-{i}", outcome_key, sym, entry, due_at, due_at,
+                        3.2 if role == "selected" else 0.2,
+                        3.0 if role == "selected" else 0.0,
                 ),
             )
     db.commit()

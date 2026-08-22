@@ -15,6 +15,7 @@ from aletheia.analytics.outcome_integrity import (
     OutcomeAssessment,
     assess_position_closure,
 )
+from aletheia.analytics.outcome_semantics import validated_outcome_economics
 
 
 def assess_realized_position(row: dict[str, Any]) -> OutcomeAssessment:
@@ -40,6 +41,9 @@ def assess_candidate_outcome(row: dict[str, Any]) -> OutcomeAssessment:
     cost_model = row.get("cost_model_version")
     if not isinstance(cost_model, str) or not cost_model.strip():
         return OutcomeAssessment(False, "missing_cost_model_version", category="candidate", source="candidate_outcome")
+    economics = validated_outcome_economics(row)
+    if economics is None:
+        return OutcomeAssessment(False, "cost_economics_incomplete", category="candidate", source="candidate_outcome")
     key = row.get("outcome_candidate_key")
     horizon = row.get("horizon")
     if not key or not horizon:
@@ -50,7 +54,7 @@ def assess_candidate_outcome(row: dict[str, Any]) -> OutcomeAssessment:
         category="candidate",
         outcome_key=f"candidate:{key}",
         horizon=str(horizon),
-        net_return_pct=net,
+        net_return_pct=economics["net_return_pct"],
         source="candidate_outcome",
     )
 

@@ -208,6 +208,8 @@ def _insert_shadow(db, idx: int, *, pnl_pct: float, batch: str = "batch-lineage"
 
 
 def _insert_forward_net(db, idx: int, *, gross: float, net: float) -> None:
+    spread = gross - 0.1 - net
+    assert spread >= 0
     db.execute(
         "INSERT INTO universe_forward_outcomes "
         "(id, member_id, snapshot_id, symbol, market_type, scanner_family, direction, horizon, "
@@ -216,10 +218,10 @@ def _insert_forward_net(db, idx: int, *, gross: float, net: float) -> None:
         "estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, "
         "min_tradable_edge_pct, cost_model_version, status) "
         "VALUES (?, ?, ?, 'BTC/USDT', 'perp', 'momentum', 'long', '24h', 100, ?, ?, ?, 102, "
-        "?, ?, ?, 0.1, 0.1, 0, ?, 0.05, 'v1', 'settled')",
+        "?, ?, ?, 0.1, ?, 0, ?, 0.05, 'v1', 'settled')",
         (
             f"forward-lineage-{idx}", f"um-lineage-{idx}", f"snap-lineage-{idx}",
-            _iso(25), _iso(), _iso(), gross, gross, gross, net,
+            _iso(25), _iso(), _iso(), gross, gross, gross, spread, net,
         ),
     )
 

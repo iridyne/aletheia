@@ -60,6 +60,10 @@ def _insert_b2_candidate(*, index: int, epoch: str, bucket: str, net: float) -> 
         scanner_family="momentum", horizon="24h", entry_price_usd=100.0,
         entry_ts=(now - timedelta(hours=25)).isoformat(),
         due_at=(now - timedelta(hours=1)).isoformat(), settled_at=now.isoformat(),
+        directional_return_pct=net + 0.2,
+        estimated_fee_pct=0.1,
+        estimated_spread_slippage_pct=0.1,
+        estimated_funding_pct=0.0,
         net_return_pct=net, min_tradable_edge_pct=0.05, cost_model_version="cost-v1",
         status="settled",
     )])

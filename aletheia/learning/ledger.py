@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from aletheia.storage.repositories import transaction
+from aletheia.storage.repositories import (
+    complete_outcome_economics_sql,
+    transaction,
+)
 from aletheia.storage.sqlite import get_db
 
 
@@ -416,13 +419,14 @@ def linked_settled_exposure_counts(
     rows = get_db().execute(
         "WITH eligible_keys AS ("
         " SELECT outcome_candidate_key AS outcome_key FROM universe_forward_outcomes"
-        " WHERE status='settled' AND entry_ts>=? AND net_return_pct IS NOT NULL"
-        " AND cost_model_version IS NOT NULL AND outcome_candidate_key IS NOT NULL"
+        " WHERE status='settled' AND entry_ts>=?"
+        f" AND {complete_outcome_economics_sql()}"
+        " AND outcome_candidate_key IS NOT NULL"
         " UNION "
         " SELECT outcome_candidate_key || ':' || horizon AS outcome_key"
         " FROM filter_candidate_outcomes"
-        " WHERE status='settled' AND entry_ts>=? AND net_return_pct IS NOT NULL"
-        " AND cost_model_version IS NOT NULL"
+        " WHERE status='settled' AND entry_ts>=?"
+        f" AND {complete_outcome_economics_sql()}"
         ") "
         "SELECT e.assignment, COUNT(DISTINCT e.candidate_key) AS n "
         "FROM learning_exposures e JOIN eligible_keys k"

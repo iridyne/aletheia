@@ -427,7 +427,7 @@ def filter_feedback_stats(
     evaluated_since: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return cost-aware pass/reject cells with a conservative shrunk mean."""
-    from aletheia.storage.sqlite import SQLITE_PYTHON_STRIP_CHARS_SQL, get_db
+    from aletheia.storage.sqlite import get_db
 
     # A candidate can be evaluated on multiple scheduler ticks (fresh first,
     # expired later). Assign it once by its first persisted exposure so pass and
@@ -437,14 +437,7 @@ def filter_feedback_stats(
     time_clause = " AND datetime(fd.first_evaluated_at) >= datetime(?)" if evaluated_since else ""
     params = (evaluated_since,) if evaluated_since else ()
     complete_net = (
-        "fo.status='settled' "
-        "AND typeof(fo.net_return_pct) IN ('integer', 'real') "
-        "AND ABS(fo.net_return_pct) <= 100 "
-        "AND typeof(fo.cost_model_version) = 'text' "
-        f"AND TRIM(fo.cost_model_version, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> '' "
-        "AND typeof(fo.min_tradable_edge_pct) IN ('integer', 'real') "
-        "AND fo.min_tradable_edge_pct >= 0 "
-        "AND fo.min_tradable_edge_pct < 1e999"
+        "fo.status='settled' AND " + repo.complete_outcome_economics_sql("fo")
     )
     rows = get_db().execute(
         FIRST_EXPOSURE_CTE_SQL +
@@ -604,7 +597,9 @@ def observer_pre_filter_diagnostics(
         FIRST_EXPOSURE_CTE_SQL
         + "SELECT fd.filter_version, fd.decision, fd.scanner_family, "
         "fd.direction, fd.market_type, fd.input_snapshot, "
-        "fo.horizon, fo.status, fo.net_return_pct "
+        "fo.horizon, fo.status, fo.net_return_pct, "
+        f"CASE WHEN {repo.complete_outcome_economics_sql('fo')} "
+        "THEN 1 ELSE 0 END AS economics_complete "
         "FROM ranked_filter_decisions fd "
         "JOIN filter_candidate_outcomes fo "
         "  ON fo.outcome_candidate_key = fd.outcome_candidate_key "
@@ -678,7 +673,7 @@ def observer_pre_filter_diagnostics(
         net = (
             float(row["net_return_pct"])
             if row.get("status") == "settled"
-            and row.get("net_return_pct") is not None
+            and row.get("economics_complete") == 1
             else None
         )
         if net is not None:

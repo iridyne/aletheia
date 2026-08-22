@@ -412,13 +412,15 @@ def test_task6_read_only_evaluation_reports_estimates_but_cannot_promote() -> No
                 settled_at=outcome.due_at,
                 economics={
                     "gross_return_pct": 1.0,
-                    "directional_return_pct": 1.0,
+                    "directional_return_pct": (
+                        1.0 if bundle.batch.assignment_arm == "treatment" else 0.0
+                    ),
                     "estimated_fee_pct": 0.1,
                     "estimated_spread_slippage_pct": 0.1,
                     "estimated_funding_pct": 0.0,
-                        "net_return_pct": (
-                            0.8 if bundle.batch.assignment_arm == "treatment" else -0.2
-                        ),
+                    "net_return_pct": (
+                        0.8 if bundle.batch.assignment_arm == "treatment" else -0.2
+                    ),
                     "min_tradable_edge_pct": 0.2,
                     "mfe_pct": 1.2,
                     "mae_pct": -0.3,

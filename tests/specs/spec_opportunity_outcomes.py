@@ -239,6 +239,45 @@ def test_missed_alpha_requires_tradable_net_edge():
         assert classify_counterfactual(invalid_net, -0.10, 0.05) == "insufficient_data"
 
 
+def test_row_verdict_requires_reconcilable_cost_economics():
+    from aletheia.analytics.outcome_semantics import classify_outcome_row
+
+    positive = {
+        "market_type": "spot",
+        "directional_return_pct": 0.5,
+        "estimated_fee_pct": 0.1,
+        "estimated_spread_slippage_pct": 0.1,
+        "estimated_funding_pct": 0.0,
+        "net_return_pct": 0.3,
+        "min_tradable_edge_pct": 0.05,
+        "cost_model_version": "v1",
+    }
+    assert classify_outcome_row(positive) == "missed_alpha_suspect"
+    for incomplete in (
+        {**positive, "estimated_fee_pct": None},
+        {**positive, "net_return_pct": 0.4},
+        {**positive, "market_type": "crypto"},
+        {**positive, "cost_model_version": " "},
+        {
+            **positive,
+            "estimated_funding_pct": 0.1,
+            "net_return_pct": 0.2,
+        },
+    ):
+        assert classify_outcome_row(incomplete) == "positive_gross_move_only"
+
+    negative = {
+        **positive,
+        "directional_return_pct": -0.5,
+        "net_return_pct": -0.7,
+    }
+    assert classify_outcome_row(negative) == "protective"
+    assert (
+        classify_outcome_row({**negative, "estimated_spread_slippage_pct": None})
+        == "insufficient_data"
+    )
+
+
 @spec_claim(
     SpecClaim(
         "OO-C01", _CONTRACT, "§8 learning isolation", "L2c",
@@ -267,10 +306,13 @@ def test_calibration_excludes_gross_only_rows():
             forward_return_pct=9.0, gross_return_pct=9.0, **common,
         ),
         UniverseForwardOutcome(
-            member_id="member-net", symbol="BBB/USDT",
-                forward_return_pct=-1.0, gross_return_pct=-1.0,
-                directional_return_pct=-1.0, net_return_pct=-1.2,
-                min_tradable_edge_pct=0.05, cost_model_version="test-v1", **common,
+                member_id="member-net", symbol="BBB/USDT",
+                    forward_return_pct=-1.0, gross_return_pct=-1.0,
+                    directional_return_pct=-1.0, net_return_pct=-1.2,
+                    estimated_fee_pct=0.1,
+                    estimated_spread_slippage_pct=0.1,
+                    estimated_funding_pct=0.0,
+                    min_tradable_edge_pct=0.05, cost_model_version="test-v1", **common,
         ),
     ])
 

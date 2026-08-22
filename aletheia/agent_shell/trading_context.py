@@ -2379,8 +2379,12 @@ def _build_layer3_wisdom() -> dict[str, Any]:
 def _get_data_health_summary() -> dict[str, Any]:
     """Build a concise data-health dict for System Operator context injection."""
     try:
-        from aletheia.storage.repositories import get_active_universe_members, get_universe_asset
-        from aletheia.storage.sqlite import SQLITE_PYTHON_STRIP_CHARS_SQL, get_db
+        from aletheia.storage.repositories import (
+            complete_outcome_economics_sql,
+            get_active_universe_members,
+            get_universe_asset,
+        )
+        from aletheia.storage.sqlite import get_db
         from aletheia.config.loader import load_config
 
         cfg = load_config()
@@ -2416,13 +2420,7 @@ def _get_data_health_summary() -> dict[str, Any]:
                FROM universe_forward_outcomes
                WHERE status = 'settled' AND horizon = '24h'
                  AND settled_at >= ?
-                 AND typeof(net_return_pct) IN ('integer', 'real')
-                 AND ABS(net_return_pct) <= 100
-                 AND typeof(cost_model_version) = 'text'
-                 AND TRIM(cost_model_version, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> ''
-                 AND typeof(min_tradable_edge_pct) IN ('integer', 'real')
-                 AND min_tradable_edge_pct >= 0
-                 AND min_tradable_edge_pct < 1e999
+                 AND {complete_outcome_economics_sql()}
                  AND direction IN ('long', 'short')""",
             (cutoff,),
         ).fetchone()

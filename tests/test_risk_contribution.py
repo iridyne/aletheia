@@ -61,10 +61,10 @@ def _seed_candidate(db, index: int, *, approved: bool, net_return_pct: float) ->
         "(id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
         "entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, "
         "directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, "
-        "estimated_funding_pct, net_return_pct, settlement_price_source, "
+        "estimated_funding_pct, net_return_pct, min_tradable_edge_pct, settlement_price_source, "
         "cost_model_version, status) "
         "VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', '24h', 100, ?, "
-        "?, ?, ?, ?, 0.1, 0.1, 0, ?, 'test_ohlcv', 'candidate-net-v1', 'settled')",
+        "?, ?, ?, ?, 0.1, 0.1, 0, ?, 0.05, 'test_ohlcv', 'candidate-net-v1', 'settled')",
         (
             f"risk-outcome-{index}", outcome_key, created_at,
             due_at, settled_at, exit_price, directional_return_pct, net_return_pct,
@@ -212,3 +212,49 @@ def test_risk_policy_value_accepts_equivalent_perp_market_aliases():
 
     assert evidence["eligible_count"] == 1
     assert evidence["exclusion_counts"] == {}
+
+
+def test_risk_policy_value_rejects_noncanonical_cost_economics():
+    from aletheia.analytics.risk_contribution import build_risk_policy_contribution
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for index in range(4):
+        _seed_candidate(db, index, approved=False, net_return_pct=1.0)
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET min_tradable_edge_pct=NULL "
+        "WHERE id='risk-outcome-0'"
+    )
+    db.execute(
+        "UPDATE filter_candidate_outcomes "
+        "SET estimated_funding_pct=0.1, net_return_pct=0.9 "
+        "WHERE id='risk-outcome-1'"
+    )
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET estimated_fee_pct=? "
+        "WHERE id='risk-outcome-2'",
+        (b"0.1",),
+    )
+    db.execute(
+        "UPDATE trade_proposals SET market_type='crypto' "
+        "WHERE id='risk-proposal-3'"
+    )
+    db.execute(
+        "UPDATE filter_decisions SET market_type='crypto' "
+        "WHERE id='risk-filter-3'"
+    )
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET market_type='crypto' "
+        "WHERE id='risk-outcome-3'"
+    )
+
+    evidence = build_risk_policy_contribution(
+        db,
+        cutoff="2026-08-01T00:00:00+00:00",
+    )
+
+    assert evidence["eligible_count"] == 0
+    assert evidence["exclusion_counts"] == {
+        "incomplete_risk_outcome_economics": 1,
+        "risk_outcome_economics_mismatch": 3,
+    }

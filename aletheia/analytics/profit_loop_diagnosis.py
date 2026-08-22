@@ -278,19 +278,7 @@ def _group_returns(facts: Iterable[Mapping[str, Any]], predicate) -> tuple[list[
             rejection_reasons["missing_outcome"] = rejection_reasons.get("missing_outcome", 0) + 1
             continue
         
-        # Build a row dict for assess_candidate_outcome
-        candidate_row = {
-            "status": outcome.get("status"),
-            "entry_ts": fact.get("first_exposure", {}).get("entry_ts") if isinstance(fact.get("first_exposure"), dict) else None,
-            "direction": fact.get("first_exposure", {}).get("direction") if isinstance(fact.get("first_exposure"), dict) else None,
-            "net_return_pct": outcome.get("net_return_pct"),
-            "min_tradable_edge_pct": outcome.get("min_tradable_edge_pct"),
-            "cost_model_version": outcome.get("cost_model_version"),
-            "outcome_candidate_key": fact.get("outcome_candidate_key"),
-            "horizon": fact.get("fixed_horizon"),
-        }
-        
-        assessment = assess_candidate_outcome(candidate_row)
+        assessment = assess_candidate_outcome(dict(outcome))
         if assessment.eligible:
             values.append(assessment.net_return_pct)
         else:

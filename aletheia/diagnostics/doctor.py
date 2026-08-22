@@ -3569,7 +3569,8 @@ def _probe_ohlcv_coverage(report: Report) -> None:
 def _probe_signal_effectiveness(report: Report) -> None:
     """Check universe signal win-rate over the last 7 days."""
     try:
-        from aletheia.storage.sqlite import SQLITE_PYTHON_STRIP_CHARS_SQL, get_db
+        from aletheia.storage.repositories import complete_outcome_economics_sql
+        from aletheia.storage.sqlite import get_db
         from datetime import timedelta
 
         db = get_db()
@@ -3585,13 +3586,7 @@ def _probe_signal_effectiveness(report: Report) -> None:
                WHERE status = 'settled'
                  AND horizon = '24h'
                  AND settled_at >= ?
-                 AND typeof(net_return_pct) IN ('integer', 'real')
-                 AND ABS(net_return_pct) <= 100
-                 AND typeof(cost_model_version) = 'text'
-                 AND TRIM(cost_model_version, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> ''
-                 AND typeof(min_tradable_edge_pct) IN ('integer', 'real')
-                 AND min_tradable_edge_pct >= 0
-                 AND min_tradable_edge_pct < 1e999""",
+                 AND {complete_outcome_economics_sql()}""",
             (cutoff,),
         ).fetchone()
 
@@ -3625,12 +3620,14 @@ def _probe_signal_effectiveness(report: Report) -> None:
 def _probe_outcome_economics(report: Report) -> None:
     """Expose whether post-migration outcomes have complete net economics."""
     try:
+        from aletheia.storage.repositories import complete_outcome_economics_sql
         from aletheia.storage.sqlite import get_db
 
         db = get_db()
         row = db.execute(
             "SELECT COUNT(*) AS total, "
-            "SUM(CASE WHEN net_return_pct IS NOT NULL THEN 1 ELSE 0 END) AS complete, "
+            f"SUM(CASE WHEN {complete_outcome_economics_sql()} "
+            "  THEN 1 ELSE 0 END) AS complete, "
             "SUM(CASE WHEN net_return_pct IS NULL "
             "  AND market_type IN ('perp','futures','swap','usdt_futures') "
             "  AND funding_rate_at_entry IS NULL THEN 1 ELSE 0 END) AS missing_funding, "
@@ -3673,6 +3670,7 @@ def _probe_outcome_economics(report: Report) -> None:
 def _probe_filter_evidence(report: Report) -> None:
     """Report whether filter pass/reject facts and their net outcomes are connected."""
     try:
+        from aletheia.storage.repositories import complete_outcome_economics_sql
         from aletheia.storage.sqlite import get_db
 
         db = get_db()
@@ -3731,7 +3729,8 @@ def _probe_filter_evidence(report: Report) -> None:
         outcomes = db.execute(
             "SELECT COUNT(DISTINCT outcome_candidate_key) AS registered, "
             "SUM(CASE WHEN status='settled' THEN 1 ELSE 0 END) AS settled, "
-            "SUM(CASE WHEN status='settled' AND net_return_pct IS NOT NULL "
+            "SUM(CASE WHEN status='settled' AND "
+            f"  {complete_outcome_economics_sql()} "
             "  THEN 1 ELSE 0 END) AS net_complete, "
             "SUM(CASE WHEN status='pending' AND datetime(due_at) < datetime(?) "
             "  THEN 1 ELSE 0 END) AS overdue, "

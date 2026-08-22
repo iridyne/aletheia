@@ -601,11 +601,13 @@ def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanne
     db.execute(
         "INSERT INTO universe_forward_outcomes "
         "(id,outcome_candidate_key,member_id,snapshot_id,symbol,scanner_family,direction,horizon,"
-        "entry_price_usd,entry_ts,due_at,settled_at,net_return_pct,min_tradable_edge_pct,"
-        "cost_model_version,status) VALUES (?,?,?,?,?,?,?,?,100,?,?,?,?,0.05,?,?)",
+        "entry_price_usd,entry_ts,due_at,settled_at,directional_return_pct,"
+        "estimated_fee_pct,estimated_spread_slippage_pct,estimated_funding_pct,"
+        "net_return_pct,min_tradable_edge_pct,cost_model_version,status) "
+        "VALUES (?,?,?,?,?,?,?,?,100,?,?,?,1.2,0.1,0.1,0,1.0,0.05,?,?)",
         (
             oid, f"candidate-{oid}" if complete else None, "member", "snapshot", symbol,
-            scanner, direction, "24h", _ts, _ts, _ts, 1.0,
+            scanner, direction, "24h", _ts, _ts, _ts,
             "v1" if complete else None, "settled",
         ),
     )

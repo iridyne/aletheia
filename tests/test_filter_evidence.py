@@ -696,9 +696,11 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
         record_filter_decision(candidate_key=key, decision=decision, **common)
         get_db().execute(
             "UPDATE filter_candidate_outcomes SET status='settled', "
+            "directional_return_pct=?, estimated_fee_pct=0.1, "
+            "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
             "net_return_pct=?, min_tradable_edge_pct=0.05, cost_model_version='v1' "
             "WHERE outcome_candidate_key=?",
-            (net, key),
+            (net + 0.2, net, key),
         )
     for suffix, edge in (
         ("missing", None), ("negative", -0.01), ("infinite", float("inf")),
@@ -708,6 +710,8 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
         record_filter_decision(candidate_key=key, decision="rejected", **common)
         get_db().execute(
             "UPDATE filter_candidate_outcomes SET status='settled', "
+            "directional_return_pct=1.0, estimated_fee_pct=0.1, "
+            "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
             "net_return_pct=0.8, min_tradable_edge_pct=?, cost_model_version='v1' "
             "WHERE outcome_candidate_key=?",
             (edge, key),
@@ -716,6 +720,8 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
     record_filter_decision(candidate_key=max_edge_key, decision="rejected", **common)
     get_db().execute(
         "UPDATE filter_candidate_outcomes SET status='settled', "
+        "directional_return_pct=0.2, estimated_fee_pct=0.1, "
+        "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
         "net_return_pct=0, min_tradable_edge_pct=?, cost_model_version='v1' "
         "WHERE outcome_candidate_key=?",
         (float.fromhex("0x1.fffffffffffffp+1023"), max_edge_key),
@@ -730,6 +736,8 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
         record_filter_decision(candidate_key=key, decision="rejected", **common)
         get_db().execute(
             "UPDATE filter_candidate_outcomes SET status='settled', "
+            "directional_return_pct=1.0, estimated_fee_pct=0.1, "
+            "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
             "net_return_pct=0.8, min_tradable_edge_pct=0.05, cost_model_version=? "
             "WHERE outcome_candidate_key=?",
             (cost_model, key),
@@ -739,6 +747,8 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
         record_filter_decision(candidate_key=key, decision="rejected", **common)
         get_db().execute(
             "UPDATE filter_candidate_outcomes SET status='settled', "
+            "directional_return_pct=1.0, estimated_fee_pct=0.1, "
+            "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
             "net_return_pct=?, min_tradable_edge_pct=0.05, cost_model_version='v1' "
             "WHERE outcome_candidate_key=?",
             (net, key),
@@ -1025,7 +1035,13 @@ def test_batch_controller_reads_only_referenced_outcome_keys():
             entry_ts=now.isoformat(),
             due_at=(now + timedelta(hours=1)).isoformat(),
             status="settled",
+            directional_return_pct=0.45,
+            estimated_fee_pct=0.1,
+            estimated_spread_slippage_pct=0.1,
+            estimated_funding_pct=0.0,
             net_return_pct=0.25,
+            min_tradable_edge_pct=0.05,
+            cost_model_version="test-v1",
         ))
     repo.insert_filter_candidate_outcomes_batch(outcomes)
 

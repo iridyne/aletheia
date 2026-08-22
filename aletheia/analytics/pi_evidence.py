@@ -63,6 +63,7 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
     partially settled cohort is explicit neutral evidence, never a negative
     directional claim.
     """
+    from aletheia.storage.repositories import complete_outcome_economics_sql
     from aletheia.storage.sqlite import get_db
 
     family = str(candidate.get("scanner_family") or "unknown")
@@ -108,16 +109,21 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
         "       WHERE en.filter_name='signal_enqueue' AND en.decision='passed' "
         "         AND en.opportunity_id=fd.opportunity_id)"
         "), outcomes AS ("
-        " SELECT c.opportunity_id, fo.net_return_pct, fo.cost_model_version, fo.status "
+        " SELECT c.opportunity_id, fo.net_return_pct, fo.cost_model_version, fo.status, "
+        f" CASE WHEN {complete_outcome_economics_sql('fo')} "
+        " THEN 1 ELSE 0 END AS economics_complete "
         " FROM cohort c LEFT JOIN filter_candidate_outcomes fo "
         "   ON fo.outcome_candidate_key=c.outcome_candidate_key AND fo.horizon=?"
         ") "
         "SELECT COUNT(DISTINCT opportunity_id) AS n_total, "
-        " COUNT(DISTINCT CASE WHEN status='settled' AND net_return_pct IS NOT NULL "
+        " COUNT(DISTINCT CASE WHEN status='settled' AND economics_complete=1 "
         "  THEN opportunity_id END) AS n_net, "
-        " AVG(CASE WHEN status='settled' THEN net_return_pct END) AS avg_net, "
-        " COUNT(DISTINCT CASE WHEN status='settled' THEN cost_model_version END) AS cost_versions, "
-        " MIN(CASE WHEN status='settled' THEN cost_model_version END) AS cost_model_version "
+        " AVG(CASE WHEN status='settled' AND economics_complete=1 "
+        "  THEN net_return_pct END) AS avg_net, "
+        " COUNT(DISTINCT CASE WHEN status='settled' AND economics_complete=1 "
+        "  THEN cost_model_version END) AS cost_versions, "
+        " MIN(CASE WHEN status='settled' AND economics_complete=1 "
+        "  THEN cost_model_version END) AS cost_model_version "
         "FROM outcomes",
         (family, direction, market, _B2_VERSION, policy_epoch_id, bucket, _EVIDENCE_HORIZON),
     ).fetchone()

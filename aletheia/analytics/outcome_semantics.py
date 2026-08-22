@@ -10,6 +10,50 @@ MISSED_ALPHA = "missed_alpha_suspect"
 POSITIVE_GROSS_ONLY = "positive_gross_move_only"
 PROTECTIVE = "protective"
 INSUFFICIENT = "insufficient_data"
+_ECONOMICS_TOLERANCE = 1e-8
+_SUPPORTED_MARKET_TYPES = frozenset({
+    "spot", "perp", "futures", "swap", "usdt_futures",
+})
+
+
+def validated_outcome_economics(row: dict[str, Any]) -> dict[str, float] | None:
+    """Return one reconcilable persisted cost tuple, otherwise fail closed."""
+    cost_model = row.get("cost_model_version")
+    if not isinstance(cost_model, str) or not cost_model.strip():
+        return None
+    fields = (
+        "directional_return_pct",
+        "estimated_fee_pct",
+        "estimated_spread_slippage_pct",
+        "estimated_funding_pct",
+        "net_return_pct",
+        "min_tradable_edge_pct",
+    )
+    values = {field: _to_float(row.get(field)) for field in fields}
+    if any(value is None for value in values.values()):
+        return None
+    economics = {field: float(value) for field, value in values.items()}
+    fee = economics["estimated_fee_pct"]
+    spread = economics["estimated_spread_slippage_pct"]
+    if fee < 0 or spread < 0 or economics["min_tradable_edge_pct"] < 0:
+        return None
+    market_type = str(row.get("market_type") or "").lower()
+    if market_type not in _SUPPORTED_MARKET_TYPES:
+        return None
+    if market_type == "spot" and economics["estimated_funding_pct"] != 0.0:
+        return None
+    expected_net = (
+        economics["directional_return_pct"]
+        - fee
+        - spread
+        - economics["estimated_funding_pct"]
+    )
+    if not math.isclose(
+        economics["net_return_pct"], expected_net,
+        rel_tol=0.0, abs_tol=_ECONOMICS_TOLERANCE,
+    ):
+        return None
+    return economics
 
 
 def classify_counterfactual(
@@ -47,10 +91,13 @@ def outcome_values(row: dict[str, Any], direction: str | None = None) -> dict[st
             directional = raw
         elif side == "short":
             directional = -raw
+    economics = validated_outcome_economics(row)
     return {
         "gross_return_pct": raw,
         "directional_return_pct": directional,
-        "net_return_pct": _to_float(row.get("net_return_pct")),
+        "net_return_pct": (
+            economics["net_return_pct"] if economics is not None else None
+        ),
         "min_tradable_edge_pct": _to_float(row.get("min_tradable_edge_pct")),
     }
 

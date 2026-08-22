@@ -78,7 +78,9 @@ def _fetch_evidence(lesson) -> dict:
         from aletheia.learning.outcomes import assess_candidate_outcome
 
         rows = db.execute(
-            "SELECT id,outcome_candidate_key,status,horizon,entry_ts,direction,"
+            "SELECT id,outcome_candidate_key,status,horizon,entry_ts,direction,market_type,"
+            "directional_return_pct,estimated_fee_pct,"
+            "estimated_spread_slippage_pct,estimated_funding_pct,"
             "net_return_pct,min_tradable_edge_pct,cost_model_version "
             "FROM universe_forward_outcomes "
             "WHERE status='settled' AND horizon='24h' "

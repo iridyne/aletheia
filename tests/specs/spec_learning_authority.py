@@ -49,9 +49,11 @@ def _insert_settled_outcome(candidate_key: str) -> str:
     db.execute(
         "INSERT INTO filter_candidate_outcomes ("
         "id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
-        "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
-        "cost_model_version, status) VALUES (?, ?, 'test', 'BTC/USDT', 'perp', "
-        "'long', '4h', 100, ?, ?, ?, 0.2, 'test-v1', 'settled')",
+        "entry_price_usd, entry_ts, due_at, settled_at, directional_return_pct, "
+        "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+        "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
+        "VALUES (?, ?, 'test', 'BTC/USDT', 'perp', 'long', '4h', 100, ?, ?, ?, "
+        "0.4, 0.1, 0.1, 0, 0.2, 0.05, 'test-v1', 'settled')",
         (f"outcome-{base}", base, now, now, now),
     )
     if not was_in_tx:
@@ -835,9 +837,11 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
 
     was = db.in_transaction
     db.execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.3, "
+        "UPDATE filter_candidate_outcomes SET status='settled', "
+        "directional_return_pct=0.5, net_return_pct=0.3, "
         "estimated_fee_pct=0.1, estimated_spread_slippage_pct=0.1, "
-        "estimated_funding_pct=0.0, mae_pct=-0.1, cost_model_version='test-v1', settled_at=? "
+        "estimated_funding_pct=0.0, min_tradable_edge_pct=0.05, "
+        "mae_pct=-0.1, cost_model_version='test-v1', settled_at=? "
         "WHERE outcome_candidate_key IN (?, ?) AND horizon='4h'",
         (now, ck_t, ck_c),
     )

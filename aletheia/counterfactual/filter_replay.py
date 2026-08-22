@@ -10,6 +10,7 @@ from statistics import mean, median
 from typing import Any, Iterable
 
 from aletheia.analytics.filter_evidence import FIRST_EXPOSURE_CTE_SQL
+from aletheia.storage.repositories import complete_outcome_economics_sql
 from aletheia.storage.sqlite import get_db
 
 
@@ -432,7 +433,9 @@ def _fetch_outcomes_for(
         batch = keys[start:start + chunk]
         placeholders = ", ".join(["?"] * len(batch))
         rows = get_db().execute(
-            f"SELECT outcome_candidate_key, status, net_return_pct "
+            "SELECT outcome_candidate_key, status, "
+            f"CASE WHEN {complete_outcome_economics_sql()} "
+            "THEN net_return_pct END AS net_return_pct "
             f"FROM filter_candidate_outcomes "
             f"WHERE horizon = ? AND outcome_candidate_key IN ({placeholders})",
             (horizon, *batch),
@@ -740,7 +743,9 @@ def _load_observer_first_exposure_rows(
         FIRST_EXPOSURE_CTE_SQL
         + "SELECT fd.outcome_candidate_key, fd.run_id, fd.symbol, "
         "fd.input_snapshot, fd.parameter_snapshot, fd.first_evaluated_at, "
-        "fo.status, fo.net_return_pct "
+        "fo.status, "
+        f"CASE WHEN {complete_outcome_economics_sql('fo')} "
+        "THEN fo.net_return_pct END AS net_return_pct "
         "FROM ranked_filter_decisions fd "
         "LEFT JOIN filter_candidate_outcomes fo "
         " ON fo.outcome_candidate_key=fd.outcome_candidate_key AND fo.horizon=? "
@@ -794,7 +799,9 @@ def _load_first_exposure_rows(
     rows = get_db().execute(
         FIRST_EXPOSURE_CTE_SQL +
         "SELECT fd.outcome_candidate_key, fd.input_snapshot, fd.parameter_snapshot, "
-        "fd.first_evaluated_at, fo.status, fo.net_return_pct "
+        "fd.first_evaluated_at, fo.status, "
+        f"CASE WHEN {complete_outcome_economics_sql('fo')} "
+        "THEN fo.net_return_pct END AS net_return_pct "
         "FROM ranked_filter_decisions fd "
         "LEFT JOIN filter_candidate_outcomes fo "
         " ON fo.outcome_candidate_key=fd.outcome_candidate_key AND fo.horizon=? "

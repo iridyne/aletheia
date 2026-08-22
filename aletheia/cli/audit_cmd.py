@@ -41,8 +41,11 @@ def data(
     output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON"),
 ):
     """Check OHLCV coverage and signal effectiveness for all active members."""
-    from aletheia.storage.repositories import get_active_universe_members
-    from aletheia.storage.sqlite import SQLITE_PYTHON_STRIP_CHARS_SQL, get_db
+    from aletheia.storage.repositories import (
+        complete_outcome_economics_sql,
+        get_active_universe_members,
+    )
+    from aletheia.storage.sqlite import get_db
     from aletheia.config.loader import load_config
     from datetime import datetime, timezone, timedelta
 
@@ -81,13 +84,7 @@ def data(
            WHERE status = 'settled'
              AND horizon = '24h'
              AND settled_at >= ?
-             AND typeof(net_return_pct) IN ('integer', 'real')
-             AND ABS(net_return_pct) <= 100
-             AND typeof(cost_model_version) = 'text'
-             AND TRIM(cost_model_version, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> ''
-             AND typeof(min_tradable_edge_pct) IN ('integer', 'real')
-             AND min_tradable_edge_pct >= 0
-             AND min_tradable_edge_pct < 1e999""",
+             AND {complete_outcome_economics_sql()}""",
         (cutoff,),
     ).fetchone()
     total_outcomes, wins, avg_ret = row if row else (0, None, None)

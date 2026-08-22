@@ -431,7 +431,7 @@ def test_live_without_resolvable_family_rejected(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("edge_threshold", "cost_model_version", "raw_net", "expect_no_evidence"),
+    ("edge_threshold", "cost_model_version", "raw_update", "expect_no_evidence"),
     (
         (0.05, "v1", None, False),
         (None, "v1", None, True),
@@ -439,12 +439,19 @@ def test_live_without_resolvable_family_rejected(tmp_path, monkeypatch):
         (0.05, "\t", None, True),
         (0.05, "\n", None, True),
         (0.05, "\N{NO-BREAK SPACE}", None, True),
-        (0.05, "v1", "malformed", True),
-        (0.05, "v1", b"4.73", True),
+        (0.05, "v1", ("net_return_pct", "malformed"), True),
+        (0.05, "v1", ("net_return_pct", b"4.73"), True),
+        (0.05, "v1", ("estimated_fee_pct", None), True),
+        (0.05, "v1", ("estimated_spread_slippage_pct", None), True),
+        (0.05, "v1", ("estimated_funding_pct", None), True),
+        (0.05, "v1", ("estimated_fee_pct", -0.12), True),
+        (0.05, "v1", ("estimated_spread_slippage_pct", -0.15), True),
+        (0.05, "v1", ("estimated_funding_pct", float("inf")), True),
+        (0.05, "v1", ("net_return_pct", 5.0), True),
     ),
 )
 def test_live_family_gate_requires_complete_edge_evidence(
-    tmp_path, monkeypatch, edge_threshold, cost_model_version, raw_net,
+    tmp_path, monkeypatch, edge_threshold, cost_model_version, raw_update,
     expect_no_evidence,
 ):
     setup_env(tmp_path, monkeypatch)
@@ -465,11 +472,16 @@ def test_live_family_gate_requires_complete_edge_evidence(
             min_tradable_edge_pct=edge_threshold, cost_model_version=cost_model_version,
             market_type="spot", status="settled",
         ))
-    if raw_net is not None:
+    if raw_update is not None:
         from aletheia.storage.sqlite import get_db
+        column, value = raw_update
+        assert column in {
+            "net_return_pct", "estimated_fee_pct",
+            "estimated_spread_slippage_pct", "estimated_funding_pct",
+        }
         get_db().execute(
-            "UPDATE universe_forward_outcomes SET net_return_pct=? WHERE snapshot_id='snap1'",
-            (raw_net,),
+            f"UPDATE universe_forward_outcomes SET {column}=? WHERE snapshot_id='snap1'",
+            (value,),
         )
         get_db().commit()
     opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",

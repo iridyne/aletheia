@@ -7605,15 +7605,39 @@ _OUTCOME_MARKET_SQL = (
     "CASE WHEN market_type IN ('perp','futures','swap','usdt_futures') "
     "THEN 'perp' ELSE COALESCE(market_type, 'spot') END"
 )
-_COMPLETE_OUTCOME_ECONOMICS_SQL = (
-    "typeof(net_return_pct) IN ('integer', 'real') "
-    "AND ABS(net_return_pct) <= 100 "
-    "AND typeof(cost_model_version) = 'text' "
-    f"AND TRIM(cost_model_version, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> '' "
-    "AND typeof(min_tradable_edge_pct) IN ('integer', 'real') "
-    "AND min_tradable_edge_pct >= 0 "
-    "AND min_tradable_edge_pct < 1e999"
-)
+def complete_outcome_economics_sql(table_alias: str = "") -> str:
+    """Return the shared SQLite predicate for decision-grade net outcomes."""
+    prefix = f"{table_alias}." if table_alias else ""
+    return (
+        f"typeof({prefix}directional_return_pct) IN ('integer', 'real') "
+        f"AND ABS({prefix}directional_return_pct) < 1e999 "
+        f"AND typeof({prefix}estimated_fee_pct) IN ('integer', 'real') "
+        f"AND {prefix}estimated_fee_pct >= 0 "
+        f"AND {prefix}estimated_fee_pct < 1e999 "
+        f"AND typeof({prefix}estimated_spread_slippage_pct) IN ('integer', 'real') "
+        f"AND {prefix}estimated_spread_slippage_pct >= 0 "
+        f"AND {prefix}estimated_spread_slippage_pct < 1e999 "
+        f"AND typeof({prefix}estimated_funding_pct) IN ('integer', 'real') "
+        f"AND ABS({prefix}estimated_funding_pct) < 1e999 "
+        f"AND typeof({prefix}market_type) = 'text' "
+        f"AND LOWER({prefix}market_type) IN "
+        "('spot', 'perp', 'futures', 'swap', 'usdt_futures') "
+        f"AND (LOWER({prefix}market_type) <> 'spot' "
+        f"OR {prefix}estimated_funding_pct = 0) "
+        f"AND typeof({prefix}net_return_pct) IN ('integer', 'real') "
+        f"AND ABS({prefix}net_return_pct) <= 100 "
+        f"AND ABS({prefix}net_return_pct - ({prefix}directional_return_pct "
+        f"- {prefix}estimated_fee_pct - {prefix}estimated_spread_slippage_pct "
+        f"- {prefix}estimated_funding_pct)) <= 1e-8 "
+        f"AND typeof({prefix}cost_model_version) = 'text' "
+        f"AND TRIM({prefix}cost_model_version, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> '' "
+        f"AND typeof({prefix}min_tradable_edge_pct) IN ('integer', 'real') "
+        f"AND {prefix}min_tradable_edge_pct >= 0 "
+        f"AND {prefix}min_tradable_edge_pct < 1e999"
+    )
+
+
+_COMPLETE_OUTCOME_ECONOMICS_SQL = complete_outcome_economics_sql()
 
 
 def insert_forward_outcome(outcome) -> None:
@@ -8375,9 +8399,7 @@ def family_spread_tolerance_stats() -> list[dict]:
         "WHERE status = 'settled' "
         "AND scanner_family IS NOT NULL "
         "AND entry_spread_bps IS NOT NULL "
-        "AND cost_model_version IS NOT NULL "
-        "AND net_return_pct IS NOT NULL "
-        "AND ABS(net_return_pct) <= 100 "
+        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND direction IN ('long', 'short') "
         "AND entry_ts >= ? "
         f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon "
