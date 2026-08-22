@@ -389,6 +389,14 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
 - **交易所明确拒单不得按 scheduler cadence 重试**：无法安全归类为“无仓位”的确定性 Close 拒单，
   Order 保持 `error`，Position 以 `pending_close_status=submission_rejected` 保留原 claim；不得新建 Close
   Order 或自动重发，须由既有 reconciliation 查明原因。该状态不伪装成成交或仓位消失。
+- **Bitget 40725 停泊只能由 owner 授权解锁**：UTA `trade_too_many_times_cancel` 取消的 close
+  归一为 `pending_close_status=venue_trade_rate_limited`（永不被自动释放——立即重发只会再撞
+  40725）。解锁通道是 `pending_close_recovery.release_rate_limited_close_claim`（dashboard
+  `POST /api/positions/{id}/recover-parked-close`）：仅在 claim 恰好处于停泊态、对应 Order 已
+  cancelled 且 error_reason 吻合时，把取消原因转写为预留的
+  `operator_authorized_cleanup_trade_rate_limited` 并清空 claim，让保护性平仓以全新
+  `close-{id}-rN` clientOid 重试；全程写审计（actor=human + owner reason），不制造任何 Fill、
+  价格或 PnL。不满足前置状态的解锁请求整体拒绝、状态零变更。
 - **未决 claim 不得关闭保护性观察**：Position Manager 仍读取 exact fresh mark 并评估
   Layer-0/SL/TP/max-hold/trailing；若保护规则再次触发，只记录等待原 claim 收敛，绝不调用
   exchange close 或创建替代 Order。`positions` 的 owner read model 同时暴露
