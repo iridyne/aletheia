@@ -8,7 +8,7 @@ import type { TabDef } from '../components/Tabs'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import { StatusBadge } from '../components/DataTable'
 import { DataStateMessage } from '../components/DataState'
-import { Badge, Button, Card, StatusText, TableWrap, useToast, type StatusTone } from '../components/ui'
+import { Badge, Button, Card, ListRowButton, StatusText, TableWrap, useToast, type StatusTone } from '../components/ui'
 import ProbabilityChart from '../charts/ProbabilityChart'
 import { fmtScore100, fmtTimestamp } from '../lib/format'
 
@@ -144,9 +144,9 @@ function ObserverStatusCard({ status, state }: { status: PredictionStatus | unde
 // --- Market Card ---
 function MarketCard({ market, onClick }: { market: PredictionMarket; onClick: () => void }) {
   return (
-    <button
+    <ListRowButton
       type="button"
-      className="card pred-market-card"
+      className="pred-market-card"
       aria-label={`Open details for ${market.event_title}`}
       onClick={onClick}
     >
@@ -181,7 +181,7 @@ function MarketCard({ market, onClick }: { market: PredictionMarket; onClick: ()
         )}
         <span className="text-muted text-sm">{shortDate(market.created_at)}</span>
       </div>
-    </button>
+    </ListRowButton>
   )
 }
 
