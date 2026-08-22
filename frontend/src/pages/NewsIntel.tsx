@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
-import { Badge, Button, Card, useToast } from '../components/ui'
+import { Badge, Button, Card, ListRowButton, useToast } from '../components/ui'
 import { DataStateMessage } from '../components/DataState'
 import { humanize, fmtTimestamp, stripHtml } from '../lib/format'
 
@@ -167,10 +167,10 @@ export default function NewsIntel() {
       ) : (
         <div className="news-list">
           {items.map(item => (
-            <button
+            <ListRowButton
               type="button"
               key={item.id}
-              className="card news-card clickable"
+              className="news-card clickable"
               data-news-id={item.id}
               aria-label={`Open news detail: ${item.title}`}
               onClick={() => { setSelected(item); setAnalysis(null) }}
@@ -198,7 +198,7 @@ export default function NewsIntel() {
               {item.summary && (
                 <p className="text-muted text-sm mt-2 news-summary">{stripHtml(item.summary)}</p>
               )}
-            </button>
+            </ListRowButton>
           ))}
         </div>
       )}

@@ -66,8 +66,8 @@ describe('News Intelligence keyboard interaction', () => {
 })
 
 describe('News Intelligence keyboard source contract', () => {
-  it('uses a native, named card opener without nested controls', () => {
-    expect(SRC).toContain('<button')
+  it('uses the shared keyboard button primitive without nested controls', () => {
+    expect(SRC).toContain('<ListRowButton')
     expect(SRC).toContain('data-news-id={item.id}')
     expect(SRC).toContain('aria-label={`Open news detail: ${item.title}`}')
     expect(SRC).toContain('newsFilterFallback')
