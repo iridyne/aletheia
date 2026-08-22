@@ -1150,7 +1150,20 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 
 /* ---------- News Intelligence list ---------- */
 .news-list { display: flex; flex-direction: column; gap: var(--space-2); }
-.news-card { padding: var(--space-3) var(--space-4); margin-bottom: 0; }
+.news-card {
+  display: block;
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: 0;
+  color: var(--text);
+  font: inherit;
+  font-weight: 400;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.news-card:hover { filter: none; background: var(--surface-2); border-color: var(--border-2); }
+button.news-card:active:not(:disabled) { transform: none; }
 .news-card-main { flex: 1; min-width: 0; }
 .news-title { font-size: 0.85rem; font-weight: 500; margin-bottom: var(--space-1); }
 /* clamp summary to 2 lines at a word boundary instead of a mid-word .slice() */
