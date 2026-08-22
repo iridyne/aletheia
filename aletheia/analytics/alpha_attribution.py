@@ -989,8 +989,9 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         "WITH operator_rows AS ("
         " SELECT fd.*, fd.rowid AS source_rowid, pd.action, pd.runtime_session_id,"
         " pd.producer_commit, pd.behavior_fingerprint,"
-        " MIN(fd.evaluated_at) OVER "
-        " (PARTITION BY fd.outcome_candidate_key) AS first_evaluated_at"
+        " ROW_NUMBER() OVER "
+        " (PARTITION BY fd.outcome_candidate_key"
+        "  ORDER BY julianday(fd.evaluated_at) ASC, fd.rowid ASC) AS exposure_rank"
         " FROM filter_decisions fd JOIN pi_decisions pd"
         " ON fd.candidate_key=('pi_decision:' || pd.id)"
         " WHERE fd.candidate_kind='pi_decision' AND fd.stage='system_operator'"
@@ -1000,7 +1001,7 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         " AND pd.behavior_fingerprint IS NOT NULL AND pd.producer_commit=fd.code_commit"
         "), first_rows AS ("
         " SELECT * FROM operator_rows"
-        " WHERE evaluated_at=first_evaluated_at"
+        " WHERE exposure_rank=1"  # #1511: stable tiebreaker via rowid, no duplicates
         ") "
     )
     contract = db.execute(

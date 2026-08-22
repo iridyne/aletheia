@@ -215,8 +215,13 @@ def get_equity_curve(
         execution_mode=execution_mode,
         closed_after=read_after,
     )
-    rows = rows[-max(1, min(limit, 5000)):]
-    genuine_rows = [row for row in rows if assess_reportable_outcome(row).eligible]
+    # #1549: never truncate in full_cumulative mode before accumulating — dropping
+    # early rows makes cumulative start from wrong base. Keep all rows for
+    # accumulation; limit only the returned display points.
+    all_rows = rows
+    if mode == "window_relative":
+        rows = rows[-max(1, min(limit, 5000)):]
+    genuine_rows = [row for row in all_rows if assess_reportable_outcome(row).eligible]
 
     def _points(source_rows: list[dict]) -> tuple[list[dict], float | None]:
         cumulative = 0.0
@@ -236,9 +241,11 @@ def get_equity_curve(
                 "pnl": round(pnl, 4),
                 "cumulative_pnl": round(cumulative, 4),
             })
-        return points, round(cumulative, 4) if recorded else None
+        # Limit display points to recent window; cumulative already includes all history
+        display_limit = max(1, min(limit, 5000))
+        return points[-display_limit:], round(cumulative, 4) if recorded else None
 
-    raw_points, raw_total = _points(rows)
+    raw_points, raw_total = _points(all_rows)
     genuine_points, genuine_total = _points(genuine_rows)
     cohort = build_outcome_cohort_summary(
         execution_mode=execution_mode,
@@ -346,24 +353,28 @@ def get_cost_summary():
         if not rows or not any(
             row.get(field) is not None
             for row in rows
-            for field in ("entry_fee", "exit_fee", "slippage_cost")
+            for field in ("entry_fee", "exit_fee", "slippage_cost", "funding_cost")
         ):
             return {
                 "total_entry_fees": None,
                 "total_exit_fees": None,
                 "total_fees": None,
                 "total_slippage": None,
+                "total_funding": None,
                 "total_costs": None,
             }
         entry = sum(float(row.get("entry_fee") or 0) for row in rows)
         exit_ = sum(float(row.get("exit_fee") or 0) for row in rows)
         slippage = sum(float(row.get("slippage_cost") or 0) for row in rows)
+        # #1625: include funding cost in the verified total
+        funding = sum(float(row.get("funding_cost") or 0) for row in rows)
         return {
             "total_entry_fees": round(entry, 8),
             "total_exit_fees": round(exit_, 8),
             "total_fees": round(entry + exit_, 8),
             "total_slippage": round(slippage, 8),
-            "total_costs": round(entry + exit_ + slippage, 8),
+            "total_funding": round(funding, 8),
+            "total_costs": round(entry + exit_ + slippage + funding, 8),
         }
 
     verified = _costs(eligible_strategy_outcomes())

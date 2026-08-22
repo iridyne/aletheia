@@ -106,6 +106,19 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _to_utc_iso(ts: str) -> str:
+    """Normalize a timestamp string to UTC ISO format for correct chronological comparison.
+
+    Handles offset-formatted timestamps like '2026-08-22T10:00:00+08:00' and
+    converts them to UTC '2026-08-22T02:00:00+00:00' so string comparison is valid. (#1266)
+    """
+    try:
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        return dt.astimezone(timezone.utc).isoformat()
+    except (ValueError, AttributeError):
+        return str(ts)
+
+
 def _batch_scanner_weights_quota_stats(
     *, evaluated_since: str | None = None,
     shrinkage_k: float = 20.0,
@@ -162,7 +175,9 @@ def _batch_scanner_weights_quota_stats(
                 continue
             key = str(outcome_key)
             existing = first_exposure.get(key)
-            if existing is not None and str(existing) <= str(evaluated_at or ""):
+            # #1266: normalize to UTC before comparing — offset timestamps like
+            # '+08:00' would otherwise sort incorrectly against UTC timestamps.
+            if existing is not None and _to_utc_iso(existing) <= _to_utc_iso(str(evaluated_at or "")):
                 # Not the first exposure — skip to keep pass/reject cohorts disjoint.
                 continue
             first_exposure[key] = str(evaluated_at or "")
