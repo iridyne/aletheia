@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
@@ -37,6 +37,21 @@ export default function NewsIntel() {
   const [filter, setFilter] = useState<string>('all')
   const [showAdd, setShowAdd] = useState(false)
   const [addForm, setAddForm] = useState({ title: '', source: '', url: '', summary: '', symbols: '', sentiment: 'neutral' })
+  const restoreNewsId = useRef<string | null>(null)
+  const newsFilterFallback = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (selected) {
+      restoreNewsId.current = selected.id
+      return
+    }
+    const id = restoreNewsId.current
+    if (!id) return
+    const opener = Array.from(document.querySelectorAll<HTMLElement>('[data-news-id]'))
+      .find(node => node.dataset.newsId === id)
+    ;(opener || newsFilterFallback.current)?.focus()
+    restoreNewsId.current = null
+  }, [selected])
 
   const { toast } = useToast()
   const analyzeMut = useMutation({
@@ -104,6 +119,7 @@ export default function NewsIntel() {
         {['all', 'new', 'reviewed', 'analyzed'].map(f => (
           <Button
             key={f}
+            ref={f === 'all' ? newsFilterFallback : undefined}
             variant={f === filter ? 'primary' : 'secondary'}
             className="btn-sm"
             onClick={() => setFilter(f)}
@@ -151,9 +167,12 @@ export default function NewsIntel() {
       ) : (
         <div className="news-list">
           {items.map(item => (
-            <Card
+            <button
+              type="button"
               key={item.id}
-              className="news-card clickable"
+              className="card news-card clickable"
+              data-news-id={item.id}
+              aria-label={`Open news detail: ${item.title}`}
               onClick={() => { setSelected(item); setAnalysis(null) }}
             >
               <div className="flex justify-between items-center gap-2">
@@ -179,7 +198,7 @@ export default function NewsIntel() {
               {item.summary && (
                 <p className="text-muted text-sm mt-2 news-summary">{stripHtml(item.summary)}</p>
               )}
-            </Card>
+            </button>
           ))}
         </div>
       )}
@@ -227,6 +246,7 @@ export default function NewsIntel() {
               ) : (
                 <Button
                   className="btn-sm"
+                  aria-label="Analyze Impact"
                   onClick={() => analyzeMut.mutate(selected.id)}
                   disabled={analyzeMut.isPending}
                 >
