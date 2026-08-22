@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import CollectorHealthDetails from './CollectorHealthDetails'
@@ -66,6 +66,13 @@ export default function StatusCluster({
   const qc = useQueryClient()
   const confirm = useConfirm()
   const [detailsRequested, setDetailsRequested] = useState(false)
+  const [popoverOpen, setPopoverOpen] = useState(false)
+  const [popoverDismissed, setPopoverDismissed] = useState(false)
+  const popoverId = useId()
+  const statusWrapRef = useRef<HTMLDivElement>(null)
+  const openerRef = useRef<HTMLButtonElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const restoreFocusRef = useRef(false)
   const [error, setError] = useState('')
   const paused = !!data?.gateway?.paused
   const running = !!data?.gateway?.running
@@ -197,6 +204,41 @@ export default function StatusCluster({
     setMode.mutate(next)
   }
   const requestDetails = () => setDetailsRequested(true)
+  const handleOpenerFocus = () => {
+    requestDetails()
+    if (restoreFocusRef.current) {
+      restoreFocusRef.current = false
+      return
+    }
+    setPopoverDismissed(false)
+  }
+  const closePopover = (restoreFocus = false) => {
+    setPopoverOpen(false)
+    setPopoverDismissed(restoreFocus)
+    if (restoreFocus) {
+      restoreFocusRef.current = true
+      openerRef.current?.focus()
+    }
+  }
+
+  useEffect(() => {
+    if (!popoverOpen) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closePopover(true)
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!statusWrapRef.current?.contains(event.target as Node)) closePopover()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    document.addEventListener('pointerdown', handlePointerDown)
+    popoverRef.current?.focus()
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.removeEventListener('pointerdown', handlePointerDown)
+    }
+  }, [popoverOpen])
 
   if (!data) {
     return (
@@ -211,7 +253,33 @@ export default function StatusCluster({
 
   return (
     <div className="topbar-status">
-      <div className="status-cluster" tabIndex={0} aria-label="System status" onMouseEnter={requestDetails} onFocus={requestDetails}>
+      <div
+        ref={statusWrapRef}
+        className="status-cluster-wrap"
+        onMouseEnter={requestDetails}
+        onFocus={handleOpenerFocus}
+        onBlurCapture={event => {
+          if (!statusWrapRef.current?.contains(event.relatedTarget as Node)) {
+            setPopoverOpen(false)
+            setPopoverDismissed(false)
+          }
+        }}
+        onPointerDown={requestDetails}
+      >
+        <button
+          ref={openerRef}
+          type="button"
+          className="status-cluster"
+          aria-label={`System status: ${master.word}`}
+          aria-expanded={popoverOpen}
+          aria-controls={popoverId}
+          onClick={() => {
+            requestDetails()
+            const nextOpen = !popoverOpen
+            setPopoverDismissed(!nextOpen)
+            setPopoverOpen(nextOpen)
+          }}
+        >
         <span className="status-cluster-lights" aria-hidden="true">
           <span className={`dot dot-${gwLight}`} />
           <span className={`dot dot-${connectivityLight}`} />
@@ -228,9 +296,19 @@ export default function StatusCluster({
           <span className={`dot dot-${realtimeTone}`} />{realtimeLabel}
         </span>
         <span className={`status-cluster-state status-cluster-${master.tone}`}>{master.word}</span>
+        </button>
 
-        <div className="status-popover" role="tooltip">
-          <div className="status-popover-title">System Status</div>
+        <div
+          id={popoverId}
+          ref={popoverRef}
+          className={'status-popover' + (popoverOpen ? ' is-open' : '') + (popoverDismissed ? ' is-dismissed' : '')}
+          role="dialog"
+          aria-modal="false"
+          aria-hidden={!popoverOpen}
+          aria-labelledby={popoverId + '-title'}
+          tabIndex={-1}
+        >
+          <div id={popoverId + '-title'} className="status-popover-title">System Status</div>
 
           <div className="sp-section">
             <div className="sp-row"><span className={`dot dot-${gwLight}`} /><span className="sp-label">Gateway</span><span className="sp-value">{running ? (paused ? 'paused' : 'running') : 'stopped'}</span></div>
@@ -302,7 +380,7 @@ export default function StatusCluster({
             <div className="sp-drift">
               <div className="sp-section-label sp-drift-label">⚠ Code Drift</div>
               <span className="sp-value">{driftRange}</span>
-              <button className="topbar-btn secondary" onClick={() => restart.mutate()} disabled={restart.isPending} title="Kill the current gateway process and cold-restart from disk. Use when git pull brought new commits that --reload didn't pick up, or when the process is in a bad state.">
+              <button className="topbar-btn secondary" onClick={() => restart.mutate()} disabled={restart.isPending} tabIndex={popoverOpen ? 0 : -1} title="Kill the current gateway process and cold-restart from disk. Use when git pull brought new commits that --reload didn't pick up, or when the process is in a bad state.">
                 {restart.isPending ? 'restarting…' : '↻ Cold Restart'}
               </button>
               <p className="sp-drift-hint">Hot-reload missed these commits. Cold restart loads the new code.</p>
