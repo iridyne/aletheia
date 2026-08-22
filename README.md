@@ -179,3 +179,5 @@ uv run pytest
 ```
 
 Use focused tests while fixing narrow defects and the repository's CI/spec contracts for trust-boundary changes. For UI-only worktree iteration, see [`DEVELOPMENT_PREVIEW.md`](docs/operations/development/DEVELOPMENT_PREVIEW.md).
+
+Worktree frontend HMR runs on `http://127.0.0.1:5173`; the stable gateway remains on `http://127.0.0.1:8787`.
