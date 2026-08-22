@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import logging
 
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
 logger = logging.getLogger("aletheia.universe.filter_advisor")
 
 # Minimum samples before adjusting tolerance away from neutral
@@ -59,8 +61,12 @@ def get_family_spread_tolerances(max_step: float = 0.20) -> dict[str, float]:
     from aletheia.storage import repositories as repo
 
     try:
-        spread_rows = repo.family_spread_tolerance_stats()
-        pressure_rows = repo.filter_pressure_stats()
+        spread_rows = repo.family_spread_tolerance_stats(
+            cost_model_version=COST_MODEL_VERSION,
+        )
+        pressure_rows = repo.filter_pressure_stats(
+            cost_model_version=COST_MODEL_VERSION,
+        )
     except Exception as exc:
         logger.warning("filter_advisor: data fetch failed: %s", exc)
         return {}
@@ -134,7 +140,7 @@ def get_family_filter_pressure_summary() -> list[dict]:
     from aletheia.storage import repositories as repo
 
     try:
-        rows = repo.filter_pressure_stats()
+        rows = repo.filter_pressure_stats(cost_model_version=COST_MODEL_VERSION)
     except Exception as exc:
         logger.warning("filter_advisor: pressure data fetch failed: %s", exc)
         return []
@@ -157,6 +163,7 @@ def get_family_filter_pressure_summary() -> list[dict]:
             "direction": row.get("direction"),
             "market_type": row.get("market_type"),
             "horizon": horizon,
+            "cost_model_version": row.get("cost_model_version"),
             "avg_net_missed": round(float(avg_net), 3),
             "miss_rate": round(float(row.get("miss_rate") or 0), 3),
             "n": n,

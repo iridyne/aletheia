@@ -23,7 +23,10 @@ def setup_test_db(tmp_path):
     return conn
 
 
-def _settled(symbol, direction, ret_pct, *, family="momentum", horizon="1h", entry_ts=None, member_id=None):
+def _settled(
+    symbol, direction, ret_pct, *, family="momentum", horizon="1h",
+    entry_ts=None, member_id=None, cost_model_version="test-v1",
+):
     directional = None
     if direction == "long":
         directional = ret_pct
@@ -54,7 +57,7 @@ def _settled(symbol, direction, ret_pct, *, family="momentum", horizon="1h", ent
         estimated_funding_pct=0.0,
         net_return_pct=net,
         min_tradable_edge_pct=0.05,
-        cost_model_version="test-v1",
+        cost_model_version=cost_model_version,
         status="settled",
     )
 
@@ -66,7 +69,10 @@ def test_short_winner_counts_on_negative_return(tmp_path):
         _settled("AAA/USDT", "short", -5.0, family="mean_reversion"),
         _settled("BBB/USDT", "short", 3.0, family="mean_reversion"),
     ])
-    stats = {(r["scanner_family"], r["direction"], r["market_type"], r["horizon"]): r for r in repo.calibration_stats()}
+    stats = {
+        (r["scanner_family"], r["direction"], r["market_type"], r["horizon"]): r
+        for r in repo.calibration_stats(cost_model_version="test-v1")
+    }
     row = stats[("mean_reversion", "short", "spot", "1h")]
     assert row["n"] == 2
     assert row["win_count"] == 1  # only the -5% short wins
@@ -79,7 +85,10 @@ def test_long_winner_counts_on_positive_return(tmp_path):
         _settled("AAA/USDT", "long", 5.0),
         _settled("BBB/USDT", "long", -2.0),
     ])
-    stats = {(r["scanner_family"], r["direction"], r["market_type"], r["horizon"]): r for r in repo.calibration_stats()}
+    stats = {
+        (r["scanner_family"], r["direction"], r["market_type"], r["horizon"]): r
+        for r in repo.calibration_stats(cost_model_version="test-v1")
+    }
     row = stats[("momentum", "long", "spot", "1h")]
     assert row["n"] == 2
     assert row["win_count"] == 1  # only the +5% long wins
@@ -91,10 +100,32 @@ def test_long_winner_counts_on_positive_return(tmp_path):
     ])
     updated = {
         (item["scanner_family"], item["direction"], item["market_type"], item["horizon"]): item
-        for item in repo.calibration_stats()
+        for item in repo.calibration_stats(cost_model_version="test-v1")
     }[("momentum", "long", "spot", "1h")]
     assert updated["n"] == 3
     assert updated["source_outcome_fingerprint"] != first_fingerprint
+    reset_db()
+
+
+def test_calibration_stats_isolates_exact_cost_model_versions(tmp_path):
+    setup_test_db(tmp_path)
+    repo.insert_forward_outcomes_batch([
+        _settled("AAA/USDT", "long", 5.0),
+        _settled("BBB/USDT", "long", -2.0),
+        _settled(
+            "CCC/USDT", "long", 9.0,
+            cost_model_version="legacy-v0",
+        ),
+    ])
+
+    current = repo.calibration_stats(cost_model_version="test-v1")[0]
+    legacy = repo.calibration_stats(cost_model_version="legacy-v0")[0]
+
+    assert current["n"] == 2
+    assert current["cost_model_version"] == "test-v1"
+    assert legacy["n"] == 1
+    assert legacy["cost_model_version"] == "legacy-v0"
+    assert current["source_outcome_fingerprint"] != legacy["source_outcome_fingerprint"]
     reset_db()
 
 
@@ -153,7 +184,7 @@ def test_incomplete_tradable_edge_is_excluded_from_calibration(tmp_path):
     )
     get_db().commit()
 
-    rows = repo.calibration_stats()
+    rows = repo.calibration_stats(cost_model_version="test-v1")
     assert len(rows) == 1
     assert rows[0]["n"] == 2
     assert rows[0]["win_count"] == 1
@@ -167,7 +198,10 @@ def test_null_direction_is_excluded_from_calibration(tmp_path):
         _settled("BBB/USDT", None, -4.0, family="volatility"),
         _settled("CCC/USDT", "long", 3.0, family="volatility"),
     ])
-    stats = {(r["scanner_family"], r["direction"], r["market_type"], r["horizon"]): r for r in repo.calibration_stats()}
+    stats = {
+        (r["scanner_family"], r["direction"], r["market_type"], r["horizon"]): r
+        for r in repo.calibration_stats(cost_model_version="test-v1")
+    }
     row = stats[("volatility", "long", "spot", "1h")]
     assert row["n"] == 1
     assert row["win_count"] == 1  # only the explicit long row counts
@@ -186,7 +220,10 @@ def test_horizon_separated_counts(tmp_path):
         _settled("AAA/USDT", "long", 4.0, entry_ts="2026-08-01T01:30:00+00:00", member_id="m_aaa_4"),  # +90min
         _settled("BBB/USDT", "long", 1.0, entry_ts="2026-08-01T00:00:00+00:00", member_id="m_bbb_1"),
     ])
-    stats = {(r["scanner_family"], r["direction"], r["market_type"], r["horizon"]): r for r in repo.calibration_stats()}
+    stats = {
+        (r["scanner_family"], r["direction"], r["market_type"], r["horizon"]): r
+        for r in repo.calibration_stats(cost_model_version="test-v1")
+    }
     row = stats[("momentum", "long", "spot", "1h")]
     assert row["n"] == 5               # raw count unchanged
     assert row["independent_n"] == 3   # AAA@T0, AAA@T+90m, BBB@T0

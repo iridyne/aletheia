@@ -3571,6 +3571,7 @@ def _probe_signal_effectiveness(report: Report) -> None:
     try:
         from aletheia.storage.repositories import complete_outcome_economics_sql
         from aletheia.storage.sqlite import get_db
+        from aletheia.universe.outcome_economics import COST_MODEL_VERSION
         from datetime import timedelta
 
         db = get_db()
@@ -3586,8 +3587,9 @@ def _probe_signal_effectiveness(report: Report) -> None:
                WHERE status = 'settled'
                  AND horizon = '24h'
                  AND settled_at >= ?
+                 AND cost_model_version = ?
                  AND {complete_outcome_economics_sql()}""",
-            (cutoff,),
+            (cutoff, COST_MODEL_VERSION),
         ).fetchone()
 
         total, wins, avg_ret = row if row else (0, None, None)
@@ -3599,20 +3601,24 @@ def _probe_signal_effectiveness(report: Report) -> None:
 
         win_rate = (wins or 0) / total * 100
         avg_str = f"{avg_ret:.3f}%" if avg_ret is not None else "n/a"
+        identity = f"cost_model={COST_MODEL_VERSION}"
 
         if win_rate < 40:
             report.add(
                 "data.signal", "warn",
-                f"24h net signal win_rate {win_rate:.1f}% ({total} settled, avg_net={avg_str}) — "
+                f"24h net signal win_rate {win_rate:.1f}% "
+                f"({total} settled, avg_net={avg_str}, {identity}) — "
                 "aggregate observation requires cohort diagnosis",
                 "inspect outcome coverage, candidate-skip evidence, and cohort splits; do not auto-tune PI",
             )
         elif win_rate >= 55:
             report.add("data.signal", "ok",
-                       f"24h net signal win_rate {win_rate:.1f}% ({total} settled, avg_net={avg_str})")
+                       f"24h net signal win_rate {win_rate:.1f}% "
+                       f"({total} settled, avg_net={avg_str}, {identity})")
         else:
             report.add("data.signal", "info",
-                       f"24h net signal win_rate {win_rate:.1f}% ({total} settled, avg_net={avg_str}) — near-random")
+                       f"24h net signal win_rate {win_rate:.1f}% "
+                       f"({total} settled, avg_net={avg_str}, {identity}) — near-random")
     except Exception:
         pass
 
@@ -3622,6 +3628,7 @@ def _probe_outcome_economics(report: Report) -> None:
     try:
         from aletheia.storage.repositories import complete_outcome_economics_sql
         from aletheia.storage.sqlite import get_db
+        from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
         db = get_db()
         row = db.execute(
@@ -3634,7 +3641,8 @@ def _probe_outcome_economics(report: Report) -> None:
             "SUM(CASE WHEN net_return_pct IS NULL "
             "  AND settlement_price_source = 'late_ticker' THEN 1 ELSE 0 END) AS late_price "
             "FROM universe_forward_outcomes "
-            "WHERE status='settled' AND cost_model_version='v1'"
+            "WHERE status='settled' AND cost_model_version=?",
+            (COST_MODEL_VERSION,),
         ).fetchone()
         total = int(row["total"] or 0) if row else 0
         complete = int(row["complete"] or 0) if row else 0
@@ -3644,13 +3652,15 @@ def _probe_outcome_economics(report: Report) -> None:
             report.add(
                 "data.outcome_economics",
                 "info",
-                "cost-aware outcome model is warming up; no settled v1 rows yet",
+                "cost-aware outcome model is warming up; no settled "
+                f"{COST_MODEL_VERSION} rows yet",
             )
             return
         ratio = complete / total
         detail = (
             f"cost-aware outcomes complete={complete}/{total} ({ratio:.0%}); "
-            f"missing_funding={missing_funding}, late_price={late_price}"
+            f"missing_funding={missing_funding}, late_price={late_price}; "
+            f"cost_model={COST_MODEL_VERSION}"
         )
         if total >= 10 and ratio < 0.5:
             report.add(

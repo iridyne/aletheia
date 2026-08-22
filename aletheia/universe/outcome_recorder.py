@@ -457,7 +457,9 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
     # Emit cost-aware cohort metrics for observability (§4.2).
     if total_settled:
         try:
-            stats = repo.calibration_stats()
+            from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+            stats = repo.calibration_stats(cost_model_version=COST_MODEL_VERSION)
             for row in stats:
                 if row["n"] >= 10:
                     wr = row["win_count"] / row["n"] * 100

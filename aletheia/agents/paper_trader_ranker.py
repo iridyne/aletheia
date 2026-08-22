@@ -685,9 +685,9 @@ def _compute_trade_score(
         score += float(factor_signal.get("score_delta") or 0.0)
 
     # Position C (2026-07-02): the strategy-evidence bonus/penalty (backtest +
-    # paper-drift scoring) was removed with the rules engine. Per-family live edge is
-    # surfaced to the PI via family_direction_edge (P1a); the deterministic ranker no
-    # longer scores on per-strategy backtest evidence.
+    # paper-drift scoring) was removed with the rules engine. Current System Operator
+    # history is candidate-conditioned B2 evidence; the deterministic ranker does not
+    # score on the old per-strategy/full-pool aggregate.
 
     # P0-5: Regime-aware scoring with smooth confidence weighting (no 0.5 cliff).
     # P0-2: Sideways branch added — trend-family scanners penalised in sideways (CTA lit.).
@@ -1331,9 +1331,8 @@ def _parse_risk_flags(universe_member: dict | None) -> list:
 
 # Position C (2026-07-02): _lookup_strategy_evidence was removed with the strategy
 # rules engine. It read backtest_runs + classified evidence via the deleted
-# analytics.strategy_evidence module. Per-family live edge (the honest replacement)
-# is surfaced to the PI via repositories.family_direction_edge (P1a), and the ranker
-# no longer gates or scores on per-strategy backtest evidence.
+# analytics.strategy_evidence module. Candidate-conditioned B2 evidence replaced the
+# old full-pool PI aggregate; the ranker does not gate or score on either source.
 
 
 def _safe_get(fn, key: str | None):

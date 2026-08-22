@@ -316,7 +316,7 @@ def test_calibration_excludes_gross_only_rows():
         ),
     ])
 
-    rows = repo.calibration_stats()
+    rows = repo.calibration_stats(cost_model_version="test-v1")
     assert len(rows) == 1
     assert rows[0]["n"] == 1
     assert rows[0]["win_count"] == 0

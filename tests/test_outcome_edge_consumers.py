@@ -48,6 +48,7 @@ def test_operator_diagnostics_exclude_incomplete_safety_edges():
     from aletheia.storage.sqlite import get_db
 
     _insert_outcome("complete", 0.05)
+    _insert_outcome("legacy-complete", 0.05, cost_model_version="legacy-v0")
     _insert_outcome("missing", None)
     _insert_outcome("negative", -0.01)
     _insert_outcome("infinite", float("inf"))
@@ -73,18 +74,21 @@ def test_operator_diagnostics_exclude_incomplete_safety_edges():
 
     summary = _get_data_health_summary()
     assert summary["signal_win_rate_24h"] == 50.0
+    assert summary["cost_model_version"] == "v1"
 
     report = doctor.Report(generated_at="test")
     doctor._probe_signal_effectiveness(report)
     signal = next(check for check in report.checks if check.name == "data.signal")
     assert "(2 settled" in signal.detail
     assert "50.0%" in signal.detail
+    assert "cost_model=v1" in signal.detail
 
     result = CliRunner().invoke(app, ["audit", "data", "--json"])
     assert result.exit_code == 0, result.output
     effectiveness = json.loads(result.output)["signal_effectiveness_7d"]
     assert effectiveness["settled_outcomes"] == 2
     assert effectiveness["win_rate_pct"] == 50.0
+    assert effectiveness["cost_model_version"] == "v1"
 
 
 def test_sql_cost_model_whitespace_matches_python_strip():

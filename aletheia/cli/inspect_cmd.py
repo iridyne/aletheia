@@ -1205,14 +1205,19 @@ def calibration(
 ):
     """Show net calibration by family, direction, market and horizon."""
     from aletheia.storage.repositories import calibration_stats
-    stats = calibration_stats()
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    stats = calibration_stats(cost_model_version=COST_MODEL_VERSION)
     if not stats:
         typer.echo("(no calibration data)")
         return
     if json_output:
         _output(stats, True)
         return
-    typer.echo("=== Net Signal Calibration (cost-aware outcomes) ===")
+    typer.echo(
+        "=== Net Signal Calibration "
+        f"(cost-aware outcomes, cost_model={COST_MODEL_VERSION}) ==="
+    )
     typer.echo(
         f"  {'family':<18s} {'side':<6s} {'market':<7s} "
         f"{'horizon':<6s} {'n':>4s} {'win%':>6s} {'avg_net':>8s}"

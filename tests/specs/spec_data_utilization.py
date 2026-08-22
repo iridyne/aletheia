@@ -815,6 +815,7 @@ def _setup_du_db(tmp_path, monkeypatch):
 
 def _seed_forward_outcome(
     conn, family, direction, forward_return, horizon="24h", edge=0.05,
+    cost_model_version="v1",
 ):
     import uuid
     from datetime import datetime, timezone
@@ -837,7 +838,7 @@ def _seed_forward_outcome(
         (str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()), "X/USDT",
          family, direction, horizon, 100.0, now, now, now, 101.0,
          forward_return, forward_return, directional, 0.1, 0.1, 0.0,
-         net, edge, "spot", "v1", "settled"),
+         net, edge, "spot", cost_model_version, "settled"),
     )
     conn.commit()
 
@@ -865,7 +866,9 @@ def test_family_direction_edge_groups_by_direction(tmp_path, monkeypatch):
     # Unknown-direction legacy row must not be folded into momentum:long.
     _seed_forward_outcome(conn, "momentum", None, 9.0)
 
-    rows = family_direction_edge(horizon="24h", within_days=7)
+    rows = family_direction_edge(
+        horizon="24h", within_days=7, cost_model_version="v1",
+    )
     by_key = {(r["scanner_family"], r["direction"], r["market_type"]): r for r in rows}
 
     assert ("momentum", "long", "spot") in by_key, "momentum:long:spot thesis missing"
@@ -880,27 +883,38 @@ def test_family_direction_edge_groups_by_direction(tmp_path, monkeypatch):
     )
 
 
-@spec_claim(
-    SpecClaim(
-        "DU-S11", _CONTRACT, "§no-orphan: forward-outcome edge → PI", "L2a",
-        "trading_context attaches family_edge to each Layer-1 opportunity (from "
-        "family_direction_edge) AND trading_decision renders it in the opportunity "
-        "line — the per-family+direction track record reaches the PI at decision "
-        "time, not just the universe-wide aggregate.",
-    ),
-)
-def test_forward_outcome_edge_routed_to_pi():
+def test_family_direction_edge_requires_one_exact_cost_model(tmp_path, monkeypatch):
+    conn = _setup_du_db(tmp_path, monkeypatch)
+    from aletheia.storage.repositories import family_direction_edge
+
+    for _ in range(30):
+        _seed_forward_outcome(
+            conn, "momentum", "long", 2.0,
+            cost_model_version="legacy-v0",
+        )
+    for _ in range(29):
+        _seed_forward_outcome(conn, "momentum", "long", 2.0)
+
+    current = family_direction_edge(cost_model_version="v1")
+    legacy = family_direction_edge(cost_model_version="legacy-v0")
+
+    assert current[0]["n"] == 29
+    assert current[0]["cost_model_version"] == "v1"
+    assert legacy[0]["n"] == 30
+    assert legacy[0]["cost_model_version"] == "legacy-v0"
+    with pytest.raises(TypeError):
+        family_direction_edge()
+
+    _seed_forward_outcome(conn, "momentum", "long", 2.0)
+    assert family_direction_edge(cost_model_version="v1")[0]["n"] == 30
+
+
+def test_full_pool_family_edge_is_not_routed_to_pi():
     tc = (_ROOT / "aletheia" / "agent_shell" / "trading_context.py").read_text(encoding="utf-8")
     td = (_ROOT / "aletheia" / "agent_shell" / "trading_decision.py").read_text(encoding="utf-8")
-    assert "family_direction_edge" in tc, (
-        "trading_context must call family_direction_edge to build the thesis-evidence map"
-    )
-    assert '"family_edge"' in tc or "'family_edge'" in tc, (
-        "trading_context must attach family_edge to each opportunity"
-    )
-    assert "_fmt_family_edge" in td, (
-        "trading_decision must render family_edge in the System Operator prompt (opportunity line)"
-    )
+    assert "family_direction_edge" not in tc
+    assert '"family_edge"' not in tc and "'family_edge'" not in tc
+    assert "_fmt_family_edge" not in td
 
 
 # ---------------------------------------------------------------------------

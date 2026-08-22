@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
 
 _MIN_NET_SAMPLES = 20
 _MIN_OUTCOME_COVERAGE = 0.70
@@ -79,6 +81,7 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
         "market_type": market,
         "score_bucket": bucket,
         "horizon": _EVIDENCE_HORIZON,
+        "cost_model_version": COST_MODEL_VERSION,
         "min_net_samples": _MIN_NET_SAMPLES,
         "min_outcome_coverage": _MIN_OUTCOME_COVERAGE,
         "shrinkage_k": _SHRINKAGE_K,
@@ -86,8 +89,9 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
     if family == "unknown" or direction not in {"long", "short"} or bucket == "unknown_score":
         return {
             **base, "n_total": 0, "n_net": 0, "outcome_coverage": 0.0,
+            "cost_model_mismatch_n": 0,
             "avg_net_pct": None, "shrunk_avg_net_pct": None,
-            "cost_model_version": None, "status": "insufficient_evidence",
+            "status": "insufficient_evidence",
             "directional_verdict": None,
         }
 
@@ -117,31 +121,43 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
         ") "
         "SELECT COUNT(DISTINCT opportunity_id) AS n_total, "
         " COUNT(DISTINCT CASE WHEN status='settled' AND economics_complete=1 "
+        "  AND cost_model_version=? "
         "  THEN opportunity_id END) AS n_net, "
         " AVG(CASE WHEN status='settled' AND economics_complete=1 "
-        "  THEN net_return_pct END) AS avg_net, "
-        " COUNT(DISTINCT CASE WHEN status='settled' AND economics_complete=1 "
-        "  THEN cost_model_version END) AS cost_versions, "
-        " MIN(CASE WHEN status='settled' AND economics_complete=1 "
-        "  THEN cost_model_version END) AS cost_model_version "
+        "  AND cost_model_version=? THEN net_return_pct END) AS avg_net, "
+        " COUNT(DISTINCT CASE WHEN status='settled' AND ("
+        "  cost_model_version IS NULL OR typeof(cost_model_version)<>'text' "
+        "  OR TRIM(cost_model_version)='' OR cost_model_version<>?) "
+        "  THEN opportunity_id END) AS cost_model_mismatch_n "
         "FROM outcomes",
-        (family, direction, market, _B2_VERSION, policy_epoch_id, bucket, _EVIDENCE_HORIZON),
+        (
+            family, direction, market, _B2_VERSION, policy_epoch_id, bucket,
+            _EVIDENCE_HORIZON, COST_MODEL_VERSION, COST_MODEL_VERSION,
+            COST_MODEL_VERSION,
+        ),
     ).fetchone()
     n_total = int(row["n_total"] or 0)
     n_net = int(row["n_net"] or 0)
     coverage = round(n_net / n_total, 4) if n_total else 0.0
     avg = float(row["avg_net"]) if row["avg_net"] is not None else None
-    cost_incident = n_net > 0 and int(row["cost_versions"] or 0) > 1
-    qualified = n_net >= _MIN_NET_SAMPLES and coverage >= _MIN_OUTCOME_COVERAGE and not cost_incident
+    cost_model_mismatch_n = int(row["cost_model_mismatch_n"] or 0)
+    qualified = (
+        n_net >= _MIN_NET_SAMPLES
+        and coverage >= _MIN_OUTCOME_COVERAGE
+        and cost_model_mismatch_n == 0
+    )
     shrunk = round((n_net * avg) / (n_net + _SHRINKAGE_K), 6) if avg is not None else None
     verdict = ("positive" if shrunk and shrunk > 0 else "negative") if qualified else None
     status = f"qualified_{verdict}" if verdict else (
-        "data_quality_incident" if cost_incident else "insufficient_evidence"
+        "data_quality_incident"
+        if cost_model_mismatch_n
+        else "insufficient_evidence"
     )
     return {
         **base, "n_total": n_total, "n_net": n_net, "outcome_coverage": coverage,
+        "cost_model_mismatch_n": cost_model_mismatch_n,
         "avg_net_pct": round(avg, 6) if avg is not None else None,
-        "shrunk_avg_net_pct": shrunk, "cost_model_version": row["cost_model_version"],
+        "shrunk_avg_net_pct": shrunk,
         "status": status, "directional_verdict": verdict,
     }
 

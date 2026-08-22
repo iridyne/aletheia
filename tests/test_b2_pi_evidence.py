@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
 
 def _setup(tmp_path, monkeypatch):
     from tests.test_entry_logic import setup_env
@@ -12,7 +14,10 @@ def _setup(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
 
-def _insert_b2_candidate(*, index: int, epoch: str, bucket: str, net: float) -> None:
+def _insert_b2_candidate(
+    *, index: int, epoch: str, bucket: str, net: float,
+    cost_model_version: str | None = COST_MODEL_VERSION,
+) -> None:
     from aletheia.storage.models import FilterCandidateOutcome, FilterDecision
     from aletheia.storage.repositories import (
         insert_filter_candidate_outcomes_batch,
@@ -64,7 +69,8 @@ def _insert_b2_candidate(*, index: int, epoch: str, bucket: str, net: float) -> 
         estimated_fee_pct=0.1,
         estimated_spread_slippage_pct=0.1,
         estimated_funding_pct=0.0,
-        net_return_pct=net, min_tradable_edge_pct=0.05, cost_model_version="cost-v1",
+        net_return_pct=net, min_tradable_edge_pct=0.05,
+        cost_model_version=cost_model_version,
         status="settled",
     )])
 
@@ -103,9 +109,44 @@ def test_b2_evidence_excludes_other_epochs_and_score_buckets(tmp_path, monkeypat
     assert summary["n_total"] == 20
     assert summary["n_net"] == 20
     assert summary["outcome_coverage"] == 1.0
+    assert summary["cost_model_version"] == COST_MODEL_VERSION
     assert summary["status"] == "qualified_positive"
     assert summary["directional_verdict"] == "positive"
     assert summary["avg_net_pct"] == 1.0
+
+
+def test_b2_evidence_reports_cost_model_identity_conflicts(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    from aletheia.analytics.pi_evidence import build_b2_evidence_summary
+
+    for index in range(20):
+        _insert_b2_candidate(
+            index=index, epoch="b2-current", bucket="high_score", net=1.0,
+        )
+    _insert_b2_candidate(
+        index=92, epoch="b2-current", bucket="high_score", net=-50.0,
+        cost_model_version="legacy-v0",
+    )
+    _insert_b2_candidate(
+        index=93, epoch="b2-current", bucket="high_score", net=-50.0,
+        cost_model_version="",
+    )
+    _insert_b2_candidate(
+        index=94, epoch="b2-current", bucket="high_score", net=-50.0,
+        cost_model_version=None,
+    )
+
+    summary = build_b2_evidence_summary({
+        "opportunity_id": "current", "scanner_family": "momentum",
+        "direction": "long", "market_type": "usdt_futures", "trade_score": 51.0,
+    }, policy_epoch_id="b2-current")
+
+    assert summary["status"] == "data_quality_incident"
+    assert summary["n_total"] == 23
+    assert summary["n_net"] == 20
+    assert summary["cost_model_mismatch_n"] == 3
+    assert summary["cost_model_version"] == COST_MODEL_VERSION
+    assert summary["directional_verdict"] is None
 
 
 def test_b2_summary_is_identical_for_assessment_bull_and_bear(tmp_path, monkeypatch):

@@ -8192,8 +8192,8 @@ def latest_filter_shadow_evaluation(experiment_id: str) -> dict | None:
 # repositories unaware of Lab state.
 
 
-def calibration_stats() -> list[dict]:
-    """Aggregate cost-aware returns by family + direction + market + horizon.
+def calibration_stats(*, cost_model_version: str) -> list[dict]:
+    """Aggregate one exact cost-model cohort by family/direction/market/horizon.
 
     Legacy gross-only rows are intentionally excluded. A win must clear the
     persisted minimum tradable edge after fees, spread/slippage and funding.
@@ -8205,6 +8205,7 @@ def calibration_stats() -> list[dict]:
     rows = db.execute(
         "SELECT scanner_family, direction, "
         f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
+        "cost_model_version, "
         "COUNT(*) as n, "
         "AVG(net_return_pct) as avg_return, "
         "SUM(CASE WHEN net_return_pct > min_tradable_edge_pct "
@@ -8214,13 +8215,15 @@ def calibration_stats() -> list[dict]:
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' "
         "AND entry_ts >= ? "
+        "AND cost_model_version = ? "
         f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND direction IN ('long', 'short') "
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon "
+        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon, "
+        "cost_model_version "
         "ORDER BY scanner_family, direction, market_type, horizon",
-        (cutoff,),
+        (cutoff, cost_model_version),
     ).fetchall()
-    lineage = _calibration_source_lineage(db, cutoff)
+    lineage = _calibration_source_lineage(db, cutoff, cost_model_version)
     result = []
     for raw in rows:
         row = dict(raw)
@@ -8291,7 +8294,9 @@ def _horizon_separated_counts(
     return independent_n, len(admitted_symbols), len(admitted_days)
 
 
-def _calibration_source_lineage(db, cutoff: str) -> dict[tuple, dict]:
+def _calibration_source_lineage(
+    db, cutoff: str, cost_model_version: str,
+) -> dict[tuple, dict]:
     """Hash every exact row consumed by ``calibration_stats`` without retaining it."""
     cursor = db.execute(
         "SELECT scanner_family, direction, "
@@ -8301,10 +8306,11 @@ def _calibration_source_lineage(db, cutoff: str) -> dict[tuple, dict]:
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' "
         "AND entry_ts >= ? "
+        "AND cost_model_version = ? "
         f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND direction IN ('long', 'short') "
         "ORDER BY scanner_family, direction, market_type, horizon, id",
-        (cutoff,),
+        (cutoff, cost_model_version),
     )
     hashers: dict[tuple, object] = {}
     counts: dict[tuple, int] = {}
@@ -8341,7 +8347,7 @@ def _calibration_source_lineage(db, cutoff: str) -> dict[tuple, dict]:
     return result
 
 
-def filter_pressure_stats() -> list[dict]:
+def filter_pressure_stats(*, cost_model_version: str) -> list[dict]:
     """Aggregate cost-aware returns for filter-rejected candidates where scanner_family is known.
 
     These rows come from risk/PI filter stages that run after scanner assignment, so
@@ -8355,6 +8361,7 @@ def filter_pressure_stats() -> list[dict]:
     rows = db.execute(
         "SELECT scanner_family, direction, "
         f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
+        "cost_model_version, "
         "COUNT(*) AS n, "
         "AVG(net_return_pct) AS avg_net, "
         "MIN(net_return_pct) AS min_net, "
@@ -8363,18 +8370,20 @@ def filter_pressure_stats() -> list[dict]:
         "  THEN 1.0 ELSE 0.0 END) AS miss_rate "
         "FROM filter_candidate_outcomes "
         "WHERE status = 'settled' "
+        "AND cost_model_version = ? "
         "AND scanner_family IS NOT NULL "
         f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND direction IN ('long', 'short') "
         "AND entry_ts >= ? "
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon "
+        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon, "
+        "cost_model_version "
         "ORDER BY scanner_family, direction, market_type, horizon",
-        (cutoff,),
+        (cost_model_version, cutoff),
     ).fetchall()
     return [dict(r) for r in rows]
 
 
-def family_spread_tolerance_stats() -> list[dict]:
+def family_spread_tolerance_stats(*, cost_model_version: str) -> list[dict]:
     """Per-family spread sensitivity from settled universe forward outcomes.
 
     Splits outcomes into low-spread (<=15 bps) and high-spread (>15 bps) buckets to
@@ -8388,6 +8397,7 @@ def family_spread_tolerance_stats() -> list[dict]:
     rows = db.execute(
         "SELECT scanner_family, direction, "
         f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
+        "cost_model_version, "
         "COUNT(*) AS n, "
         "AVG(net_return_pct) AS avg_net, "
         "MIN(net_return_pct) AS min_net, "
@@ -8397,26 +8407,33 @@ def family_spread_tolerance_stats() -> list[dict]:
         "AVG(CASE WHEN entry_spread_bps > 15 THEN net_return_pct END) AS avg_net_high_spread "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' "
+        "AND cost_model_version = ? "
         "AND scanner_family IS NOT NULL "
         "AND entry_spread_bps IS NOT NULL "
         f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND direction IN ('long', 'short') "
         "AND entry_ts >= ? "
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon "
+        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon, "
+        "cost_model_version "
         "ORDER BY scanner_family, direction, market_type, horizon",
-        (cutoff,),
+        (cost_model_version, cutoff),
     ).fetchall()
     return [dict(r) for r in rows]
 
 
-def family_direction_edge(horizon: str = "24h", within_days: int = 7) -> list[dict]:
+def family_direction_edge(
+    horizon: str = "24h",
+    within_days: int = 7,
+    *,
+    cost_model_version: str,
+) -> list[dict]:
     """Per-(scanner_family, direction, market_type) cost-aware edge.
 
-    Thesis evidence for the System Operator. Like calibration_stats(), this keeps
-    long/short and spot/perpetual evidence separate; unlike calibration_stats(),
-    it selects one horizon and recent time window for decision-time context.
-    Reuses the existing universe_forward_outcomes store and excludes legacy
-    gross-only rows.
+    Risk live-family evidence and explicit research query. Like
+    calibration_stats(), this keeps long/short and spot/perpetual evidence
+    separate; unlike calibration_stats(), it selects one horizon and recent
+    time window. Reuses the existing universe_forward_outcomes store and
+    excludes legacy gross-only rows.
 
     Returns rows: {scanner_family, direction, market_type, n, win_rate, avg_return}.
     Only families with n >= 1 in the window are returned.
@@ -8426,6 +8443,7 @@ def family_direction_edge(horizon: str = "24h", within_days: int = 7) -> list[di
     rows = db.execute(
         "SELECT scanner_family, direction, "
         f"{_OUTCOME_MARKET_SQL} AS market_type, "
+        "cost_model_version, "
         "COUNT(*) as n, "
         "AVG(net_return_pct) as avg_return, "
         "SUM(CASE WHEN net_return_pct > min_tradable_edge_pct "
@@ -8433,12 +8451,14 @@ def family_direction_edge(horizon: str = "24h", within_days: int = 7) -> list[di
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' AND horizon = ? "
         "AND settled_at >= ? "
+        "AND cost_model_version = ? "
         f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND scanner_family IS NOT NULL "
         "AND direction IN ('long', 'short') "
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL} "
+        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, "
+        "cost_model_version "
         "ORDER BY n DESC",
-        (horizon, cutoff),
+        (horizon, cutoff, cost_model_version),
     ).fetchall()
     out: list[dict] = []
     for r in rows:

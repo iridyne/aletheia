@@ -434,6 +434,7 @@ def test_live_without_resolvable_family_rejected(tmp_path, monkeypatch):
     ("edge_threshold", "cost_model_version", "raw_update", "expect_no_evidence"),
     (
         (0.05, "v1", None, False),
+        (0.05, "legacy-v0", None, True),
         (None, "v1", None, True),
         (0.05, None, None, True),
         (0.05, "\t", None, True),
@@ -506,18 +507,101 @@ def test_live_family_gate_requires_complete_edge_evidence(
 
 def test_live_family_edge_selects_matching_market_type(monkeypatch):
     from aletheia.risk.engine import _family_live_edge
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    calls = []
+
+    def _edge_rows(**kwargs):
+        calls.append(kwargs)
+        return [
+            {
+                "scanner_family": "momentum", "direction": "long",
+                "market_type": "spot", "cost_model_version": COST_MODEL_VERSION,
+                "n": 30,
+            },
+            {
+                "scanner_family": "momentum", "direction": "long",
+                "market_type": "perp", "cost_model_version": COST_MODEL_VERSION,
+                "n": 12,
+            },
+        ]
 
     monkeypatch.setattr(
         repo,
         "family_direction_edge",
-        lambda **_: [
-            {"scanner_family": "momentum", "direction": "long", "market_type": "spot", "n": 30},
-            {"scanner_family": "momentum", "direction": "long", "market_type": "perp", "n": 12},
-        ],
+        _edge_rows,
     )
 
     assert _family_live_edge("momentum", "long", "spot")["n"] == 30
     assert _family_live_edge("momentum", "long", "usdt_futures")["n"] == 12
+    assert calls == [
+        {"within_days": 7, "cost_model_version": COST_MODEL_VERSION},
+        {"within_days": 7, "cost_model_version": COST_MODEL_VERSION},
+    ]
+
+    monkeypatch.setattr(
+        repo,
+        "family_direction_edge",
+        lambda **_: [{
+            "scanner_family": "momentum", "direction": "long",
+            "market_type": "spot", "cost_model_version": "legacy-v0", "n": 30,
+        }],
+    )
+    assert _family_live_edge("momentum", "long", "spot") is None
+
+
+def test_live_family_gate_does_not_pool_old_cost_models(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    _unlock_live_auto(tmp_path)
+    from datetime import datetime, timezone
+    from aletheia.storage.models import Opportunity, UniverseForwardOutcome
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    def _outcome(index: int, version: str) -> UniverseForwardOutcome:
+        return UniverseForwardOutcome(
+            member_id=f"mixed-{version}-{index}", snapshot_id="mixed-models",
+            symbol="BTC/USDT", scanner_family="momentum", direction="long",
+            horizon="24h", entry_price_usd=100.0, due_at=now, settled_at=now,
+            exit_price_usd=105.0, forward_return_pct=5.0,
+            gross_return_pct=5.0, directional_return_pct=5.0,
+            estimated_fee_pct=0.12, estimated_spread_slippage_pct=0.15,
+            estimated_funding_pct=0.0, net_return_pct=4.73,
+            min_tradable_edge_pct=0.05, cost_model_version=version,
+            market_type="spot", status="settled",
+        )
+
+    repo.insert_forward_outcomes_batch([
+        *(_outcome(index, "legacy-v0") for index in range(30)),
+        *(_outcome(index, COST_MODEL_VERSION) for index in range(29)),
+    ])
+    opp = Opportunity(
+        symbol="BTC/USDT", market="spot", direction_bias="long",
+        scanner_family="momentum",
+    )
+    repo.insert_opportunity(opp)
+    repo.insert_market_snapshot(
+        MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000)
+    )
+
+    def _proposal() -> TradeProposal:
+        proposal = TradeProposal(
+            symbol="BTC/USDT", market_type="spot", direction="long",
+            execution_mode="bitget_live_limited", quantity=0.0001, price=60000,
+            opportunity_id=opp.id, stop_price=59000,
+        )
+        repo.insert_trade_proposal(proposal)
+        return proposal
+
+    before = evaluate_proposal(_proposal())
+    assert "family_not_live_eligible:momentum:samples=29<30" in before.violations
+
+    repo.insert_forward_outcome(_outcome(29, COST_MODEL_VERSION))
+    after = evaluate_proposal(_proposal())
+    assert not any(
+        "family_not_live_eligible" in violation for violation in after.violations
+    )
 
 
 # --- demo/paper bounds (§2.3: paper evidence must be built from bounded trades) ---
