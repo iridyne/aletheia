@@ -132,7 +132,17 @@ function RunsTab({ runs, state }: { runs: AgentRun[], state?: DataState }) {
         <h3>Run an agent now</h3>
         <div className="flex flex-wrap gap-1">
           {agents.map(a => (
-            <Button key={a.name} variant="secondary" onClick={() => run.mutate(a.name)} disabled={run.isPending}>{a.name}</Button>
+            <span key={a.name} className="flex items-center gap-1">
+              <Button
+                variant="secondary"
+                onClick={() => run.mutate(a.name)}
+                disabled={run.isPending || a.runnable === false}
+                aria-label={a.blocked_reason ? `${a.name}: ${a.blocked_reason}` : a.name}
+              >
+                {a.name}
+              </Button>
+              {a.runnable === false && <span className="text-muted text-xs">{a.blocked_reason || 'unavailable'}</span>}
+            </span>
           ))}
         </div>
       </Card>
