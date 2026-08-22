@@ -560,12 +560,14 @@ async def complete_with_fallback(
                     skipped_cooldown_models=skipped_cooldown,
                 )
                 raise
+            # ponytail: guard idx+1 access (already checked idx != last)
+            next_model = models_to_try[idx + 1] if idx + 1 < len(models_to_try) else "unknown"
             logger.warning(
                 "LLM model %s/%s transient failure on %s; trying fallback %s",
                 resolved_provider_name,
                 model,
                 type(exc).__name__,
-                models_to_try[idx + 1],
+                next_model,
             )
     assert last_exc is not None
     raise last_exc

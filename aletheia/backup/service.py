@@ -284,6 +284,48 @@ class BackupService:
             })
         return results
 
+    def rehearse_restore(self, archive_path: Path) -> dict:
+        """Rehearse a restore without mutating the workspace.
+        
+        Verifies the archive integrity and simulates restore to a temporary directory.
+        Returns a summary dict with validation results and file counts.
+        
+        This addresses #1900 by providing a supported restore rehearsal API.
+        """
+        from aletheia.backup.restore import RestoreService
+        from aletheia.backup.verify import verify_backup
+        
+        result = {
+            "valid": False,
+            "verified": False,
+            "dry_run_success": False,
+            "file_count": 0,
+            "errors": [],
+        }
+        
+        # Step 1: Verify archive integrity
+        verify = verify_backup(archive_path)
+        result["verified"] = verify.valid
+        if not verify.valid:
+            result["errors"].extend(verify.errors)
+            result["errors"].extend(verify.mismatches)
+            return result
+        
+        # Step 2: Dry-run restore to a temporary location
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_target = Path(tmp) / "rehearsal"
+            restore_svc = RestoreService()
+            dry_result = restore_svc.dry_run(archive_path, tmp_target)
+            result["dry_run_success"] = dry_result.success
+            result["file_count"] = dry_result.restored_files
+            if not dry_result.success:
+                result["errors"].extend(dry_result.errors)
+            else:
+                result["valid"] = True
+        
+        return result
+
 
 def retain_recent(keep_recent: int = DEFAULT_KEEP_RECENT, data_dir: Path | None = None) -> int:
     """Standalone entry point for scheduler / one-shot callers.

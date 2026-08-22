@@ -419,8 +419,18 @@ def _generated_branch_session_id(kind: str) -> str:
 
 def _session_belongs_to_operator_tree(session_id: str, main_session_id: str) -> bool:
     current_session_id = session_id.strip()
+    main_session_id = main_session_id.strip()
+    
+    # ponytail: guard empty inputs first
+    if not current_session_id or not main_session_id:
+        return False
+    
     visited: set[str] = set()
-    while current_session_id and current_session_id not in visited:
+    # ponytail: explicit cycle limit (max depth 100) vs unbounded visited set growth
+    max_depth = 100
+    depth = 0
+    
+    while current_session_id and current_session_id not in visited and depth < max_depth:
         if current_session_id == main_session_id:
             return True
         visited.add(current_session_id)
@@ -428,6 +438,8 @@ def _session_belongs_to_operator_tree(session_id: str, main_session_id: str) -> 
         if session is None:
             return False
         current_session_id = str(session.get("parent_session_id") or "").strip()
+        depth += 1
+    
     return False
 
 

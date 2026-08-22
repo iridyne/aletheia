@@ -895,15 +895,16 @@ async def healthcheck_all_with_metadata(
         inflight.set_result(results)
         return list(results), False
     except asyncio.CancelledError:
+        with _health_lock:
+            _health_inflight = None
         inflight.set_exception(RuntimeError("model health refresh cancelled"))
         raise
     # pi-lens-ignore: bare-except — BaseException settles shared Future before re-raising.
     except BaseException as exc:
-        inflight.set_exception(exc)
-        raise
-    finally:
         with _health_lock:
             _health_inflight = None
+        inflight.set_exception(exc)
+        raise
 
 
 async def _refresh_health_all() -> list[ModelHealth]:

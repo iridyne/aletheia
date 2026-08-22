@@ -130,16 +130,16 @@ def _send_telegram_alert(message: str, *, level: str = "warning",
                 except Exception:
                     pass
 
+        # Send from a new event loop if no loop is running, else schedule in current loop
         try:
-            asyncio.get_running_loop()
+            loop = asyncio.get_running_loop()
+            # Already in an event loop: schedule as a task but don't block
+            asyncio.create_task(_send_all())
         except RuntimeError:
+            # No loop running: create one and run synchronously
             asyncio.run(_send_all())
-        else:
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                pool.submit(asyncio.run, _send_all()).result()
     except Exception as e:
         logger.warning("Telegram notification failed (non-critical): %s", e)
-
 
 def _send_webhook(payload: dict, *, event_type: str = "alert") -> None:
     """POST JSON payload to configured webhook URL. Never raises."""

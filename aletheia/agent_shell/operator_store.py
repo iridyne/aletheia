@@ -559,6 +559,19 @@ def update_task(task_id: str, **kwargs) -> None:
         f"UPDATE agent_shell_tasks SET {sets} WHERE id = ?",
         [*updates.values(), task_id],
     )
+    
+    # ponytail: update ownership metadata when task status changes
+    if status:
+        task = get_task(task_id)
+        if task:
+            _attach_runtime_ownership(
+                entity_type="agent_shell_task",
+                entity_id=task_id,
+                runtime_id=task.get("runtime_id") or _current_runtime_id(),
+                ownership_kind="operator_task",
+                metadata={"task_type": task.get("task_type"), "status": status},
+            )
+    
     _commit_if_needed(db, was_in_tx)
     task = get_task(task_id)
     if task is not None:

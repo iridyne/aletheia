@@ -283,7 +283,10 @@ class TelegramBot:
         self._running = False
 
     def _escalate_poll_failure(self, exc: Exception) -> None:
-        """Notify operator via non-Telegram channels when polling repeatedly fails."""
+        """Notify operator via non-Telegram channels when polling repeatedly fails.
+        
+        Stops the polling loop after escalation so the failure propagates to the caller.
+        """
         try:
             from aletheia.files.jsonl import write_error
             write_error({
@@ -300,6 +303,8 @@ class TelegramBot:
             )
         except Exception:
             pass
+        # Stop the polling loop so the failure propagates to the caller
+        self.stop()
 
     async def _fetch_updates(self, client) -> list[dict[str, Any]]:
         resp = await client.get(self._api_url("getUpdates"), params={"offset": self._offset, "timeout": 20})

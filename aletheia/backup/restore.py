@@ -79,12 +79,14 @@ class RestoreService:
 
         #285: verifies and extracts the same private snapshot of the archive.
         #289: tracks overwrites and new files; rolls back on any copy failure.
+        #1910: ensures snap is always defined before finally block.
         """
         result = RestoreResult()
         result.target_dir = str(target_dir)
 
-        snap = self._copy_to_snapshot(archive_path)
+        snap = None
         try:
+            snap = self._copy_to_snapshot(archive_path)
             verify = verify_backup(snap)
             if not verify.valid:
                 result.errors = [
@@ -158,4 +160,5 @@ class RestoreService:
                     result.restored_files = 0
                     return result
         finally:
-            snap.unlink(missing_ok=True)
+            if snap is not None:
+                snap.unlink(missing_ok=True)
