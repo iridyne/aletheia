@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { createColumnHelper } from '@tanstack/react-table'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
-import { Badge, Button, Card, StatusText } from '../components/ui'
+import { Badge, Button, Card, StatusText, useConfirm } from '../components/ui'
 import { DataTable } from '../components/DataTable'
 import { DecisionTraceDrawer } from '../components/DecisionTraceDrawer'
 import { humanize, fmtSymbol, fmtAge, fmtTimestamp } from '../lib/format'
@@ -373,6 +373,7 @@ function parseConviction(rationale: string | null | undefined): number | null {
 
 function SignoffPanel() {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const { data = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
   const pending = (data as any[]).filter(p => p.status === 'pending')
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -405,17 +406,27 @@ function SignoffPanel() {
     onSettled: () => setBusyId(null),
   })
 
-  function doApprove(p: any) {
+  async function doApprove(p: any) {
     if (!canApprovePaper(p)) {
       setErr(p.id, 'Only a pending proposal stored as local paper can be approved here.')
       return
     }
-    if (!confirm(`Approve Local Paper: ${p.direction.toUpperCase()} ${fmtSymbol(p.symbol, p.market_type)}\n(local simulation; no exchange order placed)\n\nConfirm?`)) return
+    if (!(await confirm({
+      title: 'Approve local paper proposal?',
+      description: `${p.direction.toUpperCase()} ${fmtSymbol(p.symbol, p.market_type)}`,
+      detail: 'Local simulation; no exchange order placed.',
+      confirmLabel: 'Approve Local Paper',
+    }))) return
     setBusyId(p.id)
     approve.mutate(p.id)
   }
-  function doReject(p: any) {
-    if (!confirm(`Reject ${p.direction.toUpperCase()} ${fmtSymbol(p.symbol, p.market_type)}?`)) return
+  async function doReject(p: any) {
+    if (!(await confirm({
+      title: 'Reject proposal?',
+      description: `${p.direction.toUpperCase()} ${fmtSymbol(p.symbol, p.market_type)}`,
+      confirmLabel: 'Reject',
+      variant: 'warning',
+    }))) return
     setBusyId(p.id)
     reject.mutate(p.id)
   }
@@ -472,7 +483,7 @@ function SignoffPanel() {
                 <div className="bl-signoff-actions" onClick={e => e.stopPropagation()}>
                   {paperEligible ? (
                     <Button className="btn-sm" onClick={() => doApprove(p)} disabled={busy}>
-                      {busy && approve.isPending ? 'Approving…' : 'Approve'}
+                      {busy && approve.isPending ? 'Approving…' : 'Approve Local Paper'}
                     </Button>
                   ) : (
                     <StatusText tone="yellow" className="text-xs">

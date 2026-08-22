@@ -10,6 +10,7 @@ import {
   SwitchGrid as ToggleGrid,
   type BoolField,
   type NumField,
+  useConfirm,
 } from '../../../components/ui'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
@@ -105,6 +106,7 @@ function HistoricalDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 }
 
 function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
+  const confirm = useConfirm()
   const app = settings?.app as any || {}
   const runtime = settings?.runtime as any || {}
   const remoteControl = settings?.remote_control as any || {}
@@ -286,14 +288,14 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
         </select>
       </Row>
       <Row label="Git versioning of data" hint="When enabled, knowledge, playbooks, and reports are committed to git automatically for history and rollback.">
-        <Toggle checked={gitEnabled} persistence="immediate" onChange={v => {
-          if (!v && !confirm('Disable git versioning? Knowledge, playbooks, and reports will no longer be committed.')) return
+        <Toggle checked={gitEnabled} persistence="immediate" onChange={async v => {
+          if (!v && !(await confirm({ title: 'Disable git versioning?', description: 'Knowledge, playbooks, and reports will no longer be committed.', confirmLabel: 'Disable', variant: 'warning' }))) return
           safeRuntimeMut({ git_enabled: v })
         }} disabled={runtimeMut.isPending} />
       </Row>
       <Row label="Auto-reload Python changes" hint="Development convenience for hot-reloading backend code. Turn off before a controlled live run.">
-        <Toggle checked={runtime.auto_reload !== false} persistence="immediate" onChange={v => {
-          if (v && !confirm('Enable auto-reload? Code changes will hot-reload mid-run. Disable before controlled live sessions.')) return
+        <Toggle checked={runtime.auto_reload !== false} persistence="immediate" onChange={async v => {
+          if (v && !(await confirm({ title: 'Enable auto-reload?', description: 'Code changes will hot-reload mid-run. Disable before controlled live sessions.', confirmLabel: 'Enable', variant: 'warning' }))) return
           safeRuntimeMut({ auto_reload: v })
         }} disabled={runtimeMut.isPending} />
       </Row>
@@ -368,6 +370,7 @@ function RetentionCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 }
 
 function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+  const confirm = useConfirm()
   const updateCfg = settings?.update as any || {}
   const [branch, setBranch] = useState('master')
   const [enabled, setEnabled] = useState(true)
@@ -428,7 +431,7 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         <button className="secondary" onClick={() => check.mutate()} disabled={check.isPending}>Re-check</button>
         {data?.ok && data.has_update && (
           <button
-            onClick={() => { if (confirm('Pull latest code? Restart the gateway afterward.')) apply.mutate() }}
+            onClick={async () => { if (await confirm({ title: 'Pull latest code?', description: 'Restart the gateway afterward.', confirmLabel: 'Apply update', variant: 'warning' })) apply.mutate() }}
             disabled={apply.isPending}
           >Apply update</button>
         )}

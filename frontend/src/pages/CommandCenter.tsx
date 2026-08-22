@@ -7,7 +7,7 @@ import { getOperatorDisplayStatus } from '../lib/systemState'
 import { positionFreshness, positionKeys } from '../lib/queryKeys'
 import { safeErrorText } from '../lib/mutationErrors'
 import PageHeader from '../components/PageHeader'
-import { Badge, Button, Card, ListRowButton, StatusText, TableWrap, useToast } from '../components/ui'
+import { Badge, Button, Card, ListRowButton, StatusText, TableWrap, useConfirm, useToast } from '../components/ui'
 import type {
   OperatorCommandAudit,
   OperatorCommandPreview,
@@ -599,6 +599,7 @@ function HeartbeatZone({
 
 export default function CommandCenter() {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const [searchParams, setSearchParams] = useSearchParams()
   const [input, setInput] = useState('')
   const [selectedSessionId, setSelectedSessionId] = useState<string>('operator-main')
@@ -1264,11 +1265,11 @@ export default function CommandCenter() {
               <Button
                 className="btn-control"
                 disabled={commandMut.isPending || input.trim().length === 0}
-                onClick={() => {
+                onClick={async () => {
                   // #71 fix: the preview shows a "confirmation" badge when the
                   // resolved command requires it, but Send used to fire
                   // mutate() unconditionally — the badge was cosmetic. Now
-                  // gate the Send with a real window.confirm mirror of the
+                  // gate the Send with the shared confirmation modal mirror of the
                   // pattern the runtime buttons already use. This matches the
                   // backend contract from #67 (execute_typed_command with
                   // requires_confirmation returns a non-executing response
@@ -1277,7 +1278,12 @@ export default function CommandCenter() {
                   // command actually executes on the first send.
                   if (commandPreview?.command?.requires_confirmation) {
                     const label = commandPreview?.command?.name || commandPreview?.intent || 'this command'
-                    if (!window.confirm(`Confirm: run ${label}?\n\nThis is marked as requiring confirmation. Cancel to review the preview above.`)) {
+                    if (!(await confirm({
+                      title: `Run ${label}?`,
+                      description: 'This command requires confirmation. Review the preview before sending.',
+                      confirmLabel: 'Run command',
+                      variant: 'warning',
+                    }))) {
                       return
                     }
                   }
@@ -1296,18 +1302,18 @@ export default function CommandCenter() {
               pendingAction={pendingRuntimeAction}
               onCandidate={() => runtimeCandidateMut.mutate()}
               onShadow={() => runtimeShadowMut.mutate()}
-              onPromote={() => {
-                if (window.confirm('Promote the ready shadow runtime to current?')) {
+              onPromote={async () => {
+                if (await confirm({ title: 'Promote the ready shadow runtime?', confirmLabel: 'Promote', variant: 'warning' })) {
                   runtimePromoteMut.mutate()
                 }
               }}
-              onDrain={() => {
-                if (window.confirm('Mark the previous runtime as drained/legacy?')) {
+              onDrain={async () => {
+                if (await confirm({ title: 'Mark the previous runtime as drained/legacy?', confirmLabel: 'Drain', variant: 'danger' })) {
                   runtimeDrainMut.mutate()
                 }
               }}
-              onRollback={() => {
-                if (window.confirm('Rollback to the latest pre-promote checkpoint?')) {
+              onRollback={async () => {
+                if (await confirm({ title: 'Rollback to the latest pre-promote checkpoint?', confirmLabel: 'Rollback', variant: 'danger' })) {
                   runtimeRollbackMut.mutate()
                 }
               }}
