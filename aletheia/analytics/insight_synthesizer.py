@@ -146,7 +146,7 @@ async def synthesize_trading_memo(window_days: int = 30) -> TradingMemo | None:
     prior_corrections: list[dict] = []
     try:
         from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
-        prior_eval = evaluate_prior_memo()
+        prior_eval = evaluate_prior_memo(for_rotation=True)
         if prior_eval and prior_eval.get("overturned_rules"):
             prior_corrections = prior_eval["overturned_rules"][:5]
     except Exception as e:

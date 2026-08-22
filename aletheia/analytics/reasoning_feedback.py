@@ -46,11 +46,16 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
                 tp.status AS proposal_status,
                 tp.agent_rationale,
                 tp.direction,
+                tp.opportunity_id,
                 pd.conviction,
-                pd.reasoning AS pi_reasoning
+                pd.reasoning AS pi_reasoning,
+                o.regime_tag AS proposal_regime_tag,
+                o.scanner_family AS proposal_scanner_family
             FROM trade_proposals tp
             LEFT JOIN pi_decisions pd
                 ON pd.proposal_id = tp.id
+            LEFT JOIN opportunities o
+                ON o.id = tp.opportunity_id
             WHERE tp.created_at >= ?
             ORDER BY tp.created_at DESC
             """,
@@ -71,7 +76,7 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
             outcome = outcomes_by_proposal.get(str(proposal["proposal_id"]))
             proposal.update({
                 "realized_pnl": outcome.get("realized_pnl") if outcome else None,
-                "regime_tag": outcome.get("regime_tag") if outcome else None,
+                "regime_tag": proposal.get("proposal_regime_tag") or (outcome.get("regime_tag") if outcome else None),
             })
             proposals.append(proposal)
         total = len(proposals)
@@ -103,6 +108,9 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
 
         # Build pattern buckets by (direction, scanner_family, regime_tag)
         def _extract_scanner_family(row: dict) -> str:
+            # Prefer proposal-time scanner_family from the opportunity (#1981)
+            if row.get("proposal_scanner_family"):
+                return str(row["proposal_scanner_family"])
             rationale = row.get("agent_rationale") or ""
             try:
                 # agent_rationale format: "{reasoning[:200]}\n---\n{decision_meta_json}"

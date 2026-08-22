@@ -191,10 +191,21 @@ def build_trade_attribution_rows(
         ]
         positions = list(reversed(positions))[:limit]
     rows = []
+    read_errors = []
     for pos in positions:
-        row = _build_row(pos, db=db)
-        if row is not None:
-            rows.append(row)
+        try:
+            row = _build_row(pos, db=db)
+            if row is not None:
+                rows.append(row)
+        except AttributionReadError as e:
+            read_errors.append(str(e))
+    
+    # Log read errors (cannot change return signature to include error count)
+    if read_errors:
+        logger.warning("build_trade_attribution_rows: %d read errors", len(read_errors))
+        for err in read_errors[:5]:  # first 5 for diagnosis
+            logger.warning("  %s", err)
+    
     return (rows, source_truncated) if include_source_status else rows
 
 
@@ -352,6 +363,16 @@ def factor_key(row: dict) -> str:
     return f"{scanner}:{symbol}:{direction}:{conf}:{late}"
 
 
+
+class AttributionReadError(Exception):
+    """Typed wrapper for a DB/getter read failure at the trade attribution boundary."""
+    def __init__(self, table: str, key: str, cause: Exception) -> None:
+        super().__init__(f"attribution read failed: {table}:{key}: {cause}")
+        self.table = table
+        self.key = key
+        self.cause = cause
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -363,8 +384,8 @@ def _read_one(db: Any, table: str, key: str | None, fallback) -> dict | None:
         return _safe_get(fallback, key)
     try:
         row = db.execute(f"SELECT * FROM {table} WHERE id=?", (key,)).fetchone()
-    except Exception:
-        return None
+    except Exception as e:
+        raise AttributionReadError(table, key, e) from e  # propagate instead of None
     return dict(row) if row is not None else None
 
 
@@ -372,9 +393,10 @@ def _safe_get(fn, key: str | None) -> dict | None:
     if not key:
         return None
     try:
-        return fn(key)
-    except Exception:
-        return None
+        result = fn(key)
+    except Exception as e:
+        raise AttributionReadError("function", key, e) from e  # propagate
+    return result
 
 
 def _lookup_universe_member(opportunity: dict | None, *, db: Any = None) -> dict | None:
