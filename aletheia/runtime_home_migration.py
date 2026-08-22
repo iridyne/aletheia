@@ -219,9 +219,15 @@ def _verify_audit_chain(staging: Path) -> None:
 def _verify_copy(source: Path, staging: Path) -> None:
     for source_file, relative in _source_entries(source):
         copied = staging / relative
+        if not copied.is_file():
+            raise RuntimeHomeMigrationError(f"Copied file verification failed: {relative}")
+        # app.db is copied via sqlite3.Connection.backup() — the resulting file is
+        # semantically identical but byte-for-byte different (checkpoint applied,
+        # WAL folded in). Use SQLite integrity_check instead of hash comparison.
+        if relative == Path("app.db"):
+            continue  # integrity verified by _checkpoint_and_verify_database below
         if (
-            not copied.is_file()
-            or copied.stat().st_size != source_file.stat().st_size
+            copied.stat().st_size != source_file.stat().st_size
             or _sha256(copied) != _sha256(source_file)
         ):
             raise RuntimeHomeMigrationError(f"Copied file verification failed: {relative}")
