@@ -24,7 +24,8 @@ describe('PaperTradingSettings', () => {
     expect(html).toContain('Setting cash to 0 is preserved')
     expect(html).toContain('Close local spot positions')
     expect(html).toContain('Close all local positions')
-    expect(SRC).toContain("if (confirm(`Set local paper cash balance to ${value.toFixed(2)} USDT?`))")
+    expect(SRC).toContain('const confirm = useConfirm()')
+    expect(SRC).toContain('title: \'Set local paper cash balance?\'')
   })
 
   it('keeps capital events and paper parameter controls composed', () => {

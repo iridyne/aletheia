@@ -8,7 +8,7 @@ import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDr
 import Tabs from '../components/Tabs'
 import PageHeader from '../components/PageHeader'
 import { MeasuredPathSelector } from '../components/MeasuredPathSelector'
-import { Badge, Button, Card, CardHeader, ListRowButton, Meter, StatusText } from '../components/ui'
+import { Badge, Button, Card, CardHeader, ListRowButton, Meter, StatusText, useConfirm } from '../components/ui'
 import type { StatusTone } from '../components/ui'
 import { fmtNum, fmtSigned, humanize, fmtTimestamp } from '../lib/format'
 import { guardActivationConfirmation, guardEffectText, type GuardRow } from '../lib/guards'
@@ -666,6 +666,7 @@ const guardColumns = [
 
 export function KnowledgeTab() {
   const queryClient = useQueryClient()
+  const confirm = useConfirm()
   const [tab, setTab] = useState<KnowledgeTabKey>('all')
   const [catalogOffset, setCatalogOffset] = useState(0)
   const [catalogSearch, setCatalogSearch] = useState('')
@@ -852,8 +853,13 @@ export function KnowledgeTab() {
                   size="sm"
                   variant="primary"
                   disabled={guardAction.isPending}
-                  onClick={() => {
-                    if (!confirm(guardActivationConfirmation(selectedGuard))) return
+                  onClick={async () => {
+                    if (!(await confirm({
+                      title: 'Activate guard?',
+                      description: guardActivationConfirmation(selectedGuard),
+                      confirmLabel: 'Activate',
+                      variant: 'warning',
+                    }))) return
                     guardAction.mutate(selectedGuard.guard_id)
                   }}
                 >

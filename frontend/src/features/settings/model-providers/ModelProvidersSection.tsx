@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { useMutation, useQuery, type QueryClient } from "@tanstack/react-query";
 import { api } from "../../../api/client";
-import { Switch } from "../../../components/ui";
+import { Switch, useConfirm } from "../../../components/ui";
 import { SettingsFeatureSection } from "../SettingsFeatureSection";
 import { useSettingsDraftLifecycle } from "../draftLifecycle";
 import {
@@ -440,6 +440,7 @@ function ApiProfiles({
 	qc: QueryClient;
 	onDirty?: (id: string, isDirty: boolean) => void;
 }) {
+	const confirm = useConfirm();
 	const [editing, setEditing] = useState<string | "new" | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const invalidate = createModelInvalidator(qc);
@@ -547,15 +548,16 @@ function ApiProfiles({
 									<button
 										type="button"
 										className="secondary danger"
-										onClick={() => {
+										onClick={async () => {
 											const impact = roles.length
 												? ` This clears: ${roles.map((role) => ROLE_LABELS[role]).join(", ")}.`
 												: "";
-											if (
-												confirm(
-													`Delete “${provider.display_name || providerId}”?${impact} New calls will stop; already-dispatched remote requests may finish.`,
-												)
-											) {
+											if (await confirm({
+												title: `Delete “${provider.display_name || providerId}”?`,
+												description: `${impact} New calls will stop; already-dispatched remote requests may finish.`,
+												confirmLabel: "Delete",
+												variant: "danger",
+											})) {
 												remove.mutate(providerId);
 											}
 										}}
@@ -919,6 +921,7 @@ function OAuthConnections({
 	qc: QueryClient;
 	onDirty?: (id: string, isDirty: boolean) => void;
 }) {
+	const confirm = useConfirm();
 	const invalidate = createModelInvalidator(qc);
 	const disconnect = useMutation({
 		mutationFn: (providerId: string) =>
@@ -952,13 +955,16 @@ function OAuthConnections({
 							onDirty={onDirty}
 						>
 							{config?.oauth.configured ? (
-								<button
-									type="button"
-									className="secondary danger"
-									onClick={() =>
-										confirm(`Disconnect ${definition.label}?`) &&
-										disconnect.mutate(definition.id)
-									}
+									<button
+										type="button"
+										className="secondary danger"
+										onClick={async () => {
+										if (await confirm({
+											title: `Disconnect ${definition.label}?`,
+											confirmLabel: "Disconnect",
+											variant: "danger",
+										})) disconnect.mutate(definition.id)
+									}}
 								>
 									Disconnect
 								</button>

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
-import { Card, CardHeader, Button, StatusText, Meter } from '../components/ui'
+import { Card, CardHeader, Button, StatusText, Meter, useConfirm } from '../components/ui'
 import { DataStateMessage } from '../components/DataState'
 import type { StatusTone } from '../components/ui'
 import { fmtSigned, fmtNum, humanize, fmtSymbol } from '../lib/format'
@@ -31,6 +31,7 @@ function errMsg(e: any): string {
  */
 export default function RiskControls() {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const { data: status, isLoading: statusLoading, isError: statusError } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: riskStatus, isPending: riskStatusPending, isError: riskStatusError } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000 })
   const { data: boundaries, isPending: boundariesPending, isError: boundariesError } = useQuery({ queryKey: ['risk-boundaries'], queryFn: api.getRiskBoundaries })
@@ -72,7 +73,7 @@ export default function RiskControls() {
     onError: (e: any) => setKillErr(errMsg(e)),
   })
   const releaseKill = useMutation({
-    // confirm_release=true — the onClick confirm() dialog is the second confirmation.
+    // confirm_release=true — the modal confirmation is the second confirmation.
     mutationFn: () => api.setKillSwitch(false, 'manual_release', true),
     onMutate: () => setKillErr(''),
     onSuccess: async (confirmed) => {
@@ -214,7 +215,7 @@ export default function RiskControls() {
           </div>
 
           <div className="risk-console-levers">
-            {/* Kill switch — the most destructive lever; keeps the confirm() friction. */}
+            {/* Kill switch — the most destructive lever; keeps the confirmation friction. */}
             <div className="risk-lever">
               <div className="risk-lever-head">
                 <span className="risk-lever-label">Kill Switch</span>
@@ -228,7 +229,7 @@ export default function RiskControls() {
                 <Button
                   variant="danger"
                   disabled={engageKill.isPending || releaseKill.isPending}
-                  onClick={() => { if (confirm('Engage kill switch? All trading will halt immediately.')) engageKill.mutate() }}
+                  onClick={async () => { if (await confirm({ title: 'Engage kill switch?', description: 'All trading will halt immediately.', confirmLabel: 'Engage', variant: 'danger' })) engageKill.mutate() }}
                 >
                   Engage Kill Switch
                 </Button>
@@ -236,7 +237,7 @@ export default function RiskControls() {
               {killSwitchAvailable && killed && (
                 <Button
                   disabled={engageKill.isPending || releaseKill.isPending}
-                  onClick={() => { if (confirm('Release Kill Switch? Trading will resume immediately.')) releaseKill.mutate() }}
+                  onClick={async () => { if (await confirm({ title: 'Release kill switch?', description: 'Trading will resume immediately.', confirmLabel: 'Release', variant: 'warning' })) releaseKill.mutate() }}
                 >
                   Release Kill Switch
                 </Button>

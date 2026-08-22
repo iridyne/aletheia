@@ -8,6 +8,7 @@ import type { InfraEvent } from '../types'
 import { deriveMasterState, getOperatorDisplayStatus } from '../lib/systemState'
 import { safeErrorText } from '../lib/mutationErrors'
 import { parseHealthIssue } from './health-issues'
+import { useConfirm } from './ui'
 
 const PERMISSION_MODES = ['Observe', 'Paper', 'Full'] as const
 
@@ -67,6 +68,7 @@ export default function StatusCluster({
   realtime: RealtimeStatus
 }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const [detailsRequested, setDetailsRequested] = useState(false)
   const [error, setError] = useState('')
   const paused = !!data?.gateway?.paused
@@ -160,11 +162,16 @@ export default function StatusCluster({
     },
     onError: (e: Error) => setError(safeErrorText(e)),
   })
-  const nextMode = () => {
+  const nextMode = async () => {
     const index = PERMISSION_MODES.indexOf(permission as typeof PERMISSION_MODES[number])
     if (index < 0) return
     const next = PERMISSION_MODES[(index + 1) % PERMISSION_MODES.length]
-    if (next === 'Full' && !window.confirm('Switch to Full permission mode? This enables live order execution.')) return
+    if (next === 'Full' && !(await confirm({
+      title: 'Switch to Full permission mode?',
+      description: 'This enables live order execution.',
+      confirmLabel: 'Switch to Full',
+      variant: 'danger',
+    }))) return
     setMode.mutate(next)
   }
   const requestDetails = () => setDetailsRequested(true)

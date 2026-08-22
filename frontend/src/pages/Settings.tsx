@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams, useBlocker } from 'react-router-dom'
 import { api } from '../api/client'
+import { useConfirm } from '../components/ui'
 import PageHeader from '../components/PageHeader'
 import { hasUncontrolledDraft, isFallbackDraftControl, shouldBlockNavigation } from '../features/settings/dirtyGuard'
 import { MODEL_PROVIDERS_SECTION } from '../features/settings/model-providers/modelProviderState'
@@ -166,6 +167,7 @@ function parseTab(value: string | null): Tab | null {
 
 export default function Settings() {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: status, isPending: statusPending, refetch: refetchStatus } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: settings, dataUpdatedAt: settingsUpdatedAt, isPending: settingsPending, refetch: refetchSettings } = useQuery({
@@ -226,6 +228,9 @@ export default function Settings() {
     // already server-controlled and therefore settle to the same snapshot.
     setDraftEpoch(epoch => epoch + 1)
   }
+
+  const blocker = useBlocker(() => shouldBlockNavigation(dirtyRef.current.size, touchedRef.current))
+  const blockerConfirmPending = useRef(false)
 
   useEffect(() => {
     try {
@@ -335,19 +340,32 @@ export default function Settings() {
   }, [isTouched, preciseDirtyCount])
 
   // Block in-app SPA navigation when there are unsaved changes.
-  useBlocker(
-    () => {
-      if (!shouldBlockNavigation(dirtyRef.current.size, touchedRef.current)) return false
-      return !window.confirm('You have unsaved changes. Leave this page and discard them?')
-    }
-  )
+  useEffect(() => {
+    if (blocker.state !== 'blocked' || blockerConfirmPending.current) return
+    blockerConfirmPending.current = true
+    void confirm({
+      title: 'Discard unsaved changes?',
+      description: 'You have unsaved changes. Leave Settings and discard them?',
+      confirmLabel: 'Leave and discard',
+      variant: 'warning',
+    }).then(approved => {
+      blockerConfirmPending.current = false
+      if (approved) blocker.proceed()
+      else blocker.reset()
+    })
+  }, [blocker, confirm])
 
   // `slug` is set when navigation came from a search result, so the deep-link
   // effect above can scroll to that section instead of leaving the operator at
   // the top of an 11-section tab.
-  const selectTab = (next: Tab, slug?: string) => {
+  const selectTab = async (next: Tab, slug?: string) => {
     if (shouldBlockNavigation(dirtyRef.current.size, touchedRef.current)) {
-      if (!confirm('You have unsaved changes on this tab. Switch tabs and discard them?')) return
+      if (!(await confirm({
+        title: 'Discard unsaved changes?',
+        description: 'You have unsaved changes on this tab. Switch tabs and discard them?',
+        confirmLabel: 'Switch and discard',
+        variant: 'warning',
+      }))) return
     }
     clearDirty()
     setTab(next)

@@ -10,6 +10,7 @@ import {
   SwitchGrid as ToggleGrid,
   type BoolField,
   type NumField,
+  useConfirm,
 } from '../../../components/ui'
 import { fmtNum, humanize, humanizeBool } from '../../../lib/format'
 import { listToCsv, parseCsvList } from '../csvList'
@@ -555,6 +556,7 @@ export function writePolicyPath(value: RiskPolicyDraft, path: RiskPolicyPath, ne
 }
 
 export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' | 'live'; initial: RiskPolicyDraft; qc: SettingsProps['qc']; onDirty?: SettingsDirtyProps['onDirty'] }) {
+  const confirm = useConfirm()
   const [policy, setPolicy] = useState<RiskPolicyDraft>(initial)
   const [isDirty, setIsDirty] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -663,15 +665,25 @@ export function RiskPolicyEditor({ mode, initial, qc, onDirty }: { mode: 'demo' 
       )}
       <div className="settings-action-row">
         <button
-          onClick={() => {
-            if (mode === 'live' && !window.confirm('Replace the Live risk policy with these values? Live remains locked, but future Live evaluations will use this revision.')) return
+          onClick={async () => {
+            if (mode === 'live' && !(await confirm({
+              title: 'Replace the Live risk policy?',
+              description: 'Live remains locked, but future Live evaluations will use this revision.',
+              confirmLabel: 'Save Live policy',
+              variant: 'warning',
+            }))) return
             save.mutate()
           }}
           disabled={save.isPending}
         >{save.isPending ? 'Saving…' : `Save ${mode} policy`}</button>
         <button
-          onClick={() => {
-            if (!window.confirm(`Reset only the ${mode} policy to shipped defaults? The other policy and all runtime authority remain unchanged.`)) return
+          onClick={async () => {
+            if (!(await confirm({
+              title: `Reset only the ${mode} policy?`,
+              description: 'The other policy and all runtime authority remain unchanged.',
+              confirmLabel: 'Reset defaults',
+              variant: 'danger',
+            }))) return
             reset.mutate()
           }}
           disabled={reset.isPending}
@@ -688,6 +700,7 @@ type RiskPolicyProfilesData = {
 }
 
 function RiskPolicyProfiles({ risk, qc, onDirty }: { risk: RiskPolicyProfilesData; qc: SettingsProps['qc']; onDirty?: SettingsDirtyProps['onDirty'] }) {
+  const confirm = useConfirm()
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const copy = useMutation({
     mutationFn: ({ source, target }: { source: 'demo' | 'live'; target: 'demo' | 'live' }) =>
@@ -705,11 +718,16 @@ function RiskPolicyProfiles({ risk, qc, onDirty }: { risk: RiskPolicyProfilesDat
     },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
-  const runCopy = (source: 'demo' | 'live', target: 'demo' | 'live') => {
+  const runCopy = async (source: 'demo' | 'live', target: 'demo' | 'live') => {
     const warning = target === 'live'
       ? 'Copy all common Demo values into Live? Live eligibility, unlock, permissions, credentials and brake state are preserved. Review this as a multi-variable Live policy change.'
       : 'Copy all common Live values into Demo? Demo runtime state and brake state are preserved.'
-    if (window.confirm(warning)) copy.mutate({ source, target })
+    if (await confirm({
+      title: `Copy ${source === 'demo' ? 'Demo' : 'Live'} policy to ${target === 'demo' ? 'Demo' : 'Live'}?`,
+      description: warning,
+      confirmLabel: 'Copy policy',
+      variant: target === 'live' ? 'warning' : 'default',
+    })) copy.mutate({ source, target })
   }
   return (
     <div className="card mb-0">
