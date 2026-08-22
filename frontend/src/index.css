@@ -4456,6 +4456,16 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   margin-bottom: 0.5rem;
 }
 .lens-theme-header h4 { margin: 0; }
+.lens-theme-open {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.lens-theme-open:hover { color: var(--accent); text-decoration: underline; }
 .lens-theme-actions {
   display: flex;
   gap: 0.5rem;
@@ -5084,6 +5094,18 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   padding-top: 0.25rem;
   padding-bottom: 0.5rem;
 }
+.serenity-bearcase-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.serenity-bearcase-toggle:hover { color: var(--accent); text-decoration: underline; }
 .serenity-bearcase-box {
   background: var(--surface-2);
   border-radius: 4px;
