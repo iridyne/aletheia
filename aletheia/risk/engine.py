@@ -723,6 +723,18 @@ def _evaluate_proposal_locked(
     # Downstream helpers receive the same mode-scoped view. This copy is local to
     # the evaluation and never mutates the cached or persisted configuration.
     cfg.risk = risk
+    # Defensive assertion: policy values must be finite to avoid NaN > X being silently False.
+    _critical_policy_values = [
+        risk.max_daily_loss_pct,
+        risk.max_single_trade_risk_pct,
+        risk.max_demo_single_trade_risk_pct,
+        risk.max_total_live_exposure_pct,
+        risk.max_position_margin_usdt,
+        risk.base_usdt,
+    ]
+    for val in _critical_policy_values:
+        if not math.isfinite(val):
+            raise ValueError(f"Risk policy value is not finite: {val}")
     violations = []
 
     # 0. Kill switch — global brake, rejects everything when engaged.

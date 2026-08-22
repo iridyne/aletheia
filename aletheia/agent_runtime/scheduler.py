@@ -1266,7 +1266,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
     _scheduler.add_job(
         _guarded("confidence_calibration", _run_confidence_calibration), "interval", hours=6,
-        id="confidence_calibration", misfire_grace_time=300, executor="io",
+        id="confidence_calibration", misfire_grace_time=300, executor="default",
     )
     _scheduler.add_job(
         _guarded("reconciliation", _run_reconciliation), "interval", minutes=2, id="reconciliation",
@@ -1347,14 +1347,14 @@ def init_scheduler() -> BackgroundScheduler | None:
         cleanup_initial_run = datetime.now() + timedelta(minutes=5)
     _scheduler.add_job(
         _guarded("cleanup", _run_cleanup), "cron", hour=3, minute=17, id="cleanup",
-        misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
+        misfire_grace_time=600, executor="default", timezone="Asia/Shanghai",
         **({"next_run_time": cleanup_initial_run} if cleanup_initial_run else {}),
     )
     # Forward catch-up for shadow trades that the event-driven resolver missed
     # (parent positions with no opportunity_id). DB-only; cheap; bounded per run.
     _scheduler.add_job(
         _guarded("shadow_resolver", _run_shadow_resolver), "interval", hours=6,
-        id="shadow_resolver", misfire_grace_time=300, executor="io",
+        id="shadow_resolver", misfire_grace_time=300, executor="default",
     )
     _scheduler.add_job(
         _guarded("outcome_hook_replay", _run_outcome_hook_replay),

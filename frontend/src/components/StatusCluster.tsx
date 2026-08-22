@@ -110,6 +110,7 @@ export default function StatusCluster({
     riskState,
     operatorStatus,
     operatorMode,
+    healthIssues,
   })
   const opDisplay = getOperatorDisplayStatus(operator as any)
   const realtimeTone = realtime.state === 'connected'

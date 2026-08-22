@@ -516,8 +516,8 @@ class RiskCapitalPolicy(StrictRiskPolicyModel):
     # Existing v1/v2 policies intentionally migrate to account equity because
     # this default is merged underneath every persisted override.
     base_source: Literal["account_equity", "custom"] = "account_equity"
-    base_usdt: float = 100.0
-    max_position_margin_usdt: float = 50.0
+    base_usdt: float = Field(default=100.0, gt=0.0)
+    max_position_margin_usdt: float = Field(default=50.0, gt=0.0)
     # Per-symbol cumulative bound (CUM-ADD), expressed as a COUNT of full-size
     # entries — never a currency amount. Same-symbol adds average-merge into ONE
     # position, so the single-position cap does not bound repeated accumulation.
@@ -526,14 +526,12 @@ class RiskCapitalPolicy(StrictRiskPolicyModel):
     # entry is always exactly 1/N of the cap and can never be rejected by it at
     # any account size or leverage. A hardcoded dollar cap silently goes stale as
     # equity grows; a count cannot. 0 disables the check.
-    max_per_symbol_entries: int = 3
-    max_total_exposure_pct: float = 5.0
-
+    max_per_symbol_entries: int = Field(default=3, ge=0)
+    max_total_exposure_pct: float = Field(default=5.0, ge=0.0, le=100.0)
 
 class RiskLossPolicy(StrictRiskPolicyModel):
-    max_single_trade_risk_pct: float = 0.25
-    max_daily_loss_pct: float = 1.0
-
+    max_single_trade_risk_pct: float = Field(default=0.25, gt=0.0, le=100.0)
+    max_daily_loss_pct: float = Field(default=1.0, gt=0.0, le=100.0)
 
 class RiskPositionsPolicy(StrictRiskPolicyModel):
     max_open_positions: int = 3
@@ -541,38 +539,33 @@ class RiskPositionsPolicy(StrictRiskPolicyModel):
 
 
 class RiskLeveragePolicy(StrictRiskPolicyModel):
-    futures_cap: int = 2
-    major_cap: int = 3
-    mid_cap: int = 2
-    alt_cap: int = 1
-    account_cap: float = 1.5
-
+    futures_cap: int = Field(default=2, gt=0, le=125)
+    major_cap: int = Field(default=3, gt=0, le=125)
+    mid_cap: int = Field(default=2, gt=0, le=125)
+    alt_cap: int = Field(default=1, gt=0, le=125)
+    account_cap: float = Field(default=1.5, gt=0.0, le=125.0)
 
 class RiskMarginPolicy(StrictRiskPolicyModel):
-    warning_ratio: float = 0.70
-    block_ratio: float = 0.85
-    min_entry_liquidation_buffer_pct: float = 5.0
-    runtime_liquidation_buffer_pct: float = 3.0
-
+    warning_ratio: float = Field(default=0.70, gt=0.0, le=1.0)
+    block_ratio: float = Field(default=0.85, gt=0.0, le=1.0)
+    min_entry_liquidation_buffer_pct: float = Field(default=5.0, gt=0.0, le=100.0)
+    runtime_liquidation_buffer_pct: float = Field(default=3.0, gt=0.0, le=100.0)
 
 class RiskCorrelationPolicy(StrictRiskPolicyModel):
     enabled: bool = True
-    max_sector_concentration_pct: float = 60.0
-    max_portfolio_beta: float = 3.0
-    min_positions_for_concentration: int = 4
-
+    max_sector_concentration_pct: float = Field(default=60.0, gt=0.0, le=100.0)
+    max_portfolio_beta: float = Field(default=3.0, gt=0.0)
+    min_positions_for_concentration: int = Field(default=4, ge=0)
 
 class RiskExitPolicy(StrictRiskPolicyModel):
     catastrophic_stop_enabled: bool = True
-    catastrophic_stop_pct: float = 10.0
-    catastrophic_stop_pct_serenity: float = 15.0
-    horizon_hard_backstop_mult: float = 3.0
-
+    catastrophic_stop_pct: float = Field(default=10.0, gt=0.0, le=100.0)
+    catastrophic_stop_pct_serenity: float = Field(default=15.0, gt=0.0, le=100.0)
+    horizon_hard_backstop_mult: float = Field(default=3.0, gt=0.0)
 
 class RiskEligibilityPolicy(StrictRiskPolicyModel):
-    family_min_samples: int = 30
-    family_min_win_rate_pct: float = 50.0
-
+    family_min_samples: int = Field(default=30, ge=0)
+    family_min_win_rate_pct: float = Field(default=50.0, ge=0.0, le=100.0)
 
 class ModeRiskPolicy(StrictRiskPolicyModel):
     policy_id: str

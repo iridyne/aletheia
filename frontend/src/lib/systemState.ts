@@ -21,6 +21,11 @@ export interface MasterStateInput {
   operatorStatus?: string
   /** From /operator/status .mode — used to surface trade-blocking modes at master level */
   operatorMode?: string
+  /**
+   * Health issues list from /health .issues — any entry starting with 'llm_unavailable:'
+   * indicates LLM is unreachable, which should surface as DEGRADED not OPERATIONAL.
+   */
+  healthIssues?: string[]
 }
 
 // ─── Operator display status ───────────────────────────────────────────────
@@ -128,6 +133,10 @@ export function deriveMasterState(p: MasterStateInput): MasterState {
   }
   if (p.riskState === 'warning') {
     return { word: 'CAUTION', tone: 'yellow', detail: 'Running with active risk warnings — review the violations below.' }
+  }
+  const llmUnavailable = (p.healthIssues ?? []).some(issue => issue.startsWith('llm_unavailable:'))
+  if (llmUnavailable) {
+    return { word: 'DEGRADED', tone: 'yellow', detail: 'LLM provider is unreachable — agents cannot generate new proposals. Check Settings → Model Provider.' }
   }
   if (p.riskState === 'healthy') {
     return { word: 'OPERATIONAL', tone: 'green', detail: 'Agents are running within all risk limits.' }

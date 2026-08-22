@@ -282,13 +282,15 @@ function useManualClose(onSuccess?: () => void) {
 
 	const mutation = useMutation({
 		mutationFn: (position: Position) => api.closePosition(position.id),
-		onSuccess: (_data, position) => {
+		onSuccess: (data, position) => {
 			qc.invalidateQueries({ queryKey: positionKeys.all });
 			qc.invalidateQueries({ queryKey: ["trades"] });
-			toast(
-				"success",
-				`${fmtSymbol(position.symbol, position.market_type)} closed`,
-			);
+			const sym = fmtSymbol(position.symbol, position.market_type);
+			if (data?.closed === false) {
+				toast("success", `${sym} close submitted — pending materialization`);
+			} else {
+				toast("success", `${sym} closed`);
+			}
 			onSuccess?.();
 		},
 		onError: (err: any, position) => {
