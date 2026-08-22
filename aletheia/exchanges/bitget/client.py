@@ -575,6 +575,31 @@ class BitgetClient:
             return d[0] if d else None
         return d if isinstance(d, dict) else None
 
+    async def get_order_detail_by_client_oid(
+        self, client_oid: str, symbol: str
+    ) -> dict | None:
+        """Recover a Bitget orderId from a stable clientOid when the original
+        submission ACK was lost (recovery path for #1779).
+
+        Returns {"orderId": ..., "clientOid": ..., "status": ...} or None on
+        not-found / ambiguous.  Raises RuntimeError on hard exchange errors.
+        """
+        path = (
+            f"/api/v2/mix/order/detail"
+            f"?clientOid={client_oid}&symbol={symbol}&productType=USDT-FUTURES"
+        )
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            return None  # not found or ambiguous — fail-closed
+        d = data.get("data")
+        if isinstance(d, list):
+            return d[0] if d else None
+        return d if isinstance(d, dict) else None
+
+
     async def get_account(self) -> AccountSummary:
         """Get account summary (§19.3)."""
         path = "/api/v2/spot/account/info"
