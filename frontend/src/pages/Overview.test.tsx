@@ -26,6 +26,14 @@ describe('Overview operator mutation truthfulness', () => {
 })
 
 describe('Overview semantic honesty', () => {
+  it('loads persisted data coverage independently from the lightweight bootstrap', () => {
+    expect(SRC).toContain("queryKey: ['market-data-coverage']")
+    expect(SRC).toContain('queryFn: api.getDataCoverage')
+    expect(SRC).toContain('coverage={coverage.data} coverageError={coverage.isError}')
+    expect(SRC).toContain("coverage?.status === 'healthy'")
+    expect(SRC).not.toContain('deferred_until_diagnostics')
+  })
+
   it('RiskCard shows muted tone when shell data has not loaded', () => {
     // Unknown state (no data) must not show yellow (degraded) — it is unknown.
     // The tone expression must check !shell before assigning yellow.
