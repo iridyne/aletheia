@@ -930,7 +930,7 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
     )
     db = get_db()
     registered = db.execute(
-        "SELECT outcome_candidate_key, horizon, allocation_selected "
+        "SELECT outcome_candidate_key, horizon, allocation_selected, due_at "
         "FROM filter_candidate_outcomes "
         "ORDER BY outcome_candidate_key, horizon"
     ).fetchall()
@@ -940,6 +940,8 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
     assert {
         row[0]: bool(row[2]) for row in registered if row[1] == "4h"
     } == {ck_t: True, ck_c: False}
+    assert len({row["due_at"] for row in registered}) == 1
+    settlement_at = datetime.fromisoformat(str(registered[0]["due_at"]))
 
     was = db.in_transaction
     db.execute(
@@ -947,12 +949,12 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
         "estimated_fee_pct=0.1, estimated_spread_slippage_pct=0.1, "
         "estimated_funding_pct=0.0, mae_pct=-0.1, cost_model_version='test-v1', settled_at=? "
         "WHERE outcome_candidate_key IN (?, ?) AND horizon='4h'",
-        (now, ck_t, ck_c),
+        (settlement_at.isoformat(), ck_t, ck_c),
     )
     if not was:
         db.commit()
 
-    verdict = evaluate_experiment(exp)[0]
+    verdict = evaluate_experiment(exp, as_of_at=settlement_at)[0]
     assert verdict.unique_treatment_n == 1
     assert verdict.unique_control_n == 1
     assert verdict.observed == 0.3

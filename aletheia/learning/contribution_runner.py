@@ -83,6 +83,7 @@ def evaluate_experiment(
         "unsettled",
         "settlement_after_as_of",
         "missing_exact_outcome",
+        "incomplete_assignment_unit",
     })
     for cohort in build_experiment_cohorts(
         experiment_id,
