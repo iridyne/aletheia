@@ -33,6 +33,8 @@ REQUIRED_CURRENT_FILES = {
     Path("docs/design/proposals/README.md"),
     Path("docs/product/CAPABILITY_GROUND_TRUTH.md"),
     Path("docs/product/ACTIVE_RUNTIME_SCOPE.md"),
+    Path(".github/ISSUE_TEMPLATE/change_contract.md"),
+    Path(".github/PULL_REQUEST_TEMPLATE.md"),
 }
 RETIRED_CONTRACT_PATHS = {
     Path("docs/design/contracts/learning_evolution_contract.md"),
