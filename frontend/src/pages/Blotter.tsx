@@ -414,7 +414,7 @@ function SignoffPanel() {
       title: 'Approve local paper proposal?',
       description: `${p.direction.toUpperCase()} ${fmtSymbol(p.symbol, p.market_type)}`,
       detail: 'Local simulation; no exchange order placed.',
-      confirmLabel: 'Approve',
+      confirmLabel: 'Approve Local Paper',
     }))) return
     setBusyId(p.id)
     approve.mutate(p.id)
@@ -482,7 +482,7 @@ function SignoffPanel() {
                 <div className="bl-signoff-actions" onClick={e => e.stopPropagation()}>
                   {paperEligible ? (
                     <Button className="btn-sm" onClick={() => doApprove(p)} disabled={busy}>
-                      {busy && approve.isPending ? 'Approving…' : 'Approve'}
+                      {busy && approve.isPending ? 'Approving…' : 'Approve Local Paper'}
                     </Button>
                   ) : (
                     <StatusText tone="yellow" className="text-xs">
