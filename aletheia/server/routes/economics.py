@@ -11,8 +11,9 @@ See `docs/design/proposals/tokenomics_harness_phase_plan_2026-07-30.md`
 """
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta, timezone
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -48,6 +49,17 @@ from aletheia.model_provider.fallback import get_model_health_snapshot
 router = APIRouter(prefix="/api/economics", tags=["economics"])
 
 
+def _sanitize_floats(obj: Any) -> Any:
+    """Recursively replace non-finite floats with None. (#1488)"""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _sanitize_floats(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_floats(v) for v in obj]
+    return obj
+
+
 @router.get("/usage-insights")
 def usage_insights(
     days: int = Query(1),
@@ -56,7 +68,9 @@ def usage_insights(
     """Exact aggregate-only usage projection; never reads prompts or responses."""
     if days not in {1, 7, 30, 90}:
         raise HTTPException(status_code=422, detail="days must be one of 1, 7, 30, or 90")
-    return build_usage_insights(days=days, group=group)
+    result = build_usage_insights(days=days, group=group)
+    # #1488: sanitize non-finite floats (NaN/inf) before JSON serialization
+    return _sanitize_floats(result)
 
 
 @router.get("/status")

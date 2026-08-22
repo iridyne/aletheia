@@ -63,6 +63,8 @@ _MODEL_HEALTH: dict[tuple[str, str], "ModelHealthState"] = {}
 # success/failure) + iteration (ASGI thread building the health snapshot), which
 # could otherwise raise "dict changed size during iteration" (CC-1).
 _MODEL_HEALTH_LOCK = threading.Lock()
+# #1622: serialize budget admission so concurrent calls cannot both pass the cap check
+_BUDGET_ADMISSION_LOCK = threading.Lock()
 _SAFETY_LOGICAL_AGENTS = frozenset({
     "pi_trading_decision", "risk_critic", "paper_trader", "agent_shell/trading_decision",
 })
@@ -428,14 +430,47 @@ def _with_fallback_meta(
 
 
 def _enforce_budget_if_configured(cfg, request: ModelRequest) -> None:
-    """Apply opt-in policy after the Phase 2 observation has been computed."""
+    """Apply opt-in policy after the Phase 2 observation has been computed.
+
+    #1624: enforcement must fire even when budgets_shadow_enabled=False.
+    Compute observations fresh when not already on the request.
+    """
     econ = getattr(cfg, "economics", None)
+    if econ is None or not econ.enabled or econ.enforcement_mode == "warn_only":
+        return
     observations = getattr(request, "_aletheia_would_block_observations", None)
-    if econ is None or not econ.enabled or econ.enforcement_mode == "warn_only" or not observations:
+    # #1624: if shadow observation was off but enforcement is active, compute now
+    if not observations:
+        try:
+            from aletheia.economics.budgets import check_would_block
+            from aletheia.economics.tracing import resolve_pricing_snapshot
+            from datetime import datetime, timezone
+            provider_name = getattr(request, "_aletheia_provider_name", None)
+            if provider_name:
+                input_tokens = getattr(request, "_aletheia_input_tokens_est", 0) or 0
+                output_tokens = max(0, int(getattr(request, "max_tokens", 0) or 0))
+                try:
+                    from aletheia.agent_runtime.run_context import (
+                        current_agent_run_id, current_economic_attribution,
+                    )
+                    run_id = current_agent_run_id()
+                    logical_agent = (current_economic_attribution() or {}).get("logical_agent")
+                except Exception:
+                    run_id = None
+                    logical_agent = None
+                if logical_agent not in _SAFETY_LOGICAL_AGENTS:
+                    observations = check_would_block(
+                        estimated_cost_usd=0.001,  # conservative minimum
+                        run_id=run_id,
+                        logical_agent=logical_agent,
+                        provider=provider_name,
+                    )
+        except Exception:
+            pass
+    if not observations:
         return
     try:
         from aletheia.agent_runtime.run_context import current_economic_attribution
-
         logical_agent = (current_economic_attribution() or {}).get("logical_agent")
     except Exception:
         logical_agent = None
@@ -454,9 +489,12 @@ async def complete_with_fallback(
     cfg = load_config()
     resolved_provider_name = provider_name or cfg.models.default_provider
     provider = provider or await provider_router.get_provider_async(resolved_provider_name)
-    _observe_would_block(cfg, request, provider, resolved_provider_name)
-    _observe_prompt_guardrail(cfg, request)
-    _enforce_budget_if_configured(cfg, request)
+    # #1622: atomic budget check — observe and enforce under the same lock so
+    # concurrent calls cannot both read below-cap and both be admitted.
+    with _BUDGET_ADMISSION_LOCK:
+        _observe_would_block(cfg, request, provider, resolved_provider_name)
+        _observe_prompt_guardrail(cfg, request)
+        _enforce_budget_if_configured(cfg, request)
     if not request.allow_model_fallback:
         return await brokered_complete(resolved_provider_name, provider, request)
     models = await _candidate_models(resolved_provider_name, provider)
