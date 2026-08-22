@@ -397,6 +397,13 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   `operator_authorized_cleanup_trade_rate_limited` 并清空 claim，让保护性平仓以全新
   `close-{id}-rN` clientOid 重试；全程写审计（actor=human + owner reason），不制造任何 Fill、
   价格或 PnL。不满足前置状态的解锁请求整体拒绝、状态零变更。
+- **Bitget demo 分片平仓（2026-08-22 起）**：demo 撮合引擎对大数量 market-IOC close 有单笔
+  撮合迭代上限（`trade_too_many_times_cancel`、零成交、确定性复现），因此 `close_demo_position`
+  按"历史 venue 撤单次数减半"的分片数量提交（每次 match-cap 类取消减半，下限为剩余量的
+  1/64；成功分片不重置计数）。物化语义同步区分"订单成交完"与"仓位平完"：分片单整单成交只把
+  Position 数量核减到剩余（`is_partial=1` 记账、claim 释放、下一保护周期自动发下一片），绝不提前
+  关闭仍有 venue 数量的 Position；重放已落账分片是幂等 no-op；部分成交的分片单保留
+  `partially_filled` claim 继续轮询。完整平仓（订单量 = 剩余量）行为不变。
 - **未决 claim 不得关闭保护性观察**：Position Manager 仍读取 exact fresh mark 并评估
   Layer-0/SL/TP/max-hold/trailing；若保护规则再次触发，只记录等待原 claim 收敛，绝不调用
   exchange close 或创建替代 Order。`positions` 的 owner read model 同时暴露
