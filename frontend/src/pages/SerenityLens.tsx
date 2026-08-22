@@ -561,7 +561,7 @@ export function ThemesTab() {
         <Card key={t.id} className="lens-theme-card">
           <div className="lens-theme-header">
             <h4>
-              <button
+              <Button
                 type="button"
                 className="lens-theme-open"
                 onClick={() => setSelectedTheme(t.id)}
@@ -569,7 +569,7 @@ export function ThemesTab() {
                 data-serenity-theme-id={t.id}
               >
                 {t.name}
-              </button>
+              </Button>
             </h4>
             <StatusText tone={t.status === 'active' ? 'green' : t.status === 'watching' || t.status === 'promoted' ? 'blue' : 'yellow'}>
               {humanize(t.status)}
@@ -654,7 +654,7 @@ export function OpportunityRow({
       <tr>
         <td className="mono">
           {hasBearCase ? (
-            <button
+            <Button
               type="button"
               className="serenity-bearcase-toggle"
               aria-expanded={expanded}
@@ -663,7 +663,7 @@ export function OpportunityRow({
               onClick={() => setExpanded(v => !v)}
             >
               <span aria-hidden="true">{expanded ? '▾' : '▸'}</span> {symbol}
-            </button>
+            </Button>
           ) : symbol}
         </td>
         <td>{direction}</td>
