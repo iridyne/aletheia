@@ -24,6 +24,7 @@ logger = logging.getLogger("aletheia.scheduler")
 
 _scheduler: BackgroundScheduler | None = None
 _scheduler_last_tick: str | None = None
+_SCHEDULER_STOPPING: bool = False  # #1456: set by stop_scheduler() to abort io-lane jobs
 _universe_scanner_startup_cutoff: str | None = None
 _universe_scanner_startup_recovery_done = False
 _universe_scanner_audit_mirror_done = False
@@ -297,20 +298,24 @@ class _PersistentAsyncTimeoutWorker:
                     coroutine.close()
                 raise RuntimeError("scheduler async timeout queue is full")
             self._pending += 1
+
+        # #1443: wrap the coroutine so capacity is released only after the coroutine
+        # finishes its own finally/cleanup — not at future cancellation time.
+        async def _capacity_wrapper():
+            try:
+                return await coroutine
+            finally:
+                with self._lock:
+                    self._pending = max(0, self._pending - 1)
+
         try:
-            future = asyncio.run_coroutine_threadsafe(coroutine, loop)
+            future = asyncio.run_coroutine_threadsafe(_capacity_wrapper(), loop)
         except BaseException:
             with self._lock:
                 self._pending -= 1
             if asyncio.iscoroutine(coroutine):
                 coroutine.close()
             raise
-
-        def _release(_future) -> None:
-            with self._lock:
-                self._pending = max(0, self._pending - 1)
-
-        future.add_done_callback(_release)
         return future
 
     def close(self) -> None:
@@ -600,6 +605,7 @@ def _run_job_guarded(job_id: str, fn):
     except Exception as e:
         logger.warning("%s job failed outside wrapper: %s", job_id, e)
         _record_job_failure(job_id, str(e), type(e).__name__)
+        raise  # #1788: re-raise so APScheduler records EVENT_JOB_ERROR not EVENT_JOB_EXECUTED
     finally:
         with _SCHEDULER_JOB_LOCK:
             if rollback_if_in_transaction():
@@ -634,8 +640,11 @@ def _run_sync_with_timeout(
     timeout = _ASYNC_JOB_TIMEOUT_SEC[job_id]
     thread_timeout = timeout + 15.0
     timeout_worker = worker or _sync_timeout_worker
-
     def _run():
+        # #1456: abort io-lane body if Gateway is shutting down
+        if _SCHEDULER_STOPPING:
+            logger.debug("_run_sync_with_timeout: skipping %s (scheduler stopping)", job_id)
+            return None
         try:
             return fn()
         finally:
@@ -1606,7 +1615,8 @@ def init_scheduler() -> BackgroundScheduler | None:
 
 
 def stop_scheduler() -> None:
-    global _scheduler
+    global _scheduler, _SCHEDULER_STOPPING
+    _SCHEDULER_STOPPING = True  # #1456: signal io-lane jobs to abort
     if _scheduler:
         _scheduler.shutdown(wait=False)
         _scheduler = None
@@ -3922,8 +3932,11 @@ def _ohlcv_backfill_body():
     instruments = set(_get_observed_instruments(cfg))
 
     total_bars = 0
+    attempt_count = 0
+    error_count = 0
     for instrument in sorted(instruments, key=str):
         for tf in ("1h", "4h"):
+            attempt_count += 1
             try:
                 result = _asyncio.run(download_symbol_history(
                     instrument.symbol, tf, months=months,
@@ -3932,9 +3945,12 @@ def _ohlcv_backfill_body():
                 total_bars += result.bars_fetched
             except Exception as e:
                 logger.debug("nightly_backfill skip %s/%s: %s", instrument, tf, e)
-    logger.info("ohlcv_nightly_backfill: %d symbols, %d total bars fetched",
-                len(instruments), total_bars)
-
+                error_count += 1
+    logger.info("ohlcv_nightly_backfill: %d symbols, %d total bars fetched, %d/%d errors",
+                len(instruments), total_bars, error_count, attempt_count)
+    # #1789: if every download attempt failed, raise so the job is marked failed
+    if attempt_count > 0 and error_count == attempt_count:
+        raise RuntimeError(f"ohlcv_nightly_backfill: all {attempt_count} download attempts failed")
 
 def _run_okx_demo_symbols():
     try:
