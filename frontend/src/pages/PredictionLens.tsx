@@ -144,7 +144,12 @@ function ObserverStatusCard({ status, state }: { status: PredictionStatus | unde
 // --- Market Card ---
 function MarketCard({ market, onClick }: { market: PredictionMarket; onClick: () => void }) {
   return (
-    <Card className="pred-market-card" onClick={onClick}>
+    <button
+      type="button"
+      className="card pred-market-card"
+      aria-label={`Open details for ${market.event_title}`}
+      onClick={onClick}
+    >
       <div className="pred-card-header">
         <h4 className="pred-card-title">{market.event_title}</h4>
         {market.category && <Badge tone="blue">{market.category}</Badge>}
@@ -176,7 +181,7 @@ function MarketCard({ market, onClick }: { market: PredictionMarket; onClick: ()
         )}
         <span className="text-muted text-sm">{shortDate(market.created_at)}</span>
       </div>
-    </Card>
+    </button>
   )
 }
 
@@ -247,7 +252,20 @@ function ProbabilityMoversTab({ markets, state, onSelect }: { markets: Predictio
           </thead>
           <tbody>
             {movers.map(m => (
-              <tr key={m.id} className="clickable" onClick={() => onSelect(m)}>
+              <tr
+                key={m.id}
+                className="clickable"
+                role="button"
+                tabIndex={0}
+                aria-label={`Open details for ${m.event_title}`}
+                onClick={() => onSelect(m)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    onSelect(m)
+                  }
+                }}
+              >
                 <td className="pred-event-cell td-ellipsis">{m.event_title}</td>
                 <td className="mono">{pctFmt(m.yes_probability)}</td>
                 <td className={`mono ${(m.probability_change_24h ?? 0) > 0 ? 'pnl-positive' : (m.probability_change_24h ?? 0) < 0 ? 'pnl-negative' : ''}`}>

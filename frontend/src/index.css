@@ -4599,7 +4599,14 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   cursor: pointer;
   transition: border-color 0.15s;
 }
-.pred-market-card:hover { border-color: var(--accent-dim); }
+button.pred-market-card {
+  display: block; width: 100%; text-align: left;
+  color: var(--text); font: inherit;
+  background: var(--surface); border: 1px solid var(--border);
+  cursor: pointer;
+}
+button.pred-market-card:hover { border-color: var(--accent-dim); filter: none; }
+button.pred-market-card:active:not(:disabled) { transform: none; }
 .pred-card-header {
   display: flex;
   justify-content: space-between;
