@@ -135,13 +135,17 @@ jobs:
               const actualWorkflow = sourceRun.path;
               const sourceEvent = sourceRun.event;
               const sourceHeadSha = sourceRun.head_sha;
+              const runCreatedAt = new Date(sourceRun.created_at).getTime();
+              const ageMs = Date.now() - runCreatedAt;
+              const maxAgeMs = 2 * 60 * 60 * 1000; // 2 hours — prevents source_run_id replay
               if (
                 !actualWorkflow.endsWith(expectedWorkflow) ||
                 sourceEvent !== 'workflow_dispatch' ||
-                sourceHeadSha !== run.head_sha
+                sourceHeadSha !== run.head_sha ||
+                ageMs > maxAgeMs
               ) {
                 core.setFailed(
-                  `dispatch provenance mismatch: workflow=${actualWorkflow} event=${sourceEvent} sha=${sourceHeadSha}`
+                  `dispatch provenance mismatch: workflow=${actualWorkflow} event=${sourceEvent} sha=${sourceHeadSha} age=${Math.round(ageMs/60000)}min`
                 );
                 return;
               }

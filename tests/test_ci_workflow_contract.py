@@ -875,3 +875,16 @@ def test_release_candidate_dispatch_validates_source_run_id() -> None:
     assert "source_run_id" in handoff_script or "runId" in handoff_script, (
         "ci.yml release-candidate dispatch must include source_run_id in client_payload"
     )
+
+
+def test_release_dispatch_source_run_id_has_freshness_check() -> None:
+    """#1508: source_run_id verification must include a timestamp/age check to prevent replay."""
+    workflow = _auto_merge_workflow()
+    release_job = workflow.get("jobs", {}).get("release-candidate", {})
+    script = ""
+    for step in release_job.get("steps", []):
+        if isinstance(step, dict):
+            script += str(step.get("with", {}).get("script", ""))
+    assert "maxAgeMs" in script or "ageMs" in script, (
+        "release-candidate dispatch verification must check source run age to prevent replay attacks"
+    )
