@@ -1736,10 +1736,11 @@ export const api = {
 					// Layer-1 observability: reason-class breakdown over LIVE defers
 					// (defer_until > now), 12h defer_rate, oldest live-defer age in
 					// seconds, and the (currently static) queue capacity from
-					// paper_trader._PENDING_SIGNAL_QUEUE_CAPACITY.
-					market_quiet_defers: number;
-					candidate_specific_defers: number;
-					defer_rate: number;
+					// paper_trader._PENDING_SIGNAL_QUEUE_CAPACITY.  These fields are
+					// null when the backing query fails, never zero.
+					market_quiet_defers: number | null;
+					candidate_specific_defers: number | null;
+					defer_rate: number | null;
 					oldest_defer_age_seconds: number | null;
 					queue_capacity: number | null;
 				};
@@ -1959,10 +1960,10 @@ export const api = {
 			max_daily_loss_pct: number;
 			max_single_trade_risk_pct: number;
 			max_total_live_exposure_pct: number;
-			max_live_position_notional_usdt: number;
+			max_live_position_margin_usdt: number;
 			max_live_limited_cap_usdt: number;
 			starting_capital_usdt: number;
-			max_demo_position_notional_usdt: number;
+			max_demo_position_margin_usdt: number;
 			max_demo_single_trade_risk_pct: number;
 			max_futures_leverage_live: number;
 			max_futures_leverage_demo: number;
@@ -2271,6 +2272,8 @@ export const api = {
 	// "not yet available" placeholder. Frontend surface can now consume it.
 	getAgentRunSteps: (runId: string) =>
 		fetchJson<any[]>(`/agent-runs/${runId}/steps`),
+	getAgentCatalog: () =>
+		fetchJson<{ agents: { name: string; side_effect_class: string; cost_class: string; gate_check: boolean }[] }>("/agents/catalog"),
 	startAgentRun: (agent_name: string) =>
 		post("/agent-runs/start", { agent_name }),
 	getDreamingSummary: () =>
@@ -3089,6 +3092,7 @@ export interface ProfitFactorData {
 	gross_profit: number;
 	gross_loss: number;
 	profit_factor: number | null;
+	profit_factor_state?: 'finite' | 'unbounded_no_losses' | 'unavailable_no_outcomes';
 	avg_win: number;
 	avg_loss: number;
 	largest_win: number;

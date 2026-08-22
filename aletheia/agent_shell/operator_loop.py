@@ -59,8 +59,8 @@ PARAM_REGISTRY: dict[str, ParamSpec] = {
         neutral="medium", tighten_direction="up",
         floor="speculative", ceiling="high", step=1,
         ladder=["speculative", "medium", "high"]),
-    "max_demo_position_notional_usdt": ParamSpec(
-        "max_demo_position_notional_usdt", "risk",
+    "max_demo_position_margin_usdt": ParamSpec(
+        "max_demo_position_margin_usdt", "risk",
         neutral=200.0, tighten_direction="down",
         floor=20.0, ceiling=500.0, step=0.30,
         ladder=None),
@@ -505,7 +505,7 @@ def build_system_assessment() -> SystemAssessment:
     # Config snapshot
     assessment.min_confidence = getattr(cfg.trading, "min_confidence_to_trade", "medium")
     assessment.default_stop_loss_pct = getattr(cfg.trading, "default_stop_loss_pct", 3.0)
-    assessment.max_demo_notional = getattr(cfg.risk, "max_demo_position_notional_usdt", 200.0)
+    assessment.max_demo_notional = cfg.risk.demo.capital.max_position_margin_usdt
 
     # Param drift
     assessment.param_drift = {name: _get_param_drift(name) for name in PARAM_REGISTRY}
@@ -759,7 +759,7 @@ def _action_loosen_confidence(action: OperatorAction) -> dict:
 
 
 def _action_reduce_sizing(action: OperatorAction) -> dict:
-    param_name = "max_demo_position_notional_usdt"
+    param_name = "max_demo_position_margin_usdt"
     last = _last_action_time("config_patch", param_name)
     if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
         return {"action": "reduce_sizing", "status": "cooldown",
@@ -770,7 +770,7 @@ def _action_reduce_sizing(action: OperatorAction) -> dict:
 
     pct = min(action.params.get("reduce_pct", 20), 30)
     cfg = load_config()
-    current = cfg.risk.demo.capital.max_position_notional_usdt
+    current = cfg.risk.demo.capital.max_position_margin_usdt
     new_val = round(current * (1 - pct / 100), 2)
     new_val = max(new_val, 20.0)
     if new_val >= current:
@@ -778,7 +778,7 @@ def _action_reduce_sizing(action: OperatorAction) -> dict:
 
     # Compatibility assignment keeps the one-release flat projection and the
     # authoritative Demo policy synchronized.
-    cfg.risk.max_demo_position_notional_usdt = new_val
+    cfg.risk.max_demo_position_margin_usdt = new_val
     cfg.risk.demo.revision += 1
     save_config(cfg)
     _persist_action("config_patch", param=param_name,
@@ -791,7 +791,7 @@ def _action_reduce_sizing(action: OperatorAction) -> dict:
 
 def _action_increase_sizing(action: OperatorAction) -> dict:
     """Restore sizing toward neutral (Level 1). Never exceeds neutral."""
-    param_name = "max_demo_position_notional_usdt"
+    param_name = "max_demo_position_margin_usdt"
     last = _last_action_time("config_patch", param_name)
     if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
         return {"action": "increase_sizing", "status": "cooldown",
@@ -803,13 +803,13 @@ def _action_increase_sizing(action: OperatorAction) -> dict:
     spec = PARAM_REGISTRY[param_name]
     pct = min(action.params.get("increase_pct", 20), 30)
     cfg = load_config()
-    current = cfg.risk.demo.capital.max_position_notional_usdt
+    current = cfg.risk.demo.capital.max_position_margin_usdt
     new_val = round(current * (1 + pct / 100), 2)
     new_val = min(new_val, spec.neutral)  # never exceed neutral
     if new_val <= current:
         return {"action": "increase_sizing", "status": "skipped", "reason": "already at or above neutral"}
 
-    cfg.risk.max_demo_position_notional_usdt = new_val
+    cfg.risk.max_demo_position_margin_usdt = new_val
     cfg.risk.demo.revision += 1
     save_config(cfg)
     _persist_action("config_patch", param=param_name,
@@ -882,7 +882,7 @@ def _action_neutral_drift(action: OperatorAction) -> dict:
     param_name = action.params.get("param", "")
     if param_name == "min_confidence_to_trade":
         return _action_loosen_confidence(action)
-    elif param_name == "max_demo_position_notional_usdt":
+    elif param_name == "max_demo_position_margin_usdt":
         return _action_increase_sizing(action)
     elif param_name == "default_stop_loss_pct":
         return _action_widen_stop_loss(action)
@@ -1045,7 +1045,7 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
             params={"reduce_pct": 20},
             reason=f"7d win_rate={assessment.win_rate_7d:.1f}% below 35%",
         )
-        act = _maybe_escalate(act, "max_demo_position_notional_usdt", "tighten")
+        act = _maybe_escalate(act, "max_demo_position_margin_usdt", "tighten")
         actions.append(act)
 
     # Stage 3: Parameter Tuning — bounded recovery plus Level 2 proposals.
@@ -1082,7 +1082,7 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
     if (assessment.recent_streak >= 3
             and assessment.profit_factor_7d is not None
             and assessment.profit_factor_7d >= 1.5
-            and assessment.param_drift.get("max_demo_position_notional_usdt") == "tightened"
+            and assessment.param_drift.get("max_demo_position_margin_usdt") == "tightened"
             and (assessment.win_rate_7d is None or assessment.win_rate_7d >= 35)
             and not assessment.kill_switch_active):
         actions.append(OperatorAction(

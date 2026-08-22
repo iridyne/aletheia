@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
 import { Card, CardHeader, Button, StatusText, Meter } from '../components/ui'
+import { DataStateMessage } from '../components/DataState'
 import type { StatusTone } from '../components/ui'
 import { fmtSigned, fmtNum, humanize, fmtSymbol } from '../lib/format'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
@@ -31,21 +32,21 @@ function errMsg(e: any): string {
 export default function RiskControls() {
   const qc = useQueryClient()
   const { data: status, isLoading: statusLoading, isError: statusError } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
-  const { data: riskStatus } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000 })
-  const { data: boundaries } = useQuery({ queryKey: ['risk-boundaries'], queryFn: api.getRiskBoundaries })
+  const { data: riskStatus, isPending: riskStatusPending, isError: riskStatusError } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000 })
+  const { data: boundaries, isPending: boundariesPending, isError: boundariesError } = useQuery({ queryKey: ['risk-boundaries'], queryFn: api.getRiskBoundaries })
   const { data: killSwitch, isLoading: ksLoading, isError: ksError } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
-  const { data: portfolio, isLoading: portfolioLoading } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
+  const { data: portfolio, isPending: portfolioPending, isError: portfolioError } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
   // Open positions supply the market type per symbol so the exposure list can render the
   // spot/derivative convention (perp → no slash, spot → slash) via fmtSymbol. We MUST wait
   // for positions to load before rendering the exposure list — otherwise the dict is empty,
   // fmtSymbol can't tell perp from spot, and the rule says "never guess": it falls back to
   // the canonical (slashed) form, briefly displaying "ETH/USDT" for a USDT-perp until the
   // positions query settles. That violates the immutable owner rule (CLAUDE.md 2026-06-26).
-  const { data: positions = [], isLoading: positionsLoading } = useQuery({ queryKey: positionKeys.all, queryFn: api.getPositions, ...positionFreshness })
+  const { data: positions, isPending: positionsPending, isError: positionsError } = useQuery({ queryKey: positionKeys.all, queryFn: api.getPositions, ...positionFreshness })
   // 24h pipeline counts — surfaces "the system IS guarding" in the healthy state.
   // Refetches every 60s; the underlying SQL is a single COUNT GROUP BY so it's cheap.
-  const { data: funnel } = useQuery({ queryKey: ['pipeline-funnel-24h'], queryFn: () => api.getPipelineFunnel(24), refetchInterval: 60_000 })
-  const exposureLoading = portfolioLoading || positionsLoading
+  const { data: funnel, isPending: funnelPending, isError: funnelError } = useQuery({ queryKey: ['pipeline-funnel-24h'], queryFn: () => api.getPipelineFunnel(24), refetchInterval: 60_000 })
+  const exposureLoading = (portfolioPending && !portfolio) || (positionsPending && !positions)
 
   // Inline error state — the brakes-console levers are trust-critical, so a silent
   // mutation failure is the worst-case (operator THINKS they halted trading but didn't).
@@ -97,13 +98,13 @@ export default function RiskControls() {
     onError: (e: any) => setSchedErr(errMsg(e)),
   })
 
-  const s = (status ?? {}) as any
+  const s = (status ?? {}) as Record<string, unknown>
   const killed = killSwitchAvailable && killSwitch?.active === true
   const paused = statusAvailable && !!s.paused
   const gatewayRunning = statusAvailable && !!s.gateway_running
   const schedulerPending = pauseMut.isPending || resumeMut.isPending
-  const violations = (riskStatus?.violations as string[]) || []
-  const riskState = String(riskStatus?.status || 'unknown')
+  const violations = riskStatusError ? [] : ((riskStatus?.violations as string[]) || [])
+  const riskState = riskStatusError ? 'unavailable' : String(riskStatus?.status || 'unknown')
   const riskTone: StatusTone = riskState === 'blocked' ? 'red' : riskState === 'warning' ? 'yellow' : riskState === 'healthy' ? 'green' : 'blue'
 
   const master = !statusAvailable || !killSwitchAvailable
@@ -111,7 +112,7 @@ export default function RiskControls() {
     : deriveMasterState({ gatewayRunning, killed, riskState, paused })
 
   // Exposure: largest magnitude first; bars scale to the biggest absolute exposure.
-  const exposureRaw = (portfolio as any)?.exposure_by_symbol as Record<string, number> | undefined
+  const exposureRaw = (portfolio as Record<string, unknown> | undefined)?.exposure_by_symbol as Record<string, number> | undefined
   // #47/#53 fix: previously `marketTypeBySymbol[p.symbol] = p.market_type`
   // — a same-symbol spot+perp pair overwrote each other, so the last row
   // won and the display could flip between spot slash and perp concat
@@ -122,9 +123,14 @@ export default function RiskControls() {
   // migration), so this is a display-honesty best-effort until the
   // backend groups by (symbol, market_type).
   const marketTypesForSymbol: Record<string, Set<string>> = {}
-  for (const p of positions as any[]) {
-    if (!p?.symbol || !p?.market_type) continue
-    ;(marketTypesForSymbol[p.symbol] ??= new Set()).add(p.market_type)
+  const posArray = Array.isArray(positions) ? positions : []
+  for (const p of posArray) {
+    if (typeof p !== 'object' || !p) continue
+    const pObj = p as {symbol?: unknown, market_type?: unknown}
+    if (!pObj.symbol || !pObj.market_type) continue
+    const sym = String(pObj.symbol)
+    const mtype = String(pObj.market_type)
+    ;(marketTypesForSymbol[sym] ??= new Set()).add(mtype)
   }
   const _preferPerp = (types: Set<string>): string => {
     for (const derivative of ['perp', 'usdt_futures', 'futures', 'swap']) {
@@ -149,37 +155,45 @@ export default function RiskControls() {
   // Caps come from `boundaries` (demo vs live picked by exchange_mode).
   const exchangeMode = String(s.exchange_mode || 'demo').toLowerCase()
   const isLive = exchangeMode === 'live' || exchangeMode === 'bitget_live_limited'
-  const b = (boundaries || {}) as Record<string, any>
-  const activePolicy = isLive ? b.live : b.demo
-  const equity = Number((portfolio as any)?.exchange_equity_usdt) || Number((portfolio as any)?.total_value_usdt) || 0
-  const positionsCount = Number((portfolio as any)?.positions_count) || (positions as any[]).length || 0
-  const posCap = Number(activePolicy?.positions?.max_open_positions) || null
-  const notionalCap = Number(activePolicy?.capital?.max_position_notional_usdt) || null
-  const dailyLossPct = Number(activePolicy?.loss?.max_daily_loss_pct) || null
-  const dailyLossCapUsdt = (dailyLossPct != null && equity > 0) ? equity * dailyLossPct / 100 : null
-  const todayPnlRaw = (portfolio as any)?.today_pnl
+  const b = (boundaries || {}) as Record<string, Record<string, unknown> | undefined>
+  const activePolicy = (isLive ? b.live : b.demo) ?? {}
+  const capPositions = (activePolicy.positions as Record<string, unknown> | undefined)
+  const capCapital = (activePolicy.capital as Record<string, unknown> | undefined)
+  const capLoss = (activePolicy.loss as Record<string, unknown> | undefined)
+  const equity = Number((portfolio as Record<string, unknown> | undefined)?.exchange_equity_usdt) || Number((portfolio as Record<string, unknown> | undefined)?.total_value_usdt) || 0
+  const positionsCount = Number((portfolio as Record<string, unknown> | undefined)?.positions_count) || posArray.length || 0
+  const posCap = Number(capPositions?.max_open_positions) || null
+  const marginCap = Number(capCapital?.max_position_margin_usdt) || null
+  const dailyLossPct = Number(capLoss?.max_daily_loss_pct) || null
+  const portfolioObj = portfolio as Record<string, unknown> | undefined
+  const todayPnlRaw = portfolioObj?.today_pnl
   const todayPnlParsed = todayPnlRaw == null ? null : Number(todayPnlRaw)
   const todayPnl = todayPnlParsed != null && Number.isFinite(todayPnlParsed)
     ? todayPnlParsed
     : null
+  const dailyLossCapUsdt = (dailyLossPct != null && equity > 0) ? equity * dailyLossPct / 100 : null
   const todayLoss = todayPnl == null ? null : todayPnl < 0 ? Math.abs(todayPnl) : 0
-  // positions API has no notional field — derive from quantity × current_price, open only.
-  const largestPos = (positions as any[]).reduce((m, p) => {
-    if (p?.status && p.status !== 'open') return m
-    const qty = Math.abs(Number(p?.quantity) || 0)
-    const px  = Number(p?.current_price) || Number(p?.entry_price) || 0
-    return Math.max(m, qty * px)
+  // Derive margin (pledged cash) per position: notional / leverage. Spot leverage = 1.
+  const largestMargin = posArray.reduce((m, p) => {
+    if (typeof p !== 'object' || !p) return m
+    const pObj = p as {status?: unknown, quantity?: unknown, current_price?: unknown, entry_price?: unknown, leverage?: unknown}
+    if (pObj.status && pObj.status !== 'open') return m
+    const qty = Math.abs(Number(pObj.quantity) || 0)
+    const px  = Number(pObj.current_price) || Number(pObj.entry_price) || 0
+    const lev = Math.max(1, Number(pObj.leverage) || 1)
+    return Math.max(m, (qty * px) / lev)
   }, 0)
 
   const headroomRows = [
     posCap != null && { label: 'Open positions', used: positionsCount, cap: posCap, fmtUsed: (v: number) => String(Math.round(v)), fmtCap: (v: number) => String(Math.round(v)) },
-    notionalCap != null && { label: 'Largest position', used: largestPos, cap: notionalCap, fmtUsed: (v: number) => `$${v.toFixed(1)}`, fmtCap: (v: number) => `$${v.toFixed(0)}` },
+    marginCap != null && { label: 'Position margin', used: largestMargin, cap: marginCap, fmtUsed: (v: number) => `$${v.toFixed(1)}`, fmtCap: (v: number) => `$${v.toFixed(0)}` },
     dailyLossCapUsdt != null && { label: 'Daily loss', used: todayLoss, cap: dailyLossCapUsdt, fmtUsed: (v: number) => `$${v.toFixed(1)}`, fmtCap: (v: number) => `$${v.toFixed(0)}` },
   ].filter(Boolean) as { label: string; used: number | null; cap: number; fmtUsed: (v: number) => string; fmtCap: (v: number) => string }[]
 
   const fnl = funnel?.risk_decisions
   const topRejection = fnl?.top_rejection_reasons?.[0]
-  const latest = (riskStatus as any)?.latest_risk_decision
+  type LatestDecision = { created_at?: string; approved?: boolean; risk_score?: number | null } | null
+  const latest: LatestDecision = riskStatusError ? null : ((riskStatus as Record<string, unknown> | undefined)?.latest_risk_decision as LatestDecision ?? null)
 
   return (
     <div>
@@ -306,7 +320,12 @@ export default function RiskControls() {
           )}
 
           {/* 24h ACTIVITY — proves the guard is alive even in the healthy state. */}
-          {fnl && (
+          {funnelError ? (
+            <div className="risk-section">
+              <div className="risk-section-label">24h Activity</div>
+              <DataStateMessage state="unavailable" message="Guard funnel data unavailable." />
+            </div>
+          ) : fnl ? (
             <div className="risk-section">
               <div className="risk-section-label">24h Activity</div>
               <div className="risk-activity">
@@ -335,7 +354,7 @@ export default function RiskControls() {
                 )}
               </div>
             </div>
-          )}
+          ) : null}
 
           {/* HEADROOM — how close are we to each cap. */}
           {headroomRows.length > 0 && (
@@ -380,6 +399,8 @@ export default function RiskControls() {
           />
           {exposureLoading ? (
             <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
+          ) : portfolioError || positionsError ? (
+            <DataStateMessage state="unavailable" message="Live exposure unavailable. Portfolio or positions read failed." />
           ) : exposure.length > 0 ? (
             <>
               <ul className="exposure-list">
@@ -422,10 +443,14 @@ export default function RiskControls() {
       {/* Zone 3 — Configured limits (read-only reference) */}
       <Card>
         <CardHeader title="Configured Limits" meta="Read-only — edit in Settings → Risk." />
-        {boundaries ? (
-          <LimitsView boundaries={boundaries as Record<string, any>} />
-        ) : (
+        {boundariesPending && !boundaries ? (
           <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
+        ) : boundariesError ? (
+          <DataStateMessage state="unavailable" message="Configured limits unavailable. Read failed." />
+        ) : boundaries ? (
+          <LimitsView boundaries={boundaries as Record<string, unknown>} />
+        ) : (
+          <DataStateMessage state="empty" message="No configured limits found." />
         )}
       </Card>
     </div>
@@ -464,7 +489,7 @@ const LIMIT_GROUPS: LimitGroup[] = [
   {
     title: 'Position sizing',
     rows: [
-      { label: 'Position notional cap', pair: ['live.capital.max_position_notional_usdt', 'demo.capital.max_position_notional_usdt'] },
+      { label: 'Position margin cap', pair: ['live.capital.max_position_margin_usdt', 'demo.capital.max_position_margin_usdt'] },
       { label: 'Per-symbol cumulative entries', pair: ['live.capital.max_per_symbol_entries', 'demo.capital.max_per_symbol_entries'] },
       { label: 'Per-trade cost/risk budget', pair: ['live.loss.max_single_trade_risk_pct', 'demo.loss.max_single_trade_risk_pct'] },
       { label: 'Max open positions', pair: ['live.positions.max_open_positions', 'demo.positions.max_open_positions'] },
@@ -514,8 +539,8 @@ function rowKeys(r: LimitRow): string[] {
   return 'pair' in r ? r.pair : [r.single]
 }
 
-function LimitsView({ boundaries }: { boundaries: Record<string, any> }) {
-  const at = (path: string) => path.split('.').reduce((value, key) => value?.[key], boundaries)
+function LimitsView({ boundaries }: { boundaries: Record<string, unknown> }) {
+  const at = (path: string) => path.split('.').reduce((value: unknown, key) => (value as Record<string, unknown> | undefined)?.[key], boundaries)
   const consumed = new Set<string>()
   const groups = LIMIT_GROUPS
     .map(g => {

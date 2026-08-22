@@ -77,6 +77,9 @@ _LEARNING_EVALUATOR_RESTART_DELAY_SEC = 60
 
 # Track which jobs were selectively paused (for targeted resume).
 _selectively_paused_jobs: set[str] = set()
+# Track paper_trader nudges deferred by pause (wake on resume).
+_pending_wake_jobs: set[str] = set()
+
 
 # Hard time budgets for scheduler jobs that depend on external IO or LLM calls.
 # APScheduler's max_instances=1 prevents overlap, but it cannot recover a job
@@ -1189,7 +1192,11 @@ def init_scheduler() -> BackgroundScheduler | None:
     if _scheduler is not None:
         return _scheduler
 
-    cfg = load_config()
+    try:
+        cfg = load_config()
+    except Exception as exc:  # noqa: BLE001 — invalid persisted config must block startup
+        logger.error("Scheduler startup blocked by configuration blocker: %s", exc)
+        raise
     # Research workers are process-owned daemon threads. Their persisted active
     # rows are interrupted after any restart even when scheduling is disabled.
     _recover_interrupted_serenity_run()
@@ -1715,6 +1722,12 @@ def resume_scheduler() -> bool:
                 len(_selectively_paused_jobs),
             )
             _selectively_paused_jobs.clear()
+        # Wake jobs that received notify calls during pause
+        if _pending_wake_jobs:
+            for job_id in list(_pending_wake_jobs):
+                _pending_wake_jobs.discard(job_id)
+                if job_id == "paper_trader":
+                    _arm_paper_trader_job()
         return True
 
 
@@ -1873,10 +1886,13 @@ def notify_paper_trader(source: str = "unknown") -> bool:
         last_nudge = float(_PAPER_TRADER_WAKE_STATE["last_nudge_mono"])
         if now_mono - last_nudge < _PAPER_TRADER_NUDGE_DEBOUNCE_SEC:
             return False
-        if not _arm_paper_trader_job():
+        # Check if paper_trader is selectively paused; defer wake if so
+        if "paper_trader" in _selectively_paused_jobs:
+            _pending_wake_jobs.add("paper_trader")
             return False
         _PAPER_TRADER_WAKE_STATE["last_nudge_mono"] = now_mono
-        logger.debug("paper_trader: nudged forward (source=%s)", source)
+        if not _arm_paper_trader_job():
+            return False
         return True
 
 
@@ -3030,7 +3046,22 @@ def _run_cleanup():
         # their own function before agent_shell_tasks fires. See
         # repositories.prune_agent_shell_sessions for the cascade impl.
         # ------------------------------------------------------------------
-        min_open_exp_at = repo.min_open_experiment_exposure_at()
+        # Read experiment state for clean_window_cutoff guard. If this fails,
+        # skip the affected prunes rather than silently deleting protected data.
+        min_open_exp_at = None
+        try:
+            min_open_exp_at = repo.min_open_experiment_exposure_at()
+        except repo.ExperimentStateReadError as e:
+            logger.warning("Cannot read experiment state for cleanup guard: %s", e)
+            from aletheia.infra.events import emit_infra_event
+            emit_infra_event(
+                severity="error",
+                source="scheduler",
+                code="cleanup_experiment_state_read_failed",
+                message=f"Skipping experiment-guarded prunes: {e}",
+                action="Check SQLite health and retry cleanup",
+                dedupe_sec=3600,
+            )
         counts = {
             "run_steps": repo.prune_run_steps(r.agent_run_steps_days),
             "tool_calls": repo.prune_tool_calls(r.tool_calls_days),
@@ -3052,8 +3083,9 @@ def _run_cleanup():
             "prediction_probability_snapshots": repo.prune_prediction_probability_snapshots(90),
             "universe_feature_snapshots": repo.prune_universe_feature_snapshots(r.universe_feature_snapshots_days),
             "ohlcv_backfill_state": repo.prune_ohlcv_backfill_state(90),
-            "universe_forward_outcomes": repo.prune_universe_forward_outcomes(
-                30, min_experiment_started_at=min_open_exp_at,
+            "universe_forward_outcomes": (
+                repo.prune_universe_forward_outcomes(30, min_experiment_started_at=min_open_exp_at)
+                if min_open_exp_at is not None else 0
             ),
             "serenity_claims": repo.prune_serenity_claims(90),
             "shadow_trades": repo.prune_shadow_trades(90),
@@ -3062,13 +3094,19 @@ def _run_cleanup():
             # open learning experiment start so rows any open experiment
             # might still cite are preserved even when their timestamp is
             # older than the plain retention window.
-            "filter_decisions": repo.prune_filter_decisions(
-                r.filter_decisions_days,
-                min_experiment_started_at=min_open_exp_at,
+            "filter_decisions": (
+                repo.prune_filter_decisions(
+                    r.filter_decisions_days,
+                    min_experiment_started_at=min_open_exp_at,
+                )
+                if min_open_exp_at is not None else 0
             ),
-            "filter_candidate_outcomes": repo.prune_filter_candidate_outcomes(
-                r.filter_candidate_outcomes_days,
-                min_experiment_started_at=min_open_exp_at,
+            "filter_candidate_outcomes": (
+                repo.prune_filter_candidate_outcomes(
+                    r.filter_candidate_outcomes_days,
+                    min_experiment_started_at=min_open_exp_at,
+                )
+                if min_open_exp_at is not None else 0
             ),
             "filter_shadow_experiments": repo.prune_filter_shadow_experiments(r.filter_shadow_experiments_days),
             "operator_evaluation_events": repo.prune_operator_evaluation_events(30),
@@ -3248,15 +3286,16 @@ def _run_cleanup():
         _record_job_failure("cleanup", str(e))
 
 
-def _prune_news(cfg) -> int:
+def _prune_news(cfg) -> dict[str, int | str | None]:
     try:
         from aletheia.data.news_collector import prune_old_news
-        return prune_old_news(cfg.news.retention_days)
-    except Exception:
-        return 0
+        deleted = prune_old_news(cfg.news.retention_days)
+        return {"deleted": deleted, "error": None}
+    except Exception as e:
+        return {"deleted": 0, "error": str(e)}
 
 
-def _prune_session_logs(cfg) -> int:
+def _prune_session_logs(cfg) -> dict[str, int | str | None]:
     """DB-JOIN-based session-log prune (Agent 4). Falls back to the legacy
     file-only pruner if the DB-join variant is not yet importable. The
     operator's persistent main session id is threaded through as an extra
@@ -3267,27 +3306,29 @@ def _prune_session_logs(cfg) -> int:
         days = int(getattr(cfg.retention, "agent_shell_session_logs_days", 14))
         main_stem = str(getattr(getattr(cfg, "operator", None), "main_session_id", "") or "")
         extra = (main_stem,) if main_stem else ()
-        return prune_session_logs_db_join(days, extra_exempt_stems=extra)
-    except Exception:
+        deleted = prune_session_logs_db_join(days, extra_exempt_stems=extra)
+        return {"deleted": deleted, "error": None}
+    except Exception as e1:
         try:
             from aletheia.agent_shell.file_artifacts import prune_session_logs
             keep = (cfg.operator.main_session_id,)
-            return prune_session_logs(14, keep)
-        except Exception:
-            return 0
+            deleted = prune_session_logs(14, keep)
+            return {"deleted": deleted, "error": None}
+        except Exception as e2:
+            return {"deleted": 0, "error": str(e2)}
 
-
-def _prune_task_notes(cfg) -> int:
+def _prune_task_notes(cfg) -> dict[str, int | str | None]:
     """Task-notes filesystem prune (Agent 4) — joins agent_shell_tasks to
     unlink `.md` notes for finished tasks + orphan-sweeps stale files."""
     try:
         from aletheia.agent_shell.file_artifacts import prune_task_notes_db_join
-        return prune_task_notes_db_join(
+        deleted = prune_task_notes_db_join(
             days_completed=int(getattr(cfg.retention, "agent_shell_task_notes_completed_days", 7)),
             days_failed=int(getattr(cfg.retention, "agent_shell_task_notes_failed_days", 30)),
         )
-    except Exception:
-        return 0
+        return {"deleted": deleted, "error": None}
+    except Exception as e:
+        return {"deleted": 0, "error": str(e)}
 
 
 def _prune_backups(keep_recent: int) -> int:
@@ -3428,10 +3469,25 @@ def _run_filter_controller_observe():
             return
         from aletheia.analytics.filter_controller import run_controller_observe
         summary = run_controller_observe(min_samples=int(ctrl.min_samples_gate))
-        logger.info(
-            "filter_controller_observe: wrote %d recs (verdicts=%s)",
-            summary.get("recommendations_written", 0), summary.get("verdict_counts"),
-        )
+        # Issue #1240: record failure for partial/failed evidence passes so that
+        # systemd/health monitoring can distinguish a clean pass from one with
+        # missing or mismatched primary evidence (no exception needed to trigger it).
+        pass_status = summary.get("pass_status", "success")
+        pass_reason = summary.get("pass_reason")
+        if pass_status != "success":
+            logger.warning(
+                "filter_controller_observe: pass_status=%s reason=%s written=%d",
+                pass_status, pass_reason, summary.get("recommendations_written", 0),
+            )
+            _record_job_failure(
+                "filter_controller_observe",
+                f"{pass_status}: {pass_reason}",
+            )
+        else:
+            logger.info(
+                "filter_controller_observe: wrote %d recs (verdicts=%s)",
+                summary.get("recommendations_written", 0), summary.get("verdict_counts"),
+            )
     except Exception as e:
         logger.warning("filter_controller_observe job failed: %s", e)
         _record_job_failure("filter_controller_observe", str(e))

@@ -366,6 +366,32 @@ def test_rollback_stops_candidate_before_restoring(monkeypatch, tmp_path):
     assert calls == ["stop", "restore"]
 
 
+def test_gateway_command_start_slow_start_is_ok(monkeypatch):
+    """exit 2 from _gateway_command('start') is slow start, not failure."""
+    from aletheia.update import auto
+
+    class _FakeProc:
+        def __init__(self, rc):
+            self.returncode = rc
+            self.stdout = ""
+            self.stderr = ""
+
+    monkeypatch.setattr(auto, "_run", lambda *args, **kwargs: _FakeProc(2))
+    result = auto._gateway_command("start")
+    assert result["ok"] is True
+    assert result["reason"] is None
+
+    monkeypatch.setattr(auto, "_run", lambda *args, **kwargs: _FakeProc(1))
+    result = auto._gateway_command("start")
+    assert result["ok"] is False
+    assert result["reason"] == "gateway_start_failed"
+
+    # stop never emits exit 2; exit 2 for stop is a genuine failure
+    monkeypatch.setattr(auto, "_run", lambda *args, **kwargs: _FakeProc(2))
+    result = auto._gateway_command("stop")
+    assert result["ok"] is False
+
+
 def test_nonblocking_flock_excludes_concurrent_timer(tmp_path, monkeypatch):
     from aletheia.update import auto
 

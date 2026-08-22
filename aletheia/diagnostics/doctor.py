@@ -701,7 +701,7 @@ def _probe_config_gates(report: Report) -> None:
                f"live.state={cfg.live.state}, exchange.mode={cfg.exchange.mode}, "
                f"paper_execution_mode={getattr(cfg.exchange, 'paper_execution_mode', '?')}")
 
-    demo_cap = getattr(cfg.risk, "max_demo_position_notional_usdt", None)
+    demo_cap = getattr(cfg.risk, "max_demo_position_margin_usdt", None)
     paper_mode = getattr(cfg.exchange, "paper_execution_mode", "")
     if (
         cfg.exchange.mode == "demo"
@@ -710,9 +710,9 @@ def _probe_config_gates(report: Report) -> None:
         and float(demo_cap) <= 0
     ):
         report.add(
-            "config.demo_notional_cap",
+            "config.demo_margin_cap",
             "blocker",
-            f"max_demo_position_notional_usdt={float(demo_cap):g} — every paper/demo proposal is rejected",
+            f"max_demo_position_margin_usdt={float(demo_cap):g} — every paper/demo proposal is rejected",
             "set a positive paper/demo notional cap in Settings → Risk Limits after human review",
         )
 
@@ -1772,66 +1772,94 @@ def _probe_profit_loop(report: Report) -> None:
             snapshot = _op_summarize(hours=12)
             operator = snapshot.get("operator") or {}
             epoch = snapshot.get("epoch") or {}
+            section_status = snapshot.get("section_status") or {}
             commit_short = (epoch.get("producer_commit") or "unknown")[:7]
             epoch_short = (epoch.get("policy_epoch_id") or "none")[:12]
-            direct_skip = int(operator.get("direct_model_skip") or 0)
-            conviction_skip = int(operator.get("conviction_gate_skip") or 0)
-            debate_reject = int(operator.get("debate_not_confirmed") or 0)
-            defer = int(operator.get("operator_defer") or 0)
-            trade_intent = int(operator.get("operator_trade_intent") or 0)
-            direction_brake = int(operator.get("direction_brake") or 0)
-            total_skip = direct_skip + conviction_skip + debate_reject
 
-            # Optional distress bypass — only meaningful against the current
-            # epoch's direct model skips, so read reasons scoped to the current
-            # producer_commit rather than the raw 12h window.
-            commit_full = epoch.get("producer_commit")
-            if total_skip > 0 and commit_full:
-                reason_rows = db.execute(
-                    "SELECT reasoning FROM pi_decisions "
-                    "WHERE action='skip' AND producer_commit = ? "
-                    "AND COALESCE(signal_source, 'market_observer') != 'system_cascade' "
-                    "AND julianday(created_at) >= julianday('now','-12 hours') "
-                    "ORDER BY julianday(created_at) DESC LIMIT 10",
-                    (commit_full,),
-                ).fetchall()
-                distress_kws = ("structural distress", "acute distress", "systematic distress")
-                for r in reason_rows:
-                    if any(k in (r[0] or "").lower() for k in distress_kws):
-                        self_protecting = True
-                        break
-                if not self_protecting and cfg.agent.bypass_distress_gate:
+            # Check availability before treating numeric zeros as measured facts
+            op_available = (section_status.get("operator") or {}).get("status") == "available"
+            defer_available = (section_status.get("defer_events") or {}).get("status") == "available"
+            active_defer_available = (section_status.get("active_defer") or {}).get("status") == "available"
+
+            if not op_available:
+                reason_short = (section_status.get("operator") or {}).get("reason", "unknown error")[:60]
+                attribution = (
+                    f" — epoch commit={commit_short} policy={epoch_short}"
+                    f"; operator diagnostics unavailable ({reason_short})"
+                )
+            else:
+                direct_skip = int(operator.get("direct_model_skip") or 0)
+                conviction_skip = int(operator.get("conviction_gate_skip") or 0)
+                debate_reject = int(operator.get("debate_not_confirmed") or 0)
+                defer_raw = operator.get("operator_defer")
+                defer = int(defer_raw) if defer_raw is not None else None
+                trade_intent = int(operator.get("operator_trade_intent") or 0)
+                direction_brake = int(operator.get("direction_brake") or 0)
+                total_skip = direct_skip + conviction_skip + debate_reject
+
+                # Optional distress bypass — only meaningful against the current
+                # epoch's direct model skips, so read reasons scoped to the current
+                # producer_commit rather than the raw 12h window.
+                commit_full = epoch.get("producer_commit")
+                if total_skip > 0 and commit_full:
+                    reason_rows = db.execute(
+                        "SELECT reasoning FROM pi_decisions "
+                        "WHERE action='skip' AND producer_commit = ? "
+                        "AND COALESCE(signal_source, 'market_observer') != 'system_cascade' "
+                        "AND julianday(created_at) >= julianday('now','-12 hours') "
+                        "ORDER BY julianday(created_at) DESC LIMIT 10",
+                        (commit_full,),
+                    ).fetchall()
+                    distress_kws = ("structural distress", "acute distress", "systematic distress")
                     for r in reason_rows:
-                        if "suppressed" in (r[0] or "").lower():
+                        if any(k in (r[0] or "").lower() for k in distress_kws):
                             self_protecting = True
                             break
+                    if not self_protecting and cfg.agent.bypass_distress_gate:
+                        for r in reason_rows:
+                            if "suppressed" in (r[0] or "").lower():
+                                self_protecting = True
+                                break
 
-            # Defer breakdown — market_quiet vs candidate_specific + oldest age +
-            # 12h defer_rate. Populated by pipeline_progress._active_defer_stats
-            # over live rows (defer_until > now); best-effort so an older running
-            # gateway with no active defers renders defer×N unmodified.
-            mq = int(operator.get("operator_defer_market_quiet") or 0)
-            cs = int(operator.get("operator_defer_candidate_specific") or 0)
-            defer_rate = float(operator.get("defer_rate") or 0.0)
-            oldest_seconds = operator.get("oldest_active_defer_age_seconds")
-            if defer > 0 and (mq or cs or oldest_seconds is not None):
-                age_min = (
-                    int(oldest_seconds // 60) if isinstance(oldest_seconds, int) else None
+                # Defer breakdown — market_quiet vs candidate_specific + oldest age +
+                # 12h defer_rate. Populated by pipeline_progress._active_defer_stats
+                # over live rows (defer_until > now); best-effort so an older running
+                # gateway with no active defers renders defer×N unmodified.
+                if defer is not None and active_defer_available:
+                    mq_raw = operator.get("operator_defer_market_quiet")
+                    cs_raw = operator.get("operator_defer_candidate_specific")
+                    mq = int(mq_raw) if mq_raw is not None else 0
+                    cs = int(cs_raw) if cs_raw is not None else 0
+                    defer_rate_raw = operator.get("defer_rate")
+                    defer_rate = float(defer_rate_raw) if defer_rate_raw is not None else 0.0
+                    oldest_seconds = operator.get("oldest_active_defer_age_seconds")
+                    if defer > 0 and (mq or cs or oldest_seconds is not None):
+                        age_min = (
+                            int(oldest_seconds // 60) if isinstance(oldest_seconds, int) else None
+                        )
+                        age_part = f",age={age_min}m" if age_min is not None else ""
+                        rate_part = f",rate={int(round(defer_rate * 100))}%"
+                        defer_suffix = f"/defer×{defer}(mq={mq}/cs={cs}{age_part}{rate_part})"
+                    else:
+                        defer_suffix = f"/defer×{defer}"
+                elif defer is None and not defer_available:
+                    defer_suffix = "/defer(unavailable)"
+                elif defer is None:
+                    # operator says defer is None but defer_events section succeeded —
+                    # this is the transitional case; treat as zero for compatibility
+                    defer_suffix = "/defer×0"
+                else:
+                    defer_suffix = f"/defer×{defer}"
+
+                attribution = (
+                    f" — epoch commit={commit_short} policy={epoch_short}"
+                    f"; operator (12h) direct_skip×{direct_skip}"
+                    f"/conviction_gate×{conviction_skip}"
+                    f"/debate_reject×{debate_reject}"
+                    f"{defer_suffix}"
+                    f"/direction_brake×{direction_brake}"
+                    f"/trade_intent×{trade_intent}"
                 )
-                age_part = f",age={age_min}m" if age_min is not None else ""
-                rate_part = f",rate={int(round(defer_rate * 100))}%"
-                defer_suffix = f"/defer×{defer}(mq={mq}/cs={cs}{age_part}{rate_part})"
-            else:
-                defer_suffix = f"/defer×{defer}"
-            attribution = (
-                f" — epoch commit={commit_short} policy={epoch_short}"
-                f"; operator (12h) direct_skip×{direct_skip}"
-                f"/conviction_gate×{conviction_skip}"
-                f"/debate_reject×{debate_reject}"
-                f"{defer_suffix}"
-                f"/direction_brake×{direction_brake}"
-                f"/trade_intent×{trade_intent}"
-            )
         except Exception:
             pass
         prop_desc = "none ever" if prop_age is None else _fmt_age(prop_age)

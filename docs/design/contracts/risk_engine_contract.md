@@ -55,7 +55,7 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 | 2b | Complete Entry Plan | 每个 native 本地纸面 market 入场及 native exchange limit 入场必须在 Risk 前固定有限正数的 entry/stop/take-profit/risk_reward；多空几何正确，risk_reward 必须等于 `round(abs(tp-entry)/abs(entry-stop), 2)` 且该结果必须在包含边界的 `[1.00, 10.00]` 合理性包络内。exchange market close/reduce 与 adopted chain 豁免 | —（Proposal immutable fields） | `incomplete_entry_plan:{fields}` / `entry_plan_geometry:*` / `entry_plan_risk_reward_mismatch` / `entry_plan_risk_reward_outside_envelope` | engine.py check #2b/#2c |
 | 3 | Live State | 非 `live_disabled` | `live.state` | `live_disabled` | :99 |
 | 4 | Permission Mode | Observe 仅 paper_internal | `agent.permission_mode` | `permission_mode_insufficient:{mode}` | :104 |
-| 5 | Max Position Notional | live/demo 配置上限与对应账户的本地可用 USDT 取较小值，再应用回撤缩放；`paper_internal` 必须读取本地纸面账户账本，读取失败不可退回配置资金。Demo 默认 100,000 USDT，设置 API 只保留正数下限、不施加应用层最大值；live 边界不变 | `risk.max_{live/demo}_position_notional_usdt` + local exchange-account cache / paper-account ledger | `exceeds_max_position_notional:{n}>{cap}` (live path); `exceeds_demo_position_notional:{n}>{cap}` (demo path); `paper_account_balance_unavailable` | :109 |
+| 5 | Max Position Margin | live/demo 配置上限与对应账户的本地可用 USDT 取较小值，再应用回撤缩放；`paper_internal` 必须读取本地纸面账户账本，读取失败不可退回配置资金。Demo 默认 100,000 USDT，设置 API 只保留正数下限、不施加应用层最大值；live 边界不变 | `risk.max_{live/demo}_position_margin_usdt` + local exchange-account cache / paper-account ledger | `exceeds_max_position_margin:{n}>{cap}` (live path); `exceeds_demo_position_margin:{n}>{cap}` (demo path); `paper_account_balance_unavailable` | :109 |
 | 6 | Max Open Positions | live/demo 持仓数；demo 默认 200，设置 API 只保留正整数下限 | `risk.max_open_positions_{live/demo}` | `max_{live/demo}_positions_reached:{n}` | :127 |
 | 6b | Cross-pool Symbol Dedup | 同 live/demo 池内同标的禁止重复开仓(防跨 broker 重复) | —(始终启用) | `symbol_already_open:{sym}` | :141 |
 | 7 | Short Allowed | 方向合法 | `risk.allow_short_{live/demo}` | `short_not_allowed_{live/demo}` | :138 |
@@ -69,7 +69,7 @@ authoritative 幂等 identity 包含 policy hash，因此 policy 修改后必须
 | 14 | Scanner-Family Evidence | live 需该单 `scanner_family`(经 opportunity 解析)在干净窗有 ≥N 已结算证据且方向胜率≥门槛(取代已删的策略 FSM 准入,Position C 2026-07-02;fail-closed:无 family/无证据/样本不足/胜率不足均拒) | `risk.live_family_min_samples`(30)/`risk.live_family_min_win_rate_pct`(50.0) + `repo.family_direction_edge` | `family_not_live_eligible:{unknown/family:no_evidence/family:samples=n<N/family:wr=w<T}` | :211 |
 | 15 | Lesson Constraints | 已接受且未过期的 manual/owner/human block 规则保持静态硬约束；自动来源默认 advisory，只有 exact `risk_lesson_constraint` prospective treatment 可阻断该 Proposal，control/default/error 不得阻断 | `LessonStore.recommendation_json` + Learning path authority | `lesson_block_{symbol/...}:{id}:{v}` / `lesson_check_error:internal_failure` | engine.py `_check_lesson_constraints` |
 | 16 | Portfolio Correlation | 部门集中度 + 组合 BTC beta；持仓数低于 `correlation.min_positions_for_concentration`(默认 4)时跳过，少于 4 个持仓时浓度百分比粒度不足以区分信号 | `risk.correlation_guard_enabled/max_sector_concentration_pct/max_portfolio_beta/min_positions_for_concentration` | `sector_concentration/portfolio_beta:...` | :245,387 |
-| 17 | Account Leverage Ratio | 期货:同一账户池的 Position + 未决 entry Order + pre-Order reservation 的 Σ(notional×lev)/同账户 equity ≤ 上限；不同 demo broker 不混算；外部 equity 必须来自新鲜健康的具名缓存；相关 Position 的 market type/数量/价格/杠杆非法时拒绝，不能当零敞口（spot 的 NULL leverage 按其结构语义计 1x，显式非 1x 反而拒绝）。Demo 默认 10x，设置 API 只保留正数下限；live 保持 1.5x | `risk.max_account_leverage_{live/demo}` + named local cache | `account_leverage_ratio:{r}x>{cap}x` / `account_equity_unavailable:{mode}` / `account_leverage_check_error:invalid_position_exposure:position={id}:field={category}` / `account_leverage_check_error:internal_failure` | engine.py check #17 (RE-B23~28) |
+| 17 | Account Leverage Ratio | 期货:同一账户池的 Position + 未决 entry Order + pre-Order reservation 的 Σ(notional)/同账户 equity ≤ 上限；不同 demo broker 不混算；外部 equity 必须来自新鲜健康的具名缓存；相关 Position 的 market type/数量/价格/杠杆非法时拒绝，不能当零敞口（spot 的 NULL leverage 按其结构语义计 1x，显式非 1x 反而拒绝）。Demo 默认 10x，设置 API 只保留正数下限；live 保持 1.5x | `risk.max_account_leverage_{live/demo}` + named local cache | `account_leverage_ratio:{r}x>{cap}x` / `account_equity_unavailable:{mode}` / `account_leverage_check_error:invalid_position_exposure:position={id}:field={category}` / `account_leverage_check_error:internal_failure` | engine.py check #17 (RE-B23~28) |
 | 18 | Liquidation Buffer | 期货(lev>1):估算爆仓价距入场 ≥ buffer% | `risk.min_liquidation_buffer_pct`(5.0) | `liquidation_too_close:{g}%<{b}%` | :695 (FL-S09) |
 | 19 | Per-symbol Cumulative Notional | 同标的同池累计名义(含本单)≤ 上限(CUM-ADD 均价合并会绕过 #5 单仓上限)；上限由 sizing 公式推导：`capital_base × risk_pct × leverage × max_per_symbol_entries`，永不与首单产生矛盾 | `risk.capital.max_per_symbol_entries`(无量纲次数，默认 3) | `exceeds_per_symbol_notional:{sym}:{proj}>{cap}` | :285 |
 
@@ -189,7 +189,7 @@ policy version：`available-balance-risk-budget/v1`（换代用于隔离 learnin
 历史路径 `vol_target_size()` 已无生产调用者，保留为 helper；`trading.default_notional_usdt=25`、`vol_kelly_cap_fraction` 等为旧版兼容字段，不影响当前权威路径。
 
 **关键契约**：sizing 计算结果**不是**最终下单量；它仍须通过 §2 第 5 关
-(Max Position Notional)。sizing 提交期望 notional，Risk Engine 只能批准或拒绝，
+(Max Position Margin)。sizing 提交期望 notional，Risk Engine 只能批准或拒绝，
 不会把超限请求优化或裁剪成另一个仓位。
 
 ---

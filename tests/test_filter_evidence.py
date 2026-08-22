@@ -1054,7 +1054,7 @@ def test_controller_only_flags_overrestriction_after_paired_gates(monkeypatch):
     }
     monkeypatch.setattr(
         "aletheia.analytics.filter_evidence.filter_feedback_stats",
-        lambda: [
+        lambda **kwargs: [
             {**common, "decision": "passed", "shrunk_avg_net": -0.10},
             {**common, "decision": "rejected", "shrunk_avg_net": 0.20},
         ],
@@ -1198,7 +1198,7 @@ def test_controller_uses_evidence_stage_instead_of_registry_stage(monkeypatch):
     }
     monkeypatch.setattr(
         "aletheia.analytics.filter_evidence.filter_feedback_stats",
-        lambda: [
+        lambda **kwargs: [
             {**common, "decision": "passed", "shrunk_avg_net": -0.10},
             {**common, "decision": "rejected", "shrunk_avg_net": 0.20},
         ],

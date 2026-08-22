@@ -437,8 +437,6 @@ def get_provider(name: str | None = None) -> ModelProvider:
 
     api_key = None
     if pcfg.api_key_secret_ref:
-        from aletheia.config.secrets import get_secret
-
         api_key = get_secret(pcfg.api_key_secret_ref)
 
     ptype = _resolve_type(name, pcfg)
@@ -514,13 +512,59 @@ async def get_provider_async(name: str | None = None) -> ModelProvider:
     if not pcfg.enabled:
         raise ValueError(f"Model provider is disabled: {name}")
 
+    # For a cached OAuth-native provider, verify the token is still current.
+    # The sync get_provider path cannot refresh inside a running event loop, so this
+    # check is the only place where cached credentials can be renewed.
     if name in _cache:
-        return _cache[name]
+        cached = _cache[name]
+        ptype = _resolve_type(name, pcfg)
+        if ptype in ("openai_native", "anthropic_native") and pcfg.auth_type == "oauth":
+            now_ms = int(time.time() * 1000)
+            in_refresh_window = bool(
+                pcfg.oauth_expires_at
+                and now_ms > (pcfg.oauth_expires_at - _REFRESH_MARGIN_MS)
+            )
+            hard_expired = bool(
+                pcfg.oauth_expires_at and now_ms > pcfg.oauth_expires_at
+            )
+            if in_refresh_window:
+                try:
+                    fresh_token = await _resolve_oauth_token_async(name, pcfg)
+                except Exception as e:
+                    if hard_expired:
+                        _cache.pop(name, None)
+                        raise ValueError(
+                            f"OAuth token for {name} has expired and refresh failed: {e}"
+                        ) from e
+                    logger.warning(
+                        "OAuth refresh failed for %s (token not yet expired): %s", name, e
+                    )
+                    return cached
+                if fresh_token:
+                    from aletheia.config.secrets import get_secret
+                    ak = get_secret(pcfg.api_key_secret_ref) if pcfg.api_key_secret_ref else None
+                    if ptype == "openai_native":
+                        fresh_provider: ModelProvider = OpenAINativeProvider(
+                            model=pcfg.model, api_key=ak, oauth_token=fresh_token
+                        )
+                    else:
+                        fresh_provider = AnthropicNativeProvider(
+                            model=pcfg.model, api_key=ak, oauth_token=fresh_token
+                        )
+                    _cache[name] = fresh_provider
+                    return fresh_provider
+                # Refresh returned no token
+                if hard_expired:
+                    _cache.pop(name, None)
+                    raise ValueError(
+                        f"OAuth token for {name} has expired and refresh returned no token. "
+                        "Reconfigure the provider or check network connectivity."
+                    )
+                # Still in proactive margin — continue with cached provider until hard expiry
+        return cached
 
     api_key = None
     if pcfg.api_key_secret_ref:
-        from aletheia.config.secrets import get_secret
-
         api_key = get_secret(pcfg.api_key_secret_ref)
 
     ptype = _resolve_type(name, pcfg)

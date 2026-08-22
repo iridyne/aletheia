@@ -500,6 +500,57 @@ def list_deduped_shadows(
     return [dict(r) for r in get_db().execute(sql, params).fetchall()]
 
 
+def _detect_window_epochs(
+    *,
+    days: int | None = None,
+    since_iso: str | None = None,
+    until_iso: str | None = None,
+) -> tuple[str | None, str]:
+    """Return (epoch_id, status) for resolved shadow rows in the given window.
+
+    status values:
+      "single"   — exactly one distinct non-null epoch; epoch_id is that value.
+      "mixed"    — multiple epochs, or NULL rows alongside non-NULL ones.
+      "all_null" — no non-null epoch rows (pure legacy data).
+    """
+    from aletheia.storage.sqlite import get_db
+
+    if (days is None) == (since_iso is None):
+        raise ValueError("requires exactly one of days= or since_iso=")
+
+    params: list[object] = []
+    if since_iso is not None:
+        time_clause = "created_at >= ?"
+        params.append(since_iso)
+        if until_iso is not None:
+            time_clause += " AND created_at < ?"
+            params.append(until_iso)
+    else:
+        time_clause = "created_at >= datetime('now', ?)"
+        params.append(f"-{int(days)} days")
+
+    sql = f"""
+        SELECT
+            COUNT(DISTINCT policy_epoch_id) AS distinct_epochs,
+            SUM(CASE WHEN policy_epoch_id IS NULL THEN 1 ELSE 0 END) AS null_count,
+            MAX(policy_epoch_id) AS epoch_id
+        FROM shadow_trades
+        WHERE net_pnl_pct IS NOT NULL
+          AND outcome_candidate_key IS NOT NULL
+          AND {time_clause}
+    """
+    row = get_db().execute(sql, params).fetchone()
+    if not row:
+        return None, "all_null"
+    distinct = row["distinct_epochs"] or 0
+    null_count = row["null_count"] or 0
+    if distinct > 1 or (distinct == 1 and null_count > 0):
+        return None, "mixed"
+    if distinct == 1:
+        return row["epoch_id"], "single"
+    return None, "all_null"
+
+
 def _current_regime() -> str:
     """Return the current macro regime tag from the latest macro snapshot."""
     try:

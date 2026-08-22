@@ -102,7 +102,10 @@ def position_replay(
 
     from aletheia.analytics.position_replay import build_position_replay
 
-    report = build_position_replay(position_id, as_of_at=as_of_at)
+    try:
+        report = build_position_replay(position_id, as_of_at=as_of_at)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
     _output(report, json_output)
 
 
@@ -155,7 +158,10 @@ def candidate_facts(
 
     from aletheia.analytics.candidate_facts import build_candidate_facts
 
-    report = build_candidate_facts(horizon=horizon, as_of_at=as_of_at)
+    try:
+        report = build_candidate_facts(horizon=horizon, as_of_at=as_of_at)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
     _output(report, json_output)
 
 
@@ -170,7 +176,10 @@ def position_diagnosis(
     from aletheia.analytics.position_replay import build_position_replay
     from aletheia.analytics.profit_loop_diagnosis import diagnose_position_fact
 
-    fact = build_position_replay(position_id, as_of_at=as_of_at)
+    try:
+        fact = build_position_replay(position_id, as_of_at=as_of_at)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
     _output(diagnose_position_fact(fact), json_output)
 
 
@@ -185,7 +194,10 @@ def candidate_diagnosis(
     from aletheia.analytics.candidate_facts import build_candidate_facts
     from aletheia.analytics.profit_loop_diagnosis import diagnose_candidate_report
 
-    facts = build_candidate_facts(horizon=horizon, as_of_at=as_of_at)
+    try:
+        facts = build_candidate_facts(horizon=horizon, as_of_at=as_of_at)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
     _output(diagnose_candidate_report(facts), json_output)
 
 
@@ -213,7 +225,10 @@ def profit_counterfactual(
         raise typer.BadParameter("cost model must be a JSON object")
     cost_model = CostModel(**payload)
     if as_of_at is not None:
-        fact = build_position_replay(position_id, as_of_at=as_of_at)
+        try:
+            fact = build_position_replay(position_id, as_of_at=as_of_at)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc))
     else:
         fact = None
         first_failure = None
@@ -1507,7 +1522,7 @@ _RISK_VIOLATION_HINTS: dict[str, tuple[str, str]] = {
     "symbol_blocked":                      ("warning",  "Symbol is on the blocked list."),
     "symbol_not_allowed":                  ("warning",  "Symbol is not in the allowed whitelist."),
     "permission_mode_insufficient":        ("warning",  "Permission mode is insufficient for this action."),
-    "exceeds_max_position_notional":       ("warning",  "Position size exceeds the notional cap."),
+    "exceeds_max_position_margin":         ("warning",  "Position margin exceeds the cap."),
     "max_live_positions_reached":          ("warning",  "Maximum number of open live positions reached."),
     "exceeds_max_leverage":                ("warning",  "Leverage exceeds the configured cap."),
     "max_total_live_exposure_exceeded":    ("warning",  "Total live exposure exceeds the cap."),

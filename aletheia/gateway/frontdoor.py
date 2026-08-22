@@ -302,8 +302,15 @@ def create_app(
 
     @app.get("/_infra/readyz")
     async def readyz():
-        ok = (effective_static_dir / "index.html").exists()
-        return JSONResponse(status_code=200 if ok else 503, content=_minimal_liveness_payload(ok=ok))
+        static_ok = (effective_static_dir / "index.html").exists()
+        backend = await _probe_backend(_backend_url())
+        ok = static_ok and backend["ready"]
+        payload = _minimal_liveness_payload(ok=ok)
+        if not static_ok:
+            payload["detail"] = "static_unavailable"
+        elif not backend["ready"]:
+            payload["detail"] = "backend_unavailable"
+        return JSONResponse(status_code=200 if ok else 503, content=payload)
 
     @app.get("/_infra/status")
     async def infra_status(request: Request):

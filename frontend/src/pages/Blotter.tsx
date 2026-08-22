@@ -93,20 +93,20 @@ type TokenTone = 'muted' | 'accent' | 'green' | 'yellow' | 'red'
 
 function StatusToken({ label, count, tone = 'muted', hint }: {
   label: string
-  count: number | string
+  count: number | string | null
   tone?: TokenTone
   hint?: string
 }) {
   return (
-    <div className={`bl-token bl-token-${tone}`} title={hint}>
+    <div className={`bl-token bl-token-${count == null ? 'muted' : tone}`} title={hint}>
       <div className="bl-token-label">{label}</div>
-      <div className="bl-token-count mono">{count}</div>
+      <div className="bl-token-count mono">{count ?? '—'}</div>
     </div>
   )
 }
 
-function StatusTokenStrip() {
-  const { data: funnel } = useQuery({
+export function StatusTokenStrip() {
+  const { data: funnel, isPending: funnelPending, isError: funnelError } = useQuery({
     // Perf item 1: switch to the fast /current-snapshot endpoint so the
     // Blotter no longer pulls the heavy queued/reviewed/expired counts + the
     // candidate-supply snapshot payload just to render its top strip. Shared
@@ -116,41 +116,47 @@ function StatusTokenStrip() {
     refetchInterval: 30000,
     staleTime: 20000,
   })
-  const { data: proposals = [] } = useQuery({
+  const { data: proposals, isPending: proposalsPending, isError: proposalsError } = useQuery({
     queryKey: ['proposals'],
     queryFn: api.getProposals,
     refetchInterval: 15000,
     staleTime: 10000,
   })
-  const { data: decisions } = useQuery({
+  const { data: decisions, isPending: decisionsPending, isError: decisionsError } = useQuery({
     queryKey: ['operator-decisions', 24],
     queryFn: () => api.getOperatorDecisions(24, 200),
     refetchInterval: 30000,
     staleTime: 20000,
   })
 
+  const funnelAvailable = !funnelPending && !funnelError && funnel != null
+  const proposalsAvailable = !proposalsPending && !proposalsError && proposals != null
+  const decisionsAvailable = !decisionsPending && !decisionsError && decisions != null
+
   const counts = useMemo(() => {
     // still_open used to be a top-level field on the full funnel response;
     // it's identical to current.counts.open_opportunities, which the fast
     // /current-snapshot endpoint returns as part of `current`.
-    const staged = funnel?.current?.counts?.open_opportunities ?? 0
-    const awaitingSignoff = (proposals as any[]).filter(p => p.status === 'pending').length
-    const working = funnel?.current?.ranker?.counts?.carrier_active ?? 0
-    const filledToday = decisions?.counts?.trade ?? 0
+    const staged = funnelAvailable ? (funnel.current?.counts?.open_opportunities ?? 0) : null
+    const awaitingSignoff = proposalsAvailable
+      ? (proposals as any[]).filter(p => p.status === 'pending').length
+      : null
+    const working = funnelAvailable ? (funnel.current?.ranker?.counts?.carrier_active ?? 0) : null
+    const filledToday = decisionsAvailable ? (decisions.counts?.trade ?? 0) : null
     const c = decisions?.counts
-    const rejected24h = c
+    const rejected24h = decisionsAvailable && c
       ? (c.operator_skip ?? 0) + (c.portfolio_guard_reject ?? 0) + (c.user_reject ?? 0) + (c.auto_reject ?? 0) + (c.reject_unknown ?? 0)
-      : 0
+      : null
     return { staged, awaitingSignoff, working, filledToday, rejected24h }
-  }, [funnel, proposals, decisions])
+  }, [funnel, funnelAvailable, proposals, proposalsAvailable, decisions, decisionsAvailable])
 
   return (
     <div className="bl-token-strip">
-      <StatusToken label="Staged"            count={counts.staged}          tone={counts.staged          > 0 ? 'accent' : 'muted'} hint="Candidates emitted, awaiting ranker review" />
-      <StatusToken label="Awaiting Sign-off" count={counts.awaitingSignoff} tone={counts.awaitingSignoff > 0 ? 'yellow' : 'muted'} hint="Proposals pending your approval" />
-      <StatusToken label="Working"           count={counts.working}         tone={counts.working         > 0 ? 'accent' : 'muted'} hint="Active carriers held by the ranker" />
-      <StatusToken label="Filled (today)"    count={counts.filledToday}     tone={counts.filledToday     > 0 ? 'green'  : 'muted'} hint="Trades filled in the last 24h" />
-      <StatusToken label="Rejected (24h)"    count={counts.rejected24h}     tone={counts.rejected24h     > 0 ? 'red'    : 'muted'} hint="Skips + rejects in the last 24h" />
+      <StatusToken label="Staged"            count={counts.staged}          tone={counts.staged          != null && counts.staged          > 0 ? 'accent' : 'muted'} hint="Candidates emitted, awaiting ranker review" />
+      <StatusToken label="Awaiting Sign-off" count={counts.awaitingSignoff} tone={counts.awaitingSignoff != null && counts.awaitingSignoff > 0 ? 'yellow' : 'muted'} hint="Proposals pending your approval" />
+      <StatusToken label="Working"           count={counts.working}         tone={counts.working         != null && counts.working         > 0 ? 'accent' : 'muted'} hint="Active carriers held by the ranker" />
+      <StatusToken label="Filled (today)"    count={counts.filledToday}     tone={counts.filledToday     != null && counts.filledToday     > 0 ? 'green'  : 'muted'} hint="Trades filled in the last 24h" />
+      <StatusToken label="Rejected (24h)"    count={counts.rejected24h}     tone={counts.rejected24h     != null && counts.rejected24h     > 0 ? 'red'    : 'muted'} hint="Skips + rejects in the last 24h" />
     </div>
   )
 }
@@ -208,28 +214,35 @@ function CandidatesPanel() {
   // hover. The counts come straight from
   // /opportunity-funnel/current-snapshot's `counts` block (backed by
   // pipeline_progress._active_defer_stats). Rendered as a native `title` so
-  // there is no new UI state — the yellow chip already exists.
+  // there is no new UI state — the yellow chip already exists.  Null defer fields
+  // mean the backing query failed — render N/A, never zero.
   const c = current.counts
+  const deferFieldsAvailable =
+    c.market_quiet_defers != null &&
+    c.candidate_specific_defers != null &&
+    c.defer_rate != null
   const showDeferTip =
     (current.counts.deferred_candidates > 0 ||
-      current.counts.market_quiet_defers > 0 ||
-      current.counts.candidate_specific_defers > 0)
+      (c.market_quiet_defers != null && c.market_quiet_defers > 0) ||
+      (c.candidate_specific_defers != null && c.candidate_specific_defers > 0))
   const oldestMin =
     c.oldest_defer_age_seconds != null
       ? Math.round(c.oldest_defer_age_seconds / 60)
       : null
-  const deferTipLines = showDeferTip
+  const deferTipLines = showDeferTip && deferFieldsAvailable
     ? [
         `Live defers · market-quiet ${c.market_quiet_defers}`
           + ` / candidate-specific ${c.candidate_specific_defers}`,
         oldestMin != null ? `Oldest live defer · ${oldestMin}m ago` : null,
-        `12h defer rate · ${(c.defer_rate * 100).toFixed(0)}%`,
+        `12h defer rate · ${(c.defer_rate! * 100).toFixed(0)}%`,
         c.queue_capacity != null
           ? `Queue capacity · ${current.counts.queued_candidates}/${c.queue_capacity}`
           : null,
       ]
         .filter(Boolean)
         .join('\n')
+    : !deferFieldsAvailable
+    ? 'Defer diagnostics unavailable — the backing query failed.'
     : ''
 
   return (
@@ -520,7 +533,7 @@ const TIME_WINDOWS: { hours: number; label: string }[] = [
 
 const col = createColumnHelper<OperatorDecisionRow>()
 
-function CandidateLedger() {
+export function CandidateLedger() {
   const [hours, setHours] = useState(24)
   const [outcomeFilter, setOutcomeFilter] = useState<Set<Outcome>>(new Set())
   const [sideFilter, setSideFilter] = useState<'all' | 'l' | 's'>('all')
@@ -542,15 +555,24 @@ function CandidateLedger() {
     return Array.from(outcomeFilter).join(',')
   }, [outcomeFilter])
 
-  const { data, isLoading } = useQuery({
+  const { data, isPending, isError } = useQuery({
     queryKey: ['operator-decisions', hours, outcomeParam || 'all'],
     queryFn: () => api.getOperatorDecisions(hours, 200, { outcome: outcomeParam }),
     refetchInterval: 60000,
     staleTime: 20000,
   })
 
-  const items = data?.items || []
+  const items = data?.items ?? []
   const counts = data?.counts
+
+  // Map query state → DataTable.state; initial error/no data → unavailable, success empty → empty, error with cached data → stale
+  const tableState = isPending && items.length === 0
+    ? 'loading'
+    : isError && items.length === 0
+      ? 'unavailable'
+      : isError && items.length > 0
+        ? 'stale'
+        : undefined
 
   const filteredItems = useMemo(() => {
     return items.filter(it => {
@@ -718,21 +740,18 @@ function CandidateLedger() {
         )}
       </div>
 
-      {isLoading && items.length === 0 ? (
-        <p className="text-muted text-sm mb-0">Loading candidate ledger…</p>
-      ) : (
-        <DataTable
-          data={filteredItems}
-          columns={columns}
-          pageSize={20}
-          onRowClick={(row) => row.opportunity_id && setSelectedOppId(row.opportunity_id)}
-          emptyMessage={
-            hasFilters
-              ? 'No rows match the current filters.'
-              : `No terminal decisions in the last ${hours < 24 ? `${hours}h` : `${hours / 24}D`}.`
-          }
-        />
-      )}
+      <DataTable
+        data={filteredItems}
+        columns={columns}
+        pageSize={20}
+        onRowClick={(row) => row.opportunity_id && setSelectedOppId(row.opportunity_id)}
+        state={tableState}
+        emptyMessage={
+          hasFilters
+            ? 'No rows match the current filters.'
+            : `No terminal decisions in the last ${hours < 24 ? `${hours}h` : `${hours / 24}D`}.`
+        }
+      />
 
       <DecisionTraceDrawer
         opportunityId={selectedOppId}

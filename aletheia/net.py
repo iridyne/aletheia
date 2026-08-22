@@ -121,26 +121,40 @@ _proxy_reachable_cache: dict[str, tuple[bool, float]] = {}
 _PROXY_CACHE_TTL = 60.0   # seconds
 
 
+class NetworkPolicyUnavailable(RuntimeError):
+    """Raised when the network policy config cannot be read.
+
+    Direct transports are refused rather than silently allowed — failing closed
+    is safer than permitting real-IP egress when the enforce state is unknown.
+    """
+
+
 def _proxy_url() -> str | None:
-    """Read proxy_url from config. Returns None if not configured."""
+    """Read proxy_url from config. Returns None if not configured; raises NetworkPolicyUnavailable on read error."""
     try:
         from aletheia.config.loader import load_config
         return load_config().network.proxy_url or None
-    except Exception:
-        return None
+    except NetworkPolicyUnavailable:
+        raise
+    except Exception as exc:
+        raise NetworkPolicyUnavailable(f"cannot read network.proxy_url: {exc}") from exc
 
 
 def _enforce() -> bool:
-    """Read the fail-closed policy (config.network.enforce). False on any error.
+    """Read the fail-closed policy (config.network.enforce).
 
     When True, outbound traffic MUST traverse the proxy: an unreachable proxy
     fails the request rather than silently connecting direct (no real-IP leak).
+    Raises NetworkPolicyUnavailable if config cannot be read — unknown policy
+    state is not the same as enforce=False.
     """
     try:
         from aletheia.config.loader import load_config
         return bool(load_config().network.enforce)
-    except Exception:
-        return False
+    except NetworkPolicyUnavailable:
+        raise
+    except Exception as exc:
+        raise NetworkPolicyUnavailable(f"cannot read network.enforce: {exc}") from exc
 
 
 def _is_proxy_reachable(url: str) -> bool:
@@ -207,7 +221,10 @@ def invalidate_proxy_cache() -> None:
     point to a working proxy port that differs from config (e.g. Clash on 7897
     while config records stale 7890).
     """
-    url = _proxy_url()
+    try:
+        url = _proxy_url()
+    except NetworkPolicyUnavailable:
+        return
     if url:
         _proxy_reachable_cache[url] = (False, time.monotonic())
         logger.info("Proxy %s marked failed (HTTP-level) — bypassing for %ds", _redact_url(url), int(_PROXY_CACHE_TTL))
@@ -268,7 +285,10 @@ def apply_proxy_env() -> None:
     """
     existing = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
     if not existing:
-        proxy = _proxy_url()
+        try:
+            proxy = _proxy_url()
+        except NetworkPolicyUnavailable:
+            proxy = None  # env-var setup only; transport creation is guarded by _effective_proxy
         if proxy:
             os.environ["HTTP_PROXY"] = proxy
             os.environ["HTTPS_PROXY"] = proxy
@@ -375,6 +395,12 @@ class _ProxyFallbackTransport(httpx.AsyncBaseTransport):
             if response.status_code in self._PROXY_ERROR_CODES:
                 invalidate_proxy_cache()
                 logger.debug("Proxy returned %d for %s — retrying direct", response.status_code, request.url)
+                try:
+                    await response.aread()
+                except Exception:
+                    pass
+                finally:
+                    await response.aclose()
                 return await self._direct_transport.handle_async_request(request)
             return response
         except (httpx.ProxyError, httpx.ConnectError, httpx.ConnectTimeout) as e:

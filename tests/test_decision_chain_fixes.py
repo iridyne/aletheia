@@ -14,6 +14,12 @@ import json
 import math
 from types import SimpleNamespace
 
+
+async def _make_async_provider(provider):
+    """Helper for tests: wrap sync mock provider in async."""
+    return provider
+
+
 import pytest
 
 from aletheia.agent_shell.trading_decision import (
@@ -573,7 +579,7 @@ def test_real_structured_validator_exhaustion_is_typed_and_content_free(
             raw={"usage": {"completion_tokens": 20}},
         )
 
-    monkeypatch.setattr(helpers, "get_provider", lambda _name: object())
+    monkeypatch.setattr(helpers, "get_provider_async", lambda _name: _make_async_provider(object()))
     monkeypatch.setattr(helpers, "complete_with_fallback", complete)
     monkeypatch.setattr(helpers, "_record_llm", lambda _success: None)
     monkeypatch.setattr(
@@ -613,7 +619,7 @@ def test_structured_empty_content_keeps_existing_daemon_retry_semantics(
             raw={"usage": {"completion_tokens": 20}},
         )
 
-    monkeypatch.setattr(helpers, "get_provider", lambda _name: object())
+    monkeypatch.setattr(helpers, "get_provider_async", lambda _name: _make_async_provider(object()))
     monkeypatch.setattr(helpers, "complete_with_fallback", complete)
     monkeypatch.setattr(helpers, "_record_llm", lambda _success: None)
     monkeypatch.setattr(

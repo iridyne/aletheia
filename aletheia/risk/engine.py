@@ -523,15 +523,20 @@ def _cached_available_balance_usdt(execution_mode: str) -> float | None:
         return None
 
 
-def _effective_position_notional_cap(
+def _position_margin_usage(notional: float, leverage: float) -> float:
+    """Pledged cash for a proposal: abs(notional) / leverage (spot: 1x, so notional-equals-cash)."""
+    return abs(notional) / max(1.0, leverage)
+
+
+def _effective_position_margin_cap(
     risk,
     execution_mode: str,
 ) -> float | None:
-    """Return the hard position cap tightened by the matching account balance."""
+    """Return the hard position margin cap tightened by the matching account balance."""
     configured_cap = (
-        risk.max_live_position_notional_usdt
+        risk.max_live_position_margin_usdt
         if _is_live(execution_mode)
-        else risk.max_demo_position_notional_usdt
+        else risk.max_demo_position_margin_usdt
     )
     available = _cached_available_balance_usdt(execution_mode)
     if available is None:
@@ -947,8 +952,8 @@ def _evaluate_proposal_locked(
     if proposal.quantity and proposal.price:
         notional = proposal.quantity * proposal.price
         lev = max(1.0, float(proposal.leverage or 1))
-        margin_required = notional / lev
-        position_cap = _effective_position_notional_cap(
+        margin_required = _position_margin_usage(notional, lev)
+        position_cap = _effective_position_margin_cap(
             risk,
             proposal.execution_mode,
         )
@@ -959,11 +964,11 @@ def _evaluate_proposal_locked(
             if _is_live(proposal.execution_mode):
                 if margin_required > effective_cap:
                     violations.append(
-                        f"exceeds_max_position_notional:{margin_required}>{effective_cap}"
+                        f"exceeds_max_position_margin:{margin_required}>{effective_cap}"
                     )
             elif margin_required > effective_cap:
                 violations.append(
-                    f"exceeds_demo_position_notional:{margin_required}>{effective_cap}"
+                    f"exceeds_demo_position_margin:{margin_required}>{effective_cap}"
                 )
 
     # 6. Max open positions
@@ -1852,11 +1857,10 @@ def _check_correlation_exposure(
                 ))
 
         # With N=2 positions the same-family share is 50% or 100%, so 60% is a
-        # coin-flip, not a risk signal. Skip until the portfolio is deep enough.
+        # coin-flip, not a risk signal. Skip concentration until portfolio is deep
+        # enough — but portfolio BTC-beta is an independent hard guard and always runs.
         mode_policy = cfg.risk.live if _is_live(proposal.execution_mode) else cfg.risk.demo
         min_n = mode_policy.correlation.min_positions_for_concentration
-        if len(existing_exposures) < min_n:
-            return []
 
         prop_notional = 0.0
         if proposal.price and proposal.quantity:
@@ -1868,41 +1872,42 @@ def _check_correlation_exposure(
         ]
 
         # ── Sector concentration ──────────────────────────────────────────────
-        # Resolve all families in one read so a reservation cannot disappear
-        # between per-row lookups and a database failure cannot look like "none".
-        opportunity_ids = sorted({
-            opportunity_id
-            for _, _, opportunity_id in all_exposures
-            if opportunity_id
-        })
-        families: dict[str, str] = {}
-        if opportunity_ids:
-            placeholders = ",".join("?" for _ in opportunity_ids)
-            rows = get_db().execute(
-                f"SELECT id, scanner_family FROM opportunities WHERE id IN ({placeholders})",
-                opportunity_ids,
-            ).fetchall()
-            families = {
-                str(row[0]): str(row[1])
-                for row in rows
-                if row[0] and row[1]
-            }
+        if len(existing_exposures) >= min_n:
+            # Resolve all families in one read so a reservation cannot disappear
+            # between per-row lookups and a database failure cannot look like "none".
+            opportunity_ids = sorted({
+                opportunity_id
+                for _, _, opportunity_id in all_exposures
+                if opportunity_id
+            })
+            families: dict[str, str] = {}
+            if opportunity_ids:
+                placeholders = ",".join("?" for _ in opportunity_ids)
+                rows = get_db().execute(
+                    f"SELECT id, scanner_family FROM opportunities WHERE id IN ({placeholders})",
+                    opportunity_ids,
+                ).fetchall()
+                families = {
+                    str(row[0]): str(row[1])
+                    for row in rows
+                    if row[0] and row[1]
+                }
 
-        prop_family = families.get(str(proposal.opportunity_id))
-        if prop_family:
-            total_notional = sum(notional for _, notional, _ in all_exposures)
-            if total_notional > 0:
-                family_notional = sum(
-                    notional
-                    for _, notional, opportunity_id in all_exposures
-                    if families.get(str(opportunity_id)) == prop_family
-                )
-                sector_pct = (family_notional / total_notional) * 100
-                max_pct = getattr(risk, "max_sector_concentration_pct", 60.0)
-                if sector_pct > max_pct:
-                    violations.append(
-                        f"sector_concentration:{prop_family}:{sector_pct:.0f}%>{max_pct:.0f}%"
+            prop_family = families.get(str(proposal.opportunity_id))
+            if prop_family:
+                total_notional = sum(notional for _, notional, _ in all_exposures)
+                if total_notional > 0:
+                    family_notional = sum(
+                        notional
+                        for _, notional, opportunity_id in all_exposures
+                        if families.get(str(opportunity_id)) == prop_family
                     )
+                    sector_pct = (family_notional / total_notional) * 100
+                    max_pct = getattr(risk, "max_sector_concentration_pct", 60.0)
+                    if sector_pct > max_pct:
+                        violations.append(
+                            f"sector_concentration:{prop_family}:{sector_pct:.0f}%>{max_pct:.0f}%"
+                        )
 
         # ── Portfolio BTC beta ────────────────────────────────────────────────
         max_beta = getattr(risk, "max_portfolio_beta", 3.0)
@@ -2100,7 +2105,7 @@ def _check_account_leverage_ratio(
 ) -> list[str]:
     """Reject if adding this trade would push account leverage ratio above cap.
 
-    account_leverage = sum(|pos_notional| * pos_leverage) / equity
+    account_leverage = sum(|pos_notional|) / equity
     Every exposure row and the equity denominator must belong to the same account
     pool.  Missing account equity is not zero exposure and cannot be guessed from a
     configured starting balance, so it rejects with a stable availability token.
@@ -2121,7 +2126,7 @@ def _check_account_leverage_ratio(
                 qty, _entry_price, price, lev = _validated_position_exposure(p)
             except _InvalidPositionExposure as exc:
                 return [_invalid_position_exposure_violation(p, exc.field_category)]
-            position_exposure = abs(qty * price) * lev
+            position_exposure = abs(qty * price)
             weighted_notional += position_exposure
             if not math.isfinite(weighted_notional):
                 return [_invalid_position_exposure_violation(p, "account_exposure")]
@@ -2159,8 +2164,7 @@ def _check_account_leverage_ratio(
                 return ["account_leverage_check_error:invalid_entry_reservation"]
 
         if proposal.price and proposal.quantity:
-            prop_lev = float(proposal.leverage or 1)
-            weighted_notional += abs(proposal.price * proposal.quantity) * prop_lev
+            weighted_notional += abs(proposal.price * proposal.quantity)
 
         equity = _account_equity(proposal.execution_mode, cfg)
         if not equity or equity <= 0:
@@ -2492,7 +2496,7 @@ def _relevant_positions(open_positions: list, execution_mode: str) -> list:
 def _entry_reservation_weighted_notional(
     entry: _UnresolvedEntryReservation | _PreOrderEntryReservation,
 ) -> float:
-    """Return one reservation's leverage-weighted exposure or reject bad authority.
+    """Return one reservation's gross-notional exposure or reject bad authority.
 
     An unresolved Order can legitimately have zero remaining quantity only after an
     open Position represents its full persisted Fill.  A pre-Order reservation must
@@ -2517,7 +2521,7 @@ def _entry_reservation_weighted_notional(
         or leverage <= 0
     ):
         raise ValueError("invalid entry reservation exposure")
-    weighted_notional = abs(quantity * price) * leverage
+    weighted_notional = abs(quantity * price)
     if not math.isfinite(weighted_notional):
         raise ValueError("invalid entry reservation exposure")
     return weighted_notional
@@ -2589,8 +2593,7 @@ def check_account_leverage(cfg=None, execution_mode: str | None = None) -> dict:
                 },
             )
         notional = abs(qty * price)
-        position_exposure = notional * lev
-        if not math.isfinite(notional) or not math.isfinite(position_exposure):
+        if not math.isfinite(notional):
             return _unavailable_account_leverage_result(
                 cap=max_ratio,
                 reason="invalid_position_exposure",
@@ -2599,7 +2602,7 @@ def check_account_leverage(cfg=None, execution_mode: str | None = None) -> dict:
                     "position_id": _safe_position_id(p),
                 },
             )
-        weighted_notional += position_exposure
+        weighted_notional += notional
         if not math.isfinite(weighted_notional):
             return _unavailable_account_leverage_result(
                 cap=max_ratio,

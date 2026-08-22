@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+
+async def _make_async_provider(provider):
+    """Helper for tests: wrap sync mock provider in async."""
+    return provider
+
+
 import json
 
 import pytest
@@ -408,7 +414,7 @@ def test_operator_selection_adds_exact_pending_carrier_to_evaluation_context(
             fail_attribution_lookup,
         )
     provider = _OperatorProvider()
-    monkeypatch.setattr(helpers, "get_provider", lambda _name: provider)
+    monkeypatch.setattr(helpers, "get_provider_async", lambda _name: _make_async_provider(provider))
     monkeypatch.setattr(helpers, "complete_with_fallback", direct_complete)
 
     with bind_economic_attribution(

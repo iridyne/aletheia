@@ -134,10 +134,13 @@ class RuntimeContinuityService:
         lock_ttl_sec: int = 300,
         enabled: bool = False,
         shadow_gateway_launcher=None,
+        shadow_live_prober=None,
     ):
         self.lock_ttl_sec = lock_ttl_sec
         self.enabled = enabled
         self.shadow_gateway_launcher = shadow_gateway_launcher
+        # Optional override for tests; production uses live_probe_shadow from processes.
+        self.shadow_live_prober = shadow_live_prober
         assert_migrations_current()
 
     def _db(self):
@@ -791,12 +794,33 @@ class RuntimeContinuityService:
         token = self.acquire_lock("promote", runtime_id=runtime_id, owner=actor)
         db = self._db()
         try:
+            # Compute activation plan first to determine if shadow process needs liveness check
             current = self._current_runtime()
             if current is None:
                 raise RuntimeTransitionError("current_runtime_missing")
+            activation = _activation_plan(runtime_id=runtime_id, action="promote", runtime=runtime)
+
+            # Fresh liveness probe: verify shadow PID and HTTP readiness at promotion boundary
+            # only for frontdoor_route_switch (when a live shadow process exists).
+            # supervisor_respawn has no shadow process to check.
+            # Persisted readiness is audit-only; promotion must not trust stale evidence.
+            if activation.get("strategy") == "frontdoor_route_switch":
+                prober = self.shadow_live_prober
+                if prober is None:
+                    from aletheia.runtime_continuity.processes import live_probe_shadow
+                    prober = live_probe_shadow
+                probe = prober(runtime)
+                if not (probe.get("alive") and probe.get("ready") and probe.get("pid_match")):
+                    reason = probe.get("reason", "liveness_probe_failed")
+                    logger.warning(
+                        "Promote rejected: shadow process not alive/ready at promotion boundary. "
+                        "runtime_id=%s, probe=%s",
+                        runtime_id, probe,
+                    )
+                    raise RuntimeTransitionError(f"shadow_process_not_ready:{reason}")
+
             now = _utc_now()
             checkpoint_id = _new_id("runtime-checkpoint")
-            activation = _activation_plan(runtime_id=runtime_id, action="promote", runtime=runtime)
             promoted_metadata = dict(runtime.get("metadata") or {})
             promoted_metadata["activation"] = activation
 

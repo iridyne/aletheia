@@ -295,8 +295,8 @@ def test_risk_boundaries_returns_200_with_required_fields(tmp_path, monkeypatch)
         "max_single_trade_risk_pct",
         "max_open_positions_live",
         "max_open_positions_demo",
-        "max_live_position_notional_usdt",
-        "max_demo_position_notional_usdt",
+        "max_live_position_margin_usdt",
+        "max_demo_position_margin_usdt",
         "max_futures_leverage_live",
         "max_futures_leverage_demo",
     }

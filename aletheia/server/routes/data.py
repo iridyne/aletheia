@@ -359,15 +359,12 @@ _MANUAL_AGENT_ALLOWLIST: dict[str, dict] = {
     "divergence_scanner": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
     # Research / analysis — uses LLM, writes knowledge/insight artifacts only
     "research_agent": {"side_effect_class": "research", "cost_class": "high", "gate_check": False},
-    "research_worker": {"side_effect_class": "research", "cost_class": "high", "gate_check": False},
     # Review / critique — uses LLM, writes review/lesson/signal artifacts
     "post_trade_reviewer": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "risk_critic": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "lesson_reviewer": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "dreaming_agent": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "portfolio_agent": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
-    # Ranking — deterministic, no LLM, no orders
-    "paper_trader_ranker": {"side_effect_class": "rank", "cost_class": "low", "gate_check": False},
     # Behavior-producing — creates paper proposals/orders; respects kill-switch and pause
     "paper_trader": {"side_effect_class": "behavior", "cost_class": "medium", "gate_check": True},
 }
@@ -383,14 +380,23 @@ _OPERATOR_SERVICE_AGENT_ALLOWLIST: frozenset[str] = frozenset({
     "prediction_observer",
     "divergence_scanner",
     "research_agent",
-    "research_worker",
     "post_trade_reviewer",
     "risk_critic",
     "lesson_reviewer",
     "dreaming_agent",
     "portfolio_agent",
-    "paper_trader_ranker",
 })
+
+
+@router.get("/agents/catalog")
+def get_agents_catalog():
+    """Read-only catalog of agents that may be triggered manually from the Dashboard."""
+    return {
+        "agents": [
+            {"name": name, **meta}
+            for name, meta in _MANUAL_AGENT_ALLOWLIST.items()
+        ]
+    }
 
 
 class StartAgentRequest(BaseModel):
@@ -1384,7 +1390,7 @@ def get_strategy_summary():
 @router.get("/market/snapshots")
 def get_market_snapshots(
     symbol: str | None = None,
-    limit: int = 200,
+    limit: int = Query(default=200, ge=1, le=1000),
     exchange: str = "",
 ):
     """Return market snapshots.
@@ -1392,6 +1398,8 @@ def get_market_snapshots(
     Optional filters:
     - symbol: canonical BTC/USDT format
     - exchange: source exchange name (e.g. "binance", "bybit")
+
+    ``limit`` is clamped to 1..1000; values outside this range return 422.
     """
     _ensure_db()
     return repo.list_market_snapshots(symbol=symbol, limit=limit, exchange=exchange)
@@ -2827,12 +2835,10 @@ def get_family_scorecard():
     """Per-scanner_family performance statistics (win_rate, expectancy, alpha)."""
     _ensure_db()
     from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
-    from aletheia.analytics.family_scorecard import compute_family_scorecard
+    from aletheia.analytics.family_scorecard import compute_family_scorecard_with_epoch
 
-    return {
-        "families": compute_family_scorecard(),
-        **build_outcome_cohort_summary(),
-    }
+    scorecard = compute_family_scorecard_with_epoch()
+    return {**scorecard, **build_outcome_cohort_summary()}
 
 
 @router.get("/analytics/shadow-trades")

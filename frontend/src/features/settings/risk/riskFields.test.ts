@@ -25,7 +25,7 @@ const policy: RiskPolicyDraft = {
   capital: {
     base_source: 'account_equity',
     base_usdt: 100,
-    max_position_notional_usdt: 50,
+    max_position_margin_usdt: 50,
     max_per_symbol_entries: 3,
     max_total_exposure_pct: 5,
   },
@@ -33,7 +33,7 @@ const policy: RiskPolicyDraft = {
   positions: { max_open_positions: 3, allow_short: true },
   leverage: { futures_cap: 2, major_cap: 3, mid_cap: 2, alt_cap: 1, account_cap: 1.5 },
   margin: { min_entry_liquidation_buffer_pct: 5, runtime_liquidation_buffer_pct: 3, warning_ratio: 0.7, block_ratio: 0.85 },
-  correlation: { max_sector_concentration_pct: 60, max_portfolio_beta: 3, enabled: true },
+  correlation: { max_sector_concentration_pct: 60, max_portfolio_beta: 3, enabled: true, min_positions_for_concentration: 4 },
   exits: { catastrophic_stop_pct: 10, catastrophic_stop_pct_serenity: 15, horizon_hard_backstop_mult: 3, catastrophic_stop_enabled: true },
   eligibility: { family_min_samples: 30, family_min_win_rate_pct: 50 },
 }

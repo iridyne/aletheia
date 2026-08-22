@@ -79,18 +79,17 @@ class _FakeProvider:
 
 
 def _patch_providers(monkeypatch, mapping: dict):
-    """Patch get_provider INSIDE startup_gate to return our fakes by name."""
-    from aletheia.agent_runtime import startup_gate
+    """Patch the async router boundary used by complete_with_fallback()."""
 
-    def fake_get_provider(name):
+    async def fake_get_provider(name):
         if name not in mapping:
-            raise ValueError(f"Unknown provider: {name}")
+            raise ValueError(f"Cannot resolve provider type for: {name}")
         return mapping[name]
 
-    # startup_gate imports get_provider lazily from router; patch the source.
+    # The startup gate routes through complete_with_fallback(), which resolves
+    # providers via the async router path.
     import aletheia.model_provider.router as router
-    monkeypatch.setattr(router, "get_provider", fake_get_provider)
-
+    monkeypatch.setattr(router, "get_provider_async", fake_get_provider)
 
 # --- 1. all providers fail → any_usable False, each error reported ---
 
@@ -168,7 +167,7 @@ def test_probe_never_raises_on_bad_provider(tmp_path, monkeypatch):
     result = asyncio.run(startup_gate.probe_llm_providers_at_startup(cfg))
     assert result["any_usable"] is False
     assert result["checked"] == 1
-    assert "Unknown provider" in result["results"][0]["error"]
+    assert "Cannot resolve provider type for" in result["results"][0]["error"]
 
 
 # --- 4b. no enabled providers → honest empty verdict ---
@@ -291,7 +290,8 @@ def test_retry_succeeds_on_second_attempt(tmp_path, monkeypatch):
 
     cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
     cfg.health.startup_gate_max_retries = 3
-    cfg.health.startup_gate_retry_delay_sec = 0
+    cfg.health.startup_gate_retry_delay_sec = 5
+    monkeypatch.setattr(startup_gate, "_sleep", lambda s: asyncio.sleep(0))
 
     call_count = {"n": 0}
     orig_probe_one = startup_gate._probe_one
@@ -318,7 +318,8 @@ def test_retry_all_attempts_fail(tmp_path, monkeypatch):
 
     cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
     cfg.health.startup_gate_max_retries = 3
-    cfg.health.startup_gate_retry_delay_sec = 0
+    cfg.health.startup_gate_retry_delay_sec = 5
+    monkeypatch.setattr(startup_gate, "_sleep", lambda s: asyncio.sleep(0))
 
     _patch_providers(monkeypatch, {
         "anthropic_compatible": _FakeProvider(exc=RuntimeError("timeout")),
@@ -328,17 +329,18 @@ def test_retry_all_attempts_fail(tmp_path, monkeypatch):
     assert result["any_usable"] is False
     assert result["attempts"] == 3
 
-
 # --- 8. notification is called on pause ---
 
 def test_notification_called_on_pause(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.server import app as appmod
+    from aletheia.agent_runtime import startup_gate
 
     cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
     cfg.runtime.paused = False
     cfg.health.startup_gate_max_retries = 1
-    cfg.health.startup_gate_retry_delay_sec = 0
+    cfg.health.startup_gate_retry_delay_sec = 5
+    monkeypatch.setattr(startup_gate, "_sleep", lambda s: asyncio.sleep(0))
     _patch_providers(monkeypatch, {
         "anthropic_compatible": _FakeProvider(exc=RuntimeError("connection failed")),
     })
@@ -644,7 +646,8 @@ def test_mixed_dns_and_non_dns_failures_still_retry(tmp_path, monkeypatch):
 
     cfg = _cfg_with({"a": True, "b": True}, "a")
     cfg.health.startup_gate_max_retries = 2
-    cfg.health.startup_gate_retry_delay_sec = 0
+    cfg.health.startup_gate_retry_delay_sec = 5
+    monkeypatch.setattr(startup_gate, "_sleep", lambda s: asyncio.sleep(0))
 
     _patch_providers(monkeypatch, {
         "a": _FakeProvider(exc=httpx.ConnectError("getaddrinfo failed")),

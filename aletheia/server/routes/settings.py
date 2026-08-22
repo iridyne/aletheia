@@ -4,9 +4,9 @@ import asyncio
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, ValidationError, field_validator
 
-from aletheia.config.loader import load_config, save_config
+from aletheia.config.loader import load_config, save_config, mutate_config, config_file_hash
 from aletheia.config.schema import (
     AgentConfig,
     AppConfig,
@@ -33,11 +33,14 @@ from aletheia.config.schema import (
     RuntimeConfig,
     SerenityConfig,
     StrategyFactoryConfig,
+    NotificationHour,
     TelegramConfig,
     TradingConfig,
     TunnelConfig,
     UniverseConfig,
     UpdateConfig,
+    WebhookConfig,
+    WebhookTimeoutSeconds,
     default_mode_risk_policy,
 )
 from aletheia.risk.policy import risk_policy_hash
@@ -135,6 +138,27 @@ class SettingsRequest(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
+
+
+def _validated_settings_section(section_type, before: dict[str, Any], updates: dict[str, Any], *, name: str):
+    """Validate the complete resulting config section before persistence."""
+    try:
+        return section_type.model_validate({**before, **updates})
+    except ValidationError as exc:
+        fields = sorted(
+            {
+                ".".join(str(part) for part in error.get("loc", ()))
+                for error in exc.errors()
+            }
+        )
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_configuration",
+                "message": f"{name} contains invalid values",
+                "fields": fields,
+            },
+        ) from exc
 
 
 class PermissionModeRequest(SettingsRequest):
@@ -404,7 +428,7 @@ def get_settings() -> SettingsResponse:
 
 
 @router.post("/trading-mandate")
-async def set_trading_mandate(req: TradingMandateRequest):
+def set_trading_mandate(req: TradingMandateRequest):
     from aletheia.trading.trading_mandate import TradingMandateConfig, resolve_trading_mandate
 
     candidate = TradingMandateConfig.model_validate(
@@ -422,10 +446,15 @@ async def set_trading_mandate(req: TradingMandateRequest):
     if resolution.status == "not_configured":
         candidate = TradingMandateConfig(enabled=False)
 
+    before = None
+    def mutator(cfg):
+        nonlocal before
+        before = _trading_mandate_view(cfg)
+        cfg.trading_mandate = candidate
+        return True
+
+    mutate_config(mutator)
     cfg = load_config()
-    before = _trading_mandate_view(cfg)
-    cfg.trading_mandate = candidate
-    save_config(cfg)
     after = _trading_mandate_view(cfg)
     from aletheia.files.jsonl import write_audit
 
@@ -611,7 +640,7 @@ class AutonomousLearningRequest(SettingsRequest):
 
 
 @router.post("/autonomous-learning")
-async def set_autonomous_learning(req: AutonomousLearningRequest):
+def set_autonomous_learning(req: AutonomousLearningRequest):
     cfg = load_config()
     old = cfg.agent.autonomous_learning
     cfg.agent.autonomous_learning = req.enabled
@@ -629,7 +658,7 @@ class BypassDistressGateRequest(SettingsRequest):
 
 
 @router.post("/bypass-distress-gate")
-async def set_bypass_distress_gate(req: BypassDistressGateRequest):
+def set_bypass_distress_gate(req: BypassDistressGateRequest):
     cfg = load_config()
     old = cfg.agent.bypass_distress_gate
     cfg.agent.bypass_distress_gate = req.enabled
@@ -672,42 +701,52 @@ def _require_exchange_divergence_confirmation(alignment, confirmed: bool) -> Non
 
 
 @router.post("/exchange-markets")
-async def set_exchange_markets(req: ExchangeMarketsRequest):
+def set_exchange_markets(req: ExchangeMarketsRequest):
     if not req.spot and not req.usdt_futures:
         raise HTTPException(400, "At least one market must be enabled")
     if req.paper_execution_mode is not None and req.paper_execution_mode not in {"bitget_demo", "paper_internal", "binance_testnet", "okx_demo", "binance_live", "okx_live"}:
         raise HTTPException(400, "paper_execution_mode must be one of: bitget_demo, paper_internal, binance_testnet, okx_demo, binance_live, okx_live")
     if req.bitget_profile is not None and req.bitget_profile not in {"classic_v2", "uta_v3"}:
         raise HTTPException(400, "bitget_profile must be one of: classic_v2, uta_v3")
-    cfg = load_config()
-    old = cfg.exchange.model_dump(mode="json")
-    next_paper_mode = req.paper_execution_mode or cfg.exchange.paper_execution_mode
+    # Pre-validate outside the mutation lock to fail fast
+    cfg_check = load_config()
+    next_paper_mode = req.paper_execution_mode or cfg_check.exchange.paper_execution_mode
     _reject_live_identity_change(
-        cfg,
-        changed=(req.paper_execution_mode is not None and next_paper_mode != cfg.exchange.paper_execution_mode),
+        cfg_check,
+        changed=(req.paper_execution_mode is not None and next_paper_mode != cfg_check.exchange.paper_execution_mode),
     )
     from aletheia.config.exchange_alignment import exchange_alignment_for_values
     alignment = exchange_alignment_for_values(
         paper_execution_mode=next_paper_mode,
-        data_exchange=cfg.market_data.ccxt_exchange,
-        configured_exchange=cfg.exchange.name,
+        data_exchange=cfg_check.market_data.ccxt_exchange,
+        configured_exchange=cfg_check.exchange.name,
     )
-    if req.paper_execution_mode is not None and req.paper_execution_mode != cfg.exchange.paper_execution_mode:
+    if req.paper_execution_mode is not None and req.paper_execution_mode != cfg_check.exchange.paper_execution_mode:
         _require_exchange_divergence_confirmation(
             alignment, req.confirm_exchange_divergence,
         )
-    cfg.exchange.enabled_markets = {"spot": req.spot, "usdt_futures": req.usdt_futures}
-    if req.paper_execution_mode is not None:
-        cfg.exchange.paper_execution_mode = req.paper_execution_mode
-    if req.bitget_profile is not None:
-        cfg.exchange.bitget_profile = req.bitget_profile
-    save_config(cfg)
+
+    old = None
+    changed = False
+    def mutator(cfg):
+        nonlocal old, changed
+        old = cfg.exchange.model_dump(mode="json")
+        cfg.exchange.enabled_markets = {"spot": req.spot, "usdt_futures": req.usdt_futures}
+        if req.paper_execution_mode is not None:
+            cfg.exchange.paper_execution_mode = req.paper_execution_mode
+        if req.bitget_profile is not None:
+            cfg.exchange.bitget_profile = req.bitget_profile
+        changed = old != cfg.exchange.model_dump(mode="json")
+        return True
+
+    mutate_config(mutator)
+    cfg = load_config()
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "exchange_markets_changed",
                  "entity_type": "exchange_config", "before": old,
                  "after": cfg.exchange.model_dump(mode="json"),
                  "message": "exchange config updated"})
-    if old != cfg.exchange.model_dump(mode="json"):
+    if changed:
         _notify_ranker_config_change()
     return {**cfg.exchange.model_dump(mode="json"), "exchange_alignment": alignment.to_dict()}
 
@@ -724,50 +763,58 @@ class PrimaryExchangeRequest(SettingsRequest):
 
 
 @router.post("/primary-exchange")
-async def set_primary_exchange(req: PrimaryExchangeRequest):
+def set_primary_exchange(req: PrimaryExchangeRequest):
     """Atomically set primary exchange across data, execution, and risk axes."""
     eid = req.exchange_id.strip().lower()
     valid = set(_EXCHANGE_UNIFICATION_MAP.keys()) | {"paper_internal"}
     if eid not in valid:
         raise HTTPException(400, f"exchange_id must be one of: {sorted(valid)}")
 
-    cfg = load_config()
+    # Pre-validate outside the mutation lock
+    cfg_check = load_config()
     desired_paper_mode = (
         "paper_internal"
         if eid == "paper_internal"
         else _EXCHANGE_UNIFICATION_MAP[eid][1]
     )
     _reject_live_identity_change(
-        cfg,
+        cfg_check,
         changed=(
-            eid != str(cfg.exchange.name or "").lower()
-            or desired_paper_mode != cfg.exchange.paper_execution_mode
+            eid != str(cfg_check.exchange.name or "").lower()
+            or desired_paper_mode != cfg_check.exchange.paper_execution_mode
         ),
     )
-    old = {
-        "exchange.name": cfg.exchange.name,
-        "exchange.paper_execution_mode": cfg.exchange.paper_execution_mode,
-        "market_data.ccxt_exchange": cfg.market_data.ccxt_exchange,
-        "risk.allowed_exchange": cfg.risk.allowed_exchange,
-    }
 
-    if eid == "paper_internal":
-        cfg.exchange.paper_execution_mode = "paper_internal"
-    else:
-        ccxt_ex, paper_mode = _EXCHANGE_UNIFICATION_MAP[eid]
-        cfg.exchange.name = eid
-        cfg.market_data.ccxt_exchange = ccxt_ex
-        cfg.market_data.ccxt_fallback = ccxt_ex
-        cfg.exchange.paper_execution_mode = paper_mode
-        cfg.risk.allowed_exchange = eid
+    old = None
+    after = None
+    def mutator(cfg):
+        nonlocal old, after
+        old = {
+            "exchange.name": cfg.exchange.name,
+            "exchange.paper_execution_mode": cfg.exchange.paper_execution_mode,
+            "market_data.ccxt_exchange": cfg.market_data.ccxt_exchange,
+            "risk.allowed_exchange": cfg.risk.allowed_exchange,
+        }
 
-    save_config(cfg)
-    after = {
-        "exchange.name": cfg.exchange.name,
-        "exchange.paper_execution_mode": cfg.exchange.paper_execution_mode,
-        "market_data.ccxt_exchange": cfg.market_data.ccxt_exchange,
-        "risk.allowed_exchange": cfg.risk.allowed_exchange,
-    }
+        if eid == "paper_internal":
+            cfg.exchange.paper_execution_mode = "paper_internal"
+        else:
+            ccxt_ex, paper_mode = _EXCHANGE_UNIFICATION_MAP[eid]
+            cfg.exchange.name = eid
+            cfg.market_data.ccxt_exchange = ccxt_ex
+            cfg.market_data.ccxt_fallback = ccxt_ex
+            cfg.exchange.paper_execution_mode = paper_mode
+            cfg.risk.allowed_exchange = eid
+
+        after = {
+            "exchange.name": cfg.exchange.name,
+            "exchange.paper_execution_mode": cfg.exchange.paper_execution_mode,
+            "market_data.ccxt_exchange": cfg.market_data.ccxt_exchange,
+            "risk.allowed_exchange": cfg.risk.allowed_exchange,
+        }
+        return True
+
+    mutate_config(mutator)
     from aletheia.files.jsonl import write_audit
     write_audit({
         "actor": "human", "source": "dashboard",
@@ -822,7 +869,7 @@ def update_economics_config(req: EconomicsConfigUpdate):
 
 
 @router.post("/runtime")
-async def update_runtime_config(req: RuntimeConfigUpdate):
+def update_runtime_config(req: RuntimeConfigUpdate):
     cfg = load_config()
     old = cfg.runtime.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -890,7 +937,7 @@ class AppConfigUpdate(SettingsRequest):
 
 
 @router.post("/app")
-async def update_app_config(req: AppConfigUpdate):
+def update_app_config(req: AppConfigUpdate):
     cfg = load_config()
     old = cfg.app.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -921,13 +968,6 @@ class PiDaemonConfigUpdate(SettingsRequest):
     heartbeat_sec: Optional[float] = None
 
 
-_PI_DAEMON_BOUNDS: dict[str, tuple[float, float]] = {
-    "debounce_sec": (0.0, 60.0),
-    "cooldown_sec": (0.0, 600.0),
-    "heartbeat_sec": (60.0, 3600.0),
-}
-
-
 @router.post("/pi_daemon")
 async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
     """Update System Operator daemon configuration.
@@ -939,15 +979,11 @@ async def update_pi_daemon_config(req: PiDaemonConfigUpdate):
     naming registry). Any consumer parsing audit events must accept the legacy
     keys; new UI copy uses "System Operator daemon".
     """
+    from aletheia.config.schema import PiDaemonConfig
     cfg = load_config()
     old = cfg.pi_daemon.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        if field in _PI_DAEMON_BOUNDS:
-            lo, hi = _PI_DAEMON_BOUNDS[field]
-            if not (lo <= value <= hi):
-                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
-        setattr(cfg.pi_daemon, field, value)
+    cfg.pi_daemon = _validated_settings_section(PiDaemonConfig, old, updates, name="PiDaemonConfig")
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "pi_daemon_config_changed",
@@ -1003,7 +1039,7 @@ _SERENITY_BOUNDS: dict[str, tuple[float, float]] = {
 
 
 @router.post("/serenity")
-async def update_serenity_config(req: SerenityConfigUpdate):
+def update_serenity_config(req: SerenityConfigUpdate):
     cfg = load_config()
     old = cfg.serenity.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -1230,7 +1266,7 @@ class AdmitTrialRequest(SettingsRequest):
 
 
 @router.post("/learning/experiments/{experiment_id}/admit-trial")
-async def admit_learning_trial(experiment_id: str, req: AdmitTrialRequest):
+def admit_learning_trial(experiment_id: str, req: AdmitTrialRequest):
     """Admit a shadow experiment to paper_10 trial. Change-management boundary."""
     from aletheia.learning.lifecycle import _execute_trial_admission
     result = _execute_trial_admission(
@@ -1259,7 +1295,7 @@ class OperatorConfigUpdate(SettingsRequest):
 
 
 @router.post("/operator")
-async def update_operator_config(req: OperatorConfigUpdate):
+def update_operator_config(req: OperatorConfigUpdate):
     cfg = load_config()
     old = cfg.operator.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -1286,7 +1322,7 @@ class RegimeConfigUpdate(SettingsRequest):
 
 
 @router.post("/regime")
-async def update_regime_config(req: RegimeConfigUpdate):
+def update_regime_config(req: RegimeConfigUpdate):
     cfg = load_config()
     old = cfg.regime.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -1307,12 +1343,12 @@ class GuardConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
     enforce_in_paper_ranker: Optional[bool] = None
     auto_promote_enabled: Optional[bool] = None
-    min_matching_trades: Optional[int] = None
+    min_matching_trades: Optional[int] = Field(default=None, ge=1)
     max_score_penalty: Optional[float] = None
 
 
 @router.post("/guard")
-async def update_guard_config(req: GuardConfigUpdate):
+def update_guard_config(req: GuardConfigUpdate):
     cfg = load_config()
     old = cfg.guard.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -1368,37 +1404,13 @@ class HealthConfigUpdate(SettingsRequest):
     startup_gate_recheck_interval_sec: Optional[int] = None
 
 
-_HEALTH_BOUNDS: dict[str, tuple[float, float]] = {
-    "max_agent_failure_ratio": (0.0, 1.0),
-    "llm_unavailable_alert_after": (1, 100),
-    "market_data_max_staleness_min": (5, 1440),
-    "supervisor_max_restarts": (1, 50),
-    "supervisor_restart_window_sec": (60, 86400),
-    "supervisor_backoff_cap_sec": (5, 3600),
-    "self_heal_min_interval_sec": (300, 86400),
-    "self_heal_max_per_hour": (0, 12),
-    "startup_gate_max_retries": (1, 10),
-    "startup_gate_retry_delay_sec": (5, 120),
-    "auto_resume_interval_sec": (30, 3600),
-    "exchange_probe_interval_sec": (10, 300),
-    "exchange_probe_failure_threshold": (1, 20),
-    "exchange_auto_resume_interval_sec": (10, 600),
-    "exchange_auto_resume_success_threshold": (1, 10),
-    "startup_gate_recheck_interval_sec": (5, 3600),
-}
-
-
 @router.post("/health-config")
-async def update_health_config(req: HealthConfigUpdate):
+def update_health_config(req: HealthConfigUpdate):
+    from aletheia.config.schema import HealthConfig
     cfg = load_config()
     old = cfg.health.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        if field in _HEALTH_BOUNDS:
-            lo, hi = _HEALTH_BOUNDS[field]
-            if not (lo <= value <= hi):
-                raise HTTPException(400, f"'{field}' must be between {lo} and {hi}")
-        setattr(cfg.health, field, value)
+    cfg.health = _validated_settings_section(HealthConfig, old, updates, name="HealthConfig")
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "health_config_changed",
@@ -1438,7 +1450,7 @@ _RETENTION_BOUNDS: dict[str, tuple[float, float]] = {
 
 
 @router.post("/retention")
-async def update_retention_config(req: RetentionConfigUpdate):
+def update_retention_config(req: RetentionConfigUpdate):
     cfg = load_config()
     old = cfg.retention.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -1466,10 +1478,10 @@ class TelegramConfigUpdate(SettingsRequest):
     allowed_chat_ids: Optional[list[int]] = None
     notify_trade_fills: Optional[bool] = None
     notify_daily_summary: Optional[bool] = None
-    daily_summary_hour_cst: Optional[int] = None
+    daily_summary_hour_cst: Optional[NotificationHour] = None
     dnd_enabled: Optional[bool] = None
-    dnd_start_hour: Optional[int] = None
-    dnd_end_hour: Optional[int] = None
+    dnd_start_hour: Optional[NotificationHour] = None
+    dnd_end_hour: Optional[NotificationHour] = None
 
 
 @router.post("/telegram")
@@ -1477,8 +1489,13 @@ async def update_telegram_config(req: TelegramConfigUpdate):
     cfg = load_config()
     old = cfg.telegram.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        setattr(cfg.telegram, field, value)
+    candidate = _validated_settings_section(
+        TelegramConfig,
+        old,
+        updates,
+        name="telegram configuration",
+    )
+    cfg.telegram = candidate
     save_config(cfg)
 
     rescheduled = False
@@ -1488,9 +1505,31 @@ async def update_telegram_config(req: TelegramConfigUpdate):
     ):
         from aletheia.agent_runtime.scheduler import reschedule_telegram_summary
         from starlette.concurrency import run_in_threadpool
-        rescheduled = await run_in_threadpool(
-            reschedule_telegram_summary, cfg.telegram.daily_summary_hour_cst,
-        )
+        try:
+            rescheduled = await run_in_threadpool(
+                reschedule_telegram_summary, cfg.telegram.daily_summary_hour_cst,
+            )
+        except Exception:
+            rescheduled = False
+        if not rescheduled:
+            try:
+                cfg.telegram = TelegramConfig.model_validate(old)
+                save_config(cfg)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "code": "telegram_config_rollback_failed",
+                        "message": "Daily summary rescheduling failed and the previous Telegram configuration could not be restored.",
+                    },
+                ) from exc
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "telegram_summary_reschedule_failed",
+                    "message": "Daily summary rescheduling failed; the previous Telegram configuration was restored.",
+                },
+            )
 
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "telegram_config_changed",
@@ -1511,16 +1550,20 @@ class WebhookConfigUpdate(SettingsRequest):
     notify_trade_fills: Optional[bool] = None
     notify_alerts: Optional[bool] = None
     notify_daily_summary: Optional[bool] = None
-    timeout_sec: Optional[float] = None
+    timeout_sec: Optional[WebhookTimeoutSeconds] = None
 
 
 @router.post("/webhook")
-async def update_webhook_config(req: WebhookConfigUpdate):
+def update_webhook_config(req: WebhookConfigUpdate):
     cfg = load_config()
     old = cfg.webhook.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        setattr(cfg.webhook, field, value)
+    cfg.webhook = _validated_settings_section(
+        WebhookConfig,
+        old,
+        updates,
+        name="webhook configuration",
+    )
     save_config(cfg)
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "webhook_config_changed",
@@ -1540,7 +1583,7 @@ class UpdateConfigUpdate(SettingsRequest):
 
 
 @router.post("/update-config")
-async def update_update_config(req: UpdateConfigUpdate):
+def update_update_config(req: UpdateConfigUpdate):
     cfg = load_config()
     old = {"enabled": cfg.update.enabled, "branch": cfg.update.branch}
     if req.enabled is not None:
@@ -1560,7 +1603,7 @@ async def update_update_config(req: UpdateConfigUpdate):
 
 
 @router.post("/permission-mode")
-async def set_permission_mode(req: PermissionModeRequest):
+def set_permission_mode(req: PermissionModeRequest):
     if req.mode not in VALID_PERMISSION_MODES:
         raise HTTPException(400, f"Invalid mode. Choose from: {sorted(VALID_PERMISSION_MODES)}")
     cfg = load_config()
@@ -1579,7 +1622,7 @@ async def set_permission_mode(req: PermissionModeRequest):
 
 
 @router.post("/exchange-mode")
-async def set_exchange_mode(req: ExchangeModeRequest):
+def set_exchange_mode(req: ExchangeModeRequest):
     if req.mode not in ("demo", "live"):
         raise HTTPException(400, "Mode must be 'demo' or 'live'")
     cfg = load_config()
@@ -1602,10 +1645,10 @@ class RiskConfigUpdate(SettingsRequest):
     max_daily_loss_pct: Optional[float] = None
     max_single_trade_risk_pct: Optional[float] = None
     max_total_live_exposure_pct: Optional[float] = None
-    max_live_position_notional_usdt: Optional[float] = None
+    max_live_position_margin_usdt: Optional[float] = None
     max_live_limited_cap_usdt: Optional[float] = None
     starting_capital_usdt: Optional[float] = None
-    max_demo_position_notional_usdt: Optional[float] = None
+    max_demo_position_margin_usdt: Optional[float] = None
     max_per_symbol_entries: Optional[int] = None
     max_demo_single_trade_risk_pct: Optional[float] = None
     max_futures_leverage_live: Optional[int] = None
@@ -1642,7 +1685,7 @@ _RISK_IMMUTABLE = {"allowed_exchange", "require_risk_check_for_all_orders"}
 # They remain positive, finite typed values and continue to pass through every
 # Risk Engine check; exchange-backed leverage retains venue-compatible bounds.
 _RISK_MINIMUMS: dict[str, float] = {
-    "max_demo_position_notional_usdt": 1.0,
+    "max_demo_position_margin_usdt": 1.0,
     "max_demo_single_trade_risk_pct": 0.01,
     "max_account_leverage_demo": 1.0,
     "max_open_positions_demo": 1.0,
@@ -1652,7 +1695,7 @@ _RISK_BOUNDS: dict[str, tuple[float, float]] = {
     "max_daily_loss_pct": (0.1, 20.0),
     "max_single_trade_risk_pct": (0.01, 10.0),
     "max_total_live_exposure_pct": (1.0, 50.0),
-    "max_live_position_notional_usdt": (1.0, 100_000.0),
+    "max_live_position_margin_usdt": (1.0, 100_000.0),
     "max_live_limited_cap_usdt": (1.0, 100_000.0),
     "starting_capital_usdt": (1.0, 100_000.0),
     # A count of full-size entries, not a currency amount. 0 disables check #19.
@@ -1678,7 +1721,7 @@ _RISK_BOUNDS: dict[str, tuple[float, float]] = {
 
 
 @router.post("/risk")
-async def update_risk_config(req: RiskConfigUpdate):
+def update_risk_config(req: RiskConfigUpdate):
     """Update editable risk limits. Immutable fields are rejected."""
     cfg = load_config()
     old = cfg.risk.model_dump(mode="json")
@@ -1738,12 +1781,43 @@ def _policy_diff(source: dict, target: dict, prefix: str = "") -> list[dict]:
     return rows
 
 
-def _validate_mode_policy(policy: ModeRiskPolicy) -> None:
+# Canonical safety ceilings for every Live nested-policy write path.
+# Demo fields are intentionally uncapped at the application layer; only
+# exchange-backed leverage and structural (finite/positive) constraints apply.
+_LIVE_POLICY_BOUNDS: dict[str, tuple[float, float]] = {
+    "loss.max_daily_loss_pct":                     (0.1,   20.0),
+    "loss.max_single_trade_risk_pct":              (0.01,  10.0),
+    "capital.max_total_exposure_pct":              (1.0,   50.0),
+    "capital.max_position_margin_usdt":            (1.0,   100_000.0),
+    "capital.base_usdt":                           (1.0,   100_000.0),
+    "capital.max_per_symbol_entries":              (0,     20),
+    "leverage.futures_cap":                        (1,     20),
+    "leverage.major_cap":                          (1,     10),
+    "leverage.mid_cap":                            (1,     5),
+    "leverage.alt_cap":                            (1,     3),
+    "leverage.account_cap":                        (1.0,   5.0),
+    "margin.min_entry_liquidation_buffer_pct":     (1.0,   20.0),
+    "margin.runtime_liquidation_buffer_pct":       (1.0,   20.0),
+    "margin.warning_ratio":                        (0.3,   0.95),
+    "margin.block_ratio":                          (0.5,   0.99),
+    "positions.max_open_positions":                (1,     50),
+    "correlation.max_sector_concentration_pct":    (10.0,  100.0),
+    "correlation.max_portfolio_beta":              (0.5,   10.0),
+    "correlation.min_positions_for_concentration": (1,     200),
+}
+
+
+def _policy_get(policy: ModeRiskPolicy, path: str) -> float:
+    parent, _, child = path.partition(".")
+    return float(getattr(getattr(policy, parent), child))
+
+
+def _validate_mode_policy(mode: str, policy: ModeRiskPolicy) -> None:
     import math
 
     numeric = {
         "capital.base_usdt": policy.capital.base_usdt,
-        "capital.max_position_notional_usdt": policy.capital.max_position_notional_usdt,
+        "capital.max_position_margin_usdt": policy.capital.max_position_margin_usdt,
         "capital.max_per_symbol_entries": policy.capital.max_per_symbol_entries,
         "capital.max_total_exposure_pct": policy.capital.max_total_exposure_pct,
         "loss.max_single_trade_risk_pct": policy.loss.max_single_trade_risk_pct,
@@ -1758,9 +1832,13 @@ def _validate_mode_policy(policy: ModeRiskPolicy) -> None:
             policy.margin.min_entry_liquidation_buffer_pct,
         "margin.runtime_liquidation_buffer_pct":
             policy.margin.runtime_liquidation_buffer_pct,
+        "margin.warning_ratio": policy.margin.warning_ratio,
+        "margin.block_ratio": policy.margin.block_ratio,
         "correlation.max_sector_concentration_pct":
             policy.correlation.max_sector_concentration_pct,
         "correlation.max_portfolio_beta": policy.correlation.max_portfolio_beta,
+        "correlation.min_positions_for_concentration":
+            policy.correlation.min_positions_for_concentration,
     }
     invalid = [
         path for path, value in numeric.items()
@@ -1770,8 +1848,8 @@ def _validate_mode_policy(policy: ModeRiskPolicy) -> None:
         invalid.append("positions.max_open_positions")
     if policy.capital.base_usdt <= 0:
         invalid.append("capital.base_usdt")
-    if policy.capital.max_position_notional_usdt <= 0:
-        invalid.append("capital.max_position_notional_usdt")
+    if policy.capital.max_position_margin_usdt <= 0:
+        invalid.append("capital.max_position_margin_usdt")
     # A count, where 0 legitimately means "check #19 disabled" — so only
     # negatives are invalid here (the numeric sweep above already covers that).
     if policy.loss.max_single_trade_risk_pct <= 0:
@@ -1787,6 +1865,10 @@ def _validate_mode_policy(policy: ModeRiskPolicy) -> None:
     }.items():
         if value < 1:
             invalid.append(path)
+    if mode == "live":
+        for path, (lo, hi) in _LIVE_POLICY_BOUNDS.items():
+            if not (lo <= _policy_get(policy, path) <= hi):
+                invalid.append(path)
     if invalid:
         raise HTTPException(400, f"Invalid risk policy fields: {sorted(set(invalid))}")
 
@@ -1814,12 +1896,12 @@ class RiskPolicyResetRequest(SettingsRequest):
 
 
 @router.get("/risk-policies")
-async def get_risk_policies():
+def get_risk_policies():
     return _policy_payload(load_config())
 
 
 @router.post("/risk-policies/compare")
-async def compare_risk_policies(req: RiskPolicyCopyRequest):
+def compare_risk_policies(req: RiskPolicyCopyRequest):
     cfg = load_config()
     source = getattr(cfg.risk, req.source).model_dump(mode="json")
     target = getattr(cfg.risk, req.target).model_dump(mode="json")
@@ -1827,30 +1909,36 @@ async def compare_risk_policies(req: RiskPolicyCopyRequest):
 
 
 @router.post("/risk-policies/copy")
-async def copy_risk_policy(req: RiskPolicyCopyRequest):
+def copy_risk_policy(req: RiskPolicyCopyRequest):
     if req.source == req.target:
         raise HTTPException(400, "source and target policies must differ")
     if not req.confirm_target_replacement:
         raise HTTPException(422, "Policy replacement requires explicit confirmation")
-    cfg = load_config()
-    source = getattr(cfg.risk, req.source)
-    target = getattr(cfg.risk, req.target)
-    if source.revision != req.source_revision or target.revision != req.target_revision:
-        raise HTTPException(409, "policy_revision_conflict")
+    before = None
+    replacement = None
+    def mutator(cfg):
+        nonlocal before, replacement
+        source = getattr(cfg.risk, req.source)
+        target = getattr(cfg.risk, req.target)
+        if source.revision != req.source_revision or target.revision != req.target_revision:
+            raise HTTPException(409, "policy_revision_conflict")
 
-    before = target.model_dump(mode="json")
-    common = source.model_dump(
-        mode="json",
-        exclude={"policy_id", "revision", "eligibility"},
-    )
-    replacement = ModeRiskPolicy.model_validate({
-        **target.model_dump(mode="json"),
-        **common,
-        "revision": target.revision + 1,
-    })
-    _validate_mode_policy(replacement)
-    setattr(cfg.risk, req.target, replacement)
-    save_config(cfg)
+        before = target.model_dump(mode="json")
+        common = source.model_dump(
+            mode="json",
+            exclude={"policy_id", "revision", "eligibility"},
+        )
+        replacement = ModeRiskPolicy.model_validate({
+            **target.model_dump(mode="json"),
+            **common,
+            "revision": target.revision + 1,
+        })
+        _validate_mode_policy(req.target, replacement)
+        setattr(cfg.risk, req.target, replacement)
+        return True
+
+    mutate_config(mutator)
+    cfg = load_config()
     from aletheia.files.jsonl import write_audit
     write_audit({
         "actor": "human",
@@ -1866,24 +1954,29 @@ async def copy_risk_policy(req: RiskPolicyCopyRequest):
 
 
 @router.put("/risk-policies/{mode}")
-async def replace_risk_policy(mode: RiskMode, req: RiskPolicyReplaceRequest):
+def replace_risk_policy(mode: RiskMode, req: RiskPolicyReplaceRequest):
     if not req.confirm_target_replacement:
         raise HTTPException(422, "Policy replacement requires explicit confirmation")
-    cfg = load_config()
-    current = getattr(cfg.risk, mode)
-    if current.revision != req.expected_revision:
-        raise HTTPException(409, "policy_revision_conflict")
-    replacement = req.policy.model_copy(
-        update={
-            "policy_id": current.policy_id,
-            "revision": current.revision + 1,
-            "eligibility": req.policy.eligibility if mode == "live" else None,
-        },
-        deep=True,
-    )
-    _validate_mode_policy(replacement)
-    setattr(cfg.risk, mode, replacement)
-    save_config(cfg)
+    current = None
+    replacement = None
+    def mutator(cfg):
+        nonlocal current, replacement
+        current = getattr(cfg.risk, mode)
+        if current.revision != req.expected_revision:
+            raise HTTPException(409, "policy_revision_conflict")
+        replacement = req.policy.model_copy(
+            update={
+                "policy_id": current.policy_id,
+                "revision": current.revision + 1,
+                "eligibility": req.policy.eligibility if mode == "live" else None,
+            },
+            deep=True,
+        )
+        _validate_mode_policy(mode, replacement)
+        setattr(cfg.risk, mode, replacement)
+        return True
+
+    mutate_config(mutator)
     from aletheia.files.jsonl import write_audit
     write_audit({
         "actor": "human",
@@ -1895,28 +1988,33 @@ async def replace_risk_policy(mode: RiskMode, req: RiskPolicyReplaceRequest):
         "after": replacement.model_dump(mode="json"),
         "message": f"{mode} policy replaced: {req.reason}",
     })
-    return _policy_payload(cfg)
+    return _policy_payload(load_config())
 
 
 @router.post("/risk-policies/{mode}/reset-defaults")
-async def reset_risk_policy(mode: RiskMode, req: RiskPolicyResetRequest):
+def reset_risk_policy(mode: RiskMode, req: RiskPolicyResetRequest):
     if not req.confirm_target_replacement:
         raise HTTPException(422, "Policy replacement requires explicit confirmation")
-    cfg = load_config()
-    current = getattr(cfg.risk, mode)
-    if current.revision != req.expected_revision:
-        raise HTTPException(409, "policy_revision_conflict")
-    defaults = default_mode_risk_policy(mode)
-    replacement = defaults.model_copy(
-        update={
-            "policy_id": current.policy_id,
-            "revision": current.revision + 1,
-        },
-        deep=True,
-    )
-    _validate_mode_policy(replacement)
-    setattr(cfg.risk, mode, replacement)
-    save_config(cfg)
+    current = None
+    replacement = None
+    def mutator(cfg):
+        nonlocal current, replacement
+        current = getattr(cfg.risk, mode)
+        if current.revision != req.expected_revision:
+            raise HTTPException(409, "policy_revision_conflict")
+        defaults = default_mode_risk_policy(mode)
+        replacement = defaults.model_copy(
+            update={
+                "policy_id": current.policy_id,
+                "revision": current.revision + 1,
+            },
+            deep=True,
+        )
+        _validate_mode_policy(mode, replacement)
+        setattr(cfg.risk, mode, replacement)
+        return True
+
+    mutate_config(mutator)
     from aletheia.files.jsonl import write_audit
     write_audit({
         "actor": "human",
@@ -1928,7 +2026,7 @@ async def reset_risk_policy(mode: RiskMode, req: RiskPolicyResetRequest):
         "after": replacement.model_dump(mode="json"),
         "message": f"{mode} policy reset to defaults: {req.reason}",
     })
-    return _policy_payload(cfg)
+    return _policy_payload(load_config())
 
 
 # ---------------------------------------------------------------------------
@@ -1944,7 +2042,7 @@ class SymbolsUpdate(SettingsRequest):
 
 
 @router.post("/symbols")
-async def update_tradable_symbols(req: SymbolsUpdate):
+def update_tradable_symbols(req: SymbolsUpdate):
     """Update symbol filter mode and list. Risk and exchange are updated atomically."""
     if req.mode not in VALID_SYMBOL_FILTER_MODES:
         raise HTTPException(400, f"mode must be one of {sorted(VALID_SYMBOL_FILTER_MODES)}")
@@ -1992,7 +2090,7 @@ class EquitiesConfigUpdate(SettingsRequest):
 
 
 @router.post("/equities")
-async def update_observed_equities(req: EquitiesConfigUpdate):
+def update_observed_equities(req: EquitiesConfigUpdate):
     """Update US equity tickers observed by equity_observer (observation-only, not traded)."""
     normalized = list(dict.fromkeys(t.strip().upper() for t in req.tickers if t.strip()))
     cfg = load_config()
@@ -2199,7 +2297,7 @@ _MARKET_DATA_PROVIDERS = {"ccxt", "bitget"}
 
 
 @router.post("/market-data")
-async def update_market_data_config(req: MarketDataConfigUpdate):
+def update_market_data_config(req: MarketDataConfigUpdate):
     """Update market data source parameters."""
     cfg = load_config()
     old = cfg.market_data.model_dump(mode="json")
@@ -2294,7 +2392,7 @@ _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
 
 
 @router.post("/universe")
-async def update_universe_config(req: UniverseConfigUpdate):
+def update_universe_config(req: UniverseConfigUpdate):
     """Update universe generator parameters."""
     cfg = load_config()
     old = cfg.universe.model_dump(mode="json")
@@ -2389,7 +2487,7 @@ class StrategyFactoryConfigUpdate(BaseModel):
 
 
 @router.post("/strategy_factory")
-async def update_strategy_factory_config(req: StrategyFactoryConfigUpdate):
+def update_strategy_factory_config(req: StrategyFactoryConfigUpdate):
     """Strategy Factory subsystem was removed with Position C (2026-07-02).
 
     This endpoint is kept for backward compatibility but performs no mutation and
@@ -2429,7 +2527,7 @@ class RemoteControlConfigUpdate(SettingsRequest):
 
 
 @router.get("/remote-control/interfaces")
-async def get_remote_control_interfaces():
+def get_remote_control_interfaces():
     from aletheia.gateway.network import discover_ipv4_interfaces
     return {"interfaces": discover_ipv4_interfaces()}
 
@@ -2442,7 +2540,7 @@ async def get_tunnel_status():
 
 
 @router.post("/tunnel")
-async def update_tunnel_config(req: TunnelConfigUpdate):
+def update_tunnel_config(req: TunnelConfigUpdate):
     cfg = load_config()
     old = cfg.tunnel.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
@@ -2460,7 +2558,7 @@ async def update_tunnel_config(req: TunnelConfigUpdate):
 
 
 @router.post("/remote-control")
-async def update_remote_control_config(req: RemoteControlConfigUpdate):
+def update_remote_control_config(req: RemoteControlConfigUpdate):
     """Save the independent remote-control switch and optional write-only API token."""
     cfg = load_config()
     old_enabled = cfg.remote_control.enabled
@@ -2535,7 +2633,7 @@ class NetworkConfigUpdate(SettingsRequest):
 
 
 @router.post("/network")
-async def update_network_config(req: NetworkConfigUpdate):
+def update_network_config(req: NetworkConfigUpdate):
     """Update global proxy configuration and apply it to the running process."""
     cfg = load_config()
     old = cfg.network.model_dump(mode="json")
@@ -2600,28 +2698,14 @@ class HistoricalDataConfigUpdate(SettingsRequest):
     active_universe_backfill_max_pairs_per_run: int | None = None
 
 
-_HIST_DATA_BOUNDS: dict[str, tuple[float, float]] = {
-    "max_bars_per_pair": (1_000, 200_000),
-    "default_months": (1, 24),
-    "nightly_backfill_hour_cst": (0, 23),
-    "min_bars_for_backtest": (30, 5_000),
-    "active_universe_backfill_interval_minutes": (5, 60),
-    "active_universe_backfill_max_pairs_per_run": (1, 10),
-}
-
-
 @router.post("/historical_data")
 async def update_historical_data_config(req: HistoricalDataConfigUpdate):
     """Update historical OHLCV data management settings."""
+    from aletheia.config.schema import HistoricalDataConfig
     cfg = load_config()
     old = cfg.historical_data.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
-    for field, value in updates.items():
-        if field in _HIST_DATA_BOUNDS:
-            lo, hi = _HIST_DATA_BOUNDS[field]
-            if not (lo <= value <= hi):
-                raise HTTPException(400, f"'{field}' must be between {int(lo)} and {int(hi)}")
-        setattr(cfg.historical_data, field, value)
+    cfg.historical_data = _validated_settings_section(HistoricalDataConfig, old, updates, name="HistoricalDataConfig")
     save_config(cfg)
 
     _SCHEDULER_FIELDS = {
@@ -2670,7 +2754,7 @@ _EVENT_TRIGGER_BOUNDS: dict[str, tuple[float, float]] = {
 
 
 @router.post("/event_triggers")
-async def update_event_trigger_config(req: EventTriggerConfigUpdate):
+def update_event_trigger_config(req: EventTriggerConfigUpdate):
     """Update event-driven trigger thresholds."""
     cfg = load_config()
     old = cfg.event_triggers.model_dump(mode="json")
@@ -2711,18 +2795,11 @@ class NewsConfigUpdate(SettingsRequest):
 
 @router.post("/news")
 async def update_news_config(req: NewsConfigUpdate):
+    from aletheia.config.schema import NewsConfig
     cfg = load_config()
     old = cfg.news.model_dump(mode="json")
-    if req.enabled is not None:
-        cfg.news.enabled = req.enabled
-    if req.fetch_interval_minutes is not None:
-        if not (5 <= req.fetch_interval_minutes <= 120):
-            raise HTTPException(400, "fetch_interval_minutes must be 5-120")
-        cfg.news.fetch_interval_minutes = req.fetch_interval_minutes
-    if req.retention_days is not None:
-        if not (1 <= req.retention_days <= 90):
-            raise HTTPException(400, "retention_days must be 1-90")
-        cfg.news.retention_days = req.retention_days
+    updates = req.model_dump(exclude_none=True, exclude={"feeds"})
+    cfg.news = _validated_settings_section(NewsConfig, old, updates, name="NewsConfig")
     if req.feeds is not None:
         from aletheia.config.schema import NewsFeedEntry
         cfg.news.feeds = [NewsFeedEntry(**f.model_dump()) for f in req.feeds]

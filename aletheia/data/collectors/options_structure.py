@@ -106,6 +106,8 @@ async def _collect_currency(currency: str) -> OptionsMarketStructureSnapshot | N
             "type": option_type,
             "oi": oi,
             "gamma": gamma,
+            "T": T,
+            "sigma": sigma,
         })
 
     if len(entries) < _MIN_VALID_ENTRIES:
@@ -199,7 +201,7 @@ def _build_snapshot(
         underlying_price=spot,
         net_gex_estimate=net_gex,
         gamma_regime=gamma_regime,
-        gamma_flip_estimate=_gamma_flip(call_gex_by_strike, put_gex_by_strike),
+        gamma_flip_estimate=_gamma_flip_spot_sweep(entries, spot),
         call_gamma_wall=float(call_wall) if call_wall is not None else None,
         put_gamma_wall=float(put_wall) if put_wall is not None else None,
         nearest_gamma_wall_distance=nearest_wall_dist,
@@ -217,29 +219,45 @@ def _nearest_wall(spot: float, call_wall: float | None, put_wall: float | None) 
     return call_wall if call_wall is not None else put_wall
 
 
-def _gamma_flip(
-    call_gex: dict[float, float],
-    put_gex: dict[float, float],
+def _gamma_flip_spot_sweep(
+    entries: list[dict],
+    spot: float,
+    *,
+    grid_pct: float = 0.30,
+    n_points: int = 200,
 ) -> float | None:
-    """Estimate the spot level where cumulative net GEX (by strike) crosses zero."""
-    strikes = sorted(set(call_gex) | set(put_gex))
-    if len(strikes) < 2:
+    """Spot level where aggregate net GEX changes sign under a hypothetical spot move.
+
+    Sweeps candidate spot prices over ±grid_pct of current spot, recomputes BSM
+    gamma for each option at each candidate spot, and interpolates the crossing.
+    Each entry must have: strike, type ('C'/'P'), oi, T (years), sigma (annual vol).
+    """
+    if not entries:
         return None
 
-    # Build cumulative net GEX scanning from lowest to highest strike
-    cumulative: list[tuple[float, float]] = []
-    running = 0.0
-    for s in strikes:
-        running += call_gex.get(s, 0.0) - put_gex.get(s, 0.0)
-        cumulative.append((s, running))
+    lo = spot * (1.0 - grid_pct)
+    hi = spot * (1.0 + grid_pct)
+    step = (hi - lo) / n_points
 
-    # Find sign change; linearly interpolate the crossing
-    for i in range(len(cumulative) - 1):
-        s0, g0 = cumulative[i]
-        s1, g1 = cumulative[i + 1]
-        if (g0 <= 0 < g1) or (g1 <= 0 < g0):
-            if g0 == g1:
-                return (s0 + s1) / 2.0
-            return s0 + (s1 - s0) * (-g0) / (g1 - g0)
+    def _net_gex_at(s: float) -> float:
+        total = 0.0
+        for e in entries:
+            g = _bsm_gamma(s, e["strike"], e["T"], e["sigma"])
+            if g is None:
+                continue
+            sign = 1.0 if e["type"] == "C" else -1.0
+            total += sign * g * e["oi"] * s * s * 0.01
+        return total
+
+    prev_s = lo
+    prev_g = _net_gex_at(lo)
+    for i in range(1, n_points + 1):
+        s = lo + i * step
+        g = _net_gex_at(s)
+        if (prev_g <= 0.0 < g) or (g <= 0.0 < prev_g):
+            if prev_g == g:
+                return (prev_s + s) / 2.0
+            return prev_s + (s - prev_s) * (-prev_g) / (g - prev_g)
+        prev_s, prev_g = s, g
 
     return None

@@ -90,7 +90,7 @@ def test_supervisor_respawns_on_crash_then_gives_up(tmp_path, monkeypatch):
     cfg = load_config()
     cfg.health.supervisor_max_restarts = 3
     cfg.health.supervisor_restart_window_sec = 600
-    cfg.health.supervisor_backoff_cap_sec = 0  # no real sleeping in test
+    cfg.health.supervisor_backoff_cap_sec = 5  # no real sleeping in test
     save_config(cfg)
 
     spawns = {"n": 0}
@@ -580,7 +580,7 @@ def test_abnormal_restart_path_records_no_signal_event(tmp_path, monkeypatch):
     cfg = load_config()
     cfg.health.supervisor_max_restarts = 2
     cfg.health.supervisor_restart_window_sec = 600
-    cfg.health.supervisor_backoff_cap_sec = 0
+    cfg.health.supervisor_backoff_cap_sec = 5
     save_config(cfg)
 
     monkeypatch.setattr(runner, "_sleep", lambda s: None)

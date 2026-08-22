@@ -15,8 +15,8 @@ def _divergent_risk_config() -> AletheiaConfig:
     cfg = AletheiaConfig()
 
     # Simulate a process that still carries the one-release legacy snapshot.
-    cfg.risk.max_demo_position_notional_usdt = 10.0
-    cfg.risk.max_live_position_notional_usdt = 10.0
+    cfg.risk.max_demo_position_margin_usdt = 10.0
+    cfg.risk.max_live_position_margin_usdt = 10.0
     cfg.risk.max_total_live_exposure_pct = 1.0
     cfg.risk.max_single_trade_risk_pct = 0.5
     cfg.risk.max_demo_single_trade_risk_pct = 1.0
@@ -33,7 +33,7 @@ def _divergent_risk_config() -> AletheiaConfig:
     cfg.risk.demo.revision = 2
     cfg.risk.demo.capital.base_source = "custom"
     cfg.risk.demo.capital.base_usdt = 100.0
-    cfg.risk.demo.capital.max_position_notional_usdt = 200.0
+    cfg.risk.demo.capital.max_position_margin_usdt = 200.0
     cfg.risk.demo.loss.max_single_trade_risk_pct = 20.0
     cfg.risk.demo.loss.max_daily_loss_pct = 20.0
     cfg.risk.demo.leverage.futures_cap = 10
@@ -43,7 +43,7 @@ def _divergent_risk_config() -> AletheiaConfig:
     cfg.risk.live.revision = 3
     cfg.risk.live.capital.base_source = "custom"
     cfg.risk.live.capital.base_usdt = 100.0
-    cfg.risk.live.capital.max_position_notional_usdt = 100.0
+    cfg.risk.live.capital.max_position_margin_usdt = 100.0
     cfg.risk.live.capital.max_total_exposure_pct = 10.0
     cfg.risk.live.loss.max_single_trade_risk_pct = 2.0
     cfg.risk.live.loss.max_daily_loss_pct = 1.0
@@ -57,16 +57,16 @@ def _divergent_risk_config() -> AletheiaConfig:
     ("violation", "execution_mode", "boundary_key", "current", "suggested"),
     [
         (
-            "exceeds_demo_position_notional:300.0>200.0",
+            "exceeds_demo_position_margin:300.0>200.0",
             "paper_internal",
-            "max_demo_position_notional_usdt",
+            "max_demo_position_margin_usdt",
             200.0,
             300.0,
         ),
         (
-            "exceeds_max_position_notional:150.0>100.0",
+            "exceeds_max_position_margin:150.0>100.0",
             "bitget_live_limited",
-            "max_live_position_notional_usdt",
+            "max_live_position_margin_usdt",
             100.0,
             150.0,
         ),

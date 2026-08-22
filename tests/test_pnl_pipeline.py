@@ -101,7 +101,7 @@ def test_exchange_upnl_is_scoped_to_its_broker_and_duplicate_is_rejected(db, mon
             direction="long", quantity=1.0, entry_price=100.0,
             execution_mode=mode,
         ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [
@@ -136,7 +136,7 @@ def test_paper_internal_never_consumes_exchange_upnl(
         entry_price=100.0,
         execution_mode="paper_internal",
     ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [{
@@ -190,7 +190,7 @@ def test_exchange_upnl_market_type_mismatch_falls_back_to_local_estimate(
         entry_price=100.0,
         execution_mode="okx_demo",
     ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [{
@@ -246,7 +246,7 @@ def test_exchange_aggregate_upnl_is_not_reused_across_local_positions(
         entry_price=120.0,
         execution_mode="bitget_demo",
     ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [{
@@ -301,7 +301,7 @@ def test_exchange_upnl_account_fingerprint_mismatch_falls_back_and_is_labeled(
         entry_price=100.0,
         execution_mode="okx_demo",
     ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [{
@@ -353,7 +353,7 @@ def test_exchange_position_identity_disambiguates_same_instrument_rows(
                 "broker_position_id": broker_position_id,
             }),
         ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [
@@ -414,7 +414,7 @@ def test_duplicate_local_broker_position_identity_falls_back(
                 "broker_position_id": "venue-duplicate",
             }),
         ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [{
@@ -453,7 +453,7 @@ def test_exchange_exact_short_does_not_inherit_long_upnl(
         entry_price=100.0,
         execution_mode="okx_demo",
     ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 90.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 90.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 0.0,
         "positions": [
@@ -530,7 +530,7 @@ def test_stale_exchange_upnl_is_not_applied_or_persisted(
         entry_price=100.0,
         execution_mode="okx_demo",
     ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": age_seconds,
         "positions": [{
@@ -548,6 +548,87 @@ def test_stale_exchange_upnl_is_not_applied_or_persisted(
     stored = repo._select_one("positions", "upnl-stale-okx")
     assert stored is not None
     assert stored["unrealized_pnl"] == 10.0
+
+
+# ---------- Issue #1174: exact instrument identity for mark-to-market ----------
+
+class TestMarkExactInstrumentIdentity:
+    """Spot and perp positions sharing a symbol must be marked independently.
+
+    Regression proof for #1174: the scheduler must not persist a symbol-only
+    price as current_price; missing exact marks must leave the DB row unchanged.
+    """
+
+    def test_spot_and_perp_marked_independently(self, db, monkeypatch):
+        from datetime import datetime, timezone
+        from aletheia.data import price_feed
+        from aletheia.portfolio import pnl
+
+        now = datetime.now(timezone.utc)
+        fake_cache = {
+            ("binance", "BTC/USDT", "spot"): {
+                "price": 65_000.0, "ts": now, "market_type": "spot", "exchange": "binance",
+            },
+            ("binance", "BTC/USDT", "perp"): {
+                "price": 64_500.0, "ts": now, "market_type": "perp", "exchange": "binance",
+            },
+        }
+        monkeypatch.setattr(price_feed, "_instrument_price_cache", fake_cache)
+
+        monkeypatch.setattr("aletheia.config.loader.load_config", lambda **_: type(
+            "C", (), {"market_data": type("M", (), {"ccxt_exchange": "binance"})()}
+        )())
+
+        repo.insert_position(Position(
+            id="spot-pos", symbol="BTC/USDT", market_type="spot",
+            direction="long", quantity=1.0, entry_price=64_000.0,
+            execution_mode="paper_internal",
+        ))
+        repo.insert_position(Position(
+            id="perp-pos", symbol="BTC/USDT", market_type="usdt_futures",
+            direction="long", quantity=1.0, entry_price=64_000.0,
+            execution_mode="paper_internal",
+        ))
+
+        monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: {})
+        marked = {row["id"]: row for row in pnl.mark_positions_to_market(persist=True)}
+
+        assert marked["spot-pos"]["current_price"] == 65_000.0
+        assert marked["perp-pos"]["current_price"] == 64_500.0
+        assert marked["spot-pos"]["unrealized_pnl"] == pytest.approx(1_000.0)
+        assert marked["perp-pos"]["unrealized_pnl"] == pytest.approx(500.0)
+
+        stored_spot = repo._select_one("positions", "spot-pos")
+        stored_perp = repo._select_one("positions", "perp-pos")
+        assert stored_spot["current_price"] == 65_000.0
+        assert stored_perp["current_price"] == 64_500.0
+
+    def test_missing_exact_mark_does_not_overwrite_current_price(self, db, monkeypatch):
+        """When no exact mark is available, current_price must not be updated."""
+        from aletheia.data import price_feed
+        from aletheia.portfolio import pnl
+
+        monkeypatch.setattr("aletheia.config.loader.load_config", lambda **_: type(
+            "C", (), {"market_data": type("M", (), {"ccxt_exchange": "binance"})()}
+        )())
+        # Empty instrument cache — no exact mark available.
+        monkeypatch.setattr(price_feed, "_instrument_price_cache", {})
+        monkeypatch.setattr(price_feed, "_price_cache", {})
+
+        repo.insert_position(Position(
+            id="no-mark-pos", symbol="BTC/USDT", market_type="spot",
+            direction="long", quantity=1.0, entry_price=100.0,
+            execution_mode="paper_internal",
+            current_price=99.0,
+        ))
+        monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: {})
+        [marked] = pnl.mark_positions_to_market(persist=True)
+
+        # In-memory row uses current_price fallback.
+        assert marked["current_price"] == 99.0
+        # DB row must NOT be overwritten with a guessed value.
+        stored = repo._select_one("positions", "no-mark-pos")
+        assert stored["current_price"] == 99.0  # unchanged from pre-existing value
 
 
 # ---------- P1-2: compute_portfolio realized_pnl respects execution_mode ----------
@@ -1022,3 +1103,130 @@ class TestAutoDeposit:
 
         events = repo.list_capital_events()
         assert len(events) == 1
+
+
+# ---------- Issue #1247: today_raw_closed_realized_pnl fail-closed semantics ----------
+
+class TestTodayRawClosedRealizedPnl:
+    """today_raw_closed_realized_pnl / today_realized_pnl must return None when any
+    close today has incomplete economics (unavailable_count > 0).
+
+    The structured compute_portfolio path continues returning partial + completeness
+    metadata unchanged.
+    """
+
+    def _insert_complete_spot_close(
+        self,
+        *,
+        position_id: str,
+        realized_pnl: float,
+        execution_mode: str = "paper_internal",
+    ) -> None:
+        """Insert a spot close with fully-reproducible economics today (UTC)."""
+        from tests.test_outcome_closure import _insert_closed_position_via_producer
+
+        today = datetime.now(timezone.utc).isoformat()
+        _insert_closed_position_via_producer(
+            position_id=position_id,
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=1.0,
+            entry_price=100.0,
+            realized_pnl=realized_pnl,
+            execution_mode=execution_mode,
+            closed_at=today,
+        )
+
+    def _insert_incomplete_close(
+        self,
+        position_id: str,
+        *,
+        execution_mode: str = "paper_internal",
+    ) -> None:
+        """Insert a futures close with NULL funding (economics incomplete)."""
+        from aletheia.storage.models import Position
+        from aletheia.storage import repositories as repo
+
+        closed_at = datetime.now(timezone.utc).isoformat()
+        repo.insert_position(Position(
+            id=position_id,
+            symbol="ETH/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            quantity=0.1,
+            entry_price=100.0,
+            current_price=102.0,
+            execution_mode=execution_mode,
+            status="closed",
+            realized_pnl=None,
+            funding_cost=None,
+            funding_source="unavailable",
+            close_reason="max_hold",
+            close_category="neutral",
+            entry_fee=0.001,
+            exit_fee=0.001,
+            exit_price_source="exchange",
+            exit_fill_verified=True,
+            outcome_eligible=False,
+            outcome_exclusion_reason="incomplete_funding_economics",
+            outcome_semantics_version="oi-v1",
+            closed_at=closed_at,
+        ))
+
+    def test_all_complete_closes_returns_numeric_total(self, db):
+        """All closes complete: scalar returns the exact sum."""
+        from aletheia.portfolio.pnl import today_realized_pnl, today_raw_closed_realized_pnl
+
+        self._insert_complete_spot_close(position_id="c-all-1", realized_pnl=-5.0)
+        self._insert_complete_spot_close(position_id="c-all-2", realized_pnl=2.0)
+
+        result = today_realized_pnl()
+        assert result == pytest.approx(-3.0)
+        assert today_raw_closed_realized_pnl() == pytest.approx(-3.0)
+
+    def test_mixed_complete_and_incomplete_returns_none(self, db):
+        """One incomplete close contaminates the scalar: must return None."""
+        from aletheia.portfolio.pnl import today_realized_pnl, today_raw_closed_realized_pnl
+
+        self._insert_complete_spot_close(position_id="m-complete", realized_pnl=-5.0)
+        self._insert_incomplete_close("m-incomplete")
+
+        assert today_realized_pnl() is None
+        assert today_raw_closed_realized_pnl() is None
+
+    def test_no_closes_today_returns_zero(self, db):
+        """No closes today: scalar returns 0 (existing zero behavior unchanged)."""
+        from aletheia.portfolio.pnl import today_realized_pnl
+
+        assert today_realized_pnl() == pytest.approx(0.0)
+
+    def test_mixed_does_not_contaminate_other_mode(self, db):
+        """Incomplete close in mode A must not make mode B's scalar unavailable."""
+        from aletheia.portfolio.pnl import today_realized_pnl
+
+        self._insert_complete_spot_close(
+            position_id="mode-b-complete",
+            realized_pnl=-5.0,
+            execution_mode="bitget_demo",
+        )
+        self._insert_incomplete_close(
+            "mode-a-incomplete",
+            execution_mode="paper_internal",
+        )
+
+        # paper_internal has an incomplete close → None
+        assert today_realized_pnl(execution_mode="paper_internal") is None
+        # bitget_demo has only complete closes → numeric
+        assert today_realized_pnl(execution_mode="bitget_demo") == pytest.approx(-5.0)
+
+    def test_mixed_compute_portfolio_still_returns_partial_total_with_metadata(self, db):
+        """compute_portfolio structured path exposes partial sum + completeness flag."""
+        self._insert_complete_spot_close(position_id="p-complete", realized_pnl=-5.0)
+        self._insert_incomplete_close("p-incomplete")
+
+        portfolio = compute_portfolio()
+        assert portfolio["today_realized_pnl_complete"] is False
+        assert portfolio["today_realized_pnl_unavailable_count"] == 1
+        # partial sum still surfaces in the structured result
+        assert portfolio["today_realized_pnl"] == pytest.approx(-5.0)

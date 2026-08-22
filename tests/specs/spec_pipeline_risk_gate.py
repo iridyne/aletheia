@@ -326,7 +326,7 @@ def test_risk_gate_stale_market_data_for_live(tmp_path, monkeypatch):
     cfg.exchange.mode = "live"
     cfg.agent.permission_mode = "Full"
     # Give generous size/exposure caps so only stale-data check fires
-    cfg.risk.max_live_position_notional_usdt = 1_000_000.0
+    cfg.risk.max_live_position_margin_usdt = 1_000_000.0
     cfg.risk.max_total_live_exposure_pct = 100.0
     cfg.risk.max_daily_loss_pct = 99.0
     cfg.risk.live.capital.base_source = "custom"

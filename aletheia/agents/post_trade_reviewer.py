@@ -524,7 +524,9 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
             )
 
     # Phase 4: Structured case study generation + guard candidate detection
-    case_studies, guard_candidates = _run_case_builder_safe(run_id)
+    case_studies, guard_candidates, builder_errors = _run_case_builder_safe(run_id)
+    if builder_errors:
+        errors.extend(builder_errors)
     if case_studies:
         outputs.append(f"case_studies_created:{len(case_studies)}")
     if guard_candidates:
@@ -536,21 +538,43 @@ async def run_post_trade_reviewer(permission_mode: str = "Observe", run_id: str 
     return result
 
 
-def _run_case_builder_safe(run_id: str | None) -> tuple[list, list]:
-    """Run trade_case_builder deterministically. Never crashes the agent."""
+def _run_case_builder_safe(run_id: str | None) -> tuple[list, list, list[str]]:
+    """Run trade_case_builder deterministically. Returns (cases, candidates, errors)."""
+    errors = []
+    cases = []
+    candidates = []
+
     try:
-        from aletheia.analytics.trade_case_builder import build_case_studies, detect_guard_candidates
+        from aletheia.analytics.trade_case_builder import build_case_studies
 
         started_at = time.monotonic()
-        cases = build_case_studies(since_hours=168, skip_existing=True)
+        result = build_case_studies(since_hours=168, skip_existing=True)
+        cases = result["created"]
+        per_pos_failed = result["failed"]
         log_tool(
             run_id,
             "build_case_studies",
             "observe",
-            True,
-            output=f"{len(cases)} created",
+            not per_pos_failed,
+            output=f"{len(cases)} created, {len(per_pos_failed)} failed",
             duration_ms=elapsed_ms(started_at),
         )
+        for fail in per_pos_failed:
+            errors.append(f"case_builder:position_failed:{fail['position_id']}:{fail['error']}")
+    except Exception as e:
+        logger.warning("build_case_studies failed: %s", e, exc_info=True)
+        errors.append(f"case_builder:build_case_studies:{type(e).__name__}")
+        log_tool(
+            run_id,
+            "build_case_studies",
+            "observe",
+            False,
+            output=f"{type(e).__name__}: {str(e)[:100]}",
+            duration_ms=elapsed_ms(started_at) if 'started_at' in locals() else 0,
+        )
+
+    try:
+        from aletheia.analytics.trade_case_builder import detect_guard_candidates
 
         started_at = time.monotonic()
         candidates = detect_guard_candidates()
@@ -562,8 +586,16 @@ def _run_case_builder_safe(run_id: str | None) -> tuple[list, list]:
             output=f"{len(candidates)} created",
             duration_ms=elapsed_ms(started_at),
         )
-
-        return cases, candidates
     except Exception as e:
-        logger.warning("Case builder failed (non-fatal): %s", e)
-        return [], []
+        logger.warning("detect_guard_candidates failed: %s", e, exc_info=True)
+        errors.append(f"case_builder:detect_guard_candidates:{type(e).__name__}")
+        log_tool(
+            run_id,
+            "detect_guard_candidates",
+            "observe",
+            False,
+            output=f"{type(e).__name__}: {str(e)[:100]}",
+            duration_ms=elapsed_ms(started_at) if 'started_at' in locals() else 0,
+        )
+
+    return cases, candidates, errors

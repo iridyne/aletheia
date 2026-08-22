@@ -15,6 +15,7 @@ pytestmark = pytest.mark.tier_spec
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "codex-shepherd.yml"
 AUTO_MERGE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "auto-merge.yml"
+SELF_HOSTED = ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
 
 
 def _workflow() -> dict:
@@ -56,7 +57,7 @@ def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
 
     assert workflow["permissions"] == {"contents": "read"}
     job = workflow["jobs"]["shepherd"]
-    assert job["runs-on"] == "ubuntu-24.04"
+    assert job["runs-on"] == SELF_HOSTED
     assert job["permissions"] == {
         "actions": "read",
         "contents": "read",

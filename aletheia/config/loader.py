@@ -392,6 +392,11 @@ def load_config(*, persist_migrations: bool = True) -> AletheiaConfig:
         operator_section_present = isinstance(raw.get("operator"), dict)
         cfg = AletheiaConfig.model_validate(raw)
         changed = False
+        # If RiskConfig migration bumped schema_version (e.g. v3→v4), write back
+        # so the corrected values are persisted and the migration does not re-run.
+        raw_risk_version = int((raw.get("risk") or {}).get("schema_version", 0))
+        if cfg.risk.schema_version != raw_risk_version:
+            changed = True
         authority_before = cfg.operator.model_dump(mode="json")
         authority_reason: str | None = None
         if cfg.agent.permission_mode in _MODE_MIGRATION:

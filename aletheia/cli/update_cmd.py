@@ -8,6 +8,8 @@ import threading
 
 import typer
 
+from aletheia.update.continuity import describe_failure_code as _desc
+
 _BRA  = "⣾⣽⣻⢿⡿⣟⣯⣷"
 _R    = "\033[0m"
 _BOLD = "\033[1m"
@@ -96,13 +98,15 @@ def _tty_phase_fail(phase: str) -> None:
     sys.stdout.flush()
 
 
-def _tty_error(code: str, phase: str, detail: str) -> None:
+def _tty_error(code: str, phase: str, detail: str, fix: str = "") -> None:
     sys.stdout.write(f"\n  {_RED}{_BOLD}✗  Update failed:{_R}  {_BOLD}{code}{_R}\n\n")
     sys.stdout.write(f"    {_DIM}code    {_R}{code}\n")
     if phase:
         sys.stdout.write(f"    {_DIM}phase   {_R}{phase}\n")
     if detail:
         sys.stdout.write(f"    {_DIM}detail  {_R}{detail}\n")
+    if fix:
+        sys.stdout.write(f"    {_DIM}fix     {_R}{fix}\n")
     sys.stdout.write("\n")
     sys.stdout.flush()
 
@@ -188,6 +192,7 @@ def _run_update(*, restart: bool) -> None:
                 result.get("reason", "unknown"),
                 last_phase,
                 result.get("message") or "",
+                fix=result.get("fix_hint") or "",
             )
         else:
             typer.echo(f"Update not applied: {result.get('reason')}")
@@ -226,9 +231,8 @@ def _run_update(*, restart: bool) -> None:
             err=True,
         )
         if failures:
-            typer.echo(f"  failures: {', '.join(str(item) for item in failures)}", err=True)
-        if result.get("message"):
-            typer.echo(f"  {result['message']}", err=True)
+            for item in failures:
+                typer.echo(f"  ✗ {_desc(str(item))}", err=True)
         typer.echo(
             (
                 "  Source update remains applied;"
@@ -266,12 +270,8 @@ def _run_update(*, restart: bool) -> None:
             err=True,
         )
         if proof_gaps:
-            typer.echo(
-                f"  proof gaps: {', '.join(str(item) for item in proof_gaps)}",
-                err=True,
-            )
-        if result.get("message"):
-            typer.echo(f"  {result['message']}", err=True)
+            for item in proof_gaps:
+                typer.echo(f"  · {_desc(str(item))}", err=True)
         return
 
     if result.get("continuity_verified") is True:

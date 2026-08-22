@@ -245,7 +245,10 @@ def _restart_gateway() -> dict:
         )
     except Exception as exc:
         return {"ok": False, "reason": type(exc).__name__}
-    if result.returncode:
+    if result.returncode not in {0, 2}:
+        # exit 1 (or other non-zero): genuine failure — preflight blocked, port conflict,
+        # spawn died. exit 2 means do_start returned False (slow start: alive but readiness
+        # not confirmed within the 15s deadline) — gateway is up, not a rollback condition.
         return {
             "ok": False,
             "reason": "gateway_restart_failed",
@@ -508,10 +511,12 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
                     "old_commit": old,
                     "attempted_commit": new,
                     "restart_error": restarted.get("reason"),
-                    "message": "New code retained; inspect migration and gateway logs, then retry start.",
+                    "message": (
+                        "New code retained; gateway restart failed after schema change. "
+                        f"Detail: {restarted.get('detail', 'none')}"
+                    ),
                     **_metadata_fields(metadata),
                 }
-
             _restore_frontend_build(had_previous_static)
             rollback = git_ops.reset_hard(old)
             if python_deps_changed:
@@ -522,6 +527,8 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
             metadata = _persist_current_commit_fresh(actual_head_after_rollback)
             _record_metadata_failure(actual_head_after_rollback, metadata)
             recovery = _restart_gateway() if rollback.get("ok") else {"ok": False}
+            restart_detail = restarted.get("detail", "")
+            recovery_detail = recovery.get("detail", "") if rollback.get("ok") else ""
             return {
                 "applied": False,
                 "rolled_back": bool(rollback.get("ok")),
@@ -531,6 +538,11 @@ def apply_update(*, restart: bool = False, progress=None) -> dict:
                 "attempted_commit": new,
                 "actual_head": actual_head_after_rollback,
                 "recovery_started": bool(recovery.get("ok")),
+                "message": (
+                    f"Gateway restart failed during update. "
+                    f"Restart error: {restart_detail}. "
+                    f"Recovery {('succeeded' if recovery.get('ok') else 'failed')}: {recovery_detail}"
+                ),
                 **_metadata_fields(metadata),
             }
         shutil.rmtree(_PREVIOUS_DASHBOARD_STATIC, ignore_errors=True)

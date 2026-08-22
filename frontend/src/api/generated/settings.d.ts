@@ -165,6 +165,52 @@ export interface components {
             prompt_guardrail_detection_enabled: boolean;
         };
         /**
+         * EmitDedupConfig
+         * @description Cross-lifecycle dedup guards for universe signal emission (#1325).
+         */
+        EmitDedupConfig: {
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Fingerprint Memory Enabled
+             * @default false
+             */
+            fingerprint_memory_enabled: boolean;
+            /**
+             * Fingerprint Memory Window Hours
+             * @default 6
+             */
+            fingerprint_memory_window_hours: number;
+            /**
+             * Repeat Decay Enabled
+             * @default false
+             */
+            repeat_decay_enabled: boolean;
+            /**
+             * Repeat Decay Factor
+             * @default 0.85
+             */
+            repeat_decay_factor: number;
+            /**
+             * Repeat Decay Window Hours
+             * @default 6
+             */
+            repeat_decay_window_hours: number;
+            /**
+             * Terminal Cooldown Enabled
+             * @default false
+             */
+            terminal_cooldown_enabled: boolean;
+            /**
+             * Terminal Cooldown Minutes
+             * @default 60
+             */
+            terminal_cooldown_minutes: number;
+        };
+        /**
          * EventTriggerConfig
          * @description Real-time-ish event detection on price_feed ticks.
          */
@@ -1267,10 +1313,10 @@ export interface components {
              */
             max_per_symbol_entries: number;
             /**
-             * Max Position Notional Usdt
+             * Max Position Margin Usdt
              * @default 50
              */
-            max_position_notional_usdt: number;
+            max_position_margin_usdt: number;
             /**
              * Max Total Exposure Pct
              * @default 5
@@ -1367,10 +1413,10 @@ export interface components {
              */
             max_daily_loss_pct: number;
             /**
-             * Max Demo Position Notional Usdt
+             * Max Demo Position Margin Usdt
              * @default 100000
              */
-            max_demo_position_notional_usdt: number;
+            max_demo_position_margin_usdt: number;
             /**
              * Max Demo Single Trade Risk Pct
              * @default 20
@@ -1422,10 +1468,10 @@ export interface components {
              */
             max_live_limited_cap_usdt: number;
             /**
-             * Max Live Position Notional Usdt
+             * Max Live Position Margin Usdt
              * @default 50
              */
-            max_live_position_notional_usdt: number;
+            max_live_position_margin_usdt: number;
             /**
              * Max Open Positions Demo
              * @default 200
@@ -1483,7 +1529,7 @@ export interface components {
             runtime_liquidation_monitor_enabled: boolean;
             /**
              * Schema Version
-             * @default 3
+             * @default 4
              */
             schema_version: number;
             /**
@@ -2212,11 +2258,17 @@ export interface components {
              * @default 10
              */
             core_pool_size: number;
+            emit_dedup?: components["schemas"]["EmitDedupConfig"];
             /**
              * Enabled
              * @default true
              */
             enabled: boolean;
+            /**
+             * Entry Ttl Sec
+             * @default 900
+             */
+            entry_ttl_sec: number;
             /**
              * Explore Ratio
              * @default 0.2

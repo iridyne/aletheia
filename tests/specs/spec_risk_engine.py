@@ -415,13 +415,17 @@ def test_correlation_guards_include_unmaterialized_entry_exposure(
     cfg.risk.max_sector_concentration_pct = 60.0
     cfg.risk.max_portfolio_beta = 3.0
     cfg.risk.max_open_positions_demo = 10
-    cfg.risk.max_demo_position_notional_usdt = 100_000.0
+    cfg.risk.max_demo_position_margin_usdt = 100_000.0
     cfg.risk.max_per_symbol_entries = 20
     cfg.risk.demo.correlation.min_positions_for_concentration = 1
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
     monkeypatch.setattr(eng, "_portfolio_drawdown_scale", lambda _mode: 1.0)
     monkeypatch.setattr(eng, "_check_lesson_constraints", lambda _proposal: [])
-    monkeypatch.setattr(eng, "_lookup_beta", lambda _symbol: 4.0)
+    # BTC beta low enough to pass alone; ETH beta pushes the combined portfolio over the limit.
+    monkeypatch.setattr(
+        eng, "_lookup_beta",
+        lambda sym: 1.5 if sym == "BTC/USDT" else 5.0,
+    )
     monkeypatch.setattr(
         "aletheia.data.price_feed.get_fresh_price_for_protective_close",
         lambda symbol, market_type, *, venue: 100.0,
@@ -632,6 +636,53 @@ def test_sector_concentration_isolated_by_live_demo_pool(
     ), (
         f"{proposal_mode} concentration was diluted by {other_pool_mode}: "
         f"{after_other_pool_exposure!r}"
+    )
+
+
+@spec_claim(
+    SpecClaim(
+        "RE-B04c",
+        "risk_engine_contract",
+        "§2 check #16",
+        "L2b",
+        "Portfolio beta is enforced independently of the sector-concentration depth gate; "
+        "beta fires when existing exposures are below min_positions_for_concentration.",
+        status="implemented",
+    ),
+)
+def test_beta_enforced_below_concentration_depth_gate(monkeypatch):
+    """Beta guard must fire even when the portfolio is too shallow for sector concentration."""
+    import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage.models import TradeProposal
+    from unittest.mock import patch
+
+    cfg = AletheiaConfig()
+    cfg.risk.correlation_guard_enabled = True
+    cfg.risk.max_portfolio_beta = 3.0
+    cfg.risk.demo.correlation.min_positions_for_concentration = 4
+    monkeypatch.setattr(eng, "_lookup_beta", lambda _symbol: 4.0)
+
+    with patch("aletheia.storage.repositories.list_all_open_positions", return_value=[]):
+        violations = eng._check_correlation_exposure(
+            TradeProposal(
+                symbol="BTC/USDT",
+                market_type="spot",
+                direction="long",
+                execution_mode="paper_internal",
+                quantity=1.0,
+                price=100.0,
+            ),
+            cfg,
+            unresolved_entries=[],
+            pre_order_entries=[],
+        )
+
+    assert any(v.startswith("portfolio_beta:") for v in violations), (
+        f"portfolio_beta must fire below concentration depth gate; got {violations!r}"
+    )
+    assert not any(v.startswith("sector_concentration:") for v in violations), (
+        f"sector_concentration must not fire below depth gate; got {violations!r}"
     )
 
 
@@ -870,13 +921,13 @@ def test_observe_mode_rejects_non_paper(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# RE-B09 — §2 check #5: demo notional cap
+# RE-B09 — §2 check #5: demo margin cap
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim("RE-B09", "risk_engine_contract", "§2 check #5", "L2b",
-              "exceeds_demo_position_notional fires when proposal notional > max_demo_position_notional_usdt"),
+              "exceeds_demo_position_margin fires when proposal margin > max_demo_position_margin_usdt"),
 )
 def test_demo_notional_cap_fires(tmp_path, monkeypatch):
     from aletheia.config.schema import AletheiaConfig
@@ -888,7 +939,7 @@ def test_demo_notional_cap_fires(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
 
     cfg = AletheiaConfig()
-    cfg.risk.max_demo_position_notional_usdt = 100.0
+    cfg.risk.max_demo_position_margin_usdt = 100.0
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
 
     # notional = 1.0 * 200.0 = 200 > 100
@@ -900,8 +951,8 @@ def test_demo_notional_cap_fires(tmp_path, monkeypatch):
     result = evaluate_proposal(p)
 
     assert not result.approved
-    assert any("exceeds_demo_position_notional" in v for v in result.violations), (
-        f"Expected exceeds_demo_position_notional violation, got: {result.violations}"
+    assert any("exceeds_demo_position_margin" in v for v in result.violations), (
+        f"Expected exceeds_demo_position_margin violation, got: {result.violations}"
     )
 
 
@@ -920,8 +971,8 @@ def test_account_balance_tightens_matching_mode_cap(tmp_path, monkeypatch):
 
     _setup_db(tmp_path, monkeypatch)
     cfg = AletheiaConfig()
-    cfg.risk.max_demo_position_notional_usdt = 200.0
-    cfg.risk.max_live_position_notional_usdt = 50.0
+    cfg.risk.max_demo_position_margin_usdt = 200.0
+    cfg.risk.max_live_position_margin_usdt = 50.0
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
 
     def cached_state(mode):
@@ -929,9 +980,9 @@ def test_account_balance_tightens_matching_mode_cap(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sync, "get_cached_state", cached_state)
 
-    assert eng._effective_position_notional_cap(cfg.risk, "bitget_demo") == 80.0
-    assert eng._effective_position_notional_cap(cfg.risk, "bitget_live_limited") == 30.0
-    assert eng._effective_position_notional_cap(cfg.risk, "paper_internal") == 200.0
+    assert eng._effective_position_margin_cap(cfg.risk, "bitget_demo") == 80.0
+    assert eng._effective_position_margin_cap(cfg.risk, "bitget_live_limited") == 30.0
+    assert eng._effective_position_margin_cap(cfg.risk, "paper_internal") == 200.0
 
     proposal = TradeProposal(
         symbol="ETH/USDT", market_type="spot", direction="long",
@@ -939,7 +990,7 @@ def test_account_balance_tightens_matching_mode_cap(tmp_path, monkeypatch):
     )
     repo.insert_trade_proposal(proposal)
     result = eng.evaluate_proposal(proposal)
-    assert any(v == "exceeds_demo_position_notional:100.0>80.0" for v in result.violations)
+    assert any(v == "exceeds_demo_position_margin:100.0>80.0" for v in result.violations)
 
 
 @spec_claim(
@@ -968,7 +1019,7 @@ def test_local_paper_balance_reader_failure_rejects_authoritative_proposal(
     _setup_db(tmp_path, monkeypatch)
     cfg = AletheiaConfig()
     cfg.agent.permission_mode = "Paper"
-    cfg.risk.max_demo_position_notional_usdt = 200.0
+    cfg.risk.max_demo_position_margin_usdt = 200.0
     cfg.risk.max_open_positions_demo = 10
     cfg.risk.max_per_symbol_entries = 20
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
@@ -983,8 +1034,8 @@ def test_local_paper_balance_reader_failure_rejects_authoritative_proposal(
     # External accounts intentionally keep the existing advisory-cache fallback.
     monkeypatch.setattr(sync, "get_cached_state", _balance_failure)
     assert (
-        eng._effective_position_notional_cap(cfg.risk, "bitget_demo")
-        == cfg.risk.max_demo_position_notional_usdt
+        eng._effective_position_margin_cap(cfg.risk, "bitget_demo")
+        == cfg.risk.max_demo_position_margin_usdt
     )
 
     proposal = TradeProposal(
@@ -1038,7 +1089,7 @@ def test_max_open_demo_positions_blocks(tmp_path, monkeypatch):
     cfg = AletheiaConfig()
     cfg.risk.max_open_positions_demo = 2
     # Give enough notional headroom so only position count triggers
-    cfg.risk.max_demo_position_notional_usdt = 10_000.0
+    cfg.risk.max_demo_position_margin_usdt = 10_000.0
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
 
     # Insert 2 open paper positions (reaching the limit)
@@ -1235,7 +1286,7 @@ def test_demo_daily_loss_uses_demo_capital_base(tmp_path, monkeypatch):
     cfg.risk.demo.capital.base_source = "custom"
     cfg.risk.demo.capital.base_usdt = 10000.0
     cfg.risk.demo.loss.max_daily_loss_pct = 1.0
-    cfg.risk.demo.capital.max_position_notional_usdt = 10000.0
+    cfg.risk.demo.capital.max_position_margin_usdt = 10000.0
     cfg.risk.live.capital.base_source = "custom"
     cfg.risk.live.capital.base_usdt = 100.0
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
@@ -1923,8 +1974,11 @@ def test_public_account_leverage_counts_unresolved_and_pre_order_exposure(monkey
     result = eng.check_account_leverage(cfg, execution_mode="okx_demo")
 
     assert result["status"] == "available"
-    assert result["ratio"] == 3.0
-    assert result["violation"] is True
+    # same_account_order: notional = 1.0 * 100.0 = 100.0 (leverage is not multiplied in)
+    # same_account_pre_order: notional = 1.0 * 100.0 = 100.0
+    # ratio = 200.0 / 100.0 = 2.0; cap = 2.5 → no violation
+    assert result["ratio"] == 2.0
+    assert result["violation"] is False
 
 
 @pytest.mark.parametrize(
@@ -2036,6 +2090,92 @@ def test_futures_context_keeps_unavailable_account_leverage_empty(monkeypatch):
     result = _build_futures_context({"features": [], "positions": []}, cfg)
 
     assert result["account_leverage_ratio"] is None
+
+
+def test_account_leverage_is_gross_notional_over_equity_not_leverage_squared(monkeypatch):
+    """Regression for issue #1164: qty*price is already gross notional; a second
+    *leverage multiply turns account leverage into a leverage-squared metric that
+    deadlocks valid leveraged proposals.
+
+    Fixture: equity=1_000, notional=4_000 (qty=40, price=100), leverage=20x.
+    Correct ratio = 4_000 / 1_000 = 4.0x.  Buggy ratio was 4_000*20 / 1_000 = 80x.
+    """
+    import aletheia.risk.engine as eng
+    from aletheia.config.loader import load_config
+    from aletheia.storage.models import TradeProposal
+
+    equity = 1_000.0
+    cfg = load_config().model_copy(deep=True)
+    cfg.risk.max_account_leverage_demo = 10.0  # 4.0x is valid, 80x would have been rejected
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        execution_mode="okx_demo", quantity=40.0, price=100.0, leverage=20,
+    )
+
+    # Path 1: proposal only — admission gate must pass
+    monkeypatch.setattr(eng, "list_all_open_positions", lambda: [])
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: equity)
+    violations = eng._check_account_leverage_ratio(
+        proposal, cfg, unresolved_entries=[], pre_order_entries=[],
+    )
+    assert violations == [], f"4.0x proposal rejected at 10x cap: {violations}"
+
+    # Path 2: open Position — monitor must report ratio=4.0
+    monkeypatch.setattr(
+        eng, "list_all_open_positions",
+        lambda: [{"symbol": "BTC/USDT", "market_type": "usdt_futures",
+                  "execution_mode": "okx_demo", "quantity": 40.0,
+                  "entry_price": 100.0, "leverage": 20}],
+    )
+    monkeypatch.setattr(eng, "_unresolved_entry_reservations", lambda: [])
+    monkeypatch.setattr(eng, "_pre_order_entry_reservations", lambda **_: [])
+    result = eng.check_account_leverage(cfg, execution_mode="okx_demo")
+    assert result["status"] == "available"
+    assert result["ratio"] == 4.0
+    assert result["violation"] is False
+
+    # Path 3: unresolved entry Order — monitor must report ratio=4.0
+    monkeypatch.setattr(eng, "list_all_open_positions", lambda: [])
+    monkeypatch.setattr(eng, "_unresolved_entry_reservations", lambda: [
+        eng._UnresolvedEntryReservation(
+            order_id="test-order", symbol="BTC/USDT", market_type="usdt_futures",
+            execution_mode="okx_demo", opportunity_id=None,
+            price=100.0, leverage=20.0, order_quantity=40.0,
+            persisted_fill_quantity=0.0, remaining_quantity=40.0,
+            reserved_quantity=40.0, has_open_position=False,
+        )
+    ])
+    result = eng.check_account_leverage(cfg, execution_mode="okx_demo")
+    assert result["status"] == "available"
+    assert result["ratio"] == 4.0
+    assert result["violation"] is False
+
+    # Path 4: pre-Order reservation — monitor must report ratio=4.0
+    monkeypatch.setattr(eng, "_unresolved_entry_reservations", lambda: [])
+    monkeypatch.setattr(eng, "_pre_order_entry_reservations", lambda **_: [
+        eng._PreOrderEntryReservation(
+            proposal_id="test-reservation", symbol="BTC/USDT", market_type="usdt_futures",
+            execution_mode="okx_demo", opportunity_id=None,
+            price=100.0, leverage=20.0, reserved_quantity=40.0,
+        )
+    ])
+    result = eng.check_account_leverage(cfg, execution_mode="okx_demo")
+    assert result["status"] == "available"
+    assert result["ratio"] == 4.0
+    assert result["violation"] is False
+
+    # True 10.01x gross-notional/equity case still rejects at the 10x cap
+    monkeypatch.setattr(eng, "_unresolved_entry_reservations", lambda: [])
+    monkeypatch.setattr(eng, "_pre_order_entry_reservations", lambda **_: [])
+    over_cap_proposal = TradeProposal(
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        execution_mode="okx_demo", quantity=100.1, price=100.0, leverage=20,
+    )  # notional = 10_010, ratio = 10.01 > 10.0 cap
+    violations = eng._check_account_leverage_ratio(
+        over_cap_proposal, cfg, unresolved_entries=[], pre_order_entries=[],
+    )
+    assert any(v.startswith("account_leverage_ratio:") for v in violations)
 
 
 # ---------------------------------------------------------------------------
@@ -2664,7 +2804,7 @@ def test_re_b17_check14_is_family_evidence_gate():
         "L2b",
         "A paper_internal proposal submitted within the funding-settler window "
         "(economics_complete=False) must not be rejected with account_equity_unavailable "
-        "or exceeds_demo_position_notional:X>0.0 when the account has sufficient cash (#316).",
+        "or exceeds_demo_position_margin:X>0.0 when the account has sufficient cash (#316).",
         status="implemented",
     ),
 )
@@ -2753,7 +2893,7 @@ def test_paper_internal_proposal_not_rejected_during_funding_settler_window(
         f"account_equity_unavailable must not fire during settler window; "
         f"violations: {result.violations}"
     )
-    assert "exceeds_demo_position_notional" not in violation_strings or (
+    assert "exceeds_demo_position_margin" not in violation_strings or (
         ">0.0" not in violation_strings
     ), (
         f"effective_cap must not collapse to 0.0 during settler window; "
@@ -2791,7 +2931,7 @@ def test_position_cap_bounds_pledged_cash_not_raw_notional(monkeypatch):
     result = eng.evaluate_proposal(proposal)
 
     assert not any(
-        "exceeds_demo_position_notional" in v for v in result.violations
+        "exceeds_demo_position_margin" in v for v in result.violations
     ), result.violations
 
 
@@ -2819,5 +2959,5 @@ def test_position_cap_still_rejects_margin_beyond_available_cash(monkeypatch):
     result = eng.evaluate_proposal(proposal)
 
     assert any(
-        "exceeds_demo_position_notional" in v for v in result.violations
+        "exceeds_demo_position_margin" in v for v in result.violations
     ), result.violations

@@ -286,7 +286,7 @@ def _select_all(
     sql = f"SELECT * FROM {table}"
     if where:
         sql += f" WHERE {where}"
-    sql += f" ORDER BY {order} LIMIT {limit}"
+    sql += f" ORDER BY {order} LIMIT {max(1, limit)}"
     rows = db.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
 
@@ -1249,6 +1249,92 @@ def transition_queued_opportunity_to_open(oid: str) -> bool:
     return cur.rowcount == 1
 
 
+
+class ReplacementResult:
+    """Outcome of one atomic priority-replacement attempt.
+
+    Attributes
+    ----------
+    committed : bool
+        True when exactly one incumbent was evicted and one replacement was
+        installed in the same transaction.  False when any pre-condition or
+        write failed and the transaction was rolled back.
+    reason : str
+        Short token describing why the attempt was rejected or failed.
+        ``"ok"`` on success; ``"incumbent_not_queued"``, ``"replacement_not_open"``,
+        ``"write_error"`` otherwise.
+    evicted_id : str
+        The incumbent opportunity_id that was released (only meaningful when
+        *committed* is True).
+    """
+
+    __slots__ = ("committed", "reason", "evicted_id")
+
+    def __init__(self, committed: bool, reason: str, evicted_id: str = "") -> None:
+        self.committed = committed
+        self.reason = reason
+        self.evicted_id = evicted_id
+
+
+def atomic_replace_queued_carrier(
+    incumbent_id: str,
+    replacement_id: str,
+    eviction_decision: object,
+    replacement_decision: object,
+    persist_enqueue_evidence_fn: object,
+) -> "ReplacementResult":
+    """Release *incumbent_id* and claim *replacement_id* in one immediate transaction.
+
+    All writes (opportunity state transitions, pi_decisions, enqueue evidence)
+    are committed together or not at all.  If any pre-condition fails — the
+    incumbent is no longer queued, the replacement is no longer open — the whole
+    attempt is rejected without touching the database and the incumbent stays put.
+
+    Parameters
+    ----------
+    incumbent_id : str
+        opportunity_id of the queued carrier to evict.
+    replacement_id : str
+        opportunity_id of the open candidate to promote.
+    eviction_decision : PiDecision
+        Pre-built ``signal_queue_evicted`` decision record for the incumbent.
+    replacement_decision : PiDecision
+        Pre-built ``signal_pending`` decision record for the replacement.
+    persist_enqueue_evidence_fn : callable
+        Zero-argument callable that writes the enqueue evidence row inside the
+        transaction.  Must raise on error so the transaction rolls back cleanly.
+    """
+    assert callable(persist_enqueue_evidence_fn), "persist_enqueue_evidence_fn must be callable"
+
+    try:
+        with transaction(immediate=True):
+            # Verify incumbent still occupies a queue slot (CAS: queued→open).
+            evicted = execute_write(
+                "UPDATE opportunities SET status='open' WHERE id=? AND status='queued'",
+                (incumbent_id,),
+            )
+            if evicted.rowcount != 1:
+                raise _AtomicReplacementAbort("incumbent_not_queued")
+            # Verify replacement is still open (CAS: open→queued).
+            claimed = execute_write(
+                "UPDATE opportunities SET status='queued' WHERE id=? AND status='open'",
+                (replacement_id,),
+            )
+            if claimed.rowcount != 1:
+                raise _AtomicReplacementAbort("replacement_not_open")
+            insert_pi_decision(eviction_decision)
+            insert_pi_decision(replacement_decision)
+            persist_enqueue_evidence_fn()
+    except _AtomicReplacementAbort as exc:
+        return ReplacementResult(committed=False, reason=str(exc), evicted_id=incumbent_id)
+    except Exception:
+        return ReplacementResult(committed=False, reason="write_error", evicted_id=incumbent_id)
+    return ReplacementResult(committed=True, reason="ok", evicted_id=incumbent_id)
+
+
+class _AtomicReplacementAbort(Exception):
+    """Internal signal to abort an atomic replacement attempt cleanly."""
+
 def active_defer_opportunity_ids(now_iso: str | None = None) -> set[str]:
     """opportunity_id set whose most recent Operator observation is an active defer.
 
@@ -1623,6 +1709,8 @@ def _normalized_utc_datetime(value: str) -> datetime:
 
 
 def insert_capital_event(event) -> None:
+    if not math.isfinite(event.amount_usdt):
+        raise ValueError(f"capital event amount_usdt must be finite, got {event.amount_usdt!r}")
     _insert("capital_events", _to_payload_dict(event))
 
 
@@ -1655,12 +1743,19 @@ def list_capital_events_between(start_at: str, end_at: str) -> list[dict]:
 
 
 def get_net_deposits() -> float:
-    """Sum of all deposits minus withdrawals."""
+    """Sum of all deposits minus withdrawals, excluding any historical non-finite rows."""
     db = get_db()
-    row = db.execute(
-        "SELECT COALESCE(SUM(CASE WHEN event_type='deposit' THEN amount_usdt ELSE -amount_usdt END), 0) AS net FROM capital_events"
-    ).fetchone()
-    return float(row["net"]) if row else 0.0
+    rows = db.execute("SELECT id, event_type, amount_usdt FROM capital_events").fetchall()
+    bad_ids = [r["id"] for r in rows if not math.isfinite(r["amount_usdt"])]
+    if bad_ids:
+        logging.getLogger(__name__).warning(
+            "capital_events rows with non-finite amount_usdt excluded from net: %s", bad_ids
+        )
+    return sum(
+        r["amount_usdt"] if r["event_type"] == "deposit" else -r["amount_usdt"]
+        for r in rows
+        if math.isfinite(r["amount_usdt"])
+    )
 
 
 def has_capital_event_for_broker(broker_id: str) -> bool:
@@ -6107,8 +6202,17 @@ def prune_filter_decision_batches(days: int = 30) -> int:
     return _delete_old_rows("filter_decision_batches", days)
 
 
+class ExperimentStateReadError(Exception):
+    """Raised when experiment state cannot be reliably read from storage."""
+    pass
+
+
 def min_open_experiment_exposure_at() -> str | None:
-    """Return the earliest durable exposure of an active open experiment."""
+    """Return the earliest durable exposure of an active open experiment.
+
+    Raises:
+        ExperimentStateReadError: If the query fails and state cannot be proven.
+    """
     db = get_db()
     try:
         row = db.execute(
@@ -6117,8 +6221,8 @@ def min_open_experiment_exposure_at() -> str | None:
             "ON x.experiment_id=e.experiment_id "
             "WHERE e.ended_at IS NULL AND e.status='active'"
         ).fetchone()
-    except Exception:
-        return None
+    except Exception as e:
+        raise ExperimentStateReadError(f"Failed to query experiment state: {e}") from e
     if not row:
         return None
     val = row["m"] if hasattr(row, "keys") else row[0]

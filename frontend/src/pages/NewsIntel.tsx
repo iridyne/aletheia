@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, useToast } from '../components/ui'
+import { DataStateMessage } from '../components/DataState'
 import { humanize, fmtTimestamp, stripHtml } from '../lib/format'
 
 type NewsItem = {
@@ -30,7 +31,7 @@ const SENTIMENT_TONE: Record<string, 'green' | 'red' | 'blue' | 'yellow'> = {
 
 export default function NewsIntel() {
   const qc = useQueryClient()
-  const { data: news = [] } = useQuery({ queryKey: ['news'], queryFn: () => api.getNews() })
+  const { data: news, isPending: newsPending, isError: newsError } = useQuery({ queryKey: ['news'], queryFn: () => api.getNews() })
   const [selected, setSelected] = useState<NewsItem | null>(null)
   const [analysis, setAnalysis] = useState<string | null>(null)
   const [filter, setFilter] = useState<string>('all')
@@ -73,8 +74,16 @@ export default function NewsIntel() {
       sentiment: addForm.sentiment,
     })
   }
+  const newsArray = (news ?? []) as NewsItem[]
+  const newsState = newsPending && newsArray.length === 0
+    ? 'loading'
+    : newsError && newsArray.length === 0
+      ? 'unavailable'
+      : newsError && newsArray.length > 0
+        ? 'stale'
+        : undefined
 
-  const items = (news as NewsItem[]).filter(item => {
+  const items = newsArray.filter(item => {
     if (filter === 'all') return true
     if (filter === 'new') return item.status === 'new'
     if (filter === 'reviewed') return item.status === 'reviewed'
@@ -131,7 +140,11 @@ export default function NewsIntel() {
         </Card>
       )}
 
-      {items.length === 0 ? (
+      {newsState ? (
+        <Card>
+          <DataStateMessage state={newsState} />
+        </Card>
+      ) : items.length === 0 ? (
         <Card>
           <p className="text-muted">No news items yet. News will appear here once the ingestion pipeline is configured or items are added manually via the API.</p>
         </Card>

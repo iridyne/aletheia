@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from aletheia.config.loader import load_config
-from aletheia.runtime_continuity.processes import spawn_shadow_gateway
+from aletheia.runtime_continuity.processes import live_probe_shadow, spawn_shadow_gateway
 from aletheia.runtime_continuity.service import RuntimeContinuityService, RuntimeTransitionError
 
 router = APIRouter(prefix="/api/operator/runtime", tags=["operator-runtime"])
@@ -18,12 +18,15 @@ router = APIRouter(prefix="/api/operator/runtime", tags=["operator-runtime"])
 def _service() -> RuntimeContinuityService:
     cfg = load_config()
     shadow_gateway_launcher = None
+    shadow_live_prober = None
     if cfg.runtime.runtime_continuity_enabled:
         shadow_gateway_launcher = lambda runtime: spawn_shadow_gateway(cfg, runtime)
+        shadow_live_prober = live_probe_shadow
     return RuntimeContinuityService(
         lock_ttl_sec=cfg.runtime.runtime_continuity_lock_ttl_sec,
         enabled=cfg.runtime.runtime_continuity_enabled,
         shadow_gateway_launcher=shadow_gateway_launcher,
+        shadow_live_prober=shadow_live_prober,
     )
 
 

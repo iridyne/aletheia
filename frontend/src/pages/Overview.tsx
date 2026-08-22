@@ -64,7 +64,7 @@ export default function Overview() {
       <div className="cockpit-main">
         <AgentFeed bootstrap={overview.data} />
         <div className="cockpit-rail">
-          <RiskCard shell={shell.data} />
+          <RiskCard shell={shell.data} shellError={shell.isError} />
           <SystemCard shell={shell.data} coverage={overview.data?.coverage} />
           <GoLiveScoreCard />
         </div>
@@ -84,15 +84,16 @@ function SetupNotice({ required }: { required?: boolean }) {
   )
 }
 
-function RiskCard({ shell }: { shell?: ShellBootstrap }) {
+function RiskCard({ shell, shellError }: { shell?: ShellBootstrap; shellError?: boolean }) {
   const risk = shell?.risk
   const status = String(risk?.status || 'not_available')
   const violations = risk?.violations || []
-  const tone = !shell ? 'muted' : status === 'blocked' ? 'red' : status === 'healthy' ? 'green' : 'yellow'
+  const unavailable = shellError || !shell || !risk
+  const tone = unavailable ? 'muted' : status === 'blocked' ? 'red' : status === 'healthy' ? 'green' : 'yellow'
   return (
     <Card className="rail-card risk-panel">
       <div className="risk-head"><h3>Risk State</h3><div className="risk-head-badges">{risk?.kill_switch_active && <StatusText tone="red">KILL SWITCH</StatusText>}<StatusText tone={tone}>{riskStateLabel(status)}</StatusText></div></div>
-      {violations.length ? <ul className="risk-violations">{violations.map((value, index) => { const item = formatViolation(value); return <li key={`${value}-${index}`} className="risk-violation"><span className={`risk-dot risk-dot-${item.severity}`} /><div className="risk-violation-body"><span className="risk-violation-label">{item.label}</span>{item.detail && <span className="risk-violation-detail">{item.detail}</span>}</div></li> })}</ul> : <div className="risk-clear"><span className="risk-dot risk-dot-ok" /><span className="text-muted text-sm">No active violations</span></div>}
+      {unavailable ? <p className="text-muted text-sm" role="status">Risk state not available</p> : violations.length ? <ul className="risk-violations">{violations.map((value, index) => { const item = formatViolation(value); return <li key={`${value}-${index}`} className="risk-violation"><span className={`risk-dot risk-dot-${item.severity}`} /><div className="risk-violation-body"><span className="risk-violation-label">{item.label}</span>{item.detail && <span className="risk-violation-detail">{item.detail}</span>}</div></li> })}</ul> : <div className="risk-clear"><span className="risk-dot risk-dot-ok" /><span className="text-muted text-sm">No active violations</span></div>}
     </Card>
   )
 }
@@ -111,7 +112,7 @@ function SystemCard({ shell, coverage }: { shell?: ShellBootstrap; coverage?: Ov
       : exchange?.execution_exchange || exchange?.data_exchange || 'not available'
   const coverageAvailable = coverage?.availability === 'available'
   const rows = [
-    ['Gateway', shell?.gateway?.running ? 'green' : shell ? 'red' : 'muted', shell ? (shell.gateway?.paused ? 'paused' : 'running') : 'not available'],
+    ['Gateway', shell?.gateway?.running ? 'green' : !shell ? 'muted' : 'red', shell ? (shell.gateway?.paused ? 'paused' : 'running') : 'not available'],
     ['Scheduler', scheduler?.running ? 'green' : scheduler ? 'yellow' : 'muted', scheduler?.state || 'not available'],
     ['Connectivity', shell?.connectivity?.state === 'reachable' ? 'green' : 'muted', shell?.connectivity?.state || 'deferred'],
     ['Exchange', exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted', exchangeLabel],

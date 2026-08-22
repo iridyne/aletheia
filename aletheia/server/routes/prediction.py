@@ -23,7 +23,7 @@ def _parse_metadata(row: dict) -> dict:
 
 
 @router.get("/opportunities")
-async def get_prediction_opportunities(status: str | None = None, limit: int = 50):
+def get_prediction_opportunities(status: str | None = None, limit: int = 50):
     """List prediction-class opportunities with parsed metadata."""
     opps = repo.list_opportunities_by_asset_class("prediction", limit=limit)
     if status:
@@ -32,7 +32,7 @@ async def get_prediction_opportunities(status: str | None = None, limit: int = 5
 
 
 @router.get("/opportunities/{opportunity_id}")
-async def get_prediction_opportunity(opportunity_id: str):
+def get_prediction_opportunity(opportunity_id: str):
     """Single prediction opportunity with parsed metadata."""
     row = repo.get_opportunity(opportunity_id)
     if row is None:
@@ -43,7 +43,7 @@ async def get_prediction_opportunity(opportunity_id: str):
 
 
 @router.get("/status")
-async def get_prediction_status():
+def get_prediction_status():
     """Observer status: last run info, config, data freshness."""
     last_run = repo.get_latest_prediction_run()
     opps = repo.list_opportunities_by_asset_class("prediction", limit=200)
@@ -64,7 +64,7 @@ async def get_prediction_status():
 
 
 @router.post("/toggle")
-async def toggle_prediction(body: dict):
+def toggle_prediction(body: dict):
     """Enable or disable the prediction market module."""
     from aletheia.config.loader import load_config, save_config
     from aletheia.files.jsonl import write_audit
@@ -80,7 +80,7 @@ async def toggle_prediction(body: dict):
 
 
 @router.get("/markets")
-async def get_prediction_markets():
+def get_prediction_markets():
     """Return the most recent prediction opportunities as 'market cards' for the Lens.
 
     Each entry includes parsed metadata suitable for direct rendering.
@@ -112,7 +112,7 @@ async def get_prediction_markets():
 
 
 @router.get("/runs")
-async def get_prediction_runs(limit: int = 20):
+def get_prediction_runs(limit: int = 20):
     """List prediction observer run history."""
     runs = repo.list_prediction_runs(limit=limit)
     for r in runs:
@@ -126,7 +126,7 @@ async def get_prediction_runs(limit: int = 20):
 
 
 @router.get("/events")
-async def get_prediction_events(category: str | None = None, status: str = "active",
+def get_prediction_events(category: str | None = None, status: str = "active",
                                 search: str | None = None, limit: int = 50):
     """List prediction events with optional category/search filtering."""
     events = repo.list_prediction_events(category=category, status=status, limit=limit)
@@ -138,7 +138,7 @@ async def get_prediction_events(category: str | None = None, status: str = "acti
 
 
 @router.get("/events/{event_id}")
-async def get_prediction_event_detail(event_id: str):
+def get_prediction_event_detail(event_id: str):
     """Event detail with linked markets."""
     event = repo.get_prediction_event(event_id)
     if not event:
@@ -148,7 +148,7 @@ async def get_prediction_event_detail(event_id: str):
 
 
 @router.get("/markets/{market_id}/detail")
-async def get_prediction_market_detail(market_id: str):
+def get_prediction_market_detail(market_id: str):
     """Single prediction market detail."""
     market = repo.get_prediction_market_by_id(market_id)
     if not market:
@@ -184,20 +184,20 @@ async def get_prediction_market_history(market_id: str, interval: str = "1h"):
 
 
 @router.get("/markets/{market_id}/claims")
-async def get_prediction_market_claims(market_id: str, claim_type: str | None = None):
+def get_prediction_market_claims(market_id: str, claim_type: str | None = None):
     """Claims / observations for a specific market."""
     claims = repo.list_prediction_claims(market_id=market_id, claim_type=claim_type)
     return claims
 
 
 @router.get("/claims")
-async def get_all_prediction_claims(claim_type: str | None = None, limit: int = 100):
+def get_all_prediction_claims(claim_type: str | None = None, limit: int = 100):
     """All prediction claims across markets."""
     return repo.list_prediction_claims(claim_type=claim_type, limit=limit)
 
 
 @router.get("/preferences")
-async def get_prediction_preferences():
+def get_prediction_preferences():
     """Current prediction observer preferences/config."""
     from aletheia.config.loader import load_config
     cfg = load_config()
@@ -208,7 +208,7 @@ async def get_prediction_preferences():
 
 
 @router.patch("/preferences")
-async def update_prediction_preferences(body: dict):
+def update_prediction_preferences(body: dict):
     """Update prediction observer preferences."""
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
@@ -221,7 +221,7 @@ async def update_prediction_preferences(body: dict):
 
 
 @router.post("/refresh", status_code=202)
-async def trigger_prediction_refresh():
+def trigger_prediction_refresh():
     """Manually trigger a prediction observer run via the durable job queue."""
     from aletheia.config.loader import load_config
     cfg = load_config()
