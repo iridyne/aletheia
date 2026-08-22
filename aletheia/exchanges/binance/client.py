@@ -47,6 +47,8 @@ class OrderRequest:
     client_oid: str | None = None
     reduce_only: bool = False
     leverage: int | None = None   # USDT-futures: set on the exchange before an open
+    stop_price: float | None = None  # carried for audit; Binance uses separate orders for TPSL
+    take_profit_price: float | None = None
 
 
 @dataclass
