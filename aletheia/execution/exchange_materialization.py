@@ -19,7 +19,7 @@ from aletheia.data.symbols import to_canonical
 from aletheia.execution.position_enrichment import liquidation_price_for
 from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import Fill, Position
+from aletheia.storage.models import Fill, Position, new_id
 
 
 class MaterializationIntegrityError(RuntimeError):
@@ -1414,20 +1414,114 @@ def materialize_bitget_close(
                 exchange_order_id=exchange_order_id,
                 position_id=position["id"],
             )
-            if exchange_quantity < requested_quantity - tolerance:
-                repo.update_order(
-                    order_id,
-                    status="partially_filled",
-                    error_reason=None,
-                    filled_at=None,
+            old_qty = float(position.get("quantity") or 0.0)
+            position_tolerance = max(1e-12, old_qty * 1e-9)
+            remaining_qty = max(0.0, old_qty - exchange_quantity)
+            if remaining_qty > position_tolerance:
+                # PARTIAL CLOSE (venue evidence): the fills so far do not cover
+                # the remaining Position. Reduce the Position's quantity by the
+                # filled amount so risk/PnL see the correct (reduced) exposure,
+                # and record a per-close ledger row (is_partial=1) so the
+                # daily-loss breaker sees the partial reduce's economics. Two
+                # shapes land here: an order the exchange only partially
+                # filled (claim retained for continued polling), and a
+                # clipped close Order that filled exactly but intentionally
+                # covered less than the whole Position (order done, claim
+                # released so the next protective cycle submits the next clip).
+                order_fully_filled = exchange_quantity >= requested_quantity - tolerance
+                if not delta_evidence:
+                    if order_fully_filled:
+                        # Replay after the clip completed (e.g. the Order row's
+                        # quantity was aligned with the venue-booked clip):
+                        # converge the Order and release the claim without
+                        # touching quantities — every fill is already applied.
+                        repo.update_order(
+                            order_id,
+                            status="filled",
+                            error_reason=None,
+                            filled_at=_ms_to_iso(
+                                max(item.filled_at_ms for item in evidence)
+                            ),
+                        )
+                        repo.update_position(
+                            position["id"],
+                            pending_close_order_id=None,
+                            pending_close_status=None,
+                        )
+                        return MaterializationResult(
+                            state="filled_clip_partial_position",
+                            new_fill_count=0,
+                            position_id=position["id"],
+                            exchange_order_id=exchange_order_id,
+                        )
+                    # A no-new-fills poll: idempotent no-op. Reducing again by
+                    # the order's total evidence would double-count fills the
+                    # Position already reflects.
+                    return MaterializationResult(
+                        state="partially_filled",
+                        new_fill_count=0,
+                        position_id=position["id"],
+                        exchange_order_id=exchange_order_id,
+                    )
+                # The Position may already reflect earlier fills of this same
+                # order (multi-batch partials); only the delta may reduce it.
+                delta_quantity = sum(item.quantity for item in delta_evidence)
+                remaining_qty = max(0.0, old_qty - delta_quantity)
+                partial_exit_price = (
+                    sum(item.price * item.quantity for item in delta_evidence)
+                    / delta_quantity
+                    if delta_quantity > 0
+                    else None
                 )
-                repo.update_position(
-                    position["id"],
-                    pending_close_order_id=order_id,
-                    pending_close_status="partially_filled",
-                )
+                partial_exit_fee = sum(item.fee for item in delta_evidence)
+                closed_at_ms = max(item.filled_at_ms for item in delta_evidence)
+                if order_fully_filled:
+                    repo.update_order(
+                        order_id,
+                        status="filled",
+                        error_reason=None,
+                        filled_at=_ms_to_iso(closed_at_ms),
+                    )
+                    repo.update_position(
+                        position["id"],
+                        quantity=round(remaining_qty, 12),
+                        pending_close_order_id=None,
+                        pending_close_status=None,
+                    )
+                else:
+                    repo.update_order(
+                        order_id,
+                        status="partially_filled",
+                        error_reason=None,
+                        filled_at=None,
+                    )
+                    repo.update_position(
+                        position["id"],
+                        quantity=round(remaining_qty, 12),
+                        pending_close_order_id=order_id,
+                        pending_close_status="partially_filled",
+                    )
+                repo.insert_position_close_event({
+                    "id": new_id(),
+                    "position_id": position["id"],
+                    "symbol": order.get("symbol"),
+                    "direction": order.get("direction"),
+                    "execution_mode": order.get("execution_mode"),
+                    "close_reason": order.get("close_reason"),
+                    "exit_price": partial_exit_price,
+                    "closed_qty": delta_quantity,
+                    "realized_pnl": None,
+                    "entry_fee": None,
+                    "exit_fee": round(partial_exit_fee, 8) if partial_exit_fee else None,
+                    "is_partial": 1,
+                    "closed_at": _ms_to_iso(closed_at_ms),
+                })
                 return MaterializationResult(
-                    state="partially_filled",
+                    state=(
+                        "filled_clip_partial_position"
+                        if order_fully_filled
+                        else "partially_filled"
+                    ),
                     new_fill_count=len(delta_evidence),
                     position_id=position["id"],
                     exchange_order_id=exchange_order_id,
