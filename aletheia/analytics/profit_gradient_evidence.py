@@ -894,6 +894,16 @@ def _candidate_sample(
         if outcome_assessment.reason in CANDIDATE_OUTCOME_TEMPORAL_REASONS:
             return None, outcome_assessment.reason
         return None, "unverified_or_unsettled_outcome"
+    try:
+        settled_at = datetime.fromisoformat(
+            str(outcome.get("settled_at")).replace("Z", "+00:00")
+        )
+    except (TypeError, ValueError):
+        return None, "malformed_settled_at"
+    if settled_at.tzinfo is None:
+        settled_at = settled_at.replace(tzinfo=timezone.utc)
+    else:
+        settled_at = settled_at.astimezone(timezone.utc)
     if outcome.get("horizon") != _FIXED_CANDIDATE_HORIZON:
         return None, "stale_evidence"
     if outcome.get("cost_model_version") != cost_model_id:

@@ -676,6 +676,23 @@ def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_ho
     assert sample["paired_net_delta_quote"] == -2.0
     assert sample["cost_applied_once"] is True
 
+    naive_settlement_fact = fact | {
+        "fixed_horizon_outcome": fact["fixed_horizon_outcome"] | {
+            "settled_at": "2026-08-14T00:00:00",
+        },
+    }
+    sample, reason = evidence._candidate_sample(
+        db,
+        naive_settlement_fact,
+        layer="Risk",
+        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cost_model_id="v1",
+        epoch_id="epoch-1",
+    )
+    assert reason is None
+    assert sample["stage_window"]["end_at"] == "2026-08-14T00:00:00+00:00"
+
     future_fact = fact | {
         "fixed_horizon_outcome": fact["fixed_horizon_outcome"] | {
             "settled_at": "2026-08-15T00:00:00+00:00",
