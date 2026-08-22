@@ -32,7 +32,7 @@ export function resolvePredictionStatusState(
   return cachedEnabled == null ? { state: 'unavailable', enabled: undefined } : { state: 'stale', enabled: cachedEnabled }
 }
 
-function queryDataState<T>(data: T[] | undefined, isPending: boolean, isError: boolean): PredictionDataState {
+export function resolvePredictionDataState<T>(data: T[] | undefined, isPending: boolean, isError: boolean): PredictionDataState {
   if (isError && data != null) return 'stale'
   if (isError) return 'unavailable'
   if (isPending && data == null) return 'loading'
@@ -393,16 +393,21 @@ function PreferencesTab() {
 
 // --- Serenity Cross-Links ---
 function SerenityLinksSection({ marketId }: { marketId: string }) {
-  const { data: allEvidence = [] } = useQuery({
+  const evidenceQuery = useQuery({
     queryKey: ['serenity-evidence-all'],
     queryFn: () => api.getSerenityEvidence(),
     staleTime: 60000,
   })
+  const evidenceState = resolvePredictionDataState(evidenceQuery.data, evidenceQuery.isPending, evidenceQuery.isError)
+  const allEvidence = evidenceQuery.data ?? []
   const linked = allEvidence.filter((e: any) => e.source === 'prediction_market' && e.source_ref === marketId)
-  if (!linked.length) return null
+  if (evidenceState === 'available' && !linked.length) return null
 
   return (
     <DrawerSection label="Linked Serenity Themes">
+      {evidenceState === 'loading' && <PredictionDataNotice state="loading" message="Linked Serenity evidence is loading…" />}
+      {evidenceState === 'unavailable' && <PredictionDataNotice state="unavailable" message="Linked Serenity evidence unavailable. The read failed; no conclusion is implied." />}
+      {evidenceState === 'stale' && <PredictionDataNotice state="stale" message="Linked Serenity evidence is stale. Retained links may not reflect the latest read." />}
       {linked.map((e: any) => (
         <div key={e.id} className="pred-serenity-link">
           <Badge tone="green">evidence</Badge>
@@ -416,16 +421,20 @@ function SerenityLinksSection({ marketId }: { marketId: string }) {
 
 // --- Market Detail Drawer Content ---
 function MarketDetailContent({ market }: { market: PredictionMarket }) {
-  const { data: historyData } = useQuery({
+  const historyQuery = useQuery({
     queryKey: ['prediction-history', market.market_id],
     queryFn: () => api.getPredictionMarketHistory(market.market_id),
     enabled: !!market.market_id,
   })
-  const { data: claims = [] } = useQuery({
+  const claimsQuery = useQuery({
     queryKey: ['prediction-claims', market.market_id],
     queryFn: () => api.getPredictionMarketClaims(market.market_id),
     enabled: !!market.market_id,
   })
+  const historyState = resolvePredictionDataState(historyQuery.data?.points, historyQuery.isPending, historyQuery.isError)
+  const claimsState = resolvePredictionDataState(claimsQuery.data, claimsQuery.isPending, claimsQuery.isError)
+  const historyData = historyQuery.data
+  const claims = claimsQuery.data ?? []
 
   return (
     <>
@@ -437,7 +446,12 @@ function MarketDetailContent({ market }: { market: PredictionMarket }) {
       </DrawerSection>
 
       <DrawerSection label="Probability History">
-        <ProbabilityChart data={historyData?.points ?? []} height={180} />
+        {historyState === 'loading' && <PredictionDataNotice state="loading" message="Probability history is loading…" />}
+        {historyState === 'unavailable' && <PredictionDataNotice state="unavailable" message="Probability history unavailable. The read failed; no empty history is implied." />}
+        {historyState === 'stale' && <PredictionDataNotice state="stale" message="Probability history is stale. Retained points may not reflect the latest read." />}
+        {historyState !== 'loading' && historyState !== 'unavailable' && (
+          <ProbabilityChart data={historyData?.points ?? []} height={180} />
+        )}
       </DrawerSection>
 
       <DrawerSection label="Probability">
@@ -454,9 +468,12 @@ function MarketDetailContent({ market }: { market: PredictionMarket }) {
         <DrawerField label="Resolution" value={fmtTimestamp(market.resolution_at, { dateOnly: true })} />
       </DrawerSection>
 
-      {claims.length > 0 && (
-        <DrawerSection label={`Move Explanations (${claims.length})`}>
-          <div className="pred-claims-list">
+      {(claimsState !== 'available' || claims.length > 0) && (
+        <DrawerSection label={claims.length > 0 ? `Move Explanations (${claims.length})` : 'Move Explanations'}>
+          {claimsState === 'loading' && <PredictionDataNotice state="loading" message="Move explanations are loading…" />}
+          {claimsState === 'unavailable' && <PredictionDataNotice state="unavailable" message="Move explanations unavailable. The read failed; no claims are implied." />}
+          {claimsState === 'stale' && <PredictionDataNotice state="stale" message="Move explanations are stale. Retained claims may not reflect the latest read." />}
+          {claims.length > 0 && <div className="pred-claims-list">
             {claims.map((c: PredictionClaim) => (
               <div key={c.id} className="pred-claim-item">
                 <ClaimBadge type={c.claim_type} />
@@ -464,7 +481,7 @@ function MarketDetailContent({ market }: { market: PredictionMarket }) {
                 {c.direction && <DirectionBadge direction={c.direction} />}
               </div>
             ))}
-          </div>
+          </div>}
         </DrawerSection>
       )}
 
@@ -554,12 +571,12 @@ export default function PredictionLens() {
     ? 'unavailable'
     : statusView.state === 'loading'
       ? 'loading'
-      : queryDataState(marketsQuery.data, marketsQuery.isPending, marketsQuery.isError)
+    : resolvePredictionDataState(marketsQuery.data, marketsQuery.isPending, marketsQuery.isError)
   const runsState = statusView.state === 'unavailable'
     ? 'unavailable'
     : statusView.state === 'loading'
       ? 'loading'
-      : queryDataState(runsQuery.data, runsQuery.isPending, runsQuery.isError)
+    : resolvePredictionDataState(runsQuery.data, runsQuery.isPending, runsQuery.isError)
   const activeTab = showOperationalTabs ? tab : 'preferences'
   const preferenceLabel = isDisabled || (statusView.state === 'stale' && statusView.enabled === false)
     ? 'Preferences (configuration only)'

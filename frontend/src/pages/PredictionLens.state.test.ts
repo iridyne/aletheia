@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { createElement } from 'react'
 import { describe, expect, it } from 'vitest'
 import SRC from './PredictionLens.tsx?raw'
-import { PredictionStatusNotice, resolvePredictionStatusState } from './PredictionLens'
+import { PredictionStatusNotice, resolvePredictionDataState, resolvePredictionStatusState } from './PredictionLens'
 
 describe('Prediction Lens status presentation', () => {
   it('distinguishes loading, live enabled, disabled, unavailable, and stale status', () => {
@@ -27,5 +27,12 @@ describe('Prediction Lens status presentation', () => {
     expect(renderToStaticMarkup(createElement(PredictionStatusNotice, { state: 'stale', enabled: true }))).toContain('stale')
     expect(renderToStaticMarkup(createElement(PredictionStatusNotice, { state: 'loading', enabled: undefined }))).toContain('Loading Prediction Markets status')
     expect(renderToStaticMarkup(createElement(PredictionStatusNotice, { state: 'enabled', enabled: true }))).toBe('')
+  })
+
+  it('keeps read failures distinct from successful empty collections', () => {
+    expect(resolvePredictionDataState(undefined, true, false)).toBe('loading')
+    expect(resolvePredictionDataState(undefined, false, true)).toBe('unavailable')
+    expect(resolvePredictionDataState([], false, false)).toBe('empty')
+    expect(resolvePredictionDataState([{ id: 'retained' }], false, true)).toBe('stale')
   })
 })
