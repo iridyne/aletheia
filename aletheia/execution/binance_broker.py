@@ -201,8 +201,19 @@ async def fetch_private_fill_evidence(order: dict) -> list[dict]:
                 for row in page:
                     if isinstance(row, dict):
                         trade_id = str(row.get("id") or "")
-                        if trade_id:
-                            all_fills[trade_id] = row
+                        if not trade_id:
+                            continue
+                        # #1785: when paginating with fromId (no endTime), rows may
+                        # exceed w_end — discard them so we don't double-count across
+                        # windows. The deduplication dict handles the boundary case.
+                        if from_id is not None:
+                            row_ts = row.get("timestamp")
+                            try:
+                                if int(row_ts) > w_end:
+                                    continue
+                            except (TypeError, ValueError):
+                                pass
+                        all_fills[trade_id] = row
                 if len(page) < 1000:
                     break
                 last_id = str(page[-1].get("id") or "")
