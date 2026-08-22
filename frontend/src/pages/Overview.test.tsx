@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { operatorMutationError } from './Overview'
+import { isGoLiveScorecard, operatorMutationError } from './Overview'
 import SRC from './Overview.tsx?raw'
 import CSS from '../index.css?raw'
+import STATUS_SRC from '../components/StatusCluster.tsx?raw'
 
 describe('Overview operator mutation truthfulness', () => {
   it('keeps the action identity and a usable rejection reason', () => {
@@ -61,5 +62,48 @@ describe('Overview semantic honesty', () => {
     expect(CSS).toContain('--bp-md: 768px')
     expect(CSS).toContain('--bp-lg: 1024px')
     expect(CSS).toContain('--bp-xl: 1280px')
+  })
+})
+
+describe('Overview issue repairs', () => {
+  it('validates the scorecard response before treating it as qualification evidence', () => {
+    const valid = {
+      composite_score: 82,
+      traffic_light: 'green' as const,
+      criteria: [{ key: 'risk', label: 'Risk', score: 100, weight: 1, weighted_contribution: 100, detail: 'ok', status: 'pass' as const }],
+      blockers: [],
+      computed_at: '2026-08-22T10:00:00Z',
+    }
+    expect(isGoLiveScorecard(valid)).toBe(true)
+    expect(isGoLiveScorecard({ ...valid, traffic_light: 'ready' })).toBe(false)
+    expect(isGoLiveScorecard({ ...valid, criteria: [{ ...valid.criteria[0], score: Number.NaN }] })).toBe(false)
+  })
+
+  it('keeps collector, coverage, mode, and navigation paths mounted on System', () => {
+    expect(SRC).toContain("queryKey: ['collector-health']")
+    expect(SRC).toContain('CollectorHealthDetails health={collectorHealth} mode="compact"')
+    expect(SRC).toContain('CollectorHealthDetails health={collectorHealth} mode="full"')
+    expect(SRC).toContain('DataCoverageDetail')
+    expect(SRC).toContain('ModeDetail shell={shell}')
+    expect(SRC).toContain("navigate('/settings?tab=execution')")
+    expect(SRC).toContain("navigate('/settings?tab=agent')")
+    expect(SRC).toContain("navigate('/settings?tab=runtime')")
+    expect(STATUS_SRC).toContain('parseHealthIssue(issue)')
+    expect(STATUS_SRC).not.toContain('function parseIssue')
+  })
+
+  it('separates pending, unavailable, and stale scorecard states', () => {
+    expect(SRC).toContain('scorecardQuery.isPending && !data')
+    expect(SRC).toContain('scorecardQuery.isError && !data')
+    expect(SRC).toContain('scorecardQuery.isRefetchError')
+    expect(SRC).toContain('Qualification details are unavailable.')
+    expect(SRC).toContain('Refresh failed; showing the last computed scorecard.')
+    expect(SRC).toContain('Last computed {fmtTimestamp(data.computed_at)}')
+  })
+
+  it('does not clip the restored status popover at the mobile topbar', () => {
+    expect(CSS).toContain('gap: var(--space-2); overflow: visible;')
+    expect(CSS).toContain('.status-popover {')
+    expect(CSS).toContain('position: absolute; top: 100%; right: 0;')
   })
 })

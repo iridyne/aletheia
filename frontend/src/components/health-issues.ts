@@ -2,32 +2,50 @@ export interface ParsedIssue {
   key: string
   severity: 'red' | 'yellow'
   label: string
+  value: string
   detail: string
+  hint: string
+}
+
+function prefixedValue(raw: string, prefix: string): string {
+  return raw.slice(prefix.length)
 }
 
 export function parseHealthIssue(raw: string): ParsedIssue {
   if (raw === 'kill_switch_active') {
-    return { key: raw, severity: 'red', label: 'Kill switch 已激活 — 交易暂停', detail: '' }
+    return {
+      key: raw,
+      severity: 'red',
+      label: 'Kill switch',
+      value: 'active',
+      detail: 'All trading is blocked.',
+      hint: 'Open Settings → Risk → Kill Switch to release.',
+    }
   }
   if (raw.startsWith('health_check_error:')) {
-    return { key: raw, severity: 'red', label: '健康检查异常', detail: raw.slice('health_check_error:'.length) }
+    const value = prefixedValue(raw, 'health_check_error:')
+    return { key: raw, severity: 'red', label: 'Health check error', value, detail: value, hint: 'Check gateway health details and logs.' }
   }
   if (raw.startsWith('code_updated_pending_restart:')) {
-    return { key: raw, severity: 'yellow', label: '代码已更新，待重启', detail: raw.slice('code_updated_pending_restart:'.length) }
+    const value = prefixedValue(raw, 'code_updated_pending_restart:')
+    return { key: raw, severity: 'yellow', label: 'Code updated', value, detail: value, hint: 'Restart the gateway to load the checked-out code.' }
   }
   if (raw.startsWith('agent_failure_ratio:')) {
-    return { key: raw, severity: 'yellow', label: 'Agent 失败率过高', detail: raw.slice('agent_failure_ratio:'.length) }
+    const value = prefixedValue(raw, 'agent_failure_ratio:')
+    return { key: raw, severity: 'red', label: 'Agent failure ratio', value, detail: value, hint: 'Check gateway logs for the failing agents.' }
   }
   if (raw.startsWith('market_data_stale:')) {
-    return { key: raw, severity: 'yellow', label: '行情数据过期', detail: raw.slice('market_data_stale:'.length) }
+    const value = prefixedValue(raw, 'market_data_stale:')
+    return { key: raw, severity: 'yellow', label: 'Market data stale', value, detail: value, hint: 'Feed refreshes every 5 minutes; restart the gateway if it stays stale for 30 minutes.' }
   }
   if (raw.startsWith('llm_unavailable:')) {
-    return { key: raw, severity: 'yellow', label: 'LLM 不可用', detail: `连续失败 ${raw.slice('llm_unavailable:'.length)} 次` }
+    const value = prefixedValue(raw, 'llm_unavailable:')
+    return { key: raw, severity: 'red', label: 'LLM unavailable', value, detail: value, hint: 'Check Settings → Model Provider, then resume the operator.' }
   }
   if (raw === 'trading_paused') {
-    return { key: raw, severity: 'yellow', label: '交易循环已暂停', detail: '' }
+    return { key: raw, severity: 'yellow', label: 'Trading loop', value: 'paused', detail: '', hint: 'Use the Resume control in the top bar to continue.' }
   }
-  return { key: raw, severity: 'yellow', label: raw, detail: '' }
+  return { key: raw, severity: 'yellow', label: 'Health issue', value: 'attention', detail: raw, hint: 'Review the system health details.' }
 }
 
 export function parseAllIssues(issues: string[]): ParsedIssue[] {
