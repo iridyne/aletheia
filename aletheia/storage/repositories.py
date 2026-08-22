@@ -2598,6 +2598,90 @@ def update_order(oid: str, **kwargs) -> None:
     _update("orders", oid, kwargs)
 
 
+def finalize_exchange_acknowledgement(
+    order_id: str,
+    *,
+    exchange_order_id: str | None,
+    status: str,
+    error_reason: str | None,
+    close_position_id: str | None = None,
+    pending_close_status: str | None = None,
+) -> dict:
+    """Apply one aggregate venue acknowledgement without overriding private fills."""
+    incoming_exchange_id = str(exchange_order_id or "").strip() or None
+    with transaction(immediate=True):
+        order = get_order(order_id)
+        if order is None:
+            raise ValueError(f"order not found: {order_id}")
+        current_exchange_id = str(order.get("exchange_order_id") or "").strip() or None
+        if (
+            current_exchange_id
+            and incoming_exchange_id
+            and current_exchange_id != incoming_exchange_id
+        ):
+            raise ValueError("exchange acknowledgement identity conflicts with durable Order")
+
+        position = get_position(close_position_id) if close_position_id else None
+        owns_close_claim = close_position_id is None or bool(
+            position
+            and order.get("position_id") == close_position_id
+            and position.get("status") == "open"
+            and position.get("pending_close_order_id") == order_id
+        )
+        applied = False
+        if order.get("status") in {"pending", "submission_unknown"} and owns_close_claim:
+            cursor = execute_write(
+                """
+                UPDATE orders
+                SET exchange_order_id=?, status=?, error_reason=?, filled_at=NULL
+                WHERE id=? AND status IN ('pending', 'submission_unknown')
+                """,
+                (
+                    current_exchange_id or incoming_exchange_id,
+                    status,
+                    error_reason,
+                    order_id,
+                ),
+            )
+            applied = cursor.rowcount == 1
+            if applied and close_position_id:
+                position_cursor = execute_write(
+                    """
+                    UPDATE positions
+                    SET pending_close_status=?
+                    WHERE id=? AND status='open' AND pending_close_order_id=?
+                    """,
+                    (pending_close_status, close_position_id, order_id),
+                )
+                if position_cursor.rowcount != 1:
+                    raise RuntimeError("close acknowledgement lost its Position claim")
+
+        order = get_order(order_id)
+        position_id = order.get("position_id") if order else close_position_id
+        position = get_position(position_id) if position_id else None
+        fills = [
+            dict(row)
+            for row in get_db().execute(
+                "SELECT id, fill_price, fill_quantity FROM fills "
+                "WHERE order_id=? ORDER BY filled_at, rowid LIMIT 2",
+                (order_id,),
+            ).fetchall()
+        ]
+        fill = fills[0] if len(fills) == 1 else None
+
+    return {
+        "applied": applied,
+        "order_id": order_id,
+        "exchange_order_id": order.get("exchange_order_id") if order else None,
+        "order_status": order.get("status") if order else None,
+        "fill_id": fill.get("id") if fill else None,
+        "position_id": position_id,
+        "fill_price": fill.get("fill_price") if fill else None,
+        "fill_quantity": fill.get("fill_quantity") if fill else 0,
+        "position_status": position.get("status") if position else None,
+    }
+
+
 def list_orders(limit: int = 100) -> list[dict]:
     return _select_all("orders", limit=limit)
 

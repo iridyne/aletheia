@@ -29,6 +29,10 @@ from aletheia.exchanges.submission_errors import (
     is_ambiguous_submission_error as _is_ambiguous_submission_error,
 )
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
+from aletheia.execution.broker_utils import (
+    close_acknowledgement_result,
+    entry_acknowledgement_result,
+)
 from aletheia.execution.close_convergence import (
     CLOSE_CLAIM_STATES,
     has_unresolved_close_claim,
@@ -36,6 +40,7 @@ from aletheia.execution.close_convergence import (
 from aletheia.execution.post_commit_audit import write_post_commit_audit
 from aletheia.storage.models import Order
 from aletheia.storage.repositories import (
+    finalize_exchange_acknowledgement,
     get_trade_proposal,
     insert_order,
     transaction,
@@ -267,11 +272,14 @@ def execute_live_order(
         )))
     except Exception as e:
         if _is_ambiguous_submission_error(e):
-            update_order(
+            acknowledgement = finalize_exchange_acknowledgement(
                 order.id,
+                exchange_order_id=None,
                 status="submission_unknown",
                 error_reason="order_submission_transport_acknowledgement_unknown",
             )
+            if not acknowledgement["applied"]:
+                return entry_acknowledgement_result(acknowledgement)
             write_post_commit_audit({
                 "actor": "system", "source": "bitget_broker",
                 "event_type": "order_submission_unknown", "entity_type": "order",
@@ -282,19 +290,26 @@ def execute_live_order(
                 "message": "Order transport failed after submission began; automatic retry suppressed",
             })
             raise SubmissionUnknownError(client_oid=proposal_id) from e
-        update_order(order.id, status="error", error_reason="order_submission_rejected")
+        acknowledgement = finalize_exchange_acknowledgement(
+            order.id,
+            exchange_order_id=None,
+            status="error",
+            error_reason="order_submission_rejected",
+        )
+        if not acknowledgement["applied"]:
+            return entry_acknowledgement_result(acknowledgement)
         raise
 
     exchange_order_id = order_resp.order_id or ""
     if not exchange_order_id:
-        try:
-            update_order(
-                order.id,
-                status="submission_unknown",
-                error_reason="order_submission_missing_exchange_id",
-            )
-        except Exception:
-            pass
+        acknowledgement = finalize_exchange_acknowledgement(
+            order.id,
+            exchange_order_id=None,
+            status="submission_unknown",
+            error_reason="order_submission_missing_exchange_id",
+        )
+        if not acknowledgement["applied"]:
+            return entry_acknowledgement_result(acknowledgement)
         write_post_commit_audit({
             "actor": "system", "source": "bitget_broker",
             "event_type": "order_submission_unknown", "entity_type": "order",
@@ -311,20 +326,19 @@ def execute_live_order(
     exchange_reported_fill = order_resp.status in ("filled", "partially_filled")
     stored_status = "materialization_missing" if exchange_reported_fill else "submitted"
     try:
-        update_order(
+        acknowledgement = finalize_exchange_acknowledgement(
             order.id,
             exchange_order_id=exchange_order_id,
             status=stored_status,
             error_reason=(
                 "private_fill_evidence_pending" if exchange_reported_fill else None
             ),
-            filled_at=None,
         )
     except Exception as e:
         raise PostSubmitDBError(
             "exchange acknowledgement could not be persisted", exchange_order_id,
         ) from e
-    if exchange_reported_fill:
+    if exchange_reported_fill and acknowledgement["applied"]:
         write_post_commit_audit({
             "actor": "system", "source": "bitget_broker",
             "event_type": "order_materialization_pending", "entity_type": "order",
@@ -338,15 +352,7 @@ def execute_live_order(
             ),
         })
 
-    return {
-        "order_id": order.id,
-        "exchange_order_id": exchange_order_id,
-        "order_status": stored_status,
-        "fill_id": None,
-        "position_id": None,
-        "fill_price": None,
-        "fill_quantity": 0,
-    }
+    return entry_acknowledgement_result(acknowledgement)
 
 
 def _claim_close_order(
@@ -461,16 +467,16 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
             # conflicts with venue evidence. Retain one durable claim while the
             # read-only position reconciler establishes whether this was a prior
             # fill, an external close, an identity mismatch, or unavailable evidence.
-            with transaction():
-                update_order(
-                    close_order.id,
-                    status="error",
-                    error_reason="close_position_absence_unverified",
-                )
-                update_position(
-                    position_id,
-                    pending_close_status="position_absence_unverified",
-                )
+            acknowledgement = finalize_exchange_acknowledgement(
+                close_order.id,
+                exchange_order_id=None,
+                status="error",
+                error_reason="close_position_absence_unverified",
+                close_position_id=position_id,
+                pending_close_status="position_absence_unverified",
+            )
+            if not acknowledgement["applied"]:
+                return close_acknowledgement_result(acknowledgement)
             write_post_commit_audit({
                 "actor": "system", "source": "bitget_broker",
                 "event_type": "close_position_absence_unverified",
@@ -489,12 +495,16 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
         elif _is_ambiguous_submission_error(e):
             # A transport timeout cannot tell us whether the exchange accepted
             # the close.  Keep it unresolved and suppress automatic resubmission.
-            update_order(
+            acknowledgement = finalize_exchange_acknowledgement(
                 close_order.id,
+                exchange_order_id=None,
                 status="submission_unknown",
                 error_reason="close_submission_transport_acknowledgement_unknown",
+                close_position_id=position_id,
+                pending_close_status="submission_unknown",
             )
-            update_position(position_id, pending_close_status="submission_unknown")
+            if not acknowledgement["applied"]:
+                return close_acknowledgement_result(acknowledgement)
             write_post_commit_audit({
                 "actor": "system", "source": "bitget_broker",
                 "event_type": "close_submission_unknown", "entity_type": "order",
@@ -505,21 +515,30 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
                 "message": "Close transport failed after submission began; automatic retry suppressed",
             })
         else:
-            update_order(close_order.id, status="error", error_reason="close_submission_rejected")
-            update_position(position_id, pending_close_status="submission_rejected")
+            acknowledgement = finalize_exchange_acknowledgement(
+                close_order.id,
+                exchange_order_id=None,
+                status="error",
+                error_reason="close_submission_rejected",
+                close_position_id=position_id,
+                pending_close_status="submission_rejected",
+            )
+            if not acknowledgement["applied"]:
+                return close_acknowledgement_result(acknowledgement)
         raise
 
     exchange_order_id = order_resp.order_id or ""
     if not exchange_order_id:
-        try:
-            update_order(
-                close_order.id,
-                status="submission_unknown",
-                error_reason="close_submission_missing_exchange_id",
-            )
-            update_position(position_id, pending_close_status="submission_unknown")
-        except Exception:
-            pass
+        acknowledgement = finalize_exchange_acknowledgement(
+            close_order.id,
+            exchange_order_id=None,
+            status="submission_unknown",
+            error_reason="close_submission_missing_exchange_id",
+            close_position_id=position_id,
+            pending_close_status="submission_unknown",
+        )
+        if not acknowledgement["applied"]:
+            return close_acknowledgement_result(acknowledgement)
         write_post_commit_audit({
             "actor": "system", "source": "bitget_broker",
             "event_type": "close_submission_unknown", "entity_type": "order",
@@ -539,30 +558,21 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
         close_status = "submitted"
 
     try:
-        update_order(
+        acknowledgement = finalize_exchange_acknowledgement(
             close_order.id,
             exchange_order_id=exchange_order_id,
             status=close_status,
             error_reason=(
                 "private_fill_evidence_pending" if exchange_reported_fill else None
             ),
-            filled_at=None,
+            close_position_id=position_id,
+            pending_close_status=close_status,
         )
     except Exception as e:
-        try:
-            update_position(position_id, pending_close_status="materialization_missing")
-        except Exception:
-            pass
         raise PostSubmitDBError(
             "exchange close acknowledgement could not be persisted", exchange_order_id,
         ) from e
-    update_position(
-        position_id,
-        pending_close_order_id=close_order.id,
-        pending_close_status=close_status,
-        pending_close_requested_at=close_requested_at,
-    )
-    if exchange_reported_fill:
+    if exchange_reported_fill and acknowledgement["applied"]:
         write_post_commit_audit({
             "actor": "system", "source": "bitget_broker",
             "event_type": "close_materialization_pending", "entity_type": "order",
@@ -575,16 +585,7 @@ def close_demo_position(position_id: str, reason: str = "exit_rule") -> dict:
                 "local closure waits for order-matched private fill evidence"
             ),
         })
-    return {
-        "order_id": close_order.id,
-        "exchange_order_id": exchange_order_id,
-        "close_order_id": close_order.id,
-        "status": close_status,
-        "closed": False,
-        "position_id": position_id,
-        "fill_price": None,
-        "fill_quantity": 0,
-    }
+    return close_acknowledgement_result(acknowledgement)
 
 
 # ─── TPSL bracket helpers ────────────────────────────────────────────────────

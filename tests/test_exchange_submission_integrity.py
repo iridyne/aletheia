@@ -128,6 +128,260 @@ def _prepare_broker(monkeypatch, broker_module, client_name, place_order):
     return broker
 
 
+def _private_fill(
+    exchange_order_id: str,
+    client_order_id: str,
+    *,
+    quantity: float,
+    suffix: str,
+) -> dict:
+    return {
+        "orderId": exchange_order_id,
+        "clientOid": client_order_id,
+        "tradeId": f"private-trade-{suffix}",
+        "fillPrice": "101.5",
+        "fillQuantity": str(quantity),
+        "fee": "0.01",
+        "feeCoin": "USDT",
+        "cTime": "1784050000000",
+    }
+
+
+@pytest.mark.parametrize("broker_module,client_name,execution_mode", BROKERS)
+@pytest.mark.parametrize(
+    "fill_quantity,expected_status,expected_proposal_status,late_outcome",
+    [
+        pytest.param(0.01, "filled", "executed", "ack", id="full"),
+        pytest.param(
+            0.004,
+            "partially_filled",
+            "partially_filled",
+            "ack",
+            id="partial",
+        ),
+        pytest.param(
+            0.01, "filled", "executed", "ambiguous", id="ambiguous-finalizer",
+        ),
+        pytest.param(
+            0.01, "filled", "executed", "rejected", id="rejection-finalizer",
+        ),
+        pytest.param(
+            0.01, "filled", "executed", "missing-id", id="missing-id-finalizer",
+        ),
+        pytest.param(
+            0.01, "filled", "executed", "terminal", id="terminal-finalizer",
+        ),
+    ],
+)
+def test_late_entry_ack_preserves_private_materialization_winner(
+    tmp_path,
+    monkeypatch,
+    broker_module,
+    client_name,
+    execution_mode,
+    fill_quantity,
+    expected_status,
+    expected_proposal_status,
+    late_outcome,
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.storage import repositories as repo
+
+    entered_exchange = threading.Event()
+    release_exchange = threading.Event()
+    case_id = expected_status if late_outcome == "ack" else late_outcome
+    proposal_id = f"proposal-{execution_mode}-late-entry-{case_id}"
+    exchange_order_id = f"EX-LATE-ENTRY-{execution_mode}-{case_id}"
+
+    async def _late_ack(order):
+        entered_exchange.set()
+        assert release_exchange.wait(timeout=5)
+        if late_outcome == "ambiguous":
+            raise ConnectionResetError("late transport failure")
+        if late_outcome == "rejected":
+            raise RuntimeError("late definitive rejection")
+        return SimpleNamespace(
+            order_id="" if late_outcome == "missing-id" else exchange_order_id,
+            status="cancelled" if late_outcome == "terminal" else "submitted",
+            fill_price=None,
+            filled_quantity=0,
+        )
+
+    broker = _prepare_broker(
+        monkeypatch, broker_module, client_name, _late_ack,
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(
+            broker.execute_live_order,
+            proposal_id=proposal_id,
+            risk_decision_id=f"risk-{execution_mode}-{case_id}",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            order_type="market",
+            quantity=0.01,
+            price=100.0,
+            execution_mode=execution_mode,
+        )
+        assert entered_exchange.wait(timeout=5)
+        [pending] = repo.list_orders(limit=10)
+        winner = materialize_bitget_entry(
+            pending["id"],
+            [_private_fill(
+                exchange_order_id,
+                proposal_id,
+                quantity=fill_quantity,
+                suffix=f"entry-{execution_mode}-{case_id}",
+            )],
+        )
+        assert winner.state == expected_status
+        release_exchange.set()
+        result = future.result(timeout=10)
+
+    stored_order = repo.get_order(pending["id"])
+    stored_position = repo.get_position(stored_order["position_id"])
+    [stored_fill] = repo.list_fills(limit=10)
+    assert stored_order["status"] == expected_status
+    assert stored_order["exchange_order_id"] == exchange_order_id
+    assert stored_position["status"] == "open"
+    assert repo.get_trade_proposal(proposal_id)["status"] == expected_proposal_status
+    assert result["order_status"] == expected_status
+    assert result["exchange_order_id"] == exchange_order_id
+    assert result["fill_id"] == stored_fill["id"]
+    assert result["position_id"] == stored_position["id"]
+
+
+@pytest.mark.parametrize(
+    "broker_module,client_name,execution_mode,close_name", CLOSE_BROKERS,
+)
+@pytest.mark.parametrize(
+    "late_outcome",
+    ["ack", "ambiguous", "rejected", "missing-id"],
+    ids=[
+        "ack",
+        "ambiguous-finalizer",
+        "rejection-finalizer",
+        "missing-id-finalizer",
+    ],
+)
+def test_late_close_ack_preserves_private_materialization_winner(
+    tmp_path,
+    monkeypatch,
+    broker_module,
+    client_name,
+    execution_mode,
+    close_name,
+    late_outcome,
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    entered_exchange = threading.Event()
+    release_exchange = threading.Event()
+    exchange_order_id = f"EX-LATE-CLOSE-{execution_mode}"
+
+    async def _late_ack(order):
+        entered_exchange.set()
+        assert release_exchange.wait(timeout=5)
+        if late_outcome == "ambiguous":
+            raise ConnectionResetError("late close transport failure")
+        if late_outcome == "rejected":
+            raise RuntimeError("late definitive close rejection")
+        return SimpleNamespace(
+            order_id="" if late_outcome == "missing-id" else exchange_order_id,
+            status="submitted",
+            fill_price=None,
+            filled_quantity=0,
+        )
+
+    broker = _prepare_broker(
+        monkeypatch, broker_module, client_name, _late_ack,
+    )
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        current_price=101.0,
+        execution_mode=execution_mode,
+    )
+    repo.insert_position(position)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(
+            getattr(broker, close_name), position.id, "take_profit",
+        )
+        assert entered_exchange.wait(timeout=5)
+        [pending] = repo.list_orders(limit=10)
+        winner = materialize_bitget_close(
+            pending["id"],
+            [_private_fill(
+                exchange_order_id,
+                f"close-{position.id}",
+                quantity=0.01,
+                suffix=f"close-{execution_mode}",
+            )],
+        )
+        assert winner.state == "filled"
+        release_exchange.set()
+        result = future.result(timeout=10)
+
+    stored_order = repo.get_order(pending["id"])
+    stored_position = repo.get_position(position.id)
+    assert stored_order["status"] == "filled"
+    assert stored_order["exchange_order_id"] == exchange_order_id
+    assert stored_position["status"] == "closed"
+    assert stored_position["pending_close_order_id"] is None
+    assert stored_position["pending_close_status"] is None
+    assert result["status"] == "filled"
+    assert result["closed"] is True
+    assert len(repo.list_fills(limit=10)) == 1
+
+
+def test_exchange_ack_cas_accepts_pending_and_rejects_conflicting_identity(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Order
+
+    pending = Order(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.01,
+        price=100.0,
+        execution_mode="bitget_demo",
+        source="adopted",
+    )
+    repo.insert_order(pending)
+    applied = repo.finalize_exchange_acknowledgement(
+        pending.id,
+        exchange_order_id="EX-NORMAL-ACK",
+        status="submitted",
+        error_reason=None,
+    )
+    assert applied["applied"] is True
+    assert applied["order_status"] == "submitted"
+    assert applied["exchange_order_id"] == "EX-NORMAL-ACK"
+
+    repo.update_order(pending.id, status="filled")
+    with pytest.raises(ValueError, match="identity conflicts"):
+        repo.finalize_exchange_acknowledgement(
+            pending.id,
+            exchange_order_id="EX-CONFLICTING-ACK",
+            status="submitted",
+            error_reason=None,
+        )
+    assert repo.get_order(pending.id)["status"] == "filled"
+    assert repo.get_order(pending.id)["exchange_order_id"] == "EX-NORMAL-ACK"
+
+
 @pytest.mark.parametrize("broker_module,client_name,execution_mode", BROKERS)
 def test_open_transport_failure_is_unknown_and_direct_retry_is_suppressed(
     tmp_path, monkeypatch, broker_module, client_name, execution_mode,
@@ -899,14 +1153,16 @@ def test_first_exchange_id_backfill_failure_is_post_submit_unresolved(
     broker = _prepare_broker(
         monkeypatch, broker_module, client_name, _acknowledged,
     )
-    original_update = broker.update_order
+    original_finalize = broker.finalize_exchange_acknowledgement
 
-    def _fail_exchange_id_backfill(order_id, **updates):
-        if updates.get("exchange_order_id"):
+    def _fail_exchange_id_backfill(order_id, **acknowledgement):
+        if acknowledgement.get("exchange_order_id"):
             raise RuntimeError("private-backfill-db-detail")
-        return original_update(order_id, **updates)
+        return original_finalize(order_id, **acknowledgement)
 
-    monkeypatch.setattr(broker, "update_order", _fail_exchange_id_backfill)
+    monkeypatch.setattr(
+        broker, "finalize_exchange_acknowledgement", _fail_exchange_id_backfill,
+    )
     kwargs = dict(
         proposal_id="proposal-backfill-fail",
         risk_decision_id="risk-1",
@@ -927,6 +1183,54 @@ def test_first_exchange_id_backfill_failure_is_post_submit_unresolved(
     with pytest.raises(SubmissionUnknownError):
         broker.execute_live_order(**kwargs)
     assert calls == ["proposal-backfill-fail"]
+
+
+@pytest.mark.parametrize(
+    "broker_module,client_name,execution_mode", BROKERS[1:],
+)
+def test_explicit_rejection_write_failure_is_post_submit_unresolved(
+    tmp_path, monkeypatch, broker_module, client_name, execution_mode,
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.errors import PostSubmitDBError
+    from aletheia.storage import repositories as repo
+
+    async def _rejected(_order):
+        return SimpleNamespace(
+            order_id="EX-REJECTION-WRITE-FAIL",
+            status="rejected",
+            fill_price=None,
+            filled_quantity=None,
+        )
+
+    broker = _prepare_broker(monkeypatch, broker_module, client_name, _rejected)
+    audits = []
+    monkeypatch.setattr(broker, "write_post_commit_audit", audits.append)
+    monkeypatch.setattr(
+        broker,
+        "finalize_exchange_acknowledgement",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("private-rejection-db-detail")
+        ),
+    )
+
+    with pytest.raises(PostSubmitDBError) as exc_info:
+        broker.execute_live_order(
+            proposal_id="proposal-rejection-write-fail",
+            risk_decision_id="risk-1",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            order_type="market",
+            quantity=0.001,
+            price=60000.0,
+            execution_mode=execution_mode,
+        )
+
+    assert exc_info.value.exchange_order_id == "EX-REJECTION-WRITE-FAIL"
+    assert "private-rejection-db-detail" not in str(exc_info.value)
+    assert repo.list_orders(limit=10)[0]["status"] == "pending"
+    assert audits == []
 
 
 @pytest.mark.parametrize("broker_module,client_name,execution_mode", BROKERS)
@@ -1273,14 +1577,16 @@ def test_close_exchange_id_backfill_failure_is_post_submit_unresolved(
         )
 
     broker = _prepare_broker(monkeypatch, broker_module, client_name, _acknowledged)
-    original_update = broker.update_order
+    original_finalize = broker.finalize_exchange_acknowledgement
 
-    def _fail_exchange_id_backfill(order_id, **updates):
-        if updates.get("exchange_order_id"):
+    def _fail_exchange_id_backfill(order_id, **acknowledgement):
+        if acknowledgement.get("exchange_order_id"):
             raise RuntimeError("private-close-backfill-detail")
-        return original_update(order_id, **updates)
+        return original_finalize(order_id, **acknowledgement)
 
-    monkeypatch.setattr(broker, "update_order", _fail_exchange_id_backfill)
+    monkeypatch.setattr(
+        broker, "finalize_exchange_acknowledgement", _fail_exchange_id_backfill,
+    )
     position = Position(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=0.01, entry_price=100.0, current_price=101.0,
@@ -1293,7 +1599,7 @@ def test_close_exchange_id_backfill_failure_is_post_submit_unresolved(
     assert exc_info.value.exchange_order_id == "EX-CLOSE-BACKFILL-FAIL"
     assert "private-close-backfill-detail" not in str(exc_info.value)
     stored = repo._select_one("positions", position.id)
-    assert stored["pending_close_status"] == "materialization_missing"
+    assert stored["pending_close_status"] == "pending"
 
     retry = getattr(broker, close_name)(position.id, reason="stop_loss")
     assert retry["already_pending"] is True
