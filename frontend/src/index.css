@@ -362,11 +362,13 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 
 /* ---------- Status cluster (Block 1 of topbar right) ----------
    3 dots + heartbeat + state word. Hover/focus reveals .status-popover. */
+.status-cluster-wrap { position: relative; display: inline-flex; }
 .status-cluster {
-  position: relative; display: inline-flex; align-items: center;
+  display: inline-flex; align-items: center;
   gap: var(--space-2); padding: var(--space-1) var(--space-2);
   border: 1px solid transparent; border-radius: var(--r-sm);
-  cursor: default; outline: none; transition: background 0.12s, border-color 0.12s;
+  appearance: none; background: transparent; color: inherit; font: inherit;
+  cursor: pointer; outline: none; transition: background 0.12s, border-color 0.12s;
 }
 .status-cluster:hover, .status-cluster:focus-visible {
   background: var(--surface-2); border-color: var(--border);
@@ -411,9 +413,9 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   opacity: 0; pointer-events: none; transform: translateY(-4px);
   transition: opacity 0.15s, transform 0.15s; z-index: 50;
 }
-.status-cluster:hover .status-popover,
-.status-cluster:focus-visible .status-popover,
-.status-cluster:focus-within .status-popover {
+.status-cluster-wrap:hover .status-popover:not(.is-dismissed),
+.status-cluster-wrap:focus-within .status-popover:not(.is-dismissed),
+.status-popover.is-open {
   opacity: 1; transform: translateY(0); pointer-events: auto;
 }
 .status-popover-title {
