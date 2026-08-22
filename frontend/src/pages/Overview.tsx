@@ -4,11 +4,15 @@ import { useNavigate } from 'react-router-dom'
 import { bootApi, type OverviewBootstrap, type ShellBootstrap } from '../api/boot'
 import PnLZone from '../components/PnLZone'
 import AgentFeed from '../components/AgentFeed'
+import AnimatedSection from '../components/AnimatedSection'
+import CollectorHealthDetails from '../components/CollectorHealthDetails'
 import { Button, Card, Meter, StatusText } from '../components/ui'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
-import { humanize } from '../lib/format'
+import { fmtTimestamp, humanize } from '../lib/format'
 import { api, type GoLiveScorecard } from '../api/client'
 import type { MarketDataCoverageReport } from '../types'
+import { parseAllIssues, sortedIssues, type ParsedIssue } from '../components/health-issues'
+import type { CollectorHealthReport, MarketDataCoverageDomain } from '../types'
 
 // The feed receives the compact bootstrap projection: <AgentFeed /> remains
 // the canonical layout contract while the prop avoids three cold REST lists.
@@ -105,8 +109,15 @@ function RiskCard({ shell, shellError }: { shell?: ShellBootstrap; shellError?: 
   )
 }
 
+type SystemDetail = 'collectors' | 'coverage' | 'mode' | null
+
+function statusLight(state: string | undefined): Light {
+  return state === 'reachable' ? 'green' : state === 'unavailable' ? 'red' : state === 'recovering' ? 'yellow' : 'muted'
+}
+
 function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap; coverage?: MarketDataCoverageReport; coverageError?: boolean }) {
   const navigate = useNavigate()
+  const [expanded, setExpanded] = useState<SystemDetail>(null)
   const scheduler = shell?.scheduler
   const runtime = shell?.runtime
   const exchange = shell?.exchange
@@ -117,26 +128,166 @@ function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap
     : exchangeDiverged
       ? `${exchange?.execution_exchange || 'unknown'} exec · ${exchange?.data_exchange || 'unknown'} data`
       : exchange?.execution_exchange || exchange?.data_exchange || 'not available'
-  const coverageTone = coverage?.status === 'healthy' ? 'green' : coverage ? 'yellow' : 'muted'
-  const coverageLabel = coverage
-    ? coverageError ? 'stale' : coverage.status === 'healthy' ? 'available' : coverage.status
-    : coverageError ? 'unavailable' : 'deferred'
-  const rows = [
-    ['Gateway', shell?.gateway?.running ? 'green' : !shell ? 'muted' : 'red', shell ? (shell.gateway?.paused ? 'paused' : 'running') : 'not available'],
-    ['Scheduler', scheduler?.running ? 'green' : scheduler ? 'yellow' : 'muted', scheduler?.state || 'not available'],
-    ['Connectivity', shell?.connectivity?.state === 'reachable' ? 'green' : 'muted', shell?.connectivity?.state || 'deferred'],
-    ['Exchange', exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted', exchangeLabel],
-    ['Data coverage', coverageTone, coverageLabel],
-    ['Live', shell?.live?.enabled ? 'yellow' : 'muted', humanize(shell?.live?.state || 'not available')],
-    ['Runtime', runtime?.boot_commit ? runtime.boot_commit.slice(0, 12) : 'not available', runtime?.mode || 'not available'],
-  ]
+  const collectorHealthQuery = useQuery<CollectorHealthReport>({
+    queryKey: ['collector-health'],
+    queryFn: api.getCollectorHealth,
+    staleTime: 28_000,
+    refetchInterval: 30_000,
+    retry: 1,
+  })
+  const collectorHealth = collectorHealthQuery.data
+  const coverageReport = coverage
+  const collectorIncident = collectorHealth?.infrastructure_incident
+  const collectorLight = !collectorHealth
+    ? collectorHealthQuery.isError ? 'muted' : 'yellow'
+    : collectorIncident?.status === 'active' || collectorIncident?.status === 'recovering'
+      ? 'yellow'
+      : collectorHealth.status === 'healthy' ? 'green'
+        : collectorHealth.status === 'initializing' ? 'muted'
+          : collectorHealth.status === 'degraded' ? 'red' : 'yellow'
+  const collectorValue = !collectorHealth
+    ? collectorHealthQuery.isPending ? 'loading' : 'not available'
+    : collectorIncident?.status === 'active'
+      ? `${collectorIncident.affected_domains.length} blocked by connectivity`
+      : collectorIncident?.status === 'recovering'
+        ? `${collectorIncident.affected_domains.length} retrying after recovery`
+        : collectorHealth.status === 'initializing'
+          ? 'initializing'
+          : collectorHealth.status === 'degraded'
+            ? `${collectorHealth.degraded_count} degraded · ${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
+            : collectorHealth.status === 'attention'
+              ? `${collectorHealth.transient_problem_count} transient · ${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
+              : `${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
+  const coverageHealthy = coverage?.status === 'healthy'
+  const coverageLight = coverageReport
+    ? coverage?.status === 'empty' ? 'muted' : coverageReport.critical_problem_count > 0 ? 'yellow' : coverageHealthy ? 'green' : 'yellow'
+    : 'muted'
+  const coverageValue = coverageReport
+    ? `${coverageReport.fresh_count}/${coverageReport.domain_count} current`
+    : coverageError ? 'not available' : 'deferred'
+  const modelProvider = shell?.operator?.model_provider || 'not available'
+  const bootCommit = runtime?.boot_commit || ''
+  const currentCommit = runtime?.current_commit || ''
+  const codeDrift = !!bootCommit && !!currentCommit && bootCommit !== currentCommit
+  const healthIssues = sortedIssues(parseAllIssues(shell?.health?.issues || []))
+  const toggle = (detail: Exclude<SystemDetail, null>) => setExpanded(value => value === detail ? null : detail)
   return (
     <Card className="rail-card system-panel">
-      <div className="flex items-center justify-between mb-2"><h3>System</h3><Button type="button" variant="secondary" className="btn-control" onClick={() => navigate('/settings?tab=runtime')}>Details →</Button></div>
-      <table className="status-board"><tbody>{rows.map(([label, light, value]) => <tr className="status-row" key={label}><th>{label}</th><td className="status-cell"><span className={`status-light light-${light === 'green' || light === 'red' || light === 'yellow' || light === 'muted' ? light : 'muted'}`} /><span className="status-value">{value}</span></td></tr>)}</tbody></table>
-      {shell?.health?.issues?.length ? <p className="hint mb-0">{shell.health.issues.join(' · ')}</p> : null}
+      <div className="mb-2"><h3>System</h3></div>
+      <table className="status-board"><tbody>
+        <StatusRow label="Gateway" light={shell?.gateway?.running ? (shell.gateway.paused ? 'yellow' : 'green') : !shell ? 'muted' : 'red'} value={shell ? (shell.gateway?.paused ? 'paused' : 'running') : 'not available'} />
+        <StatusRow label="Scheduler" light={scheduler?.running ? 'green' : scheduler ? 'yellow' : 'muted'} value={scheduler?.state || 'not available'} />
+        <StatusRow label="Connectivity" light={statusLight(shell?.connectivity?.state)} value={shell?.connectivity?.state || 'deferred'} title={shell?.connectivity?.reason} />
+        <StatusRow label="Exchange" light={exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted'} value={exchangeLabel} onClick={() => navigate('/settings?tab=execution')} title={exchangeDiverged ? 'Execution and market-data exchanges are intentionally split.' : exchangeLabel} externalLink />
+        <StatusRow label="Collectors" light={collectorLight} value={collectorValue} onClick={() => toggle('collectors')} expanded={expanded === 'collectors'} />
+        {collectorHealth && <tr className="status-detail-row"><td colSpan={2}><div className="system-inline-detail"><CollectorHealthDetails health={collectorHealth} mode="compact" /></div></td></tr>}
+        <StatusRow label="Data coverage" light={coverageLight} value={coverageValue} onClick={() => toggle('coverage')} expanded={expanded === 'coverage'} />
+        <StatusRow label="Model" light="muted" value={modelProvider} onClick={() => navigate('/settings?tab=agent')} externalLink />
+        <StatusRow label="Mode" light={shell?.kill_switch?.active ? 'red' : shell?.live?.enabled ? 'yellow' : 'muted'} value={`Live: ${humanize(shell?.live?.state || 'not available')} · ${humanize(shell?.permission?.mode || 'not available')}${shell?.kill_switch?.active ? ' · KILL' : ''}`} onClick={() => toggle('mode')} expanded={expanded === 'mode'} />
+        <StatusRow label="Code" light={!bootCommit ? 'muted' : codeDrift ? 'yellow' : 'green'} value={bootCommit ? bootCommit.slice(0, 12) : 'not available'} title={bootCommit ? (codeDrift ? `Running commit: ${bootCommit}. Checked-out commit: ${currentCommit}.` : `Running backend commit: ${bootCommit}`) : 'Running commit is not available.'} onClick={() => navigate('/settings?tab=runtime')} externalLink />
+        <StatusRow label="Runtime" light="muted" value={runtime?.mode || 'not available'} onClick={() => navigate('/settings?tab=runtime')} externalLink />
+      </tbody></table>
+      <AnimatedSection open={expanded === 'collectors'}>
+        {collectorHealth?.domains?.length ? <CollectorHealthDetails health={collectorHealth} mode="full" /> : <p className="text-muted text-sm" role="status">Collector diagnostics not available.</p>}
+      </AnimatedSection>
+      <AnimatedSection open={expanded === 'coverage'}>
+        {coverageReport?.domains?.length ? <DataCoverageDetail coverage={coverageReport} /> : <p className="text-muted text-sm" role="status">Data coverage details {coverageError ? 'not available.' : 'loading…'}</p>}
+      </AnimatedSection>
+      <AnimatedSection open={expanded === 'mode'}>
+        <ModeDetail shell={shell} />
+      </AnimatedSection>
+      {healthIssues.length > 0 && <HealthIssueList issues={healthIssues} />}
     </Card>
   )
+}
+
+type Light = 'green' | 'red' | 'yellow' | 'blue' | 'muted'
+
+function StatusRow({
+  label, light, value, title, onClick, expanded, externalLink,
+}: { label: string; light: Light; value: string; title?: string; onClick?: () => void; expanded?: boolean; externalLink?: boolean }) {
+  const clickable = Boolean(onClick)
+  return (
+    <tr
+      className={`status-row${clickable ? ' status-row-clickable' : ''}`}
+      onClick={onClick}
+      onKeyDown={event => { if (clickable && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onClick?.() } }}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      aria-expanded={clickable && expanded != null ? expanded : undefined}
+    >
+      <th>{label}</th>
+      <td className="status-cell">
+        <span className={`status-light light-${light}`} />
+        <span className="status-value" title={title ?? value}>{value}</span>
+        {clickable && <span className="status-row-chevron" aria-hidden="true">{externalLink ? '→' : expanded ? '▼' : '▶'}</span>}
+      </td>
+    </tr>
+  )
+}
+
+function HealthIssueList({ issues }: { issues: ParsedIssue[] }) {
+  return (
+    <div className="sp-issues overview-health-issues" aria-label="System health issues">
+      {issues.map(issue => (
+        <div key={issue.key} className="sp-issue-row" title={issue.key} aria-label={`${issue.label}: ${issue.detail || issue.hint}`}>
+          <span className={`sp-issue-icon sp-issue-${issue.severity}`}>⚠</span>
+          <div className="sp-issue-body">
+            <div className="sp-issue-title"><span className="sp-issue-label">{issue.label}</span>{issue.value && <span className="sp-issue-value">{issue.value}</span>}</div>
+            <span className="sp-issue-hint">{issue.hint}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const COVERAGE_LIGHT: Record<string, Light> = { fresh: 'green', stale: 'yellow', empty: 'muted', invalid: 'red', idle: 'muted' }
+const COVERAGE_RANK: Record<string, number> = { invalid: 0, stale: 1, empty: 2, idle: 3, fresh: 4 }
+
+function fmtCoverageAge(sec: number | null): string {
+  if (sec == null) return 'never'
+  if (sec < 60) return `${Math.round(sec)}s old`
+  if (sec < 3600) return `${Math.floor(sec / 60)}m old`
+  return `${Math.floor(sec / 3600)}h${Math.floor((sec % 3600) / 60)}m old`
+}
+
+function fmtCoverageMaxAge(sec: number): string {
+  if (sec < 60) return `${sec}s`
+  if (sec % 3600 === 0) return `${sec / 3600}h`
+  return `${Math.floor(sec / 60)}m`
+}
+
+function DataCoverageDetail({ coverage }: { coverage: MarketDataCoverageReport }) {
+  const domains = [...coverage.domains].sort((a, b) => (COVERAGE_RANK[a.state] ?? 5) - (COVERAGE_RANK[b.state] ?? 5))
+  return (
+    <div className="chd-panel">
+      <div className="chd-title">Data coverage</div>
+      {domains.map((domain: MarketDataCoverageDomain) => {
+        const light = COVERAGE_LIGHT[domain.state] || 'muted'
+        return (
+          <div key={domain.domain} className="chd-domain">
+            <div className="chd-domain-head"><span className={`status-light light-${light}`} /><span className="chd-domain-name">{(domain.label || domain.domain).toUpperCase()}</span><span className={`chd-status chd-status-${light}`}>{domain.state}</span></div>
+            <div className="chd-domain-meta"><span>{domain.symbol_count} symbols · {domain.row_count.toLocaleString()} rows</span><span>{fmtCoverageAge(domain.age_sec)}{domain.max_age_sec ? ` · max ${fmtCoverageMaxAge(domain.max_age_sec)}` : ''}</span></div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function ModeDetail({ shell }: { shell?: ShellBootstrap }) {
+  const scheduler = shell?.scheduler
+  const risk = shell?.risk?.status
+  const killed = !!shell?.kill_switch?.active
+  const items: Array<{ label: string; value: string; light: Light }> = [
+    { label: 'LIVE MODE', value: humanize(shell?.live?.state || 'not available'), light: shell?.live?.state === 'live_full' ? 'green' : shell?.live?.enabled ? 'yellow' : 'muted' },
+    { label: 'PERMISSION', value: humanize(shell?.permission?.mode || 'not available'), light: shell?.permission?.mode === 'Full' ? 'yellow' : 'muted' },
+    { label: 'KILL SWITCH', value: killed ? 'active' : 'inactive', light: killed ? 'red' : 'muted' },
+    { label: 'SCHEDULER', value: scheduler?.state || 'not available', light: shell?.gateway?.paused ? 'yellow' : scheduler?.running === false ? 'red' : scheduler ? 'green' : 'muted' },
+  ]
+  if (risk && risk !== 'not_available' && risk !== 'not_evaluated') items.push({ label: 'RISK', value: riskStateLabel(risk), light: risk === 'blocked' ? 'red' : risk === 'warning' ? 'yellow' : 'green' })
+  return <div className="chd-panel"><div className="chd-title">Mode &amp; permissions</div>{items.map(item => <div key={item.label} className="chd-domain"><div className="chd-domain-head"><span className={`status-light light-${item.light}`} /><span className="chd-domain-name">{item.label}</span><span className={`chd-status chd-status-${item.light}`}>{item.value}</span></div></div>)}</div>
 }
 
 function BlotterSummaryStrip({ summary }: { summary?: OverviewBootstrap['summary'] }) {
@@ -151,16 +302,54 @@ function BlotterSummaryStrip({ summary }: { summary?: OverviewBootstrap['summary
   )
 }
 
+export function isGoLiveScorecard(value: unknown): value is GoLiveScorecard {
+  if (!value || typeof value !== 'object') return false
+  const scorecard = value as Partial<GoLiveScorecard>
+  if (typeof scorecard.composite_score !== 'number' || !Number.isFinite(scorecard.composite_score)) return false
+  if (scorecard.traffic_light !== 'red' && scorecard.traffic_light !== 'yellow' && scorecard.traffic_light !== 'green') return false
+  if (!Array.isArray(scorecard.criteria) || !scorecard.criteria.every(item => {
+    if (!item || typeof item !== 'object') return false
+    const criterion = item as Partial<GoLiveScorecard['criteria'][number]>
+    return typeof criterion.key === 'string'
+      && typeof criterion.label === 'string'
+      && typeof criterion.detail === 'string'
+      && typeof criterion.score === 'number'
+      && Number.isFinite(criterion.score)
+      && (criterion.status === 'pass' || criterion.status === 'warning' || criterion.status === 'fail')
+  })) return false
+  return Array.isArray(scorecard.blockers)
+    && scorecard.blockers.every(blocker => typeof blocker === 'string')
+    && typeof scorecard.computed_at === 'string'
+    && scorecard.computed_at.length > 0
+}
+
 function GoLiveScoreCard() {
   const [expanded, setExpanded] = useState(false)
-  const { data } = useQuery<GoLiveScorecard>({ queryKey: ['go-live-scorecard'], queryFn: api.getGoLiveScorecard, staleTime: 60_000, enabled: expanded })
+  const scorecardQuery = useQuery<GoLiveScorecard>({
+    queryKey: ['go-live-scorecard'],
+    queryFn: async () => {
+      const value = await api.getGoLiveScorecard()
+      if (!isGoLiveScorecard(value)) throw new Error('invalid scorecard response')
+      return value
+    },
+    staleTime: 60_000,
+    retry: 1,
+    enabled: expanded,
+  })
+  const { data } = scorecardQuery
+  const stale = Boolean(data && scorecardQuery.isRefetchError)
+  const dataTone = data ? data.traffic_light : 'muted'
+  const label = data
+    ? stale ? 'STALE' : data.traffic_light === 'green' ? 'READY' : data.traffic_light === 'yellow' ? 'CAUTION' : 'NOT READY'
+    : scorecardQuery.isError ? 'UNAVAILABLE' : scorecardQuery.isPending ? 'DEFERRED' : 'DEFERRED'
   return (
     <Card className="rail-card scorecard-panel">
       <Button type="button" variant="ghost" className="scorecard-header" onClick={() => setExpanded(value => !value)} aria-expanded={expanded}>
-        <div className="scorecard-title"><h3>Go-Live</h3><StatusText tone={data ? data.traffic_light : 'muted'}>{data ? (data.traffic_light || 'NOT READY').toUpperCase() : 'deferred'}</StatusText></div><span className="text-muted text-xs">{expanded ? '▲' : '▼'}</span>
+        <div className="scorecard-title"><h3>Go-Live</h3><StatusText tone={stale ? 'yellow' : dataTone}>{label}</StatusText></div><span className="text-muted text-xs">{expanded ? '▲' : '▼'}</span>
       </Button>
-      {expanded && data && <div className="scorecard-criteria">{data.criteria.map(item => <div key={item.key} className="scorecard-row"><span className="scorecard-label">{item.label}</span><div className="scorecard-bar-bg"><Meter pct={item.score} className="scorecard-bar-fill" /></div><span className="scorecard-detail">{item.detail}</span></div>)}{data.blockers.length > 0 && <div className="scorecard-blockers"><span className="text-xs text-error">Blockers: {data.blockers.join(' · ')}</span></div>}</div>}
-      {expanded && !data && <p className="text-muted text-sm">Loading qualification details…</p>}
+      {expanded && scorecardQuery.isPending && !data && <p className="text-muted text-sm" role="status">Loading qualification details…</p>}
+      {expanded && scorecardQuery.isError && !data && <div className="scorecard-unavailable" role="status"><p className="text-muted text-sm">Qualification details are unavailable.</p><Button type="button" variant="secondary" onClick={() => void scorecardQuery.refetch()}>Retry</Button></div>}
+      {expanded && data && <div className="scorecard-criteria">{stale && <p className="scorecard-stale" role="status">Refresh failed; showing the last computed scorecard. Last computed {fmtTimestamp(data.computed_at)}.</p>}{data.criteria.map(item => <div key={item.key} className="scorecard-row"><span className="scorecard-label">{item.label}</span><div className="scorecard-bar-bg"><Meter pct={item.score} className="scorecard-bar-fill" /></div><span className="scorecard-detail">{item.detail}</span></div>)}{data.blockers.length > 0 && <div className="scorecard-blockers"><span className="text-xs text-error">Blockers: {data.blockers.join(' · ')}</span></div>}{!stale && <p className="scorecard-meta">Last computed {fmtTimestamp(data.computed_at)}</p>}</div>}
     </Card>
   )
 }

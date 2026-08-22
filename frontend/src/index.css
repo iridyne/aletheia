@@ -215,7 +215,10 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   /* Rail toggle is desktop-only — under the mobile breakpoint the sidebar
      forces itself back to 240px, so the button would do nothing. */
   .sidebar-toggle { display: none; }
-  .topbar { min-width: 0; padding-inline: var(--space-3); gap: var(--space-2); overflow: hidden; }
+  /* The status popover is positioned below this header; clipping the header
+     makes the operator diagnostics unreachable on narrow screens. The ticker
+     owns its own horizontal clipping, so the header itself can stay visible. */
+  .topbar { min-width: 0; padding-inline: var(--space-3); gap: var(--space-2); overflow: visible; }
   .dev-preview-banner { min-width: 0; max-width: 124px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .topbar-status { min-width: 0; gap: var(--space-2); }
 }
@@ -2616,6 +2619,18 @@ button.market-instrument-group-title { font-family: inherit; }
   text-align: center;
 }
 .status-row-clickable:hover .status-row-chevron { color: var(--text); }
+.status-row-clickable:focus-visible th,
+.status-row-clickable:focus-visible td { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+.system-inline-detail {
+  padding: 0 var(--space-2) var(--space-1);
+}
+.status-detail-row td { padding: 0; border-bottom: 0; }
+.overview-health-issues {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--border);
+}
 
 /* CollapsibleSection uses inline styles — no CSS class needed. */
 .chd-panel {
@@ -2993,6 +3008,10 @@ button.market-instrument-group-title { font-family: inherit; }
 .scorecard-bar-fill { display: block; height: 100%; border-radius: 2px; transition: width 0.3s; }
 .scorecard-detail { color: var(--muted); font-size: 0.65rem; white-space: nowrap; }
 .scorecard-blockers { margin-top: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--border); }
+.scorecard-unavailable { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.scorecard-unavailable p { margin: 0; }
+.scorecard-stale, .scorecard-meta { margin: var(--space-2) 0; color: var(--yellow); font-size: 0.68rem; line-height: 1.4; }
+.scorecard-meta { color: var(--faint); }
 
 /* AI Decision compact projection in the Position drawer.
    Raw `decision_reasoning` is never rendered by default — this block styles
