@@ -114,7 +114,7 @@ class BinanceClient:
         ccxt_symbol = to_ccxt_perp(order.symbol)
 
         # Futures open: set intended leverage first (skip reduce-only closes). Fail-closed.
-        if order.leverage and order.leverage > 1 and not order.reduce_only:
+        if order.leverage is not None and order.leverage >= 1 and not order.reduce_only:
             await self.set_leverage(ccxt_symbol, order.leverage)
 
         params = {}
