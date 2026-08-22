@@ -125,6 +125,12 @@ async def fetch_private_fill_evidence(order: dict) -> list[dict]:
 
     The normalized rows contain actual per-trade fee and exchange time; no
     requested or aggregate response economics are substituted.
+
+    Fixes applied:
+    - #1783: if exchange_order_id is absent but client_order_id present,
+      recover orderId via origClientOrderId lookup before scanning trades.
+    - #1785: split [start_ms, now] into <=7-day windows; within each window
+      paginate with fromId only (no endTime) to comply with Binance API rules.
     """
     execution_mode = str(order.get("execution_mode") or "")
     account_mode = _BINANCE_ACCOUNT_MODES.get(execution_mode)
@@ -144,35 +150,72 @@ async def fetch_private_fill_evidence(order: dict) -> list[dict]:
         ccxt_symbol = to_ccxt_perp(str(order["symbol"]))
         start_ms = _created_at_ms(order.get("created_at"))
         end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        raw_fills: list[dict] = []
-        from_id: str | None = None
-        complete = False
-        for _ in range(100):
-            params: dict = {"endTime": end_ms}
-            since = start_ms if from_id is None else None
-            if from_id is not None:
-                params["fromId"] = from_id
-            page = await exchange.fetch_my_trades(
-                ccxt_symbol,
-                since=since,
-                limit=1000,
-                params=params,
-            )
-            if not isinstance(page, list):
-                raise ValueError("Binance private trade history malformed")
-            raw_fills.extend(row for row in page if isinstance(row, dict))
-            if len(page) < 1000:
-                complete = True
-                break
-            last_id = str(page[-1].get("id") or "")
-            if not last_id.isdigit():
-                raise RuntimeError("Binance private trade pagination incomplete")
-            next_id = str(int(last_id) + 1)
-            if next_id == from_id:
-                raise RuntimeError("Binance private trade pagination stalled")
-            from_id = next_id
-        if not complete:
-            raise RuntimeError("Binance private trade history incomplete")
+
+        # #1783: recover orderId from origClientOrderId when ACK was lost.
+        if not exchange_order_id and client_order_id:
+            try:
+                recovered = await client.get_order_by_client_order_id(
+                    client_order_id, str(order["symbol"])
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Binance orderId recovery failed for client_order_id %s (%s)",
+                    client_order_id,
+                    type(exc).__name__,
+                )
+                recovered = None
+            if recovered and str(recovered.get("clientOrderId") or "") == client_order_id:
+                recovered_id = str(recovered.get("orderId") or "").strip()
+                if recovered_id:
+                    exchange_order_id = recovered_id
+            if not exchange_order_id:
+                # Cannot identify order — fail-closed
+                return []
+
+        # #1785: partition into <=7-day windows; use fromId pagination within each.
+        MAX_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+        windows: list[tuple[int, int]] = []
+        w_start = start_ms
+        while w_start < end_ms:
+            w_end = min(w_start + MAX_WINDOW_MS, end_ms)
+            windows.append((w_start, w_end))
+            w_start = w_end
+
+        all_fills: dict[str, dict] = {}  # keyed by trade id for deduplication
+        for (w_start, w_end) in windows:
+            from_id: str | None = None
+            for _ in range(100):
+                if from_id is None:
+                    params: dict = {"startTime": w_start, "endTime": w_end}
+                    page = await exchange.fetch_my_trades(
+                        ccxt_symbol, limit=1000, params=params
+                    )
+                else:
+                    # fromId only — no time bounds (Binance forbids fromId+endTime)
+                    params = {"fromId": from_id}
+                    page = await exchange.fetch_my_trades(
+                        ccxt_symbol, limit=1000, params=params
+                    )
+                if not isinstance(page, list):
+                    raise ValueError("Binance private trade history malformed")
+                for row in page:
+                    if isinstance(row, dict):
+                        trade_id = str(row.get("id") or "")
+                        if trade_id:
+                            all_fills[trade_id] = row
+                if len(page) < 1000:
+                    break
+                last_id = str(page[-1].get("id") or "")
+                if not last_id.isdigit():
+                    raise RuntimeError("Binance private trade pagination incomplete")
+                next_id = str(int(last_id) + 1)
+                if next_id == from_id:
+                    raise RuntimeError("Binance private trade pagination stalled")
+                from_id = next_id
+            else:
+                raise RuntimeError("Binance private trade history incomplete")
+
+        raw_fills = list(all_fills.values())
 
         normalized: list[dict] = []
         recovered_order_ids: set[str] = set()
