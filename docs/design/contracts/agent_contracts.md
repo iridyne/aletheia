@@ -55,7 +55,7 @@
 | 38 | learning_lifecycle_controller | interval `learning.evaluation_interval_minutes` (default 60) | io | Apply at most one owner-gated paper lifecycle action per current experiment; requires autonomous Learning, no pause/integrity incident, lifecycle automation, paper influence, and path allowlist |
 | 39 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
 | 40 | learning_startup_catchup | once, 5min after gateway boot | agents | Run only the latest missed dreaming/memo/reviewer date-window; a durable success watermark prevents restart duplicates |
-| 41 | learning_measurement_startup_catchup | once, 2min after gateway boot | learning_measurement | Before the first regular evaluator interval, re-run only the current missing contribution-measurement window through `learning_contribution_evaluator`; shares its serial non-starving lane and remains independent of autonomous Learning and paper influence |
+| 41 | learning_measurement_startup_catchup | once, 2min after gateway boot | learning_measurement | Before the first regular evaluator interval, re-run `learning_contribution_evaluator` only when its successful watermark/deadline is missing or invalid, or its persisted cadence deadline is reached; shares its serial non-starving lane and remains independent of autonomous Learning and paper influence |
 | 42 | learning_lifecycle_audit_reconciler | every 5min | io | Retry bounded pending lifecycle JSONL mirrors by stable event id; never replay a transition and continue during layered pause |
 
 Learning behavior jobs (rows 10–15, 26, 30–31, 38 and the Learning behavior catch-up) share
@@ -425,8 +425,8 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 
 - **Trigger**: one recurring interval at `learning.evaluation_interval_minutes` (default 60);
   restart preserves a nearer durable future deadline, and an overdue deadline retries after 60s;
-  startup catch-up remains a one-shot caller of this same evaluator and retries only while the
-  current measurement watermark is still missing
+  startup catch-up remains a one-shot caller of this same evaluator and retries when its successful
+  watermark/deadline is missing or invalid, or when the persisted cadence deadline has been reached
 - **Inputs**: prospective `universe_family_calibration` exposures plus exact-key settled outcomes
 - **Statistical unit**: persisted `assignment_unit_key` cluster; complete-cluster allocation utility
   averages selected-member net return with zero utility for dropped members, and uses worst selected

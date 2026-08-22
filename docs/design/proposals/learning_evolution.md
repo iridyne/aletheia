@@ -553,12 +553,13 @@ evidence never grants authority, and wrong-stage/wrong-hypothesis evidence remai
 Every Learning job has a durable expected-run record, idempotency key, last success,
 next due time, input watermark, output counts, and failure reason.
 
-- Restart catch-up runs at most once for the missing schedule window.
+- Restart catch-up runs at most once when the successful watermark/deadline is missing or invalid,
+  or when the persisted cadence deadline has been reached.
 - Contribution measurement has one recurring scheduler job,
   `learning_contribution_evaluator`. `learning_measurement_startup_catchup` runs before its first
-  regular interval and invokes that same evaluator only when the current window is missing; there
-  is no second scheduled verdict runner. Historical `learning_verdict_runner` health rows remain
-  retained operational history and do not imply a registered job.
+  regular interval and invokes that same evaluator only under the durable catch-up conditions above;
+  there is no second scheduled verdict runner. Historical `learning_verdict_runner` health rows
+  remain retained operational history and do not imply a registered job.
 - Current status may recover to healthy and clear `last_error`, but `last_failed_at` and
   `last_failure_reason` retain the most recent failure across recovery.
 - A direct scheduled extractor is recorded even when it bypasses the agent orchestrator.
