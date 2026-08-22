@@ -56,7 +56,8 @@ class TelegramBot:
         if parse_mode:
             payload["parse_mode"] = parse_mode
         async with httpx_client(timeout=10) as client:
-            await client.post(self._api_url("sendMessage"), json=payload)
+            resp = await client.post(self._api_url("sendMessage"), json=payload)
+            resp.raise_for_status()  # Issue #1469: HTTP errors should not appear successful
 
     def _is_authorized(self, chat_id: int) -> bool:
         return self._authorization_error(chat_id) is None
@@ -253,9 +254,7 @@ class TelegramBot:
         if not self.configure():
             logger.warning("Telegram bot configuration incomplete; polling not started")
             return
-        if not self.allowed_chat_ids:
-            logger.warning("Telegram enabled but no allowed_chat_ids are configured.")
-            return
+        # Issue #1729: don't check allowed_chat_ids at startup; let the loop check config dynamically
         self._running = True
         self._consecutive_poll_failures = 0
         backoff = poll_interval
@@ -276,7 +275,11 @@ class TelegramBot:
                     backoff = min(backoff * 2, 60.0)
                     continue
                 for update in updates:
-                    await self._handle_update(update, client)
+                    # Issue #1764: wrap command handling so exceptions don't kill the poll loop
+                    try:
+                        await self._handle_update(update, client)
+                    except Exception as exc:
+                        logger.error("Telegram command handling failed (continuing poll): %s", exc, exc_info=True)
                 await asyncio.sleep(poll_interval)
 
     def stop(self) -> None:

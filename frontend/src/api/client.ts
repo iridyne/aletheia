@@ -2273,7 +2273,7 @@ export const api = {
 	getAgentRunSteps: (runId: string) =>
 		fetchJson<any[]>(`/agent-runs/${runId}/steps`),
 	getAgentCatalog: () =>
-		fetchJson<{ agents: { name: string; side_effect_class: string; cost_class: string; gate_check: boolean }[] }>("/agents/catalog"),
+		fetchJson<{ agents: { name: string; side_effect_class: string; cost_class: string; gate_check: boolean; runnable?: boolean; blocked_reason?: string | null }[] }>("/agents/catalog"),
 	startAgentRun: (agent_name: string) =>
 		post("/agent-runs/start", { agent_name }),
 	getDreamingSummary: () =>
@@ -3204,7 +3204,12 @@ export interface TradeInsights extends OutcomeCohort {
 	trade_frequency: TradeFrequencyDay[];
 	symbol_direction_matrix: SymbolDirectionEntry[];
 	hold_duration_buckets: HoldDurationBucket[];
-	r_multiple_distribution: RMultipleBin[];
+	r_multiple_distribution: RMultipleBin[]; // #2061: always an array (bins only); diagnostics in r_multiple_distribution_meta
+	r_multiple_distribution_meta?: {
+		eligible_r_multiple_count: number;
+		unavailable_r_multiple_count: number;
+		unavailability_reasons: Record<string, number>;
+	};
 	by_exit_reason: ExitReasonEntry[];
 }
 

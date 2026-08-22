@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -207,8 +207,23 @@ function OverviewTab() {
 }
 
 // --- Runs Tab ---
-function RunsTab() {
+export function RunsTab() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const restoreRunId = useRef<string | null>(null)
+  const runListHeading = useRef<HTMLHeadingElement>(null)
+
+  useEffect(() => {
+    if (selectedRunId) {
+      restoreRunId.current = selectedRunId
+      return
+    }
+    const id = restoreRunId.current
+    if (!id) return
+    const opener = Array.from(document.querySelectorAll<HTMLElement>('[data-serenity-run-id]'))
+      .find(node => node.dataset.serenityRunId === id)
+    ;(opener || runListHeading.current)?.focus()
+    restoreRunId.current = null
+  }, [selectedRunId])
 
   return (
     <div>
@@ -216,7 +231,7 @@ function RunsTab() {
         <RunDetailPanel runId={selectedRunId} onBack={() => setSelectedRunId(null)} />
       ) : (
         <Card>
-          <h3>Run History</h3>
+          <h3 ref={runListHeading} tabIndex={-1}>Run History</h3>
           <RecentRunsList limit={20} onSelect={setSelectedRunId} />
         </Card>
       )}
@@ -224,7 +239,7 @@ function RunsTab() {
   )
 }
 
-function RecentRunsList({ limit, onSelect }: { limit: number; onSelect?: (id: string) => void }) {
+export function RecentRunsList({ limit, onSelect }: { limit: number; onSelect?: (id: string) => void }) {
   const { data } = useQuery({
     queryKey: ['serenity-runs', limit],
     queryFn: () => api.getSerenityRuns({ limit }),
@@ -261,6 +276,15 @@ function RecentRunsList({ limit, onSelect }: { limit: number; onSelect?: (id: st
               key={r.id}
               className={onSelect ? 'clickable' : ''}
               onClick={() => onSelect?.(r.id)}
+              onKeyDown={onSelect ? (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  onSelect(r.id)
+                }
+              } : undefined}
+              tabIndex={onSelect ? 0 : undefined}
+              data-serenity-run-id={onSelect ? r.id : undefined}
+              aria-label={onSelect ? `Open ${humanize(r.status)} run details from ${shortDate(r.startedAt || r.started_at)}` : undefined}
             >
               <td><RunStatusBadge status={r.status} /></td>
               <td>{r.triggerType || r.trigger_type ? humanize(r.triggerType || r.trigger_type) : '—'}</td>
@@ -431,12 +455,27 @@ function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }
 }
 
 // --- Themes Tab ---
-function ThemesTab() {
+export function ThemesTab() {
   const qc = useQueryClient()
   const { toast } = useToast()
   const [selectedTheme, setSelectedTheme] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string>('active')
   const [promoteErrors, setPromoteErrors] = useState<Record<string, string>>({})
+  const restoreThemeId = useRef<string | null>(null)
+  const themeListFallback = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (selectedTheme) {
+      restoreThemeId.current = selectedTheme
+      return
+    }
+    const id = restoreThemeId.current
+    if (!id) return
+    const opener = Array.from(document.querySelectorAll<HTMLElement>('[data-serenity-theme-id]'))
+      .find(node => node.dataset.serenityThemeId === id)
+    ;(opener || themeListFallback.current)?.focus()
+    restoreThemeId.current = null
+  }, [selectedTheme])
 
   const { data: themes = [] } = useQuery({
     queryKey: ['serenity-themes', statusFilter],
@@ -499,6 +538,7 @@ function ThemesTab() {
         {STATUS_FILTERS.map(s => (
           <Button
             key={s}
+            ref={s === 'active' ? themeListFallback : undefined}
             className={`lens-filter-btn${statusFilter === s ? ' active' : ''}`}
             onClick={() => setStatusFilter(s)}
           >
@@ -520,7 +560,17 @@ function ThemesTab() {
       {themes.map((t: any) => (
         <Card key={t.id} className="lens-theme-card">
           <div className="lens-theme-header">
-            <h4 className="clickable" onClick={() => setSelectedTheme(t.id)}>{t.name}</h4>
+            <h4>
+              <Button
+                type="button"
+                className="lens-theme-open"
+                onClick={() => setSelectedTheme(t.id)}
+                aria-label={`Open theme ${t.name} details`}
+                data-serenity-theme-id={t.id}
+              >
+                {t.name}
+              </Button>
+            </h4>
             <StatusText tone={t.status === 'active' ? 'green' : t.status === 'watching' || t.status === 'promoted' ? 'blue' : 'yellow'}>
               {humanize(t.status)}
             </StatusText>
@@ -583,9 +633,10 @@ function ThemesTab() {
 }
 
 // U1: Opportunity row with expandable bear_case
-function OpportunityRow({
-  symbol, direction, rec, grade, evidenceTier, status, bearCase
+export function OpportunityRow({
+  id, symbol, direction, rec, grade, evidenceTier, status, bearCase
 }: {
+  id: string
   symbol: string
   direction: string
   rec?: string
@@ -596,15 +647,25 @@ function OpportunityRow({
 }) {
   const [expanded, setExpanded] = useState(false)
   const hasBearCase = !!bearCase
+  const bearCaseId = `serenity-bear-case-${id}`
 
   return (
     <>
-      <tr
-        style={hasBearCase ? { cursor: 'pointer' } : undefined}
-        onClick={hasBearCase ? () => setExpanded(v => !v) : undefined}
-        title={hasBearCase ? (expanded ? 'Hide bear case' : 'Show bear case') : undefined}
-      >
-        <td className="mono">{symbol}</td>
+      <tr>
+        <td className="mono">
+          {hasBearCase ? (
+            <Button
+              type="button"
+              className="serenity-bearcase-toggle"
+              aria-expanded={expanded}
+              aria-controls={bearCaseId}
+              aria-label={`${expanded ? 'Hide' : 'Show'} bear case for ${symbol}`}
+              onClick={() => setExpanded(v => !v)}
+            >
+              <span aria-hidden="true">{expanded ? '▾' : '▸'}</span> {symbol}
+            </Button>
+          ) : symbol}
+        </td>
         <td>{direction}</td>
         <td>
           {rec ? (
@@ -618,7 +679,7 @@ function OpportunityRow({
         <td><StatusBadge status={status} /></td>
       </tr>
       {expanded && bearCase && (
-        <tr>
+        <tr id={bearCaseId}>
           <td colSpan={6} className="serenity-bearcase-cell">
             <div className="serenity-bearcase-box">
               <span className="serenity-bearcase-label">Bear Case:</span>
@@ -736,6 +797,7 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
                   return (
                     <OpportunityRow
                       key={o.id}
+                      id={o.id}
                       symbol={fmtSymbol(o.symbol, o.market_type)}
                       direction={humanize(o.direction)}
                       rec={rec}

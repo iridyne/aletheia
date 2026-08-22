@@ -52,7 +52,15 @@ def build_trade_insights() -> dict:
         "trade_frequency":        _trade_frequency(rows),
         "symbol_direction_matrix": _symbol_direction_matrix(rows),
         "hold_duration_buckets":  _hold_duration_buckets(rows),
-        "r_multiple_distribution": _r_multiple_distribution(rows),
+        # #2061: _r_multiple_distribution returns a dict with a "bins" list plus
+        # diagnostic metadata.  The wire contract for r_multiple_distribution is
+        # RMultipleBin[] (array) — expose bins directly and route the metadata to a
+        # dedicated key so the frontend never receives an Object where it expects an Array.
+        "r_multiple_distribution":      (_r_multiple_dist := _r_multiple_distribution(rows))["bins"],
+        "r_multiple_distribution_meta": {
+            k: _r_multiple_dist[k]
+            for k in ("eligible_r_multiple_count", "unavailable_r_multiple_count", "unavailability_reasons")
+        },
         "by_exit_reason":         _by_exit_reason(rows),
     }
 
