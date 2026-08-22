@@ -130,13 +130,14 @@ def _send_telegram_alert(message: str, *, level: str = "warning",
                 except Exception:
                     pass
 
+        # Issue #1731: never block caller — fire-and-forget delivery
         try:
-            asyncio.get_running_loop()
+            loop = asyncio.get_running_loop()
+            # In an async context: schedule task, do not await
+            asyncio.create_task(_send_all())
         except RuntimeError:
+            # No event loop: blocking is acceptable
             asyncio.run(_send_all())
-        else:
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                pool.submit(asyncio.run, _send_all()).result()
     except Exception as e:
         logger.warning("Telegram notification failed (non-critical): %s", e)
 
@@ -180,7 +181,7 @@ def _send_webhook(payload: dict, *, event_type: str = "alert") -> None:
         from aletheia.net import build_urllib_opener
         build_urllib_opener().open(req, timeout=timeout)
     except Exception as e:
-        logger.debug("Webhook notification failed (non-critical): %s", e)
+        logger.warning("Webhook notification failed (non-critical): %s", e)  # Issue #1755: WARNING not DEBUG
 
 
 def notify_operator(
