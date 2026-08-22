@@ -3204,7 +3204,12 @@ export interface TradeInsights extends OutcomeCohort {
 	trade_frequency: TradeFrequencyDay[];
 	symbol_direction_matrix: SymbolDirectionEntry[];
 	hold_duration_buckets: HoldDurationBucket[];
-	r_multiple_distribution: RMultipleBin[];
+	r_multiple_distribution: RMultipleBin[]; // #2061: always an array (bins only); diagnostics in r_multiple_distribution_meta
+	r_multiple_distribution_meta?: {
+		eligible_r_multiple_count: number;
+		unavailable_r_multiple_count: number;
+		unavailability_reasons: Record<string, number>;
+	};
 	by_exit_reason: ExitReasonEntry[];
 }
 
