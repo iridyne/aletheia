@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
 import logging
+import math
+import json
+import logging
 from typing import Any
 
 from aletheia.config.loader import load_config
@@ -52,6 +55,15 @@ from aletheia.storage.sqlite import get_db
 
 logger = logging.getLogger("aletheia.learning.lifecycle")
 
+class _ExperimentAlreadyClosedError(RuntimeError):
+    """Raised inside a lifecycle transaction when the predecessor row is gone.
+
+    Signals that a concurrent safety action (refreeze/invalidate) or a prior
+    promotion won the race and already closed this generation.  (#1429)
+    """
+    def __init__(self, experiment_id: str) -> None:
+        super().__init__(f"experiment {experiment_id} already closed by a concurrent transition")
+        self.experiment_id = experiment_id
 
 STAGE_SUCCESSOR = {
     "shadow": "paper_10",
@@ -586,7 +598,15 @@ def _promote_one_stage(
     policy_epoch: str,
 ) -> LifecycleResult:
     to_stage = STAGE_SUCCESSOR[experiment.stage]
-    allocation = _stage_allocation(to_stage)
+    # #1452: resolve allocation before opening the transaction; fail closed if
+    # config is unavailable rather than silently committing a 0.80 default.
+    try:
+        allocation = _stage_allocation(to_stage)
+    except ValueError as exc:
+        return LifecycleResult(
+            "hold", "promote_stage", f"learning_config_unavailable:{exc}",
+            experiment.experiment_id, verdict_id=str(verdict["verdict_id"]),
+        )
     now = _now()
     successor = LearningExperiment(
         hypothesis_id=experiment.hypothesis_id,
@@ -627,11 +647,15 @@ def _promote_one_stage(
                     (existing or {}).get("successor_experiment_id"), str(verdict["verdict_id"]),
                 )
             db = get_db()
-            db.execute(
+            result = db.execute(
                 "UPDATE learning_experiments SET status='closed', ended_at=? "
                 "WHERE experiment_id=? AND ended_at IS NULL",
                 (now, experiment.experiment_id),
             )
+            # #1429: if rowcount == 0 a concurrent safety action already closed
+            # this generation; roll back and report the collision.
+            if result.rowcount != 1:
+                raise _ExperimentAlreadyClosedError(experiment.experiment_id)
             insert_experiment(successor)
             register_fixed_look_decision(
                 successor,
@@ -639,6 +663,11 @@ def _promote_one_stage(
                 policy_epoch=policy_epoch,
                 behavior_contract_hash=str(verdict["behavior_contract_hash"]),
             )
+    except _ExperimentAlreadyClosedError:
+        return LifecycleResult(
+            "hold", "promote_stage", "already_transitioned_by_concurrent_safety",
+            experiment.experiment_id, verdict_id=str(verdict["verdict_id"]),
+        )
     except InferenceContractError:
         return LifecycleResult(
             "hold",
@@ -692,21 +721,31 @@ def _apply_safety_action(
         policy_epoch=policy_epoch,
         created_at=now,
     )
-    with transaction():
-        if not insert_lifecycle_event(event):
-            return LifecycleResult(action, action, "already_transitioned", experiment.experiment_id, verdict_id=verdict["verdict_id"])
-        db = get_db()
-        status = "invalid" if action == "invalidate" else "refrozen"
-        db.execute(
-            "UPDATE learning_experiments SET status=?, ended_at=? "
-            "WHERE experiment_id=? AND ended_at IS NULL",
-            (status, now, experiment.experiment_id),
-        )
-        if action == "invalidate":
-            db.execute(
-                "UPDATE learning_hypotheses SET status='refrozen', updated_at=? WHERE hypothesis_id=?",
-                (now, hypothesis.hypothesis_id),
+    try:
+        with transaction():
+            if not insert_lifecycle_event(event):
+                return LifecycleResult(action, action, "already_transitioned", experiment.experiment_id, verdict_id=verdict["verdict_id"])
+            db = get_db()
+            status = "invalid" if action == "invalidate" else "refrozen"
+            safety_result = db.execute(
+                "UPDATE learning_experiments SET status=?, ended_at=? "
+                "WHERE experiment_id=? AND ended_at IS NULL",
+                (status, now, experiment.experiment_id),
             )
+            # #1429: if rowcount == 0, a concurrent promotion already closed this
+            # generation; report it rather than silently claiming safety success.
+            if safety_result.rowcount != 1:
+                raise _ExperimentAlreadyClosedError(experiment.experiment_id)
+            if action == "invalidate":
+                db.execute(
+                    "UPDATE learning_hypotheses SET status='refrozen', updated_at=? WHERE hypothesis_id=?",
+                    (now, hypothesis.hypothesis_id),
+                )
+    except _ExperimentAlreadyClosedError:
+        return LifecycleResult(
+            "hold", action, "already_transitioned_by_concurrent_promotion",
+            experiment.experiment_id, verdict_id=verdict["verdict_id"],
+        )
     _write_lifecycle_audit(event)
     return LifecycleResult(action, action, event.reason, experiment.experiment_id, verdict_id=verdict["verdict_id"])
 
@@ -1076,12 +1115,20 @@ def _retire_idle_experiment(
 
 
 def _stage_allocation(stage: str) -> float:
+    """Resolve the allocation fraction for a promotion target stage.
+
+    Raises ``ValueError`` on config unavailability or out-of-bounds value so
+    the caller (``_promote_one_stage``) can hold rather than commit under an
+    incorrect policy identity.  (#1452)
+    """
     if stage == "paper_active":
         try:
             value = float(load_config().learning.paper_active_allocation_pct)
-        except Exception:
-            value = 0.80
-        return min(0.90, max(0.01, value))
+        except Exception as exc:
+            raise ValueError(f"paper_active_allocation_pct unavailable: {exc}") from exc
+        if not math.isfinite(value) or not (0.01 <= value <= 0.90):
+            raise ValueError(f"paper_active_allocation_pct out of range: {value!r}")
+        return value
     return STAGE_ALLOCATION[stage]
 
 
