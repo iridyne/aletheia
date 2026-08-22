@@ -2273,7 +2273,7 @@ export const api = {
 	getAgentRunSteps: (runId: string) =>
 		fetchJson<any[]>(`/agent-runs/${runId}/steps`),
 	getAgentCatalog: () =>
-		fetchJson<{ agents: { name: string; side_effect_class: string; cost_class: string; gate_check: boolean }[] }>("/agents/catalog"),
+		fetchJson<{ agents: { name: string; side_effect_class: string; cost_class: string; gate_check: boolean; runnable?: boolean; blocked_reason?: string | null }[] }>("/agents/catalog"),
 	startAgentRun: (agent_name: string) =>
 		post("/agent-runs/start", { agent_name }),
 	getDreamingSummary: () =>

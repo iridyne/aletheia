@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from aletheia.config.loader import is_preview_mode, load_config
+from aletheia.config.prediction import prediction_observer_blocked_reason
 from aletheia.portfolio.pnl import compute_portfolio
 from aletheia.storage.sqlite import get_db
 from aletheia.storage import repositories as repo
@@ -391,12 +392,17 @@ _OPERATOR_SERVICE_AGENT_ALLOWLIST: frozenset[str] = frozenset({
 @router.get("/agents/catalog")
 def get_agents_catalog():
     """Read-only catalog of agents that may be triggered manually from the Dashboard."""
-    return {
-        "agents": [
-            {"name": name, **meta}
-            for name, meta in _MANUAL_AGENT_ALLOWLIST.items()
-        ]
-    }
+    agents = []
+    for name, meta in _MANUAL_AGENT_ALLOWLIST.items():
+        entry = {"name": name, **meta}
+        if name == "prediction_observer":
+            try:
+                reason = prediction_observer_blocked_reason(load_config())
+            except Exception:
+                reason = "prediction_observer_config_unavailable"
+            entry.update({"runnable": reason is None, "blocked_reason": reason})
+        agents.append(entry)
+    return {"agents": agents}
 
 
 class StartAgentRequest(BaseModel):
@@ -444,6 +450,28 @@ def start_agent_run(req: StartAgentRequest, request: Request):
             )
 
     meta = _MANUAL_AGENT_ALLOWLIST[req.agent_name]
+
+    if req.agent_name == "prediction_observer":
+        try:
+            blocked_reason = prediction_observer_blocked_reason(load_config())
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "prediction_observer_config_unavailable",
+                    "message": "Prediction observer configuration is unavailable; no run was queued.",
+                },
+            ) from exc
+        if blocked_reason is not None:
+            status_code = 503 if blocked_reason == "prediction_observer_config_unavailable" else 400
+            message = {
+                "prediction_observer_disabled": "Prediction observer is disabled; no run was queued.",
+                "prediction_observer_not_configured": "No prediction markets are configured; no run was queued.",
+            }.get(blocked_reason, "Prediction observer is unavailable; no run was queued.")
+            raise HTTPException(
+                status_code=status_code,
+                detail={"error": blocked_reason, "message": message},
+            )
 
     # Gate check for behavior-producing agents: honour kill-switch and pause state
     # so a manual trigger cannot bypass protections that scheduled runs respect.
