@@ -304,7 +304,15 @@ def promotion_refreeze_reason(*, now: datetime | None = None) -> str | None:
     last_success = _parse_timestamp(reviewer.last_succeeded_at)
     if last_success is None or current - last_success > _REVIEWER_STALE_AFTER:
         return "reviewer_stale"
+    # #1826: reject future timestamps with a small skew allowance (5 minutes).
+    # A future last_succeeded_at (e.g. from clock rollback or corrupt write)
+    # would incorrectly make the reviewer appear fresh, unfreezing guard mutations.
+    _CLOCK_SKEW_ALLOWANCE = timedelta(minutes=5)
+    if last_success > current + _CLOCK_SKEW_ALLOWANCE:
+        return "reviewer_timestamp_future"
     oldest = _parse_timestamp(reviewer.oldest_backlog_at)
+    if oldest is not None and oldest > current + _CLOCK_SKEW_ALLOWANCE:
+        return "reviewer_backlog_timestamp_future"
     if oldest is not None and current - oldest > _REVIEWER_STALE_AFTER:
         return "reviewer_backlog_stale"
     if reviewer.backlog_count > _REVIEWER_BACKLOG_LIMIT:
