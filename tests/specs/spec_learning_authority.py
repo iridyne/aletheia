@@ -916,8 +916,14 @@ def test_policy_epoch_ignores_code_only_rebuild_and_rotates_on_config_change(mon
     import aletheia.agent_runtime.build_info as build_info
     from aletheia.config.loader import load_config
     from aletheia.learning.ledger import get_record
+    from aletheia.storage.sqlite import get_db
 
-    base_cfg = load_config()
+    loaded_cfg = load_config()
+    base_cfg = loaded_cfg.model_copy(update={
+        "universe": loaded_cfg.universe.model_copy(
+            update={"blacklist": ["BTC/USDT"]}
+        )
+    })
     _enable_legacy_paper_authority(monkeypatch, "ranker_factor_filter")
     monkeypatch.setattr(exp, "load_config", lambda: base_cfg)
 
@@ -936,6 +942,41 @@ def test_policy_epoch_ignores_code_only_rebuild_and_rotates_on_config_change(mon
     e_base = exp._policy_epoch("universe_family_calibration")
     monkeypatch.setattr(exp, "load_config", lambda: changed)
     assert exp._policy_epoch("universe_family_calibration") != e_base  # config change rotates it
+
+    blacklist_changed = base_cfg.model_copy(update={
+        "universe": base_cfg.universe.model_copy(
+            update={"blacklist": ["ETH/USDT", "BTC/USDT", "ETH/USDT"]}
+        )
+    })
+    monkeypatch.setattr(exp, "load_config", lambda: blacklist_changed)
+    blacklist_epoch = exp._policy_epoch("universe_family_calibration")
+    assert blacklist_epoch != e_base
+    persisted = get_record("learning_policy_epochs", blacklist_epoch)
+    effective_values = json.loads(persisted["effective_values_json"])
+    assert effective_values["universe_behavior"]["blacklist"] == [
+        "BTC/USDT", "ETH/USDT",
+    ]
+
+    reordered = base_cfg.model_copy(update={
+        "universe": base_cfg.universe.model_copy(
+            update={"blacklist": ["BTC/USDT", "ETH/USDT"]}
+        )
+    })
+    monkeypatch.setattr(exp, "load_config", lambda: reordered)
+    assert exp._policy_epoch("universe_family_calibration") == blacklist_epoch
+
+    rows = get_db().execute(
+        "SELECT epoch_id, ended_at FROM learning_policy_epochs "
+        "WHERE epoch_kind='decision_policy:universe_family_calibration'"
+    ).fetchall()
+    assert [row["epoch_id"] for row in rows if row["ended_at"] is None] == [
+        blacklist_epoch,
+    ]
+    assert all(
+        row["ended_at"] is not None
+        for row in rows
+        if row["epoch_id"] != blacklist_epoch
+    )
 
     # Each exposure is stamped with the running build.
     monkeypatch.setattr(build_info, "get_boot_commit", lambda: "commit-XYZ")
