@@ -8,7 +8,7 @@ import type { TabDef } from '../components/Tabs'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import { StatusBadge } from '../components/DataTable'
 import { DataStateMessage } from '../components/DataState'
-import { Badge, Button, Card, StatusText, TableWrap, useToast, type StatusTone } from '../components/ui'
+import { Badge, Button, Card, ListRowButton, StatusText, TableWrap, useToast, type StatusTone } from '../components/ui'
 import ProbabilityChart from '../charts/ProbabilityChart'
 import { fmtScore100, fmtTimestamp } from '../lib/format'
 
@@ -144,7 +144,12 @@ function ObserverStatusCard({ status, state }: { status: PredictionStatus | unde
 // --- Market Card ---
 function MarketCard({ market, onClick }: { market: PredictionMarket; onClick: () => void }) {
   return (
-    <Card className="pred-market-card" onClick={onClick}>
+    <ListRowButton
+      type="button"
+      className="pred-market-card"
+      aria-label={`Open details for ${market.event_title}`}
+      onClick={onClick}
+    >
       <div className="pred-card-header">
         <h4 className="pred-card-title">{market.event_title}</h4>
         {market.category && <Badge tone="blue">{market.category}</Badge>}
@@ -176,7 +181,7 @@ function MarketCard({ market, onClick }: { market: PredictionMarket; onClick: ()
         )}
         <span className="text-muted text-sm">{shortDate(market.created_at)}</span>
       </div>
-    </Card>
+    </ListRowButton>
   )
 }
 
@@ -247,7 +252,20 @@ function ProbabilityMoversTab({ markets, state, onSelect }: { markets: Predictio
           </thead>
           <tbody>
             {movers.map(m => (
-              <tr key={m.id} className="clickable" onClick={() => onSelect(m)}>
+              <tr
+                key={m.id}
+                className="clickable"
+                role="button"
+                tabIndex={0}
+                aria-label={`Open details for ${m.event_title}`}
+                onClick={() => onSelect(m)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    onSelect(m)
+                  }
+                }}
+              >
                 <td className="pred-event-cell td-ellipsis">{m.event_title}</td>
                 <td className="mono">{pctFmt(m.yes_probability)}</td>
                 <td className={`mono ${(m.probability_change_24h ?? 0) > 0 ? 'pnl-positive' : (m.probability_change_24h ?? 0) < 0 ? 'pnl-negative' : ''}`}>
