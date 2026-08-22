@@ -404,6 +404,11 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   Position 数量核减到剩余（`is_partial=1` 记账、claim 释放、下一保护周期自动发下一片），绝不提前
   关闭仍有 venue 数量的 Position；重放已落账分片是幂等 no-op；部分成交的分片单保留
   `partially_filled` claim 继续轮询。完整平仓（订单量 = 剩余量）行为不变。
+- **可成交限价回退（同日扩展）**：实测该 demo 缺陷可以是 **symbol 级**的——XRPUSDT 上任意数量
+  的市价单（含 5 张诊断性入场）都被零成交取消，而限价单正常成交。因此一旦某 Position 的平仓史
+  出现 match-cap 取消，下一次平仓自动改为**可成交限价**：价 = 最新价 ×（对手方向 ±1%），
+  GTC 挂单穿透对手价、残余量留在簿上由既有部分成交物化收敛；取价失败则回退市价。定价方向按
+  venue 侧对手方向计算（UTA 客户端会把 hedge 平仓翻转到持仓反侧）。
 - **未决 claim 不得关闭保护性观察**：Position Manager 仍读取 exact fresh mark 并评估
   Layer-0/SL/TP/max-hold/trailing；若保护规则再次触发，只记录等待原 claim 收敛，绝不调用
   exchange close 或创建替代 Order。`positions` 的 owner read model 同时暴露
