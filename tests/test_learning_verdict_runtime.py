@@ -513,6 +513,45 @@ def test_canonical_and_selected_mirror_economic_disagreement_fails_closed():
     }
 
 
+def test_canonical_and_mirror_temporal_disagreement_fails_closed():
+    hypothesis, experiment = _experiment()
+    _exposure(
+        experiment, hypothesis, candidate="temporal-mirror", assignment="treatment",
+        outcome_key="temporal-mirror:4h",
+    )
+    _exposure(
+        experiment, hypothesis, candidate="temporal-clean", assignment="control",
+        outcome_key="temporal-clean:4h",
+    )
+    _filter_outcome("temporal-mirror", net=1.0)
+    _outcome("temporal-mirror:4h", net=1.0)
+    _filter_outcome("temporal-clean", net=0.0)
+
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    mirror = db.execute(
+        "SELECT settled_at FROM universe_forward_outcomes "
+        "WHERE outcome_candidate_key='temporal-mirror:4h'"
+    ).fetchone()
+    invalid_due = (
+        datetime.fromisoformat(mirror["settled_at"]) + timedelta(minutes=1)
+    ).isoformat()
+    db.execute(
+        "UPDATE universe_forward_outcomes SET due_at=? "
+        "WHERE outcome_candidate_key='temporal-mirror:4h'",
+        (invalid_due,),
+    )
+    db.commit()
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "invalid"
+    assert metrics["invalid_reasons"] == {"conflicting_mirrored_outcome": 1}
+    assert "due_at" in metrics["evidence_conflicts"][0]["differing_fields"]
+
+
 def test_canonical_and_mirror_source_label_difference_is_not_an_economic_conflict():
     hypothesis, experiment = _experiment()
     _exposure(
@@ -643,6 +682,104 @@ def test_conflicting_universe_fallback_duplicates_fail_closed_in_any_insertion_o
     assert verdict.verdict == "invalid"
     assert metrics["invalid_reasons"] == {"ambiguous_duplicate_outcome": 1}
     assert verdict.unique_treatment_n == 0
+
+
+def test_due_only_universe_duplicate_conflict_fails_closed():
+    hypothesis, experiment = _experiment()
+    _exposure(experiment, hypothesis, candidate="due-ambiguous", assignment="treatment")
+    _exposure(experiment, hypothesis, candidate="due-clean", assignment="control")
+    _outcome("due-ambiguous", net=1.0, suffix="valid")
+    _outcome("due-ambiguous", net=1.0, suffix="invalid")
+    _outcome("due-clean", net=0.0)
+
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    invalid = db.execute(
+        "SELECT settled_at FROM universe_forward_outcomes "
+        "WHERE id='outcome-due-ambiguous-4h-invalid'"
+    ).fetchone()
+    db.execute(
+        "UPDATE universe_forward_outcomes SET due_at=? "
+        "WHERE id='outcome-due-ambiguous-4h-invalid'",
+        (
+            (
+                datetime.fromisoformat(invalid["settled_at"])
+                + timedelta(minutes=1)
+            ).isoformat(),
+        ),
+    )
+    db.commit()
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "invalid"
+    assert metrics["invalid_reasons"] == {"ambiguous_duplicate_outcome": 1}
+
+
+def test_future_duplicate_cannot_invalidate_historical_cohort():
+    from aletheia.learning.cohorts import build_experiment_cohorts
+    from aletheia.learning.contribution_runner import evaluate_experiment
+
+    hypothesis, experiment = _experiment()
+    _exposure(experiment, hypothesis, candidate="future-duplicate", assignment="treatment")
+    _exposure(experiment, hypothesis, candidate="future-clean", assignment="control")
+    _outcome("future-duplicate", net=1.0, suffix="mature")
+    _outcome(
+        "future-duplicate",
+        net=-99.0,
+        suffix="future",
+        entry_at=_iso(days=2),
+    )
+    _outcome("future-clean", net=0.0)
+    cutoff = _BASE + timedelta(days=1)
+
+    cohort = build_experiment_cohorts(
+        experiment.experiment_id,
+        as_of_at=cutoff,
+    )[0]
+    verdicts = evaluate_experiment(
+        experiment.experiment_id,
+        as_of_at=cutoff,
+    )
+
+    assert not cohort.invalid_reasons
+    assert {sample.candidate_key for sample in cohort.samples} == {
+        "future-duplicate",
+        "future-clean",
+    }
+    assert verdicts
+    assert all(verdict.verdict != "invalid" for verdict in verdicts)
+
+
+def test_future_row_keeps_higher_priority_temporal_invalid_reason():
+    from aletheia.learning.contribution_runner import evaluate_experiment
+    from aletheia.storage.sqlite import get_db
+
+    hypothesis, experiment = _experiment()
+    _exposure(experiment, hypothesis, candidate="future-invalid", assignment="treatment")
+    _outcome(
+        "future-invalid",
+        net=1.0,
+        entry_at=_iso(days=2),
+    )
+    db = get_db()
+    db.execute(
+        "UPDATE universe_forward_outcomes SET due_at=? "
+        "WHERE outcome_candidate_key='future-invalid'",
+        (_iso(days=2, minutes=-1),),
+    )
+    db.commit()
+
+    verdict = evaluate_experiment(
+        experiment.experiment_id,
+        as_of_at=_BASE + timedelta(days=1),
+    )[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "invalid"
+    assert metrics["invalid_reasons"] == {"due_before_entry": 1}
 
 
 def test_conflicting_allocation_result_excludes_sample_without_invalidating_cohort():

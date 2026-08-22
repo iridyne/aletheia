@@ -16,6 +16,7 @@ These feed into apply_fine_tradability_filters() and the operator system assessm
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
 
 logger = logging.getLogger("aletheia.universe.filter_advisor")
@@ -59,8 +60,19 @@ def get_family_spread_tolerances(max_step: float = 0.20) -> dict[str, float]:
     from aletheia.storage import repositories as repo
 
     try:
-        spread_rows = repo.family_spread_tolerance_stats()
-        pressure_rows = repo.filter_pressure_stats()
+        db = repo.get_db()
+        started_txn = not db.in_transaction
+        if started_txn:
+            db.execute("BEGIN DEFERRED")
+        try:
+            as_of_at = datetime.now(timezone.utc)
+            spread_rows = repo.family_spread_tolerance_stats(
+                as_of_at=as_of_at,
+            )
+            pressure_rows = repo.filter_pressure_stats(as_of_at=as_of_at)
+        finally:
+            if started_txn:
+                db.execute("ROLLBACK")
     except Exception as exc:
         logger.warning("filter_advisor: data fetch failed: %s", exc)
         return {}

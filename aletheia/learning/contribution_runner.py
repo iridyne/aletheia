@@ -57,13 +57,20 @@ def run_verdict_cycle() -> dict:
     return {"evaluated": evaluated, "verdicts_written": verdicts_written, "skipped": skipped}
 
 
-def evaluate_experiment(experiment_id: str) -> list[LearningContributionVerdict]:
+def evaluate_experiment(
+    experiment_id: str,
+    *,
+    as_of_at: datetime | None = None,
+) -> list[LearningContributionVerdict]:
     """Evaluate and persist all supported isolated cohorts for one experiment.
 
     Equal source inputs yield the same verdict id and leave the existing row in
     place.  New settled inputs yield a new immutable measurement record.
     """
     verdicts: list[LearningContributionVerdict] = []
+    evaluation_as_of = (
+        datetime.now(timezone.utc) if as_of_at is None else as_of_at
+    )
     # Retention: a cohort whose exposures are still gathering data would
     # otherwise mint a durable ``insufficient_data`` placeholder row every 6h
     # cycle, inflating ``learning_contribution_verdicts`` for no gain.  Skip
@@ -72,8 +79,15 @@ def evaluate_experiment(experiment_id: str) -> list[LearningContributionVerdict]
     # terminal signal — samples, invalid reasons, or non-transient exclusion
     # reasons (e.g. ``dirty_or_missing_entry_time`` for pre-floor observations)
     # — must still produce their verdict so downstream integrity checks see it.
-    _TRANSIENT_EXCLUSIONS = frozenset({"unsettled", "missing_exact_outcome"})
-    for cohort in build_experiment_cohorts(experiment_id):
+    _TRANSIENT_EXCLUSIONS = frozenset({
+        "unsettled",
+        "settlement_after_as_of",
+        "missing_exact_outcome",
+    })
+    for cohort in build_experiment_cohorts(
+        experiment_id,
+        as_of_at=evaluation_as_of,
+    ):
         if (
             not cohort.samples
             and not cohort.invalid_reasons
@@ -88,7 +102,10 @@ def evaluate_experiment(experiment_id: str) -> list[LearningContributionVerdict]
         insert_record("learning_contribution_verdicts", verdict, ignore_duplicates=True)
         stored = get_record("learning_contribution_verdicts", verdict.verdict_id)
         verdicts.append(LearningContributionVerdict(**(stored or verdict.model_dump())))
-        confirmatory = _maybe_consume_confirmatory_verdict(cohort)
+        confirmatory = _maybe_consume_confirmatory_verdict(
+            cohort,
+            as_of_at=evaluation_as_of,
+        )
         if confirmatory is not None:
             verdicts.append(confirmatory)
     return verdicts
@@ -170,6 +187,8 @@ def _build_verdict(
 
 def _maybe_consume_confirmatory_verdict(
     cohort: ContributionCohort,
+    *,
+    as_of_at: datetime,
 ) -> LearningContributionVerdict | None:
     if not str(cohort.experiment.stage).startswith("paper_"):
         return None
@@ -191,6 +210,7 @@ def _maybe_consume_confirmatory_verdict(
     confirmatory_cohorts = build_experiment_cohorts(
         cohort.experiment.experiment_id,
         assignment_unit_keys=frozenset(selected_keys),
+        as_of_at=as_of_at,
     )
     selected = next(
         (candidate for candidate in confirmatory_cohorts if candidate.key == cohort.key),

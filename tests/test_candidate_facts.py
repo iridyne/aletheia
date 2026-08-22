@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime
 import json
 import sqlite3
 import zlib
+
+import pytest
 
 import aletheia.analytics.candidate_facts as candidate_facts
 
@@ -26,7 +29,8 @@ def _db() -> sqlite3.Connection:
         );
         CREATE TABLE filter_candidate_outcomes (
             id TEXT PRIMARY KEY, outcome_candidate_key TEXT, horizon TEXT,
-            entry_ts TEXT, settled_at TEXT, status TEXT, net_return_pct REAL
+            entry_ts TEXT, due_at TEXT, settled_at TEXT, status TEXT,
+            net_return_pct REAL
         );
         CREATE TABLE opportunities (id TEXT PRIMARY KEY, created_at TEXT);
         CREATE TABLE pi_decisions (
@@ -124,12 +128,13 @@ def _db() -> sqlite3.Connection:
     for index, key in enumerate(("outcome-traded", "outcome-skip", "outcome-risk", "outcome-filtered")):
         settled_at = "2026-08-14T00:00:00+00:00" if key != "outcome-filtered" else "2026-08-15T00:00:00+00:00"
         db.execute(
-            "INSERT INTO filter_candidate_outcomes VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO filter_candidate_outcomes VALUES (?,?,?,?,?,?,?,?)",
             (
                 f"fixed-{index}",
                 key,
                 "24h",
                 "2026-08-13T00:00:00+00:00",
+                "2026-08-14T00:00:00+00:00",
                 settled_at,
                 "settled",
                 float(index),
@@ -160,6 +165,72 @@ def test_candidate_facts_preserve_traded_skip_reject_and_filtered_units():
     assert all(fact["variable_horizon_position_outcome"] is None for fact in facts.values())
     assert report["settled_outcome_count"] == 3
     assert report["outcome_coverage"] == 0.75
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "reason"),
+    [
+        ("settled_at", None, "missing_settled_at"),
+        ("settled_at", "not-a-time", "malformed_settled_at"),
+        ("due_at", "2026-08-12T23:59:59+00:00", "due_before_entry"),
+        ("settled_at", "2026-08-15T00:00:00+00:00", "settlement_after_as_of"),
+    ],
+)
+def test_candidate_facts_exclude_temporally_invalid_settled_outcomes(
+    column, value, reason,
+):
+    db = _db()
+    db.execute(
+        f"UPDATE filter_candidate_outcomes SET {column}=? WHERE id='fixed-0'",
+        (value,),
+    )
+
+    report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db,
+    )
+
+    fact = next(item for item in report["facts"] if item["fact_id"] == "outcome-traded")
+    assert fact["fixed_horizon_outcome"] is None
+    assert fact["fixed_horizon_outcome_unavailable_reason"] == reason
+    assert fact["evidence_available_at"] is None
+    assert report["settled_outcome_count"] == 2
+    assert report["unavailable_reasons"][reason] == 1
+
+    from aletheia.analytics.profit_gradient_evidence import _candidate_sample
+
+    sample, sample_reason = _candidate_sample(
+        db,
+        fact,
+        layer="Risk",
+        cutoff=datetime.fromisoformat("2026-08-14T12:00:00+00:00"),
+        epoch_start=datetime.fromisoformat("2026-08-12T00:00:00+00:00"),
+        cost_model_id="v1",
+        epoch_id="epoch-1",
+    )
+    assert sample is None
+    assert sample_reason == reason
+
+    from aletheia.analytics.profit_loop_diagnosis import diagnose_candidate_report
+
+    diagnosis = diagnose_candidate_report(report)
+    assert diagnosis["layers"]["Selection"]["exclusion_reasons"][reason] == 1
+
+
+def test_candidate_facts_keep_pending_visible_without_counting_it_as_settled():
+    db = _db()
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET status='pending', settled_at=NULL "
+        "WHERE id='fixed-0'"
+    )
+
+    report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db,
+    )
+
+    fact = next(item for item in report["facts"] if item["fact_id"] == "outcome-traded")
+    assert fact["fixed_horizon_outcome"]["status"] == "pending"
+    assert report["settled_outcome_count"] == 2
+    assert "unsettled" not in report["unavailable_reasons"]
 
 
 def test_candidate_facts_reject_variable_horizon():

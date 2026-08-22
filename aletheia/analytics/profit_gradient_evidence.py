@@ -20,7 +20,12 @@ from aletheia.analytics.candidate_facts import (
     FACT_CONTRACT_VERSION as PROFIT_LOOP_FACT_CONTRACT_VERSION,
     build_candidate_facts,
 )
-from aletheia.learning.outcomes import assess_candidate_outcome
+from aletheia.analytics.learning_window import LEARNING_DATA_FLOOR_ISO
+from aletheia.learning.outcomes import (
+    CANDIDATE_OUTCOME_TEMPORAL_REASONS,
+    assess_candidate_outcome,
+    candidate_outcome_temporal_reason,
+)
 from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.analytics.execution_contribution import (
     _paired_position_cost,
@@ -82,6 +87,7 @@ _WATERFALL_ORDER = (
     "ambiguous_identity",
     "missing_identity",
     "epoch_mismatch",
+    *CANDIDATE_OUTCOME_TEMPORAL_REASONS,
     "unverified_or_unsettled_outcome",
     "incomplete_path",
     "cost_incomplete",
@@ -377,16 +383,14 @@ def _resolve_cost_model(
     sources: list[dict[str, Any]] = []
     malformed_count = 0
     source_error = False
-    for table, time_fields in (
-        ("filter_candidate_outcomes", ("entry_ts", "settled_at")),
-        ("universe_forward_outcomes", ("entry_ts", "settled_at")),
-    ):
+    for table in ("filter_candidate_outcomes", "universe_forward_outcomes"):
         columns = _columns(db, table)
+        required = {"cost_model_version", "status", "entry_ts", "due_at", "settled_at"}
         # Exploratory shadow rows and rows without a terminal status are not a
         # confirmatory cost-model registry.
-        if not {"cost_model_version", "status", *time_fields} <= columns:
+        if not required <= columns:
             continue
-        selected = ["cost_model_version", "status", *time_fields]
+        selected = sorted(required)
         if "id" in columns:
             selected.insert(0, "id")
         try:
@@ -395,14 +399,18 @@ def _resolve_cost_model(
                     continue
                 if str(row.get("status") or "").lower() != "settled":
                     continue
-                if any(row.get(field) in (None, "") for field in time_fields):
-                    malformed_count += 1
+                entry_at = _time(row.get("entry_ts"))
+                floor = _time(LEARNING_DATA_FLOOR_ISO)
+                if entry_at is not None and floor is not None and entry_at < floor:
                     continue
-                parsed_times = [_time(row.get(field)) for field in time_fields]
-                if any(value is None for value in parsed_times):
-                    malformed_count += 1
+                temporal_reason = candidate_outcome_temporal_reason(
+                    row,
+                    as_of_at=cutoff,
+                )
+                if temporal_reason == "settlement_after_as_of":
                     continue
-                if any(value > cutoff for value in parsed_times if value is not None):
+                if temporal_reason:
+                    malformed_count += 1
                     continue
                 sources.append({"table": table, **row})
         except (sqlite3.Error, OSError):
@@ -868,6 +876,11 @@ def _candidate_sample(
 ) -> tuple[dict[str, Any] | None, str | None]:
     outcome = fact.get("fixed_horizon_outcome")
     if not isinstance(outcome, Mapping):
+        unavailable_reason = fact.get(
+            "fixed_horizon_outcome_unavailable_reason"
+        )
+        if unavailable_reason in CANDIDATE_OUTCOME_TEMPORAL_REASONS:
+            return None, str(unavailable_reason)
         return None, "unverified_or_unsettled_outcome"
     occurred = _time(fact.get("event_at") or outcome.get("entry_ts"))
     if occurred is None:
@@ -876,13 +889,10 @@ def _candidate_sample(
         return None, "outside_epoch"
     if occurred > cutoff:
         return None, "outside_cutoff"
-    settled_at = _time(outcome.get("settled_at"))
-    if settled_at is None:
-        return None, "unverified_or_unsettled_outcome"
-    if settled_at > cutoff:
-        return None, "outside_cutoff"
-    outcome_assessment = assess_candidate_outcome(outcome)
+    outcome_assessment = assess_candidate_outcome(outcome, as_of_at=cutoff)
     if not outcome_assessment.eligible:
+        if outcome_assessment.reason in CANDIDATE_OUTCOME_TEMPORAL_REASONS:
+            return None, outcome_assessment.reason
         return None, "unverified_or_unsettled_outcome"
     if outcome.get("horizon") != _FIXED_CANDIDATE_HORIZON:
         return None, "stale_evidence"
@@ -1437,6 +1447,12 @@ def _add_layer_samples(
 
     for fact in candidate_facts:
         for layer in ("Selection", "Decision", "Risk"):
+            unavailable_reason = fact.get(
+                "fixed_horizon_outcome_unavailable_reason"
+            )
+            if unavailable_reason in CANDIDATE_OUTCOME_TEMPORAL_REASONS:
+                record(layer, None, str(unavailable_reason))
+                continue
             if cost_status != "available":
                 record(layer, None, "cost_incomplete")
                 continue
@@ -1554,12 +1570,9 @@ def _coverage_context(
     for fact in cohort_candidates:
         outcome = fact.get("fixed_horizon_outcome")
         if isinstance(outcome, Mapping):
-            settled_at = _time(outcome.get("settled_at"))
-            assessment = assess_candidate_outcome(outcome)
+            assessment = assess_candidate_outcome(outcome, as_of_at=cutoff)
             if (
                 assessment.eligible
-                and settled_at is not None
-                and settled_at <= cutoff
                 and outcome.get("cost_model_version") == cost_model_id
             ):
                 candidate_eligible += 1
