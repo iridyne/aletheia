@@ -22,6 +22,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
+from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_bitget
 from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest
 from aletheia.exchanges.submission_errors import (
@@ -140,19 +141,28 @@ def _approved_protection_prices(
     return approved_stop, approved_take_profit
 
 
+class MarginTransferError(RuntimeError):
+    """Mix margin transfer failed before order placement."""
+
+
 
 def _ensure_mix_margin(client, required_usd: float, dry_run: bool = False) -> None:
-    """Top up the mix (futures) wallet from UTA before a futures order."""
+    """Top up the mix (futures) wallet from UTA before a futures order.
+
+    #1521: margin-transfer errors must propagate (not be swallowed), so callers
+    know a live order was NOT placed when margin transfer fails. DemoFundingUnavailable
+    is the one exception: demo accounts may have no auto-top-up, so proceed without.
+    """
     if required_usd <= 0 or dry_run:
         return
     try:
         from aletheia.exchanges.bitget.client import DemoFundingUnavailable
         _run_coro(client.transfer(required_usd))
     except DemoFundingUnavailable:
-        raise
+        # Demo-only case: no real funds to transfer. Proceed with order.
+        return
     except Exception as e:
-        logger.warning("mix margin precheck skipped: %s", type(e).__name__)
-
+        raise MarginTransferError(f"mix margin transfer failed: {e}") from e
 def execute_live_order(
     proposal_id: str,
     risk_decision_id: str | None,
@@ -255,15 +265,35 @@ def execute_live_order(
             )
             raise
 
+    # --- Pre-submission: set leverage before placing the order (#1732, #1792).
+    # Splitting set_leverage out ensures a leverage timeout is a KNOWN pre-
+    # submission failure (order.status = "error"), never submission_unknown.
+    if market_type != "spot" and leverage is not None and leverage >= 1:
+        try:
+            _run_coro(client.set_leverage(exchange_symbol, leverage))
+        except Exception:
+            update_order(
+                order.id,
+                status="error",
+                error_reason="leverage_setup_failed_before_submission",
+            )
+            raise
+
+    # #1727: gate exchange-native TPSL preset fields on the toggle. When disabled,
+    # pass None so the BitgetClient does not include presetStopLossPrice /
+    # presetStopSurplusPrice in the order body.
+    tpsl_enabled = load_config().trading.exchange_tpsl_enabled
+    wire_stop_price = approved_stop_price if tpsl_enabled else None
+    wire_take_profit_price = approved_take_profit_price if tpsl_enabled else None
     try:
         order_resp = _run_coro(client.place_order(OrderRequest(
             symbol=exchange_symbol, market_type=market_type, side=side,
             order_type=order_type, quantity=quantity,
             price=price if order_type == "limit" else None,
             client_oid=proposal_id,
-            preset_stop_loss_price=approved_stop_price,
-            preset_take_profit_price=approved_take_profit_price,
-            leverage=leverage,
+            preset_stop_loss_price=wire_stop_price,
+            preset_take_profit_price=wire_take_profit_price,
+            leverage=None,  # already set above; skip redundant client-side call
         )))
     except Exception as e:
         if _is_ambiguous_submission_error(e):

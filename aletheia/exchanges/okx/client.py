@@ -19,6 +19,7 @@ import ccxt.async_support as ccxt
 
 from aletheia.config.secrets import get_secret
 from aletheia.data.symbols import to_canonical, to_ccxt_perp
+from aletheia.exchanges.submission_errors import ClosePositionAbsentError
 
 logger = logging.getLogger("aletheia.okx_client")
 
@@ -34,6 +35,8 @@ class OrderRequest:
     client_oid: str | None = None
     reduce_only: bool = False
     leverage: int | None = None   # USDT-futures: set on the exchange before an open
+    stop_price: float | None = None  # carried for audit; OKX uses separate algo orders for TPSL
+    take_profit_price: float | None = None
 
 
 @dataclass
@@ -220,6 +223,15 @@ class OKXClient:
             )
         except ccxt.BaseError as e:
             logger.error("OKX order failed: %s", e)
+            # #1706: OKX error 51020 means the position to reduce does not exist.
+            # Raise ClosePositionAbsentError so the broker's reconciliation state
+            # machine marks the position as position_absence_unverified rather than
+            # a generic error, enabling exact reconciliation.
+            err_msg = str(e)
+            if order.reduce_only and ("51020" in err_msg or "position does not exist" in err_msg.lower()):
+                raise ClosePositionAbsentError(
+                    f"OKX close rejected: no matching position (reduce_only=True, detail={err_msg!r})"
+                ) from e
             raise RuntimeError(f"OKX: {e}") from e
 
         status = self._map_status(resp.get("status", ""))
@@ -563,7 +575,7 @@ class OKXClient:
             expected_side = "sell" if request.direction == "long" else "buy"
             known_entry_order_ids = set(request.known_entry_order_ids)
             for raw in raw_fills:
-                timestamp = _okx_int(raw.get("ts") or raw.get("fillTime"))
+                timestamp = _okx_int(raw.get("fillTime") or raw.get("ts"))
                 if not request.history_start_ms <= timestamp <= request.history_end_ms:
                     continue
                 if str(raw.get("instId") or "") != instrument_id:

@@ -271,7 +271,9 @@ async def fetch_private_fill_evidence(order: dict) -> list[dict]:
             if exchange_order_id:
                 matched_identity = remote_order_id == exchange_order_id
             else:
-                matched_identity = remote_client_id == client_order_id
+                # #1771: OKX strips hyphens from clOrdId (e.g. "close-abc" → "closeabc").
+                # Normalise both sides before comparing so timed-out closes can recover.
+                matched_identity = remote_client_id.replace("-", "") == client_order_id.replace("-", "")
             if not matched_identity:
                 continue
             if str(row.get("instId") or instrument_id) != instrument_id:
@@ -283,7 +285,7 @@ async def fetch_private_fill_evidence(order: dict) -> list[dict]:
             try:
                 price = float(row.get("fillPx"))
                 quantity = float(row.get("fillSz")) * contract_size
-                timestamp_ms = int(row.get("ts") or row.get("fillTime"))
+                timestamp_ms = int(row.get("fillTime") or row.get("ts"))
                 fee = float(row.get("fee"))
             except (TypeError, ValueError):
                 raise ValueError("OKX order-matched private fill is incomplete")
@@ -375,12 +377,30 @@ def execute_live_order(
     )
     insert_order(order)
 
+    # --- Pre-submission: set leverage before placing the order (#1732, #1792).
+    # Splitting set_leverage out ensures a leverage timeout is a KNOWN pre-
+    # submission failure (order.status = "error"), never submission_unknown.
+    if market_type != "spot" and leverage is not None and leverage >= 1:
+        ccxt_sym = okx_ccxt_symbol(market_type, symbol)
+        try:
+            _run_coro(client.set_leverage(ccxt_sym, leverage))
+        except Exception:
+            update_order(
+                order.id,
+                status="error",
+                error_reason="leverage_setup_failed_before_submission",
+            )
+            raise
+
     try:
         order_resp = _run_coro(client.place_order(OrderRequest(
             symbol=symbol, market_type=market_type, side=side,
             order_type=order_type, quantity=quantity,
             price=price if order_type == "limit" else None,
-            client_oid=proposal_id, leverage=leverage,
+            client_oid=proposal_id,
+            leverage=None,  # already set above; skip redundant client-side call
+            stop_price=stop_price,
+            take_profit_price=take_profit_price,
         )))
     except Exception as e:
         if _is_ambiguous_submission_error(e):
