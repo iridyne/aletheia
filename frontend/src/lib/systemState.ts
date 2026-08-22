@@ -47,6 +47,11 @@ export interface MasterStateInput {
   operatorTradingBlocked?: boolean
   /** Human-readable detail from operator current_intent, shown in the blocked detail. */
   operatorBlockedDetail?: string
+  /**
+   * Health issues from /api/health or shell-bootstrap .health.issues.
+   * Used to elevate specific conditions that are not reachable via other inputs.
+   */
+  healthIssues?: string[]
 }
 
 // ─── Operator display status ───────────────────────────────────────────────
@@ -119,16 +124,19 @@ export interface MasterState {
 
 /**
  * Derive the single master headline. Priority (top→bottom = most severe → least):
- *   1. Gateway down                → OFFLINE  / red
- *   2. Kill switch engaged         → HALTED   / red
- *   3. Risk engine blocking orders → BLOCKED  / red
- *   4. Operator process offline    → OFFLINE  / red  (heartbeat dead)
- *   5. Operator heartbeat stale    → STALE    / yellow
- *   6. Operator in blocking mode   → BLOCKED  / yellow (Repairing / Degraded)
- *   7. Scheduler paused            → PAUSED   / yellow
- *   8. Risk warning                → CAUTION  / yellow
- *   9. Risk healthy                → OPERATIONAL / green
- *  10. Unknown/not evaluated       → STANDBY  / blue
+ *   1. Gateway down                → OFFLINE    / red
+ *   2. Kill switch engaged         → HALTED     / red
+ *   3. Risk engine blocking orders → BLOCKED    / red
+ *   4. Exchange unreachable        → BLOCKED    / red    ← health issue
+ *   5. Operator process offline    → OFFLINE    / red  (heartbeat dead)
+ *   6. Operator heartbeat stale    → STALE      / yellow
+ *   7. Operator in blocking mode   → BLOCKED    / yellow (Repairing / Degraded)
+ *   8. Operator trading blocked    → BLOCKED    / yellow (llm_unavailable etc.)
+ *   9. Scheduler paused            → PAUSED     / yellow
+ *  10. Risk warning                → CAUTION    / yellow
+ *  11. Degraded health issue       → DEGRADED   / yellow (agent failures, health_check_error, no market data)
+ *  12. Risk healthy                → OPERATIONAL / green
+ *  13. Unknown/not evaluated       → STANDBY    / blue
  */
 export function deriveMasterState(p: MasterStateInput): MasterState {
   if (!p.gatewayRunning) {
@@ -139,6 +147,9 @@ export function deriveMasterState(p: MasterStateInput): MasterState {
   }
   if (p.riskState === 'blocked') {
     return { word: 'BLOCKED', tone: 'red', detail: 'Risk engine is rejecting new orders. Clear the violations below.' }
+  }
+  if (p.healthIssues?.some(i => i === 'exchange_unreachable')) {
+    return { word: 'BLOCKED', tone: 'red', detail: 'Exchange is not reachable. Orders cannot be placed until connectivity is restored.' }
   }
   if (p.operatorStatus === 'offline') {
     return { word: 'OFFLINE', tone: 'red', detail: 'Operator process is not reachable. Check gateway logs.' }
@@ -160,6 +171,13 @@ export function deriveMasterState(p: MasterStateInput): MasterState {
   }
   if (p.riskState === 'warning') {
     return { word: 'CAUTION', tone: 'yellow', detail: 'Running with active risk warnings — review the violations below.' }
+  }
+  if (p.healthIssues?.some(i =>
+    i === 'market_data_never_collected' ||
+    i.startsWith('agent_failure_ratio:') ||
+    i.startsWith('health_check_error:')
+  )) {
+    return { word: 'DEGRADED', tone: 'yellow', detail: 'System health is degraded — check the health indicators in the status panel.' }
   }
   if (p.riskState === 'healthy') {
     return { word: 'OPERATIONAL', tone: 'green', detail: 'Agents are running within all risk limits.' }

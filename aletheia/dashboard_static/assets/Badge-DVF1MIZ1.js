@@ -1,0 +1,1 @@
+import{j as t,Z as n}from"./index-CJfNbMiS.js";function x({tone:a="neutral",className:s,children:e,...r}){return t.jsx("span",{className:n("badge",a!=="neutral"&&`badge-${a}`,s),...r,children:e})}export{x as B};
