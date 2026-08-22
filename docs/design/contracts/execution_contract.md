@@ -499,6 +499,12 @@ Bitget 使用 mix fills cursor，OKX 使用 fills-history bill cursor，Binance 
 互换的入口；ready demo disappearance candidate 只有经过 RG-T06 三态直查后才可调用。Live 仍是
 alert-only，active reconciliation incident 仍先阻断收口。
 
+RG-T07 编排层另有一道独立防线（2026-08-19 事故后加入）：`confirmed_absent_without_fill` 本身不是
+administrative close 的充分授权——settlement 必须先用当前 profile client 做一次新鲜的全量仓位直查，
+直查仍确认 absent 才可关闭，并把 candidate 的 `direct_query_state` 落为 `confirmed_absent` 作为持久
+证据；直查显示仓位仍在则保持 open（下一轮 classify 会把 candidate 结案为 `reappeared`），直查不可用
+则 fail-closed 推迟。`verified_fill` 路径不受此门约束（私有成交历史是更强的平仓证据）。
+
 administrative-unverified close 不得：
 
 - 用 entry/mark/current fallback 伪造退出 fill；
