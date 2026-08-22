@@ -1,16 +1,16 @@
 {
   "schema_version": "frontend-performance-v1",
-  "entry": "assets/index-CJfNbMiS.js",
+  "entry": "assets/index-BUwVZhaj.js",
   "modulepreload": [],
   "initial_graph": [
-    "assets/index-CJfNbMiS.js"
+    "assets/index-BUwVZhaj.js"
   ],
   "critical_js": {
-    "raw": 407920,
-    "gzip": 125419,
-    "br": 118413,
+    "raw": 408892,
+    "gzip": 125693,
+    "br": 118660,
     "files": [
-      "assets/index-CJfNbMiS.js"
+      "assets/index-BUwVZhaj.js"
     ]
   },
   "critical_css": {
@@ -23,9 +23,9 @@
   },
   "total_static": {
     "html_raw": 4915,
-    "html_gzip": 1660,
-    "html_br": 1463,
-    "critical_br": 144859
+    "html_gzip": 1661,
+    "html_br": 1465,
+    "critical_br": 145108
   },
   "budgets": {
     "critical_js_br": 204800,

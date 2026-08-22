@@ -52,6 +52,16 @@ export function parseHealthIssue(raw: string): ParsedIssue {
     const value = prefixedValue(raw, 'startup_gate_blocked:')
     return { key: raw, severity: 'yellow', label: 'Startup gate', value: `blocked: ${value}`, detail: `The startup gate is preventing scheduler resume due to: ${value}`, hint: 'Resolve the blocking conditions listed above, then the scheduler will resume automatically.' }
   }
+  if (raw === 'observer_run_failed') {
+    return { key: raw, severity: 'yellow', label: 'Observer run failed', value: 'error', detail: 'The market observer agent run failed.', hint: 'Check gateway logs for market_observer errors. The observer will retry on the next scheduler tick.' }
+  }
+  if (raw.startsWith('observer_stale:')) {
+    const value = prefixedValue(raw, 'observer_stale:')
+    return { key: raw, severity: 'yellow', label: 'Observer stale', value, detail: `Market observer has not completed a run in ${value}.`, hint: 'Observation staleness does not block trading. Wait for the next scheduled run or restart the gateway if it persists beyond 30 minutes.' }
+  }
+  if (raw === 'runtime_session_provenance_degraded') {
+    return { key: raw, severity: 'yellow', label: 'Session provenance', value: 'degraded', detail: 'The active runtime session was never persisted; child rows lack provenance.', hint: 'Operational impact is minimal. Restart the gateway if you need durable session lineage for auditing.' }
+  }
   if (raw === 'trading_paused') {
     return { key: raw, severity: 'yellow', label: 'Trading loop', value: 'paused', detail: '', hint: 'Use the Resume control in the top bar to continue.' }
   }
@@ -74,6 +84,9 @@ const _LABEL_PRIORITY: Record<string, number> = {
   'startup_gate_blocked:': 2,
   'market_data_stale:': 2,
   'trading_paused': 2,
+  'observer_run_failed': 1,
+  'observer_stale:': 1,
+  'runtime_session_provenance_degraded': 1,
 }
 
 function _issuePriority(issue: ParsedIssue): number {
