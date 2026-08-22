@@ -629,6 +629,7 @@ def close_position(
     materialize_close: Callable[[], None] | None = None,
     actor: str = "system",
     source: str = "scheduler",
+    close_reasoning: dict | None = None,
     funding_cost: float | None = None,
     funding_source: str | None = None,
     funding_evidence: dict | None = None,
@@ -822,11 +823,29 @@ def close_position(
             outcome_evidence["funding_accounting_version"] = funding_evidence.get(
                 "accounting_version", "local-paper-funding-v2",
             )
-    exit_reasoning = build_exit_reasoning(
-        row,
-        exit_price=exit_price,
-        reason=reason,
-    )
+    if close_reasoning is None:
+        exit_reasoning = build_exit_reasoning(
+            row,
+            exit_price=exit_price,
+            reason=reason,
+        )
+    else:
+        if not isinstance(close_reasoning, dict):
+            raise ValueError("close_reasoning must be a mapping")
+        actor = close_reasoning["actor"]
+        source = close_reasoning["source"]
+        trigger = dict(close_reasoning["trigger"])
+        trigger.pop("exit_price", None)
+        exit_reasoning = build_exit_reasoning(
+            row,
+            exit_price=exit_price,
+            reason=reason,
+            actor=actor,
+            source=source,
+            reasoning=close_reasoning["reason"],
+            is_ai_judgment=close_reasoning["is_ai_judgment"],
+            trigger=trigger,
+        )
     update_fields = {
         "status": "closed",
         "current_price": exit_price,

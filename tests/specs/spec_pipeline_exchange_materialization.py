@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timezone
+import json
 import sqlite3
 import threading
 
@@ -961,6 +962,7 @@ def _seed_pending_close(
     quantity: float = 1.0,
     trade_school: str = "short_term",
     market_type: str = "spot",
+    close_reasoning: str | None = None,
 ):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Fill, Order, Position
@@ -1018,6 +1020,7 @@ def _seed_pending_close(
         client_order_id=f"close-{position.id}",
         position_id=position.id,
         close_reason="take_profit",
+        close_reasoning=close_reasoning,
         status="submitted",
     )
     repo.insert_order(close_order)
@@ -1283,9 +1286,23 @@ def test_complete_private_close_fill_closes_linked_position_once(
         )
     ]
     _patch_bitget_history(monkeypatch, fill_rows)
+    close_reasoning = {
+        "version": "trade_decision_rationale.v1",
+        "actor": "system_operator",
+        "source": "portfolio_review",
+        "reason_code": "take_profit",
+        "reason": "Momentum reversed while breadth weakened.",
+        "is_ai_judgment": True,
+        "trigger": {"trigger_type": "operator_review"},
+    }
     _, _, position, close_order = _seed_pending_close(
         exchange_order_id="EX-XM-CLOSE",
         trade_school="serenity",
+        close_reasoning=json.dumps(
+            close_reasoning,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
     )
     feedback: dict[str, object] = {}
     from aletheia.portfolio import pnl
@@ -1328,6 +1345,11 @@ def test_complete_private_close_fill_closes_linked_position_once(
     assert stored_position["close_category"] == "strategy"
     assert stored_position["exit_price_source"] == "broker_fill"
     assert stored_position["exit_fill_verified"] == 1
+    exit_reasoning = json.loads(stored_position["exit_reasoning"])
+    assert exit_reasoning["actor"] == "system_operator"
+    assert exit_reasoning["source"] == "portfolio_review"
+    assert exit_reasoning["reason"] == close_reasoning["reason"]
+    assert exit_reasoning["trigger"]["exit_price"] == pytest.approx(110.0)
     assert stored_position["outcome_eligible"] == 1
     assert stored_position["outcome_exclusion_reason"] == "eligible"
     assert feedback["realized_pnl"] == pytest.approx(9.74)
@@ -1342,9 +1364,51 @@ def test_complete_private_close_fill_closes_linked_position_once(
 
     attribution = build_trade_attribution_rows(limit=10)
     assert [row["position_id"] for row in attribution] == [position.id]
+    exit_reasoning_before_replay = stored_position["exit_reasoning"]
 
     second = reconcile()
     assert second["filled"] == 0
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)
+    ).fetchone()[0] == 1
+    assert repo._select_one("positions", position.id)["exit_reasoning"] == (
+        exit_reasoning_before_replay
+    )
+
+
+def test_legacy_null_pending_close_reasoning_keeps_generic_final_provenance(
+    tmp_path, monkeypatch
+):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.storage import repositories as repo
+
+    _, _, position, close_order = _seed_pending_close(
+        exchange_order_id="EX-XM-CLOSE-LEGACY-NULL"
+    )
+    result = materialize_bitget_close(
+        close_order.id,
+        [
+            _private_fill(
+                "EX-XM-CLOSE-LEGACY-NULL",
+                "BG-XM-CLOSE-LEGACY-NULL-1",
+                price=110.0,
+                quantity=1.0,
+                fee=0.2,
+                filled_at_ms=1_784_400_000_000,
+            )
+        ],
+    )
+
+    stored_order = repo.get_order(close_order.id)
+    stored_position = repo._select_one("positions", position.id)
+    exit_reasoning = json.loads(stored_position["exit_reasoning"])
+    assert result.state == "filled"
+    assert stored_order["close_reasoning"] is None
+    assert stored_position["status"] == "closed"
+    assert exit_reasoning["actor"] == "system"
+    assert exit_reasoning["source"] == "position_lifecycle"
+    assert exit_reasoning["is_ai_judgment"] is False
     assert db.execute(
         "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)
     ).fetchone()[0] == 1
@@ -1379,8 +1443,22 @@ def test_partial_private_close_fill_keeps_position_open(tmp_path, monkeypatch):
     _patch_bitget_history(
         monkeypatch, fill_rows, open_ids=("EX-XM-CLOSE-PARTIAL",)
     )
+    close_reasoning = json.dumps(
+        {
+            "version": "trade_decision_rationale.v1",
+            "actor": "system_operator",
+            "source": "portfolio_review",
+            "reason_code": "take_profit",
+            "reason": "Momentum reversed while breadth weakened.",
+            "is_ai_judgment": True,
+            "trigger": {"trigger_type": "operator_review"},
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     _, _, position, close_order = _seed_pending_close(
-        exchange_order_id="EX-XM-CLOSE-PARTIAL"
+        exchange_order_id="EX-XM-CLOSE-PARTIAL",
+        close_reasoning=close_reasoning,
     )
 
     result = reconcile()
@@ -1397,6 +1475,8 @@ def test_partial_private_close_fill_keeps_position_open(tmp_path, monkeypatch):
     assert stored_position["pending_close_order_id"] == close_order.id
     assert stored_position["pending_close_status"] == "partially_filled"
     assert stored_position["closed_at"] is None
+    assert stored_position["exit_reasoning"] is None
+    assert stored_order["close_reasoning"] == close_reasoning
     close_fill = dict(
         db.execute(
             "SELECT * FROM fills WHERE order_id=?", (close_order.id,)
@@ -1404,6 +1484,245 @@ def test_partial_private_close_fill_keeps_position_open(tmp_path, monkeypatch):
     )
     assert close_fill["fill_quantity"] == pytest.approx(0.4)
     assert close_fill["fee_source"] == "reconciled"
+
+
+@pytest.mark.parametrize(
+    ("close_reasoning", "error_match"),
+    [
+        pytest.param("", "malformed", id="empty"),
+        pytest.param("[]", "not an object", id="non-object"),
+        pytest.param(
+            json.dumps(
+                {
+                    "version": "trade_decision_rationale.v1",
+                    "actor": "system_operator",
+                    "source": "portfolio_review",
+                    "reason_code": "stop_loss",
+                    "reason": "Mismatched reason code.",
+                    "is_ai_judgment": True,
+                    "trigger": {},
+                }
+            ),
+            "does not match Order reason",
+            id="reason-code",
+        ),
+        pytest.param(
+            json.dumps(
+                {
+                    "version": "trade_decision_rationale.v1",
+                    "actor": "system_operator",
+                    "source": "portfolio_review",
+                    "reason_code": "take_profit",
+                    "reason": "Conflicting judgment flag.",
+                    "is_ai_judgment": False,
+                    "trigger": {},
+                }
+            ),
+            "actor and judgment flag conflict",
+            id="actor-judgment",
+        ),
+        pytest.param(
+            json.dumps(
+                {
+                    "version": "trade_decision_rationale.v1",
+                    "actor": "human",
+                    "source": "portfolio_review",
+                    "reason_code": "take_profit",
+                    "reason": "Conflicting provenance.",
+                    "is_ai_judgment": False,
+                    "trigger": {},
+                }
+            ),
+            "actor and source conflict",
+            id="actor-source",
+        ),
+        pytest.param(
+            '{"version":"trade_decision_rationale.v1","actor":"system",'
+            '"source":"position_lifecycle","reason_code":"take_profit",'
+            '"reason":"Overflow trigger.","is_ai_judgment":false,'
+            '"trigger":{"configured_take_profit_price":1e999}}',
+            "malformed",
+            id="non-finite-exponent",
+        ),
+    ],
+)
+def test_invalid_pending_close_reasoning_blocks_verified_materialization(
+    tmp_path,
+    monkeypatch,
+    close_reasoning,
+    error_match,
+):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import (
+        MaterializationIntegrityError,
+        materialize_bitget_close,
+    )
+    from aletheia.storage import repositories as repo
+
+    _, _, position, close_order = _seed_pending_close(
+        exchange_order_id="EX-XM-CLOSE-BAD-REASONING",
+        close_reasoning=close_reasoning,
+    )
+    fill_rows = [
+        _private_fill(
+            "EX-XM-CLOSE-BAD-REASONING",
+            "BG-XM-CLOSE-BAD-REASONING-1",
+            price=110.0,
+            quantity=1.0,
+            fee=0.2,
+            filled_at_ms=1_784_400_000_000,
+        )
+    ]
+
+    with pytest.raises(MaterializationIntegrityError, match=error_match):
+        materialize_bitget_close(close_order.id, fill_rows)
+
+    stored_order = repo.get_order(close_order.id)
+    stored_position = repo._select_one("positions", position.id)
+    assert stored_order["status"] == "materialization_missing"
+    assert stored_order["close_reasoning"] == close_reasoning
+    assert stored_position["status"] == "open"
+    assert stored_position["pending_close_status"] == "materialization_missing"
+    assert stored_position["exit_reasoning"] is None
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)
+    ).fetchone()[0] == 0
+
+
+def test_pending_close_reasoning_accepts_existing_verified_exit_identity():
+    from aletheia.execution.exchange_materialization import _close_reasoning_for_order
+
+    payload = {
+        "version": "trade_decision_rationale.v1",
+        "actor": "system",
+        "source": "verified_exit_protocol",
+        "reason_code": "take_profit",
+        "reason": "Verified private close evidence.",
+        "is_ai_judgment": False,
+        "trigger": {},
+    }
+    assert _close_reasoning_for_order(
+        {
+            "close_reason": "take_profit",
+            "close_reasoning": json.dumps(payload),
+        }
+    ) == payload
+
+
+@pytest.mark.parametrize("mutation", ("close_reasoning", "source"))
+def test_close_order_authority_change_blocks_verified_materialization(
+    tmp_path, monkeypatch, mutation
+):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import (
+        MaterializationIntegrityError,
+        materialize_bitget_close,
+    )
+    from aletheia.portfolio import pnl
+    from aletheia.storage import repositories as repo
+
+    original_reasoning = json.dumps(
+        {
+            "version": "trade_decision_rationale.v1",
+            "actor": "system_operator",
+            "source": "portfolio_review",
+            "reason_code": "take_profit",
+            "reason": "Original rationale.",
+            "is_ai_judgment": True,
+            "trigger": {},
+        }
+    )
+    changed_reasoning = json.dumps(
+        {
+            "version": "trade_decision_rationale.v1",
+            "actor": "system_operator",
+            "source": "portfolio_review",
+            "reason_code": "take_profit",
+            "reason": "Changed rationale.",
+            "is_ai_judgment": True,
+            "trigger": {},
+        }
+    )
+    _, _, position, close_order = _seed_pending_close(
+        exchange_order_id="EX-XM-CLOSE-AUTHORITY-CHANGE",
+        close_reasoning=original_reasoning,
+    )
+    real_close_position = pnl.close_position
+
+    def _mutate_order_before_close(*args, **kwargs):
+        if mutation == "close_reasoning":
+            repo.update_order(close_order.id, close_reasoning=changed_reasoning)
+        else:
+            repo.update_order(close_order.id, source="adopted")
+        return real_close_position(*args, **kwargs)
+
+    monkeypatch.setattr(pnl, "close_position", _mutate_order_before_close)
+    fill_rows = [
+        _private_fill(
+            "EX-XM-CLOSE-AUTHORITY-CHANGE",
+            "BG-XM-CLOSE-AUTHORITY-CHANGE-1",
+            price=110.0,
+            quantity=1.0,
+            fee=0.2,
+            filled_at_ms=1_784_400_000_000,
+        )
+    ]
+
+    with pytest.raises(MaterializationIntegrityError, match="authority changed"):
+        materialize_bitget_close(close_order.id, fill_rows)
+
+    stored_order = repo.get_order(close_order.id)
+    stored_position = repo._select_one("positions", position.id)
+    assert stored_order["status"] == "materialization_missing"
+    assert stored_order["close_reasoning"] == (
+        changed_reasoning if mutation == "close_reasoning" else original_reasoning
+    )
+    assert stored_order["source"] == ("adopted" if mutation == "source" else "native")
+    assert stored_position["status"] == "open"
+    assert stored_position["pending_close_status"] == "materialization_missing"
+    assert stored_position["exit_reasoning"] is None
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)
+    ).fetchone()[0] == 0
+
+
+def test_invalid_pending_close_reasoning_blocks_partial_fill_write(
+    tmp_path, monkeypatch
+):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import (
+        MaterializationIntegrityError,
+        materialize_bitget_close,
+    )
+    from aletheia.storage import repositories as repo
+
+    _, _, position, close_order = _seed_pending_close(
+        exchange_order_id="EX-XM-CLOSE-BAD-PARTIAL",
+        close_reasoning="[]",
+    )
+    fill_rows = [
+        _private_fill(
+            "EX-XM-CLOSE-BAD-PARTIAL",
+            "BG-XM-CLOSE-BAD-PARTIAL-1",
+            price=108.0,
+            quantity=0.4,
+            fee=0.02592,
+            filled_at_ms=1_784_500_000_000,
+        )
+    ]
+
+    with pytest.raises(MaterializationIntegrityError, match="close reasoning carrier"):
+        materialize_bitget_close(close_order.id, fill_rows)
+
+    stored_order = repo.get_order(close_order.id)
+    stored_position = repo._select_one("positions", position.id)
+    assert stored_order["status"] == "materialization_missing"
+    assert stored_position["status"] == "open"
+    assert stored_position["pending_close_status"] == "materialization_missing"
+    assert stored_position["exit_reasoning"] is None
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)
+    ).fetchone()[0] == 0
 
 
 @spec_claim(

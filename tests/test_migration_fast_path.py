@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 38)
+        f"aletheia-sqlite-v{version}" for version in range(2, 39)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v37"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v38"
     connection.close()
 
 
@@ -675,8 +675,9 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
             # includes v31 (persona rollout), v32 (uPnL identity), v33
             # (Observation Lab frozen units), v34 (EX-04 live authorization
             # ref), v35 (momentum-short exhaustion shadow), v36 (options
-            # market structure), and v37 (gamma-flip reset).
-            for step in migrations._MIGRATIONS[:-14]
+            # market structure), v37 (gamma-flip reset), and v38 (pending-close
+            # reasoning handoff).
+            for step in migrations._MIGRATIONS[:-15]
         ],
     )
     connection.commit()
@@ -694,9 +695,13 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260820_0036_gamma_flip_reset_v37",
-        "aletheia-sqlite-v37",
+        "20260823_0037_pending_close_reasoning_v38",
+        "aletheia-sqlite-v38",
     )
+    order_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(orders)")
+    }
+    assert "close_reasoning" in order_columns
     health_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(learning_job_health)")
     }

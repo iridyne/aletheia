@@ -638,7 +638,10 @@ def _find_open_position(
 
 
 def _claim_close_order(
-    position_id: str, reason: str,
+    position_id: str,
+    reason: str,
+    *,
+    close_reasoning: str | None = None,
 ) -> tuple[dict, Order | None, str | None]:
     """Atomically claim one OKX close before any exchange side effect."""
     from aletheia.storage import repositories as repo
@@ -664,6 +667,7 @@ def _claim_close_order(
             client_order_id=f"close-{position_id}",
             position_id=position_id,
             close_reason=reason,
+            close_reasoning=close_reasoning,
             symbol=row["symbol"],
             market_type=row["market_type"],
             direction=row["direction"],
@@ -683,7 +687,12 @@ def _claim_close_order(
         return row, close_order, requested_at
 
 
-def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
+def close_okx_position(
+    position_id: str,
+    reason: str = "exit_rule",
+    *,
+    close_reasoning: str | None = None,
+) -> dict:
     """Close an OKX position with a reduceOnly order.
 
     Works for both okx_demo and okx_live_limited positions.
@@ -691,7 +700,11 @@ def close_okx_position(position_id: str, reason: str = "exit_rule") -> dict:
     from aletheia.storage import repositories as repo
     from aletheia.portfolio.pnl import close_position
 
-    row, close_order, close_requested_at = _claim_close_order(position_id, reason)
+    row, close_order, close_requested_at = _claim_close_order(
+        position_id,
+        reason,
+        close_reasoning=close_reasoning,
+    )
     if close_order is None:
         existing_order = repo.get_order(row["pending_close_order_id"])
         return {
