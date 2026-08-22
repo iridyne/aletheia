@@ -240,6 +240,16 @@ def test_review_optional_surfaces_are_job_gated_before_runner_allocation() -> No
     assert "success|skipped" in aggregate
 
 
+def test_review_core_enforces_change_contract_structure() -> None:
+    """Every PR must include SDD Depth and Contract Delta in its description."""
+    review_core = _workflow()["jobs"]["review-core"]
+    commands = _run_commands(review_core)
+    assert "check_change_contract.py" in commands
+    # The check must run after check_docs.py and before secret scan
+    assert commands.index("check_change_contract.py") > commands.index("check_docs.py")
+    assert commands.index("check_change_contract.py") < commands.index("gitleaks")
+
+
 def test_operator_shell_regression_uses_explicit_cross_platform_test_files() -> None:
     package = json.loads(
         (WORKFLOW_DIR.parent.parent / "operator-shell" / "package.json").read_text(

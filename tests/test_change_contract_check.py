@@ -1,0 +1,136 @@
+"""Tests for scripts/check_change_contract.py — PR Change Contract enforcement."""
+
+from __future__ import annotations
+
+import pytest
+
+from scripts.check_change_contract import check_pr_description
+
+# Valid minimal PR description with D0
+VALID_D0_PR = """
+## SDD Depth
+
+D0 — Implementation Conformance Repair
+
+## Contract Delta
+
+NONE — existing Contract remains unchanged.
+"""
+
+# Valid D1 PR with ADDED/MODIFIED/REMOVED
+VALID_D1_PR = """
+## SDD Depth
+
+D1 — Contract Behavior Change
+
+## Contract Delta
+
+### ADDED
+- New behavior X
+
+### MODIFIED
+- Old behavior Y → new semantics Z
+"""
+
+# Missing SDD Depth section
+MISSING_SDD_DEPTH = """
+## Contract Delta
+
+NONE
+"""
+
+# Missing Contract Delta section
+MISSING_CONTRACT_DELTA = """
+## SDD Depth
+
+D0
+"""
+
+# SDD Depth section exists but no valid depth value
+INVALID_SDD_DEPTH_VALUE = """
+## SDD Depth
+
+This is a change.
+
+## Contract Delta
+
+NONE
+"""
+
+# Release-please PR (exempt)
+RELEASE_PLEASE_PR = """
+chore(main): release 1.2.3
+
+This PR was opened by release-please.
+
+## Contract Delta
+not required
+"""
+
+
+def test_valid_d0_pr_passes() -> None:
+    failures = check_pr_description(VALID_D0_PR, [])
+    assert not failures
+
+
+def test_valid_d1_pr_passes() -> None:
+    failures = check_pr_description(VALID_D1_PR, [])
+    assert not failures
+
+
+def test_missing_sdd_depth_fails() -> None:
+    failures = check_pr_description(MISSING_SDD_DEPTH, [])
+    assert failures
+    assert any("## SDD Depth" in f for f in failures)
+
+
+def test_missing_contract_delta_fails() -> None:
+    failures = check_pr_description(MISSING_CONTRACT_DELTA, [])
+    assert failures
+    assert any("## Contract Delta" in f for f in failures)
+
+
+def test_invalid_sdd_depth_value_fails() -> None:
+    failures = check_pr_description(INVALID_SDD_DEPTH_VALUE, [])
+    assert failures
+    assert any("D0" in f or "D1" in f or "D2" in f for f in failures)
+
+
+def test_release_please_pr_is_exempt() -> None:
+    failures = check_pr_description(RELEASE_PLEASE_PR, [])
+    assert not failures
+
+
+def test_docs_only_pr_is_exempt() -> None:
+    """Docs-only PRs (all changed files under docs/) are exempt."""
+    failures = check_pr_description(MISSING_SDD_DEPTH, ["docs/governance/policy.md"])
+    assert not failures
+
+
+def test_github_template_only_pr_is_exempt() -> None:
+    """Changes only to .github/ are exempt."""
+    failures = check_pr_description(MISSING_SDD_DEPTH, [".github/workflows/ci.yml"])
+    assert not failures
+
+
+def test_mixed_exempt_and_code_requires_contract() -> None:
+    """If any non-exempt file is touched, the full check applies."""
+    failures = check_pr_description(
+        MISSING_SDD_DEPTH, ["docs/governance/policy.md", "aletheia/core.py"]
+    )
+    assert failures
+
+
+def test_case_insensitive_header_matching() -> None:
+    """Headers are matched case-insensitively."""
+    case_varied = """
+## sdd depth
+
+D0
+
+## contract delta
+
+NONE
+"""
+    failures = check_pr_description(case_varied, [])
+    assert not failures

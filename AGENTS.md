@@ -12,10 +12,14 @@ then read only the `@` guide whose scope matches the task.
   explicit scope.
 - Optimize for:
   `State consistency > Safety > Auditability > Semantic honesty > Tests > Capability > Agent autonomy`.
-- Before changing code, name the boundary being changed and what remains
-  unchanged. Analysis-only work does not authorize code changes. Stop if a task
-  weakens an invariant, changes trading safety without approval, or cannot be
-  proved safely.
+- Before changing code, identify the SDD depth (D0 — conformance repair,
+  D1 — contract behavior change, D2 — substantial design change) and state
+  the Contract Delta or `NONE`. See
+  [@DEVELOPMENT_WORKFLOW.md](docs/operations/development/agent-guides/DEVELOPMENT_WORKFLOW.md)
+  for the required pre-change steps. Name the boundary being changed and what
+  remains unchanged. Analysis-only work does not authorize code changes. Stop
+  if a task weakens an invariant, changes trading safety without approval, or
+  cannot be proved safely.
 - Keep implementation and verification proportional. Default to one root-cause
   change and the smallest runnable regression that proves it. Do not duplicate
   the same edge-case test across DB, API, CLI, and UI layers unless they have
