@@ -81,6 +81,45 @@ Executable SDD claims are a separate conformance axis. Their historical
 not mean the product capability is implemented or supported. Product support
 is determined only by Product Capability Ground Truth.
 
+## Change Contract and SDD depth
+
+A GitHub Issue is the default carrier for every change. It expresses why the
+change is necessary, what the current system state is, and how completion is
+verified. It must not duplicate or replace the canonical Contract.
+
+Every change has an SDD depth, independent of the A/B/C task-routing
+classification:
+
+| Depth | When | Contract Delta |
+|---|---|---|
+| D0 — Conformance Repair | Bug, narrow refactor, internal change; no externally observable behavior change | `NONE` — reference the existing Contract being repaired |
+| D1 — Contract Behavior Change | Externally observable semantics, API/schema, state transitions, failure semantics, Risk/Execution invariants, authority surfaces | Explicit `ADDED / MODIFIED / REMOVED` with old→new semantic description |
+| D2 — Substantial Design Change | Major new capability, cross-domain change, trust-boundary change | Requires an accepted `docs/design/proposals/` Proposal before the target state enters any Contract |
+
+**Contract update rule.** Code changing does not require a Contract change.
+Update a Contract only when an approved, externally observable behavior changes.
+A D0 repair that brings code back into conformance with an existing Contract
+MUST NOT modify that Contract. Internal refactors, algorithm replacements,
+race-condition repairs, and performance optimizations do not change Contracts.
+
+**Convergence.** After implementation, verify:
+
+1. Does the implementation satisfy the Change Contract in the Issue?
+2. Do executable tests prove the changed invariants?
+3. Does the current Contract need to change?  If yes, are executable SpecClaims
+   updated in the same change?
+4. Does Product Capability Ground Truth need to change?  Update it only if a
+   production capability genuinely changed — not merely because a test passes.
+5. Is runtime or economic qualification required, or is repository-level
+   conformance sufficient?
+
+The separation between executable SpecClaim conformance and product capability
+support is absolute. `SpecClaim.status = "implemented"` means that individual
+executable claim conforms; it does not mean the capability is implemented or
+supported. Product Capability Ground Truth is the sole authority for product
+support status. A passing test suite without a production consumer, runtime
+path, and economic outcome is not a product capability.
+
 ## Authority and conflict resolution
 
 Use this order when documents conflict:
