@@ -104,11 +104,15 @@ def _positive_float(value) -> float | None:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    # #1722: non-finite values (NaN, inf) must never enter fill economics
+    # #1722: non-finite values (NaN, inf) must never enter fill economics.
+    # Return None (row skipped by caller) rather than raising to avoid aborting
+    # the entire fill batch when one row has a bad value.
     if not math.isfinite(number):
-        raise MaterializationIntegrityError(
-            f"non-finite fill value rejected: {value!r}"
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "non-finite fill value rejected and row skipped: %r", value
         )
+        return None
     return number if number > 0 else None
 
 

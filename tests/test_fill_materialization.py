@@ -20,16 +20,14 @@ from aletheia.execution.exchange_materialization import (
 # #1722 — non-finite fill economics must be rejected
 # ──────────────────────────────────────────────────────────────────────────────
 
-def test_positive_float_nan_raises():
-    """NaN must not enter fill economics."""
-    with pytest.raises(MaterializationIntegrityError, match="non-finite"):
-        _positive_float(float("nan"))
+def test_positive_float_nan_returns_none():
+    """NaN must not enter fill economics — returns None so the row is skipped."""
+    assert _positive_float(float("nan")) is None
 
 
-def test_positive_float_inf_raises():
-    """Infinity must not enter fill economics."""
-    with pytest.raises(MaterializationIntegrityError, match="non-finite"):
-        _positive_float(float("inf"))
+def test_positive_float_inf_returns_none():
+    """Infinity must not enter fill economics — returns None so the row is skipped."""
+    assert _positive_float(float("inf")) is None
 
 
 def test_positive_float_finite_ok():
@@ -38,10 +36,10 @@ def test_positive_float_finite_ok():
     assert _positive_float(0) is None  # zero is not positive
 
 
-def test_parse_bitget_nan_price_raises():
-    """A fill row with NaN price raises MaterializationIntegrityError."""
-    row = {
-        "tradeId": "t1",
+def test_parse_bitget_nan_price_row_is_skipped():
+    """A fill row with NaN price is silently skipped (not exception), valid rows still parsed."""
+    nan_row = {
+        "tradeId": "t_bad",
         "orderId": "o1",
         "fillPrice": float("nan"),
         "fillQuantity": 1.0,
@@ -49,8 +47,18 @@ def test_parse_bitget_nan_price_raises():
         "feeCoin": "USDT",
         "cTime": 1700000000000,
     }
-    with pytest.raises(MaterializationIntegrityError, match="non-finite"):
-        parse_bitget_private_fills([row])
+    good_row = {
+        "tradeId": "t_good",
+        "orderId": "o2",
+        "fillPrice": 2000.0,
+        "fillQuantity": 0.5,
+        "fee": "0.1",
+        "feeCoin": "USDT",
+        "cTime": 1700000001000,
+    }
+    result = parse_bitget_private_fills([nan_row, good_row])
+    assert len(result) == 1
+    assert result[0].fill_id == "t_good"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

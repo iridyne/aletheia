@@ -354,7 +354,13 @@ def execute_live_order(
             "reason": f"venue_status:{order_resp.status}",
             "after": {"status": "cancelled"},
         })
-        return
+        return {
+            "order_id": order.id,
+            "exchange_order_id": exchange_order_id,
+            "order_status": "cancelled",
+            "fill_id": None, "position_id": None,
+            "fill_price": None, "fill_quantity": 0,
+        }
     exchange_reported_fill = order_resp.status in ("filled", "partially_filled")
     stored_status = "materialization_missing" if exchange_reported_fill else "submitted"
     # #1553: late ack must not regress an Order that reconciliation already resolved.
@@ -366,7 +372,13 @@ def execute_live_order(
                 "binance_broker: discarding late ack for order %s (current status: %s)",
                 order.id, current.get("status"),
             )
-            return
+            return {
+                "order_id": order.id,
+                "exchange_order_id": exchange_order_id,
+                "order_status": current.get("status"),
+                "fill_id": None, "position_id": None,
+                "fill_price": None, "fill_quantity": 0,
+            }
     except Exception:
         pass
     try:
