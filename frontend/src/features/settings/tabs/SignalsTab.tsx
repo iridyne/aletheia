@@ -7,6 +7,7 @@ import {
   SettingsRow as Row,
   Switch as Toggle,
 } from '../../../components/ui'
+import { DataStateMessage } from '../../../components/DataState'
 import { listToCsv, parseCsvList } from '../csvList'
 import { executionExchangeFromPaperMode } from '../execution/exchangeMode'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
@@ -258,7 +259,7 @@ function MacroSignalsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 // ─── Prediction Markets Toggle ───
 
 function PredictionToggleCard({ qc }: { qc: SettingsProps['qc'] }) {
-  const { data: status } = useQuery({
+  const statusQuery = useQuery({
     queryKey: ['prediction-status'],
     queryFn: api.getPredictionStatus,
   })
@@ -274,13 +275,34 @@ function PredictionToggleCard({ qc }: { qc: SettingsProps['qc'] }) {
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
   })
 
-  const enabled = status?.enabled ?? false
+  const statusState = statusQuery.data
+    ? statusQuery.isError ? 'stale' : 'available'
+    : statusQuery.isPending ? 'loading' : 'unavailable'
+  const enabled = statusQuery.data?.enabled === true
+  const canToggle = statusState === 'available'
 
   return (
     <div className="card" style={{ marginBottom: 0 }}>
-      <Row label="Prediction observer" hint="When ON, the scheduler fetches Polymarket data every 30 min. When OFF, all prediction-related agent work stops.">
-        <Toggle checked={enabled} persistence="immediate" onChange={v => mut.mutate(v)} disabled={mut.isPending} />
-      </Row>
+      {statusState === 'available' || statusState === 'stale' ? (
+        <Row label="Prediction observer" hint="When ON, the scheduler fetches Polymarket data every 30 min. When OFF, all prediction-related agent work stops.">
+          <Toggle
+            checked={enabled}
+            persistence="immediate"
+            onChange={v => mut.mutate(v)}
+            disabled={mut.isPending || !canToggle}
+          />
+        </Row>
+      ) : (
+        <DataStateMessage
+          state={statusState}
+          message={statusState === 'loading'
+            ? 'Prediction observer status is loading; the toggle is unavailable until a successful read.'
+            : 'Prediction observer status unavailable; the toggle is unavailable until a successful read.'}
+        />
+      )}
+      {statusState === 'stale' && (
+        <DataStateMessage state="stale" message="Prediction observer status is stale. The retained value is shown for context, but changes are disabled until live status is confirmed." />
+      )}
       <SaveMsg msg={msg} />
     </div>
   )
