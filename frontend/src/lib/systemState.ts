@@ -35,6 +35,8 @@ export interface MasterStateInput {
   paused: boolean
   /** From /risk/status .status — 'healthy' | 'warning' | 'blocked' | 'not_available' | … */
   riskState?: string
+  /** From /health .status — 'healthy' | 'degraded' | 'unavailable' | … */
+  healthState?: string
   /** From /operator/status .status — 'online' | 'stale' | 'offline' | undefined */
   operatorStatus?: string
   /** From /operator/status .mode — used to surface trade-blocking modes at master level */
@@ -75,6 +77,7 @@ export interface OperatorDisplayStatus {
 
 // Modes that prevent the Operator from generating new trade proposals.
 const _TRADE_BLOCKING_MODES = new Set<string>(['Repairing', 'Degraded', 'Paused'])
+const _HEALTH_CAUTION_STATES = new Set<string>(['degraded', 'unhealthy', 'warning', 'attention'])
 
 const _BLOCKED_MODE_DETAILS: Record<string, string> = {
   Repairing:
@@ -169,6 +172,10 @@ export function deriveMasterState(p: MasterStateInput): MasterState {
   if (p.paused) {
     return { word: 'PAUSED', tone: 'yellow', detail: 'Scheduler is paused. Agents are idle until resumed.' }
   }
+  const healthState = p.healthState?.trim().toLowerCase()
+  if (healthState && _HEALTH_CAUTION_STATES.has(healthState)) {
+    return { word: 'CAUTION', tone: 'yellow', detail: 'System health is degraded — review the health details below.' }
+  }
   if (p.riskState === 'warning') {
     return { word: 'CAUTION', tone: 'yellow', detail: 'Running with active risk warnings — review the violations below.' }
   }
@@ -178,6 +185,9 @@ export function deriveMasterState(p: MasterStateInput): MasterState {
     i.startsWith('health_check_error:')
   )) {
     return { word: 'DEGRADED', tone: 'yellow', detail: 'System health is degraded — check the health indicators in the status panel.' }
+  }
+  if (healthState !== 'healthy') {
+    return { word: 'STANDBY', tone: 'blue', detail: 'System health has not been verified yet.' }
   }
   if (p.riskState === 'healthy') {
     return { word: 'OPERATIONAL', tone: 'green', detail: 'Agents are running within all risk limits.' }

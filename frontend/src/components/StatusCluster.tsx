@@ -131,11 +131,13 @@ export default function StatusCluster({
     operatorDaemonEvaluating === false &&
     operatorCurrentIntent.toLowerCase().includes('gateway health issue')
   )
+  const healthState = String(healthQuery.data?.status || data?.health?.status || '')
   const master = deriveMasterState({
     gatewayRunning: running,
     killed,
     paused,
     riskState,
+    healthState,
     operatorStatus,
     operatorMode,
     operatorTradingBlocked,
