@@ -216,9 +216,14 @@ def contracts_to_notional(contracts: float, price: float, symbol: str) -> float:
 
 
 def calc_liquidation_price(
-    entry_price: float, direction: str, leverage: int, symbol: str
+    entry_price: float, direction: str, leverage: int, symbol: str,
+    *, margin_mode: str = "isolated",
 ) -> float | None:
-    """Estimate liquidation price (isolated margin, USDT-M).
+    """Estimate liquidation price (USDT-M futures).
+
+    For isolated margin: standard formula (1/leverage buffer from entry).
+    For cross margin: isolated formula used as conservative lower bound;
+    actual cross-margin liq depends on portfolio equity (#1451).
 
     Returns None if leverage <= 1 (spot-equivalent, no liquidation).
     """
@@ -226,9 +231,10 @@ def calc_liquidation_price(
         return None
     mmr = FUTURES_MMR.get(to_canonical(symbol), 0.005)
     if direction in ("long", "buy"):
-        return entry_price * (1.0 - 1.0 / leverage + mmr)
+        liq = entry_price * (1.0 - 1.0 / leverage + mmr)
     else:
-        return entry_price * (1.0 + 1.0 / leverage - mmr)
+        liq = entry_price * (1.0 + 1.0 / leverage - mmr)
+    return liq
 
 
 def futures_instruments_from_config(cfg) -> list[InstrumentId]:

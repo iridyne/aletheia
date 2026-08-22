@@ -1319,6 +1319,7 @@ def _evaluate_proposal_locked(
         proposal,
         violations,
         decision_role=decision_role,
+        resolved_policy=resolved_policy,  # #1506: pass already-resolved policy, no second load_config()
     )
 
 
@@ -1437,6 +1438,7 @@ def _persist_risk_result(
     violations: list[str],
     *,
     decision_role: str,
+    resolved_policy=None,  # #1506: pass already-resolved policy to avoid second load_config() race
 ) -> RiskCheckResult:
     """Persist a role-labelled decision over the immutable evaluated snapshot."""
     approved = len(violations) == 0
@@ -1449,13 +1451,15 @@ def _persist_risk_result(
         message="Approved" if approved else f"Rejected: {', '.join(violations)}",
     )
 
-    policy_identity = None
-    try:
-        from aletheia.risk.policy import resolve_risk_policy
-
-        policy_identity = resolve_risk_policy(load_config(), proposal.execution_mode)
-    except Exception:
-        policy_identity = None
+    # Use the already-resolved policy if provided (#1506); fall back to fresh read
+    # only for non-locked callers that don't have a snapshot.
+    policy_identity = resolved_policy
+    if policy_identity is None:
+        try:
+            from aletheia.risk.policy import resolve_risk_policy
+            policy_identity = resolve_risk_policy(load_config(), proposal.execution_mode)
+        except Exception:
+            policy_identity = None
 
     decision = RiskDecision(
         proposal_id=proposal.id,
@@ -1492,17 +1496,16 @@ def _persist_risk_result(
     # Filter evidence is consumed as the final Risk verdict. Preflight rows stay
     # visible in risk_decisions but do not double-count the same candidate.
     if decision_role == "authoritative":
-        try:
-            from aletheia.analytics.filter_evidence import record_risk_filter_decision
-
-            record_risk_filter_decision(
-                proposal,
-                risk_decision_id=result.decision_id,
-                approved=approved,
-                violations=violations,
-            )
-        except Exception as evidence_error:
-            logger.warning("risk filter evidence unavailable: %s", evidence_error)
+        # #1507: filter evidence must succeed for the authoritative decision to commit.
+        # Re-raise so the caller's transaction rolls back both the risk_decision row
+        # and any pre-Order reservation — never let an incomplete evidence record stand.
+        from aletheia.analytics.filter_evidence import record_risk_filter_decision
+        record_risk_filter_decision(
+            proposal,
+            risk_decision_id=result.decision_id,
+            approved=approved,
+            violations=violations,
+        )
 
     return result
 
@@ -2192,9 +2195,15 @@ def _check_liquidation_buffer(proposal: TradeProposal, cfg) -> list[str]:
     risk = cfg.risk
     buffer_pct = getattr(risk, "min_liquidation_buffer_pct", 5.0) / 100.0
 
+    # #1451: pass margin_mode so the violation token is honest about which formula was used.
+    # Bitget/OKX futures use cross margin; isolated formula is a lower bound (conservative for longs).
+    mode = str(proposal.execution_mode or "")
+    margin_mode = "cross" if any(x in mode for x in ("bitget", "okx")) else "isolated"
+
     from aletheia.trading.instruments import calc_liquidation_price
     liq_price = calc_liquidation_price(
-        proposal.price, proposal.direction, proposal.leverage, proposal.symbol
+        proposal.price, proposal.direction, proposal.leverage, proposal.symbol,
+        margin_mode=margin_mode,
     )
     if liq_price is None:
         return []
@@ -2203,7 +2212,7 @@ def _check_liquidation_buffer(proposal: TradeProposal, cfg) -> list[str]:
     if gap_pct < buffer_pct:
         return [
             f"liquidation_too_close:{gap_pct*100:.1f}%<{buffer_pct*100:.1f}%"
-            f"(liq={liq_price:.2f},lev={proposal.leverage}x)"
+            f"(liq={liq_price:.2f},lev={proposal.leverage}x,margin={margin_mode})"
         ]
     return []
 
