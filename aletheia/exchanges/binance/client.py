@@ -217,6 +217,37 @@ class BinanceClient:
             logger.error("Binance %s get_open_orders failed: %s", self._mode, e)
             raise RuntimeError(f"Binance {self._mode} open_orders: {e}") from e
 
+    async def get_order_by_client_order_id(
+        self, client_order_id: str, symbol: str
+    ) -> dict | None:
+        """Recover a Binance orderId from an origClientOrderId when the original
+        submission response was lost (recovery path for #1783).
+
+        Returns {"orderId": str, "clientOrderId": str, "status": str} or None
+        on not-found.  Raises RuntimeError on hard exchange errors.
+        """
+        try:
+            ccxt_symbol = to_ccxt_perp(symbol)
+            exchange = self._ensure_exchange()
+            # fetch_order with origClientOrderId queries /fapi/v1/order
+            resp = await exchange.fetch_order(
+                id=None,
+                symbol=ccxt_symbol,
+                params={"origClientOrderId": client_order_id},
+            )
+            if not isinstance(resp, dict):
+                return None
+            return {
+                "orderId": str(resp.get("id") or ""),
+                "clientOrderId": str(resp.get("clientOrderId") or ""),
+                "status": str(resp.get("status") or ""),
+            }
+        except ccxt.OrderNotFound:
+            return None
+        except ccxt.BaseError as e:
+            logger.error("Binance %s get_order_by_client_order_id failed: %s", self._mode, e)
+            raise RuntimeError(f"Binance {self._mode} order lookup: {e}") from e
+
     async def get_funding_ledger(
         self,
         *,

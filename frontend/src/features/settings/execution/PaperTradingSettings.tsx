@@ -7,6 +7,7 @@ import {
   SaveMessage as SaveMsg,
   SettingsRow as Row,
   Switch as Toggle,
+  useConfirm,
 } from '../../../components/ui'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import type { SettingsDirtyProps } from '../types'
@@ -14,6 +15,7 @@ import type { SettingsDirtyProps } from '../types'
 const CONFIDENCE_LEVELS = ['high', 'medium', 'speculative'] as const
 
 export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQueryClient>; onDirty?: (id: string, isDirty: boolean) => void }) {
+  const confirm = useConfirm()
   const { data: account, isLoading } = useQuery({ queryKey: ['paper-account'], queryFn: api.getPaperAccount })
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
@@ -78,20 +80,20 @@ export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQue
         <input value={note} onChange={e => setNote(e.target.value)} placeholder="Reason (shown to agent)" style={{ minWidth: '180px' }} />
         <button disabled={!valid || mutate.isPending} onClick={() => mutate.mutate({ action: 'credit', value })}>Add funds</button>
         <button className="secondary" disabled={!valid || value <= 0 || mutate.isPending} onClick={() => mutate.mutate({ action: 'debit', value })}>Remove funds</button>
-        <button className="secondary" disabled={!valid || mutate.isPending} onClick={() => {
-          if (confirm(`Set local paper cash balance to ${value.toFixed(2)} USDT?`)) mutate.mutate({ action: 'set', value })
+        <button className="secondary" disabled={!valid || mutate.isPending} onClick={async () => {
+          if (await confirm({ title: 'Set local paper cash balance?', description: `${value.toFixed(2)} USDT`, confirmLabel: 'Set balance' })) mutate.mutate({ action: 'set', value })
         }}>Set balance</button>
       </Row>
       <div className="danger-zone" style={{ marginTop: '1rem' }}>
         <div className="danger-zone-header">Position Management</div>
         <Row label="Close local spot positions" hint="Closes every open local paper spot position at its last stored market price. Trade history remains intact.">
-          <button className="secondary" disabled={closeMutation.isPending} onClick={() => {
-            if (confirm('Close all local paper spot positions?')) closeMutation.mutate(true)
+          <button className="secondary" disabled={closeMutation.isPending} onClick={async () => {
+            if (await confirm({ title: 'Close local spot positions?', description: 'Every open local paper spot position will be closed.', confirmLabel: 'Close positions', variant: 'danger' })) closeMutation.mutate(true)
           }}>Close local spot positions</button>
         </Row>
         <Row label="Close all local positions" hint="Closes every open local paper position, including futures, at its last stored market price.">
-          <button disabled={closeMutation.isPending} onClick={() => {
-            if (confirm('Close every open local paper position?')) closeMutation.mutate(false)
+          <button disabled={closeMutation.isPending} onClick={async () => {
+            if (await confirm({ title: 'Close all local positions?', description: 'Every open local paper position, including futures, will be closed.', confirmLabel: 'Close positions', variant: 'danger' })) closeMutation.mutate(false)
           }}>Close all local positions</button>
         </Row>
       </div>

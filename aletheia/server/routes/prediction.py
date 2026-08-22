@@ -8,6 +8,7 @@ import json
 
 from fastapi import APIRouter, HTTPException
 
+from aletheia.config.prediction import prediction_observer_blocked_reason
 from aletheia.storage import repositories as repo
 
 router = APIRouter(prefix="/api/prediction", tags=["prediction"])
@@ -224,11 +225,18 @@ def update_prediction_preferences(body: dict):
 def trigger_prediction_refresh():
     """Manually trigger a prediction observer run via the durable job queue."""
     from aletheia.config.loader import load_config
-    cfg = load_config()
-    if not cfg.market_data.prediction_enabled:
-        raise HTTPException(400, "Prediction market module is disabled")
-    if not cfg.market_data.observed_prediction_markets:
-        raise HTTPException(400, "No prediction markets configured")
+    try:
+        cfg = load_config()
+    except Exception as exc:
+        raise HTTPException(503, "Prediction observer configuration is unavailable") from exc
+    blocked_reason = prediction_observer_blocked_reason(cfg)
+    if blocked_reason is not None:
+        message = {
+            "prediction_observer_disabled": "Prediction market module is disabled",
+            "prediction_observer_not_configured": "No prediction markets configured",
+            "prediction_observer_config_unavailable": "Prediction observer configuration is unavailable",
+        }.get(blocked_reason, "Prediction observer is unavailable")
+        raise HTTPException(400 if blocked_reason != "prediction_observer_config_unavailable" else 503, message)
 
     from aletheia.agent_runtime.job_queue import (
         AgentJobManagerClosed,

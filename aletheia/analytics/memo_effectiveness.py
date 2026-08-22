@@ -61,7 +61,7 @@ def memo_half_life_weight(generated_at: str | None, *, now: datetime | None = No
     return round(exp(-log(2) * age_days / half_life_days), 4)
 
 
-def evaluate_prior_memo() -> dict | None:
+def evaluate_prior_memo(*, for_rotation: bool = False) -> dict | None:
     """Score the most-recent persisted TradingMemo against subsequent outcomes.
 
     Returns a verdict dict ``{memo_id, accuracy_score, overturned_rules,
@@ -83,7 +83,8 @@ def evaluate_prior_memo() -> dict | None:
             memo = json.loads(prior.get("content") or "{}")
         except (json.JSONDecodeError, TypeError):
             return None
-        if not is_current_outcome_artifact(memo, max_age=timedelta(hours=72)):
+        max_age = timedelta(days=30) if for_rotation else timedelta(hours=72)
+        if not is_current_outcome_artifact(memo, max_age=max_age):
             return None
         generated_at = memo.get("generated_at")
         if not memo_id or not generated_at:
@@ -92,10 +93,26 @@ def evaluate_prior_memo() -> dict | None:
         now_iso = datetime.now(timezone.utc).isoformat()
 
         # Trades the memo could have influenced: opened at/after it was formed.
-        rows = [
-            row for row in eligible_strategy_outcomes()
-            if str(row.get("opened_at") or "") >= str(generated_at)
-        ]
+        # Only paper_internal trades; if a learning_manifest_json is available,
+        # verify the trade actually saw this memo (#1978).
+        rows = []
+        for row in eligible_strategy_outcomes():
+            if str(row.get("opened_at") or "") < str(generated_at):
+                continue
+            # Only paper_internal trades where Learning was active
+            if row.get("execution_mode") and row.get("execution_mode") != "paper_internal":
+                continue
+            # If a learning_manifest_json is available, verify memo exposure
+            manifest_raw = row.get("learning_manifest_json") or row.get("decision_learning_manifest")
+            if manifest_raw:
+                try:
+                    manifest = json.loads(manifest_raw) if isinstance(manifest_raw, str) else manifest_raw
+                    if isinstance(manifest, dict) and manifest.get("trading_memo_id"):
+                        if manifest["trading_memo_id"] != memo_id:
+                            continue  # trade saw a different memo
+                except (json.JSONDecodeError, TypeError):
+                    pass  # no memo filtering if manifest unparseable
+            rows.append(row)
 
         verdict = {
             "memo_id": memo_id,

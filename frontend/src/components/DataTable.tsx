@@ -58,6 +58,8 @@ export function DataTable<T>({
     } catch { /* storage unavailable — visibility stays session-only */ }
   }, [tableId, columnVisibility])
 
+  // TanStack Table owns live table state; React Compiler cannot safely memoize this API.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
     data,
     columns,

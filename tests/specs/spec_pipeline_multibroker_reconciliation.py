@@ -1184,7 +1184,7 @@ def test_binance_private_reader_normalizes_order_matched_actual_fee(
         async def load_markets(self):
             return None
 
-        async def fetch_my_trades(self, symbol, since, limit, params):
+        async def fetch_my_trades(self, symbol, since=None, limit=None, params=None):
             calls.append({
                 "symbol": symbol,
                 "since": since,

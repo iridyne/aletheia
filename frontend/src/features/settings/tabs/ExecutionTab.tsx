@@ -6,6 +6,7 @@ import {
   SaveMessage as SaveMsg,
   SettingsRow as Row,
   Switch as Toggle,
+  useConfirm,
 } from '../../../components/ui'
 import { humanize } from '../../../lib/format'
 import { executionExchangeFromPaperMode } from '../execution/exchangeMode'
@@ -100,6 +101,7 @@ const PRIMARY_EXCHANGES = [
 ] as const
 
 function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
+  const confirm = useConfirm()
   const exchangeName = String((settings?.exchange as any)?.name || 'bitget')
   const paperMode = String((settings?.exchange as any)?.paper_execution_mode || 'bitget_demo')
   const effective = paperMode === 'paper_internal' ? 'paper_internal' : exchangeName
@@ -119,11 +121,16 @@ function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
       >
         <select
           value={effective}
-          onChange={e => {
+          onChange={async e => {
             const id = e.target.value
             if (id === effective) return
             const label = PRIMARY_EXCHANGES.find(ex => ex.id === id)?.label ?? id
-            if (!confirm(`Switch primary exchange to ${label}?\n\nThis atomically updates data source, paper execution mode, and risk allowlist.`)) return
+            if (!(await confirm({
+              title: `Switch primary exchange to ${label}?`,
+              description: 'This atomically updates data source, paper execution mode, and risk allowlist.',
+              confirmLabel: 'Switch exchange',
+              variant: 'warning',
+            }))) return
             mut.mutate(id)
           }}
           disabled={mut.isPending}
@@ -140,6 +147,7 @@ function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
 }
 
 function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
+  const confirm = useConfirm()
   const paperMode = String((settings?.exchange as any)?.paper_execution_mode || 'bitget_demo')
   const modeLabel: Record<string, string> = {
     okx_demo: 'OKX Demo', bitget_demo: 'Bitget Demo',
@@ -151,9 +159,14 @@ function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
   })
   return (
     <Row label="Exchange mode" hint={`demo uses ${modeLabel[paperMode] ?? paperMode} for paper trading. live is an experimental readiness intent only; new proposals still use ${modeLabel[paperMode] ?? paperMode}.`}>
-      <select value={String(status.exchange_mode)} onChange={e => {
+      <select value={String(status.exchange_mode)} onChange={async e => {
         const next = e.target.value
-        if (next === 'live' && !confirm('Select experimental live readiness? This does not route new proposals to real-fund execution.')) return
+        if (next === 'live' && !(await confirm({
+          title: 'Select experimental live readiness?',
+          description: 'This does not route new proposals to real-fund execution.',
+          confirmLabel: 'Select live readiness',
+          variant: 'warning',
+        }))) return
         mut.mutate(next)
       }} className="w-auto">
         <option value="demo">demo</option>

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   createChart, CrosshairMode, LineStyle, PriceScaleMode,
   type IChartApi, type IPriceLine, type ISeriesApi, type LogicalRange, type Time,
@@ -74,6 +74,11 @@ function levelStyle(kind: PositionLevel['kind']) {
   if (kind === 'stop') return { color: chartTheme.markerStopLong, lineStyle: LineStyle.Dashed }
   if (kind === 'take_profit') return { color: chartTheme.markerBuy, lineStyle: LineStyle.Dashed }
   return { color: chartTheme.markerSell, lineStyle: LineStyle.Dotted }
+}
+
+function clearPriceLines(series: ISeriesApi<'Candlestick'>, lines: IPriceLine[]) {
+  for (const line of lines) series.removePriceLine(line)
+  lines.length = 0
 }
 
 function timeFormatter(timezone: ChartSettings['view']['timezone']) {
@@ -320,14 +325,10 @@ export default function PriceChart({
     [settings.indicators.subcharts],
   )
 
-  const clearLines = (series: ISeriesApi<'Candlestick'>, lines: IPriceLine[]) => {
-    for (const line of lines) series.removePriceLine(line)
-    lines.length = 0
-  }
-  const applyLevels = () => {
+  const applyLevels = useCallback(() => {
     const series = candleRef.current
     if (!series) return
-    clearLines(series, levelLinesRef.current)
+    clearPriceLines(series, levelLinesRef.current)
     if (!settingsRef.current.overlays.levels) return
     const axisLabelVisible = settingsRef.current.scale.priceLabels
     for (const level of levelsRef.current) {
@@ -338,12 +339,12 @@ export default function PriceChart({
         lineWidth: 1, axisLabelVisible,
       }))
     }
-  }
-  const applyProfile = (range?: LogicalRange | null) => {
+  }, [])
+  const applyProfile = useCallback((range?: LogicalRange | null) => {
     const chart = chartRef.current
     const series = candleRef.current
     if (!chart || !series) return
-    clearLines(series, profileLinesRef.current)
+    clearPriceLines(series, profileLinesRef.current)
     const visible = range ?? chart.timeScale().getVisibleLogicalRange()
     const profile = settingsRef.current.overlays.profile && visible
       ? estimateVisibleVolumeProfile(barsRef.current, visible.from, visible.to) : null
@@ -354,14 +355,14 @@ export default function PriceChart({
       series.createPriceLine({ price: profile.vah, title: 'Est. VAH', color: chartTheme.borderColor, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible }),
       series.createPriceLine({ price: profile.val, title: 'Est. VAL', color: chartTheme.borderColor, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible }),
     )
-  }
-  const applyMarkers = () => {
+  }, [])
+  const applyMarkers = useCallback(() => {
     const series = candleRef.current
     if (!series) return
     bucketsRef.current = bucketChartMarkers(barsRef.current, markersRef.current)
     series.setMarkers(settingsRef.current.overlays.signals ? markerSeriesData(bucketsRef.current) : [])
-  }
-  const applyMainIndicators = () => {
+  }, [])
+  const applyMainIndicators = useCallback(() => {
     const bars = barsRef.current
     const active = new Set(settingsRef.current.indicators.main)
     const ema20Points = active.has('ema20') ? calculateEma(bars, 20) : []
@@ -372,7 +373,7 @@ export default function PriceChart({
     bbUpperRef.current?.setData(bbPoints.map(point => ({ time: point.time as Time, value: point.upper })))
     bbMiddleRef.current?.setData(bbPoints.map(point => ({ time: point.time as Time, value: point.middle })))
     bbLowerRef.current?.setData(bbPoints.map(point => ({ time: point.time as Time, value: point.lower })))
-  }
+  }, [])
 
   useEffect(() => {
     const priceContainer = priceContainerRef.current
@@ -535,10 +536,10 @@ export default function PriceChart({
       bbMiddleRef.current = null
       bbLowerRef.current = null
     }
-  }, [symbol, timeframe, marketType])
+  }, [applyLevels, applyMainIndicators, applyMarkers, applyProfile, marketType, symbol, timeframe])
 
-  useEffect(() => { markersRef.current = markers; applyMarkers() }, [markers])
-  useEffect(() => { levelsRef.current = positionLevels; applyLevels() }, [positionLevels])
+  useEffect(() => { markersRef.current = markers; applyMarkers() }, [applyMarkers, markers])
+  useEffect(() => { levelsRef.current = positionLevels; applyLevels() }, [applyLevels, positionLevels])
 
   useEffect(() => {
     settingsRef.current = settings
@@ -571,7 +572,7 @@ export default function PriceChart({
     applyProfile()
     applyMainIndicators()
     // Bump revision so mounted panes recompute against latest settings-independent data if needed.
-  }, [settings])
+  }, [applyLevels, applyMainIndicators, applyMarkers, applyProfile, settings])
 
   const registerPane = (id: SubchartIndicatorId, chart: IChartApi) => {
     paneChartsRef.current.set(id, chart)
