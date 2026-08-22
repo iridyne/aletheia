@@ -7,6 +7,7 @@ import {
   CollapsibleSection as Collapsible,
   SettingsRow as Row,
   Switch as Toggle,
+  useConfirm,
 } from '../../../components/ui'
 import { ModelProvidersSection } from '../model-providers/ModelProvidersSection'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
@@ -67,6 +68,7 @@ export const LLM_COST_SECTION = {
 } satisfies SettingsFeatureDescriptor
 
 export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
+  const confirm = useConfirm()
   const agent = settings?.agent as any || {}
   const runtime = settings?.runtime as any || {}
   // #164 fix: previously these mutations had onSuccess only — a rejected save
@@ -183,9 +185,14 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
       )}
       <SettingsFeatureSection descriptor={PERMISSION_SECTION}>
         <Row label="Permission mode" hint="Observe → Paper → Full. Increasing autonomy at each step.">
-          <select value={perm} onChange={e => {
+          <select value={perm} onChange={async e => {
             const next = e.target.value
-            if (!confirm(`Change permission mode to "${next}"? This affects agent autonomy and is audited.`)) return
+            if (!(await confirm({
+              title: `Change permission mode to "${next}"?`,
+              description: 'This affects agent autonomy and is audited.',
+              confirmLabel: 'Change mode',
+              variant: next === 'Full' ? 'danger' : 'warning',
+            }))) return
             permMut.mutate(next)
           }} className="w-auto">
             {PERMISSION_MODES.map(m => <option key={m}>{m}</option>)}
@@ -206,14 +213,14 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
             <Toggle checked={contributionEvaluationEnabled} persistence="immediate" onChange={v => learningMut.mutate({ contribution_evaluation_enabled: v })} disabled={learningMut.isPending} />
           </Row>
           <Row label="Lifecycle automation" hint="Record stage recommendations and, only after owner admission and all safety gates, move one Paper experiment stage at a time. Default ON.">
-            <Toggle checked={lifecycleAutomationEnabled} persistence="immediate" onChange={v => {
-              if (v && !confirm('Enable Paper-experiment lifecycle automation? Experiment influence still requires owner admission and every safety gate.')) return
+            <Toggle checked={lifecycleAutomationEnabled} persistence="immediate" onChange={async v => {
+              if (v && !(await confirm({ title: 'Enable Paper-experiment lifecycle automation?', description: 'Experiment influence still requires owner admission and every safety gate.', confirmLabel: 'Enable', variant: 'warning' }))) return
               learningMut.mutate({ lifecycle_automation_enabled: v })
             }} disabled={learningMut.isPending} />
           </Row>
           <Row label="Paper influence" hint="Make the measured Paper path available to an explicitly admitted, fully gated experiment. Default ON; this never enables live trading.">
-            <Toggle checked={paperInfluenceEnabled} persistence="immediate" onChange={v => {
-              if (v && !confirm('Enable paper Learning influence? Only explicitly allowlisted paths can use paper treatment.')) return
+            <Toggle checked={paperInfluenceEnabled} persistence="immediate" onChange={async v => {
+              if (v && !(await confirm({ title: 'Enable paper Learning influence?', description: 'Only explicitly allowlisted paths can use paper treatment.', confirmLabel: 'Enable', variant: 'warning' }))) return
               learningMut.mutate({ paper_influence_enabled: v })
             }} disabled={learningMut.isPending} />
           </Row>
@@ -410,8 +417,8 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           <Toggle
             checked={serenityAutoPromote}
             persistence="immediate"
-            onChange={v => {
-              if (v && !confirm('Enable auto-promote? Themes that meet the threshold will be queued to the System Operator without human review.')) return
+            onChange={async v => {
+              if (v && !(await confirm({ title: 'Enable auto-promote?', description: 'Themes that meet the threshold will be queued to the System Operator without human review.', confirmLabel: 'Enable', variant: 'warning' }))) return
               serenityMut.mutate({ auto_promote: v })
             }}
             disabled={serenityMut.isPending}
@@ -487,8 +494,8 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           <Toggle
             checked={schedulerEnabled}
             persistence="immediate"
-            onChange={v => {
-              if (!v && !confirm('Disable the scheduler? All agent jobs will stop firing automatically.')) return
+            onChange={async v => {
+              if (!v && !(await confirm({ title: 'Disable the scheduler?', description: 'All agent jobs will stop firing automatically.', confirmLabel: 'Disable', variant: 'danger' }))) return
               runtimeMut.mutate({ scheduler_enabled: v })
             }}
             disabled={runtimeMut.isPending}
@@ -501,8 +508,8 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           <Toggle
             checked={operatorLoopEnabled}
             persistence="immediate"
-            onChange={v => {
-              if (!v && !confirm('Disable the operator loop? Automated system governance will stop.')) return
+            onChange={async v => {
+              if (!v && !(await confirm({ title: 'Disable the operator loop?', description: 'Automated system governance will stop.', confirmLabel: 'Disable', variant: 'danger' }))) return
               operatorMut.mutate({ loop_enabled: v })
             }}
             disabled={operatorMut.isPending}
@@ -515,8 +522,8 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           <Toggle
             checked={piDaemonEnabled}
             persistence="immediate"
-            onChange={v => {
-              if (!v && !confirm('Disable the System Operator daemon? The agent will revert to 15-minute polling intervals.')) return
+            onChange={async v => {
+              if (!v && !(await confirm({ title: 'Disable the System Operator daemon?', description: 'The agent will revert to 15-minute polling intervals.', confirmLabel: 'Disable', variant: 'danger' }))) return
               piDaemonMut.mutate({ enabled: v })
             }}
             disabled={piDaemonMut.isPending}

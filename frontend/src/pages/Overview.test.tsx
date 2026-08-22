@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { isGoLiveScorecard, operatorMutationError } from './Overview'
+import { semanticTone } from '../lib/systemState'
 import SRC from './Overview.tsx?raw'
 import CSS from '../index.css?raw'
 import STATUS_SRC from '../components/StatusCluster.tsx?raw'
+import APP_SRC from '../App.tsx?raw'
 
 describe('Overview operator mutation truthfulness', () => {
   it('keeps the action identity and a usable rejection reason', () => {
@@ -27,6 +29,38 @@ describe('Overview operator mutation truthfulness', () => {
 })
 
 describe('Overview semantic honesty', () => {
+  it('maps semantic status fixtures to the documented tones', () => {
+    expect([
+      ['active', 'green'],
+      ['degraded', 'yellow'],
+      ['loading', 'muted'],
+      ['unknown', 'muted'],
+      ['unavailable', 'red'],
+      ['disabled', 'muted'],
+    ] as const).toEqual([
+      ['active', semanticTone('active')],
+      ['degraded', semanticTone('degraded')],
+      ['loading', semanticTone('loading')],
+      ['unknown', semanticTone('unknown')],
+      ['unavailable', semanticTone('unavailable')],
+      ['disabled', semanticTone('disabled')],
+    ])
+  })
+
+  it('keeps loading and disabled states muted instead of implying degradation', () => {
+    expect(STATUS_SRC).toContain("semanticTone(liveOn ? 'active' : 'disabled')")
+    expect(SRC).toContain('const collectorState: SemanticState')
+    expect(SRC).toContain("collectorHealthQuery.isPending ? 'loading' : 'unknown'")
+    expect(SRC).not.toContain("collectorHealthQuery.isError ? 'muted' : 'yellow'")
+  })
+
+  it('uses full disclosure chevrons with an accessible relationship', () => {
+    expect(APP_SRC).toContain('aria-expanded={!collapsed[group]}')
+    expect(APP_SRC).toContain('aria-controls={itemsId}')
+    expect(APP_SRC).toContain("collapsed[group] ? '▶' : '▼'")
+    expect(APP_SRC).not.toContain('▾')
+  })
+
   it('loads persisted data coverage independently from the lightweight bootstrap', () => {
     expect(SRC).toContain("queryKey: ['market-data-coverage']")
     expect(SRC).toContain('queryFn: api.getDataCoverage')
@@ -39,7 +73,7 @@ describe('Overview semantic honesty', () => {
     // Unknown state (no data) must not show yellow (degraded) — it is unknown.
     // The tone expression must check !shell before assigning yellow.
     expect(SRC).toContain('const unavailable = shellError || !shell || !risk')
-    expect(SRC).toContain('const tone = unavailable ? \'muted\'')
+    expect(SRC).toContain("semanticTone('unknown')")
   })
 
   it('GoLiveScoreCard derives tone from backend traffic_light, not hardcoded yellow', () => {

@@ -11,6 +11,24 @@
 
 export type MasterTone = 'green' | 'yellow' | 'red' | 'blue' | 'muted'
 
+export type SemanticState = 'active' | 'degraded' | 'loading' | 'unknown' | 'unavailable' | 'disabled' | 'blocked'
+export type SemanticTone = 'green' | 'yellow' | 'red' | 'muted'
+
+/** Keep state colors consistent across status surfaces. Loading/unknown/disabled are not incidents. */
+export function semanticTone(state: SemanticState): SemanticTone {
+  if (state === 'active') return 'green'
+  if (state === 'degraded') return 'yellow'
+  if (state === 'unavailable' || state === 'blocked') return 'red'
+  return 'muted'
+}
+
+export function connectivityTone(state?: string | null): SemanticTone {
+  if (state === 'reachable') return semanticTone('active')
+  if (state === 'unavailable') return semanticTone('unavailable')
+  if (state === 'recovering') return semanticTone('degraded')
+  return semanticTone('unknown')
+}
+
 export interface MasterStateInput {
   gatewayRunning: boolean
   killed: boolean
@@ -23,6 +41,19 @@ export interface MasterStateInput {
   operatorStatus?: string
   /** From /operator/status .mode — used to surface trade-blocking modes at master level */
   operatorMode?: string
+  /**
+   * True when the operator is online but the trading daemon is not evaluating due to a
+   * gateway health issue (e.g. llm_unavailable). Derived from trading_daemon.evaluating
+   * and current_intent containing 'Gateway health issue'.
+   */
+  operatorTradingBlocked?: boolean
+  /** Human-readable detail from operator current_intent, shown in the blocked detail. */
+  operatorBlockedDetail?: string
+  /**
+   * Health issues from /api/health or shell-bootstrap .health.issues.
+   * Used to elevate specific conditions that are not reachable via other inputs.
+   */
+  healthIssues?: string[]
 }
 
 // ─── Operator display status ───────────────────────────────────────────────
@@ -96,17 +127,19 @@ export interface MasterState {
 
 /**
  * Derive the single master headline. Priority (top→bottom = most severe → least):
- *   1. Gateway down                → OFFLINE  / red
- *   2. Kill switch engaged         → HALTED   / red
- *   3. Risk engine blocking orders → BLOCKED  / red
- *   4. Operator process offline    → OFFLINE  / red  (heartbeat dead)
- *   5. Operator heartbeat stale    → STALE    / yellow
- *   6. Operator in blocking mode   → BLOCKED  / yellow (Repairing / Degraded)
- *   7. Scheduler paused            → PAUSED   / yellow
- *   8. Degraded system health      → CAUTION  / yellow
- *   9. Risk warning                → CAUTION  / yellow
- *  10. Risk healthy + healthy health → OPERATIONAL / green
- *  11. Unknown/not evaluated       → STANDBY  / blue
+ *   1. Gateway down                → OFFLINE    / red
+ *   2. Kill switch engaged         → HALTED     / red
+ *   3. Risk engine blocking orders → BLOCKED    / red
+ *   4. Exchange unreachable        → BLOCKED    / red    ← health issue
+ *   5. Operator process offline    → OFFLINE    / red  (heartbeat dead)
+ *   6. Operator heartbeat stale    → STALE      / yellow
+ *   7. Operator in blocking mode   → BLOCKED    / yellow (Repairing / Degraded)
+ *   8. Operator trading blocked    → BLOCKED    / yellow (llm_unavailable etc.)
+ *   9. Scheduler paused            → PAUSED     / yellow
+ *  10. Risk warning                → CAUTION    / yellow
+ *  11. Degraded health issue       → DEGRADED   / yellow (agent failures, health_check_error, no market data)
+ *  12. Risk healthy                → OPERATIONAL / green
+ *  13. Unknown/not evaluated       → STANDBY    / blue
  */
 export function deriveMasterState(p: MasterStateInput): MasterState {
   if (!p.gatewayRunning) {
@@ -118,6 +151,9 @@ export function deriveMasterState(p: MasterStateInput): MasterState {
   if (p.riskState === 'blocked') {
     return { word: 'BLOCKED', tone: 'red', detail: 'Risk engine is rejecting new orders. Clear the violations below.' }
   }
+  if (p.healthIssues?.some(i => i === 'exchange_unreachable')) {
+    return { word: 'BLOCKED', tone: 'red', detail: 'Exchange is not reachable. Orders cannot be placed until connectivity is restored.' }
+  }
   if (p.operatorStatus === 'offline') {
     return { word: 'OFFLINE', tone: 'red', detail: 'Operator process is not reachable. Check gateway logs.' }
   }
@@ -126,6 +162,12 @@ export function deriveMasterState(p: MasterStateInput): MasterState {
   }
   if (p.operatorMode && _TRADE_BLOCKING_MODES.has(p.operatorMode)) {
     return { word: 'BLOCKED', tone: 'yellow', detail: 'Operator cannot generate new trade proposals. Check the Operator panel for details.' }
+  }
+  if (p.operatorTradingBlocked) {
+    const detail = p.operatorBlockedDetail
+      ? `Operator is online but not evaluating signals: ${p.operatorBlockedDetail}`
+      : 'Operator is online but the trading daemon is not evaluating signals. Check the Operator panel.'
+    return { word: 'BLOCKED', tone: 'yellow', detail }
   }
   if (p.paused) {
     return { word: 'PAUSED', tone: 'yellow', detail: 'Scheduler is paused. Agents are idle until resumed.' }
@@ -136,6 +178,13 @@ export function deriveMasterState(p: MasterStateInput): MasterState {
   }
   if (p.riskState === 'warning') {
     return { word: 'CAUTION', tone: 'yellow', detail: 'Running with active risk warnings — review the violations below.' }
+  }
+  if (p.healthIssues?.some(i =>
+    i === 'market_data_never_collected' ||
+    i.startsWith('agent_failure_ratio:') ||
+    i.startsWith('health_check_error:')
+  )) {
+    return { word: 'DEGRADED', tone: 'yellow', detail: 'System health is degraded — check the health indicators in the status panel.' }
   }
   if (healthState !== 'healthy') {
     return { word: 'STANDBY', tone: 'blue', detail: 'System health has not been verified yet.' }

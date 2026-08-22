@@ -1267,6 +1267,29 @@ def reconcile() -> dict:
                         reason="client_order_identity_ambiguous",
                     )
                     continue
+                elif market_type == "usdt_futures":
+                    # Order may have already filled and left the open-order list.
+                    # Fall back to a direct detail lookup by clientOid (#1779).
+                    try:
+                        from aletheia.data.symbols import to_bitget as _to_bitget
+                        detail = _run_coro(
+                            client.get_order_detail_by_client_oid(
+                                str(order["client_order_id"]),
+                                _to_bitget(str(order["symbol"])),
+                            )
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "reconcile: clientOid detail lookup failed for order %s (%s)",
+                            order["id"],
+                            type(exc).__name__,
+                        )
+                        detail = None
+                    if detail and str(detail.get("clientOid") or "") == str(order["client_order_id"]):
+                        recovered_id = str(detail.get("orderId") or "").strip()
+                        if recovered_id:
+                            update_order(order["id"], exchange_order_id=recovered_id)
+                            order["exchange_order_id"] = recovered_id
 
             is_close_order = _is_close_order(order)
             use_exact_order_history = (

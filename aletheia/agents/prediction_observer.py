@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool, record_step, observer_llm_deadline
 from aletheia.agent_runtime.permissions import is_tool_permitted
+from aletheia.config.prediction import prediction_observer_blocked_reason
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
     insert_opportunity,
@@ -238,10 +239,11 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
         return {"outputs": outputs, "errors": errors}
 
     cfg = load_config()
-    categories = cfg.market_data.observed_prediction_markets
-    if not categories:
-        outputs.append("no_prediction_markets_configured")
+    blocked_reason = prediction_observer_blocked_reason(cfg)
+    if blocked_reason is not None:
+        errors.append(blocked_reason)
         return {"outputs": outputs, "errors": errors}
+    categories = cfg.market_data.observed_prediction_markets
 
     # Start observer run record
     from aletheia.storage.repositories import (

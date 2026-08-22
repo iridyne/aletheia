@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
+import { connectivityTone, semanticTone, type SemanticState } from '../lib/systemState'
 import { bootApi, type OverviewBootstrap, type ShellBootstrap } from '../api/boot'
 import PnLZone from '../components/PnLZone'
 import AgentFeed from '../components/AgentFeed'
@@ -100,7 +101,9 @@ function RiskCard({ shell, shellError }: { shell?: ShellBootstrap; shellError?: 
   const status = String(risk?.status || 'not_available')
   const violations = risk?.violations || []
   const unavailable = shellError || !shell || !risk
-  const tone = unavailable ? 'muted' : status === 'blocked' ? 'red' : status === 'healthy' ? 'green' : 'yellow'
+  const tone = unavailable
+    ? semanticTone('unknown')
+    : semanticTone(status === 'blocked' ? 'blocked' : status === 'healthy' ? 'active' : status === 'warning' ? 'degraded' : 'unknown')
   return (
     <Card className="rail-card risk-panel">
       <div className="risk-head"><h3>Risk State</h3><div className="risk-head-badges">{risk?.kill_switch_active && <StatusText tone="red">KILL SWITCH</StatusText>}<StatusText tone={tone}>{riskStateLabel(status)}</StatusText></div></div>
@@ -110,10 +113,6 @@ function RiskCard({ shell, shellError }: { shell?: ShellBootstrap; shellError?: 
 }
 
 type SystemDetail = 'collectors' | 'coverage' | 'mode' | null
-
-function statusLight(state: string | undefined): Light {
-  return state === 'reachable' ? 'green' : state === 'unavailable' ? 'red' : state === 'recovering' ? 'yellow' : 'muted'
-}
 
 function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap; coverage?: MarketDataCoverageReport; coverageError?: boolean }) {
   const navigate = useNavigate()
@@ -138,13 +137,13 @@ function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap
   const collectorHealth = collectorHealthQuery.data
   const coverageReport = coverage
   const collectorIncident = collectorHealth?.infrastructure_incident
-  const collectorLight = !collectorHealth
-    ? collectorHealthQuery.isError ? 'muted' : 'yellow'
+  const collectorState: SemanticState = !collectorHealth
+    ? collectorHealthQuery.isPending ? 'loading' : 'unknown'
     : collectorIncident?.status === 'active' || collectorIncident?.status === 'recovering'
-      ? 'yellow'
-      : collectorHealth.status === 'healthy' ? 'green'
-        : collectorHealth.status === 'initializing' ? 'muted'
-          : collectorHealth.status === 'degraded' ? 'red' : 'yellow'
+      ? 'degraded'
+      : collectorHealth.status === 'healthy' ? 'active'
+        : collectorHealth.status === 'degraded' || collectorHealth.status === 'attention' ? 'degraded' : 'unknown'
+  const collectorLight = semanticTone(collectorState)
   const collectorValue = !collectorHealth
     ? collectorHealthQuery.isPending ? 'loading' : 'not available'
     : collectorIncident?.status === 'active'
@@ -177,7 +176,7 @@ function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap
       <table className="status-board"><tbody>
         <StatusRow label="Gateway" light={shell?.gateway?.running ? (shell.gateway.paused ? 'yellow' : 'green') : !shell ? 'muted' : 'red'} value={shell ? (shell.gateway?.paused ? 'paused' : 'running') : 'not available'} />
         <StatusRow label="Scheduler" light={scheduler?.running ? 'green' : scheduler ? 'yellow' : 'muted'} value={scheduler?.state || 'not available'} />
-        <StatusRow label="Connectivity" light={statusLight(shell?.connectivity?.state)} value={shell?.connectivity?.state || 'deferred'} title={shell?.connectivity?.reason} />
+        <StatusRow label="Connectivity" light={connectivityTone(shell?.connectivity?.state)} value={shell?.connectivity?.state || 'deferred'} title={shell?.connectivity?.reason} />
         <StatusRow label="Exchange" light={exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted'} value={exchangeLabel} onClick={() => navigate('/settings?tab=execution')} title={exchangeDiverged ? 'Execution and market-data exchanges are intentionally split.' : exchangeLabel} externalLink />
         <StatusRow label="Collectors" light={collectorLight} value={collectorValue} onClick={() => toggle('collectors')} expanded={expanded === 'collectors'} />
         {collectorHealth && <tr className="status-detail-row"><td colSpan={2}><div className="system-inline-detail"><CollectorHealthDetails health={collectorHealth} mode="compact" /></div></td></tr>}

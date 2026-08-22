@@ -19,9 +19,9 @@ describe('health issue projection', () => {
       value: 'active',
     })
     expect(parseHealthIssue('observer_run_failed')).toMatchObject({
-      severity: 'red',
+      severity: 'yellow',
       label: 'Observer run failed',
-      value: 'failed',
+      value: 'error',
     })
   })
 

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { Command } from 'cmdk'
 import { api } from '../api/client'
+import { useConfirm } from './ui'
 
 interface CmdAction {
   id: string
@@ -60,6 +61,7 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
   const executingRef = useRef(false)
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const confirm = useConfirm()
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -125,8 +127,8 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
 
     { id: 'sys-pause', label: 'Pause Gateway', group: 'System', keywords: 'stop halt', action: () => setGatewayPaused(true) },
     { id: 'sys-resume', label: 'Resume Gateway', group: 'System', keywords: 'start continue', action: () => setGatewayPaused(false) },
-    { id: 'sys-kill', label: 'Engage Kill Switch', group: 'System', dangerous: true, action: async () => { if (confirm('Engage kill switch? All trading will halt.')) await setKillSwitch(true) } },
-    { id: 'sys-unkill', label: 'Release Kill Switch', group: 'System', action: async () => { if (confirm('Release Kill Switch? Trading will resume immediately.')) await setKillSwitch(false) } },
+    { id: 'sys-kill', label: 'Engage Kill Switch', group: 'System', dangerous: true, action: async () => { if (await confirm({ title: 'Engage kill switch?', description: 'All trading will halt.', confirmLabel: 'Engage', variant: 'danger' })) await setKillSwitch(true) } },
+    { id: 'sys-unkill', label: 'Release Kill Switch', group: 'System', action: async () => { if (await confirm({ title: 'Release kill switch?', description: 'Trading will resume immediately.', confirmLabel: 'Release', variant: 'warning' })) await setKillSwitch(false) } },
 
     { id: 'agent-observer', label: 'Run Market Observer', group: 'Agents', keywords: 'trigger start market', action: () => startAgent('market_observer') },
     { id: 'agent-research', label: 'Run Research Agent', group: 'Agents', keywords: 'trigger start research', action: () => startAgent('research_agent') },
