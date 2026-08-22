@@ -20,7 +20,7 @@ from aletheia.exchanges.submission_errors import (
     ClosePositionAbsentError,
     is_ambiguous_submission_error as _is_ambiguous_submission_error,
 )
-from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
+from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError, LeverageSetupError
 from aletheia.execution.close_convergence import (
     CLOSE_CLAIM_STATES,
     has_unresolved_close_claim,
@@ -294,6 +294,10 @@ def execute_live_order(
             price=price if order_type == "limit" else None,
             client_oid=proposal_id, leverage=leverage,
         )))
+    except LeverageSetupError as e:
+        # #1792: leverage failed BEFORE order submission — not submission_unknown.
+        update_order(order.id, status="error", error_reason="leverage_setup_failed_before_submission")
+        raise
     except Exception as e:
         if _is_ambiguous_submission_error(e):
             update_order(

@@ -1377,10 +1377,7 @@ def _execute_proposal(
                     strategy_id=execution_proposal.strategy_id,
                     execution_mode=allowed_mode,
                     stop_price=execution_proposal.stop_price,
-                    take_profit_price=(
-                        execution_proposal.take_profit
-                        if allowed_mode == "bitget_demo"
-                        else None                    ),
+                    take_profit_price=execution_proposal.take_profit,
                     leverage=execution_proposal.leverage,
                     opportunity_id=execution_proposal.opportunity_id,
                     trade_school=execution_proposal.trade_school,
@@ -1548,10 +1545,7 @@ def _execute_proposal(
                     strategy_id=execution_proposal.strategy_id,
                     execution_mode=allowed_mode,
                     stop_price=execution_proposal.stop_price,
-                    take_profit_price=(
-                        execution_proposal.take_profit
-                        if allowed_mode == "bitget_live_limited"
-                        else None                    ),
+                    take_profit_price=execution_proposal.take_profit,
                     leverage=execution_proposal.leverage,
                     opportunity_id=execution_proposal.opportunity_id,
                     trade_school=execution_proposal.trade_school,

@@ -11,6 +11,7 @@ from aletheia.exchanges.submission_errors import (
     ClosePositionAbsentError,
     SubmissionResponseUnknownError,
 )
+from aletheia.execution.errors import LeverageSetupError
 from aletheia.config.secrets import get_secret, redact
 from aletheia.data.symbols import to_canonical
 
@@ -413,9 +414,16 @@ class BitgetClient:
         # Futures open: set the intended leverage on the exchange first (skip on a
         # hedge-mode close, which does not change leverage). Fail-closed — set_leverage
         # raises on failure, aborting the order rather than opening at the wrong size.
-        if (order.market_type != "spot" and order.leverage and order.leverage > 1
+        if (order.market_type != "spot" and order.leverage is not None and order.leverage >= 1
                 and not order.hold_side):
-            await self.set_leverage(order.symbol, order.leverage)
+            try:
+                await self.set_leverage(order.symbol, order.leverage)
+            except Exception as exc:
+                # #1792: leverage failure is pre-submission — raise a typed error so
+                # the broker does NOT mark the order as submission_unknown.
+                raise LeverageSetupError(
+                    f"leverage setup failed before order submission: {exc}"
+                ) from exc
 
         if order.market_type == "spot":
             path = "/api/v2/spot/trade/place-order"

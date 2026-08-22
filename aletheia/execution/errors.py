@@ -37,3 +37,12 @@ class SubmissionUnknownError(RuntimeError):
         super().__init__(message)
         self.exchange_order_id = exchange_order_id
         self.client_oid = client_oid
+
+
+class LeverageSetupError(RuntimeError):
+    """Leverage configuration failed BEFORE any order was submitted.
+
+    The exchange never received a create-order call.  Callers must NOT mark
+    the local Order as submission_unknown — there is no ambiguous exposure.
+    (#1792)
+    """

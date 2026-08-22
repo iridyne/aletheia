@@ -19,6 +19,7 @@ import ccxt.async_support as ccxt
 
 from aletheia.config.secrets import get_secret
 from aletheia.data.symbols import to_canonical, to_ccxt_perp
+from aletheia.execution.errors import LeverageSetupError
 
 logger = logging.getLogger("aletheia.okx_client")
 
@@ -202,8 +203,13 @@ class OKXClient:
             # NOTE: reduceOnly intentionally omitted — derivatives-only concept.
         else:
             # Futures open: set intended leverage first (skip reduce-only closes). Fail-closed.
-            if order.leverage and order.leverage > 1 and not order.reduce_only:
-                await self.set_leverage(ccxt_symbol, order.leverage)
+            if order.leverage is not None and order.leverage >= 1 and not order.reduce_only:
+                try:
+                    await self.set_leverage(ccxt_symbol, order.leverage)
+                except Exception as exc:
+                    raise LeverageSetupError(
+                        f"leverage setup failed before order submission: {exc}"
+                    ) from exc
             contract_size = await self._contract_size(ccxt_symbol)
             amount = order.quantity / contract_size if contract_size else order.quantity
             if order.reduce_only:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_CEILING, InvalidOperation
+import math
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -59,6 +60,13 @@ def _decimal(value: Any, field: str, *, required: bool = False) -> Decimal | Non
         parsed = Decimal(str(value))
     except (InvalidOperation, ValueError) as exc:
         raise ConstraintUnavailable(f"exchange rule has invalid {field}") from exc
+    # #1481: non-finite floats (NaN, inf) that survive float→Decimal conversion
+    # must be rejected before they corrupt order sizing arithmetic.
+    try:
+        if not parsed.is_finite():
+            raise ConstraintUnavailable(f"exchange rule has non-finite {field}: {value!r}")
+    except InvalidOperation as exc:
+        raise ConstraintUnavailable(f"exchange rule has non-finite {field}") from exc
     if parsed <= 0:
         if required:
             raise ConstraintUnavailable(f"exchange rule has non-positive {field}")
