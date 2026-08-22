@@ -135,16 +135,22 @@ export default function App() {
           <span className="brand-sub">trading os</span>
         </div>
         <nav>
-          {NAV.map(({ group, items }) => (
-            <div key={group || items.map(item => item.to).join('|')} className="nav-group">
-              {group && !railCollapsed && <button className="nav-group-label" onClick={() => toggle(group)}><span>{group}</span><span className={`chev ${collapsed[group] ? 'chev-closed' : ''}`}>▾</span></button>}
-              {group && railCollapsed && <div className="nav-group-divider" aria-hidden="true" />}
-              {(railCollapsed || !collapsed[group]) && items.map(item => {
-                const Icon = item.icon
-                return <NavLink key={item.to} to={item.to} end={item.to === '/'} onClick={closeSidebar} title={railCollapsed ? item.label : undefined}><Icon size={16} className="nav-icon" aria-hidden="true" /><span className="nav-label">{item.label}</span></NavLink>
-              })}
-            </div>
-          ))}
+          {NAV.map(({ group, items }) => {
+            const itemsId = group ? `nav-group-${group.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : undefined
+            const groupCollapsed = Boolean(group && !railCollapsed && collapsed[group])
+            return (
+              <div key={group || items.map(item => item.to).join('|')} className="nav-group">
+                {group && !railCollapsed && <button className="nav-group-label" onClick={() => toggle(group)} aria-expanded={!collapsed[group]} aria-controls={itemsId}><span>{group}</span><span className="chev" aria-hidden="true">{collapsed[group] ? '▶' : '▼'}</span></button>}
+                {group && railCollapsed && <div className="nav-group-divider" aria-hidden="true" />}
+                <div id={itemsId} className="nav-group-items" hidden={groupCollapsed}>
+                  {items.map(item => {
+                    const Icon = item.icon
+                    return <NavLink key={item.to} to={item.to} end={item.to === '/'} onClick={closeSidebar} title={railCollapsed ? item.label : undefined}><Icon size={16} className="nav-icon" aria-hidden="true" /><span className="nav-label">{item.label}</span></NavLink>
+                  })}
+                </div>
+              </div>
+            )
+          })}
         </nav>
         <button className="sidebar-toggle" onClick={() => setRailCollapsed(value => !value)} aria-label={railCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={railCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
           {railCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}<span className="nav-label">Collapse</span>

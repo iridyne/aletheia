@@ -11,6 +11,24 @@
 
 export type MasterTone = 'green' | 'yellow' | 'red' | 'blue' | 'muted'
 
+export type SemanticState = 'active' | 'degraded' | 'loading' | 'unknown' | 'unavailable' | 'disabled' | 'blocked'
+export type SemanticTone = 'green' | 'yellow' | 'red' | 'muted'
+
+/** Keep state colors consistent across status surfaces. Loading/unknown/disabled are not incidents. */
+export function semanticTone(state: SemanticState): SemanticTone {
+  if (state === 'active') return 'green'
+  if (state === 'degraded') return 'yellow'
+  if (state === 'unavailable' || state === 'blocked') return 'red'
+  return 'muted'
+}
+
+export function connectivityTone(state?: string | null): SemanticTone {
+  if (state === 'reachable') return semanticTone('active')
+  if (state === 'unavailable') return semanticTone('unavailable')
+  if (state === 'recovering') return semanticTone('degraded')
+  return semanticTone('unknown')
+}
+
 export interface MasterStateInput {
   gatewayRunning: boolean
   killed: boolean

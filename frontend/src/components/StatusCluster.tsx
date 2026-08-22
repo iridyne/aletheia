@@ -5,7 +5,7 @@ import CollectorHealthDetails from './CollectorHealthDetails'
 import type { RealtimeStatus } from '../lib/useRealtimeUpdates'
 import type { ShellBootstrap } from '../api/boot'
 import type { InfraEvent } from '../types'
-import { deriveMasterState, getOperatorDisplayStatus } from '../lib/systemState'
+import { connectivityTone, deriveMasterState, getOperatorDisplayStatus, semanticTone } from '../lib/systemState'
 import { safeErrorText } from '../lib/mutationErrors'
 import { parseHealthIssue } from './health-issues'
 
@@ -53,10 +53,6 @@ function exchangeLabel(data: ShellBootstrap, status: any): string {
   const exchange = data.exchange?.execution_exchange || data.exchange?.data_exchange
   if (exchange) return `${exchange}${data.exchange?.paper_execution_mode ? ` · ${data.exchange.paper_execution_mode}` : ''}`
   return data.exchange?.paper_execution_mode ? `Local paper · ${data.exchange.paper_execution_mode}` : 'Local paper · no exchange'
-}
-
-function statusLight(state: string | undefined): 'green' | 'yellow' | 'red' | 'muted' {
-  return state === 'reachable' ? 'green' : state === 'unavailable' ? 'red' : state === 'recovering' ? 'yellow' : 'muted'
 }
 
 export default function StatusCluster({
@@ -127,9 +123,9 @@ export default function StatusCluster({
           ? 'ws…'
           : 'off'
   const realtimeTitle = `Realtime transport: ${realtime.state}; ${realtime.malformedFrameCount} malformed; ${realtime.unknownCategoryCount} unknown categories`
-  const connectivityLight = statusLight(connectivityState)
+  const connectivityLight = connectivityTone(connectivityState)
   const gwLight = running ? (paused ? 'yellow' : 'green') : 'red'
-  const liveLight = liveOn ? 'yellow' : 'muted'
+  const liveLight = semanticTone(liveOn ? 'active' : 'disabled')
   const killLight = killed ? 'red' : 'muted'
   const latestRun = (runsQuery.data || [])[0]
 
