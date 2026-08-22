@@ -103,11 +103,13 @@ export default function StatusCluster({
   const operatorStatus = String(operator?.status || data?.operator?.status || 'offline')
   const operatorMode = String(operator?.mode || data?.operator?.mode || (paused ? 'Paused' : 'Observing'))
   const riskState = String(riskQuery.data?.status || data?.risk?.status || '')
+  const healthState = String(healthQuery.data?.status || data?.health?.status || '')
   const master = deriveMasterState({
     gatewayRunning: running,
     killed,
     paused,
     riskState,
+    healthState,
     operatorStatus,
     operatorMode,
   })

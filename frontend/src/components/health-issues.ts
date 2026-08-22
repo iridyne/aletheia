@@ -42,6 +42,9 @@ export function parseHealthIssue(raw: string): ParsedIssue {
     const value = prefixedValue(raw, 'llm_unavailable:')
     return { key: raw, severity: 'red', label: 'LLM unavailable', value, detail: value, hint: 'Check Settings → Model Provider, then resume the operator.' }
   }
+  if (raw === 'observer_run_failed') {
+    return { key: raw, severity: 'red', label: 'Observer run failed', value: 'failed', detail: 'The latest observer run did not complete successfully.', hint: 'Open Observer details and gateway logs before trusting current research state.' }
+  }
   if (raw === 'trading_paused') {
     return { key: raw, severity: 'yellow', label: 'Trading loop', value: 'paused', detail: '', hint: 'Use the Resume control in the top bar to continue.' }
   }
@@ -59,6 +62,7 @@ const _LABEL_PRIORITY: Record<string, number> = {
   'code_updated_pending_restart:': 4,
   'agent_failure_ratio:': 3,
   'llm_unavailable:': 3,
+  'observer_run_failed': 3,
   'market_data_stale:': 2,
   'trading_paused': 2,
 }

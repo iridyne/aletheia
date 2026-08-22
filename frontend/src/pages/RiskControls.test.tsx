@@ -20,4 +20,10 @@ describe('RiskControls trust-path mutations', () => {
     expect(SRC.match(/qc\.refetchQueries\(\{ queryKey: \['status'\] \}, \{ throwOnError: true \}\)/g)).toHaveLength(2)
     expect(SRC).not.toContain("qc.setQueryData(['kill-switch'], confirmed)")
   })
+
+  it('feeds health truth into the shared master state', () => {
+    expect(SRC).toContain("queryKey: ['health']")
+    expect(SRC).toContain("const healthState = healthError ? 'unavailable' : String(health?.status || 'unknown')")
+    expect(SRC).toContain('riskState, healthState, paused')
+  })
 })

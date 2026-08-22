@@ -33,6 +33,7 @@ export default function RiskControls() {
   const qc = useQueryClient()
   const { data: status, isLoading: statusLoading, isError: statusError } = useQuery({ queryKey: ['status'], queryFn: api.getStatus })
   const { data: riskStatus, isPending: riskStatusPending, isError: riskStatusError } = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, refetchInterval: 15000 })
+  const { data: health, isError: healthError } = useQuery({ queryKey: ['health'], queryFn: api.getHealth, refetchInterval: 15000 })
   const { data: boundaries, isPending: boundariesPending, isError: boundariesError } = useQuery({ queryKey: ['risk-boundaries'], queryFn: api.getRiskBoundaries })
   const { data: killSwitch, isLoading: ksLoading, isError: ksError } = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch })
   const { data: portfolio, isPending: portfolioPending, isError: portfolioError } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
@@ -105,11 +106,12 @@ export default function RiskControls() {
   const schedulerPending = pauseMut.isPending || resumeMut.isPending
   const violations = riskStatusError ? [] : ((riskStatus?.violations as string[]) || [])
   const riskState = riskStatusError ? 'unavailable' : String(riskStatus?.status || 'unknown')
+  const healthState = healthError ? 'unavailable' : String(health?.status || 'unknown')
   const riskTone: StatusTone = riskState === 'blocked' ? 'red' : riskState === 'warning' ? 'yellow' : riskState === 'healthy' ? 'green' : 'blue'
 
   const master = !statusAvailable || !killSwitchAvailable
     ? { word: 'NOT AVAILABLE', tone: 'blue' as const, detail: 'Authoritative runtime safety state is unavailable.' }
-    : deriveMasterState({ gatewayRunning, killed, riskState, paused })
+    : deriveMasterState({ gatewayRunning, killed, riskState, healthState, paused })
 
   // Exposure: largest magnitude first; bars scale to the biggest absolute exposure.
   const exposureRaw = (portfolio as Record<string, unknown> | undefined)?.exposure_by_symbol as Record<string, number> | undefined

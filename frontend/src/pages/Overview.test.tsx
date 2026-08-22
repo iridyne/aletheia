@@ -92,6 +92,12 @@ describe('Overview issue repairs', () => {
     expect(STATUS_SRC).not.toContain('function parseIssue')
   })
 
+  it('feeds shell health into the persistent master status derivation', () => {
+    expect(STATUS_SRC).toContain("const healthState = String(healthQuery.data?.status || data?.health?.status || '')")
+    expect(STATUS_SRC).toContain('riskState,')
+    expect(STATUS_SRC).toContain('healthState,')
+  })
+
   it('separates pending, unavailable, and stale scorecard states', () => {
     expect(SRC).toContain('scorecardQuery.isPending && !data')
     expect(SRC).toContain('scorecardQuery.isError && !data')
