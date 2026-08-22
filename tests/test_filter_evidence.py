@@ -696,7 +696,51 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
         record_filter_decision(candidate_key=key, decision=decision, **common)
         get_db().execute(
             "UPDATE filter_candidate_outcomes SET status='settled', "
-            "net_return_pct=?, min_tradable_edge_pct=0.05 WHERE outcome_candidate_key=?",
+            "net_return_pct=?, min_tradable_edge_pct=0.05, cost_model_version='v1' "
+            "WHERE outcome_candidate_key=?",
+            (net, key),
+        )
+    for suffix, edge in (
+        ("missing", None), ("negative", -0.01), ("infinite", float("inf")),
+        ("malformed", "malformed"), ("blob", b"0.05"),
+    ):
+        key = f"opportunity:confidence-{suffix}"
+        record_filter_decision(candidate_key=key, decision="rejected", **common)
+        get_db().execute(
+            "UPDATE filter_candidate_outcomes SET status='settled', "
+            "net_return_pct=0.8, min_tradable_edge_pct=?, cost_model_version='v1' "
+            "WHERE outcome_candidate_key=?",
+            (edge, key),
+        )
+    max_edge_key = "opportunity:confidence-max-finite"
+    record_filter_decision(candidate_key=max_edge_key, decision="rejected", **common)
+    get_db().execute(
+        "UPDATE filter_candidate_outcomes SET status='settled', "
+        "net_return_pct=0, min_tradable_edge_pct=?, cost_model_version='v1' "
+        "WHERE outcome_candidate_key=?",
+        (float.fromhex("0x1.fffffffffffffp+1023"), max_edge_key),
+    )
+    for suffix, cost_model in (
+        ("missing-cost-model", None), ("blank-cost-model", " "),
+        ("tab-cost-model", "\t"),
+        ("unicode-space-cost-model", "\N{NO-BREAK SPACE}"),
+        ("blob-cost-model", b"v1"),
+    ):
+        key = f"opportunity:confidence-{suffix}"
+        record_filter_decision(candidate_key=key, decision="rejected", **common)
+        get_db().execute(
+            "UPDATE filter_candidate_outcomes SET status='settled', "
+            "net_return_pct=0.8, min_tradable_edge_pct=0.05, cost_model_version=? "
+            "WHERE outcome_candidate_key=?",
+            (cost_model, key),
+        )
+    for suffix, net in (("malformed-net", "malformed"), ("blob-net", b"0.8")):
+        key = f"opportunity:confidence-{suffix}"
+        record_filter_decision(candidate_key=key, decision="rejected", **common)
+        get_db().execute(
+            "UPDATE filter_candidate_outcomes SET status='settled', "
+            "net_return_pct=?, min_tradable_edge_pct=0.05, cost_model_version='v1' "
+            "WHERE outcome_candidate_key=?",
             (net, key),
         )
     get_db().commit()
@@ -710,6 +754,9 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
     assert rejected["blocked_avoided_loss_count"] == 1
     assert rejected["blocked_missed_alpha_count"] == 1
     assert rejected["blocked_net_sum"] == pytest.approx(0.2)
+    assert rejected["n_total"] == 15
+    assert rejected["n_net"] == 3
+    assert rejected["outcome_coverage"] == 0.2
 
 
 def test_filter_snapshot_drops_sensitive_keys_and_truncates_text():

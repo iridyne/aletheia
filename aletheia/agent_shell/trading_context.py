@@ -2380,7 +2380,7 @@ def _get_data_health_summary() -> dict[str, Any]:
     """Build a concise data-health dict for System Operator context injection."""
     try:
         from aletheia.storage.repositories import get_active_universe_members, get_universe_asset
-        from aletheia.storage.sqlite import get_db
+        from aletheia.storage.sqlite import SQLITE_PYTHON_STRIP_CHARS_SQL, get_db
         from aletheia.config.loader import load_config
 
         cfg = load_config()
@@ -2410,13 +2410,19 @@ def _get_data_health_summary() -> dict[str, Any]:
         # Signal effectiveness (7d, 24h horizon)
         cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         row = db.execute(
-            """SELECT COUNT(*),
-                      SUM(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0)
+            f"""SELECT COUNT(*),
+                      SUM(CASE WHEN net_return_pct > min_tradable_edge_pct
                                THEN 1 ELSE 0 END)
                FROM universe_forward_outcomes
                WHERE status = 'settled' AND horizon = '24h'
-                 AND settled_at >= ? AND net_return_pct IS NOT NULL
+                 AND settled_at >= ?
+                 AND typeof(net_return_pct) IN ('integer', 'real')
                  AND ABS(net_return_pct) <= 100
+                 AND typeof(cost_model_version) = 'text'
+                 AND TRIM(cost_model_version, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> ''
+                 AND typeof(min_tradable_edge_pct) IN ('integer', 'real')
+                 AND min_tradable_edge_pct >= 0
+                 AND min_tradable_edge_pct < 1e999
                  AND direction IN ('long', 'short')""",
             (cutoff,),
         ).fetchone()

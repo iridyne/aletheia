@@ -140,6 +140,7 @@ def _outcome(
     entry_at: str | None = None,
     status: str = "settled",
     cost_model_version: str | None = "cost-v1",
+    min_tradable_edge_pct: float | None = 0.05,
     settlement_price_source: str = "horizon_ohlcv",
     suffix: str = "",
 ):
@@ -154,9 +155,10 @@ def _outcome(
         "INSERT INTO universe_forward_outcomes "
         "(id, outcome_candidate_key, member_id, snapshot_id, symbol, venue, market_type, "
         "scanner_family, direction, horizon, entry_price_usd, entry_ts, due_at, settled_at, "
-        "net_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+        "net_return_pct, min_tradable_edge_pct, estimated_fee_pct, "
+        "estimated_spread_slippage_pct, estimated_funding_pct, "
         "mae_pct, settlement_price_source, cost_model_version, status) "
-        "VALUES (?, ?, ?, ?, 'BTC/USDT', 'test', 'perp', 'momentum', 'long', ?, 100, ?, ?, ?, ?, "
+        "VALUES (?, ?, ?, ?, 'BTC/USDT', 'test', 'perp', 'momentum', 'long', ?, 100, ?, ?, ?, ?, ?, "
         "0.1, 0.1, 0.0, ?, ?, ?, ?)",
         (
             f"outcome-{candidate}-{horizon}-{suffix or 'primary'}",
@@ -168,6 +170,7 @@ def _outcome(
             due,
             settled,
             net,
+            min_tradable_edge_pct,
             mae,
             settlement_price_source,
             cost_model_version,
@@ -185,6 +188,7 @@ def _filter_outcome(
     entry_at: str | None = None,
     status: str = "settled",
     cost_model_version: str | None = "cost-v1",
+    min_tradable_edge_pct: float | None = 0.05,
     allocation_selected: bool | None = True,
     settlement_price_source: str = "horizon_ohlcv",
     suffix: str = "",
@@ -198,10 +202,11 @@ def _filter_outcome(
     get_db().execute(
         "INSERT INTO filter_candidate_outcomes "
         "(id, outcome_candidate_key, venue, symbol, market_type, scanner_family, direction, "
-        "horizon, allocation_selected, entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
+        "horizon, allocation_selected, entry_price_usd, entry_ts, due_at, settled_at, "
+        "net_return_pct, min_tradable_edge_pct, "
         "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, mae_pct, "
         "settlement_price_source, cost_model_version, status) "
-        "VALUES (?, ?, 'test', 'BTC/USDT', 'perp', 'momentum', 'long', ?, ?, 100, ?, ?, ?, ?, "
+        "VALUES (?, ?, 'test', 'BTC/USDT', 'perp', 'momentum', 'long', ?, ?, 100, ?, ?, ?, ?, ?, "
         "0.1, 0.1, 0.0, ?, ?, ?, ?)",
         (
             f"filter-outcome-{candidate}-{horizon}-{suffix or 'primary'}",
@@ -212,6 +217,7 @@ def _filter_outcome(
             due,
             settled,
             net,
+            min_tradable_edge_pct,
             mae,
             settlement_price_source,
             cost_model_version,

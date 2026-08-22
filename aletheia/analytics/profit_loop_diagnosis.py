@@ -284,6 +284,7 @@ def _group_returns(facts: Iterable[Mapping[str, Any]], predicate) -> tuple[list[
             "entry_ts": fact.get("first_exposure", {}).get("entry_ts") if isinstance(fact.get("first_exposure"), dict) else None,
             "direction": fact.get("first_exposure", {}).get("direction") if isinstance(fact.get("first_exposure"), dict) else None,
             "net_return_pct": outcome.get("net_return_pct"),
+            "min_tradable_edge_pct": outcome.get("min_tradable_edge_pct"),
             "cost_model_version": outcome.get("cost_model_version"),
             "outcome_candidate_key": fact.get("outcome_candidate_key"),
             "horizon": fact.get("fixed_horizon"),

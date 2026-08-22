@@ -34,7 +34,11 @@ def assess_candidate_outcome(row: dict[str, Any]) -> OutcomeAssessment:
     net = _to_float(row.get("net_return_pct"))
     if net is None:
         return OutcomeAssessment(False, "net_economics_unavailable", category="candidate", source="candidate_outcome")
-    if not row.get("cost_model_version"):
+    edge = _to_float(row.get("min_tradable_edge_pct"))
+    if edge is None or edge < 0:
+        return OutcomeAssessment(False, "tradable_edge_unavailable", category="candidate", source="candidate_outcome")
+    cost_model = row.get("cost_model_version")
+    if not isinstance(cost_model, str) or not cost_model.strip():
         return OutcomeAssessment(False, "missing_cost_model_version", category="candidate", source="candidate_outcome")
     key = row.get("outcome_candidate_key")
     horizon = row.get("horizon")
@@ -70,10 +74,7 @@ def _parse_dt(value: Any) -> datetime | None:
 
 
 def _to_float(value: Any) -> float | None:
-    if value is None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    try:
-        number = float(value)
-        return number if math.isfinite(number) else None
-    except (TypeError, ValueError):
-        return None
+    number = float(value)
+    return number if math.isfinite(number) else None

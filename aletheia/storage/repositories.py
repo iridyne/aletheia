@@ -13,6 +13,7 @@ import time
 import uuid
 from collections.abc import Mapping, Sequence
 from aletheia.storage.sqlite import (
+    SQLITE_PYTHON_STRIP_CHARS_SQL,
     acquire_write_lock,
     execute_many_write,
     execute_write,
@@ -7604,6 +7605,15 @@ _OUTCOME_MARKET_SQL = (
     "CASE WHEN market_type IN ('perp','futures','swap','usdt_futures') "
     "THEN 'perp' ELSE COALESCE(market_type, 'spot') END"
 )
+_COMPLETE_OUTCOME_ECONOMICS_SQL = (
+    "typeof(net_return_pct) IN ('integer', 'real') "
+    "AND ABS(net_return_pct) <= 100 "
+    "AND typeof(cost_model_version) = 'text' "
+    f"AND TRIM(cost_model_version, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> '' "
+    "AND typeof(min_tradable_edge_pct) IN ('integer', 'real') "
+    "AND min_tradable_edge_pct >= 0 "
+    "AND min_tradable_edge_pct < 1e999"
+)
 
 
 def insert_forward_outcome(outcome) -> None:
@@ -8173,16 +8183,14 @@ def calibration_stats() -> list[dict]:
         f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
         "COUNT(*) as n, "
         "AVG(net_return_pct) as avg_return, "
-        "SUM(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0) "
+        "SUM(CASE WHEN net_return_pct > min_tradable_edge_pct "
         "  THEN 1 ELSE 0 END) as win_count, "
         "MIN(net_return_pct) as min_return, "
         "MAX(net_return_pct) as max_return "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' "
         "AND entry_ts >= ? "
-        "AND net_return_pct IS NOT NULL "
-        "AND cost_model_version IS NOT NULL "
-        "AND ABS(net_return_pct) <= 100 "
+        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND direction IN ('long', 'short') "
         f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon "
         "ORDER BY scanner_family, direction, market_type, horizon",
@@ -8269,9 +8277,7 @@ def _calibration_source_lineage(db, cutoff: str) -> dict[tuple, dict]:
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' "
         "AND entry_ts >= ? "
-        "AND net_return_pct IS NOT NULL "
-        "AND cost_model_version IS NOT NULL "
-        "AND ABS(net_return_pct) <= 100 "
+        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND direction IN ('long', 'short') "
         "ORDER BY scanner_family, direction, market_type, horizon, id",
         (cutoff,),
@@ -8329,14 +8335,12 @@ def filter_pressure_stats() -> list[dict]:
         "AVG(net_return_pct) AS avg_net, "
         "MIN(net_return_pct) AS min_net, "
         "MAX(net_return_pct) AS max_net, "
-        "AVG(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0) "
+        "AVG(CASE WHEN net_return_pct > min_tradable_edge_pct "
         "  THEN 1.0 ELSE 0.0 END) AS miss_rate "
         "FROM filter_candidate_outcomes "
         "WHERE status = 'settled' "
         "AND scanner_family IS NOT NULL "
-        "AND cost_model_version IS NOT NULL "
-        "AND net_return_pct IS NOT NULL "
-        "AND ABS(net_return_pct) <= 100 "
+        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND direction IN ('long', 'short') "
         "AND entry_ts >= ? "
         f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon "
@@ -8402,12 +8406,12 @@ def family_direction_edge(horizon: str = "24h", within_days: int = 7) -> list[di
         f"{_OUTCOME_MARKET_SQL} AS market_type, "
         "COUNT(*) as n, "
         "AVG(net_return_pct) as avg_return, "
-        "SUM(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0) "
+        "SUM(CASE WHEN net_return_pct > min_tradable_edge_pct "
         "  THEN 1 ELSE 0 END) as win_count "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' AND horizon = ? "
-        "AND settled_at >= ? AND net_return_pct IS NOT NULL "
-        "AND ABS(net_return_pct) <= 100 "
+        "AND settled_at >= ? "
+        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND scanner_family IS NOT NULL "
         "AND direction IN ('long', 'short') "
         f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL} "

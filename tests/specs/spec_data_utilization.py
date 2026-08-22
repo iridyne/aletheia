@@ -813,7 +813,9 @@ def _setup_du_db(tmp_path, monkeypatch):
     return conn
 
 
-def _seed_forward_outcome(conn, family, direction, forward_return, horizon="24h"):
+def _seed_forward_outcome(
+    conn, family, direction, forward_return, horizon="24h", edge=0.05,
+):
     import uuid
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
@@ -832,7 +834,7 @@ def _seed_forward_outcome(conn, family, direction, forward_return, horizon="24h"
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()), "X/USDT",
          family, direction, horizon, 100.0, now, now, now, 101.0,
-         forward_return, forward_return, directional, net, 0.05, "spot", "v1", "settled"),
+         forward_return, forward_return, directional, net, edge, "spot", "v1", "settled"),
     )
     conn.commit()
 
@@ -853,6 +855,7 @@ def test_family_direction_edge_groups_by_direction(tmp_path, monkeypatch):
     _seed_forward_outcome(conn, "momentum", "long", 2.0)
     _seed_forward_outcome(conn, "momentum", "long", 1.0)
     _seed_forward_outcome(conn, "momentum", "long", -1.0)
+    _seed_forward_outcome(conn, "momentum", "long", 9.0, edge=None)
     # momentum:short — 2 outcomes, 2 wins (negative return = short win)
     _seed_forward_outcome(conn, "momentum", "short", -2.0)
     _seed_forward_outcome(conn, "momentum", "short", -3.0)

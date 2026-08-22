@@ -427,7 +427,7 @@ def filter_feedback_stats(
     evaluated_since: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return cost-aware pass/reject cells with a conservative shrunk mean."""
-    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.sqlite import SQLITE_PYTHON_STRIP_CHARS_SQL, get_db
 
     # A candidate can be evaluated on multiple scheduler ticks (fresh first,
     # expired later). Assign it once by its first persisted exposure so pass and
@@ -436,6 +436,16 @@ def filter_feedback_stats(
     # rejection incorrectly becomes the candidate's first exposure.
     time_clause = " AND datetime(fd.first_evaluated_at) >= datetime(?)" if evaluated_since else ""
     params = (evaluated_since,) if evaluated_since else ()
+    complete_net = (
+        "fo.status='settled' "
+        "AND typeof(fo.net_return_pct) IN ('integer', 'real') "
+        "AND ABS(fo.net_return_pct) <= 100 "
+        "AND typeof(fo.cost_model_version) = 'text' "
+        f"AND TRIM(fo.cost_model_version, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> '' "
+        "AND typeof(fo.min_tradable_edge_pct) IN ('integer', 'real') "
+        "AND fo.min_tradable_edge_pct >= 0 "
+        "AND fo.min_tradable_edge_pct < 1e999"
+    )
     rows = get_db().execute(
         FIRST_EXPOSURE_CTE_SQL +
         "SELECT fd.filter_name, fd.stage, fd.filter_version, "
@@ -443,19 +453,19 @@ def filter_feedback_stats(
         "COALESCE(fd.scanner_family, 'unknown') AS scanner_family, "
         "fd.direction, fd.market_type, fo.horizon, "
         "COUNT(DISTINCT fd.outcome_candidate_key) AS n_total, "
-        "COUNT(DISTINCT CASE WHEN fo.status='settled' AND fo.net_return_pct IS NOT NULL "
+        f"COUNT(DISTINCT CASE WHEN {complete_net} "
         "  THEN fd.outcome_candidate_key END) AS n_net, "
-        "AVG(CASE WHEN fo.status='settled' THEN fo.net_return_pct END) AS avg_net, "
-        "SUM(CASE WHEN fo.status='settled' AND fo.net_return_pct > 0 "
+        f"AVG(CASE WHEN {complete_net} THEN fo.net_return_pct END) AS avg_net, "
+        f"SUM(CASE WHEN {complete_net} AND fo.net_return_pct > 0 "
         "  THEN fo.net_return_pct ELSE 0 END) AS gains, "
-        "SUM(CASE WHEN fo.status='settled' AND fo.net_return_pct < 0 "
+        f"SUM(CASE WHEN {complete_net} AND fo.net_return_pct < 0 "
         "  THEN -fo.net_return_pct ELSE 0 END) AS losses, "
-        "SUM(CASE WHEN fd.decision='rejected' AND fo.status='settled' "
+        f"SUM(CASE WHEN fd.decision='rejected' AND {complete_net} "
         "  AND fo.net_return_pct < 0 THEN 1 ELSE 0 END) AS blocked_avoided_loss_count, "
-        "SUM(CASE WHEN fd.decision='rejected' AND fo.status='settled' "
-        "  AND fo.net_return_pct > COALESCE(fo.min_tradable_edge_pct, 0.05) "
+        f"SUM(CASE WHEN fd.decision='rejected' AND {complete_net} "
+        "  AND fo.net_return_pct > fo.min_tradable_edge_pct "
         "  THEN 1 ELSE 0 END) AS blocked_missed_alpha_count, "
-        "SUM(CASE WHEN fd.decision='rejected' AND fo.status='settled' "
+        f"SUM(CASE WHEN fd.decision='rejected' AND {complete_net} "
         "  THEN fo.net_return_pct ELSE 0 END) AS blocked_net_sum "
         "FROM ranked_filter_decisions fd "
         "JOIN filter_candidate_outcomes fo "

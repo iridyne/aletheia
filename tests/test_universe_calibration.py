@@ -95,6 +95,68 @@ def test_long_winner_counts_on_positive_return(tmp_path):
     reset_db()
 
 
+def test_incomplete_tradable_edge_is_excluded_from_calibration(tmp_path):
+    setup_test_db(tmp_path)
+    complete = _settled("AAA/USDT", "long", 5.0)
+    incomplete = _settled("BBB/USDT", "long", 5.0).model_copy(
+        update={"min_tradable_edge_pct": None},
+    )
+    malformed = _settled("CCC/USDT", "long", 5.0)
+    blob = _settled("DDD/USDT", "long", 5.0)
+    max_finite = _settled("EEE/USDT", "long", 5.0).model_copy(
+        update={"min_tradable_edge_pct": float.fromhex("0x1.fffffffffffffp+1023")},
+    )
+    malformed_net = _settled("FFF/USDT", "long", 5.0)
+    blob_net = _settled("GGG/USDT", "long", 5.0)
+    blank_cost = _settled("HHH/USDT", "long", 5.0)
+    blob_cost = _settled("III/USDT", "long", 5.0)
+    whitespace_cost = _settled("JJJ/USDT", "long", 5.0)
+    unicode_space_cost = _settled("KKK/USDT", "long", 5.0)
+    repo.insert_forward_outcomes_batch([
+        complete, incomplete, malformed, blob, max_finite, malformed_net, blob_net,
+        blank_cost, blob_cost, whitespace_cost, unicode_space_cost,
+    ])
+    get_db().execute(
+        "UPDATE universe_forward_outcomes SET min_tradable_edge_pct='malformed' WHERE id=?",
+        (malformed.id,),
+    )
+    get_db().execute(
+        "UPDATE universe_forward_outcomes SET min_tradable_edge_pct=? WHERE id=?",
+        (b"0.05", blob.id),
+    )
+    get_db().execute(
+        "UPDATE universe_forward_outcomes SET net_return_pct='malformed' WHERE id=?",
+        (malformed_net.id,),
+    )
+    get_db().execute(
+        "UPDATE universe_forward_outcomes SET net_return_pct=? WHERE id=?",
+        (b"5.0", blob_net.id),
+    )
+    get_db().execute(
+        "UPDATE universe_forward_outcomes SET cost_model_version=' ' WHERE id=?",
+        (blank_cost.id,),
+    )
+    get_db().execute(
+        "UPDATE universe_forward_outcomes SET cost_model_version=? WHERE id=?",
+        (b"v1", blob_cost.id),
+    )
+    get_db().execute(
+        "UPDATE universe_forward_outcomes SET cost_model_version=? WHERE id=?",
+        ("\t", whitespace_cost.id),
+    )
+    get_db().execute(
+        "UPDATE universe_forward_outcomes SET cost_model_version=? WHERE id=?",
+        ("\N{NO-BREAK SPACE}", unicode_space_cost.id),
+    )
+    get_db().commit()
+
+    rows = repo.calibration_stats()
+    assert len(rows) == 1
+    assert rows[0]["n"] == 2
+    assert rows[0]["win_count"] == 1
+    reset_db()
+
+
 def test_null_direction_is_excluded_from_calibration(tmp_path):
     setup_test_db(tmp_path)
     repo.insert_forward_outcomes_batch([

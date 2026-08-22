@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 
@@ -17,12 +18,15 @@ def classify_counterfactual(
     min_tradable_edge_pct: float | None,
 ) -> str:
     """Classify a rejected opportunity without promoting gross movement to alpha."""
-    edge = max(0.0, float(min_tradable_edge_pct or 0.0))
-    if net_return_pct is not None and float(net_return_pct) > edge:
+    net = _to_float(net_return_pct)
+    directional = _to_float(directional_return_pct)
+    edge = _to_float(min_tradable_edge_pct)
+    complete_net = net is not None and edge is not None and edge >= 0
+    if complete_net and net > edge:
         return MISSED_ALPHA
-    if directional_return_pct is not None and float(directional_return_pct) > 0:
+    if directional is not None and directional > 0:
         return POSITIVE_GROSS_ONLY
-    if net_return_pct is not None:
+    if complete_net:
         return PROTECTIVE
     return INSUFFICIENT
 
@@ -61,9 +65,7 @@ def classify_outcome_row(row: dict[str, Any], direction: str | None = None) -> s
 
 
 def _to_float(value: Any) -> float | None:
-    if value is None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+    number = float(value)
+    return number if math.isfinite(number) else None

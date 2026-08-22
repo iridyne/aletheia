@@ -117,6 +117,7 @@ def _make_candidate_fact(
         "fixed_horizon_outcome": {
             "status": "settled",
             "net_return_pct": net_return_pct,
+            "min_tradable_edge_pct": 0.05,
             "cost_model_version": cost_model_version,
         },
     }
@@ -227,6 +228,7 @@ def test_candidate_missing_direction_and_cost_model_excluded_from_eligible():
                 "fixed_horizon_outcome": {
                     "status": "settled",
                     "net_return_pct": 3.0,
+                    "min_tradable_edge_pct": 0.05,
                     "cost_model_version": "v1",
                 },
             },
@@ -244,6 +246,7 @@ def test_candidate_missing_direction_and_cost_model_excluded_from_eligible():
                 "fixed_horizon_outcome": {
                     "status": "settled",
                     "net_return_pct": 4.0,
+                    "min_tradable_edge_pct": 0.05,
                 },
             },
         ],

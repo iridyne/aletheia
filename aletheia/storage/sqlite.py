@@ -79,6 +79,17 @@ _TRANSACTION_START_SQL = {"BEGIN", "SAVEPOINT"}
 _TRANSACTION_END_SQL = {"COMMIT", "END", "RELEASE", "ROLLBACK"}
 _WITH_WRITE_RE = re.compile(r"\b(?:INSERT|UPDATE|DELETE|REPLACE)\b", re.IGNORECASE)
 
+# SQLite TRIM defaults to ASCII space only.  Keep SQL evidence gates aligned
+# with Python str.strip() so whitespace-only authority identities fail closed.
+SQLITE_PYTHON_STRIP_CHARS_SQL = "||".join(
+    f"char({codepoint})"
+    for codepoint in (
+        9, 10, 11, 12, 13, 28, 29, 30, 31, 32, 133, 160, 5760,
+        8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200,
+        8201, 8202, 8232, 8233, 8239, 8287, 12288,
+    )
+)
+
 
 def acquire_write_lock(
     *,

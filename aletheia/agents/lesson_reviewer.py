@@ -102,7 +102,7 @@ def _fetch_evidence(lesson) -> dict:
         total = len(eligible)
         wins = sum(
             1 for row, net in eligible
-            if net > float(row.get("min_tradable_edge_pct") or 0.0)
+            if net > float(row["min_tradable_edge_pct"])
         )
         avg_return = (
             sum(net for _, net in eligible) / total if total else None

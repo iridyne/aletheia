@@ -143,10 +143,33 @@ def test_shared_outcome_adapter_fails_closed_on_ineligible_rows():
         "entry_ts": clean, "direction": "long", "net_return_pct": float("nan"),
         "cost_model_version": "v1",
     }).eligible
+    for invalid_net in ("0.5", b"0.5", True):
+        assert not assess_candidate_outcome({
+            "outcome_candidate_key": "c-invalid-net", "horizon": "4h",
+            "status": "settled", "entry_ts": clean, "direction": "long",
+            "net_return_pct": invalid_net, "min_tradable_edge_pct": 0.05,
+            "cost_model_version": "v1",
+        }).eligible
+    for invalid_cost_model in (None, "", " ", b"v1", True):
+        assert not assess_candidate_outcome({
+            "outcome_candidate_key": "c-invalid-cost-model", "horizon": "4h",
+            "status": "settled", "entry_ts": clean, "direction": "long",
+            "net_return_pct": 0.5, "min_tradable_edge_pct": 0.05,
+            "cost_model_version": invalid_cost_model,
+        }).eligible
+    for invalid_edge in (
+        None, float("nan"), float("inf"), -0.01, "malformed", "0.05", b"0.05", True,
+    ):
+        assert not assess_candidate_outcome({
+            "outcome_candidate_key": "c-invalid-edge", "horizon": "4h",
+            "status": "settled", "entry_ts": clean, "direction": "long",
+            "net_return_pct": 0.5, "min_tradable_edge_pct": invalid_edge,
+            "cost_model_version": "v1",
+        }).eligible
     eligible = assess_candidate_outcome({
         "outcome_candidate_key": "c-net", "horizon": "4h", "status": "settled",
         "entry_ts": clean, "direction": "long", "net_return_pct": 0.5,
-        "cost_model_version": "v1",
+        "min_tradable_edge_pct": 0.05, "cost_model_version": "v1",
     })
     assert eligible.eligible
     assert eligible.net_return_pct == 0.5
@@ -197,8 +220,11 @@ def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(mo
         )
         db.execute(
             "INSERT INTO filter_candidate_outcomes "
-            "(id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, cost_model_version, status) "
-            "VALUES (?, ?, 'test', 'BTC/USDT', 'spot', 'long', '4h', 100, ?, ?, ?, ?, 'v1', 'settled')",
+            "(id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
+            "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
+            "min_tradable_edge_pct, cost_model_version, status) "
+            "VALUES (?, ?, 'test', 'BTC/USDT', 'spot', 'long', '4h', 100, ?, ?, ?, "
+            "?, 0.05, 'v1', 'settled')",
             (f"fo-{idx}", key, entry, entry, entry, net),
         )
     db.commit()
@@ -394,8 +420,8 @@ def test_ranker_case_outcome_adapter_uses_exact_base_key_and_horizon():
         "INSERT INTO filter_candidate_outcomes ("
         "id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
         "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
-        "estimated_fee_pct, estimated_spread_slippage_pct, cost_model_version, status"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "estimated_fee_pct, estimated_spread_slippage_pct, min_tradable_edge_pct, cost_model_version, status"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.05, ?, ?)",
         (
             "ranker-outcome-1", "member-1", "bitget", "BTC/USDT", "spot", "long",
             "4h", 100.0, now, now, now, 0.4, 0.05, 0.05, "cost-v1", "settled",
@@ -479,7 +505,7 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
         outcome_key = ranker_key(candidate_key)
         db.execute(
             "UPDATE filter_candidate_outcomes SET entry_ts=?, due_at=?, settled_at=?, "
-            "net_return_pct=?, estimated_fee_pct=0.05, "
+            "net_return_pct=?, min_tradable_edge_pct=0.05, estimated_fee_pct=0.05, "
             "estimated_spread_slippage_pct=0.05, mae_pct=-0.5, "
             "cost_model_version='cost-v1', status='settled' "
             "WHERE outcome_candidate_key=? AND horizon='4h'",
@@ -561,7 +587,8 @@ def test_ranker_case_excludes_wrong_horizon_and_incomplete_cost(monkeypatch):
         outcome_key = ranker_key(candidate_key)
         db.execute(
             "UPDATE filter_candidate_outcomes SET horizon=?, entry_ts=?, due_at=?, "
-            "settled_at=?, net_return_pct=0.4, estimated_fee_pct=?, "
+            "settled_at=?, net_return_pct=0.4, min_tradable_edge_pct=0.05, "
+            "estimated_fee_pct=?, "
             "estimated_spread_slippage_pct=?, cost_model_version=?, status='settled' "
             "WHERE outcome_candidate_key=? AND horizon='4h'",
             (

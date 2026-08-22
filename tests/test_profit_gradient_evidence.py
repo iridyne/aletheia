@@ -587,6 +587,7 @@ def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_ho
             "entry_ts": "2026-08-13T00:00:00+00:00",
             "settled_at": "2026-08-14T00:00:00+00:00",
             "net_return_pct": -1.0,
+            "min_tradable_edge_pct": 0.05,
             "cost_model_version": "v1",
         },
     }

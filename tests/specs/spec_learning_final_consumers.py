@@ -642,6 +642,20 @@ async def test_lesson_reviewer_requires_clean_exact_scope(monkeypatch):
             db, oid=f"dirty-{i}", symbol="BTC/USDT", direction="long", scanner="momentum",
             complete=False,
         )
+    _insert_forward_outcome(
+        db, oid="malformed-edge", symbol="BTC/USDT", direction="long", scanner="momentum",
+    )
+    db.execute(
+        "UPDATE universe_forward_outcomes SET min_tradable_edge_pct='malformed' "
+        "WHERE id='malformed-edge'"
+    )
+    _insert_forward_outcome(
+        db, oid="blob-edge", symbol="BTC/USDT", direction="long", scanner="momentum",
+    )
+    db.execute(
+        "UPDATE universe_forward_outcomes SET min_tradable_edge_pct=? WHERE id='blob-edge'",
+        (b"0.05",),
+    )
     db.commit()
 
     lesson = LessonStore().create(

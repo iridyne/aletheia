@@ -225,6 +225,18 @@ def test_missed_alpha_requires_tradable_net_edge():
     assert classify_counterfactual(0.01, 0.45, 0.05) == "positive_gross_move_only"
     assert classify_counterfactual(None, 0.45, 0.05) == "positive_gross_move_only"
     assert classify_counterfactual(-0.20, -0.10, 0.05) == "protective"
+    for invalid_edge in (
+        None, float("nan"), float("inf"), -0.01, "0.05", b"0.05", True,
+    ):
+        assert (
+            classify_counterfactual(0.20, 0.45, invalid_edge)
+            == "positive_gross_move_only"
+        )
+        assert classify_counterfactual(-0.20, -0.10, invalid_edge) == "insufficient_data"
+    assert classify_counterfactual(float("inf"), 0.45, 0.05) == "positive_gross_move_only"
+    assert classify_counterfactual(float("nan"), -0.10, 0.05) == "insufficient_data"
+    for invalid_net in ("0.20", b"0.20", True):
+        assert classify_counterfactual(invalid_net, -0.10, 0.05) == "insufficient_data"
 
 
 @spec_claim(

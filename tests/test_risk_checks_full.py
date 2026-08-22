@@ -9,6 +9,8 @@ existing paper flow, which stays permissive.
 import sqlite3
 from datetime import datetime, timezone, timedelta
 
+import pytest
+
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import (
@@ -428,7 +430,23 @@ def test_live_without_resolvable_family_rejected(tmp_path, monkeypatch):
     assert any("family_not_live_eligible:unknown" in v for v in result.violations)
 
 
-def test_live_family_with_clean_window_edge_passes_gate14(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("edge_threshold", "cost_model_version", "raw_net", "expect_no_evidence"),
+    (
+        (0.05, "v1", None, False),
+        (None, "v1", None, True),
+        (0.05, None, None, True),
+        (0.05, "\t", None, True),
+        (0.05, "\n", None, True),
+        (0.05, "\N{NO-BREAK SPACE}", None, True),
+        (0.05, "v1", "malformed", True),
+        (0.05, "v1", b"4.73", True),
+    ),
+)
+def test_live_family_gate_requires_complete_edge_evidence(
+    tmp_path, monkeypatch, edge_threshold, cost_model_version, raw_net,
+    expect_no_evidence,
+):
     setup_env(tmp_path, monkeypatch)
     _unlock_live_auto(tmp_path)
     from datetime import datetime, timezone
@@ -444,9 +462,16 @@ def test_live_family_with_clean_window_edge_passes_gate14(tmp_path, monkeypatch)
             gross_return_pct=5.0, directional_return_pct=5.0,
             estimated_fee_pct=0.12, estimated_spread_slippage_pct=0.15,
             estimated_funding_pct=0.0, net_return_pct=4.73,
-            min_tradable_edge_pct=0.05, cost_model_version="v1",
+            min_tradable_edge_pct=edge_threshold, cost_model_version=cost_model_version,
             market_type="spot", status="settled",
         ))
+    if raw_net is not None:
+        from aletheia.storage.sqlite import get_db
+        get_db().execute(
+            "UPDATE universe_forward_outcomes SET net_return_pct=? WHERE snapshot_id='snap1'",
+            (raw_net,),
+        )
+        get_db().commit()
     opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",
                       scanner_family="momentum")
     repo.insert_opportunity(opp)
@@ -457,10 +482,14 @@ def test_live_family_with_clean_window_edge_passes_gate14(tmp_path, monkeypatch)
                       opportunity_id=opp.id, stop_price=59000)
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
-    # >=30 wins, WR=100% → check #14 passes (other live checks may still fire).
-    assert not any("family_not_live_eligible" in v for v in result.violations), (
-        f"family gate should pass with 30 winning outcomes, got: {result.violations}"
-    )
+    family_violations = [
+        violation for violation in result.violations
+        if "family_not_live_eligible" in violation
+    ]
+    if expect_no_evidence:
+        assert family_violations == ["family_not_live_eligible:momentum:no_evidence"]
+    else:
+        assert family_violations == []
 
 
 def test_live_family_edge_selects_matching_market_type(monkeypatch):
