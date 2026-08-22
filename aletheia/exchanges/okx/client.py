@@ -202,7 +202,7 @@ class OKXClient:
             # NOTE: reduceOnly intentionally omitted — derivatives-only concept.
         else:
             # Futures open: set intended leverage first (skip reduce-only closes). Fail-closed.
-            if order.leverage and order.leverage > 1 and not order.reduce_only:
+            if order.leverage is not None and order.leverage >= 1 and not order.reduce_only:
                 await self.set_leverage(ccxt_symbol, order.leverage)
             contract_size = await self._contract_size(ccxt_symbol)
             amount = order.quantity / contract_size if contract_size else order.quantity

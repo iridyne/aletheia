@@ -375,12 +375,29 @@ def execute_live_order(
     )
     insert_order(order)
 
+    # --- Pre-submission: set leverage before placing the order (#1732, #1792).
+    # Lifting this out of place_order means a leverage timeout is a KNOWN pre-
+    # submission failure (order.status = "error"), never submission_unknown.
+    if market_type != "spot" and leverage is not None and leverage >= 1:
+        ccxt_sym = okx_ccxt_symbol(market_type, symbol)
+        try:
+            _run_coro(client.set_leverage(ccxt_sym, leverage))
+        except Exception:
+            update_order(
+                order.id,
+                status="error",
+                error_reason="leverage_setup_failed_before_submission",
+            )
+            raise
+
     try:
         order_resp = _run_coro(client.place_order(OrderRequest(
             symbol=symbol, market_type=market_type, side=side,
             order_type=order_type, quantity=quantity,
             price=price if order_type == "limit" else None,
-            client_oid=proposal_id, leverage=leverage,
+            client_oid=proposal_id,
+            leverage=None,  # leverage already set above; skip redundant client-side call
+            take_profit_price=take_profit_price,
         )))
     except Exception as e:
         if _is_ambiguous_submission_error(e):

@@ -413,8 +413,8 @@ class BitgetClient:
         # Futures open: set the intended leverage on the exchange first (skip on a
         # hedge-mode close, which does not change leverage). Fail-closed — set_leverage
         # raises on failure, aborting the order rather than opening at the wrong size.
-        if (order.market_type != "spot" and order.leverage and order.leverage > 1
-                and not order.hold_side):
+        if (order.market_type != "spot" and order.leverage is not None
+                and order.leverage >= 1 and not order.hold_side):
             await self.set_leverage(order.symbol, order.leverage)
 
         if order.market_type == "spot":
