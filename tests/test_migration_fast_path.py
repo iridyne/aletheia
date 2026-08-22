@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 38)
+        f"aletheia-sqlite-v{version}" for version in range(2, 39)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v37"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v38"
     connection.close()
 
 
@@ -655,6 +655,23 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE positions (id TEXT PRIMARY KEY);
         CREATE TABLE filter_shadow_experiments (id TEXT PRIMARY KEY);
         CREATE TABLE trade_proposals (id TEXT PRIMARY KEY);
+        CREATE TABLE audit_events (
+            id TEXT PRIMARY KEY,
+            timestamp TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            source TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            entity_type TEXT,
+            entity_id TEXT,
+            before_state TEXT,
+            after_state TEXT,
+            message TEXT
+        );
+        INSERT INTO audit_events
+        VALUES (
+            'legacy-audit', '2026-08-08T00:00:00+00:00', 'system',
+            'legacy', 'legacy_event', NULL, NULL, NULL, NULL, 'legacy'
+        );
         INSERT INTO learning_experiments (experiment_id) VALUES ('legacy-experiment');
         INSERT INTO learning_contribution_verdicts
         VALUES ('legacy-positive', 'legacy-experiment');
@@ -675,8 +692,12 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
             # includes v31 (persona rollout), v32 (uPnL identity), v33
             # (Observation Lab frozen units), v34 (EX-04 live authorization
             # ref), v35 (momentum-short exhaustion shadow), v36 (options
-            # market structure), and v37 (gamma-flip reset).
-            for step in migrations._MIGRATIONS[:-14]
+            # market structure), v37 (gamma-flip reset), and v38 (funding
+            # audit outbox). Anchor to the semantic migration instead of a
+            # tail length so a future additive migration cannot fake v24 as
+            # already applied without its columns.
+            for step in migrations._MIGRATIONS
+            if step.migration_id < "20260811_0023_learning_hypothesis_identity_v24"
         ],
     )
     connection.commit()
@@ -694,8 +715,32 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260820_0036_gamma_flip_reset_v37",
-        "aletheia-sqlite-v37",
+        "20260823_0037_funding_audit_outbox_v38",
+        "aletheia-sqlite-v38",
+    )
+    audit_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(audit_events)")
+    }
+    assert {
+        "jsonl_mirror_status",
+        "jsonl_attempt_count",
+        "jsonl_last_error_class",
+        "jsonl_mirrored_at",
+    } <= audit_columns
+    assert tuple(connection.execute(
+        "SELECT jsonl_mirror_status, jsonl_attempt_count, "
+        "jsonl_last_error_class, jsonl_mirrored_at "
+        "FROM audit_events WHERE id='legacy-audit'"
+    ).fetchone()) == (None, None, None, None)
+    index_sql = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' "
+        "AND name='idx_audit_events_jsonl_outbox'"
+    ).fetchone()[0]
+    compact_index_sql = "".join(str(index_sql).lower().split())
+    assert "onaudit_events(jsonl_mirror_status,timestamp,id)" in compact_index_sql
+    assert (
+        "wherejsonl_mirror_statusin('pending','failed')"
+        in compact_index_sql
     )
     health_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(learning_job_health)")

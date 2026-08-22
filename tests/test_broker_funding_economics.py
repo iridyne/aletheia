@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -239,6 +240,111 @@ def test_closed_exchange_position_can_be_recovered_from_broker_funding(
     assert stored["funding_source"] == "broker_ledger"
     assert stored["realized_pnl"] is not None
     assert close_event["realized_pnl"] == stored["realized_pnl"]
+
+
+def test_broker_funding_audit_failure_replays_without_reapplying_settlement(
+    tmp_path, monkeypatch,
+):
+    setup_env(tmp_path, monkeypatch)
+    _demo_config(monkeypatch)
+    _fresh_snapshot(price=110.0)
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=110.0,
+        execution_mode="bitget_demo",
+        opened_at="2026-07-14T00:00:00+00:00",
+    )
+    repo.insert_position(position)
+    from aletheia.portfolio.pnl import close_position
+
+    closed_at = "2026-07-14T12:00:00+00:00"
+    close_position(
+        position.id,
+        exit_price=110.0,
+        actual_exit_fee=0.1,
+        closed_at=closed_at,
+        verified_exit_evidence={
+            "source": "private_fills",
+            "fill_ids": ["fill-audit"],
+            "fill_quantity": 1.0,
+        },
+    )
+    incomplete = repo._select_one("positions", position.id)
+    ledger = make_complete_ledger(
+        broker_id="bitget_demo",
+        account_environment="demo",
+        source_endpoint="/private/funding",
+        history_start_ms=1783987200000,
+        history_end_ms=1784073600000,
+        events=[],
+    )
+    funding = compute_broker_funding(
+        position=incomplete,
+        closed_at=closed_at,
+        ledger=ledger,
+    )
+    from aletheia.files import jsonl as jsonl_mod
+    from aletheia.portfolio.broker_funding_settlement import (
+        materialize_broker_funding_economics,
+    )
+
+    real_writer = jsonl_mod.write_audits_deduplicated
+    monkeypatch.setattr(jsonl_mod, "write_audits_deduplicated", lambda _events: set())
+    first = materialize_broker_funding_economics(
+        incomplete,
+        funding_cost=funding.funding_cost,
+        funding_evidence=funding.evidence,
+    )
+    stored = dict(repo._select_one("positions", position.id))
+    audit = dict(repo.get_db().execute(
+        "SELECT * FROM audit_events WHERE entity_id=? AND "
+        "event_type='exchange_position_funding_settled'",
+        (position.id,),
+    ).fetchone())
+    assert first["status"] == "settled"
+    assert first["audit_mirror_status"] == "pending"
+    assert audit["jsonl_mirror_status"] == "failed"
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM paper_account_events WHERE position_id=?",
+        (position.id,),
+    ).fetchone()[0] == 0
+
+    monkeypatch.setattr(jsonl_mod, "write_audits_deduplicated", real_writer)
+    repeated = materialize_broker_funding_economics(
+        incomplete,
+        funding_cost=funding.funding_cost,
+        funding_evidence=funding.evidence,
+    )
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "logs" / "audit.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and json.loads(line).get("id") == audit["id"]
+    ]
+    assert repeated["status"] == "already_current"
+    assert repeated["audit_mirror_status"] == "mirrored"
+    assert len(records) == 1
+    assert records[0]["timestamp"] == audit["timestamp"]
+    assert records[0]["after"]["funding_economics_fingerprint"] == (
+        json.loads(stored["reconciliation_evidence"])[
+            "funding_economics_fingerprint"
+        ]
+    )
+    assert dict(repo._select_one("positions", position.id)) == stored
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM audit_events WHERE entity_id=? AND "
+        "event_type='exchange_position_funding_settled'",
+        (position.id,),
+    ).fetchone()[0] == 1
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM paper_account_events WHERE position_id=?",
+        (position.id,),
+    ).fetchone()[0] == 0
 
 
 def test_bitget_reconciliation_materializes_zero_funding_pnl(

@@ -124,8 +124,10 @@ def test_scheduler_registers_separate_single_instance_learning_jobs(monkeypatch)
         universe_audit_reconciler = started.get_job(
             "universe_scanner_audit_reconciler"
         )
+        funding_audit_reconciler = started.get_job("funding_audit_reconciler")
         assert evaluator is not None and controller is not None and audit_reconciler is not None
         assert universe_audit_reconciler is not None
+        assert funding_audit_reconciler is not None
         assert job_ids.count("learning_contribution_evaluator") == 1
         assert "learning_verdict_runner" not in job_ids
         assert evaluator.max_instances == controller.max_instances == 1
@@ -133,10 +135,20 @@ def test_scheduler_registers_separate_single_instance_learning_jobs(monkeypatch)
         assert universe_audit_reconciler.max_instances == 1
         assert universe_audit_reconciler.coalesce is True
         assert universe_audit_reconciler.executor == "audit"
+        assert funding_audit_reconciler.max_instances == 1
+        assert funding_audit_reconciler.coalesce is True
+        assert funding_audit_reconciler.executor == "audit"
+        assert funding_audit_reconciler.trigger.interval.total_seconds() == 300
+        funding_delay = (
+            funding_audit_reconciler.next_run_time
+            - datetime.now(funding_audit_reconciler.next_run_time.tzinfo)
+        ).total_seconds()
+        assert 0 < funding_delay <= 90
         assert evaluator.coalesce is True and controller.coalesce is True
         assert evaluator.next_run_time == durable_due
         assert "learning_lifecycle_audit_reconciler" in scheduler._ESSENTIAL_JOBS
         assert "universe_scanner_audit_reconciler" in scheduler._ESSENTIAL_JOBS
+        assert "funding_audit_reconciler" in scheduler._ESSENTIAL_JOBS
     finally:
         scheduler.stop_scheduler()
 

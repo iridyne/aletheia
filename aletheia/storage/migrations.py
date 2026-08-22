@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v37"
+SCHEMA_VERSION = "aletheia-sqlite-v38"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4855,6 +4855,25 @@ _GAMMA_FLIP_RESET_CHECKSUM = hashlib.sha256(
     (_GAMMA_FLIP_RESET_SQL + "\ngamma_flip_reset_v1").encode("utf-8")
 ).hexdigest()
 
+_FUNDING_AUDIT_OUTBOX_COLUMNS = (
+    ("jsonl_mirror_status", "audit_events", "TEXT"),
+    ("jsonl_attempt_count", "audit_events", "INTEGER"),
+    ("jsonl_last_error_class", "audit_events", "TEXT"),
+    ("jsonl_mirrored_at", "audit_events", "TEXT"),
+)
+_FUNDING_AUDIT_OUTBOX_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_audit_events_jsonl_outbox
+ON audit_events(jsonl_mirror_status, timestamp, id)
+WHERE jsonl_mirror_status IN ('pending', 'failed');
+"""
+_FUNDING_AUDIT_OUTBOX_CHECKSUM = hashlib.sha256(
+    (
+        repr(_FUNDING_AUDIT_OUTBOX_COLUMNS)
+        + _FUNDING_AUDIT_OUTBOX_INDEX_SQL
+        + "\nfunding_audit_outbox_v1"
+    ).encode("utf-8")
+).hexdigest()
+
 
 class MigrationStateError(RuntimeError):
     """Base class for durable migration-ledger contract failures."""
@@ -4963,6 +4982,9 @@ _MIGRATION_DESCRIPTIONS = {
     ),
     "20260820_0036_gamma_flip_reset_v37": (
         "Null historical gamma_flip_estimate values computed with incorrect cumulative-strike algorithm"
+    ),
+    "20260823_0037_funding_audit_outbox_v38": (
+        "durable JSONL mirror state for opt-in funding settlement audits"
     ),
 }
 
@@ -5269,6 +5291,18 @@ def _apply_options_market_structure_v36(db: sqlite3.Connection) -> None:
 def _apply_gamma_flip_reset_v37(db: sqlite3.Connection) -> None:
     """Null historical gamma_flip_estimate rows computed with incorrect cumulative-strike algorithm."""
     db.executescript(_GAMMA_FLIP_RESET_SQL)
+
+
+def _apply_funding_audit_outbox_v38(db: sqlite3.Connection) -> None:
+    """Enroll only future funding audits in a retryable JSONL mirror outbox."""
+    existing = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(audit_events)").fetchall()
+    }
+    for column, table, column_type in _FUNDING_AUDIT_OUTBOX_COLUMNS:
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+            existing.add(column)
+    db.executescript(_FUNDING_AUDIT_OUTBOX_INDEX_SQL)
 
 
 def _apply_learning_hypothesis_identity_v24(db: sqlite3.Connection) -> None:
@@ -5830,6 +5864,12 @@ _MIGRATIONS = (
         checksum=_GAMMA_FLIP_RESET_CHECKSUM,
         schema_version="aletheia-sqlite-v37",
         apply=_apply_gamma_flip_reset_v37,
+    ),
+    MigrationStep(
+        migration_id="20260823_0037_funding_audit_outbox_v38",
+        checksum=_FUNDING_AUDIT_OUTBOX_CHECKSUM,
+        schema_version="aletheia-sqlite-v38",
+        apply=_apply_funding_audit_outbox_v38,
     ),
 )
 

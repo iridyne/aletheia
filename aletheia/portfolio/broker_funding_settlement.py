@@ -61,7 +61,11 @@ def materialize_broker_funding_economics(
     funding_evidence: dict,
 ) -> dict:
     """Atomically repair Position, close ledger, audit, and outcome-hook authority."""
-    from aletheia.files.jsonl import write_audit
+    from aletheia.portfolio.funding_audit import (
+        funding_audit_id,
+        insert_pending_funding_audit,
+        reconcile_position_funding_audits,
+    )
     from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs
 
     position_id = str(row.get("id") or "")
@@ -86,7 +90,14 @@ def materialize_broker_funding_economics(
         candidate, exit_fill_verified=True,
     )
     fingerprint = _fingerprint(funding_evidence)
-    audit_payload: dict | None = None
+    try:
+        audit_mirror_status = reconcile_position_funding_audits(position_id)
+    except Exception as exc:
+        logger.error(
+            "broker funding audit reconcile failed (%s)", type(exc).__name__,
+        )
+        audit_mirror_status = "pending"
+    audit_event_id: str | None = None
 
     with repo.transaction(immediate=True):
         current = repo._select_one("positions", position_id)
@@ -111,6 +122,7 @@ def materialize_broker_funding_economics(
                     "position_id": position_id,
                     "status": "already_current",
                     "realized_pnl": realized,
+                    "audit_mirror_status": audit_mirror_status,
                 }
             raise ValueError("existing exchange economics cannot be overwritten")
 
@@ -180,7 +192,14 @@ def materialize_broker_funding_economics(
             "outcome_exclusion_reason": outcome_reason,
             "funding_economics_fingerprint": fingerprint,
         }
-        repo.insert_audit_event(AuditEvent(
+        audit_event_id = funding_audit_id(
+            position_id=position_id,
+            event_type="exchange_position_funding_settled",
+            accounting_version="broker-funding-v1",
+            fingerprint=fingerprint,
+        )
+        insert_pending_funding_audit(AuditEvent(
+            id=audit_event_id,
             actor="system",
             source="broker_funding_settler",
             event_type="exchange_position_funding_settled",
@@ -193,24 +212,15 @@ def materialize_broker_funding_economics(
                 f"realized_pnl={realized}"
             ),
         ))
-        audit_payload = {
-            "actor": "system",
-            "source": "broker_funding_settler",
-            "event_type": "exchange_position_funding_settled",
-            "entity_type": "position",
-            "entity_id": position_id,
-            "before": before,
-            "after": after,
-            "message": f"Materialized broker funding economics for {position_id}",
-        }
 
-    if audit_payload is not None:
+    if audit_event_id is not None:
         try:
-            write_audit(audit_payload, mirror_db=False)
+            audit_mirror_status = reconcile_position_funding_audits(position_id)
         except Exception as exc:
             logger.error(
-                "broker funding JSONL audit sink failed (%s)", type(exc).__name__,
+                "broker funding audit reconcile failed (%s)", type(exc).__name__,
             )
+            audit_mirror_status = "pending"
     if outcome_eligible:
         try:
             from aletheia.portfolio.outcome_hooks import process_outcome_hook_jobs
@@ -226,6 +236,7 @@ def materialize_broker_funding_economics(
         "status": "settled",
         "realized_pnl": realized,
         "funding_cost": float(funding_cost),
+        "audit_mirror_status": audit_mirror_status,
     }
 
 
@@ -268,6 +279,7 @@ async def settle_unsettled_exchange_closes(limit: int = 50) -> dict:
     ]
     settled = 0
     still_pending = 0
+    audit_pending = 0
     errors: list[str] = []
     for row in rows:
         position_id = str(row.get("id") or "")
@@ -299,12 +311,15 @@ async def settle_unsettled_exchange_closes(limit: int = 50) -> dict:
             if not funding.complete or funding.funding_cost is None:
                 still_pending += 1
                 continue
-            materialize_broker_funding_economics(
+            materialized = materialize_broker_funding_economics(
                 row,
                 funding_cost=funding.funding_cost,
                 funding_evidence=funding.evidence,
             )
             settled += 1
+            audit_pending += int(
+                materialized.get("audit_mirror_status") != "mirrored"
+            )
         except Exception as exc:
             logger.warning(
                 "broker funding settler failed for %s (%s)",
@@ -322,6 +337,7 @@ async def settle_unsettled_exchange_closes(limit: int = 50) -> dict:
         "checked": len(rows),
         "settled": settled,
         "still_pending": still_pending,
+        "audit_pending": audit_pending,
         "errors": errors,
         "as_of": datetime.now(timezone.utc).isoformat(),
     }

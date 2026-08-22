@@ -3360,6 +3360,27 @@ def _probe_audit_chain(report: Report) -> None:
                        "inspect audit log manually; missing timestamps prevent automatic classification")
 
 
+def _probe_funding_audit_mirror(report: Report) -> None:
+    """Surface durable funding audits still missing their JSONL mirror."""
+    from aletheia.portfolio.funding_audit import funding_audit_backlog
+
+    backlog = funding_audit_backlog()
+    if backlog["count"]:
+        report.add(
+            "trust.audit_mirror_backlog",
+            "warn",
+            f"{backlog['count']} funding audit mirror(s) pending; "
+            f"oldest={backlog['oldest_at'] or 'unknown'}",
+            "the funding_audit_reconciler will retry without replaying accounting",
+        )
+    else:
+        report.add(
+            "trust.audit_mirror_backlog",
+            "ok",
+            "no pending funding audit mirrors",
+        )
+
+
 def _probe_config_consistency(report: Report) -> None:
     """Cross-field config consistency — detects contradictions like disabled default provider."""
     from aletheia.config.loader import load_config
@@ -4104,6 +4125,7 @@ def build_report(*, probe_llm: bool = False) -> Report:
         _probe_network,
         _probe_infra_db_size,
         _probe_audit_chain,
+        _probe_funding_audit_mirror,
         _probe_runtime_session_provenance,
         _probe_fts_coverage,
     ):

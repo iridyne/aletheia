@@ -566,6 +566,14 @@ bracket 的历史序列才可完成；公开历史费率在这里仍是本地模
 以带 position/source/fingerprint 的 `manual_credit` 或 `manual_debit` 追加差额，不删除旧事件。
 `aletheia data reconcile-paper-funding` 默认只读；apply 必须显式列出 Position IDs 并匹配当次 report
 fingerprint。
+
+Funding 会计状态与 audit delivery 状态彼此独立。新 paper/broker funding settlement audit 在上述
+会计 transaction 内以 stable ID 写入 `audit_events` 并标记 JSONL mirror `pending`；transaction
+提交后才尝试 hash-chain append。文件失败保留已提交的 Position/PnL/cash/hook authority，同时返回
+`audit_mirror_status=pending` 并使对应 scheduler/audit job health degraded；不得把 accounting status
+改写为 error 或触发会计重放。`already_current` 只重试已有 pending mirror。append 后 ack 前崩溃由
+stable ID 去重恢复，成功状态单调为 `mirrored`。历史无共享 ID 的 audit 不自动 replay。
+
 已完成数值、full-close、paper cash、eligibility 和 outcome hook 都一致，但顶层 funding version/fingerprint
 缺失或不匹配的旧行，必须单独报告为 `funding_identity_mismatch`。只有它是唯一差异、且原始 nested
 funding evidence 仍可按持仓窗与逐事件合计复核时，apply 才可走 identity-only repair：保留该 nested
