@@ -1749,6 +1749,19 @@ def test_pending_outcomes_preserve_exposed_intervention_units():
         authority_reason="current_stage_measurement_healthy",
     )
     _filter_outcome("pending-control", status="pending", net=None)
+    _exposure(
+        experiment,
+        hypothesis,
+        candidate="future-control",
+        assignment="control",
+        assignment_unit_key="future-control-cluster",
+        authority_applied=False,
+        authority_reason="current_stage_measurement_healthy",
+    )
+    _filter_outcome(
+        "future-control",
+        entry_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+    )
 
     verdict = _run(experiment.experiment_id)[0]
     metrics = json.loads(verdict.harm_metrics_json)
@@ -1760,8 +1773,9 @@ def test_pending_outcomes_preserve_exposed_intervention_units():
     assert metrics["exposed_treatment_assignment_unit_n"] == 1
     assert metrics["exposed_authority_applied_treatment_unit_n"] == 1
     assert metrics["exposed_actual_intervention_treatment_unit_n"] == 1
-    assert metrics["exposed_control_assignment_unit_n"] == 1
+    assert metrics["exposed_control_assignment_unit_n"] == 2
     assert metrics["exclusion_reasons"]["unsettled"] == 3
+    assert metrics["exclusion_reasons"]["settlement_after_as_of"] == 1
 
 
 def test_exposed_units_reject_invalid_control_and_cross_arm_provenance():

@@ -91,6 +91,9 @@ def evaluate_experiment(
     ):
         if (
             not cohort.samples
+            # Once a real treatment was applied, persist readiness even while its
+            # economic outcomes are still developing.
+            and not cohort.exposed_actual_intervention_treatment_units
             and not cohort.invalid_reasons
             and not any(
                 reason not in _TRANSIENT_EXCLUSIONS
