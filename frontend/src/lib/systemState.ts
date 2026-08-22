@@ -39,6 +39,14 @@ export interface MasterStateInput {
   operatorStatus?: string
   /** From /operator/status .mode — used to surface trade-blocking modes at master level */
   operatorMode?: string
+  /**
+   * True when the operator is online but the trading daemon is not evaluating due to a
+   * gateway health issue (e.g. llm_unavailable). Derived from trading_daemon.evaluating
+   * and current_intent containing 'Gateway health issue'.
+   */
+  operatorTradingBlocked?: boolean
+  /** Human-readable detail from operator current_intent, shown in the blocked detail. */
+  operatorBlockedDetail?: string
 }
 
 // ─── Operator display status ───────────────────────────────────────────────
@@ -140,6 +148,12 @@ export function deriveMasterState(p: MasterStateInput): MasterState {
   }
   if (p.operatorMode && _TRADE_BLOCKING_MODES.has(p.operatorMode)) {
     return { word: 'BLOCKED', tone: 'yellow', detail: 'Operator cannot generate new trade proposals. Check the Operator panel for details.' }
+  }
+  if (p.operatorTradingBlocked) {
+    const detail = p.operatorBlockedDetail
+      ? `Operator is online but not evaluating signals: ${p.operatorBlockedDetail}`
+      : 'Operator is online but the trading daemon is not evaluating signals. Check the Operator panel.'
+    return { word: 'BLOCKED', tone: 'yellow', detail }
   }
   if (p.paused) {
     return { word: 'PAUSED', tone: 'yellow', detail: 'Scheduler is paused. Agents are idle until resumed.' }

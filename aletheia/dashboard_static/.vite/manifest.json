@@ -1,0 +1,329 @@
+{
+  "_Badge-Guz9Ov9g.js": {
+    "file": "assets/Badge-Guz9Ov9g.js",
+    "name": "Badge",
+    "imports": [
+      "index.html"
+    ]
+  },
+  "_BarChart-D5n6nCyi.js": {
+    "file": "assets/BarChart-D5n6nCyi.js",
+    "name": "BarChart",
+    "imports": [
+      "index.html",
+      "_index-wUhQfxI-.js"
+    ]
+  },
+  "_DataState-CZ1TDtUm.js": {
+    "file": "assets/DataState-CZ1TDtUm.js",
+    "name": "DataState",
+    "imports": [
+      "index.html"
+    ]
+  },
+  "_DataTable-ClnJv6iW.js": {
+    "file": "assets/DataTable-ClnJv6iW.js",
+    "name": "DataTable",
+    "imports": [
+      "index.html",
+      "_DataState-CZ1TDtUm.js"
+    ]
+  },
+  "_ListRow-B0AfQXD0.js": {
+    "file": "assets/ListRow-B0AfQXD0.js",
+    "name": "ListRow",
+    "imports": [
+      "index.html"
+    ]
+  },
+  "_PageHeader-Bna-Jetv.js": {
+    "file": "assets/PageHeader-Bna-Jetv.js",
+    "name": "PageHeader",
+    "imports": [
+      "index.html"
+    ]
+  },
+  "_Switch-B_7c4jLe.js": {
+    "file": "assets/Switch-B_7c4jLe.js",
+    "name": "Switch",
+    "imports": [
+      "index.html"
+    ]
+  },
+  "_Tabs-CTFChe8U.js": {
+    "file": "assets/Tabs-CTFChe8U.js",
+    "name": "Tabs",
+    "imports": [
+      "index.html"
+    ]
+  },
+  "_index-wUhQfxI-.js": {
+    "file": "assets/index-wUhQfxI-.js",
+    "name": "index",
+    "imports": [
+      "index.html"
+    ]
+  },
+  "_theme-CH6Agmvr.js": {
+    "file": "assets/theme-CH6Agmvr.js",
+    "name": "theme"
+  },
+  "index.html": {
+    "file": "assets/index-CBDr9LWe.js",
+    "name": "index",
+    "src": "index.html",
+    "isEntry": true,
+    "dynamicImports": [
+      "src/charts/AccountEquityChart.tsx",
+      "src/charts/PnLChart.tsx",
+      "src/pages/AgentActivity.tsx",
+      "src/pages/Learning.tsx",
+      "src/pages/Blotter.tsx",
+      "src/pages/TradesPositions.tsx",
+      "src/pages/Charts.tsx",
+      "src/pages/Settings.tsx",
+      "src/pages/RiskControls.tsx",
+      "src/pages/NewsIntel.tsx",
+      "src/pages/CommandCenter.tsx",
+      "src/pages/SerenityLens.tsx",
+      "src/pages/PredictionLens.tsx",
+      "src/pages/Universe.tsx",
+      "src/pages/Usage.tsx",
+      "src/components/CommandPalette.tsx",
+      "src/components/PackagedUpdateBanner.tsx"
+    ],
+    "css": [
+      "assets/index-VI4J2Z_N.css"
+    ]
+  },
+  "src/charts/AccountEquityChart.tsx": {
+    "file": "assets/AccountEquityChart-CO3PiEEd.js",
+    "name": "AccountEquityChart",
+    "src": "src/charts/AccountEquityChart.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_theme-CH6Agmvr.js"
+    ]
+  },
+  "src/charts/PnLChart.tsx": {
+    "file": "assets/PnLChart-DjEzAbfA.js",
+    "name": "PnLChart",
+    "src": "src/charts/PnLChart.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_theme-CH6Agmvr.js"
+    ]
+  },
+  "src/charts/TradeInsightsPanel.tsx": {
+    "file": "assets/TradeInsightsPanel-_xaA2Qle.js",
+    "name": "TradeInsightsPanel",
+    "src": "src/charts/TradeInsightsPanel.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_BarChart-D5n6nCyi.js",
+      "_index-wUhQfxI-.js"
+    ]
+  },
+  "src/components/CommandPalette.tsx": {
+    "file": "assets/CommandPalette-DY9oCRKi.js",
+    "name": "CommandPalette",
+    "src": "src/components/CommandPalette.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_index-wUhQfxI-.js"
+    ]
+  },
+  "src/components/PackagedUpdateBanner.tsx": {
+    "file": "assets/PackagedUpdateBanner-F8bHlO_S.js",
+    "name": "PackagedUpdateBanner",
+    "src": "src/components/PackagedUpdateBanner.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html"
+    ]
+  },
+  "src/pages/AgentActivity.tsx": {
+    "file": "assets/AgentActivity-Dht0qVhO.js",
+    "name": "AgentActivity",
+    "src": "src/pages/AgentActivity.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_DataTable-ClnJv6iW.js",
+      "_Tabs-CTFChe8U.js",
+      "_PageHeader-Bna-Jetv.js",
+      "_Badge-Guz9Ov9g.js",
+      "_DataState-CZ1TDtUm.js"
+    ]
+  },
+  "src/pages/Blotter.tsx": {
+    "file": "assets/Blotter-DZeKYoCt.js",
+    "name": "Blotter",
+    "src": "src/pages/Blotter.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_PageHeader-Bna-Jetv.js",
+      "_Badge-Guz9Ov9g.js",
+      "_DataTable-ClnJv6iW.js",
+      "_DataState-CZ1TDtUm.js"
+    ]
+  },
+  "src/pages/Charts.tsx": {
+    "file": "assets/Charts-CF9HUvlQ.js",
+    "name": "Charts",
+    "src": "src/pages/Charts.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_theme-CH6Agmvr.js",
+      "_PageHeader-Bna-Jetv.js",
+      "_Tabs-CTFChe8U.js",
+      "_Badge-Guz9Ov9g.js",
+      "_ListRow-B0AfQXD0.js"
+    ]
+  },
+  "src/pages/CommandCenter.tsx": {
+    "file": "assets/CommandCenter-zEkyXlmz.js",
+    "name": "CommandCenter",
+    "src": "src/pages/CommandCenter.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_PageHeader-Bna-Jetv.js",
+      "_Badge-Guz9Ov9g.js",
+      "_ListRow-B0AfQXD0.js"
+    ]
+  },
+  "src/pages/Learning.tsx": {
+    "file": "assets/Learning-DK-L-amt.js",
+    "name": "Learning",
+    "src": "src/pages/Learning.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_DataTable-ClnJv6iW.js",
+      "_Tabs-CTFChe8U.js",
+      "_PageHeader-Bna-Jetv.js",
+      "_Badge-Guz9Ov9g.js",
+      "_ListRow-B0AfQXD0.js",
+      "_DataState-CZ1TDtUm.js"
+    ]
+  },
+  "src/pages/NewsIntel.tsx": {
+    "file": "assets/NewsIntel-BQSNeG90.js",
+    "name": "NewsIntel",
+    "src": "src/pages/NewsIntel.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_PageHeader-Bna-Jetv.js",
+      "_Badge-Guz9Ov9g.js",
+      "_DataState-CZ1TDtUm.js"
+    ]
+  },
+  "src/pages/PredictionLens.tsx": {
+    "file": "assets/PredictionLens-D1VmQjJZ.js",
+    "name": "PredictionLens",
+    "src": "src/pages/PredictionLens.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_PageHeader-Bna-Jetv.js",
+      "_Tabs-CTFChe8U.js",
+      "_DataTable-ClnJv6iW.js",
+      "_Badge-Guz9Ov9g.js",
+      "_theme-CH6Agmvr.js",
+      "_DataState-CZ1TDtUm.js"
+    ]
+  },
+  "src/pages/RiskControls.tsx": {
+    "file": "assets/RiskControls-BfGLgJJ5.js",
+    "name": "RiskControls",
+    "src": "src/pages/RiskControls.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_PageHeader-Bna-Jetv.js",
+      "_DataState-CZ1TDtUm.js"
+    ]
+  },
+  "src/pages/SerenityLens.tsx": {
+    "file": "assets/SerenityLens-v6xvlrfZ.js",
+    "name": "SerenityLens",
+    "src": "src/pages/SerenityLens.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_PageHeader-Bna-Jetv.js",
+      "_Tabs-CTFChe8U.js",
+      "_DataTable-ClnJv6iW.js",
+      "_Badge-Guz9Ov9g.js",
+      "_Switch-B_7c4jLe.js",
+      "_DataState-CZ1TDtUm.js"
+    ]
+  },
+  "src/pages/Settings.tsx": {
+    "file": "assets/Settings-B5gyyrEL.js",
+    "name": "Settings",
+    "src": "src/pages/Settings.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_PageHeader-Bna-Jetv.js",
+      "_Switch-B_7c4jLe.js"
+    ],
+    "css": [
+      "assets/Settings-CFvKRIDa.css"
+    ]
+  },
+  "src/pages/TradesPositions.tsx": {
+    "file": "assets/TradesPositions-BP0Oh8s8.js",
+    "name": "TradesPositions",
+    "src": "src/pages/TradesPositions.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_DataTable-ClnJv6iW.js",
+      "_PageHeader-Bna-Jetv.js",
+      "_Badge-Guz9Ov9g.js",
+      "_Tabs-CTFChe8U.js",
+      "_DataState-CZ1TDtUm.js"
+    ],
+    "dynamicImports": [
+      "src/charts/TradeInsightsPanel.tsx"
+    ]
+  },
+  "src/pages/Universe.tsx": {
+    "file": "assets/Universe-tD1XsVh1.js",
+    "name": "Universe",
+    "src": "src/pages/Universe.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_DataTable-ClnJv6iW.js",
+      "_PageHeader-Bna-Jetv.js",
+      "_Badge-Guz9Ov9g.js",
+      "_DataState-CZ1TDtUm.js"
+    ]
+  },
+  "src/pages/Usage.tsx": {
+    "file": "assets/Usage-D-qKehfL.js",
+    "name": "Usage",
+    "src": "src/pages/Usage.tsx",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_DataTable-ClnJv6iW.js",
+      "_PageHeader-Bna-Jetv.js",
+      "_Badge-Guz9Ov9g.js",
+      "_BarChart-D5n6nCyi.js",
+      "_index-wUhQfxI-.js",
+      "_DataState-CZ1TDtUm.js"
+    ]
+  }
+}

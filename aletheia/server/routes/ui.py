@@ -92,7 +92,10 @@ def _operator_snapshot() -> dict:
         from aletheia.server.routes.operator import _operator_status_payload
 
         payload = _operator_status_payload()
-        return {key: payload.get(key) for key in ("status", "mode", "permission_mode", "last_seen_at", "stale", "heartbeat_age_sec")}
+        return {key: payload.get(key) for key in (
+            "status", "mode", "permission_mode", "last_seen_at", "stale", "heartbeat_age_sec",
+            "current_intent", "trading_daemon",
+        )}
     except Exception as exc:
         return {"status": "not_available", "reason": f"operator:{type(exc).__name__}"}
 

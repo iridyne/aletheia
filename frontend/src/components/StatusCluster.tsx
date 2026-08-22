@@ -101,6 +101,29 @@ export default function StatusCluster({
   const operatorStatus = String(operator?.status || data?.operator?.status || 'offline')
   const operatorMode = String(operator?.mode || data?.operator?.mode || (paused ? 'Paused' : 'Observing'))
   const riskState = String(riskQuery.data?.status || data?.risk?.status || '')
+  // Operator trading-daemon block: online+Working but not evaluating due to a health issue.
+  // Use the richer detail from the live operatorQuery when available, fall back to bootstrap.
+  // Unvalidated query.data from /operator/status; fields are optional unknown until checked at read site.
+  // Bootstrap data (.operator) is typed; we fall back to it when query.data doesn't supply a field.
+  const _op = operator as unknown
+  const operatorCurrentIntent: string = (
+    (_op && typeof _op === 'object' && 'current_intent' in _op && typeof _op.current_intent === 'string')
+      ? _op.current_intent
+      : data?.operator?.current_intent
+  ) ?? ''
+  const _opDaemon =
+    (_op && typeof _op === 'object' && 'trading_daemon' in _op)
+      ? _op.trading_daemon
+      : data?.operator?.trading_daemon
+  const operatorDaemonEvaluating: boolean | undefined =
+    (_opDaemon && typeof _opDaemon === 'object' && 'evaluating' in _opDaemon)
+      ? Boolean(_opDaemon.evaluating)
+      : undefined
+  const operatorTradingBlocked = (
+    operatorStatus === 'online' &&
+    operatorDaemonEvaluating === false &&
+    operatorCurrentIntent.toLowerCase().includes('gateway health issue')
+  )
   const master = deriveMasterState({
     gatewayRunning: running,
     killed,
@@ -108,6 +131,8 @@ export default function StatusCluster({
     riskState,
     operatorStatus,
     operatorMode,
+    operatorTradingBlocked,
+    operatorBlockedDetail: operatorTradingBlocked ? operatorCurrentIntent : undefined,
   })
   const opDisplay = getOperatorDisplayStatus(operator as any)
   const realtimeTone = realtime.state === 'connected'
@@ -263,7 +288,8 @@ export default function StatusCluster({
             <div className="sp-section-label">Operator</div>
             <div className="sp-row"><span className="sp-label">Status</span><span className="sp-value">{opDisplay.state}{operatorStatus === 'stale' && <span className="sp-stale-hint"> — heartbeat delayed; usually self-recovers in 1–2 min. If stuck, restart the gateway.</span>}</span></div>
             {opDisplay.blockedDetail && <div className="sp-blocked-detail">{opDisplay.blockedDetail}</div>}
-            {operator?.current_intent && <div className="sp-row"><span className="sp-label">Intent</span><span className="sp-value sp-value-wrap">{operator.current_intent}</span></div>}
+            {operatorTradingBlocked && <div className="sp-blocked-detail">Not evaluating signals — gateway health issue. {operatorCurrentIntent && <span className="sp-value-muted">{operatorCurrentIntent}</span>}</div>}
+            {!operatorTradingBlocked && operator?.current_intent && <div className="sp-row"><span className="sp-label">Intent</span><span className="sp-value sp-value-wrap">{operator.current_intent}</span></div>}
             <div className="sp-row sp-row-debug"><span className="sp-label sp-label-muted">Mode</span><span className="sp-value sp-value-muted">{opDisplay.debugMode}</span></div>
             {operator?.session_id && <div className="sp-row"><span className="sp-label">Session</span><span className="sp-value">{operator.session_id}</span></div>}
             {heartbeatText && <div className="sp-row"><span className="sp-label">Heartbeat</span><span className="sp-value">{heartbeatText} ago</span></div>}
