@@ -26,7 +26,7 @@
 
 **暂停所有权**：`runtime.paused` 是活动 lease 的兼容投影，不再是可由任一恢复循环独占清除的单一事实；`pause_blockers` 才表示当前 execution pool 的有效 blocker。人工操作、Exchange Connectivity、Startup Behavior Gate 与 LLM Startup Gate 各持有带 `reason`、`generation`、`acquired_at`、`source` 的 durable lease；global/demo/live trading brakes 也进入同一 owner map，并保留各自 `scope`，但 Risk 的 mode 语义仍独立决定适用池。一个恢复路径只能释放自身在异步检查开始前观察到的匹配 generation；新 generation、其他 owner 或 required dependency 未验证都会 fail closed。仅最后一个有效 owner 成功释放时才调用一次 `resume_scheduler()`；公开 `resume_scheduler()` 会在同一进程级 pause-transition `RLock` 内重新读取 durable blockers，并在任一适用 owner/brake 存在时拒绝修改 APScheduler，因此 Settings 的 `scheduler_enabled=true` 也不能旁路所有权。若调度器恢复调用失败，原 lease 会恢复到配置中并保持 fail-closed。旧配置中的 `paused_by_connectivity`/generation/timestamp 会迁移为 `exchange_connectivity` owner，旧 brake boolean 会迁移为 scope owner；无法归因的旧 `paused=true` 则诚实迁移为时间与 generation 均未知的 `manual` owner。`GET /api/status`、`GET /api/risk/status`、`aletheia control status --json` 与 Doctor 的 `config.paused` 项是该状态的只读观测面；它们同时暴露 active owner 的 `reason`、`generation`、`acquired_at`、`age_seconds`、`source`、`scope`、blocked reason，并明确 exchange recovery 不等于 scheduler resumed。
 
-当前 essential 集合：`market_data`、`data_collectors`、`data_collector_context`、`connectivity_monitor`、`portfolio_snapshot`、`price_feed`、`position_manager`、`position_path_observer`、`ohlcv_nightly_backfill`、`ohlcv_active_backfill`、`exchange_sync`、`health_check`、`cleanup`、`news_fetch`、`okx_demo_symbols`、`reconciliation`、`position_reconcile`、`tpsl_fill_check`、`outcome_settler`、`paper_funding_settler`、`outcome_hook_replay`、`shadow_resolver`、`learning_contribution_evaluator`、`learning_measurement_startup_catchup`、`learning_lifecycle_audit_reconciler`、`universe_scanner_audit_reconciler`。
+当前 essential 集合：`market_data`、`data_collectors`、`data_collector_context`、`connectivity_monitor`、`portfolio_snapshot`、`price_feed`、`position_manager`、`position_path_observer`、`ohlcv_nightly_backfill`、`ohlcv_active_backfill`、`exchange_sync`、`health_check`、`cleanup`、`news_fetch`、`okx_demo_symbols`、`reconciliation`、`position_reconcile`、`tpsl_fill_check`、`outcome_settler`、`paper_funding_settler`、`broker_funding_settler`、`funding_audit_reconciler`、`outcome_hook_replay`、`shadow_resolver`、`learning_contribution_evaluator`、`learning_measurement_startup_catchup`、`learning_lifecycle_audit_reconciler`、`universe_scanner_audit_reconciler`。
 
 ---
 
@@ -96,6 +96,7 @@ _EXECUTOR_WORKERS = {
 | 23 | `risk_critic` | 430 | interval | hours=6 | agents | 300 | 300 |
 | 24 | `universe_refresh` | 436 | interval | minutes=10 | io | 600 | 120 |
 | 24a | `universe_scanner_audit_reconciler` | — | interval | minutes=5 | audit | 15 | 120 |
+| 24b | `funding_audit_reconciler` | — | interval | minutes=5 | audit | 15 | 120 |
 | 25 | `data_collectors` | 444 | interval | minutes=2 | io | 55 | 60 |
 | 25a | `data_collector_context` | 449 | interval | minutes=10 | io | 60 | 60 |
 | 26 | `guard_promotion` | — | cron | hour=4, minute=0, tz=Asia/Shanghai | io | — | 600 |
@@ -110,6 +111,13 @@ _EXECUTOR_WORKERS = {
 hash-chain lock/full-chain scan 则发生在专用、固定且队列有界的 sync timeout worker。
 因此任一 audit filesystem 调用永久卡住时，不会占用 operational `io` pool 或共享
 sync timeout worker，也不会重做 scanner DB recovery。
+
+`funding_audit_reconciler` 同样是 essential、`max_instances=1`、`coalesce=True` 的
+非行为型修复任务。它在 boot 后一分钟开始，每轮 oldest-first 处理最多 100 条 opt-in
+funding audit，复用专用 `audit` pool 与固定、有界的 audit sync timeout worker。
+它只追加/确认 stable audit identity，不重放 Position、PnL、paper cash、close projection
+或 Outcome hook。backlog 会使对应 job health 与 `/api/health` degraded，并触发 Doctor
+warning；`/api/ready` 和前后端 `/_infra/readyz` 的基础设施就绪语义保持不变。
 
 `cleanup` 的 cron 状态是进程内状态；Gateway 离线时错过的触发不会由 APScheduler
 自动补回。初始化 scheduler 时读取最近一次 `data_pruned` audit event，并按上海时区判断

@@ -1822,6 +1822,121 @@ def test_invalidated_position_cannot_be_rematerialized(tmp_path, monkeypatch):
 
 @spec_claim(
     SpecClaim(
+        "PFA-MAT-04",
+        "pipeline_paper_close_materialization",
+        "durable funding audit mirror",
+        "L2c",
+        "A failed paper-funding JSONL append leaves durable mirror work; restart "
+        "heals it by stable ID without replaying Position, cash, or outcome hooks.",
+        status="implemented",
+    )
+)
+def test_paper_funding_audit_failure_replays_without_reapplying_settlement(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from datetime import timedelta
+    from aletheia.files import jsonl as jsonl_mod
+    from aletheia.portfolio.paper_account import materialize_position_economics
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import close_db, get_db
+
+    closed_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    position_id = "paper-funding-audit-retry"
+    _seed_stuck_paper_close(
+        position_id=position_id,
+        symbol="BTC/USDT",
+        closed_at=closed_at,
+    )
+    _seed_null_close_event(position_id, closed_at.isoformat())
+    evidence = _complete_recovered_funding(position_id, cost=0.02)
+    real_writer = jsonl_mod.write_audits_deduplicated
+    monkeypatch.setattr(jsonl_mod, "write_audits_deduplicated", lambda _events: set())
+
+    first = materialize_position_economics(
+        position_id,
+        realized_pnl=0.36,
+        funding_cost=0.02,
+        funding_evidence=evidence,
+        outcome_eligible=True,
+        outcome_exclusion_reason="eligible",
+    )
+    db = get_db()
+    first_position = dict(repo._select_one("positions", position_id))
+    first_close = dict(db.execute(
+        "SELECT * FROM position_close_events WHERE position_id=?", (position_id,),
+    ).fetchone())
+    first_cash = [dict(row) for row in db.execute(
+        "SELECT * FROM paper_account_events WHERE position_id=? ORDER BY rowid",
+        (position_id,),
+    ).fetchall()]
+    first_hooks = [dict(row) for row in db.execute(
+        "SELECT * FROM outcome_hook_jobs WHERE position_id=? ORDER BY rowid",
+        (position_id,),
+    ).fetchall()]
+    audit = dict(db.execute(
+        "SELECT * FROM audit_events WHERE entity_id=? AND "
+        "event_type='paper_position_funding_settled'",
+        (position_id,),
+    ).fetchone())
+    assert first["status"] == "settled"
+    assert first["audit_mirror_status"] == "pending"
+    assert audit["jsonl_mirror_status"] == "failed"
+
+    close_db()
+    jsonl_mod._last_audit_hash = None
+    monkeypatch.setattr(jsonl_mod, "write_audits_deduplicated", real_writer)
+    repeated = materialize_position_economics(
+        position_id,
+        realized_pnl=0.36,
+        funding_cost=0.02,
+        funding_evidence=evidence,
+        outcome_eligible=True,
+        outcome_exclusion_reason="eligible",
+    )
+
+    db = get_db()
+    mirrored = dict(db.execute(
+        "SELECT * FROM audit_events WHERE id=?", (audit["id"],),
+    ).fetchone())
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "logs" / "audit.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and json.loads(line).get("id") == audit["id"]
+    ]
+    assert repeated["status"] == "already_current"
+    assert repeated["audit_mirror_status"] == "mirrored"
+    assert mirrored["jsonl_mirror_status"] == "mirrored"
+    assert len(records) == 1
+    assert records[0]["timestamp"] == audit["timestamp"]
+    assert records[0]["after"]["funding_economics_fingerprint"] == (
+        json.loads(first_position["reconciliation_evidence"])[
+            "funding_economics_fingerprint"
+        ]
+    )
+    assert dict(repo._select_one("positions", position_id)) == first_position
+    assert dict(db.execute(
+        "SELECT * FROM position_close_events WHERE position_id=?", (position_id,),
+    ).fetchone()) == first_close
+    assert [dict(row) for row in db.execute(
+        "SELECT * FROM paper_account_events WHERE position_id=? ORDER BY rowid",
+        (position_id,),
+    ).fetchall()] == first_cash
+    assert [dict(row) for row in db.execute(
+        "SELECT * FROM outcome_hook_jobs WHERE position_id=? ORDER BY rowid",
+        (position_id,),
+    ).fetchall()] == first_hooks
+    assert db.execute(
+        "SELECT COUNT(*) FROM audit_events WHERE entity_id=?", (position_id,),
+    ).fetchone()[0] == 1
+
+
+@spec_claim(
+    SpecClaim(
         "PFA-MAT-02",
         "pipeline_paper_close_materialization",
         "delayed materialization rollback",

@@ -215,6 +215,7 @@ Durable lifecycle retry 遇到无终止换行的尾部时也遵守该约束：�
 | Agent Shell 命令执行（含拒绝） | `agent_shell_command` | `agent_shell/audit.py:37-44` |
 | 外部持仓认领（reconciler） | `position_adopted` | `portfolio/position_reconciler.py:361-382`；`after_state` 含 `commit_hash` + `parent_hash`（链入 §6.4 提案 hash chain，TaG P1-2） |
 | Learning lifecycle transition | `learning_lifecycle_transition` | `learning/lifecycle.py`；SQLite lifecycle event/state 先原子提交，JSONL mirror 使用 stable event id 幂等补写 |
+| Funding settlement/correction | `paper_position_funding_settled` / `paper_position_economics_repaired` / `paper_position_economics_corrected` / `exchange_position_funding_settled` | `portfolio/funding_audit.py`；会计事务内写 stable-ID SQLite audit，JSONL mirror 独立幂等补写 |
 | 历史 filled Order 链恢复结果 | `order_reconciled` / `order_reconciliation_inconclusive` | `execution/reconciliation.py:_write_filled_gap_event`；同一 Order、结果类型和 reason 使用 stable event id，SQLite 与 JSONL 各自幂等收敛（§6.3b） |
 
 `FORBIDDEN_INTENTS` 集合中的意图（`agent_shell/registry.py:415-426`）在 `agent_shell/commands.py:167` 被拦截；被拦截时同路径写 `agent_shell_command` 审计记录，`message` 前缀为 `"DENIED"`。
@@ -246,6 +247,24 @@ JSONL 使用 `learning-lifecycle:<event_id>` 作为 stable `id`。`write_audit(.
 两个 sink 独立 best-effort 收敛：任一 sink 暂时失败时，下一轮可补齐缺失记录，已经成功的
 sink 不会产生重复记录。Order、结果类型或 reason 改变代表不同观察事实，必须生成新 id；
 该规则不改变 Order 状态机、交易所查询、Risk approval 或 Execution Gateway 行为。
+
+### §6.3c Funding settlement audit outbox
+
+新发生的 paper 与 exchange funding settlement/correction 使用 versioned canonical tuple
+`(position_id, event_type, funding_accounting_version, funding_economics_fingerprint)` 派生 stable
+audit ID。Position/PnL、close projection、paper cash、Outcome hook intent 与同一 `AuditEvent`
+在一个 SQLite transaction 内提交；JSONL mirror 失败不得回滚或重放这些会计事实。
+
+`audit_events.jsonl_mirror_status/jsonl_attempt_count/jsonl_last_error_class/jsonl_mirrored_at`
+仅由 opt-in funding audit 使用。`NULL` 表示 unmanaged；历史与普通 audit 保持 `NULL`，不得因 migration
+猜测旧 JSONL 是否缺失。新 funding audit 从 `pending` 开始；失败转 `failed`，成功单调转
+`mirrored`。`funding_audit_reconciler` 每 5 分钟在专用 audit lane 有界处理 100 条。append 成功但
+ack 前崩溃时，重启通过所有轮转文件中的同一 stable ID 直接 ack，不追加第二条记录。
+
+会计结果与镜像结果正交：`settled/repaired/corrected/already_current` 不因文件故障改写；调用方同时
+返回 `audit_mirror_status`。`already_current` 只愈合已有 pending audit，不为没有 stable audit 行的
+历史 Position 编造事件。backlog 使 `/api/health` degraded，并由 Doctor
+`trust.audit_mirror_backlog` 报警；`/api/ready` 与前后端 `/_infra/readyz` 仍只表达进程/静态就绪。
 
 ### §6.4 提案级 hash chain（TaG P0-1，2026-06-29）
 
