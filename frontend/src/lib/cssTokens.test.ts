@@ -75,6 +75,23 @@ describe("CSS custom properties", () => {
 		}
 	});
 
+	it("keeps responsive rules on the canonical breakpoint scale", () => {
+		const code = stripComments(CSS);
+		for (const legacy of [480, 520, 600, 620, 700, 701, 900, 1100]) {
+			expect(code, `legacy ${legacy}px media query`).not.toMatch(new RegExp(`@media\\s*\\([^)]*${legacy}px`));
+		}
+		expect(code).toContain("@media (max-width: 639px)");
+		expect(code).toContain("@media (max-width: 767px)");
+		expect(code).toContain("@media (max-width: 1023px)");
+	});
+
+	it("uses design tokens for the shared confirmation primitive", () => {
+		const modal = CSS.slice(CSS.indexOf(".confirm-modal"), CSS.indexOf(".confirm-title"));
+		expect(modal).toContain("border-radius: var(--r)");
+		expect(modal).toContain("padding: var(--space-6)");
+		expect(CSS).toContain(".confirm-detail { margin: 0 0 var(--space-4); padding: var(--space-2) var(--space-3);");
+	});
+
 	it("keeps the Live authority wall on themed classes, not inline colours", () => {
 		// Regression guard: this wall previously inlined light-theme hex fallbacks
 		// (`var(--color-danger-bg, #fff5f5)`), painting near-white on a dark app.

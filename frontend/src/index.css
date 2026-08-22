@@ -130,8 +130,8 @@
        --bp-md: 768px   (narrow tablet)
        --bp-lg: 1024px  (medium desktop, main+rail split, settings nav collapse)
        --bp-xl: 1280px  (standard desktop)
-     Legacy rules still use 480/700/900/1100 pending Phase 2a migration (#689).
-     Do NOT introduce new rules at legacy values; use the target scale above.
+     All responsive rules use the target scale above. CSS media queries cannot
+     consume custom properties, so keep these literals aligned with the tokens.
   */
 
   --card: var(--surface);
@@ -200,11 +200,11 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   from { opacity: 0; }
   to { opacity: 1; }
 }
-@media (min-width: 701px) {
+@media (min-width: 768px) {
   /* Backdrop is mobile-only — never render one on desktop even if the state leaks. */
   .sidebar-backdrop { display: none; }
 }
-@media (max-width: 700px) {
+@media (max-width: 767px) {
   .sidebar { transform: translateX(-100%); visibility: hidden; transition: transform 0.2s ease, visibility 0s linear 0.2s; z-index: 50; width: 240px; }
   .sidebar.open { transform: translateX(0); visibility: visible; transition-delay: 0s; }
   .content { margin-left: 0; }
@@ -352,7 +352,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 .fetch-progress.is-active { opacity: 1; transition: width 0.4s ease-out; }
 .fetch-progress.is-done { opacity: 0; transition: width 0.2s ease-in, opacity 0.3s 0.1s ease-out; }
 
-@media (max-width: 900px) {
+@media (max-width: 1023px) {
   .market-ticker .ticker-divider { display: none; }
   .market-ticker .ticker-token:nth-of-type(n+3) { display: none; }
 }
@@ -646,7 +646,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 .ui-list-row:hover { filter: none; background: rgba(34,211,238,0.035); border-color: var(--border-2); }
 .ui-list-row:active { transform: none; }
 .ui-list-row.selected { border-color: var(--border-2); background: rgba(79,156,255,0.08); }
-@media (max-width: 700px) {
+@media (max-width: 767px) {
   .ui-card-header { flex-direction: column; align-items: stretch; }
   .ui-card-actions { justify-content: flex-start; flex-wrap: wrap; }
 }
@@ -883,8 +883,8 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 /* No narrow-screen override here on purpose. The nav collapses through the two
    canonical guards only: lg−1 (max-width:1023px) caps it to a 220px vertical
    column, md−1 (max-width:767px) drops it to a 52px icon rail. A former
-   `@media (max-width:900px)` block turned the nav into a full-width horizontal
-   row — a banned 900 breakpoint (ui_design_system.md §responsive) that also
+   A former 900px block turned the nav into a full-width horizontal row — a
+   banned legacy breakpoint (ui_design_system.md §responsive) that also
    collided with the 1023 !important width cap, jamming the row into a 220px
    square. Keep the nav vertical at every width; do not reintroduce 900. */
 
@@ -929,7 +929,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   min-width: 0;
 }
 .settings-row-control > * { min-width: 0; max-width: 100%; }
-@media (max-width: 900px) {
+@media (max-width: 1023px) {
   .settings-row { grid-template-columns: 1fr; gap: var(--space-2); align-items: start; }
   .settings-row-control { justify-content: flex-start; flex-wrap: wrap; }
 }
@@ -1011,7 +1011,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   border: 1px solid rgba(234, 179, 8, 0.35); border-radius: var(--r-sm);
   background: rgba(234, 179, 8, 0.08); color: var(--text); font-size: 0.78rem;
 }
-@media (max-width: 640px) {
+@media (max-width: 639px) {
   .settings-draft-banner { align-items: flex-start; flex-direction: column; }
 }
 .danger-zone {
@@ -1203,8 +1203,8 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 .universe-selection > span:last-child { max-width: 38ch; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: var(--fs-sm); }
 .universe-market-quality, .universe-decision-state { color: var(--muted); font-size: var(--fs-sm); }
 .universe-decision-state .badge { color: var(--text); }
-@media (max-width: 900px) { .universe-pool-health { grid-template-columns: repeat(2, minmax(0, 1fr)); } .universe-overview-grid { grid-template-columns: 1fr; } }
-@media (max-width: 620px) { .universe-allocation-row { grid-template-columns: minmax(90px, 1fr) 2ch; } .universe-allocation-track, .universe-allocation-row small { grid-column: 1 / -1; } }
+@media (max-width: 1023px) { .universe-pool-health { grid-template-columns: repeat(2, minmax(0, 1fr)); } .universe-overview-grid { grid-template-columns: 1fr; } }
+@media (max-width: 639px) { .universe-allocation-row { grid-template-columns: minmax(90px, 1fr) 2ch; } .universe-allocation-track, .universe-allocation-row small { grid-column: 1 / -1; } }
 
 /* ---------- Tables ---------- */
 /* Utility for explicit scroll containers (H9). Cards use overflow: hidden by
@@ -1308,7 +1308,7 @@ input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; marg
 .provider-capability-grid span { display: flex; flex-direction: column; gap: 2px; color: var(--muted); font-size: 0.68rem; }
 .provider-capability-grid strong { color: var(--text); font: 500 0.72rem var(--mono); }
 .provider-advanced > .hint { padding: 0 var(--space-3) var(--space-3); }
-@media (max-width: 700px) {
+@media (max-width: 767px) {
   .provider-mode-switch { display: grid; width: 100%; }
   .provider-capability-grid { grid-template-columns: 1fr; }
   .provider-routing-assignments { width: 100%; align-items: stretch; flex-direction: column; }
@@ -1465,7 +1465,7 @@ th.sortable:hover { color: var(--text); }
   gap: var(--space-3);
   margin-bottom: var(--space-4);
 }
-@media (max-width: 480px) {
+@media (max-width: 639px) {
   .lens-grid { grid-template-columns: 1fr; }
 }
 .lens-module p { color: var(--muted); margin-bottom: 0; }
@@ -1781,7 +1781,7 @@ button.market-instrument-group-title { font-family: inherit; }
   }
   .market-context-picker > span:first-child { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 }
-@media (max-width: 700px) {
+@media (max-width: 767px) {
   .market-instrument-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; }
   .market-instrument-form > button { align-self: end; }
   .market-workbench-context { min-height: 64px; flex-wrap: wrap; gap: var(--space-2); padding-block: var(--space-2); }
@@ -2192,7 +2192,7 @@ button.market-instrument-group-title { font-family: inherit; }
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: var(--space-3);
 }
-@media (max-width: 480px) {
+@media (max-width: 639px) {
   .runtime-grid,
   .runtime-ops-grid {
     grid-template-columns: 1fr;
@@ -2254,7 +2254,7 @@ button.market-instrument-group-title { font-family: inherit; }
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) minmax(0, 0.9fr) auto;
 }
-@media (max-width: 700px) {
+@media (max-width: 767px) {
   .command-composer-actions {
     flex-direction: column;
     align-items: stretch;
@@ -2278,7 +2278,7 @@ button.market-instrument-group-title { font-family: inherit; }
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 0.6rem;
 }
-@media (max-width: 700px) {
+@media (max-width: 767px) {
   .cc-action-grid {
     grid-template-columns: 1fr;
   }
@@ -2322,7 +2322,7 @@ button.market-instrument-group-title { font-family: inherit; }
   align-items: center;
   margin-bottom: 0.65rem;
 }
-@media (max-width: 700px) {
+@media (max-width: 767px) {
   .cc-branch-actions {
     grid-template-columns: 1fr;
   }
@@ -2439,7 +2439,7 @@ button.market-instrument-group-title { font-family: inherit; }
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.6rem;
 }
-@media (max-width: 700px) {
+@media (max-width: 767px) {
   .cc-inspector-facts {
     grid-template-columns: 1fr;
   }
@@ -2953,11 +2953,6 @@ button.market-instrument-group-title { font-family: inherit; }
  * point-in-time snapshot reason lines.
  */
 
-@media (max-width: 700px) {
-}
-
-
-
 /* 24h cumulative funnel bars */
 
 
@@ -3169,11 +3164,11 @@ button.market-instrument-group-title { font-family: inherit; }
   margin-bottom: var(--space-4);
   align-items: start;
 }
-@media (max-width: 1100px) {
+@media (max-width: 1023px) {
   .bl-mid-band { grid-template-columns: 1fr; }
   .bl-token-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
-@media (max-width: 640px) {
+@media (max-width: 639px) {
   .bl-token-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
@@ -3645,7 +3640,7 @@ button.market-instrument-group-title { font-family: inherit; }
 .blotter-split { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); align-items: start; }
 .blotter-split.single { grid-template-columns: 1fr; }
 .blotter-col { min-width: 0; }
-@media (max-width: 1100px) { .blotter-split { grid-template-columns: 1fr; } }
+@media (max-width: 1023px) { .blotter-split { grid-template-columns: 1fr; } }
 .blotter-group-label {
   margin: 0 0 var(--space-2); font-size: 0.72rem; font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
@@ -3704,7 +3699,7 @@ button.market-instrument-group-title { font-family: inherit; }
 }
 .thesis-lineage-evidence { font-size: 0.78rem; line-height: 1.55; display: flex; flex-direction: column; gap: 3px; }
 .thesis-lineage-note { margin: 0; color: var(--muted); font-size: 0.75rem; }
-@media (max-width: 520px) {
+@media (max-width: 639px) {
   .thesis-lineage-grid { grid-template-columns: 1fr; }
   .thesis-lineage-head { align-items: flex-start; flex-direction: column; }
 }
@@ -3784,10 +3779,10 @@ button.market-instrument-group-title { font-family: inherit; }
 .lco-progress-fill { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
 .lco-message { display: flex; flex-direction: column; gap: var(--space-2); }
 .lco-message p { margin: 0; color: var(--muted); font-size: 0.78rem; }
-@media (max-width: 1100px) {
+@media (max-width: 1023px) {
   .lco-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 700px) {
+@media (max-width: 767px) {
   .tab-bar { overflow-x: auto; }
   .tab { flex: 0 0 auto; }
   .lco-grid, .lco-summary-grid { grid-template-columns: 1fr; }
@@ -3837,7 +3832,7 @@ button.market-instrument-group-title { font-family: inherit; }
   display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4);
   align-items: start; margin-bottom: var(--space-3);
 }
-@media (max-width: 900px) { .risk-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1023px) { .risk-grid { grid-template-columns: 1fr; } }
 
 /* --- Zone 1: master-caution console band (the page's one bold element) --- */
 .risk-console {
@@ -3970,7 +3965,7 @@ button.market-instrument-group-title { font-family: inherit; }
 .account-snapshot {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: var(--space-4); margin-bottom: var(--space-4);
 }
-@media (max-width: 600px) { .account-snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 639px) { .account-snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .metric-tile {
   margin-bottom: 0; padding: var(--space-2) var(--space-3); min-height: 68px;
   overflow: visible; position: relative;
@@ -4225,7 +4220,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   align-items: start;
   margin-top: var(--space-4);
 }
-@media (max-width: 900px) { .learn-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1023px) { .learn-grid { grid-template-columns: 1fr; } }
 
 /* Asymmetric Bento variant — main outputs (2fr) + aside meta info (1fr). Each
    column stacks multiple cards vertically (gap matches grid gap for consistency),
@@ -4235,7 +4230,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
 .learn-col-main, .learn-col-aside {
   display: flex; flex-direction: column; gap: var(--space-4);
 }
-@media (max-width: 900px) {
+@media (max-width: 1023px) {
   .learn-grid.asym { grid-template-columns: 1fr; }
 }
 
@@ -4309,7 +4304,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
 .kb-toolbar input, .kb-toolbar select { width: 100%; }
 .kb-catalog-meta { margin: 0 0 var(--space-2); color: var(--muted); font-size: 0.75rem; }
 .kb-pagination { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-3); margin-top: var(--space-3); color: var(--muted); font-size: 0.75rem; }
-@media (max-width: 600px) {
+@media (max-width: 639px) {
   .learn-item-button { align-items: flex-start; flex-direction: column; }
   .learn-item-context { width: 100%; justify-content: space-between; }
   .kb-pagination { justify-content: space-between; }
@@ -4636,7 +4631,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   color: var(--muted);
 }
 .pred-empty p:first-child { font-size: 1rem; color: var(--text); margin-bottom: var(--space-2); }
-@media (max-width: 700px) {
+@media (max-width: 767px) {
   .pred-grid { grid-template-columns: 1fr; }
   .pred-card-stats { grid-template-columns: repeat(2, 1fr); }
 }
@@ -4678,7 +4673,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   gap: var(--space-3);
   margin-bottom: var(--space-4);
 }
-@media (max-width: 480px) { .analytics-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 639px) { .analytics-grid { grid-template-columns: repeat(2, 1fr); } }
 
 .analytics-metric-tile {
   background: var(--surface);
@@ -4789,7 +4784,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   grid-template-columns: 1fr 1fr;
   gap: var(--space-4);
 }
-@media (max-width: 900px) {
+@media (max-width: 1023px) {
   .insights-two-col { grid-template-columns: 1fr; }
 }
 .insights-direction-grid {
@@ -4873,7 +4868,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   grid-template-columns: 1fr 1fr;
   gap: var(--space-4);
 }
-@media (max-width: 900px) {
+@media (max-width: 1023px) {
   .insights-2col { grid-template-columns: 1fr; }
 }
 .insights-pf-big {
@@ -5042,12 +5037,12 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
 
 /* ---------- Confirm modal ---------- */
 .confirm-backdrop { position: fixed; inset: 0; z-index: 250; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
-.confirm-modal { background: var(--surface); border: 1px solid var(--border-2); border-radius: 12px; padding: 24px; max-width: 420px; width: 90vw; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+.confirm-modal { background: var(--surface); border: 1px solid var(--border-2); border-radius: var(--r); padding: var(--space-6); max-width: 420px; width: 90vw; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
 .confirm-title { margin: 0 0 8px; font-size: 1rem; font-weight: 600; }
 .confirm-title.confirm-danger { color: var(--red); }
 .confirm-title.confirm-warning { color: var(--yellow); }
 .confirm-desc { margin: 0 0 12px; font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
-.confirm-detail { margin: 0 0 16px; padding: 10px 12px; background: var(--bg-2); border-radius: 6px; font-size: 0.75rem; color: var(--text); font-family: var(--mono); line-height: 1.6; }
+.confirm-detail { margin: 0 0 var(--space-4); padding: var(--space-2) var(--space-3); background: var(--bg-2); border-radius: var(--r-sm); font-size: 0.75rem; color: var(--text); font-family: var(--mono); line-height: 1.6; }
 .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
 /* ============================ prefers-reduced-motion ============================
