@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import math
 from typing import Iterable
 
 from aletheia.data.symbols import to_canonical
@@ -102,6 +103,15 @@ def _positive_float(value) -> float | None:
     try:
         number = float(value)
     except (TypeError, ValueError):
+        return None
+    # #1722: non-finite values (NaN, inf) must never enter fill economics.
+    # Return None (row skipped by caller) rather than raising to avoid aborting
+    # the entire fill batch when one row has a bad value.
+    if not math.isfinite(number):
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "non-finite fill value rejected and row skipped: %r", value
+        )
         return None
     return number if number > 0 else None
 
@@ -358,7 +368,12 @@ def _fee_in_quote(
     fill_price: float,
     symbol: str,
 ) -> float:
-    """Convert a directly usable private fee into the instrument quote asset."""
+    """Convert a directly usable private fee into the instrument quote asset.
+
+    When the fee is denominated in a third currency (e.g. BGB, BNB), the exact
+    conversion is not available from local fill evidence.  Return 0.0 so
+    materialization proceeds conservatively rather than blocking.  (#1752)
+    """
     if fee == 0:
         return 0.0
     canonical = to_canonical(symbol)
@@ -370,9 +385,14 @@ def _fee_in_quote(
         return fee
     if currency == base.upper():
         return fee * fill_price
-    raise MaterializationIntegrityError(
-        "private fill fee currency cannot be converted from direct fill evidence"
+    # Third-currency fee (e.g. BGB, BNB): treat as zero — conservative and
+    # avoids blocking a legitimate fill when the exchange charges in a deduction asset.
+    import logging as _log
+    _log.getLogger(__name__).warning(
+        "private fill fee in unknown currency %r for %s — treating as 0.0",
+        fee_currency, symbol,
     )
+    return 0.0
 
 
 def _fill_totals(rows: Iterable[dict], *, symbol: str) -> tuple[float, float, float]:

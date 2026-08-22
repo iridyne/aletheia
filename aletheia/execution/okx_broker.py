@@ -35,6 +35,7 @@ from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
     find_compatible_open_position,
+    get_order,
     insert_order, insert_fill, insert_position, update_position,
     update_order, transaction,
 )
@@ -427,8 +428,47 @@ def execute_live_order(
             "message": "Exchange acknowledged submission without an order id; automatic retry suppressed",
         })
         raise SubmissionUnknownError(client_oid=proposal_id)
+    # #1502: explicit terminal rejection from the venue is NOT submission_unknown.
+    if order_resp.status in ("cancelled", "rejected", "expired") and exchange_order_id:
+        try:
+            update_order(order.id, exchange_order_id=exchange_order_id, status="cancelled",
+                         error_reason="explicit_venue_rejection")
+        except Exception:
+            pass
+        write_post_commit_audit({
+            "actor": "system", "source": "okx_broker",
+            "event_type": "order_explicitly_rejected", "entity_type": "order",
+            "entity_id": order.id,
+            "reason": f"venue_status:{order_resp.status}",
+            "after": {"status": "cancelled"},
+        })
+        return {
+            "order_id": order.id,
+            "exchange_order_id": exchange_order_id,
+            "order_status": "cancelled",
+            "fill_id": None, "position_id": None,
+            "fill_price": None, "fill_quantity": 0,
+        }
     exchange_reported_fill = order_resp.status in ("filled", "partially_filled")
     stored_status = "materialization_missing" if exchange_reported_fill else "submitted"
+    # #1553: late ack must not regress an Order that reconciliation already resolved.
+    _UNRESOLVED = {"pending", "submission_unknown"}
+    try:
+        current = get_order(order.id)
+        if current is not None and current.get("status") not in _UNRESOLVED:
+            logger.debug(
+                "okx_broker: discarding late ack for order %s (current status: %s)",
+                order.id, current.get("status"),
+            )
+            return {
+                "order_id": order.id,
+                "exchange_order_id": exchange_order_id,
+                "order_status": current.get("status"),
+                "fill_id": None, "position_id": None,
+                "fill_price": None, "fill_quantity": 0,
+            }
+    except Exception:
+        pass  # if we can't read current state, proceed with update conservatively
     try:
         update_order(
             order.id,
