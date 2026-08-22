@@ -10,6 +10,7 @@ import { humanize, fmtSymbol, fmtAge, fmtTimestamp } from '../lib/format'
 import { positionKeys } from '../lib/queryKeys'
 
 type OperatorDecisionRow = Awaited<ReturnType<typeof api.getOperatorDecisions>>['items'][number]
+const EMPTY_DECISION_ROWS: OperatorDecisionRow[] = []
 
 /**
  * Blotter — the merged trade-decision workstation (docs/design/frontend/blotter_design.md).
@@ -562,7 +563,7 @@ export function CandidateLedger() {
     staleTime: 20000,
   })
 
-  const items = data?.items ?? []
+  const items = data?.items ?? EMPTY_DECISION_ROWS
   const counts = data?.counts
 
   // Map query state → DataTable.state; initial error/no data → unavailable, success empty → empty, error with cached data → stale
