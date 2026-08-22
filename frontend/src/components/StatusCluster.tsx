@@ -87,6 +87,7 @@ export default function StatusCluster({
 
   const status = statusQuery.data
   const operator = operatorQuery.data ?? data?.operator
+  const operatorPermission = String(operator?.permission_mode || data?.operator?.permission_mode || '')
   const killed = killSwitchQuery.data?.active ?? data?.kill_switch?.active ?? false
   const live = String(data?.live?.state || 'live_disabled')
   const liveOn = data?.live?.enabled ?? live !== 'live_disabled'
@@ -231,7 +232,8 @@ export default function StatusCluster({
             <div className="sp-row"><span className={`dot dot-${connectivityLight}`} /><span className="sp-label">Connectivity</span><span className="sp-value">{connectivityState}</span></div>
             <div className="sp-row"><span className={`dot dot-${realtimeTone}`} /><span className="sp-label">Realtime transport</span><span className="sp-value">{realtime.state}{realtime.lastFrameAt && ` · last ${fmtEventTime(new Date(realtime.lastFrameAt).toISOString())}`}{(realtime.malformedFrameCount > 0 || realtime.unknownCategoryCount > 0) && ` · ${realtime.malformedFrameCount} malformed · ${realtime.unknownCategoryCount} unknown`}</span></div>
             <div className="sp-row"><span className="sp-label">Exchange</span><span className="sp-value">{exchangeLabel(data, status)}</span></div>
-            <div className="sp-row"><span className="sp-label">Permission</span><span className="sp-value">{permission || '—'}</span></div>
+            <div className="sp-row"><span className="sp-label">Worker / Trading permission</span><span className="sp-value">{permission || 'not available'}</span></div>
+            <div className="sp-row"><span className="sp-label">Operator permission</span><span className="sp-value">{operatorPermission || 'not available'}</span></div>
             {(status?.model_provider || operator?.model_provider) && <div className="sp-row"><span className="sp-label">Model</span><span className="sp-value">{status?.model_provider || operator?.model_provider}</span></div>}
             {collectorHealthQuery.data && <CollectorHealthDetails health={collectorHealthQuery.data} mode="compact" />}
             {detailsRequested && statusQuery.isPending && <div className="sp-row"><span className="sp-label">Diagnostics</span><span className="sp-value">loading…</span></div>}
@@ -281,7 +283,7 @@ export default function StatusCluster({
         </div>
       </div>
 
-      <button className="perm-mode-btn mono" onClick={nextMode} disabled={!permission || setMode.isPending} title={`Permission mode: ${permission} — click to cycle`}>
+      <button className="perm-mode-btn mono" onClick={nextMode} disabled={!permission || setMode.isPending} aria-label={`Worker / Trading permission mode: ${permission || 'not available'}`} title={`Worker / Trading permission mode: ${permission || 'not available'} — click to cycle`}>
         {permission || '—'}
       </button>
       <button className="topbar-btn secondary" onClick={() => pause.mutate()} disabled={!running || pause.isPending} title={paused ? 'Resume agents' : 'Pause agents'}>
