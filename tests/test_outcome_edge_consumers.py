@@ -100,3 +100,62 @@ def test_sql_cost_model_whitespace_matches_python_strip():
         (whitespace,),
     ).fetchone()[0]
     assert stripped == ""
+
+
+def test_sql_and_python_accept_the_same_reconciled_large_returns():
+    from aletheia.analytics.outcome_semantics import validated_outcome_economics
+    from aletheia.storage.repositories import complete_outcome_economics_sql
+    from aletheia.storage.sqlite import get_db
+
+    values = (100.0, 100.0001, 200.0, -100.0, -100.0001, -250.0)
+    for index, value in enumerate(values):
+        _insert_outcome(
+            f"large-{index}", 0.05,
+            directional_return_pct=value,
+            net_return_pct=value,
+        )
+
+    rows = get_db().execute(
+        "SELECT *, "
+        f"CASE WHEN {complete_outcome_economics_sql()} THEN 1 ELSE 0 END AS sql_eligible "
+        "FROM universe_forward_outcomes WHERE id LIKE 'large-%' ORDER BY id"
+    ).fetchall()
+
+    assert len(rows) == len(values)
+    for raw in rows:
+        row = dict(raw)
+        assert validated_outcome_economics(row) is not None
+        assert row["sql_eligible"] == 1
+
+
+def test_persisted_outlier_policy_not_consumer_cap_controls_large_returns():
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    _insert_outcome(
+        "large-valid", 0.05,
+        directional_return_pct=200.0,
+        net_return_pct=200.0,
+    )
+    _insert_outcome(
+        "physical-outlier", 0.05,
+        directional_return_pct=1_000_001.0,
+        net_return_pct=1_000_001.0,
+    )
+    get_db().commit()
+
+    assert repo.mark_outlier_outcomes_failed() == 1
+    statuses = {
+        row["id"]: row["status"]
+        for row in get_db().execute(
+            "SELECT id, status FROM universe_forward_outcomes"
+        ).fetchall()
+    }
+    assert statuses == {
+        "large-valid": "settled",
+        "physical-outlier": "failed",
+    }
+    calibration = repo.calibration_stats(cost_model_version="v1")
+    assert len(calibration) == 1
+    assert calibration[0]["n"] == 1
+    assert calibration[0]["avg_return"] == 200.0

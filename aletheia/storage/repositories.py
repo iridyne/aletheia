@@ -7625,7 +7625,6 @@ def complete_outcome_economics_sql(table_alias: str = "") -> str:
         f"AND (LOWER({prefix}market_type) <> 'spot' "
         f"OR {prefix}estimated_funding_pct = 0) "
         f"AND typeof({prefix}net_return_pct) IN ('integer', 'real') "
-        f"AND ABS({prefix}net_return_pct) <= 100 "
         f"AND ABS({prefix}net_return_pct - ({prefix}directional_return_pct "
         f"- {prefix}estimated_fee_pct - {prefix}estimated_spread_slippage_pct "
         f"- {prefix}estimated_funding_pct)) <= 1e-8 "
