@@ -14,7 +14,8 @@ supersedes: []
 > Executable claim namespace: `LCO-*` in
 > `tests/specs/spec_learning_observability.py`.
 > Status: partially implemented. The bounded, GET-only
-> `/api/analytics/learning-contribution` owner summary, default Contribution tab,
+> `/api/analytics/learning-contribution` owner summary, Overview-led Learning page's
+> Impact/Contribution surface,
 > current-summary cache/`Server-Timing`, measured-path selector, and current-surface
 > accessibility evidence are implemented. Dedicated drill-down APIs and the full
 > Experiments/Operations/history/detail workbench remain targets.
@@ -84,7 +85,7 @@ surface look shipped.
 | Lifecycle inspection | Internal read function returns progress, recommendation and job health | Public sanitized projection |
 | Job health | Current and durable last-failure fields exist | Current, recovery and catch-up states remain separate |
 | Public Learning API | Bounded additive `lco-v1` summary at `/analytics/learning-contribution`; no dedicated LCO detail/list family. Legacy Settings experiment list/detail GETs use a different contract. | Contribution summary implemented; dedicated experiment/health/detail GET endpoints remain targets |
-| Learning UI | Contribution is the default tab, exposes every measurable path and preserves path-specific verdict/query states; legacy Dreaming, Knowledge Base and Reports remain | Experiments/Operations surfaces, detail/history and their accessibility proof remain targets |
+| Learning UI | Overview is the default tab; the Impact tab exposes every measurable path and preserves path-specific verdict/query states. Legacy Runs, Library and Operations surfaces remain. | Experiments/Operations surfaces, detail/history and their accessibility proof remain targets |
 | Trial admission | Separate Settings POST exists, remains default-closed and is tunnel-token protected | Observability remains recommendation-only; no mutation action is rendered here. The separate legacy `/settings/autonomous-learning` master toggle is also tunnel-token protected. |
 
 `/analytics/learning-funnel` remains an artifact/activity report. It must not be
@@ -254,8 +255,8 @@ endpoint moves into the current endpoint index in `api_reference.md`.
 
 ### 6.1 `GET /api/analytics/learning-contribution`
 
-Purpose: bounded summary by path/current experiment, suitable for the default
-Contribution tab.
+Purpose: bounded summary by path/current experiment, suitable for the current
+Overview and Impact/Contribution surfaces.
 
 Current minimal slice:
 
@@ -600,11 +601,11 @@ deployment and is not implied by that Preview measurement.
 
 ## 8. Learning Workbench Information Architecture
 
-The Contribution tab exposes every measurement-supported path through a labelled
-native selector, keeps verdict/query state path-specific, and polls no faster than
-30 seconds while mounted. Responsive 1100/700px layouts and browser accessibility
-proof cover this surface. The complete five-tab workbench, history, drawers and
-dedicated Operations surface remain targets.
+The current Impact/Contribution surface exposes every measurement-supported path
+through a labelled native selector, keeps verdict/query state path-specific, and
+polls no faster than 30 seconds while mounted. Responsive 1100/700px layouts and
+browser accessibility proof cover this surface. The complete five-tab workbench,
+history, drawers and dedicated Operations surface remain targets.
 
 ### 8.1 Page structure
 

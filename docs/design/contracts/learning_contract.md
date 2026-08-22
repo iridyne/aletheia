@@ -1,14 +1,15 @@
 # Learning Subsystem Contract
 
 > Contract level: L2. This file is normative for the Learning subsystem.
-> Last aligned: 2026-08-08 fixed-look inference and sequential-validity reconciliation.
+> Last aligned: 2026-08-23 bounded `lco-v1` observability truth reconciliation.
 > Reference intent: [Product Direction - evidence-to-learning loop](../../product/definition/DIRECTION.md#2-complete-the-evidence-to-learning-loop).
-> Future designs:
+> Related design authorities:
 > [`learning_evolution.md`](../proposals/learning_evolution.md) and
 > [`learning_observability.md`](../proposals/learning_observability.md), plus the
 > factor-scoring-specific
 > [`universe_continuous_scoring_safety.md`](../proposals/universe_continuous_scoring_safety.md).
-> They are Proposals, not current guarantees.
+> They remain Proposals; current guarantees are only the implemented slices explicitly adopted
+> below.
 
 Learning is not a dashboard-only feature. Its product role is to turn market
 observations, trade decisions, closed trades, reviews, and later corrections into
@@ -611,30 +612,39 @@ Current Learning UI surfaces:
 - Registry-backed paper-influence path checkboxes. Only paths with a real consumer and prospective
   authority adapter are selectable; declared-but-unwired paths remain visible and disabled.
   `advisory_skill` is currently `consumer_unwired` and cannot be saved through Settings.
+- The bounded `lco-v1` Contribution summary for current experiments, including registry path
+  capabilities, current measurement and cohort identity, assignment-unit/member counts,
+  exclusions and integrity facts, availability/freshness, sanitized evaluator/catch-up health,
+  and read-only lifecycle/authority readiness. It preserves current measurement separately from
+  historical mismatch facts and performs no evaluation, admission, lifecycle, or config mutation.
+- Current backend/frontend behavior preserves distinct loading, genuine empty, unavailable, stale,
+  and partial Contribution states; failed optional sections keep a named bounded error instead of
+  becoming an empty list or zero. The corresponding executable UI claim remains `partial` until
+  its registry runs that frontend proof rather than checking proof presence.
 
-API endpoints are indexed in `docs/design/api/api_reference.md`.
+The current bounded GET endpoint is indexed in `docs/design/api/api_reference.md`. Portfolio PnL,
+knowledge counts and `/analytics/learning-funnel` remain activity/context only; they do not prove
+Learning contribution. A request failure must not be rendered as a genuine empty list or zero.
 
-The current surface does **not** expose the measured A1 cluster, provenance, metric-history,
-current-cohort identity, evaluator recovery, catch-up, or lifecycle-recommendation facts. Portfolio
-PnL, knowledge counts and `/analytics/learning-funnel` are activity/context only. A request failure
-must not be rendered as a genuine empty list or zero.
+### 8.2 Deferred owner drill-down and workbench
 
-### 8.2 Target owner projection
-
-The proposed target is
+The accepted target design is
 [`learning_observability.md`](../proposals/learning_observability.md), feature id
-`learning_contribution_observability`, projection schema `lco-v1`. It defines:
+`learning_contribution_observability`, projection schema `lco-v1`. Its §6.1 bounded summary is the
+current surface adopted by this Contract. Remaining target work includes:
 
-- current versus historical measurement identity;
-- complete-cluster membership, selected/dropped members, exclusions and invalid reasons;
-- canonical/fallback/mirror/disagreement provenance;
-- current and durable-last-failure evaluator state plus measurement catch-up;
-- read-only lifecycle recommendations with `mutation_available=false`;
-- bounded cached GET endpoints and an honest responsive Learning workbench.
+- optional `path_id`/`status`/`limit`/`offset` query behavior for the current summary;
+- the §6.2–§6.7 path, hypothesis, experiment-list, experiment-detail, health, and exposure endpoint
+  family, including append-only verdict history and lifecycle events inside experiment detail;
+- bounded cohort/member drill-down, filters and pagination, plus the broader responsive owner
+  workbench;
+- executable UI behavior and accessibility proof that the claim registry still marks `partial`.
 
-That Proposal adds no admission mutation, paper influence, lifecycle automation, schema, config,
-scheduler job, Risk, Execution, exchange or live authority. Its `LCO-*` claims remain `missing`
-until implementation tests turn them GREEN.
+This Contract remains authoritative for current behavior. The Proposal's §11 executable-claim
+registry records the evidence status for its implemented and partial claims; future endpoint and
+workbench slices remain not implemented until this Contract and the API index adopt them. Neither
+the shipped summary nor the deferred slices add admission mutation, paper influence, lifecycle
+automation, schema, config, scheduler jobs, Risk, Execution, exchange, or live authority.
 
 ---
 
@@ -682,7 +692,7 @@ Primary executable claims:
 - `tests/specs/spec_learning_continuity.py`
 - `tests/specs/spec_learning_verdict_runtime.py`
 - `tests/specs/spec_learning_final_consumers.py`
-- `tests/specs/spec_learning_observability.py` (`LCO-*`, target/missing)
+- `tests/specs/spec_learning_observability.py` (`LCO-*` implemented/partial registry claims)
 - `tests/e2e/test_pipeline_feedback_loop.py`
 - `tests/e2e/test_pipeline_guard_promotion.py`
 - `tests/e2e/test_learning_paper_lifecycle.py`
@@ -712,7 +722,7 @@ Important tripwires:
   change-control review.
 
 These current claims remain valid regression coverage. They must not be represented as proof of
-the target `LE-*` positive-contribution claims, the missing `LCO-*` owner projection, or
+the target `LE-*` positive-contribution claims, deferred LCO detail/full-workbench slices, or
 profitability.
 
 ## 11. Outcome Integrity Handoff
