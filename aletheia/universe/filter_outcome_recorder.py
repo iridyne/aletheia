@@ -223,7 +223,7 @@ async def settle_due_filter_outcomes(
             entry_price=entry,
             exit_price=exit_price,
             direction=row.get("direction"),
-            market_type=row.get("market_type") or "spot",
+            market_type=row.get("market_type"),
             hold_seconds=hold_seconds,
             entry_spread_bps=row.get("entry_spread_bps"),
             fallback_spread_bps=cfg.universe.max_spread_bps,

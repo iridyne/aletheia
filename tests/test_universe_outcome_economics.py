@@ -86,6 +86,30 @@ def test_register_pending_carries_point_in_time_cost_inputs(monkeypatch):
     assert {row.funding_rate_at_entry for row in captured} == {0.0005}
 
 
+def test_register_pending_does_not_invent_spot_identity(monkeypatch):
+    from aletheia.universe.outcome_recorder import register_pending
+
+    captured = []
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder.repo.insert_forward_outcomes_batch",
+        lambda rows: captured.extend(rows),
+    )
+
+    count = register_pending([{
+        "id": "member-missing-market",
+        "snapshot_id": "snapshot-missing-market",
+        "symbol": "BTC/USDT",
+        "venue": "okx",
+        "market_type": None,
+        "scanner_family": "momentum",
+        "direction": "long",
+        "entry_price_usd": 100.0,
+    }], entry_ts="2026-07-10T00:00:00+00:00")
+
+    assert count == 4
+    assert {row.market_type for row in captured} == {""}
+
+
 def test_perp_provider_fallback_never_downgrades_to_spot(monkeypatch):
     from aletheia.data.providers import Ticker
     from aletheia.data.sources.chain import FallbackChainProvider
@@ -191,6 +215,62 @@ def test_settle_due_uses_exact_instrument_and_horizon_candles(monkeypatch):
     assert settled[0]["economics"]["net_return_pct"] == pytest.approx(1.69)
     assert settled[0]["economics"]["mfe_pct"] == pytest.approx(3.0)
     assert settled[0]["economics"]["mae_pct"] == pytest.approx(-1.0)
+
+
+def test_forward_settlement_does_not_default_missing_market_identity(monkeypatch):
+    from aletheia.universe import outcome_recorder
+
+    now = datetime.now(timezone.utc)
+    entry = now - timedelta(hours=2)
+    row = {
+        "id": "outcome-missing-market",
+        "symbol": "BTC/USDT",
+        "market_type": "",
+        "direction": "long",
+        "horizon": "1h",
+        "entry_price_usd": 100.0,
+        "entry_ts": entry.isoformat(),
+        "due_at": (entry + timedelta(hours=1)).isoformat(),
+    }
+    settled = []
+
+    with pytest.raises(ValueError, match="InstrumentId.market_type"):
+        outcome_recorder._build_plan(row, default_venue="okx", now=now)
+
+    async def observations(rows, *, now):
+        return {
+            row["id"]: {
+                "exit_price": 105.0,
+                "price_quality_ok": True,
+                "price_source": "test",
+                "settlement_lag_sec": 0.0,
+            }
+            for row in rows
+        }
+
+    monkeypatch.setattr(
+        outcome_recorder.repo,
+        "list_pending_forward_outcomes",
+        lambda **_: [row],
+    )
+    monkeypatch.setattr(
+        outcome_recorder,
+        "_batch_fetch_market_observations",
+        observations,
+    )
+    monkeypatch.setattr(
+        outcome_recorder.repo,
+        "settle_forward_outcome",
+        lambda **kwargs: settled.append(kwargs),
+    )
+    monkeypatch.setattr(outcome_recorder.repo, "calibration_stats", lambda: [])
+    monkeypatch.setattr(
+        outcome_recorder, "_maybe_generate_guard_candidates", lambda _rows: None,
+    )
+
+    assert asyncio.run(outcome_recorder.settle_due(max_rows=1)) == 1
+    assert settled[0]["economics"]["estimated_funding_pct"] is None
+    assert settled[0]["economics"]["net_return_pct"] is None
 
 
 def test_migration_backfills_identity_without_inventing_historical_net():

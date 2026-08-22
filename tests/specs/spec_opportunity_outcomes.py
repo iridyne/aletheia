@@ -87,23 +87,55 @@ def test_net_return_formula_includes_all_costs():
 def test_missing_perp_funding_keeps_net_unknown():
     from aletheia.universe.outcome_economics import estimate_outcome_economics
 
-    result = estimate_outcome_economics(
-        entry_price=100.0,
-        exit_price=95.0,
-        direction="short",
-        market_type="perp",
-        hold_seconds=8 * 3600,
-        entry_spread_bps=5.0,
-        fallback_spread_bps=25.0,
-        funding_rate_at_entry=None,
-        execution_fee_pct=0.06,
-        slippage_bps=5.0,
-        price_quality_ok=True,
-    )
+    for market_type in ("perp", "futures", "swap", "usdt_futures"):
+        result = estimate_outcome_economics(
+            entry_price=100.0,
+            exit_price=95.0,
+            direction="short",
+            market_type=market_type,
+            hold_seconds=8 * 3600,
+            entry_spread_bps=5.0,
+            fallback_spread_bps=25.0,
+            funding_rate_at_entry=None,
+            execution_fee_pct=0.06,
+            slippage_bps=5.0,
+            price_quality_ok=True,
+        )
 
-    assert result["directional_return_pct"] == pytest.approx(5.0)
-    assert result["estimated_funding_pct"] is None
-    assert result["net_return_pct"] is None
+        assert result["directional_return_pct"] == pytest.approx(5.0)
+        assert result["estimated_funding_pct"] is None
+        assert result["net_return_pct"] is None
+
+
+@spec_claim(
+    SpecClaim(
+        "OO-B06", _CONTRACT, "§2 instrument identity", "L2b",
+        "An unknown market identity cannot become funding-free, cost-complete spot economics.",
+        status="implemented",
+    )
+)
+def test_unknown_market_identity_keeps_net_unknown():
+    from aletheia.universe.outcome_economics import estimate_outcome_economics
+
+    for market_type in (None, "", "   ", "crypto", "unknown", "perpp"):
+        result = estimate_outcome_economics(
+            entry_price=100.0,
+            exit_price=105.0,
+            direction="long",
+            market_type=market_type,
+            hold_seconds=8 * 3600,
+            entry_spread_bps=5.0,
+            fallback_spread_bps=25.0,
+            funding_rate_at_entry=None,
+            execution_fee_pct=0.06,
+            slippage_bps=5.0,
+            price_quality_ok=True,
+        )
+
+        assert result["gross_return_pct"] == pytest.approx(5.0)
+        assert result["directional_return_pct"] == pytest.approx(5.0)
+        assert result["estimated_funding_pct"] is None
+        assert result["net_return_pct"] is None
 
 
 @spec_claim(

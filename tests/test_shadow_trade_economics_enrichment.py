@@ -26,7 +26,7 @@ from aletheia.storage.repositories import (
 )
 from aletheia.storage.models import ShadowTrade
 from aletheia.storage.sqlite import get_db
-from aletheia.counterfactual.trades import _compute_shadow_economics
+from aletheia.counterfactual.trades import _compute_shadow_economics, _current_price
 
 
 def _fresh_shadow(**overrides) -> ShadowTrade:
@@ -162,6 +162,57 @@ def test_economics_returns_none_for_missing_entry():
         row={"entry_price": -1.0, "direction": "long", "market_type": "perp"},
         exit_price=110.0, hold_seconds=3600.0,
     ) is None
+
+
+@pytest.mark.parametrize("market_type", (None, "", "unknown"))
+def test_shadow_economics_does_not_default_missing_market_identity(market_type):
+    economics = _compute_shadow_economics(
+        row={
+            "entry_price": 100.0,
+            "direction": "long",
+            "market_type": market_type,
+        },
+        exit_price=110.0,
+        hold_seconds=3600.0,
+    )
+
+    assert economics is not None
+    assert economics["estimated_funding_pct"] is None
+    assert economics["net_return_pct"] is None
+
+
+def test_exact_shadow_price_does_not_fall_back_for_unknown_market(monkeypatch):
+    from aletheia.storage import repositories as repo
+
+    calls = []
+    monkeypatch.setattr(
+        repo,
+        "list_market_snapshots",
+        lambda **kwargs: calls.append(kwargs) or [{"price": 100.0}],
+    )
+
+    assert _current_price("BTC/USDT", market_type="crypto", exact=True) is None
+    assert calls == []
+
+
+def test_shadow_registration_does_not_invent_spot_identity(monkeypatch):
+    from aletheia.counterfactual import trades
+
+    monkeypatch.setattr(trades, "_current_regime", lambda: "normal")
+    monkeypatch.setattr(trades, "_current_policy_epoch", lambda: "epoch-test")
+    ids = trades.persist_shadow_batch([{
+        "opportunity_id": "opportunity-missing-market",
+        "symbol": "BTC/USDT",
+        "market_type": None,
+        "direction": "long",
+        "trade_score": 1.0,
+    }], selected=None, top_n=1)
+
+    row = get_db().execute(
+        "SELECT market_type, entry_price FROM shadow_trades WHERE id=?", (ids[0],),
+    ).fetchone()
+    assert row["market_type"] == ""
+    assert row["entry_price"] is None
 
 
 def test_spot_row_has_zero_funding_and_valid_net():

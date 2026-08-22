@@ -102,7 +102,7 @@ def persist_shadow_batch(
         rank = rank_by_opportunity.get(opp_id, fallback_rank)
         symbol = candidate.get("symbol") or ""
         direction = candidate.get("direction") or candidate.get("direction_bias") or "long"
-        market_type = candidate.get("market_type") or "spot"
+        market_type = str(candidate.get("market_type") or "").strip().lower()
         entry_price = _current_price(symbol, market_type=market_type, exact=True)
         outcome_candidate_key = f"opportunity:{opp_id}" if opp_id else None
 
@@ -194,7 +194,7 @@ def _compute_shadow_economics(
         cfg = load_config()
     except Exception:
         return None
-    market_type = str(row.get("market_type") or "spot").lower()
+    market_type = str(row.get("market_type") or "").strip().lower()
     entry_spread = row.get("entry_spread_bps")
     funding_rate = row.get("funding_rate_at_entry")
     try:
@@ -335,12 +335,9 @@ def _current_price(
             legacy_symbol = to_bitget(canonical)
             if legacy_symbol != canonical:
                 symbols.append(legacy_symbol)
-            normalized_market = (
-                "perp"
-                if str(market_type or "").lower()
-                in {"perp", "futures", "swap", "usdt_futures"}
-                else "spot" if str(market_type or "").lower() == "spot" else None
-            )
+            normalized_market = _normalized_market_type(market_type)
+            if normalized_market is None:
+                return None
 
             placeholders = ",".join("?" for _ in symbols)
             base = (
@@ -350,26 +347,17 @@ def _current_price(
                 "AND datetime(snapshot_at) >= datetime(?)"
             )
             params: list[object] = [*symbols, event_dt.isoformat(), oldest_usable]
-            if normalized_market is not None:
-                typed = get_db().execute(
-                    base
-                    + " AND market_type = ? "
-                    "ORDER BY datetime(snapshot_at) DESC, rowid DESC LIMIT 1",
-                    (*params, normalized_market),
-                ).fetchone()
-                if typed is not None:
-                    price = float(typed["price"])
-                    return price if math.isfinite(price) and price > 0 else None
+            typed = get_db().execute(
+                base
+                + " AND market_type = ? "
+                "ORDER BY datetime(snapshot_at) DESC, rowid DESC LIMIT 1",
+                (*params, normalized_market),
+            ).fetchone()
+            if typed is None:
                 # A spot snapshot cannot prove a futures counterfactual (or vice
                 # versa), even when it is temporally fresh.
                 return None
-            fallback = get_db().execute(
-                base + " ORDER BY datetime(snapshot_at) DESC, rowid DESC LIMIT 1",
-                params,
-            ).fetchone()
-            if fallback is None:
-                return None
-            price = float(fallback["price"])
+            price = float(typed["price"])
             return price if math.isfinite(price) and price > 0 else None
 
         from aletheia.trading.market_data import latest_snapshot
@@ -377,12 +365,9 @@ def _current_price(
             from aletheia.data.symbols import to_canonical
             from aletheia.storage.repositories import list_market_snapshots
 
-            normalized_market = (
-                "perp"
-                if str(market_type or "spot").lower()
-                in {"perp", "futures", "swap", "usdt_futures"}
-                else "spot"
-            )
+            normalized_market = _normalized_market_type(market_type)
+            if normalized_market is None:
+                return None
             rows = list_market_snapshots(
                 symbol=to_canonical(symbol),
                 market_type=normalized_market,
