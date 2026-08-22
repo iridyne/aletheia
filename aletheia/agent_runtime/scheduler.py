@@ -1582,8 +1582,12 @@ def init_scheduler() -> BackgroundScheduler | None:
         timezone="Asia/Shanghai",
     )
 
-    sched.start()
-    _scheduler = sched
+    _scheduler = sched  # set before start so callers that check _scheduler see a valid instance
+    try:
+        sched.start()
+    except Exception:
+        _scheduler = None
+        raise
     # If config says paused at boot, apply pause (layered or blanket).
     if cfg.runtime.paused:
         if cfg.health.layered_pause_enabled:
