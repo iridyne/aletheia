@@ -532,8 +532,93 @@ def test_owner_authorized_release_refuses_non_parked_claim():
         "pos-sub-rej", actor="human", reason="not actually parked"
     )
     assert result["released"] is False
-    assert result["code"] == "claim_not_parked"
+    # The cancelled-but-different-reason order fails the admissible-state
+    # checks rather than the claim-status gate (both refuse, state unchanged).
+    assert result["code"] == "parked_order_mismatch"
     stored_position = repo._select_one("positions", "pos-sub-rej")
+    assert stored_position["pending_close_status"] == "submission_rejected"
+
+
+def test_owner_authorized_release_accepts_unreached_venue_submission_rejection():
+    """A venue-rejected close that never reached the exchange (no exchange id,
+    terminal error) is safely owner-releasable without the 4h age-out."""
+    _seed_order(
+        Order(
+            id="claim-sub-rej-unreached",
+            client_order_id="close-pos-sub-rej2-r1",
+            position_id="pos-sub-rej2",
+            close_reason="stop_loss",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=424.0,
+            price=1.48,
+            execution_mode="bitget_demo",
+            status="error",
+            source="native",
+            error_reason="close_submission_rejected:Bitget order error: tick",
+            created_at=_iso(0.5),
+        )
+    )
+    repo.insert_position(
+        _position(
+            id="pos-sub-rej2",
+            pending_close_order_id="claim-sub-rej-unreached",
+            pending_close_status="submission_rejected",
+            pending_close_requested_at=_iso(0.5),
+        )
+    )
+
+    result = pcr.release_rate_limited_close_claim(
+        "pos-sub-rej2", actor="human", reason="tick-quantization fix deployed"
+    )
+    assert result["released"] is True
+    stored_position = repo._select_one("positions", "pos-sub-rej2")
+    assert stored_position["pending_close_order_id"] is None
+    assert stored_position["pending_close_status"] is None
+    # The rejected order keeps its own error reason — it never reached matching,
+    # so it must not enter the clip-halving cancel history.
+    stored_order = repo.get_order("claim-sub-rej-unreached")
+    assert stored_order["error_reason"].startswith("close_submission_rejected")
+
+
+def test_owner_authorized_release_refuses_submitted_rejection_with_exchange_id():
+    _seed_order(
+        Order(
+            id="claim-sub-rej-reached",
+            client_order_id="close-pos-sub-rej3-r1",
+            position_id="pos-sub-rej3",
+            close_reason="stop_loss",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=9.0,
+            price=1.0,
+            execution_mode="bitget_demo",
+            status="error",
+            source="native",
+            exchange_order_id="1475000000000000000",
+            error_reason="close_submission_rejected:late",
+            created_at=_iso(0.5),
+        )
+    )
+    repo.insert_position(
+        _position(
+            id="pos-sub-rej3",
+            pending_close_order_id="claim-sub-rej-reached",
+            pending_close_status="submission_rejected",
+            pending_close_requested_at=_iso(0.5),
+        )
+    )
+
+    result = pcr.release_rate_limited_close_claim(
+        "pos-sub-rej3", actor="human", reason="must stay for reconciliation"
+    )
+    assert result["released"] is False
+    assert result["code"] == "parked_order_mismatch"
+    stored_position = repo._select_one("positions", "pos-sub-rej3")
     assert stored_position["pending_close_status"] == "submission_rejected"
 
 

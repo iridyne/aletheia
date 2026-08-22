@@ -530,25 +530,37 @@ def release_rate_limited_close_claim(
         ).fetchone()
         if fresh_position is None or str(fresh_position["status"] or "") != "open":
             return {"released": False, "code": "position_not_found_or_not_open"}
-        if (
-            str(fresh_position["pending_close_status"] or "")
-            != VENUE_TRADE_RATE_LIMITED_STATUS
-        ):
-            return {"released": False, "code": "claim_not_parked"}
+        claim_status = str(fresh_position["pending_close_status"] or "")
         order_id = str(fresh_position["pending_close_order_id"] or "")
         if not order_id:
             return {"released": False, "code": "claim_not_parked"}
         fresh_order = db.execute(
             "SELECT * FROM orders WHERE id=? LIMIT 1", (order_id,)
         ).fetchone()
-        if (
-            fresh_order is None
-            or not _is_close_order(dict(fresh_order))
-            or str(fresh_order["status"] or "") != "cancelled"
-            or str(fresh_order["error_reason"] or "") != TRADE_RATE_LIMIT_CANCEL_REASON
-            or str(fresh_order["position_id"] or "") != position_id
-        ):
+        if fresh_order is None or not _is_close_order(dict(fresh_order)):
             return {"released": False, "code": "parked_order_mismatch"}
+        if str(fresh_order["position_id"] or "") != position_id:
+            return {"released": False, "code": "parked_order_mismatch"}
+        if claim_status == VENUE_TRADE_RATE_LIMITED_STATUS:
+            if (
+                str(fresh_order["status"] or "") != "cancelled"
+                or str(fresh_order["error_reason"] or "")
+                != TRADE_RATE_LIMIT_CANCEL_REASON
+            ):
+                return {"released": False, "code": "parked_order_mismatch"}
+        elif claim_status == "submission_rejected":
+            # A close the venue rejected at submission and that provably never
+            # reached the exchange (no exchange order id, terminal error) has
+            # no in-flight ambiguity — the same safety property as the 40725
+            # park. The default 4h age-out also covers it; this is the
+            # owner-authorized early unlock for a fixed root cause.
+            if (
+                str(fresh_order["status"] or "") != "error"
+                or str(fresh_order["exchange_order_id"] or "").strip() != ""
+            ):
+                return {"released": False, "code": "parked_order_mismatch"}
+        else:
+            return {"released": False, "code": "claim_not_parked"}
 
         next_oid = next_close_client_oid(position_id)
         db.execute(
@@ -566,7 +578,7 @@ def release_rate_limited_close_claim(
             WHERE id=? AND status='open'
               AND pending_close_order_id=? AND pending_close_status=?
             """,
-            (position_id, order_id, VENUE_TRADE_RATE_LIMITED_STATUS),
+            (position_id, order_id, claim_status),
         )
         if cursor.rowcount != 1:
             raise RuntimeError(
