@@ -187,6 +187,23 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   min-height: 240px; display: flex; flex-direction: column; align-items: center;
   justify-content: center; gap: var(--space-3); text-align: center;
 }
+.route-skeleton {
+  position: relative; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--r);
+  background: linear-gradient(110deg, var(--surface) 35%, var(--surface-2) 50%, var(--surface) 65%);
+  background-size: 200% 100%;
+  animation: route-skeleton-shimmer 1.25s ease-in-out infinite;
+}
+.route-skeleton::before {
+  content: 'Loading page…'; color: var(--muted); font-size: 0.75rem;
+}
+@keyframes route-skeleton-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .route-skeleton { animation: none; }
+}
 /* Collapse sidebar on narrow viewports (L1); hamburger toggle handled in App.tsx */
 .hamburger { display: none !important; }
 /* Mobile drawer backdrop — click anywhere outside the sidebar to close it.

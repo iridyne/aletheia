@@ -4,7 +4,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Position, UniverseCurrentResponse } from '../types'
 import type * as PriceChartModel from '../charts/priceChartModel'
 import type { ChartSettings } from '../charts/priceChartModel'
@@ -85,10 +85,16 @@ function makeClient() {
 }
 
 let root: Root | undefined
+beforeEach(() => {
+  // happy-dom resolves relative fetches to localhost:3000; this component test
+  // supplies its query cache explicitly, so network access is out of scope.
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 503 })))
+})
 afterEach(() => {
   act(() => root?.unmount())
   root = undefined
   document.body.innerHTML = ''
+  vi.unstubAllGlobals()
 })
 function renderCharts() {
   const node = document.createElement('div')

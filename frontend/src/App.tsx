@@ -49,6 +49,10 @@ function NotFound() {
   )
 }
 
+export function RouteLoading() {
+  return <div className="route-state route-skeleton" role="status" aria-label="Loading page" />
+}
+
 export default function App() {
   const location = useLocation()
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -133,7 +137,7 @@ export default function App() {
         <main className="main">
           <BackendConnectionGuard enabled={Boolean(shell.error)} />
           <RouteErrorBoundary key={location.pathname} destination={location.pathname}>
-            <Suspense fallback={<div className="route-state route-skeleton" role="status" aria-label="Loading page" />}>
+            <Suspense fallback={<RouteLoading />}>
               <Routes>
                 <Route path="/" element={<Overview />} />
                 <Route path="/agent-activity" element={<AgentActivity />} />
