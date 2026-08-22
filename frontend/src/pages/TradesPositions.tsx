@@ -541,13 +541,14 @@ export default function TradesPositions() {
 											<span className="text-muted text-sm">
 												click a row for the causal chain
 											</span>
-											<button
+											<Button
 												onClick={handleExportCsv}
 												disabled={csvExporting}
-												className="btn btn-secondary btn-sm ml-auto"
+												variant="secondary"
+												size="sm"
 											>
 												{csvExporting ? 'Exporting…' : 'Export CSV'}
-											</button>
+											</Button>
 										</div>
 										<Card>
 											<DataTable
