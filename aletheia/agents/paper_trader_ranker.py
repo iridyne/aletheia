@@ -1163,8 +1163,8 @@ def _evaluate_guards_safe(
     strategy_has_ruleset: bool,
     ruleset_entry_result,
     strategy_evidence: dict | None,
-) -> GuardEvaluation | None:
-    """Build guard context and evaluate. Returns None on failure (never crashes ranker)."""
+) -> GuardEvaluation:
+    """Build guard context and evaluate. Returns blocking GuardEvaluation on failure (fail-closed)."""
     try:
         cfg = load_config()
         guard_cfg = getattr(cfg, "guard", None)
@@ -1230,8 +1230,13 @@ def _evaluate_guards_safe(
 
         return result
     except Exception as e:
-        logger.warning("Guard evaluation failed (non-fatal): %s", e)
-        return None
+        logger.warning("Guard evaluation failed — failing closed to block candidate: %s", e)
+        # #1244: guard load/evaluation failure must block the candidate, not allow through.
+        return GuardEvaluation(
+            blocked=True,
+            total_penalty=1000.0,
+            hits=[],
+        )
 
 
 def _make_candidate(

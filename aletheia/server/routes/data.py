@@ -2589,10 +2589,17 @@ def patch_serenity_theme_status(theme_id: str, body: dict):
         raise HTTPException(404, "Theme not found")
     repo.update_serenity_theme(theme_id, status=new_status, updated_at=datetime.now(timezone.utc).isoformat())
     # Cascade dismiss/expire to child opportunities so thesis-invalidation exit fires
+    # #1518: loop to update ALL active opportunities, not just the newest 200
     if new_status in ("dismissed", "expired"):
-        active_opps = repo.list_serenity_opportunities(theme_id=theme_id, status="active", limit=200)
-        for opp in active_opps:
-            repo.update_serenity_opportunity(opp["id"], status=new_status)
+        page_size = 200
+        while True:
+            active_opps = repo.list_serenity_opportunities(theme_id=theme_id, status="active", limit=page_size)
+            if not active_opps:
+                break
+            for opp in active_opps:
+                repo.update_serenity_opportunity(opp["id"], status=new_status)
+            if len(active_opps) < page_size:
+                break
     return {"id": theme_id, "status": new_status}
 
 

@@ -260,8 +260,22 @@ def load_trading_guards(
                 )
                 guards.append(guard)
             except Exception as e:
-                logger.warning("Failed to load guard from %s: %s", path, e)
-                continue
+                logger.warning("Failed to load guard from %s: %s — treating as blocking (fail-closed)", path, e)
+                # #1244: a malformed guard file must block rather than be silently skipped.
+                # Insert a synthetic blocking guard so the malformed file has enforcing authority.
+                guards.append(TradingGuard(
+                    guard_id=f"LOAD_ERROR:{path.stem}",
+                    title=f"Load error: {path.stem}",
+                    description=f"Guard file could not be parsed: {e}",
+                    status=status,
+                    scope=scope or "paper_entry",
+                    enforcement="hard",
+                    severity="critical",
+                    score_penalty=1000.0,
+                    block_candidate=True,
+                    applies_to=GuardAppliesTo(),
+                    predicates=[],
+                ))
 
     return guards
 
