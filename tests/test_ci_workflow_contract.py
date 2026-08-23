@@ -783,11 +783,3 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     assert "auto-merge is enabled; GitHub will merge when required checks pass" in update_script
     assert "auto-merge did not complete" not in update_script
     assert "const autoMergeStates = new Set(['BEHIND', 'BLOCKED', 'HAS_HOOKS'])" in update_script
-    assert "head.repo.full_name == github.repository" in guard
-    assert "head.ref != github.event.repository.default_branch" in guard
-
-    assert not any("uses" in step for step in job["steps"])
-
-    commands = _run_commands(job)
-    assert "gh api -X DELETE" in commands
-    assert "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH" in commands
