@@ -576,7 +576,7 @@ def _insert_position_x_evaluation_fixture(*, retrospective: bool = False):
             "settled_at": (due + timedelta(minutes=1)).isoformat(),
             "exit_price_usd": 100.0 * (1 + raw_return / 100.0),
             "directional_return_pct": raw_return,
-            "settlement_price_source": "fixture_ohlcv",
+            "settlement_price_source": "horizon_ohlcv",
             "settlement_lag_sec": 60.0,
             "status": "settled",
             "policy_epoch_id": "p3-epoch",
@@ -630,6 +630,76 @@ def test_position_x_p3_evaluator_rejects_post_outcome_imports(tmp_path, monkeypa
     assert horizon["exclusions"] == {"ingestion_lag_exceeded": 3}
 
 
+@pytest.mark.parametrize(
+    ("price_source", "settlement_lag_sec", "expected"),
+    [
+        ("horizon_ohlcv", 1_000_000.0, None),
+        ("horizon_ohlcv_local", 3_600.0, None),
+        ("near_due_ticker", 360.0, None),
+        ("near_due_ticker", 360.000001, "invalid_settlement_provenance"),
+        ("late_ticker", 0.0, "invalid_settlement_provenance"),
+        ("unknown", 0.0, "invalid_settlement_provenance"),
+        (None, None, "missing_settlement_source"),
+        ("horizon_ohlcv", -0.001, "invalid_settlement_provenance"),
+        ("horizon_ohlcv", float("nan"), "invalid_settlement_provenance"),
+        ("horizon_ohlcv", float("inf"), "invalid_settlement_provenance"),
+        ("horizon_ohlcv", "0", "invalid_settlement_provenance"),
+        ("horizon_ohlcv", True, "invalid_settlement_provenance"),
+    ],
+)
+def test_position_x_p3_requires_fixed_horizon_settlement_provenance(
+    price_source, settlement_lag_sec, expected,
+):
+    from aletheia.data.perp_structure_shadow import _prospective_exclusion
+
+    as_of = datetime(2026, 7, 20, tzinfo=timezone.utc)
+    due = as_of + timedelta(hours=1)
+    row = {
+        "snapshot_as_of_time": as_of.isoformat(),
+        "snapshot_observed_at": (as_of + timedelta(minutes=1)).isoformat(),
+        "entry_ts": as_of.isoformat(),
+        "due_at": due.isoformat(),
+        "settled_at": (due + timedelta(minutes=1)).isoformat(),
+        "entry_price_usd": 100.0,
+        "exit_price_usd": 101.0,
+        "horizon": "1h",
+        "settlement_price_source": price_source,
+        "settlement_lag_sec": settlement_lag_sec,
+        "source_hash": "source",
+        "snapshot_source_hash": "source",
+    }
+
+    assert _prospective_exclusion(row, 300) == expected
+
+
+def test_position_x_p3_invalid_settlement_provenance_cannot_make_readiness(
+    tmp_path, monkeypatch,
+):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    _insert_position_x_evaluation_fixture()
+    from aletheia.data.perp_structure_shadow import evaluate_position_x_shadow
+    from aletheia.storage.sqlite import get_db
+
+    get_db().execute(
+        "UPDATE perp_structure_shadow_outcomes "
+        "SET settlement_price_source='late_ticker', settlement_lag_sec=3600 "
+        "WHERE id='p3-outcome-0'"
+    )
+    result = evaluate_position_x_shadow(
+        policy_epoch_id="p3-epoch",
+        horizons=("1h",),
+        minimum_samples=3,
+        now=datetime(2026, 8, 11, tzinfo=timezone.utc),
+    )
+
+    horizon = result["horizons"]["1h"]
+    assert result["status"] == "insufficient_data"
+    assert horizon["eligible"] == 2
+    assert horizon["exclusions"] == {"invalid_settlement_provenance": 1}
+
+
 def test_owner_aggregate_rejects_sensitive_account_fields(tmp_path, monkeypatch):
     from tests.test_entry_logic import setup_env
 
@@ -678,7 +748,7 @@ async def test_structure_shadow_outcome_settles_without_decision_influence(
         return {
             row["id"]: {
                 "exit_price": 110.0,
-                "price_source": "test_ohlcv",
+                "price_source": "horizon_ohlcv",
                 "settlement_lag_sec": 0.0,
             }
             for row in rows
