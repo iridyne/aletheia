@@ -499,6 +499,94 @@ def list_deduped_shadows(
     return [dict(r) for r in get_db().execute(sql, params).fetchall()]
 
 
+_SHADOW_RESULT_FIELDS = (
+    "exit_price",
+    "pnl_pct",
+    "gross_return_pct",
+    "net_pnl_pct",
+    "estimated_fee_pct",
+    "estimated_spread_slippage_pct",
+    "estimated_funding_pct",
+    "min_tradable_edge_pct",
+    "settlement_price_source",
+    "settlement_lag_sec",
+    "cost_model_version",
+    "btc_return_pct",
+    "resolved_at",
+)
+
+
+def list_shadow_trade_diagnostics(
+    batch_id: str | None = None,
+    scanner_family: str | None = None,
+    opportunity_id: str | None = None,
+    was_selected: bool | None = None,
+    resolved: bool | None = None,
+    limit: int = 200,
+) -> list[dict]:
+    """Return operator-safe shadows without changing the raw persistence reader."""
+    from aletheia.storage.repositories import (
+        list_shadow_trades,
+        valid_keyed_shadow_projection_sql,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    rows = list_shadow_trades(
+        batch_id=batch_id,
+        scanner_family=scanner_family,
+        opportunity_id=opportunity_id,
+        was_selected=was_selected,
+        resolved=resolved,
+        limit=limit,
+    )
+    keyed_ids = [
+        row["id"]
+        for row in rows
+        if str(row.get("outcome_candidate_key") or "").strip()
+    ]
+    keyed_id_set = set(keyed_ids)
+    authorized_ids: set[str] = set()
+    if keyed_ids:
+        authorized_ids = {
+            row["id"]
+            for row in get_db().execute(
+                "SELECT s.id FROM shadow_trades AS s "
+                "WHERE s.id IN (SELECT value FROM json_each(?)) "
+                f"AND {valid_keyed_shadow_projection_sql('s')}",
+                (json.dumps(keyed_ids),),
+            ).fetchall()
+        }
+
+    for row in rows:
+        if row["id"] not in keyed_id_set:
+            row.update(
+                authority_status="legacy_observation",
+                authorized=False,
+                authority_reason="legacy_unkeyed_shadow",
+            )
+            continue
+        if row["id"] in authorized_ids and row.get("resolved_at") is not None:
+            row.update(
+                authority_status="canonical_24h",
+                authorized=True,
+                authority_reason=None,
+            )
+            continue
+        pending = row.get("resolved_at") is None
+        for field in _SHADOW_RESULT_FIELDS:
+            row[field] = None
+        row.update(
+            authority_status="pending" if pending else "unauthorized",
+            authorized=False,
+            authority_reason=(
+                "canonical_24h_pending"
+                if pending
+                else "canonical_24h_projection_invalid"
+            ),
+        )
+    return rows
+
+
 def _detect_window_epochs(
     *,
     days: int | None = None,

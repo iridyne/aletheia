@@ -466,6 +466,159 @@ def test_linked_projection_settles_all_time_aligned_same_key_shadows():
         assert row["resolved_at"] == canonical["settled_at"]
 
 
+def test_public_shadow_diagnostics_sanitize_unauthorized_results():
+    from unittest.mock import patch
+
+    from aletheia.cli.inspect_cmd import inspect_app
+    from aletheia.counterfactual.trades import (
+        list_shadow_trade_diagnostics,
+        persist_shadow_batch,
+    )
+    from aletheia.server.routes.data import get_shadow_trades
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import ShadowTrade
+    from aletheia.storage.sqlite import get_db
+    from tests.shadow_outcome_fixture import (
+        insert_canonical_outcome_for_shadow,
+        settle_pending_keyed_shadows,
+    )
+
+    def persist(opportunity_id: str) -> str:
+        candidate = {
+            "opportunity_id": opportunity_id,
+            "symbol": "BTC/USDT",
+            "venue": "bitget",
+            "direction": "long",
+            "scanner_family": "momentum",
+            "trade_score": 60.0,
+        }
+        with patch("aletheia.counterfactual.trades._current_price", return_value=100.0):
+            return persist_shadow_batch([candidate], candidate)[0]
+
+    valid_id = persist("diagnostic-valid")
+    settle_pending_keyed_shadows(1.0)
+    pending_id = persist("diagnostic-pending")
+    orphan_id = persist("diagnostic-orphan")
+    invalid_id = persist("diagnostic-invalid")
+    insert_canonical_outcome_for_shadow(
+        invalid_id,
+        horizon="24h",
+        net_return_pct=1.0,
+    )
+    repo.settle_linked_shadow_outcomes("opportunity:diagnostic-invalid")
+
+    now = datetime.now(timezone.utc).isoformat()
+    repo.insert_shadow_trade(ShadowTrade(
+        id="diagnostic-legacy",
+        opportunity_id="diagnostic-legacy",
+        symbol="BTC/USDT",
+        venue="bitget",
+        direction="long",
+        entry_price=100.0,
+        exit_price=102.0,
+        pnl_pct=2.0,
+        resolved_at=now,
+    ))
+    repo.insert_shadow_trade(ShadowTrade(
+        id="diagnostic-blank-key-legacy",
+        opportunity_id="diagnostic-blank-key-legacy",
+        outcome_candidate_key=" \t",
+        symbol="BTC/USDT",
+        venue="bitget",
+        direction="long",
+        entry_price=100.0,
+        exit_price=104.0,
+        pnl_pct=4.0,
+        resolved_at=now,
+    ))
+    db = get_db()
+    db.execute(
+        "UPDATE shadow_trades SET exit_price=105,pnl_pct=5 WHERE id=?",
+        (pending_id,),
+    )
+    db.execute(
+        "UPDATE shadow_trades SET exit_price=109,pnl_pct=9,gross_return_pct=9,"
+        "net_pnl_pct=9,estimated_fee_pct=0,estimated_spread_slippage_pct=0,"
+        "estimated_funding_pct=0,min_tradable_edge_pct=0,"
+        "settlement_price_source='horizon_ohlcv',settlement_lag_sec=0,"
+        "cost_model_version='forged',btc_return_pct=3,resolved_at=? WHERE id=?",
+        (now, orphan_id),
+    )
+    db.execute(
+        "UPDATE shadow_trades SET settlement_price_source='late_ticker' WHERE id=?",
+        (invalid_id,),
+    )
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET settlement_price_source='late_ticker' "
+        "WHERE outcome_candidate_key='opportunity:diagnostic-invalid' "
+        "AND horizon='24h'",
+    )
+    db.commit()
+
+    result_fields = (
+        "exit_price", "pnl_pct", "gross_return_pct", "net_pnl_pct",
+        "estimated_fee_pct", "estimated_spread_slippage_pct",
+        "estimated_funding_pct", "min_tradable_edge_pct",
+        "settlement_price_source", "settlement_lag_sec", "cost_model_version",
+        "btc_return_pct", "resolved_at",
+    )
+    raw = {row["id"]: row for row in repo.list_shadow_trades(limit=20)}
+    assert raw[orphan_id]["pnl_pct"] == 9
+    assert raw[orphan_id]["resolved_at"] == now
+    assert raw[invalid_id]["settlement_price_source"] == "late_ticker"
+
+    projected = {
+        row["id"]: row for row in list_shadow_trade_diagnostics(limit=20)
+    }
+    assert projected[valid_id]["authority_status"] == "canonical_24h"
+    assert projected[valid_id]["authorized"] is True
+    assert projected[valid_id]["pnl_pct"] == 1.0
+    assert projected[pending_id]["authority_status"] == "pending"
+    assert projected[pending_id]["authority_reason"] == "canonical_24h_pending"
+    assert all(projected[pending_id][field] is None for field in result_fields)
+    for row_id in (orphan_id, invalid_id):
+        assert projected[row_id]["authority_status"] == "unauthorized"
+        assert projected[row_id]["authority_reason"] == (
+            "canonical_24h_projection_invalid"
+        )
+        assert all(projected[row_id][field] is None for field in result_fields)
+    legacy = projected["diagnostic-legacy"]
+    assert legacy["authority_status"] == "legacy_observation"
+    assert legacy["authorized"] is False
+    assert legacy["authority_reason"] == "legacy_unkeyed_shadow"
+    assert legacy["pnl_pct"] == 2.0
+    assert legacy["resolved_at"] == now
+    blank_key_legacy = projected["diagnostic-blank-key-legacy"]
+    assert blank_key_legacy["authority_status"] == "legacy_observation"
+    assert blank_key_legacy["pnl_pct"] == 4.0
+    assert blank_key_legacy["resolved_at"] == now
+
+    api_rows = {row["id"]: row for row in get_shadow_trades(limit=20)}
+    assert api_rows == projected
+    resolved_rows = {
+        row["id"]: row for row in get_shadow_trades(resolved=True, limit=20)
+    }
+    assert pending_id not in resolved_rows
+    assert resolved_rows[orphan_id]["authority_status"] == "unauthorized"
+    assert resolved_rows[orphan_id]["pnl_pct"] is None
+    unresolved_rows = {
+        row["id"]: row for row in get_shadow_trades(resolved=False, limit=20)
+    }
+    assert set(unresolved_rows) == {pending_id}
+    assert unresolved_rows[pending_id]["pnl_pct"] is None
+
+    cli = CliRunner().invoke(inspect_app, ["shadow-trades", "--resolved", "--json"])
+    assert cli.exit_code == 0, cli.output
+    cli_rows = json.loads(cli.output)
+    assert any(row["authority_status"] == "canonical_24h" for row in cli_rows)
+    unauthorized = [
+        row for row in cli_rows if row["authority_status"] == "unauthorized"
+    ]
+    assert len(unauthorized) == 2
+    assert all(row["pnl_pct"] is None and row["resolved_at"] is None for row in unauthorized)
+    assert any(row["authority_status"] == "legacy_observation" for row in cli_rows)
+
+
 def test_persisted_outlier_policy_not_consumer_cap_controls_large_returns():
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db

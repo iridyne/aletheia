@@ -1375,14 +1375,15 @@ def shadow_trades(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Show shadow trades (counterfactual: what if we traded #2/#3 candidate)."""
-    from aletheia.storage.repositories import list_shadow_trades
-    rows = list_shadow_trades(
+    from aletheia.counterfactual.trades import list_shadow_trade_diagnostics
+
+    rows = list_shadow_trade_diagnostics(
         scanner_family=scanner,
         resolved=resolved or None,
         limit=limit,
     )
     display = [{
-        "batch_id": r.get("batch_id", "")[:8],
+        "batch_id": (r.get("batch_id") or "")[:8],
         "symbol": r.get("symbol"),
         "direction": r.get("direction"),
         "scanner_family": r.get("scanner_family"),
@@ -1391,6 +1392,9 @@ def shadow_trades(
         "was_selected": r.get("was_selected"),
         "pnl_pct": r.get("pnl_pct"),
         "resolved_at": r.get("resolved_at"),
+        "authority_status": r.get("authority_status"),
+        "authorized": r.get("authorized"),
+        "authority_reason": r.get("authority_reason"),
     } for r in rows]
     _output(display, json_output)
 
