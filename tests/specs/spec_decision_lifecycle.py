@@ -2873,10 +2873,26 @@ def test_operator_context_fingerprint_ignores_carrier_churn_but_tracks_material_
     assert score_changed != first
 
 
-def test_operator_context_fingerprint_tracks_real_b2_schema_fields():
-    from aletheia.agent_shell.trading_context import operator_decision_context_fingerprint
+def test_operator_context_fingerprint_tracks_real_b2_schema_fields(monkeypatch):
+    import aletheia.agent_shell.trading_context as trading_context
 
-    def context(*, n_net=25, coverage=0.64, shrunk=0.95, verdict=None):
+    projections = []
+    original_dumps = trading_context.json.dumps
+
+    def capture_projection(value, *args, **kwargs):
+        projections.append(value)
+        return original_dumps(value, *args, **kwargs)
+
+    monkeypatch.setattr(trading_context.json, "dumps", capture_projection)
+    operator_decision_context_fingerprint = (
+        trading_context.operator_decision_context_fingerprint
+    )
+
+    def context(
+        *, n_net=25, coverage=0.64, shrunk=0.95, verdict=None,
+        version="b2.1", epoch="b2-epoch-a", horizon="24h",
+        cost_model="v1", mismatch_n=0,
+    ):
         return {
             "skip_policy_epoch_id": "epoch-direct-skip-v3",
             "layer1": {"regime": {"state": "sideways", "long_bias": 0.5, "short_bias": 0.5}},
@@ -2885,18 +2901,27 @@ def test_operator_context_fingerprint_tracks_real_b2_schema_fields():
                 "symbol": "TIA/USDT", "direction": "short",
                 "market_type": "usdt_futures", "trade_score": 45.35,
                 "b2_evidence": {
-                    "status": "insufficient_evidence", "n_total": 39,
+                    "version": version, "policy_epoch_id": epoch,
+                    "horizon": horizon, "status": "insufficient_evidence", "n_total": 39,
                     "n_net": n_net, "outcome_coverage": coverage,
                     "avg_net_pct": 1.71, "shrunk_avg_net_pct": shrunk,
                     "directional_verdict": verdict,
+                    "cost_model_version": cost_model,
+                    "cost_model_mismatch_n": mismatch_n,
                 },
             }]},
         }
 
     baseline = operator_decision_context_fingerprint(context())
+    assert projections[0]["version"] == "operator-decision-context-v6"
     assert operator_decision_context_fingerprint(context(n_net=26)) != baseline
     assert operator_decision_context_fingerprint(context(coverage=0.70)) != baseline
     assert operator_decision_context_fingerprint(context(shrunk=-0.20, verdict="negative")) != baseline
+    assert operator_decision_context_fingerprint(context(version="b2.2")) != baseline
+    assert operator_decision_context_fingerprint(context(epoch="b2-epoch-b")) != baseline
+    assert operator_decision_context_fingerprint(context(horizon="4h")) != baseline
+    assert operator_decision_context_fingerprint(context(cost_model="v2")) != baseline
+    assert operator_decision_context_fingerprint(context(mismatch_n=1)) != baseline
 
 
 def test_operator_context_fingerprint_reopens_when_account_authority_recovers():
@@ -5877,7 +5902,9 @@ def test_expired_defer_is_capped_without_rearm_warning(tmp_path, monkeypatch):
             "pending_queue": {"unresolved_total": 1, "visible_count": 1, "overflow_count": 0, "oldest_at": None},
             "pending_signals": [
                 {"opportunity_id": "opp-expired-defer", "symbol": "BTC/USDT",
-                 "direction": "long", "market_type": "spot"},
+                 "direction": "long", "market_type": "spot", "b2_evidence": {
+                     "policy_epoch_id": "b2-current", "cost_model_version": "v1",
+                 }},
             ],
         },
     }
@@ -5895,6 +5922,8 @@ def test_expired_defer_is_capped_without_rearm_warning(tmp_path, monkeypatch):
     )
     snapshot = json.loads(event["queue_snapshot_json"])
     assert snapshot["defer_until"] == expired_valid_until
+    assert snapshot["b2_policy_epoch_id"] == "b2-current"
+    assert snapshot["cost_model_version"] == "v1"
 
     rows = db.execute(
         "SELECT filter_name, reason_code FROM filter_decisions "

@@ -14,6 +14,32 @@ def _setup(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
 
+def test_b2_policy_epoch_identity_includes_cost_model_version():
+    from aletheia.agent_shell.b2_evidence_policy import (
+        _AFFECTED_PATHS,
+        _EFFECTIVE_VALUES,
+        _EPOCH_KIND,
+    )
+    from aletheia.learning.policy_epochs import build_policy_epoch, compare_policy_epochs
+
+    assert _EFFECTIVE_VALUES["cost_model_version"] == COST_MODEL_VERSION
+    current = build_policy_epoch(
+        _EPOCH_KIND,
+        _EFFECTIVE_VALUES,
+        affected_path_ids=_AFFECTED_PATHS,
+    )
+    rotated = build_policy_epoch(
+        _EPOCH_KIND,
+        {**_EFFECTIVE_VALUES, "cost_model_version": "next-cost-model"},
+        affected_path_ids=_AFFECTED_PATHS,
+    )
+    assert rotated.epoch_hash != current.epoch_hash
+    for path_id in _AFFECTED_PATHS:
+        comparison = compare_policy_epochs(current, rotated, path_id)
+        assert comparison.experiment_action == "new_epoch"
+        assert comparison.safety_action == "apply_normally"
+
+
 def _insert_b2_candidate(
     *, index: int, epoch: str, bucket: str, net: float,
     cost_model_version: str | None = COST_MODEL_VERSION,
@@ -164,6 +190,7 @@ def test_b2_summary_is_identical_for_assessment_bull_and_bear(tmp_path, monkeypa
         "policy_epoch_id": "b2-current", "selection_tier": "ranker_enqueued",
         "score_bucket": "high_score", "n_total": 0, "n_net": 0, "horizon": "24h",
         "outcome_coverage": 0.0, "directional_verdict": None,
+        "cost_model_version": COST_MODEL_VERSION, "cost_model_mismatch_n": 3,
     }
     block = render_b2_evidence_summary(summary)
     ctx = {
@@ -193,6 +220,11 @@ def test_b2_summary_is_identical_for_assessment_bull_and_bear(tmp_path, monkeypa
     assert block in bear
     assert "999T" not in assessment
     assert "-99.00%avg_net" not in assessment
+
+    from aletheia.agent_shell.decision_facts import candidate_fact_bundle
+
+    facts = candidate_fact_bundle(ctx, opportunity_id="current")
+    assert facts["b2"]["cost_model_mismatch_n"] == 3
 
 
 def test_negative_b2_outcome_opposes_short_candidate_without_implying_bearish_price():

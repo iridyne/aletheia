@@ -1816,6 +1816,8 @@ def _existing_deferred_context_observation(
     direction: str | None = None,
     market_type: str | None = None,
     material_fingerprint: str | None = None,
+    b2_policy_epoch_id: str | None,
+    cost_model_version: str | None,
     symbol_level: bool = False,
 ) -> dict | None:
     """Return the most recent defer event in this fingerprint window, any kind.
@@ -1838,7 +1840,7 @@ def _existing_deferred_context_observation(
     ``debate_not_confirmed``), the operator's decision does not improve when
     features refresh — the context_fingerprint changes with each feature snapshot
     but the underlying judgment is the same. We therefore bypass the fingerprint
-    check and suppress re-evaluation by opportunity_id + defer_until alone.
+    check while still requiring the exact B2 policy epoch and cost-model identity.
     This prevents the tight re-evaluation loop that fires on every feature refresh.
     """
     from aletheia.storage.sqlite import get_db
@@ -1852,9 +1854,9 @@ def _existing_deferred_context_observation(
     # same symbol every ~10 min, so opportunity_id matching misses the prior defer
     # and re-burns an LLM re-eval. When enabled AND the material fingerprint is
     # available, match by symbol+direction+market_type GUARDED by the material
-    # fingerprint on EVERY branch — a fresh opportunity_id for an unchanged setup
-    # is recognised and suppressed, while any real market move flips the
-    # fingerprint, fails the guard, and reopens evaluation (DL-INV-23). Legacy
+    # fingerprint and B2/cost identity on EVERY branch — a fresh opportunity_id
+    # for an unchanged setup is recognised and suppressed, while any real market
+    # or evidence-identity change fails the guard and reopens evaluation (DL-INV-23). Legacy
     # opportunity_id matching is retained when the flag is off or the fingerprint
     # is unavailable (fail open = evaluate).
     if symbol_level and material_fingerprint and symbol:
@@ -1869,6 +1871,8 @@ def _existing_deferred_context_observation(
             "AND json_extract(queue_snapshot_json, '$.direction') = ? "
             "AND json_extract(queue_snapshot_json, '$.market_type') = ? "
             "AND json_extract(queue_snapshot_json, '$.material_fingerprint') = ? "
+            "AND json_extract(queue_snapshot_json, '$.b2_policy_epoch_id') = ? "
+            "AND json_extract(queue_snapshot_json, '$.cost_model_version') = ? "
             "AND event_kind LIKE 'operator_decision_deferred_%' "
             "AND json_extract(queue_snapshot_json, '$.defer_until') > ? "
             "AND ("
@@ -1884,7 +1888,10 @@ def _existing_deferred_context_observation(
             " AND (source.valid_until IS NULL OR datetime(source.valid_until)>datetime('now'))"
             ") "
             "ORDER BY created_at DESC LIMIT 1",
-            (symbol, _nd(direction), _nm(market_type), material_fingerprint, now_iso),
+            (
+                symbol, _nd(direction), _nm(market_type), material_fingerprint,
+                b2_policy_epoch_id, cost_model_version, now_iso,
+            ),
         ).fetchone()
     else:
         # Legacy per-opportunity match. Every market-quiet defer suppresses only
@@ -1892,6 +1899,8 @@ def _existing_deferred_context_observation(
         market_quiet_row = get_db().execute(
             "SELECT * FROM operator_evaluation_events "
             "WHERE json_extract(queue_snapshot_json, '$.opportunity_id') = ? "
+            "AND json_extract(queue_snapshot_json, '$.b2_policy_epoch_id') = ? "
+            "AND json_extract(queue_snapshot_json, '$.cost_model_version') = ? "
             "AND event_kind LIKE 'operator_decision_deferred_%' "
             "AND json_extract(queue_snapshot_json, '$.defer_until') > ? "
             "AND ("
@@ -1907,7 +1916,7 @@ def _existing_deferred_context_observation(
             " AND (source.valid_until IS NULL OR datetime(source.valid_until)>datetime('now'))"
             ") "
             "ORDER BY created_at DESC LIMIT 1",
-            (opportunity_id, now_iso),
+            (opportunity_id, b2_policy_epoch_id, cost_model_version, now_iso),
         ).fetchone()
     if market_quiet_row is not None:
         return dict(market_quiet_row)
@@ -2016,13 +2025,15 @@ def _record_deferred_context_observation(
     # emit-source suppression and the symbol-level LLM fast-path can recognize
     # "same setup, market unchanged" across the fresh opportunity_id that universe
     # refresh mints each cycle. Normalized here so writer/reader match exactly.
-    # Always written (data-harmless); consumers gate on skip_policy flags.
+    # The exact B2/cost identity also prevents a defer from surviving an evidence
+    # cohort rotation. Always written (data-harmless); consumers gate on skip_policy flags.
     from aletheia.agent_shell.trading_context import (
         material_fingerprint_from_candidate_ctx,
         _normalize_direction,
         _normalize_market_type,
     )
     material_fingerprint = material_fingerprint_from_candidate_ctx(ctx, opportunity_id)
+    b2 = sel.get("b2_evidence") if isinstance(sel.get("b2_evidence"), dict) else {}
     snapshot = {
         "context_fingerprint": context_fingerprint,
         "material_fingerprint": material_fingerprint,
@@ -2033,6 +2044,8 @@ def _record_deferred_context_observation(
         "market_type": _normalize_market_type(
             sel.get("market_type") or sel.get("market")
         ),
+        "b2_policy_epoch_id": b2.get("policy_epoch_id"),
+        "cost_model_version": b2.get("cost_model_version"),
         "opportunity_id": opportunity_id,
         "observation_window_start": window_start,
         "defer_until": defer_until,
@@ -2284,6 +2297,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         candidate_material_fp = material_fingerprint_from_candidate_ctx(
             candidate_ctx, opportunity_id
         )
+        candidate_b2 = candidate.get("b2_evidence") or {}
         existing_defer = _existing_deferred_context_observation(
             candidate_fingerprint,
             opportunity_id=opportunity_id,
@@ -2293,6 +2307,8 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             direction=candidate.get("direction") or candidate.get("direction_bias"),
             market_type=candidate.get("market_type") or candidate.get("market"),
             material_fingerprint=candidate_material_fp,
+            b2_policy_epoch_id=candidate_b2.get("policy_epoch_id"),
+            cost_model_version=candidate_b2.get("cost_model_version"),
             symbol_level=symbol_level_suppression,
         )
         if existing_defer is None:

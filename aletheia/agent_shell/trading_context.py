@@ -107,6 +107,9 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
             "rank_priority": _score(item.get("trade_score")),
             "reasoning": " ".join(str(item.get("reasoning") or "").split()).lower(),
             "b2": {
+                "version": b2.get("version"),
+                "policy_epoch_id": b2.get("policy_epoch_id"),
+                "horizon": b2.get("horizon"),
                 "status": b2.get("status"),
                 "n_total": b2.get("n_total"),
                 "n_net": b2.get("n_net"),
@@ -114,6 +117,8 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
                 "avg_net_pct": _score(b2.get("avg_net_pct")),
                 "shrunk_avg_net_pct": _score(b2.get("shrunk_avg_net_pct")),
                 "directional_verdict": b2.get("directional_verdict"),
+                "cost_model_version": b2.get("cost_model_version"),
+                "cost_model_mismatch_n": b2.get("cost_model_mismatch_n"),
             },
         }
 
@@ -202,7 +207,7 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
         str(item.get("scanner_family") or ""),
     )
     projection = {
-        "version": "operator-decision-context-v5",
+        "version": "operator-decision-context-v6",
         "skip_policy_epoch_id": ctx.get("skip_policy_epoch_id"),
         "execution_mode": ctx.get("execution_mode"),
         # Account availability and equity are material to deterministic sizing;
