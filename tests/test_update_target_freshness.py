@@ -139,6 +139,7 @@ def test_apply_update_persists_target_commit_without_saving_prepull_config(monke
     pre_pull.runtime.paused = True  # stale snapshot marker
 
     monkeypatch.setattr(applier, "load_config", lambda: pre_pull)
+    monkeypatch.setattr(applier, "_is_managed_venv", lambda: True)
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
     monkeypatch.setattr(git_ops, "current_branch", lambda: "master")
     monkeypatch.setattr(git_ops, "current_commit", lambda: "old-sha")
@@ -243,6 +244,7 @@ def test_metadata_failure_does_not_turn_applied_update_into_false_rollback(monke
     cfg.update.enabled = True
     cfg.update.branch = "master"
     monkeypatch.setattr(applier, "load_config", lambda: cfg)
+    monkeypatch.setattr(applier, "_is_managed_venv", lambda: True)
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
     monkeypatch.setattr(git_ops, "current_branch", lambda: "master")
     monkeypatch.setattr(git_ops, "current_commit", lambda: "old-sha")

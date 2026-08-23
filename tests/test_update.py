@@ -28,6 +28,8 @@ def setup_env(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
     monkeypatch.setattr(git_ops, "current_branch", lambda: "master")
+    from aletheia.update import applier
+    monkeypatch.setattr(applier, "_is_managed_venv", lambda: True)
 
 
 class _FakeProc:
