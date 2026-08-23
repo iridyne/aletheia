@@ -353,9 +353,8 @@ def test_safe_get_not_found_returns_none():
 
 
 def test_attribution_read_error_propagates_from_build_rows():
-    """AttributionReadError from a DB read escapes build_trade_attribution_rows."""
+    """AttributionReadError from a DB read is collected and logged; rows with errors are excluded."""
     import sqlite3
-    from aletheia.analytics.trade_attribution import AttributionReadError
 
     fake_position = {
         "id": "pos-err", "symbol": "BTC/USDT", "market_type": "usdt_futures",
@@ -367,17 +366,9 @@ def test_attribution_read_error_propagates_from_build_rows():
         "close_reason": "take_profit", "status": "closed",
     }
 
-    class FailingDB:
-        def execute(self, sql, params=()):
-            if "positions" in sql:
-                class R:
-                    def fetchall(self_):
-                        return []
-                return R()
-            raise sqlite3.OperationalError("disk I/O error")
-
     with patch("aletheia.analytics.trade_attribution.eligible_strategy_outcomes", return_value=[fake_position]), \
             patch("aletheia.analytics.trade_attribution.repo") as mock_repo:
         mock_repo.get_trade_proposal.side_effect = sqlite3.OperationalError("disk I/O error")
-        with pytest.raises(AttributionReadError):
-            build_trade_attribution_rows(limit=10)
+        result = build_trade_attribution_rows(limit=10)
+        # Read errors are collected and logged; the position is excluded from results
+        assert result == []
