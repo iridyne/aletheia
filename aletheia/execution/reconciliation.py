@@ -233,9 +233,8 @@ def _complete_exact_gap_evidence(order: dict, rows) -> bool:
     if any(str(row.get("orderId") or "") != exchange_order_id for row in raw_rows):
         return False
     matched_id, evidence = evidence_for_order(order, raw_rows)
-    # The parser drops rows with missing fill id, price, quantity, fee, or
-    # exchange time.  Requiring a one-to-one result makes any such omission
-    # inconclusive instead of silently materializing only the usable subset.
+    # The strict order-scoped parser rejects rows with missing fill identity or
+    # economics. A one-to-one result also guards against future parser changes.
     if matched_id != exchange_order_id or len(evidence) != len(raw_rows):
         return False
     requested = _finite_float(order.get("quantity"), positive=True)

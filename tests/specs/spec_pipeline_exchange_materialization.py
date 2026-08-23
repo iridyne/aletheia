@@ -960,6 +960,7 @@ def _seed_pending_close(
     exchange_order_id: str,
     quantity: float = 1.0,
     trade_school: str = "short_term",
+    market_type: str = "spot",
 ):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Fill, Order, Position
@@ -971,6 +972,8 @@ def _seed_pending_close(
         order_status="filled",
         proposal_status="executed",
         trade_school=trade_school,
+        market_type=market_type,
+        leverage=5 if market_type == "usdt_futures" else None,
     )
     repo.insert_fill(
         Fill(
@@ -1025,6 +1028,230 @@ def _seed_pending_close(
         pending_close_requested_at="2026-07-13T00:00:00+00:00",
     )
     return proposal, entry_order, position, close_order
+
+
+@pytest.mark.parametrize("lifecycle", ["entry", "close", "futures_close"])
+@spec_claim(
+    SpecClaim(
+        "PL-XM-16",
+        "pipeline_exchange_materialization",
+        "§5 private evidence integrity",
+        "L2b",
+        "One non-finite economic row for the exact private Order invalidates the evidence "
+        "batch before any entry or close Fill, Position economics, or terminal state "
+        "is written.",
+        status="implemented",
+    )
+)
+def test_mixed_nonfinite_private_batch_never_mutates_entry_or_close(
+    tmp_path, monkeypatch, lifecycle
+):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.reconciliation import reconcile
+    from aletheia.storage import repositories as repo
+
+    exchange_order_id = f"EX-XM-NONFINITE-{lifecycle.upper()}"
+    if lifecycle == "entry":
+        _, proposal, _, order = _seed_native_chain(
+            exchange_order_id=exchange_order_id,
+            quantity=1.0,
+        )
+        position = None
+    else:
+        proposal, _, position, order = _seed_pending_close(
+            exchange_order_id=exchange_order_id,
+            market_type=(
+                "usdt_futures" if lifecycle == "futures_close" else "spot"
+            ),
+        )
+
+    good = _private_fill(
+        exchange_order_id,
+        f"BG-XM-NONFINITE-{lifecycle}-GOOD",
+        price=110.0,
+        quantity=0.5,
+        fee=0.03,
+        filled_at_ms=1_784_700_000_000,
+    )
+    bad = _private_fill(
+        exchange_order_id,
+        f"BG-XM-NONFINITE-{lifecycle}-BAD",
+        price=110.0,
+        quantity=0.5,
+        fee=float("nan"),
+        filled_at_ms=1_784_700_001_000,
+    )
+    _patch_bitget_history(monkeypatch, [good, bad])
+    funding_queries: list[dict] = []
+    if lifecycle == "futures_close":
+        from aletheia.exchanges.bitget import client as bitget_client
+
+        async def _funding_ledger(self, **kwargs):
+            funding_queries.append(kwargs)
+            return []
+
+        monkeypatch.setattr(
+            bitget_client.BitgetClient,
+            "get_funding_ledger",
+            _funding_ledger,
+        )
+    initial_order_status = repo.get_order(order.id)["status"]
+    initial_proposal_status = repo.get_trade_proposal(proposal.id)["status"]
+    initial_position = (
+        dict(
+            db.execute(
+                "SELECT * FROM positions WHERE id=?", (position.id,)
+            ).fetchone()
+        )
+        if position is not None
+        else None
+    )
+
+    first = reconcile()
+
+    assert first["inconclusive"] == 1
+    assert first["materialized_fills"] == 0
+    assert repo.get_order(order.id)["status"] == initial_order_status
+    assert repo.get_trade_proposal(proposal.id)["status"] == initial_proposal_status
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)
+    ).fetchone()[0] == 0
+    if position is None:
+        assert db.execute(
+            "SELECT COUNT(*) FROM positions WHERE order_id=?", (order.id,)
+        ).fetchone()[0] == 0
+    else:
+        stored_position = dict(
+            db.execute(
+                "SELECT * FROM positions WHERE id=?", (position.id,)
+            ).fetchone()
+        )
+        assert stored_position == initial_position
+
+    second = reconcile()
+    assert second["inconclusive"] == 1
+    assert second["materialized_fills"] == 0
+    assert funding_queries == []
+    assert repo.get_order(order.id)["status"] == initial_order_status
+    assert repo.get_trade_proposal(proposal.id)["status"] == initial_proposal_status
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)
+    ).fetchone()[0] == 0
+    if position is not None:
+        assert dict(
+            db.execute(
+                "SELECT * FROM positions WHERE id=?", (position.id,)
+            ).fetchone()
+        ) == initial_position
+
+
+@pytest.mark.parametrize("lifecycle", ["averaging_entry", "complete_close"])
+@spec_claim(
+    SpecClaim(
+        "PL-XM-17",
+        "pipeline_exchange_materialization",
+        "§5 private evidence integrity",
+        "L2b",
+        "Finite private fields whose derived or existing-plus-new merged economics "
+        "overflow are rejected before an averaging entry or complete close can persist "
+        "any economic mutation.",
+        status="implemented",
+    )
+)
+def test_private_derived_economic_overflow_never_mutates_position(
+    tmp_path, monkeypatch, lifecycle
+):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.reconciliation import reconcile
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Fill, Position
+
+    exchange_order_id = f"EX-XM-OVERFLOW-{lifecycle.upper()}"
+    if lifecycle == "complete_close":
+        proposal, _, position, order = _seed_pending_close(
+            exchange_order_id=exchange_order_id,
+            quantity=2.0,
+        )
+    else:
+        _, first_proposal, _, first_order = _seed_native_chain(
+            exchange_order_id="EX-XM-OVERFLOW-FIRST",
+            quantity=1.0,
+            order_status="filled",
+            proposal_status="executed",
+        )
+        repo.insert_fill(
+            Fill(
+                id="BG-XM-OVERFLOW-FIRST",
+                order_id=first_order.id,
+                fill_price=1e308,
+                fill_quantity=1.0,
+                fee=0.0,
+                fee_source="reconciled",
+                filled_at="2026-07-13T00:00:00+00:00",
+            )
+        )
+        position = Position(
+            proposal_id=first_proposal.id,
+            order_id=first_order.id,
+            opportunity_id=first_proposal.opportunity_id,
+            symbol=first_proposal.symbol,
+            market_type=first_proposal.market_type,
+            direction=first_proposal.direction,
+            quantity=1.0,
+            entry_price=1e308,
+            current_price=1e308,
+            entry_fee=0.0,
+            execution_mode=first_proposal.execution_mode,
+            entry_price_source="broker_fill",
+            entry_fill_verified=True,
+        )
+        repo.insert_position(position)
+        repo.update_order(first_order.id, position_id=position.id)
+        _, proposal, _, order = _seed_native_chain(
+            exchange_order_id=exchange_order_id,
+            quantity=1.0,
+        )
+
+    fill = _private_fill(
+        exchange_order_id,
+        f"BG-XM-OVERFLOW-{lifecycle}",
+        price=1e308,
+        quantity=2.0 if lifecycle == "complete_close" else 1.0,
+        fee=0.0,
+        filled_at_ms=1_784_700_002_000,
+    )
+    _patch_bitget_history(monkeypatch, [fill])
+    before = dict(
+        db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone()
+    )
+    initial_order_status = repo.get_order(order.id)["status"]
+    initial_proposal_status = repo.get_trade_proposal(proposal.id)["status"]
+
+    first = reconcile()
+
+    assert first["inconclusive"] == 1
+    assert first["materialized_fills"] == 0
+    assert repo.get_order(order.id)["status"] == initial_order_status
+    assert repo.get_trade_proposal(proposal.id)["status"] == initial_proposal_status
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)
+    ).fetchone()[0] == 0
+    after = dict(
+        db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone()
+    )
+    assert after == before
+
+    second = reconcile()
+    assert second["inconclusive"] == 1
+    assert second["materialized_fills"] == 0
+    assert repo.get_order(order.id)["status"] == initial_order_status
+    assert repo.get_trade_proposal(proposal.id)["status"] == initial_proposal_status
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)
+    ).fetchone()[0] == 0
+    assert dict(
+        db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone()
+    ) == before
 
 
 @spec_claim(
