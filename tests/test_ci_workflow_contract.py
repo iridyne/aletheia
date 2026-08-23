@@ -661,6 +661,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "Python integration",
         "Python end-to-end",
         "Python runtime state",
+        "Regression checks",
     ):
         assert required_check in candidate_script
     assert "issues.removeLabel" in candidate_script

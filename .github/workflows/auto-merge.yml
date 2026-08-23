@@ -290,6 +290,7 @@ jobs:
               'Python integration',
               'Python end-to-end',
               'Python runtime state',
+              'Regression checks',
             ];
             for (const check of requiredChecks) {
               await github.rest.repos.createCommitStatus({
