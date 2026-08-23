@@ -124,6 +124,8 @@ def _make_candidate_fact(
             "status": "settled",
             "venue": "bitget",
             "entry_ts": entry_ts,
+            "settlement_price_source": "horizon_ohlcv",
+            "settlement_lag_sec": 0.0,
             "direction": direction,
             "market_type": "spot",
             "entry_price_usd": 100.0,

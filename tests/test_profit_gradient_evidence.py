@@ -588,6 +588,8 @@ def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_ho
             "outcome_candidate_key": "candidate-1",
             "entry_ts": "2026-08-13T00:00:00+00:00",
             "settled_at": "2026-08-14T00:00:00+00:00",
+            "settlement_price_source": "horizon_ohlcv",
+            "settlement_lag_sec": 0.0,
             "entry_price_usd": 100.0,
             "exit_price_usd": 99.2,
             "directional_return_pct": -0.8,

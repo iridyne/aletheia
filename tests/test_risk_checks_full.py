@@ -472,6 +472,7 @@ def test_live_family_gate_requires_complete_edge_evidence(
             estimated_fee_pct=0.12, estimated_spread_slippage_pct=0.15,
             estimated_funding_pct=0.0, net_return_pct=4.73,
             min_tradable_edge_pct=edge_threshold, cost_model_version=cost_model_version,
+            settlement_price_source="horizon_ohlcv", settlement_lag_sec=0.0,
             market_type="spot", status="settled",
         ))
     if raw_update is not None:
@@ -570,6 +571,7 @@ def test_live_family_gate_does_not_pool_old_cost_models(tmp_path, monkeypatch):
             estimated_fee_pct=0.12, estimated_spread_slippage_pct=0.15,
             estimated_funding_pct=0.0, net_return_pct=4.73,
             min_tradable_edge_pct=0.05, cost_model_version=version,
+            settlement_price_source="horizon_ohlcv", settlement_lag_sec=0.0,
             market_type="spot", status="settled",
         )
 
