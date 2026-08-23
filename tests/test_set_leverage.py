@@ -38,3 +38,16 @@ async def test_bitget_set_leverage_fail_closed(monkeypatch):
     monkeypatch.setattr(httpx.AsyncClient, "post", _fail_post)
     with pytest.raises(RuntimeError):
         await client.set_leverage("BTCUSDT", 3)
+
+
+@pytest.mark.asyncio
+async def test_uta_v3_set_leverage_raises_profile_contract_error():
+    """set_leverage must raise ProfileContractError immediately for uta_v3.
+
+    No network call should be made — the guard fires before any HTTP request.
+    """
+    from aletheia.exchanges.bitget.client import ProfileContractError
+
+    client = BitgetClient(mode="demo", profile="uta_v3")
+    with pytest.raises(ProfileContractError):
+        await client.set_leverage("BTCUSDT", 10)

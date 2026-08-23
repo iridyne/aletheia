@@ -371,7 +371,10 @@ class BitgetClient:
         place_order sends. Fail-closed: any non-success response raises so the broker
         aborts the order rather than opening at the account-default leverage. Params
         per Bitget mix v2 /account/set-leverage — confirm against a live demo account.
+        
+        classic_v2 only — uta_v3 leverage is set via the v3 order body.
         """
+        self._assert_classic_v2("set_leverage")
         import json
 
         path = "/api/v2/mix/account/set-leverage"
@@ -413,8 +416,9 @@ class BitgetClient:
         # Futures open: set the intended leverage on the exchange first (skip on a
         # hedge-mode close, which does not change leverage). Fail-closed — set_leverage
         # raises on failure, aborting the order rather than opening at the wrong size.
+        # Skip for uta_v3: v3 orders carry leverage in the order body.
         if (order.market_type != "spot" and order.leverage and order.leverage > 1
-                and not order.hold_side):
+                and not order.hold_side and self.profile != "uta_v3"):
             await self.set_leverage(order.symbol, order.leverage)
 
         if order.market_type == "spot":
@@ -646,9 +650,12 @@ class BitgetClient:
             return {}
         return accounts[0]
 
-
     async def transfer(self, amount: float, coin: str = "USDT") -> dict | None:
-        """Move `amount` of `coin` from unified/spot wallet into mix (USDT-FUTURES)."""
+        """Move `amount` of `coin` from unified/spot wallet into mix (USDT-FUTURES).
+        
+        classic_v2 only — uta_v3 uses unified margin, no pre-transfer needed.
+        """
+        self._assert_classic_v2("transfer")
         import json as _json
         try:
             mix = await self.get_mix_account("USDT-FUTURES")
@@ -693,6 +700,8 @@ class BitgetClient:
 
     async def get_open_orders(self, market_type: str = "spot") -> list[dict]:
         """Get unfilled (open) orders (§19.3)."""
+        if self.profile == "uta_v3":
+            raise ProfileContractError("'get_open_orders' not yet implemented for uta_v3")
         if market_type == "spot":
             path = "/api/v2/spot/trade/unfilled-orders"
         else:
@@ -707,6 +716,8 @@ class BitgetClient:
 
     async def cancel_order(self, order_id: str, symbol: str, market_type: str = "spot") -> dict:
         """Cancel an order (§19.3). Returns {cancelled, order_id, [error]}."""
+        if self.profile == "uta_v3":
+            raise ProfileContractError("'cancel_order' not yet implemented for uta_v3")
         import json as _json
         if market_type == "spot":
             path = "/api/v2/spot/trade/cancel-order"
@@ -725,6 +736,8 @@ class BitgetClient:
 
     async def get_fills(self, symbol: str | None = None, market_type: str = "spot") -> list[dict]:
         """Get trade fills (§19.3)."""
+        if self.profile == "uta_v3":
+            raise ProfileContractError("'get_fills' not yet implemented for uta_v3")
         if market_type == "spot":
             path = "/api/v2/spot/trade/fills"
         else:

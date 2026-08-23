@@ -183,3 +183,70 @@ def test_startup_gate_unknown_profile_fails():
     ok, detail = _check_bitget_profile(_FakeCfg())
     assert not ok
     assert "bad_profile" in detail
+
+
+# ─── UTA v3 no-v2 contract tests ─────────────────────────────────────────────
+
+
+def test_uta_v3_set_leverage_raises_profile_contract_error():
+    """set_leverage must raise ProfileContractError for uta_v3."""
+    import asyncio
+    c = BitgetClient(mode="demo", profile="uta_v3")
+    with pytest.raises(ProfileContractError):
+        asyncio.run(c.set_leverage("BTCUSDT", 10))
+
+
+def test_uta_v3_transfer_raises_profile_contract_error():
+    """transfer must raise ProfileContractError for uta_v3."""
+    import asyncio
+    c = BitgetClient(mode="demo", profile="uta_v3")
+    with pytest.raises(ProfileContractError):
+        asyncio.run(c.transfer(100.0))
+
+
+def test_uta_v3_get_open_orders_raises_profile_contract_error():
+    """get_open_orders must raise ProfileContractError for uta_v3."""
+    import asyncio
+    c = BitgetClient(mode="demo", profile="uta_v3")
+    with pytest.raises(ProfileContractError):
+        asyncio.run(c.get_open_orders())
+
+
+def test_uta_v3_cancel_order_raises_profile_contract_error():
+    """cancel_order must raise ProfileContractError for uta_v3."""
+    import asyncio
+    c = BitgetClient(mode="demo", profile="uta_v3")
+    with pytest.raises(ProfileContractError):
+        asyncio.run(c.cancel_order("123", "BTCUSDT"))
+
+
+def test_uta_v3_get_fills_raises_profile_contract_error():
+    """get_fills must raise ProfileContractError for uta_v3."""
+    import asyncio
+    c = BitgetClient(mode="demo", profile="uta_v3")
+    with pytest.raises(ProfileContractError):
+        asyncio.run(c.get_fills())
+
+
+def test_classic_v2_leverage_still_uses_v2_path(monkeypatch):
+    """classic_v2 set_leverage must call /api/v2/mix/account/set-leverage."""
+    import asyncio
+    import httpx
+
+    captured_urls = []
+
+    class _Resp:
+        def json(self):
+            return {"code": "00000", "data": {}}
+
+    async def _mock_post(self, url, **kw):
+        captured_urls.append(url)
+        return _Resp()
+
+    monkeypatch.setattr(BitgetClient, "_get_creds", lambda self: ("k", "s", "p"))
+    monkeypatch.setattr(httpx.AsyncClient, "post", _mock_post)
+
+    c = BitgetClient(mode="demo", profile="classic_v2")
+    asyncio.run(c.set_leverage("BTCUSDT", 5))
+    assert any("/api/v2/" in u for u in captured_urls)
+    assert any("set-leverage" in u for u in captured_urls)

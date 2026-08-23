@@ -242,7 +242,7 @@ def execute_live_order(
     required_margin = 0.0
     if market_type != 'spot' and quantity and price and leverage:
         required_margin = float(quantity) * float(price) / float(leverage)
-    if market_type != 'spot' and required_margin > 0:
+    if market_type != 'spot' and required_margin > 0 and client.profile != "uta_v3":
         try:
             _ensure_mix_margin(client, required_margin)
         except Exception:
