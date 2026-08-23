@@ -19,7 +19,7 @@ class BitgetDemoAdapter:
         from aletheia.exchanges.bitget.client import BitgetClient
         from aletheia.config.loader import load_config
         cfg = load_config()
-        self._client = BitgetClient(mode=cfg.exchange.mode)
+        self._client = BitgetClient(mode=cfg.exchange.mode, profile=cfg.exchange.bitget_profile)
         self._client._get_creds()  # raises RuntimeError when not configured
 
     async def get_account(self) -> AccountInfo:

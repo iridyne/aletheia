@@ -15,7 +15,7 @@ def test():
     from aletheia.exchanges.bitget.client import BitgetClient
 
     cfg = load_config()
-    client = BitgetClient(mode=cfg.exchange.mode)
+    client = BitgetClient(mode=cfg.exchange.mode, profile=cfg.exchange.bitget_profile)
     result = asyncio.run(client.test_connection())
     if result["connected"]:
         typer.echo(f"✓ Bitget {result['mode']} connection successful")

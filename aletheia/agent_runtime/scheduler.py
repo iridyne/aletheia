@@ -2814,7 +2814,10 @@ def _tpsl_fill_check_body():
             if not account_candidates:
                 return {"materialized": [], "errors": []}
             account_mode = "demo" if execution_mode == "bitget_demo" else "live"
-            client = BitgetClient(mode=account_mode)
+            client = BitgetClient(
+                mode=account_mode,
+                profile=load_config().exchange.bitget_profile,
+            )
             materialized = []
             errors = []
             try:

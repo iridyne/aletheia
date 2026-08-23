@@ -270,6 +270,7 @@ class BitgetClient:
 
     async def test_connection(self) -> dict:
         """Test API connectivity."""
+        self._assert_classic_v2("test_connection")
         path = "/api/v2/spot/account/info"
         try:
             headers = self._headers("GET", path)
@@ -348,6 +349,7 @@ class BitgetClient:
 
     async def get_balances(self) -> list[Balance]:
         """Get account balances."""
+        self._assert_classic_v2("get_balances")
         path = "/api/v2/spot/account/assets"
         headers = self._headers("GET", path)
         async with httpx_client(timeout=15) as client:
@@ -567,6 +569,8 @@ class BitgetClient:
 
     async def _get_order_detail(self, order_id: str, symbol: str) -> dict | None:
         """Fetch a single mix order's detail (fill state + priceAvg)."""
+        if self.profile == "uta_v3":
+            raise ProfileContractError("'_get_order_detail' not yet implemented for uta_v3")
         path = f"/api/v2/mix/order/detail?orderId={order_id}&symbol={symbol}&productType=USDT-FUTURES"
         headers = self._headers("GET", path)
         async with httpx_client(timeout=15) as client:
@@ -581,6 +585,7 @@ class BitgetClient:
 
     async def get_account(self) -> AccountSummary:
         """Get account summary (§19.3)."""
+        self._assert_classic_v2("get_account")
         path = "/api/v2/spot/account/info"
         headers = self._headers("GET", path)
         async with httpx_client(timeout=15) as client:
@@ -760,6 +765,8 @@ class BitgetClient:
         market_type: str = "usdt_futures",
     ) -> list[dict]:
         """Return the complete private fill history for one exact futures Order."""
+        if self.profile == "uta_v3":
+            raise ProfileContractError("'get_order_fills' not yet implemented for uta_v3")
         if market_type != "usdt_futures":
             raise ValueError("exact Bitget order fills currently require usdt_futures")
         order_id = str(order_id or "").strip()
@@ -814,6 +821,8 @@ class BitgetClient:
         end_time_ms: int,
     ) -> dict:
         """Return a complete private funding-bill window for one futures account."""
+        if self.profile == "uta_v3":
+            raise ProfileContractError("'get_funding_ledger' not yet implemented for uta_v3")
         from aletheia.execution.broker_funding import (
             make_complete_ledger,
             normalize_bitget_funding_rows,
@@ -895,6 +904,11 @@ class BitgetClient:
             inconclusive_verified_exit,
             private_history_window_available,
         )
+
+        if self.profile == "uta_v3":
+            return inconclusive_verified_exit(
+                request, "profile_contract_unsupported",
+            )
 
         expected_mode = "bitget_demo" if self.mode == "demo" else "bitget_live_limited"
         if (
@@ -1012,6 +1026,7 @@ class BitgetClient:
         plan_type: "pos_loss" (stop-loss) or "pos_profit" (take-profit).
         Returns the exchange plan order ID.
         """
+        self._assert_classic_v2("place_tpsl_order")
         import json as _json
         path = "/api/v2/mix/order/place-tpsl-order"
         body_data: dict = {
@@ -1040,6 +1055,7 @@ class BitgetClient:
 
     async def cancel_plan_order(self, symbol: str, order_id: str) -> dict:
         """Cancel a pending TP/SL trigger order. Returns {cancelled, order_id}."""
+        self._assert_classic_v2("cancel_plan_order")
         import json as _json
         path = "/api/v2/mix/order/cancel-plan-order"
         body_data = {
@@ -1058,6 +1074,7 @@ class BitgetClient:
 
     async def get_pending_plan_orders(self, symbol: str | None = None) -> list[dict]:
         """List pending TP/SL trigger orders for USDT-FUTURES."""
+        self._assert_classic_v2("get_pending_plan_orders")
         path = "/api/v2/mix/order/orders-plan-pending?productType=USDT-FUTURES"
         if symbol:
             path += f"&symbol={symbol}"
@@ -1076,6 +1093,7 @@ class BitgetClient:
         Exact executed rows expose ``planStatus`` plus ``executeOrderId``. Plan
         prices are trigger metadata, not private Fill economics.
         """
+        self._assert_classic_v2("get_plan_order_history")
         path = (
             "/api/v2/mix/order/orders-plan-history"
             "?productType=USDT-FUTURES&planType=profit_loss"

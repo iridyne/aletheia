@@ -342,3 +342,38 @@ def test_reconciliation_scans_all_unresolved_orders_without_fixed_limit(
 
     assert result["checked"] == 501
     assert result["filled"] == 0
+
+
+def test_open_order_query_failure_is_inconclusive_not_empty(tmp_path, monkeypatch):
+    """A failed open-order view must not be treated as 'no open orders'."""
+    from aletheia.exchanges.bitget import client as bg
+    from aletheia.exchanges.bitget.client import ProfileContractError
+
+    setup_env(tmp_path, monkeypatch)
+
+    async def fail_open_orders(self, market_type="spot"):
+        raise ProfileContractError("'get_open_orders' not yet implemented for uta_v3")
+
+    async def fake_fills(self, symbol=None, market_type="spot"):
+        return []
+
+    monkeypatch.setattr(bg.BitgetClient, "get_open_orders", fail_open_orders)
+    monkeypatch.setattr(bg.BitgetClient, "get_fills", fake_fills)
+
+    repo.insert_order(Order(
+        source="adopted",
+        symbol="BTC/USDT", market_type="spot", direction="long", order_type="limit",
+        quantity=0.001, price=60000, execution_mode="bitget_live_limited",
+        exchange_order_id="EX-UNSEEN", status="submitted",
+    ))
+
+    from aletheia.execution.reconciliation import reconcile
+    result = reconcile()
+
+    assert result["filled"] == 0
+    assert result["inconclusive"] == 1
+    assert repo.list_orders()[0]["status"] == "submitted"
+    audit = repo.list_audit_events(limit=1)[0]
+    assert audit["event_type"] == "order_reconciliation_inconclusive"
+    assert "open_order_query_unavailable" in audit["after_state"]
+

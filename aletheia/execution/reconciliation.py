@@ -1067,6 +1067,9 @@ def reconcile() -> dict:
                 reason="complete_exchange_fill_not_proven",
             )
     from aletheia.exchanges.bitget.client import BitgetClient
+    from aletheia.execution.bitget_broker import _configured_bitget_profile
+
+    bitget_profile = _configured_bitget_profile()
 
     # Historical terminal Orders are never added to the ordinary open-order
     # scan.  They get a dedicated, exact orderId-only path after local authority
@@ -1105,7 +1108,7 @@ def reconcile() -> dict:
             continue
         try:
             if filled_gap_client is None:
-                filled_gap_client = BitgetClient(mode="demo")
+                filled_gap_client = BitgetClient(mode="demo", profile=bitget_profile)
             rows = _response_rows(
                 _run_coro(
                     filled_gap_client.get_order_fills(
@@ -1204,9 +1207,9 @@ def reconcile() -> dict:
         ]
         if not mode_orders:
             continue
-        client = BitgetClient(mode=account_mode)
+        client = BitgetClient(mode=account_mode, profile=bitget_profile)
         markets = sorted({str(order.get("market_type") or "spot") for order in mode_orders})
-        open_rows: dict[str, list[dict]] = {}
+        open_rows: dict[str, list[dict] | None] = {}
         fill_rows: dict[str, list[dict]] = {}
         failed_default_fill_markets: set[str] = set()
         symbol_fill_rows: dict[tuple[str, str], list[dict] | None] = {}
@@ -1217,7 +1220,9 @@ def reconcile() -> dict:
                     _run_coro(client.get_open_orders(market_type=market_type))
                 )
             except Exception as exc:
-                open_rows[market_type] = []
+                # Unavailable is not "no open orders". Downstream must not
+                # treat a missing view as venue absence.
+                open_rows[market_type] = None
                 errors.append(
                     f"{execution_mode}/{market_type}: open-order query unavailable"
                 )
@@ -1248,10 +1253,12 @@ def reconcile() -> dict:
             # clientOid. Recover the venue id from an open order before looking
             # at fills; private fill matching can recover it as well.
             if not order.get("exchange_order_id") and order.get("client_order_id"):
+                open_list = open_rows.get(market_type)
                 remote_ids = {
                     str(row.get("orderId") or row.get("order_id"))
-                    for row in open_rows.get(market_type, [])
-                    if str(row.get("clientOid") or row.get("clientOrderId") or "")
+                    for row in (open_list or [])
+                    if open_list is not None
+                    and str(row.get("clientOid") or row.get("clientOrderId") or "")
                     == str(order["client_order_id"])
                     and (row.get("orderId") or row.get("order_id"))
                 }
@@ -1470,10 +1477,23 @@ def reconcile() -> dict:
                 )
                 continue
 
-            remote_open = exchange_order_id and any(
-                str(row.get("orderId") or row.get("order_id") or "")
-                == exchange_order_id
-                for row in open_rows.get(market_type, [])
+            open_list = open_rows.get(market_type)
+            if open_list is None and not complete:
+                inconclusive += 1
+                _write_reconcile_event(
+                    order,
+                    state=str(order.get("status") or "unresolved"),
+                    reason="open_order_query_unavailable",
+                )
+                continue
+            remote_open = bool(
+                exchange_order_id
+                and open_list is not None
+                and any(
+                    str(row.get("orderId") or row.get("order_id") or "")
+                    == exchange_order_id
+                    for row in open_list
+                )
             )
             if remote_open and reported_quantity <= 0:
                 continue

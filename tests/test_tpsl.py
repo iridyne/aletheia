@@ -28,6 +28,9 @@ def _make_client():
     from aletheia.exchanges.bitget.client import BitgetClient
     c = BitgetClient.__new__(BitgetClient)
     c._base = "https://api.bitget.com"
+    c.profile = "classic_v2"
+    c.mode = "demo"
+    c.demo = True
     c._headers = lambda method, path, body="": {}
     return c
 

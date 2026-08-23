@@ -78,7 +78,7 @@ class TestConnectionRequest(BaseModel):
 async def test_connection(req: TestConnectionRequest | None = None):
     cfg = load_config()
     mode = (req.mode if req and req.mode else cfg.exchange.mode)
-    client = BitgetClient(mode=mode)
+    client = BitgetClient(mode=mode, profile=cfg.exchange.bitget_profile)
     result = await client.test_connection()
     return result
 

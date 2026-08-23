@@ -176,3 +176,21 @@ def test_exchange_confirms_absent_cancels_before_hard_window(monkeypatch):
     summary = soc.cleanup_stale_orphan_orders()
     assert summary["cancelled"] == 1
     assert repo.get_order("gone")["error_reason"] == "stale_order_absent_on_exchange"
+
+
+def test_profile_contract_error_is_unverifiable_not_absent(monkeypatch):
+    """uta_v3 ProfileContractError must not be treated as 'order is gone'."""
+    from aletheia.exchanges.bitget.client import BitgetClient, ProfileContractError
+
+    async def fail_open(self, market_type="spot"):
+        raise ProfileContractError("'get_open_orders' not yet implemented for uta_v3")
+
+    monkeypatch.setattr(BitgetClient, "get_open_orders", fail_open)
+    _seed_order(_order(
+        oid="uta-unseen", hours_ago=72, execution_mode="bitget_demo",
+        exchange_order_id="ex-uta",
+    ))
+    summary = soc.cleanup_stale_orphan_orders()
+    assert summary["cancelled"] == 0
+    assert _status("uta-unseen") == "submitted"
+

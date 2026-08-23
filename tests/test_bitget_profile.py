@@ -250,3 +250,94 @@ def test_classic_v2_leverage_still_uses_v2_path(monkeypatch):
     asyncio.run(c.set_leverage("BTCUSDT", 5))
     assert any("/api/v2/" in u for u in captured_urls)
     assert any("set-leverage" in u for u in captured_urls)
+
+@pytest.mark.real_place_order
+def test_uta_v3_lifecycle_never_issues_v2_http(monkeypatch):
+    """entry → open-order → fill → close → recovery must not hit /api/v2/."""
+    import asyncio
+    import httpx
+
+    from aletheia.exchanges.bitget.client import OrderRequest
+    from aletheia.execution.verified_exit import VerifiedExitRequest
+
+    captured = []
+
+    class _Resp:
+        def json(self):
+            return {"code": "00000", "data": {}}
+
+    async def _mock_get(self, url, **kw):
+        captured.append(("GET", url))
+        return _Resp()
+
+    async def _mock_post(self, url, **kw):
+        captured.append(("POST", url))
+        return _Resp()
+
+    monkeypatch.setattr(BitgetClient, "_get_creds", lambda self: ("k", "s", "p"))
+    monkeypatch.setattr(httpx.AsyncClient, "get", _mock_get)
+    monkeypatch.setattr(httpx.AsyncClient, "post", _mock_post)
+
+    c = BitgetClient(mode="demo", profile="uta_v3")
+    entry = OrderRequest(
+        symbol="BTCUSDT",
+        market_type="usdt_futures",
+        side="buy",
+        order_type="market",
+        quantity=0.001,
+    )
+    close = OrderRequest(
+        symbol="BTCUSDT",
+        market_type="usdt_futures",
+        side="buy",
+        order_type="market",
+        quantity=0.001,
+        hold_side="long",
+    )
+    request = VerifiedExitRequest(
+        broker_id="bitget_demo",
+        account_environment="demo",
+        account_scope="logical-account-1",
+        execution_mode="bitget_demo",
+        position_id="position-1",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.001,
+        history_start_ms=1,
+        history_end_ms=2,
+    )
+
+    with pytest.raises(NotImplementedError):
+        asyncio.run(c.place_order(entry))
+    with pytest.raises(ProfileContractError):
+        asyncio.run(c.get_open_orders(market_type="usdt_futures"))
+    with pytest.raises(ProfileContractError):
+        asyncio.run(c.get_fills(market_type="usdt_futures"))
+    with pytest.raises(ProfileContractError):
+        asyncio.run(c.get_order_fills(
+            order_id="EX-1", symbol="BTCUSDT", market_type="usdt_futures",
+        ))
+    with pytest.raises(NotImplementedError):
+        asyncio.run(c.place_order(close))
+    with pytest.raises(ProfileContractError):
+        asyncio.run(c.cancel_order("EX-1", "BTCUSDT", market_type="usdt_futures"))
+    with pytest.raises(ProfileContractError):
+        asyncio.run(c.set_leverage("BTCUSDT", 5))
+    with pytest.raises(ProfileContractError):
+        asyncio.run(c.transfer(100.0))
+    with pytest.raises(ProfileContractError):
+        asyncio.run(c.get_plan_order_history(order_id="PLAN-1"))
+    with pytest.raises(ProfileContractError):
+        asyncio.run(c.get_funding_ledger(
+            broker_id="bitget_demo",
+            symbol="BTCUSDT",
+            start_time_ms=1,
+            end_time_ms=2,
+        ))
+    result = asyncio.run(c.get_verified_position_exit(request))
+    assert result.state == "inconclusive"
+
+    v2 = [item for item in captured if "/api/v2/" in item[1]]
+    assert v2 == [], f"uta_v3 leaked v2 HTTP: {v2}"
+
