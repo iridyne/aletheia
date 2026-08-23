@@ -524,8 +524,11 @@ text, local paths, SQL or exception details. A recovered `current_status=healthy
 `last_failed_at` or the sanitized `last_failure_code`. Historical `learning_verdict_runner` rows are shown only
 under `historical_unregistered_jobs`; they never imply registration.
 
-Catch-up state is derived from the evaluator watermark and current window. The
-one-shot catch-up job has no fabricated durable row.
+Catch-up state is derived from the evaluator's durable success watermark and
+`next_due_at`. A missing watermark or deadline fails closed; otherwise the persisted
+cadence deadline decides when recovery is due. The current UTC-hour identity remains
+independently visible but cannot override that deadline. The one-shot catch-up job has
+no fabricated durable row.
 
 ### 6.7 `GET /api/learning/exposures/{entity_id}`
 
@@ -729,7 +732,7 @@ is visible on Contribution and Operations.
 | Harm sample gate is not met | `indeterminate`; authority blocked without claiming a breach |
 | Assignment cluster incomplete | excluded with exact reason; survivors are not samples |
 | Evaluator recovered after failure | current healthy plus durable prior failure |
-| Catch-up watermark missing/old | `catchup_due` or `unavailable`, never healthy by inference |
+| Catch-up watermark missing, deadline missing/invalid, or persisted deadline reached | `catchup_due` or `unavailable`, never healthy by inference |
 | Scheduler job absent | `registered=false`; durable old health does not override |
 | `admit_trial` recommended | recommendation visible; no mutation control; readiness remains distinct from owner authentication |
 | Path consumer wired but evaluator unsupported | both booleans shown separately |
@@ -815,7 +818,7 @@ cannot make a behavioral claim GREEN.
 | Source provenance | Canonical, fallback, mirror and conflict fixtures remain distinct |
 | Metric history | Old metric/build/epoch verdict remains history, never current |
 | Scheduler recovery | Healthy current state can coexist with a visible durable last failure |
-| Catch-up | Current window, watermark and due state are independently asserted |
+| Catch-up | Current display window, success watermark and persisted cadence deadline are independently asserted |
 | Recommendation | `admit_trial` renders without a button or mutation invocation from the observability surface |
 | Path capability | Consumer/settings/measurement support booleans cannot collapse |
 | Empty/error honesty | Request failure is unavailable, not an empty cohort or zero count |
