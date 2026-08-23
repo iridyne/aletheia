@@ -406,15 +406,15 @@ def test_task6_read_only_evaluation_reports_estimates_but_cannot_promote() -> No
             min_interval_sec=0,
         )
         for outcome in bundle.outcomes:
+            directional = 1.0 if bundle.batch.assignment_arm == "treatment" else 0.0
+            gross = directional if outcome.direction == "long" else -directional
             repo.settle_filter_candidate_outcome(
                 outcome.id,
-                exit_price=101.0 if outcome.direction == "long" else 99.0,
+                exit_price=outcome.entry_price_usd * (1.0 + gross / 100.0),
                 settled_at=outcome.due_at,
                 economics={
-                    "gross_return_pct": 1.0,
-                    "directional_return_pct": (
-                        1.0 if bundle.batch.assignment_arm == "treatment" else 0.0
-                    ),
+                    "gross_return_pct": gross,
+                    "directional_return_pct": directional,
                     "estimated_fee_pct": 0.1,
                     "estimated_spread_slippage_pct": 0.1,
                     "estimated_funding_pct": 0.0,

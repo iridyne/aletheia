@@ -44,15 +44,23 @@ def _shadow(db, sid: str | None, oid: str, key: str | None, *, score: float = 50
 
 def _outcome(db, key: str, horizon: str, net, *, status: str = "settled", venue: str | None = "bitget", symbol: str | None = "BTC/USDT", market: str | None = "spot", direction: str | None = "long", entry_minute: float = -0.5, cost_model: str | None = "v1", entry_price=100) -> None:
     directional = net + 0.2 if isinstance(net, (int, float)) else None
+    price_direction = {"long": 1.0, "short": -1.0}.get(direction)
+    exit_price = (
+        entry_price * (1.0 + price_direction * directional / 100.0)
+        if isinstance(entry_price, (int, float))
+        and directional is not None
+        and price_direction is not None
+        else None
+    )
     db.execute(
         "INSERT INTO filter_candidate_outcomes (id,outcome_candidate_key,venue,symbol,"
-        "market_type,direction,horizon,entry_price_usd,entry_ts,due_at,settled_at,"
+        "market_type,direction,horizon,entry_price_usd,exit_price_usd,entry_ts,due_at,settled_at,"
         "directional_return_pct,estimated_fee_pct,estimated_spread_slippage_pct,"
         "estimated_funding_pct,net_return_pct,min_tradable_edge_pct,"
-        "cost_model_version,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0.1,0.1,0,?,0.05,?,?)",
+        "cost_model_version,status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0.1,0.1,0,?,0.05,?,?)",
         (
             f"out-{key}-{horizon}", key, venue, symbol, market, direction, horizon,
-            entry_price, _now(entry_minute), _now(-0.1),
+            entry_price, exit_price, _now(entry_minute), _now(-0.1),
             _now() if status.lower() == "settled" else None,
             directional, net, cost_model, status,
         ),
@@ -196,7 +204,7 @@ def test_conflicting_settled_outcomes_are_excluded_deterministically():
     db.execute(
         "CREATE TABLE filter_candidate_outcomes (outcome_candidate_key TEXT,horizon TEXT,"
         "status TEXT,net_return_pct REAL,settled_at TEXT,venue TEXT,symbol TEXT,market_type TEXT,"
-        "direction TEXT,entry_ts TEXT,cost_model_version TEXT,entry_price_usd REAL,"
+        "direction TEXT,entry_ts TEXT,cost_model_version TEXT,entry_price_usd REAL,exit_price_usd REAL,"
         "directional_return_pct REAL,estimated_fee_pct REAL,"
         "estimated_spread_slippage_pct REAL,estimated_funding_pct REAL,"
         "min_tradable_edge_pct REAL)"
@@ -204,8 +212,9 @@ def test_conflicting_settled_outcomes_are_excluded_deterministically():
     db.executemany(
         "INSERT INTO filter_candidate_outcomes VALUES "
         "('key-conflict','15m','settled',?,?,'bitget','BTC/USDT','spot','long',"
-        "?,'v1',100,?,0.1,0.1,0,0.05)",
-        [(1.0, _now(), _now(-0.5), 1.2), (-1.0, _now(), _now(-0.5), -0.8)],
+        "?,'v1',100,?,?,0.1,0.1,0,0.05)",
+        [(1.0, _now(), _now(-0.5), 101.2, 1.2),
+         (-1.0, _now(), _now(-0.5), 99.2, -0.8)],
     )
     db.commit()
 
@@ -226,7 +235,7 @@ def test_mixed_numeric_and_null_settled_outcomes_conflict():
     db.execute(
         "CREATE TABLE filter_candidate_outcomes (outcome_candidate_key TEXT,horizon TEXT,"
         "status TEXT,net_return_pct REAL,settled_at TEXT,venue TEXT,symbol TEXT,market_type TEXT,"
-        "direction TEXT,entry_ts TEXT,cost_model_version TEXT,entry_price_usd REAL,"
+        "direction TEXT,entry_ts TEXT,cost_model_version TEXT,entry_price_usd REAL,exit_price_usd REAL,"
         "directional_return_pct REAL,estimated_fee_pct REAL,"
         "estimated_spread_slippage_pct REAL,estimated_funding_pct REAL,"
         "min_tradable_edge_pct REAL)"
@@ -234,8 +243,9 @@ def test_mixed_numeric_and_null_settled_outcomes_conflict():
     db.executemany(
         "INSERT INTO filter_candidate_outcomes VALUES "
         "('key-mixed','15m','settled',?,?,'bitget','BTC/USDT','spot','long',"
-        "?,'v1',100,?,0.1,0.1,0,0.05)",
-        [(1.0, _now(), _now(-0.5), 1.2), (None, _now(), _now(-0.5), 0.2)],
+        "?,'v1',100,?,?,0.1,0.1,0,0.05)",
+        [(1.0, _now(), _now(-0.5), 101.2, 1.2),
+         (None, _now(), _now(-0.5), 100.2, 0.2)],
     )
     db.commit()
 

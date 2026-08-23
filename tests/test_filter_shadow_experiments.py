@@ -75,12 +75,13 @@ def _record_ttl_candidate(
     db = get_db()
     db.execute(
         "UPDATE filter_candidate_outcomes SET status='settled', settled_at=?, "
-        "directional_return_pct=?, estimated_fee_pct=0.1, "
+        "directional_return_pct=?, exit_price_usd=?, estimated_fee_pct=0.1, "
         "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0.0, "
         "net_return_pct=?, min_tradable_edge_pct=0.05, cost_model_version=? "
         "WHERE outcome_candidate_key=? AND horizon='1h'",
         (
             evaluated_at.isoformat(), net_return_pct + 0.2,
+            100.0 + net_return_pct + 0.2,
             net_return_pct, COST_MODEL_VERSION, key,
         ),
     )

@@ -122,6 +122,8 @@ def test_shared_outcome_adapter_fails_closed_on_ineligible_rows():
     dirty = "2026-06-24T00:00:00+00:00"
     complete_economics = {
         "market_type": "perp",
+        "entry_price_usd": 100.0,
+        "exit_price_usd": 100.8,
         "directional_return_pct": 0.8,
         "estimated_fee_pct": 0.1,
         "estimated_spread_slippage_pct": 0.1,
@@ -263,13 +265,14 @@ def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(mo
         db.execute(
             "INSERT INTO filter_candidate_outcomes "
             "(id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
-            "entry_price_usd, entry_ts, due_at, settled_at, directional_return_pct, "
+            "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, directional_return_pct, "
             "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
             "net_return_pct, "
             "min_tradable_edge_pct, cost_model_version, status) "
-            "VALUES (?, ?, 'test', 'BTC/USDT', 'spot', 'long', '4h', 100, ?, ?, ?, "
+            "VALUES (?, ?, 'test', 'BTC/USDT', 'spot', 'long', '4h', 100, ?, ?, ?, ?, "
             "?, 0.1, 0.1, 0, ?, 0.05, 'v1', 'settled')",
-            (f"fo-{idx}", key, entry, entry, entry, net + 0.2, net),
+            (f"fo-{idx}", key, 100.0 * (1.0 + (net + 0.2) / 100.0),
+             entry, entry, entry, net + 0.2, net),
         )
     db.commit()
 
@@ -463,10 +466,10 @@ def test_ranker_case_outcome_adapter_uses_exact_base_key_and_horizon():
     db.execute(
         "INSERT INTO filter_candidate_outcomes ("
         "id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
-        "entry_price_usd, entry_ts, due_at, settled_at, directional_return_pct, "
+        "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, directional_return_pct, "
         "net_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, "
         "estimated_funding_pct, min_tradable_edge_pct, cost_model_version, status"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0.5, ?, ?, ?, 0, 0.05, ?, ?)",
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100.5, ?, ?, ?, 0.5, ?, ?, ?, 0, 0.05, ?, ?)",
         (
             "ranker-outcome-1", "member-1", "bitget", "BTC/USDT", "spot", "long",
             "4h", 100.0, now, now, now, 0.4, 0.05, 0.05, "cost-v1", "settled",
@@ -550,7 +553,8 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
         outcome_key = ranker_key(candidate_key)
         db.execute(
             "UPDATE filter_candidate_outcomes SET entry_ts=?, due_at=?, settled_at=?, "
-            "directional_return_pct=?, net_return_pct=?, min_tradable_edge_pct=0.05, "
+            "directional_return_pct=?, exit_price_usd=entry_price_usd * (1 + ? / 100.0), "
+            "net_return_pct=?, min_tradable_edge_pct=0.05, "
             "estimated_fee_pct=0.05, estimated_spread_slippage_pct=0.05, "
             "estimated_funding_pct=0, mae_pct=-0.5, "
             "cost_model_version='cost-v1', status='settled' "
@@ -559,6 +563,7 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
                 outcome_time,
                 outcome_time,
                 outcome_time,
+                outcome + 0.1,
                 outcome + 0.1,
                 outcome,
                 outcome_key,
@@ -634,7 +639,8 @@ def test_ranker_case_excludes_wrong_horizon_and_incomplete_cost(monkeypatch):
         outcome_key = ranker_key(candidate_key)
         db.execute(
             "UPDATE filter_candidate_outcomes SET horizon=?, entry_ts=?, due_at=?, "
-            "settled_at=?, directional_return_pct=0.5, net_return_pct=0.4, "
+            "settled_at=?, directional_return_pct=0.5, "
+            "exit_price_usd=entry_price_usd * 1.005, net_return_pct=0.4, "
             "min_tradable_edge_pct=0.05, "
             "estimated_fee_pct=?, "
             "estimated_spread_slippage_pct=?, estimated_funding_pct=0, "

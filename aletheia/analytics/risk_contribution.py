@@ -316,18 +316,11 @@ def _exclusion_reason(row: dict[str, Any], cutoff_at: datetime) -> str | None:
         **{field: row.get(field) for field in economics_fields},
         "market_type": row.get("outcome_market_type"),
         "cost_model_version": row.get("cost_model_version"),
+        "direction": row.get("outcome_direction"),
+        "entry_price_usd": row.get("entry_price_usd"),
+        "exit_price_usd": row.get("exit_price_usd"),
     })
     if economics is None:
-        return "risk_outcome_economics_mismatch"
-    directional = economics["directional_return_pct"]
-    exit_price = _finite(row.get("exit_price_usd"), positive=True)
-    direction = str(row.get("outcome_direction") or "").lower()
-    if exit_price is None:
-        return "incomplete_risk_outcome_settlement"
-    expected_directional = (exit_price - entry) / entry * 100.0
-    if direction == "short":
-        expected_directional = -expected_directional
-    if not math.isclose(directional, expected_directional, abs_tol=1e-8):
         return "risk_outcome_economics_mismatch"
     if not row.get("settlement_price_source"):
         return "incomplete_risk_outcome_settlement"

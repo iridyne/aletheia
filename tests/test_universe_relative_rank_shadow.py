@@ -139,7 +139,8 @@ def test_relative_rank_persists_isolated_cluster_and_outcome():
     assert bundle.outcomes[0].outcome_candidate_key.startswith(f"relative-rank:{bundle.batch.experiment_id}:")
     repo.get_db().execute(
         "UPDATE filter_candidate_outcomes SET status='settled', "
-        "directional_return_pct=1.45, estimated_fee_pct=0.1, "
+        "directional_return_pct=1.45, exit_price_usd=entry_price_usd * 1.0145, "
+        "estimated_fee_pct=0.1, "
         "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
         "net_return_pct=1.25, min_tradable_edge_pct=0.05, "
         "cost_model_version='test-v1', settled_at=due_at WHERE id=?",

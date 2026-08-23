@@ -836,7 +836,8 @@ def _seed_forward_outcome(
         " min_tradable_edge_pct, market_type, cost_model_version, status) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()), "X/USDT",
-         family, direction, horizon, 100.0, now, now, now, 101.0,
+         family, direction, horizon, 100.0, now, now, now,
+         100.0 * (1.0 + forward_return / 100.0),
          forward_return, forward_return, directional, 0.1, 0.1, 0.0,
          net, edge, "spot", cost_model_version, "settled"),
     )

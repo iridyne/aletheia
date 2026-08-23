@@ -104,6 +104,10 @@ def _make_candidate_fact(
     entry_ts: str = "2026-08-01T00:00:00+00:00",
     fixed_horizon: str = "24h",
 ) -> dict:
+    directional_return_pct = net_return_pct + 0.2
+    price_return_pct = (
+        directional_return_pct if direction == "long" else -directional_return_pct
+    )
     return {
         "fact_id": fact_id,
         "first_exposure": {
@@ -121,7 +125,9 @@ def _make_candidate_fact(
             "entry_ts": entry_ts,
             "direction": direction,
             "market_type": "spot",
-            "directional_return_pct": net_return_pct + 0.2,
+            "entry_price_usd": 100.0,
+            "exit_price_usd": 100.0 * (1.0 + price_return_pct / 100.0),
+            "directional_return_pct": directional_return_pct,
             "estimated_fee_pct": 0.1,
             "estimated_spread_slippage_pct": 0.1,
             "estimated_funding_pct": 0.0,

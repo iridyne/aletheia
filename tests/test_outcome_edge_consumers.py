@@ -19,21 +19,30 @@ def _insert_outcome(
     estimated_fee_pct: object = 0.0,
     estimated_spread_slippage_pct: object = 0.0,
     estimated_funding_pct: object = 0.0,
+    direction: str = "long",
 ) -> None:
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc).isoformat()
+    if isinstance(directional_return_pct, (int, float)):
+        price_return_pct = (
+            directional_return_pct if direction == "long" else -directional_return_pct
+        )
+        exit_price_usd = 100.0 * (1.0 + price_return_pct / 100.0)
+    else:
+        exit_price_usd = None
     get_db().execute(
         "INSERT INTO universe_forward_outcomes "
         "(id, member_id, snapshot_id, symbol, scanner_family, market_type, direction, "
-        "horizon, entry_price_usd, entry_ts, due_at, settled_at, forward_return_pct, "
+        "horizon, entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, forward_return_pct, "
         "gross_return_pct, directional_return_pct, estimated_fee_pct, "
         "estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, "
         "min_tradable_edge_pct, cost_model_version, status) "
-        "VALUES (?, ?, 'edge-snapshot', 'BTC/USDT', 'momentum', ?, 'long', "
-        "'24h', 100, ?, ?, ?, 0.1, 0.1, ?, ?, ?, ?, ?, ?, ?, 'settled')",
+        "VALUES (?, ?, 'edge-snapshot', 'BTC/USDT', 'momentum', ?, ?, "
+        "'24h', 100, ?, ?, ?, ?, 0.1, 0.1, ?, ?, ?, ?, ?, ?, ?, 'settled')",
         (
-            outcome_id, f"member-{outcome_id}", market_type, now, now, now,
+            outcome_id, f"member-{outcome_id}", market_type, direction,
+            exit_price_usd, now, now, now,
             directional_return_pct, estimated_fee_pct,
             estimated_spread_slippage_pct, estimated_funding_pct,
             net_return_pct, edge, cost_model_version,
@@ -107,12 +116,20 @@ def test_sql_and_python_accept_the_same_reconciled_large_returns():
     from aletheia.storage.repositories import complete_outcome_economics_sql
     from aletheia.storage.sqlite import get_db
 
-    values = (100.0, 100.0001, 200.0, -100.0, -100.0001, -250.0)
-    for index, value in enumerate(values):
+    values = (
+        (100.0, "long"),
+        (100.0001, "long"),
+        (200.0, "long"),
+        (-100.0, "short"),
+        (-100.0001, "short"),
+        (-250.0, "short"),
+    )
+    for index, (value, direction) in enumerate(values):
         _insert_outcome(
             f"large-{index}", 0.05,
             directional_return_pct=value,
             net_return_pct=value,
+            direction=direction,
         )
 
     rows = get_db().execute(
@@ -126,6 +143,63 @@ def test_sql_and_python_accept_the_same_reconciled_large_returns():
         row = dict(raw)
         assert validated_outcome_economics(row) is not None
         assert row["sql_eligible"] == 1
+
+
+def test_sql_and_python_reject_directional_returns_not_reconciled_to_prices():
+    from aletheia.analytics.outcome_semantics import validated_outcome_economics
+    from aletheia.storage.repositories import complete_outcome_economics_sql
+    from aletheia.storage.sqlite import get_db
+
+    base = {
+        "direction": "long",
+        "entry_price_usd": 100.0,
+        "exit_price_usd": 100.1,
+        "directional_return_pct": 0.1,
+        "estimated_fee_pct": 0.0,
+        "estimated_spread_slippage_pct": 0.0,
+        "estimated_funding_pct": 0.0,
+        "net_return_pct": 0.1,
+        "min_tradable_edge_pct": 0.05,
+        "market_type": "spot",
+        "cost_model_version": "v1",
+    }
+    fields = tuple(base)
+    aliases = ", ".join(f"? AS {field}" for field in fields)
+
+    def eligibility(row: dict[str, object]) -> tuple[bool, int]:
+        sql_eligible = get_db().execute(
+            "SELECT CASE WHEN "
+            f"{complete_outcome_economics_sql()} THEN 1 ELSE 0 END "
+            f"FROM (SELECT {aliases})",
+            tuple(row[field] for field in fields),
+        ).fetchone()[0]
+        return validated_outcome_economics(row) is not None, sql_eligible
+
+    invalid_mutations = (
+        ("forged", "exit_price_usd", 100.0),
+        ("missing-exit", "exit_price_usd", None),
+        ("text-exit", "exit_price_usd", "100.1"),
+        ("blob-exit", "exit_price_usd", b"100.1"),
+        ("infinite-exit", "exit_price_usd", float("inf")),
+        ("zero-exit", "exit_price_usd", 0.0),
+        ("negative-exit", "exit_price_usd", -1.0),
+        ("missing-entry", "entry_price_usd", None),
+        ("text-entry", "entry_price_usd", "100"),
+        ("blob-entry", "entry_price_usd", b"100"),
+        ("infinite-entry", "entry_price_usd", float("inf")),
+        ("zero-entry", "entry_price_usd", 0.0),
+        ("negative-entry", "entry_price_usd", -1.0),
+        ("unknown-direction", "direction", "flat"),
+    )
+    for _, field, value in invalid_mutations:
+        assert eligibility({**base, field: value}) == (False, 0)
+
+    assert eligibility({**base, "exit_price_usd": 100.1 + 5e-9}) == (True, 1)
+    assert eligibility({**base, "exit_price_usd": 100.1 + 2e-8}) == (False, 0)
+
+    direct = dict(base)
+    direct["entry_price_usd"] = True
+    assert validated_outcome_economics(direct) is None
 
 
 def test_persisted_outlier_policy_not_consumer_cap_controls_large_returns():

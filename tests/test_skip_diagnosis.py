@@ -83,6 +83,7 @@ def _add_candidate(
             direction="long",
             horizon=horizon,
             entry_price_usd=100.0,
+            exit_price_usd=(None if is_pending else 100.0 + net + 0.2),
             entry_ts=now.isoformat(),
             due_at=due_at.isoformat(),
             settled_at=None if is_pending else due_at.isoformat(),

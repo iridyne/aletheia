@@ -33,6 +33,23 @@ def validated_outcome_economics(row: dict[str, Any]) -> dict[str, float] | None:
     if any(value is None for value in values.values()):
         return None
     economics = {field: float(value) for field, value in values.items()}
+    direction = str(row.get("direction") or "").lower()
+    entry = _to_float(row.get("entry_price_usd"))
+    exit_price = _to_float(row.get("exit_price_usd"))
+    if (
+        direction not in {"long", "short"}
+        or entry is None or entry <= 0
+        or exit_price is None or exit_price <= 0
+    ):
+        return None
+    expected_directional = (exit_price - entry) / entry * 100.0
+    if direction == "short":
+        expected_directional = -expected_directional
+    if not math.isclose(
+        economics["directional_return_pct"], expected_directional,
+        rel_tol=0.0, abs_tol=_ECONOMICS_TOLERANCE,
+    ):
+        return None
     fee = economics["estimated_fee_pct"]
     spread = economics["estimated_spread_slippage_pct"]
     if fee < 0 or spread < 0 or economics["min_tradable_edge_pct"] < 0:

@@ -63,6 +63,7 @@ def _insert_b2_candidate(
         id=f"outcome-{index}", outcome_candidate_key=decision_key,
         venue="binance", symbol="BTC/USDT", market_type="perp", direction="long",
         scanner_family="momentum", horizon="24h", entry_price_usd=100.0,
+        exit_price_usd=100.0 * (1.0 + (net + 0.2) / 100.0),
         entry_ts=(now - timedelta(hours=25)).isoformat(),
         due_at=(now - timedelta(hours=1)).isoformat(), settled_at=now.isoformat(),
         directional_return_pct=net + 0.2,

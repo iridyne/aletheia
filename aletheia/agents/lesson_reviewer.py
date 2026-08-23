@@ -79,6 +79,7 @@ def _fetch_evidence(lesson) -> dict:
 
         rows = db.execute(
             "SELECT id,outcome_candidate_key,status,horizon,entry_ts,direction,market_type,"
+            "entry_price_usd,exit_price_usd,"
             "directional_return_pct,estimated_fee_pct,"
             "estimated_spread_slippage_pct,estimated_funding_pct,"
             "net_return_pct,min_tradable_edge_pct,cost_model_version "

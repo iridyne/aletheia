@@ -244,6 +244,9 @@ def test_row_verdict_requires_reconcilable_cost_economics():
 
     positive = {
         "market_type": "spot",
+        "direction": "long",
+        "entry_price_usd": 100.0,
+        "exit_price_usd": 100.5,
         "directional_return_pct": 0.5,
         "estimated_fee_pct": 0.1,
         "estimated_spread_slippage_pct": 0.1,
@@ -268,6 +271,7 @@ def test_row_verdict_requires_reconcilable_cost_economics():
 
     negative = {
         **positive,
+        "exit_price_usd": 99.5,
         "directional_return_pct": -0.5,
         "net_return_pct": -0.7,
     }
@@ -303,10 +307,12 @@ def test_calibration_excludes_gross_only_rows():
     repo.insert_forward_outcomes_batch([
         UniverseForwardOutcome(
             member_id="member-gross-only", symbol="AAA/USDT",
+            exit_price_usd=109.0,
             forward_return_pct=9.0, gross_return_pct=9.0, **common,
         ),
         UniverseForwardOutcome(
                 member_id="member-net", symbol="BBB/USDT",
+                    exit_price_usd=99.0,
                     forward_return_pct=-1.0, gross_return_pct=-1.0,
                     directional_return_pct=-1.0, net_return_pct=-1.2,
                     estimated_fee_pct=0.1,

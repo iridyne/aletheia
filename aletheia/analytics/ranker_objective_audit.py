@@ -355,7 +355,7 @@ def _attach_outcomes(db, rows: list[dict]) -> dict[str, int]:
     required = {
         "outcome_candidate_key", "horizon", "status", "net_return_pct", "settled_at",
         "venue", "symbol", "market_type", "direction", "entry_ts", "cost_model_version",
-        "entry_price_usd", "directional_return_pct", "estimated_fee_pct",
+        "entry_price_usd", "exit_price_usd", "directional_return_pct", "estimated_fee_pct",
         "estimated_spread_slippage_pct", "estimated_funding_pct",
         "min_tradable_edge_pct",
     }
@@ -372,7 +372,7 @@ def _attach_outcomes(db, rows: list[dict]) -> dict[str, int]:
     outcomes = db.execute(
         "SELECT rowid,outcome_candidate_key,horizon,status,net_return_pct,settled_at,"
         "venue,symbol,market_type,direction,entry_ts,cost_model_version,entry_price_usd,"
-        "directional_return_pct,estimated_fee_pct,estimated_spread_slippage_pct,"
+        "exit_price_usd,directional_return_pct,estimated_fee_pct,estimated_spread_slippage_pct,"
         "estimated_funding_pct,min_tradable_edge_pct "
         f"FROM filter_candidate_outcomes WHERE outcome_candidate_key IN ({placeholders}) "
         "ORDER BY outcome_candidate_key,horizon,datetime(settled_at),rowid",
