@@ -116,6 +116,12 @@ def _make_candidate_fact(
         "fixed_horizon": fixed_horizon,
         "fixed_horizon_outcome": {
             "status": "settled",
+            "entry_ts": entry_ts,
+            "due_at": "2026-08-02T00:00:00+00:00",
+            "settled_at": "2026-08-02T00:00:00+00:00",
+            "direction": direction,
+            "outcome_candidate_key": outcome_candidate_key,
+            "horizon": fixed_horizon,
             "net_return_pct": net_return_pct,
             "cost_model_version": cost_model_version,
         },
