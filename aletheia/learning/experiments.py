@@ -269,6 +269,7 @@ def _policy_epoch_definition(
         if path_id == "universe_family_calibration":
             u = cfg.universe
             values["universe_behavior"] = {
+                "blacklist": sorted(set(u.blacklist)),
                 "family_quota": u.family_quota,
                 "family_quota_by_regime": u.family_quota_by_regime,
                 "explore_ratio": u.explore_ratio,
