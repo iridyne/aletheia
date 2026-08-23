@@ -32,7 +32,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from pydantic import BaseModel
@@ -73,22 +73,24 @@ def _fetch_evidence(lesson) -> dict:
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
+    as_of_at = datetime.now(timezone.utc)
+    window_start = as_of_at - timedelta(days=30)
 
-    def _agg(where_extra: str, params: tuple) -> dict:
+    def _agg(where_extra: str, params: tuple, *, as_of_at: datetime) -> dict:
         from aletheia.learning.outcomes import assess_candidate_outcome
 
         rows = db.execute(
             "SELECT id,outcome_candidate_key,status,horizon,entry_ts,direction,"
-            "net_return_pct,min_tradable_edge_pct,cost_model_version "
+            "due_at,settled_at,net_return_pct,min_tradable_edge_pct,cost_model_version "
             "FROM universe_forward_outcomes "
             "WHERE status='settled' AND horizon='24h' "
-            "AND settled_at >= datetime('now','-30 days') " + where_extra,
-            params,
+            "AND datetime(settled_at) >= datetime(?) " + where_extra,
+            (window_start.isoformat(), *params),
         ).fetchall()
         eligible_by_outcome: dict[str, tuple[dict, float]] = {}
         for raw in rows:
             row = dict(raw)
-            assessed = assess_candidate_outcome(row)
+            assessed = assess_candidate_outcome(row, as_of_at=as_of_at)
             if (
                 not assessed.eligible
                 or assessed.net_return_pct is None
@@ -114,7 +116,7 @@ def _fetch_evidence(lesson) -> dict:
             "avg_return": round(avg_return, 3) if avg_return is not None else None,
         }
 
-    evidence = {"aggregate": _agg("", ())}
+    evidence = {"aggregate": _agg("", (), as_of_at=as_of_at)}
 
     def _json_dict(raw: str | None) -> dict:
         try:
@@ -145,7 +147,9 @@ def _fetch_evidence(lesson) -> dict:
 
     evidence["symbol"] = symbol
     if symbol:
-        evidence["symbol_stats"] = _agg("AND symbol = ?", (symbol,))
+        evidence["symbol_stats"] = _agg(
+            "AND symbol = ?", (symbol,), as_of_at=as_of_at,
+        )
 
     # Scanner-family slice (#99): a block_scanner lesson must be judged against the
     # scanner-family's OWN settled outcomes, not just the global/symbol aggregates —
@@ -160,7 +164,9 @@ def _fetch_evidence(lesson) -> dict:
             scanner = families[0]
     evidence["scanner_family"] = scanner
     if scanner:
-        evidence["scanner_family_stats"] = _agg("AND scanner_family = ?", (scanner,))
+        evidence["scanner_family_stats"] = _agg(
+            "AND scanner_family = ?", (scanner,), as_of_at=as_of_at,
+        )
 
     direction = rec.get("direction") or ev.get("direction") or _single_factor_value(2)
     if not direction and lesson.summary:
@@ -173,7 +179,9 @@ def _fetch_evidence(lesson) -> dict:
         direction = None
     evidence["direction"] = direction
     if direction:
-        evidence["direction_stats"] = _agg("AND direction = ?", (direction,))
+        evidence["direction_stats"] = _agg(
+            "AND direction = ?", (direction,), as_of_at=as_of_at,
+        )
 
     scope_clauses: list[str] = []
     scope_params: list[str] = []
@@ -192,7 +200,9 @@ def _fetch_evidence(lesson) -> dict:
         }.items() if value
     }
     evidence["exact_scope"] = (
-        _agg(" ".join(scope_clauses), tuple(scope_params))
+        _agg(
+            " ".join(scope_clauses), tuple(scope_params), as_of_at=as_of_at,
+        )
         if scope_clauses else {"total": 0, "wins": 0, "win_rate": None, "avg_return": None}
     )
     return evidence

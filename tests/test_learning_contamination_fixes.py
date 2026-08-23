@@ -182,3 +182,79 @@ def test_lesson_evidence_ignores_gross_only_history(tmp_path, monkeypatch):
     assert evidence["exact_scope_dimensions"] == {
         "symbol": "BTC/USDT", "direction": "long", "scanner_family": "momentum",
     }
+
+
+def test_lesson_evidence_uses_complete_rows_at_one_cutoff(tmp_path, monkeypatch):
+    """All evidence slices assess the same complete outcome snapshot."""
+    from datetime import datetime, timedelta, timezone
+
+    sq = _reviewer_db(tmp_path, monkeypatch)
+    from aletheia.agents.lesson_reviewer import _fetch_evidence
+    from aletheia.learning import outcomes
+    from aletheia.learning.lessons import LessonStore
+
+    lesson = LessonStore().create(
+        "BTC/USDT momentum longs",
+        source_type="test",
+        source_id="temporal-evidence",
+        category="entry_timing",
+        severity="warning",
+        evidence={
+            "supporting_factor_keys": [
+                "momentum:BTC/USDT:long:medium_confidence:clean",
+            ],
+        },
+    )
+    db = sq.get_db()
+    db.execute(
+        "INSERT INTO universe_forward_outcomes "
+        "(id, outcome_candidate_key, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
+        "entry_price_usd, entry_ts, due_at, settled_at, forward_return_pct, gross_return_pct, "
+        "directional_return_pct, net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
+        "VALUES ('temporal', 'candidate-temporal', 'm', 's', 'BTC/USDT', 'momentum', 'long', "
+        "'24h', 100, datetime('now','-2 days'), datetime('now','-1 day'), "
+        "datetime('now','-1 day'), 1, 1, 1, 0.8, 0.05, 'v1', 'settled')"
+    )
+    boundary = datetime.now(timezone.utc) - timedelta(days=30)
+    for row_id, settled_at in (
+        ("before-window", boundary - timedelta(minutes=5)),
+        ("inside-window", boundary + timedelta(minutes=5)),
+    ):
+        due_at = settled_at - timedelta(minutes=1)
+        entry_at = due_at - timedelta(hours=24)
+        db.execute(
+            "INSERT INTO universe_forward_outcomes "
+            "(id, outcome_candidate_key, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
+            "entry_price_usd, entry_ts, due_at, settled_at, forward_return_pct, gross_return_pct, "
+            "directional_return_pct, net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
+            "VALUES (?, ?, 'm', 's', 'BTC/USDT', 'momentum', 'long', '24h', "
+            "100, ?, ?, ?, 1, 1, 1, 0.8, 0.05, 'v1', 'settled')",
+            (
+                row_id,
+                f"candidate-{row_id}",
+                entry_at.isoformat(),
+                due_at.isoformat(),
+                settled_at.isoformat(),
+            ),
+        )
+    db.commit()
+
+    original = outcomes.assess_candidate_outcome
+    assessed: list[tuple[dict, object]] = []
+
+    def _record(row, *, as_of_at=None):
+        assessed.append((dict(row), as_of_at))
+        return original(row, as_of_at=as_of_at)
+
+    monkeypatch.setattr(outcomes, "assess_candidate_outcome", _record)
+
+    evidence = _fetch_evidence(lesson)
+
+    assert evidence["exact_scope"]["total"] == 2
+    assert assessed
+    assert "before-window" not in {row.get("id") for row, _ in assessed}
+    assert "inside-window" in {row.get("id") for row, _ in assessed}
+    assert all(row.get("due_at") and row.get("settled_at") for row, _ in assessed)
+    cutoffs = {as_of_at for _, as_of_at in assessed}
+    assert len(cutoffs) == 1
+    assert next(iter(cutoffs)).tzinfo is timezone.utc

@@ -438,12 +438,12 @@ def test_real_authorized_learned_guard_exposure_applies_only_treatment(monkeypat
         f"guard-control:{i}" for i in range(1000)
         if stable_assignment(experiment, f"guard-control:{i}") == "control"
     )
-    assert evaluate(
-        treatment_key, _insert_settled_outcome(treatment_key),
-    ).blocked is False
-    assert evaluate(
-        control_key, _insert_settled_outcome(control_key),
-    ).blocked is False
+    treatment_outcome = f"{treatment_key.replace(':', '_')}:4h"
+    control_outcome = f"{control_key.replace(':', '_')}:4h"
+    assert evaluate(treatment_key, treatment_outcome).blocked is False
+    assert _insert_settled_outcome(treatment_key) == treatment_outcome
+    assert evaluate(control_key, control_outcome).blocked is False
+    assert _insert_settled_outcome(control_key) == control_outcome
 
     exposure = db.execute(
         "SELECT concurrent_policy_epoch FROM learning_exposures "
@@ -468,10 +468,11 @@ def test_real_authorized_learned_guard_exposure_applies_only_treatment(monkeypat
         f"guard-applied:{i}" for i in range(1000)
         if stable_assignment(experiment, f"guard-applied:{i}") == "treatment"
     )
-    applied_outcome = _insert_settled_outcome(applied_key)
+    applied_outcome = f"{applied_key.replace(':', '_')}:4h"
     applied = evaluate(applied_key, applied_outcome)
     assert applied.blocked is True
     assert applied.total_penalty == 9.0
+    assert _insert_settled_outcome(applied_key) == applied_outcome
     stored = db.execute(
         "SELECT candidate_key, opportunity_id, outcome_candidate_key, assignment, "
         "before_json, after_json FROM learning_exposures WHERE candidate_key=? "

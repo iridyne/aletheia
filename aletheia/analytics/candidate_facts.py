@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import json
 from typing import Any, Iterable
 from aletheia.analytics.filter_evidence import decode_filter_decision_batch
+from aletheia.learning.outcomes import candidate_outcome_temporal_reason
 
 from aletheia.storage import repositories as repo
 
@@ -220,15 +221,36 @@ def _build_candidate_facts_inner(
     outcomes = _rows(
         source,
         "SELECT * FROM filter_candidate_outcomes"
-        " WHERE horizon=? AND (entry_ts IS NULL OR datetime(entry_ts) <= datetime(?))"
+        " WHERE horizon=?"
         " ORDER BY datetime(entry_ts), rowid",
-        (horizon, cutoff.isoformat()),
+        (horizon,),
     )
-    outcome_by_key = {
-        str(row["outcome_candidate_key"]): row
-        for row in outcomes
-        if _visible(row, cutoff) and (not row.get("settled_at") or (_utc(row.get("settled_at")) or cutoff) <= cutoff)
-    }
+    outcome_by_key: dict[str, dict[str, Any]] = {}
+    outcome_unavailable_reason_by_key: dict[str, str] = {}
+    outcome_exclusions: list[dict[str, Any]] = []
+    for row in outcomes:
+        outcome_key = str(row.get("outcome_candidate_key") or "")
+        if outcome_key not in grouped:
+            continue
+        if str(row.get("status") or "").lower() == "settled":
+            reason = candidate_outcome_temporal_reason(row, as_of_at=cutoff)
+            if reason:
+                outcome_unavailable_reason_by_key.setdefault(outcome_key, reason)
+                outcome_exclusions.append(
+                    {
+                        "source_table": "filter_candidate_outcomes",
+                        "source_outcome_id": row.get("id"),
+                        "outcome_candidate_key": row.get("outcome_candidate_key"),
+                        "horizon": row.get("horizon"),
+                        "event_at": row.get("settled_at"),
+                        "availability": "unavailable",
+                        "unavailable_reason": reason,
+                    }
+                )
+                continue
+            outcome_by_key[outcome_key] = row
+        elif _visible(row, cutoff):
+            outcome_by_key[outcome_key] = row
 
     facts: list[dict[str, Any]] = []
     terminal_counts: defaultdict[str, int] = defaultdict(int)
@@ -373,6 +395,11 @@ def _build_candidate_facts_inner(
                     "position_reached": position is not None,
                 },
                 "fixed_horizon_outcome": outcome,
+                "fixed_horizon_outcome_unavailable_reason": (
+                    outcome_unavailable_reason_by_key.get(fact_id)
+                    if outcome is None
+                    else None
+                ),
                 "fixed_horizon": horizon,
                 "variable_horizon_position_outcome": None,
             }
@@ -381,11 +408,14 @@ def _build_candidate_facts_inner(
     outcome_count = sum(
         1
         for fact in facts
-        if fact["fixed_horizon_outcome"] is not None and fact["fixed_horizon_outcome"].get("status") == "settled"
+        if fact["fixed_horizon_outcome"] is not None
+        and str(fact["fixed_horizon_outcome"].get("status") or "").lower()
+        == "settled"
     )
+    exclusions = [*batch_exclusions, *outcome_exclusions]
     unavailable_reasons = Counter(
         str(item.get("unavailable_reason") or "source_unavailable")
-        for item in batch_exclusions
+        for item in exclusions
     )
     return {
         "contract_version": FACT_CONTRACT_VERSION,
@@ -396,9 +426,9 @@ def _build_candidate_facts_inner(
         "candidate_count": len(facts),
         "settled_outcome_count": outcome_count,
         "outcome_coverage": outcome_count / len(facts) if facts else None,
-        "unavailable_count": len(batch_exclusions),
+        "unavailable_count": len(exclusions),
         "unavailable_reasons": dict(sorted(unavailable_reasons.items())),
-        "exclusions": batch_exclusions,
+        "exclusions": exclusions,
         "terminal_counts": dict(sorted(terminal_counts.items())),
         "facts": facts,
     }
