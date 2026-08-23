@@ -829,14 +829,16 @@ def _seed_forward_outcome(
     conn.execute(
         "INSERT INTO universe_forward_outcomes "
         "(id, member_id, snapshot_id, venue, symbol, scanner_family, direction, horizon, "
-        " entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, "
+        " entry_price_usd, entry_ts, due_at, settled_at, "
+        " settlement_price_source, settlement_lag_sec, exit_price_usd, "
         " forward_return_pct, gross_return_pct, directional_return_pct, "
         " estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
         " net_return_pct, "
         " min_tradable_edge_pct, market_type, cost_model_version, status) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()), "bitget", "X/USDT",
          family, direction, horizon, 100.0, now, now, now,
+         "horizon_ohlcv", 0.0,
          100.0 * (1.0 + forward_return / 100.0),
          forward_return, forward_return, directional, 0.1, 0.1, 0.0,
          net, edge, "spot", cost_model_version, "settled"),

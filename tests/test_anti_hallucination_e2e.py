@@ -526,6 +526,8 @@ def test_data_health_signal_win_rate_excludes_unknown_direction(tmp_path, monkey
             net_return_pct=(directional - 0.2) if directional is not None else None,
             min_tradable_edge_pct=0.05,
             cost_model_version="v1",
+            settlement_price_source="horizon_ohlcv",
+            settlement_lag_sec=0.0,
             market_type="spot",
             status="settled",
         )
