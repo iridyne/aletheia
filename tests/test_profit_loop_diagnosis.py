@@ -122,6 +122,7 @@ def _make_candidate_fact(
             "outcome_candidate_key": outcome_candidate_key,
             "horizon": fixed_horizon,
             "status": "settled",
+            "venue": "bitget",
             "entry_ts": entry_ts,
             "direction": direction,
             "market_type": "spot",
@@ -242,6 +243,7 @@ def test_candidate_missing_direction_and_cost_model_excluded_from_eligible():
                 "fixed_horizon": "24h",
                     "fixed_horizon_outcome": {
                         "status": "settled",
+                        "venue": "bitget",
                         "entry_ts": "2026-08-01T00:00:00+00:00",
                         "market_type": "spot",
                         "outcome_candidate_key": "key-no-direction",
@@ -264,6 +266,7 @@ def test_candidate_missing_direction_and_cost_model_excluded_from_eligible():
                 "fixed_horizon": "24h",
                     "fixed_horizon_outcome": {
                         "status": "settled",
+                        "venue": "bitget",
                         "entry_ts": "2026-08-01T00:00:00+00:00",
                         "direction": "long",
                         "market_type": "spot",

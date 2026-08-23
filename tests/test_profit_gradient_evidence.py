@@ -581,6 +581,7 @@ def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_ho
         "terminal_state": "risk_reject",
         "fixed_horizon_outcome": {
                 "status": "settled",
+                "venue": "bitget",
                 "direction": "long",
                 "market_type": "perp",
             "horizon": "24h",
