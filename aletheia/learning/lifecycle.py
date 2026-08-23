@@ -7,8 +7,6 @@ from datetime import datetime, timedelta, timezone
 import json
 import logging
 import math
-import json
-import logging
 from typing import Any
 
 from aletheia.config.loader import load_config
