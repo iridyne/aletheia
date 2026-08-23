@@ -10,7 +10,7 @@ import math
 
 from aletheia.analytics.outcome_integrity import outcome_write_eligibility
 from aletheia.execution.broker_funding import (
-    compute_broker_funding,
+    compute_stored_broker_funding,
     funding_query_window,
 )
 from aletheia.storage import repositories as repo
@@ -59,6 +59,7 @@ def materialize_broker_funding_economics(
     *,
     funding_cost: float,
     funding_evidence: dict,
+    funding_ledger: dict,
 ) -> dict:
     """Atomically repair Position, close ledger, audit, and outcome-hook authority."""
     from aletheia.files.jsonl import write_audit
@@ -94,6 +95,15 @@ def materialize_broker_funding_economics(
             raise ValueError(f"position not found: {position_id}")
         if current.get("status") != "closed":
             raise ValueError("position is no longer closed")
+        evidence_root: dict = {}
+        raw_evidence = current.get("reconciliation_evidence")
+        if raw_evidence:
+            try:
+                parsed = json.loads(str(raw_evidence))
+                if isinstance(parsed, dict):
+                    evidence_root = parsed
+            except (TypeError, ValueError, json.JSONDecodeError):
+                evidence_root = {}
         if current.get("realized_pnl") is not None:
             same = (
                 current.get("funding_cost") is not None
@@ -105,6 +115,7 @@ def materialize_broker_funding_economics(
                     float(current["realized_pnl"]), realized,
                     rel_tol=0.0, abs_tol=1e-8,
                 )
+                and evidence_root.get("funding_economics_fingerprint") == fingerprint
             )
             if same:
                 return {
@@ -114,15 +125,20 @@ def materialize_broker_funding_economics(
                 }
             raise ValueError("existing exchange economics cannot be overwritten")
 
-        evidence_root: dict = {}
-        raw_evidence = current.get("reconciliation_evidence")
-        if raw_evidence:
-            try:
-                parsed = json.loads(str(raw_evidence))
-                if isinstance(parsed, dict):
-                    evidence_root = parsed
-            except (TypeError, ValueError, json.JSONDecodeError):
-                evidence_root = {}
+        current_funding = compute_stored_broker_funding(
+            get_db(),
+            position=current,
+            closed_at=current.get("closed_at"),
+            ledger=funding_ledger,
+        )
+        if (
+            not current_funding.complete
+            or current_funding.funding_cost != funding_cost
+            or current_funding.evidence != funding_evidence
+        ):
+            raise ValueError(
+                "broker funding attribution changed before settlement commit"
+            )
         evidence_root.update({
             "funding": funding_evidence,
             "funding_economics_fingerprint": fingerprint,
@@ -281,20 +297,11 @@ async def settle_unsettled_exchange_closes(limit: int = 50) -> dict:
                 start_time_ms=start_ms,
                 end_time_ms=end_ms,
             )
-            candidates = [
-                dict(item)
-                for item in get_db().execute(
-                    """SELECT * FROM positions
-                       WHERE id<>? AND execution_mode=?
-                         AND market_type='usdt_futures' AND symbol=?""",
-                    (position_id, row["execution_mode"], row["symbol"]),
-                ).fetchall()
-            ]
-            funding = compute_broker_funding(
+            funding = compute_stored_broker_funding(
+                get_db(),
                 position=row,
                 closed_at=row["closed_at"],
                 ledger=ledger,
-                candidate_positions=candidates,
             )
             if not funding.complete or funding.funding_cost is None:
                 still_pending += 1
@@ -303,6 +310,7 @@ async def settle_unsettled_exchange_closes(limit: int = 50) -> dict:
                 row,
                 funding_cost=funding.funding_cost,
                 funding_evidence=funding.evidence,
+                funding_ledger=ledger,
             )
             settled += 1
         except Exception as exc:
