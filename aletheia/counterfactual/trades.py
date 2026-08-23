@@ -96,7 +96,7 @@ def persist_shadow_batch(
         rank = rank_by_opportunity.get(opp_id, fallback_rank)
         symbol = candidate.get("symbol") or ""
         direction = candidate.get("direction") or candidate.get("direction_bias") or "long"
-        market_type = str(candidate.get("market_type") or "").strip().lower()
+        market_type = str(candidate.get("market_type") or "").strip().lower() or "spot"
         venue_value = candidate.get("venue")
         venue = venue_value.strip() if isinstance(venue_value, str) and venue_value.strip() else None
         entry_price = _current_price(symbol, market_type=market_type, exact=True)
@@ -190,10 +190,7 @@ def _compute_shadow_economics(
         cfg = load_config()
     except Exception:
         return None
-    raw_market_type = row.get("market_type")
-    if not raw_market_type:
-        return {"estimated_funding_pct": None, "net_return_pct": None}
-    market_type = str(raw_market_type).lower()
+    market_type = str(row.get("market_type") or "").strip().lower() or "spot"
     entry_spread = row.get("entry_spread_bps")
     funding_rate = row.get("funding_rate_at_entry")
     try:
