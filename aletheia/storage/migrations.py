@@ -3318,7 +3318,7 @@ _LEGACY_BASELINE_ID = "20260806_0001_legacy_schema_v2"
 # Filled from the normalized source preceding MIGRATION_LEDGER_START. The value is
 # deliberately stable: changing an applied migration is drift, not a reason to replay
 # it. Add a new MigrationStep for every future schema or data upgrade.
-_LEGACY_BASELINE_CHECKSUM = "b210b180fa4392a542a5275941ca15d1a443374b3e951055d8a4bbc12d32f8ee"
+_LEGACY_BASELINE_CHECKSUM = "4b3e67a4bbfca4f76c1f41c32b87abc30539db9127a3bb0e9876962b03e0f261"
 _MIGRATION_LOCK_TIMEOUT_SEC = 120.0
 
 _STARTUP_HOT_PATH_INDEXES_SQL = """
