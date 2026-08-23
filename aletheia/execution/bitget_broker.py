@@ -579,7 +579,7 @@ def close_demo_position(
         )
         if quantity < remaining_quantity:
             with transaction():
-                update_order(close_order["id"], quantity=quantity)
+                update_order(close_order.id, quantity=quantity)
             logger.info(
                 "clipped Bitget close for %s: submitting %s of %s remaining "
                 "(venue match-cap cancel history)",
