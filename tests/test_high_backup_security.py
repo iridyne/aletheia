@@ -64,7 +64,6 @@ def test_restore_rejects_symlink_at_destination(tmp_path):
     svc = RestoreService()
     # Calling _copy_single_file-equivalent should detect the symlink
     # We test the source check in restore.py:
-    from aletheia.backup.restore import RestoreSecurityError
     src_code = inspect.getsource(RestoreService.restore)
     assert "is_symlink" in src_code, (
         "restore() must check for symlinks at destination path (#1618)"
