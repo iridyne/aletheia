@@ -44,7 +44,13 @@ def test_directional_decision_registers_one_shared_outcome_per_horizon():
     assert {row["direction"] for row in rows} == {"short"}
 
 
-def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
+@pytest.mark.parametrize(
+    ("market_type", "expected_net"),
+    (("spot", 1.68), ("", None)),
+)
+def test_filter_outcome_settlement_preserves_market_economics(
+    monkeypatch, market_type, expected_net,
+):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import FilterCandidateOutcome, ShadowTrade
     from aletheia.storage.sqlite import get_db
@@ -56,7 +62,7 @@ def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
         outcome_candidate_key="opportunity:settle-filter-net",
         venue="okx",
         symbol="BTC/USDT",
-        market_type="spot",
+        market_type=market_type,
         direction="long",
         scanner_family="momentum",
         horizon="24h",
@@ -71,7 +77,7 @@ def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
         batch_id="batch-net",
         symbol="BTC/USDT",
         venue="okx",
-        market_type="spot",
+        market_type=market_type,
         direction="long",
         entry_price=100.0,
         outcome_candidate_key=outcome.outcome_candidate_key,
@@ -101,14 +107,20 @@ def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
     ).fetchone()
     assert row["status"] == "settled"
     assert row["gross_return_pct"] == pytest.approx(2.0)
-    assert row["net_return_pct"] == pytest.approx(1.68)
     assert row["mfe_pct"] == pytest.approx(3.0)
     assert row["mae_pct"] == pytest.approx(-1.0)
     shadow_row = get_db().execute(
         "SELECT * FROM shadow_trades WHERE id=?", (shadow.id,)
     ).fetchone()
     assert shadow_row["pnl_pct"] == pytest.approx(2.0)
-    assert shadow_row["net_pnl_pct"] == pytest.approx(1.68)
+    if expected_net is None:
+        assert row["estimated_funding_pct"] is None
+        assert row["net_return_pct"] is None
+        assert shadow_row["net_pnl_pct"] is None
+    else:
+        assert row["estimated_funding_pct"] == 0.0
+        assert row["net_return_pct"] == pytest.approx(expected_net)
+        assert shadow_row["net_pnl_pct"] == pytest.approx(expected_net)
     assert shadow_row["resolved_at"]
 
 

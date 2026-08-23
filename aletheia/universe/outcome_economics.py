@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from aletheia.data.symbols import MARKET_FUTURES, MARKET_PERP, MARKET_SPOT
+
 
 _FUNDING_INTERVAL_SEC = 8 * 3600
-_PERP_MARKETS = frozenset({"perp", "futures", "swap", "usdt_futures"})
+_PERP_MARKETS = frozenset({MARKET_PERP, MARKET_FUTURES, "swap", "usdt_futures"})
 _VALID_DIRECTIONS = frozenset({"long", "short"})
 _MIN_EDGE_FLOOR_PCT = 0.05
 COST_MODEL_VERSION = "v1"
@@ -21,7 +23,7 @@ def estimate_outcome_economics(
     entry_price: float,
     exit_price: float,
     direction: str | None,
-    market_type: str,
+    market_type: str | None,
     hold_seconds: float,
     entry_spread_bps: float | None,
     fallback_spread_bps: float,
@@ -44,7 +46,7 @@ def estimate_outcome_economics(
         raise ValueError("entry_price and exit_price must be positive")
 
     side = str(direction or "").lower()
-    market = str(market_type or "spot").lower()
+    market = str(market_type or "").strip().lower()
     hold = max(0.0, float(hold_seconds or 0.0))
     gross = (exit_ - entry) / entry * 100.0
     directional = _directional(gross, side)
@@ -72,8 +74,10 @@ def estimate_outcome_economics(
                 * (hold / _FUNDING_INTERVAL_SEC)
                 * direction_sign
             )
-    else:
+    elif market == MARKET_SPOT:
         funding_pct = 0.0
+    else:
+        funding_pct = None
 
     net: float | None = None
     if (
