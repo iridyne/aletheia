@@ -102,6 +102,7 @@ export const RISK_POLICY_BOOLS = [
   { key: 'positions.allow_short', label: 'Allow short selling' },
   { key: 'correlation.enabled', label: 'Correlation guard' },
   { key: 'exits.catastrophic_stop_enabled', label: 'Catastrophic stop' },
+  { key: 'exits.horizon_due_allow_hold', label: 'Horizon due: allow hold (roll horizon, do not flatten)' },
   { key: 'auto_trip_mode_brake_on_daily_loss', label: 'Auto-trip mode brake on daily loss' },
 ] as const satisfies readonly PolicyBoolField[]
 

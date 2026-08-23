@@ -567,11 +567,21 @@ class RiskExitPolicy(StrictRiskPolicyModel):
     catastrophic_stop_pct: float = 10.0
     catastrophic_stop_pct_serenity: float = 15.0
     horizon_hard_backstop_mult: float = 3.0
+    # Horizon-due review may hold (roll the authored horizon) instead of
+    # flattening. Default True is the safer behavior: expiry is not a forced
+    # close. False restores close-or-explicit-extend.
+    horizon_due_allow_hold: bool = True
 
 
 class RiskEligibilityPolicy(StrictRiskPolicyModel):
     family_min_samples: int = 30
     family_min_win_rate_pct: float = 50.0
+    # Exchange-demo entry quality (ignored on live when left at these defaults).
+    # min_regime_confidence_to_enter <= 0 disables the confidence stand-down.
+    # family_min_expectancy is None on live; 0.0 on demo means "must not be negative".
+    min_regime_confidence_to_enter: float = 0.0
+    sideways_standdown: bool = False
+    family_min_expectancy: float | None = None
 
 
 class ModeRiskPolicy(StrictRiskPolicyModel):
@@ -680,6 +690,9 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
             "horizon_hard_backstop_mult": data.get(
                 "horizon_hard_backstop_mult", 3.0
             ),
+            "horizon_due_allow_hold": data.get(
+                "horizon_due_allow_hold", True
+            ),
         },
         "eligibility": (
             {
@@ -687,8 +700,20 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
                 "family_min_win_rate_pct": data.get(
                     "live_family_min_win_rate_pct", 50.0
                 ),
+                "min_regime_confidence_to_enter": 0.0,
+                "sideways_standdown": False,
+                "family_min_expectancy": None,
             }
-            if is_live else None
+            if is_live
+            else {
+                "family_min_samples": data.get("demo_family_min_samples", 20),
+                "family_min_win_rate_pct": 0.0,
+                "min_regime_confidence_to_enter": data.get(
+                    "demo_min_regime_confidence_to_enter", 0.60
+                ),
+                "sideways_standdown": data.get("demo_sideways_standdown", True),
+                "family_min_expectancy": data.get("demo_family_min_expectancy", 0.0),
+            }
         ),
         "auto_trip_mode_brake_on_daily_loss": data.get(
             f"kill_switch_enabled_{suffix}", is_live
@@ -704,6 +729,9 @@ def default_mode_risk_policy(mode: Literal["demo", "live"]) -> ModeRiskPolicy:
 def _merge_policy(base: dict, override: dict) -> dict:
     merged = dict(base)
     for key, value in override.items():
+        # None override on a nested dict → keep default (None = "use shipped default")
+        if value is None and isinstance(merged.get(key), dict):
+            continue
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
             merged[key] = _merge_policy(merged[key], value)
         else:
@@ -849,6 +877,18 @@ class RiskConfig(BaseModel):
             "live_family_min_win_rate_pct": (
                 "live", "eligibility", "family_min_win_rate_pct",
             ),
+            "demo_sideways_standdown": (
+                "demo", "eligibility", "sideways_standdown",
+            ),
+            "demo_min_regime_confidence_to_enter": (
+                "demo", "eligibility", "min_regime_confidence_to_enter",
+            ),
+            "demo_family_min_samples": (
+                "demo", "eligibility", "family_min_samples",
+            ),
+            "demo_family_min_expectancy": (
+                "demo", "eligibility", "family_min_expectancy",
+            ),
         }
         shared_paths = {
             "max_per_symbol_entries": ("capital", "max_per_symbol_entries"),
@@ -873,6 +913,9 @@ class RiskConfig(BaseModel):
             ),
             "horizon_hard_backstop_mult": (
                 "exits", "horizon_hard_backstop_mult",
+            ),
+            "horizon_due_allow_hold": (
+                "exits", "horizon_due_allow_hold",
             ),
         }
         if name in mode_paths:
@@ -951,6 +994,7 @@ class RiskConfig(BaseModel):
     # decision (close / extend). The position is auto-closed only at the far backstop
     # min(expected_horizon * this multiplier, the school's absolute max_hold).
     horizon_hard_backstop_mult: float = 3.0
+    horizon_due_allow_hold: bool = True
     max_open_positions_live: int = 3
     max_open_positions_demo: int = 200
     # "whitelist" = only symbol_list may trade; "blacklist" = all except symbol_list.
@@ -970,6 +1014,11 @@ class RiskConfig(BaseModel):
     # edge — at least N settled forward outcomes AND win_rate >= threshold.
     live_family_min_samples: int = 30
     live_family_min_win_rate_pct: float = 50.0
+    # Demo-mode entry quality aliases (check #14 for demo)
+    demo_sideways_standdown: bool = True
+    demo_min_regime_confidence_to_enter: float = 0.60
+    demo_family_min_samples: int = 0
+    demo_family_min_expectancy: float | None = 0.0
 
 
 class TelegramConfig(BaseModel):

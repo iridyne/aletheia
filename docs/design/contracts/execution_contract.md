@@ -389,6 +389,26 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
 - **交易所明确拒单不得按 scheduler cadence 重试**：无法安全归类为“无仓位”的确定性 Close 拒单，
   Order 保持 `error`，Position 以 `pending_close_status=submission_rejected` 保留原 claim；不得新建 Close
   Order 或自动重发，须由既有 reconciliation 查明原因。该状态不伪装成成交或仓位消失。
+- **Bitget 40725 停泊只能由 owner 授权解锁**：UTA `trade_too_many_times_cancel` 取消的 close
+  归一为 `pending_close_status=venue_trade_rate_limited`（永不被自动释放——立即重发只会再撞
+  40725）。解锁通道是 `pending_close_recovery.release_rate_limited_close_claim`（dashboard
+  `POST /api/positions/{id}/recover-parked-close`）：仅在 claim 恰好处于停泊态、对应 Order 已
+  cancelled 且 error_reason 吻合时，把取消原因转写为预留的
+  `operator_authorized_cleanup_trade_rate_limited` 并清空 claim，让保护性平仓以全新
+  `close-{id}-rN` clientOid 重试；全程写审计（actor=human + owner reason），不制造任何 Fill、
+  价格或 PnL。不满足前置状态的解锁请求整体拒绝、状态零变更。
+- **Bitget demo 分片平仓（2026-08-22 起）**：demo 撮合引擎对大数量 market-IOC close 有单笔
+  撮合迭代上限（`trade_too_many_times_cancel`、零成交、确定性复现），因此 `close_demo_position`
+  按"历史 venue 撤单次数减半"的分片数量提交（每次 match-cap 类取消减半，下限为剩余量的
+  1/64；成功分片不重置计数）。物化语义同步区分"订单成交完"与"仓位平完"：分片单整单成交只把
+  Position 数量核减到剩余（`is_partial=1` 记账、claim 释放、下一保护周期自动发下一片），绝不提前
+  关闭仍有 venue 数量的 Position；重放已落账分片是幂等 no-op；部分成交的分片单保留
+  `partially_filled` claim 继续轮询。完整平仓（订单量 = 剩余量）行为不变。
+- **可成交限价回退（同日扩展）**：实测该 demo 缺陷可以是 **symbol 级**的——XRPUSDT 上任意数量
+  的市价单（含 5 张诊断性入场）都被零成交取消，而限价单正常成交。因此一旦某 Position 的平仓史
+  出现 match-cap 取消，下一次平仓自动改为**可成交限价**：价 = 最新价 ×（对手方向 ±1%），
+  GTC 挂单穿透对手价、残余量留在簿上由既有部分成交物化收敛；取价失败则回退市价。定价方向按
+  venue 侧对手方向计算（UTA 客户端会把 hedge 平仓翻转到持仓反侧）。
 - **未决 claim 不得关闭保护性观察**：Position Manager 仍读取 exact fresh mark 并评估
   Layer-0/SL/TP/max-hold/trailing；若保护规则再次触发，只记录等待原 claim 收敛，绝不调用
   exchange close 或创建替代 Order。`positions` 的 owner read model 同时暴露
@@ -498,6 +518,12 @@ Bitget 使用 mix fills cursor，OKX 使用 fills-history bill cursor，Binance 
 状态：RG-T07 / OI-B03 已实现。`portfolio.outcome_closure` 提供 verified 与 administrative 两个不可
 互换的入口；ready demo disappearance candidate 只有经过 RG-T06 三态直查后才可调用。Live 仍是
 alert-only，active reconciliation incident 仍先阻断收口。
+
+RG-T07 编排层另有一道独立防线（2026-08-19 事故后加入）：`confirmed_absent_without_fill` 本身不是
+administrative close 的充分授权——settlement 必须先用当前 profile client 做一次新鲜的全量仓位直查，
+直查仍确认 absent 才可关闭，并把 candidate 的 `direct_query_state` 落为 `confirmed_absent` 作为持久
+证据；直查显示仓位仍在则保持 open（下一轮 classify 会把 candidate 结案为 `reappeared`），直查不可用
+则 fail-closed 推迟。`verified_fill` 路径不受此门约束（私有成交历史是更强的平仓证据）。
 
 administrative-unverified close 不得：
 

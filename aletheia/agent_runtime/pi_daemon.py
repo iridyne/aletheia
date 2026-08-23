@@ -96,8 +96,13 @@ def notify_pi_daemon(source: str = "unknown", event: WakeEvent | None = None) ->
     is coalesced + rate-limited before it reaches the LLM. A source-only call (no
     event) is the legacy generic portfolio wake and always evaluates this cycle.
     """
-    global _uvicorn_loop, _signal_event
-    if _uvicorn_loop is None or _signal_event is None:
+    # Capture the loop reference locally to avoid a TOCTOU race: stop_pi_daemon()
+    # can set _uvicorn_loop = None between the check and the call.
+    loop = _uvicorn_loop
+    if loop is None or _signal_event is None:
+        return False
+    if loop.is_closed():
+        logger.debug("pi_daemon: notify dropped (loop closed, source=%s)", source)
         return False
 
     def _apply() -> None:
@@ -111,7 +116,7 @@ def notify_pi_daemon(source: str = "unknown", event: WakeEvent | None = None) ->
             _signal_event.set()
 
     try:
-        _uvicorn_loop.call_soon_threadsafe(_apply)
+        loop.call_soon_threadsafe(_apply)
         logger.debug("pi_daemon: notified (source=%s, event=%s)", source, getattr(event, "kind", None))
         return True
     except Exception as exc:
@@ -313,6 +318,11 @@ async def _pi_daemon_loop(
         logger.info("pi_daemon: rearmed durable pending queue at startup")
 
     while True:
+        # Record the start of each cycle so daemon_status() can report a
+        # meaningful heartbeat age.  Without this, the _last_heartbeat global
+        # stays 0.0 forever and operators have no liveness signal.
+        _last_heartbeat = time.monotonic()
+
         # Wait for a producer signal, portfolio retry, durable Operator defer
         # deadline, or the heartbeat backstop.  A deadline is queried from
         # SQLite every cycle so signal traffic and process restarts cannot reset
@@ -358,18 +368,15 @@ async def _pi_daemon_loop(
             cfg = load_config()
             if cfg.runtime.paused:
                 logger.debug("pi_daemon: skipped (runtime.paused=True)")
-                if defer_delay is not None and defer_delay <= 0:
-                    await asyncio.sleep(defer_guard_backoff)
+                await asyncio.sleep(defer_guard_backoff)
                 continue
             if cfg.agent.permission_mode not in ("Paper", "Full"):
                 logger.debug("pi_daemon: skipped (permission_mode=%s)", cfg.agent.permission_mode)
-                if defer_delay is not None and defer_delay <= 0:
-                    await asyncio.sleep(defer_guard_backoff)
+                await asyncio.sleep(defer_guard_backoff)
                 continue
         except Exception as exc:
             logger.warning("pi_daemon: config load failed: %s", exc)
-            if defer_delay is not None and defer_delay <= 0:
-                await asyncio.sleep(defer_guard_backoff)
+            await asyncio.sleep(defer_guard_backoff)
             continue
 
         # Skip if a prior evaluation is still running. Do this BEFORE draining the
@@ -377,8 +384,7 @@ async def _pi_daemon_loop(
         # being consumed and lost while an eval is mid-flight.
         if _eval_lock.locked():
             logger.debug("pi_daemon: evaluation already in progress, skipping")
-            if defer_delay is not None and defer_delay <= 0:
-                await asyncio.sleep(0.05)
+            await asyncio.sleep(defer_guard_backoff)
             continue
 
         # Drain pending wake events into the coalescer and pull rate-limited,

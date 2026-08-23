@@ -176,8 +176,9 @@ async def _private_account_probe(identity: dict[str, Any]) -> tuple[Any, str | N
     try:
         if broker == "bitget":
             from aletheia.exchanges.bitget.client import BitgetClient
+            from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
 
-            client = BitgetClient(mode="live")
+            client = BitgetClient(mode="live", profile=configured_bitget_profile())
             account = await client.get_account()
             raw = getattr(account, "raw", {}) or {}
             return raw, getattr(account, "user_id", None), _environment(raw), _permission(raw)

@@ -3,7 +3,8 @@
 These are offline tests (no network, no credentials). They verify:
 - Profile-aware client construction (unknown profile raises).
 - classic_v2 cannot call uta_v3 endpoints and vice-versa.
-- place_order on uta_v3 is blocked (qualification pending).
+  (place_order/get_positions under uta_v3 now route to v3 — see
+  tests/test_bitget_uta_v3_switch.py.)
 - Profile-specific error codes for "no position".
 - Profile-specific pagination parameter name.
 - Config validator rejects unknown profile values.
@@ -46,15 +47,6 @@ def test_default_profile_is_classic_v2():
 # ─── Profile enforcement: uta_v3 cannot use classic_v2 endpoints ─────────────
 
 
-def test_classic_v2_get_positions_blocked_on_uta_v3(monkeypatch):
-    """uta_v3 client must not call v2 mix positions endpoint."""
-    import asyncio
-
-    c = BitgetClient(mode="demo", profile="uta_v3")
-    with pytest.raises(ProfileContractError, match="classic_v2"):
-        asyncio.run(c.get_positions())
-
-
 def test_classic_v2_get_mix_account_blocked_on_uta_v3(monkeypatch):
     import asyncio
 
@@ -73,16 +65,6 @@ def test_uta_v3_get_uta_account_blocked_on_classic_v2(monkeypatch):
     c = BitgetClient(mode="demo", profile="classic_v2")
     with pytest.raises(ProfileContractError, match="uta_v3"):
         asyncio.run(c.get_uta_account())
-
-
-# ─── UTA v3 order placement is qualification-gated ───────────────────────────
-
-
-def test_place_order_uta_v3_raises_not_implemented():
-    """UTA v3 qualification guard must raise NotImplementedError."""
-    c = BitgetClient(mode="demo", profile="uta_v3")
-    with pytest.raises(NotImplementedError, match="uta_v3"):
-        c._assert_uta_v3_qualified()
 
 
 # ─── Error code tables ────────────────────────────────────────────────────────

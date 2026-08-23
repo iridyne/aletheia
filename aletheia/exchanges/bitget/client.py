@@ -12,7 +12,7 @@ from aletheia.exchanges.submission_errors import (
     SubmissionResponseUnknownError,
 )
 from aletheia.config.secrets import get_secret, redact
-from aletheia.data.symbols import to_canonical
+from aletheia.data.symbols import to_bitget, to_canonical
 
 
 BASE_URL = "https://api.bitget.com"
@@ -244,14 +244,6 @@ class BitgetClient:
                 f"configured profile is {self.profile!r}"
             )
 
-    def _assert_uta_v3_qualified(self) -> None:
-        """UTA v3 Demo qualification is a prerequisite for live order operations."""
-        raise NotImplementedError(
-            "Bitget uta_v3 profile is Experimental: "
-            "Demo end-to-end qualification required before order operations. "
-            "See issue #1003."
-        )
-
     def _cred_prefix(self) -> str:
         return f"bitget.{self.mode}"
 
@@ -392,15 +384,19 @@ class BitgetClient:
     async def place_order(self, order: OrderRequest) -> OrderResponse:
         """Place an order — gated by execution mode externally.
 
-        Only classic_v2 profile is qualified for order placement. UTA v3
-        raises NotImplementedError until Demo qualification completes (#1003).
+        uta_v3 profile routes to the /api/v3/ unified order endpoint; classic_v2
+        uses the /api/v2/ mix endpoint. UTA v3 order placement is enabled after
+        Demo end-to-end qualification (#1003).
         """
-        import json
         if self.profile == "uta_v3":
-            self._assert_uta_v3_qualified()
+            return await self._uta_place_order(order)
 
-        # Validate before leverage setup or order submission so malformed
-        # protection cannot leave any exchange-side effect behind. Validation is
+        # classic_v2 path below. Validate before leverage setup or order
+        # submission so malformed protection cannot leave any exchange-side
+        # effect behind. Validation is unconditional when a value is supplied;
+        # spot/close isolation below decides only whether a valid value is
+        # serialized.
+        import json
         # unconditional when a value is supplied; spot/close isolation below
         # decides only whether a valid value is serialized.
         preset_stop_loss = _validated_preset_protection_price(
@@ -617,8 +613,13 @@ class BitgetClient:
         )
 
     async def get_positions(self) -> list[Position]:
-        """Get open USDT-futures positions (§19.3). classic_v2 only."""
-        self._assert_classic_v2("get_positions")
+        """Get open USDT-futures positions (§19.3).
+
+        uta_v3 routes to the /api/v3/ unified position endpoint; classic_v2 uses
+        the /api/v2/ mix endpoint.
+        """
+        if self.profile == "uta_v3":
+            return await self._uta_positions()
         path = "/api/v2/mix/position/all-position?productType=USDT-FUTURES&marginCoin=USDT"
         headers = self._headers("GET", path)
         async with httpx_client(timeout=15) as client:
@@ -716,6 +717,399 @@ class BitgetClient:
             raise RuntimeError(f"Bitget UTA API error: {data.get('msg')}")
         return data.get("data", {}) or {}
 
+    # ------------------------------------------------------------------
+    # UTA (Unified Trading Account) support
+    #
+    # Bitget unified accounts have NO separate "mix" (contracts) wallet:
+    # margin is drawn from the unified USDT wallet. The classic v2 mix
+    # endpoints read an (empty) legacy mix wallet and the spot->mix transfer
+    # endpoint is unsupported (40404), so they cannot be used for UTA. We
+    # detect UTA once per client and route the affected calls to the v3
+    # unified endpoints. Classic accounts keep the original v2 behaviour.
+    # ------------------------------------------------------------------
+    async def _is_unified(self) -> bool:
+        # Profile is the source of truth for endpoint-family routing. #1124 made
+        # the profile explicit so the classic_v2 (/api/v2/) and uta_v3 (/api/v3/)
+        # endpoint families are never mixed at runtime — there is no detection
+        # roundtrip, so a uta_v3 client always uses unified endpoints and a
+        # classic_v2 client always uses the legacy mix/spot endpoints regardless
+        # of whether the UTA wallet is momentarily empty.
+        return self.profile == "uta_v3"
+
+    async def get_account_balance(self) -> dict:
+        """Normalized USDT-Futures margin balance, UTA-aware.
+
+        Returns {available, equity, unrealized_pnl, unified}. For UTA the
+        available USDT of the unified wallet is the margin source.
+        """
+        if await self._is_unified():
+            data = await self.get_uta_account()
+            assets = (data or {}).get("assets") or [] if isinstance(data, dict) else []
+            usdt = next((a for a in assets if a.get("coin") == "USDT"), None)
+            avail = float(usdt.get("available") or 0) if usdt else 0.0
+            equity = float(data.get("usdtEquity") or avail) if isinstance(data, dict) else avail
+            return {"available": avail, "equity": equity, "unrealized_pnl": 0.0, "unified": True}
+        mix = await self.get_mix_account("USDT-FUTURES")
+        return {
+            "available": float(mix.get("available") or 0) if mix else 0.0,
+            "equity": float(mix.get("accountEquity") or 0) if mix else 0.0,
+            "unrealized_pnl": float(mix.get("unrealizedPL") or 0) if mix else 0.0,
+            "unified": False,
+        }
+
+    @staticmethod
+    def _safe_position_float(v) -> float:
+        """Parse a position numeric string or number; return 0.0 on failure."""
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    async def _uta_positions(self) -> list:
+        path = "/api/v3/position/current-position?category=USDT-FUTURES"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget UTA API error: {data.get('msg')}")
+        positions = []
+        for p in (data.get("data") or {}).get("list") or []:
+            try:
+                ctime_ms = int(p.get("cTime") or p.get("openTime") or 0) or None
+            except (TypeError, ValueError):
+                ctime_ms = None
+            positions.append(Position(
+                symbol=p.get("symbol", ""),
+                side=p.get("posSide", ""),
+                quantity=self._safe_position_float(p.get("total")),
+                entry_price=self._safe_position_float(p.get("avgPrice")),
+                unrealized_pnl=self._safe_position_float(p.get("unrealisedPnl")),
+                leverage=int(p.get("leverage") or 0) or None,
+                mark_price=self._safe_position_float(p.get("markPrice")),
+                # Identity fields feed reconciler fingerprints (posId) and
+                # position open-time attribution (cTime) — mirror the v2 mapper.
+                position_id=str(p.get("posId") or p.get("positionId") or p.get("id") or "") or None,
+                ctime_ms=ctime_ms,
+            ))
+        return positions
+
+    async def _uta_place_order(self, order: OrderRequest) -> OrderResponse:
+        import json as _json
+        preset_stop_loss = _validated_preset_protection_price(order.preset_stop_loss_price)
+        preset_take_profit = _validated_preset_protection_price(order.preset_take_profit_price)
+        if (order.market_type != "spot" and order.leverage and order.leverage > 1
+                and not order.hold_side):
+            await self.set_leverage(order.symbol, order.leverage)
+        if order.market_type == "spot":
+            category = "spot"
+            extra = {}
+        else:
+            category = "USDT-FUTURES"
+            extra = {"marginCoin": "USDT", "leverage": str(int(order.leverage)) if (order.leverage and order.leverage > 1) else "1", "marginMode": "crossed"}
+        body_data: dict = {
+            "category": category,
+            "symbol": order.symbol,
+            "side": order.side,
+            "orderType": order.order_type,
+            "qty": str(order.quantity),
+            "timeInForce": "gtc",
+        }
+        body_data.update(extra)
+        if order.market_type != "spot":
+            if order.hold_side:
+                body_data["posSide"] = order.hold_side
+                # UTA v3 API 需要 tradeSide="close" 来标识平仓操作。
+                # 缺失时默认是 "open"，导致出场订单变成开新仓（bug 根因）。
+                body_data["tradeSide"] = "close"
+                # UTA (v3) close requires `side` OPPOSITE the position (close
+                # long = sell, close short = buy) — verified empirically
+                # 2026-07-31 on bitget_demo: side SAME as the position +
+                # tradeSide="close" was resolved by the exchange as an OPEN
+                # (tradeSide=open_short/open_long), doubling the position
+                # instead of closing it. The non-UTA v2 mix path keeps side
+                # SAME as the open side (DECISIONS.md 2026-06-09).
+                body_data["side"] = "sell" if order.hold_side == "long" else "buy"
+            else:
+                body_data["posSide"] = "long" if order.side == "buy" else "short"
+        if order.order_type == "limit" and order.price:
+            body_data["price"] = str(order.price)
+        if order.client_oid:
+            body_data["clientOid"] = str(order.client_oid)
+        if preset_stop_loss is not None:
+            body_data["presetStopLossPrice"] = preset_stop_loss
+        if preset_take_profit is not None:
+            body_data["presetTakeProfitPrice"] = preset_take_profit
+        body = _json.dumps(body_data)
+        headers = self._headers("POST", "/api/v3/trade/place-order", body)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.post(f"{self._base}/api/v3/trade/place-order", content=body, headers=headers)
+            status_code = int(getattr(resp, "status_code", 200) or 0)
+            if status_code >= 500:
+                raise SubmissionResponseUnknownError("Bitget UTA create-order returned a server error")
+            try:
+                data = resp.json()
+            except (ValueError, UnicodeError) as exc:
+                raise SubmissionResponseUnknownError("Bitget UTA create-order acknowledgement was unreadable") from exc
+        if not isinstance(data, dict):
+            raise SubmissionResponseUnknownError("Bitget UTA create-order acknowledgement was not an object")
+        response_code = data.get("code")
+        if not isinstance(response_code, str) or not response_code.strip():
+            raise SubmissionResponseUnknownError("Bitget UTA create-order acknowledgement had no response code")
+        if response_code != "00000":
+            response_message = data.get("msg")
+            if not isinstance(response_message, str) or not response_message.strip():
+                raise SubmissionResponseUnknownError("Bitget UTA create-order acknowledgement was not a recognizable rejection")
+            # Error codes meaning "no open position" are profile-specific: uta_v3
+            # adds 45110 to the classic_v2 set {22002, 25227}. Scope this
+            # classification to hedge-mode closes.
+            if order.hold_side and response_code in profile_close_absent_codes(self.profile):
+                raise ClosePositionAbsentError(
+                    f"Bitget close rejected: no position available (code={response_code})"
+                )
+            raise RuntimeError(f"Bitget order error: {response_message}")
+        response_data = data.get("data")
+        if not isinstance(response_data, dict):
+            raise SubmissionResponseUnknownError("Bitget UTA create-order success acknowledgement had invalid data")
+        raw_order_id = response_data.get("orderId")
+        if not isinstance(raw_order_id, str) or not raw_order_id.strip():
+            raise SubmissionResponseUnknownError("Bitget UTA create-order success acknowledgement had no order id")
+        order_id = raw_order_id.strip()
+        resp_obj = OrderResponse(order_id=order_id, client_oid=response_data.get("clientOid"))
+        if order.market_type != "spot":
+            try:
+                detail = await self._uta_order_detail(order_id, order.symbol)
+            except Exception:
+                detail = None
+            if detail:
+                self._apply_fill_detail(resp_obj, detail)
+        return resp_obj
+
+    async def close_uta_position(self, *, symbol: str, pos_side: str) -> dict:
+        """Whole-position UTA flash close for one symbol and side.
+
+        ``symbol`` and ``pos_side`` are required so this cannot flatten the
+        rest of the book. Bitget ``POST /api/v3/trade/close-positions`` with
+        only ``category`` would close every USDT-futures position.
+        """
+        import json as _json
+
+        side = str(pos_side or "").strip().lower()
+        if side not in {"long", "short"}:
+            raise ValueError("close_uta_position requires pos_side long or short")
+        exchange_symbol = to_bitget(str(symbol or "").strip())
+        if not exchange_symbol:
+            raise ValueError("close_uta_position requires a symbol")
+        body_data = {
+            "category": "USDT-FUTURES",
+            "symbol": exchange_symbol,
+            "posSide": side,
+        }
+        body = _json.dumps(body_data)
+        path = "/api/v3/trade/close-positions"
+        headers = self._headers("POST", path, body)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget UTA close-positions error: {data.get('msg')}")
+        return data.get("data") if isinstance(data.get("data"), dict) else {"raw": data.get("data")}
+
+    async def _uta_cancel_order(self, order_id, symbol, market_type):
+        import json as _json
+        body = _json.dumps({"orderId": order_id, "symbol": symbol, "category": "USDT-FUTURES", "marginCoin": "USDT"})
+        path = "/api/v3/trade/cancel-order"
+        headers = self._headers("POST", path, body)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            return {"cancelled": False, "order_id": order_id, "error": data.get("msg", "unknown")}
+        return {"cancelled": True, "order_id": order_id}
+
+    async def _uta_open_orders(self, market_type):
+        path = "/api/v3/trade/unfilled-orders?category=USDT-FUTURES&marginCoin=USDT"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget API error: {data.get('msg')}")
+        return (data.get("data") or {}).get("list") or []
+
+    async def _uta_fills(self, symbol, market_type):
+        category = "spot" if market_type == "spot" else "USDT-FUTURES"
+        path = f"/api/v3/trade/fills?category={category}"
+        if symbol:
+            path += f"&symbol={symbol}"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget API error: {data.get('msg')}")
+        return (data.get("data") or {}).get("list") or []
+
+    async def _uta_exact_fills(self, order_id: str) -> list[dict]:
+        path = f"/api/v3/trade/fills?category=USDT-FUTURES&orderId={order_id}"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            payload = resp.json()
+        if payload.get("code") != "00000":
+            raise RuntimeError("Bitget UTA exact private fill history rejected")
+        data = payload.get("data")
+        if data is None:
+            rows = []
+        elif isinstance(data, dict):
+            rows = data.get("list")
+            if rows is None:
+                rows = data.get("fillList")
+            if rows is None:
+                rows = []
+        else:
+            rows = data
+        if not isinstance(rows, list):
+            raise ValueError("Bitget UTA exact private fill history malformed")
+        return [
+            row for row in rows
+            if isinstance(row, dict) and str(row.get("orderId") or "") == order_id
+        ]
+
+    async def _uta_order_history_row(self, order_id: str, symbol: str) -> dict | None:
+        path = (
+            "/api/v3/trade/history-orders?category=USDT-FUTURES"
+            f"&symbol={symbol}&limit=50"
+        )
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            payload = resp.json()
+        if payload.get("code") != "00000":
+            raise RuntimeError("Bitget UTA order history rejected")
+        rows = ((payload.get("data") or {}).get("list") or [])
+        for row in rows:
+            if isinstance(row, dict) and str(row.get("orderId") or "") == order_id:
+                return row
+        return None
+
+    async def _uta_set_leverage(self, exchange_symbol, leverage):
+        import json as _json
+        path = "/api/v3/account/set-leverage"
+        body_data = {
+            "symbol": exchange_symbol,
+            "category": "USDT-FUTURES",
+            "marginCoin": "USDT",
+            "leverage": str(int(leverage)),
+            "posSide": "long",
+        }
+        body = _json.dumps(body_data)
+        headers = self._headers("POST", path, body)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget UTA set-leverage failed: {data.get('msg')}")
+
+    async def _uta_order_detail(self, order_id, symbol, market_type="usdt_futures"):
+        """Fetch UTA order fill state.
+
+        The v3 /trade/fills endpoint returns FILL records (fillPx, fillSz,
+        fillFee) — not the order-detail shape _apply_fill_detail expects
+        (state, priceAvg, baseVolume).  We translate the first fill row into
+        that shape so the existing _apply_fill_detail mapper works unchanged.
+
+        UTA fills are terminal by construction (the endpoint only returns rows
+        for fills that landed), so any returned row means at least partially
+        filled.
+        """
+        category = "spot" if market_type == "spot" else "USDT-FUTURES"
+        path = f"/api/v3/trade/fills?category={category}&orderId={order_id}"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            return None
+        lst = (data.get("data") or {}).get("list") or []
+        if not lst:
+            return None
+        fill = lst[0]
+        # Translate fill-record fields → order-detail shape for _apply_fill_detail.
+        return {
+            "state": "filled",  # a returned fill row means the fill landed
+            "priceAvg": fill.get("fillPx") or fill.get("priceAvg"),
+            "baseVolume": fill.get("fillSz") or fill.get("baseVolume"),
+            "accBaseVolume": fill.get("accFillSz") or fill.get("accBaseVolume") or fill.get("fillSz"),
+            "filledQty": fill.get("fillSz") or fill.get("filledQty"),
+            "fillFee": fill.get("fillFee"),
+            "fillFeeCurrency": fill.get("feeCcy") or fill.get("fillFeeCurrency"),
+        }
+
+    async def _uta_place_tpsl(self, symbol, plan_type, trigger_price, hold_side, size, execute_price, client_oid):
+        import json as _json
+        body_data: dict = {
+            "category": "USDT-FUTURES",
+            "symbol": symbol,
+            "posSide": hold_side,
+            "type": "tpsl",
+        }
+        if plan_type in ("pos_profit", "profit_plan"):
+            body_data["takeProfit"] = str(trigger_price)
+        else:
+            body_data["stopLoss"] = str(trigger_price)
+        if execute_price is not None:
+            body_data["slLimitPrice"] = str(execute_price)
+        if client_oid:
+            body_data["clientOid"] = client_oid
+        body = _json.dumps(body_data)
+        path = "/api/v3/trade/place-strategy-order"
+        headers = self._headers("POST", path, body)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            raise RuntimeError(f"Bitget UTA place_tpsl_order error: {data.get('msg')}")
+        return data.get("data", {}).get("orderId", "")
+
+    async def _uta_cancel_plan(self, symbol, order_id):
+        import json as _json
+        body = _json.dumps({"orderId": order_id, "symbol": symbol, "category": "USDT-FUTURES", "marginCoin": "USDT"})
+        path = "/api/v3/trade/cancel-strategy-order"
+        headers = self._headers("POST", path, body)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.post(f"{self._base}{path}", content=body, headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            return {"cancelled": False, "order_id": order_id, "error": data.get("msg", "unknown")}
+        return {"cancelled": True, "order_id": order_id}
+
+    async def _uta_pending_plans(self, symbol):
+        path = "/api/v3/trade/orders-plan-pending?category=USDT-FUTURES"
+        if symbol:
+            path += f"&symbol={symbol}"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            return []
+        return (data.get("data") or {}).get("list") or []
+
+    async def _uta_plan_history(self, symbol, order_id):
+        path = "/api/v3/trade/orders-plan-history?category=USDT-FUTURES"
+        if symbol:
+            path += f"&symbol={symbol}"
+        if order_id:
+            path += f"&orderId={order_id}"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{self._base}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") != "00000":
+            return []
+        return (data.get("data") or {}).get("list") or []
+
     async def get_open_orders(self, market_type: str = "spot") -> list[dict]:
         """Get unfilled (open) orders (§19.3)."""
         if market_type == "spot":
@@ -778,6 +1172,8 @@ class BitgetClient:
         symbol = str(symbol or "").strip()
         if not order_id or not symbol:
             raise ValueError("exact Bitget fill query requires order_id and symbol")
+        if self.profile == "uta_v3":
+            return await self._get_order_fills_uta_v3(order_id=order_id, symbol=symbol)
 
         endpoint = "/api/v2/mix/order/fills"
         cursor: str | None = None
@@ -801,21 +1197,41 @@ class BitgetClient:
             data = payload.get("data")
             if not isinstance(data, dict) or not isinstance(data.get("fillList"), list):
                 raise ValueError("Bitget exact private fill history malformed")
-            page = data["fillList"]
-            if any(
-                not isinstance(row, dict)
-                or str(row.get("orderId") or "") != order_id
-                for row in page
-            ):
-                raise ValueError("Bitget exact private fill history mismatched")
+            page = [
+                row for row in data["fillList"]
+                if isinstance(row, dict) and str(row.get("orderId") or "") == order_id
+            ]
             fills.extend(page)
-            if len(page) < 100:
+            if len(data["fillList"]) < 100:
                 return fills
             next_cursor = str(data.get("endId") or "")
             if not next_cursor or next_cursor == cursor:
                 raise RuntimeError("Bitget exact private fill pagination incomplete")
             cursor = next_cursor
         raise RuntimeError("Bitget exact private fill history incomplete")
+
+    async def _get_order_fills_uta_v3(self, *, order_id: str, symbol: str) -> list[dict]:
+        """Fetch fills via UTA v3 /api/v3/trade/fills, filtering to this order_id."""
+        params = {
+            "category": "USDT-FUTURES",
+            "symbol": symbol,
+            "orderId": order_id,
+            "limit": "100",
+        }
+        path = f"/api/v3/trade/fills?{urlencode(params)}"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            response = await client.get(f"{self._base}{path}", headers=headers)
+            payload = response.json()
+        if payload.get("code") != "00000":
+            raise RuntimeError("Bitget UTA exact private fill history rejected")
+        data = payload.get("data") or {}
+        raw = data.get("list") or []
+        return [
+            row for row in raw
+            if isinstance(row, dict) and str(row.get("orderId") or "") == order_id
+        ]
+
 
     async def get_funding_ledger(
         self,
@@ -832,6 +1248,10 @@ class BitgetClient:
             require_retained_history,
         )
 
+        # Funding bills live on the v2 mix account-bill endpoint; the v3 unified
+        # family has no equivalent, so uta_v3 (which has no legacy mix wallet)
+        # fails loud rather than silently query the wrong account view.
+        self._assert_classic_v2("get_funding_ledger")
         expected_mode = "bitget_demo" if self.mode == "demo" else "bitget_live_limited"
         if broker_id != expected_mode:
             raise ValueError("Bitget funding account identity mismatch")
@@ -917,6 +1337,12 @@ class BitgetClient:
             return inconclusive_verified_exit(request, "account_identity_mismatch")
         if request.market_type != "usdt_futures":
             return inconclusive_verified_exit(request, "unsupported_market_type")
+        # Verified exit reads the v2 mix private fill history, which the v3
+        # unified family does not expose — degrade explicitly with a uta_v3
+        # reason so the reconciler knows the gap is a profile limitation, not a
+        # transient query failure.
+        if self.profile != "classic_v2":
+            return inconclusive_verified_exit(request, "uta_v3_private_fill_history_unqualified")
         if not private_history_window_available(request):
             return inconclusive_verified_exit(request, "history_window_unavailable")
 

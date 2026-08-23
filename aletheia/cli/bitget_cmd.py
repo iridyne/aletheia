@@ -13,9 +13,10 @@ def test():
     warn_deprecated("Settings → Credentials (Test connection)")
     from aletheia.config.loader import load_config
     from aletheia.exchanges.bitget.client import BitgetClient
+    from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
 
     cfg = load_config()
-    client = BitgetClient(mode=cfg.exchange.mode)
+    client = BitgetClient(mode=cfg.exchange.mode, profile=configured_bitget_profile())
     result = asyncio.run(client.test_connection())
     if result["connected"]:
         typer.echo(f"✓ Bitget {result['mode']} connection successful")

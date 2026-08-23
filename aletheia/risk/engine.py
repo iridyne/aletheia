@@ -38,6 +38,7 @@ from aletheia.trading.entry_plan import (
     RISK_REWARD_OUTSIDE_ENVELOPE,
     calculate_entry_plan_risk_reward,
     entry_plan_risk_reward_is_plausible,
+    stop_distance_below_min_floor,
 )
 
 logger = logging.getLogger("aletheia.risk.engine")
@@ -903,6 +904,16 @@ def _evaluate_proposal_locked(
                 if not entry_plan_risk_reward_is_plausible(expected_risk_reward):
                     violations.append(RISK_REWARD_OUTSIDE_ENVELOPE)
 
+    if proposal.stop_price and proposal.price:
+        tight_stop = stop_distance_below_min_floor(
+            proposal.price,
+            proposal.stop_price,
+            execution_mode=proposal.execution_mode,
+            cfg=cfg,
+        )
+        if tight_stop:
+            violations.append(tight_stop)
+
     # 3. Live state — fail CLOSED. A *_live_limited order is permitted ONLY when the
     #    live state is the explicit unlocked value ("live_limited", set by human
     #    confirmation). Any other value (default "live_disabled", a typo, or an
@@ -1236,6 +1247,23 @@ def _evaluate_proposal_locked(
                     "max_total_demo_exposure_exceeded:"
                     f"{projected}>{demo_exposure_cap}"
                 )
+
+        # 14b. Exchange-demo entry quality. Live #14 and paper_internal stay
+        # unchanged. Open positions are not closed by these tokens.
+        from aletheia.risk.demo_entry_quality import (
+            collect_demo_entry_quality_violations,
+        )
+        violations.extend(
+            collect_demo_entry_quality_violations(
+                execution_mode=proposal.execution_mode,
+                eligibility=resolved_policy.policy.eligibility,
+                scanner_family=_resolve_proposal_family(proposal),
+                direction=proposal.direction,
+                market_type=getattr(proposal, "market_type", "spot"),
+                symbol=getattr(proposal, "symbol", None),
+            )
+        )
+
 
     # 15. Lesson-based constraints — accepted lessons with actionable recommendations
     #     can impose symbol/direction blocks learned from past failures.

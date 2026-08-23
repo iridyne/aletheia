@@ -3170,11 +3170,18 @@ def list_exhausted_deferred_position_path_buckets(*, limit: int = 2_000) -> list
 
 
 def list_oldest_deferred_position_path_bucket(*, limit: int = 2_000) -> list[dict]:
-    """Return the oldest due bucket for each Position, bounded oldest-first."""
+    """Return the oldest due bucket, at most one queued bucket per Position.
+
+    Open Positions are selected before closed-history recovery. The observer's
+    first cursor does not backfill history, but recovery still enrolls the
+    oldest missing bucket for every closed row. Without this live preference a
+    months-old closed book starves the current open book: one global
+    ``MIN(bucket_open_ms)`` stays on pre-observer closes and never reaches
+    currently open Positions.
+    """
 
     bounded_limit = max(1, min(int(limit), 2_000))
-    rows = get_db().execute(
-        "WITH due AS ("
+    due_sql = (
         "SELECT d.* FROM position_path_observation_deferred_buckets d "
         "WHERE d.attempt_count < ? "
         "AND NOT EXISTS ("
@@ -3182,7 +3189,24 @@ def list_oldest_deferred_position_path_bucket(*, limit: int = 2_000) -> list[dic
         "WHERE earlier.position_id=d.position_id "
         "AND earlier.bucket_open_ms < d.bucket_open_ms"
         ")"
+    )
+    live_rows = get_db().execute(
+        f"WITH due AS ({due_sql}) "
+        "SELECT due.* FROM due "
+        "INNER JOIN positions p ON p.id=due.position_id "
+        "WHERE p.status='open' "
+        "AND due.bucket_open_ms=("
+        "SELECT MIN(due2.bucket_open_ms) FROM due due2 "
+        "INNER JOIN positions p2 ON p2.id=due2.position_id "
+        "WHERE p2.status='open'"
         ") "
+        "ORDER BY due.position_id LIMIT ?",
+        (POSITION_PATH_MAX_RETRY_ATTEMPTS, bounded_limit),
+    ).fetchall()
+    if live_rows:
+        return [dict(row) for row in live_rows]
+    rows = get_db().execute(
+        f"WITH due AS ({due_sql}) "
         "SELECT * FROM due "
         "ORDER BY bucket_open_ms, position_id LIMIT ?",
         (POSITION_PATH_MAX_RETRY_ATTEMPTS, bounded_limit),

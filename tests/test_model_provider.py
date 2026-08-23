@@ -5,8 +5,11 @@ import pytest  # pyright: ignore[reportMissingImports]
 from unittest.mock import patch, AsyncMock
 import json
 
-from aletheia.model_provider.base import ModelRequest, ModelHealth, ModelProvider
-from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+from aletheia.model_provider.base import ModelRequest, ModelHealth, ModelProvider, ProviderResponseError
+from aletheia.model_provider.openai_compatible import (
+    OpenAICompatibleProvider,
+    _extract_chat_completion_text,
+)
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
 from aletheia.model_provider.databricks import DatabricksProvider, _normalize_workspace_url
 from aletheia.model_provider.codex_cli import CodexCLIProvider
@@ -312,6 +315,30 @@ async def test_openai_complete_mock():
         resp = await provider.complete(req)
         assert resp.content == "Hello world"
         assert resp.model == "test"
+
+
+def test_openai_chat_missing_choices_is_provider_response_error():
+    with pytest.raises(ProviderResponseError, match="openai_chat_missing_choices"):
+        _extract_chat_completion_text({"id": "cmpl-glm", "object": "chat.completion"})
+
+
+def test_openai_chat_extracts_legacy_choice_text():
+    assert _extract_chat_completion_text({"choices": [{"text": "plain"}]}) == "plain"
+
+
+@pytest.mark.anyio
+async def test_openai_complete_missing_choices_raises_provider_response_error():
+    provider = OpenAICompatibleProvider(base_url="http://localhost:8000/v1", model="glm-5.2")
+
+    class FakeResponse:
+        status_code = 200
+        is_success = True
+        def raise_for_status(self): pass
+        def json(self): return {"id": "cmpl-glm"}
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=FakeResponse()):
+        with pytest.raises(ProviderResponseError, match="openai_chat_missing_choices"):
+            await provider.complete(ModelRequest(messages=[{"role": "user", "content": "hi"}]))
 
 
 @pytest.mark.anyio

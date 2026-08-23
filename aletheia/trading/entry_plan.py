@@ -12,6 +12,76 @@ OPERATOR_RISK_REWARD_OUTSIDE_ENVELOPE = (
     "invalid_operator_entry_plan_risk_reward:outside_envelope"
 )
 RISK_REWARD_OUTSIDE_ENVELOPE = "entry_plan_risk_reward_outside_envelope"
+STOP_DISTANCE_BELOW_VOL_TARGET = "stop_distance_below_vol_target"
+# Published-sideways demo floor: 1.5% vol_target sits inside a >2% daily range.
+SIDEWAYS_STOP_MULT = 2.0
+
+
+def stop_distance_pct(
+    entry_price: float | None, stop_price: float | None
+) -> float | None:
+    """Absolute stop distance as a percent of entry. ``None`` if undefined."""
+    try:
+        entry = float(entry_price)
+        stop = float(stop_price)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(value) for value in (entry, stop)) or entry <= 0:
+        return None
+    distance = abs(entry - stop)
+    if distance <= 0:
+        return None
+    return (distance / entry) * 100.0
+
+
+def min_stop_distance_pct(*, execution_mode: str | None, cfg) -> float | None:
+    """Exchange-demo floor: stop must be at least ``trading.vol_target_pct``.
+
+    That field is the existing ATR vol-target percent used for sizing, not a
+    new magic number. In a published sideways regime the floor is
+    ``vol_target_pct * SIDEWAYS_STOP_MULT`` (never tighter than the base
+    floor). Live and ``paper_internal`` stay unchanged. ``0`` disables.
+    Unpublished regime is fail-open to the base floor.
+    """
+    from aletheia.risk.demo_entry_quality import (
+        applies_to_execution_mode,
+        load_published_regime,
+    )
+
+    if not applies_to_execution_mode(execution_mode):
+        return None
+    try:
+        floor = float(getattr(getattr(cfg, "trading", None), "vol_target_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(floor) or floor <= 0:
+        return None
+    try:
+        state, _confidence = load_published_regime()
+    except Exception:
+        state = None
+    if str(state or "").lower() == "sideways":
+        widened = floor * SIDEWAYS_STOP_MULT
+        if math.isfinite(widened) and widened > floor:
+            floor = widened
+    return floor
+
+
+def stop_distance_below_min_floor(
+    entry_price: float | None,
+    stop_price: float | None,
+    *,
+    execution_mode: str | None,
+    cfg,
+) -> str | None:
+    """Return a violation token when the stop is tighter than the demo floor."""
+    floor = min_stop_distance_pct(execution_mode=execution_mode, cfg=cfg)
+    distance = stop_distance_pct(entry_price, stop_price)
+    if floor is None or distance is None:
+        return None
+    if distance + 1e-12 < floor:
+        return f"{STOP_DISTANCE_BELOW_VOL_TARGET}:{distance:.4f}<{floor:.4f}"
+    return None
 
 
 def calculate_entry_plan_risk_reward(

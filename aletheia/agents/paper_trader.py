@@ -464,11 +464,40 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     # ranks are temporarily occupied/cooling down. Keep the complete working set.
     candidates = list(workset.scanned_candidates)
 
+    # ── AI Investment Committee enrichment (LLM-powered) ───────────────────
+    try:
+        from aletheia.agents.committee.integration import (
+            committee_direction_conflict_reason,
+            enrich_candidates_parallel,
+        )
+
+        _candidates_to_enrich = [c for c in candidates if not c.get("skip_reason")]
+        if _candidates_to_enrich:
+            _enriched_llm = await enrich_candidates_parallel(
+                _candidates_to_enrich, max_concurrency=8, total_timeout=240.0,
+            )
+            enriched_map = {c.get("opportunity_id"): c for c in _enriched_llm}
+            candidates = [
+                enriched_map.get(c.get("opportunity_id"), c) for c in candidates
+            ]
+            for candidate in candidates:
+                if candidate.get("skip_reason"):
+                    continue
+                conflict = committee_direction_conflict_reason(candidate)
+                if conflict:
+                    candidate["skip_reason"] = conflict
+    except Exception as exc:
+        logger.warning("LLM Committee enrichment skipped: %s", exc)
+
+
     _PERMANENT_SKIP_PREFIXES = (
         "neutral_bias", "confidence_below_", "paused_strategy:", "blocked_factor:",
         "equity_shadow_track", "execution_eligible=False", "universe_not_eligible",
         "ttl_expired", "ttl_invalid", "factor_hard_blocked", "okx_demo_symbol_not_supported",
         "symbol_not_allowed:", "producer_not_authorized", "producer_eligibility_",
+        "regime_confidence_standdown", "regime_sideways_standdown",
+        "family_not_demo_eligible", "reverse_after_stop",
+        "committee_direction_conflict",
     )
     def _is_permanent_skip(candidate: dict) -> bool:
         return bool(

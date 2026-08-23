@@ -76,9 +76,11 @@ class TestConnectionRequest(BaseModel):
 
 @router.post("/bitget/test-connection")
 async def test_connection(req: TestConnectionRequest | None = None):
+    from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+
     cfg = load_config()
     mode = (req.mode if req and req.mode else cfg.exchange.mode)
-    client = BitgetClient(mode=mode)
+    client = BitgetClient(mode=mode, profile=configured_bitget_profile())
     result = await client.test_connection()
     return result
 

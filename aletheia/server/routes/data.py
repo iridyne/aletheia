@@ -1357,6 +1357,47 @@ async def manual_close_position(position_id: str, req: ManualCloseRequest):
     return await asyncio.to_thread(_do_close)
 
 
+class ParkedCloseRecoveryRequest(BaseModel):
+    """Payload for an owner-authorized release of a Bitget 40725-parked close."""
+    reason: str
+
+
+@router.post("/positions/{position_id}/recover-parked-close")
+async def recover_parked_close_position(position_id: str, req: ParkedCloseRecoveryRequest):
+    """Owner-authorized release of a venue_trade_rate_limited pending close.
+
+    The manual close endpoint deliberately refuses to bypass the 40725 park;
+    this is the explicit owner unlock the park's audit message promises. It
+    releases the parked claim only — protective exits retry the close with a
+    fresh close-{id}-rN client order id on their next evaluation. No fill,
+    price, or PnL is fabricated here. Audit records actor='human' and the
+    required operator reason.
+    """
+    _ensure_db()
+    if not (req.reason or "").strip():
+        raise HTTPException(400, {"code": "reason_required", "message": "reason is required"})
+
+    import asyncio
+    from aletheia.execution.pending_close_recovery import release_rate_limited_close_claim
+
+    def _release() -> dict:
+        result = release_rate_limited_close_claim(
+            position_id, actor="human", reason=req.reason
+        )
+        if not result.get("released"):
+            raise HTTPException(
+                409,
+                {
+                    "code": result.get("code", "not_recoverable"),
+                    "position_id": position_id,
+                    "message": "Parked close claim is not in the recoverable 40725-parked state",
+                },
+            )
+        return result
+
+    return await asyncio.to_thread(_release)
+
+
 @router.get("/audit/events")
 def get_audit_events(limit: int = 100):
     _ensure_db()

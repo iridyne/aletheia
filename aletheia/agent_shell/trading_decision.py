@@ -30,6 +30,7 @@ from aletheia.trading.entry_plan import (
     OPERATOR_RISK_REWARD_OUTSIDE_ENVELOPE,
     calculate_entry_plan_risk_reward,
     entry_plan_risk_reward_is_plausible,
+    stop_distance_below_min_floor,
 )
 
 logger = logging.getLogger("aletheia.agent_shell.trading_decision")
@@ -67,6 +68,10 @@ class _DummySchema:
 
 _MIN_CONVICTION_TO_TRADE = 55       # below this, skip (even after debate)
 _DEBATE_RANGE = (40, 80)            # conviction in this range triggers debate
+# Assess/reassess/debate were truncating at the llm_structured default 2048
+# (530 truncated attempts / 34 triple-truncates in a 7d window). Retries scale
+# 1.5× then 2×, so 4096 → 6144 → 8192.
+_OPERATOR_STRUCTURED_MAX_TOKENS = 4096
 _MAX_CONVICTION_MULTIPLIER = 2.0    # cap: 2× base notional at 100% conviction
 _MIN_CONVICTION_MULTIPLIER = 0.5    # floor: 0.5× base notional at low conviction
 _BIAS_BRAKE_WINDOW_HOURS = 24
@@ -81,6 +86,7 @@ _ADVERSE_SKIP_REASON_CODES = {
     "liquidity_or_execution_quality",
     "negative_same_cohort_outcomes",
     "invalid_risk_reward",
+    "rsi_contrary_to_entry",
 }
 
 
@@ -860,6 +866,36 @@ async def evaluate_trading_opportunity(trading_context: dict) -> TradingDecision
     # and the mode's Risk-page per-trade budget. Direct historical/programmatic
     # callers without that authority retain the compatibility sizing path.
     if decision.action in trade_actions and decision.conviction >= _MIN_CONVICTION_TO_TRADE:
+        from aletheia.agent_shell.decision_facts import rsi_contrary_to_entry_refs
+
+        contrary_refs = rsi_contrary_to_entry_refs(decision, trading_context)
+        if contrary_refs:
+            from aletheia.agent_shell.decision_facts import _rsi_short_oversold_floor
+            regime = ((trading_context.get("layer1") or {}).get("regime") or {})
+            decision.filter_trace.append({
+                "filter_name": "operator_rsi_contrary_gate",
+                "stage": "system_operator",
+                "decision": "rejected",
+                "reason_code": "rsi_contrary_to_entry",
+                "inputs": {
+                    "conviction": decision.conviction,
+                    "direction": decision.direction,
+                    "scanner_family": decision.scanner_family,
+                    "fact_refs": contrary_refs,
+                },
+                "parameters": {
+                    "rsi_oversold": _rsi_short_oversold_floor(
+                        execution_mode=str(trading_context.get("execution_mode") or "") or None,
+                        regime_state=regime.get("state"),
+                    ),
+                    "rsi_overbought": 70.0,
+                },
+            })
+            raise DecisionUnavailable(
+                "rsi_contrary_to_entry",
+                stage="operator_contrary_signal_gate",
+                filter_trace=list(decision.filter_trace),
+            )
         decision.filter_trace.append({
             "filter_name": "operator_conviction_gate",
             "stage": "system_operator",
@@ -1469,6 +1505,14 @@ async def prepare_decision_as_proposal(decision: TradingDecision, execution_mode
             stop_price = round(price * (1 - stop_pct / 100.0), 8)
         else:
             stop_price = round(price * (1 + stop_pct / 100.0), 8)
+    tight_stop = stop_distance_below_min_floor(
+        price,
+        stop_price,
+        execution_mode=str(getattr(cfg.exchange, "paper_execution_mode", "") or ""),
+        cfg=cfg,
+    )
+    if tight_stop:
+        _reject_operator_entry_plan(tight_stop, ["stop_price"])
 
     # Commit take-profit + reward:risk before execution. take_profit is the
     # operator's explicit price for parsed model decisions. Programmatic/legacy
@@ -2003,6 +2047,7 @@ async def _assess_opportunity(ctx: dict) -> dict | None:
         provider=get_provider_for_tier("deep"),
         caller="system_operator.assess_opportunity",
         reasoning_effort="none",
+        max_tokens=_OPERATOR_STRUCTURED_MAX_TOKENS,
     )
     if err or result is None:
         logger.warning("LLM assessment failed: %s", err)
@@ -2069,6 +2114,7 @@ async def _reassess_direct_skip(
         provider=get_provider_for_tier("deep"),
         caller="system_operator.reassess_direct_skip",
         reasoning_effort="none",
+        max_tokens=_OPERATOR_STRUCTURED_MAX_TOKENS,
     )
     if err or result is None:
         raise DecisionUnavailable(
@@ -2154,6 +2200,7 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
             provider=_deep_provider,
             caller="system_operator.debate_bull",
             reasoning_effort="none",
+            max_tokens=_OPERATOR_STRUCTURED_MAX_TOKENS,
         ),
         llm_structured(
             system_bear,
@@ -2162,6 +2209,7 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
             provider=_deep_provider,
             caller="system_operator.debate_bear",
             reasoning_effort="none",
+            max_tokens=_OPERATOR_STRUCTURED_MAX_TOKENS,
         ),
     )
     if bull_err or bear_err or not bull_result or not bear_result:
@@ -3075,6 +3123,9 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "for execution. If no durable pending signal is suitable, skip.",
         "- A rank_priority value only orders candidates that already passed upstream "
         "eligibility. Never reject a candidate merely because that value looks low.",
+        "- An AI committee blocked or neutral opinion is advisory, not a veto. A "
+        "committee direction that contradicts the candidate direction is a veto. "
+        "Trade, skip with typed adverse evidence, or let the caller defer.",
         "- Insufficient matured outcomes or missing historical evidence is neutral. It "
         "cannot by itself justify a terminal skip.",
         "- Missing optional telemetry (for example OI delta) is unknown, not zero and not "
@@ -3106,6 +3157,9 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "candidate.risk_flags is non-empty\n"
         "  invalid_risk_reward → reward/risk < 1.0 given your stop_price and "
         "take_profit vs entry price\n"
+        "  rsi_contrary_to_entry → non-mean_reversion short with RSI 15m/14 < 30 "
+        "(or < 40 when exchange-demo and published regime is sideways) "
+        "(oversold bounce risk) or long with RSI 15m/14 > 70 (overbought fade risk)\n"
         "  A claim that does not satisfy its predicate is rejected by the validation gate "
         "and the candidate is deferred, not consumed. Missing optional fields such as "
         "oi_delta_1h or funding_rate are unknown, not adverse — use "

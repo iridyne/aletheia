@@ -19,6 +19,9 @@ remains explicitly unresolved until reconciliation creates the local Fill/Positi
 
 import asyncio
 import logging
+import math
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -60,6 +63,56 @@ _RETRY_SUPPRESSING_ORDER_STATES = (
     "materialization_missing",
 )
 
+_CLOSE_CLIP_MIN_FRACTION = 1.0 / 64.0
+_VENUE_MATCH_CAP_CANCEL_REASONS = frozenset({
+    "trade_too_many_times_cancel",
+    "operator_authorized_cleanup_trade_rate_limited",
+})
+# Marketable-limit fallback bound through the last price once a symbol's demo
+# market path is confirmed broken (XRPUSDT 2026-08-22: every market order at
+# any size — including a 5-unit diagnostic entry — was zero-fill cancelled with
+# trade_too_many_times_cancel while limit orders filled normally).
+_MARKETABLE_LIMIT_TOLERANCE = 0.01
+
+
+def _venue_match_cap_cancel_count(position_id: str) -> int:
+    from aletheia.storage import repositories as repo
+
+    row = repo.get_db().execute(
+        "SELECT COUNT(*) AS n FROM orders "
+        "WHERE position_id = ? AND close_reason IS NOT NULL "
+        "AND status = 'cancelled' AND error_reason IN (?, ?)",
+        (position_id, *_VENUE_MATCH_CAP_CANCEL_REASONS),
+    ).fetchone()
+    return int(row["n"] or 0) if row else 0
+
+
+def _quantize_to_reference_precision(bound: float, reference: float, *, up: bool) -> float:
+    """Quantize a price bound onto the reference price's own tick precision."""
+    text = f"{reference:.10f}".rstrip("0")
+    decimals = len(text.split(".")[1]) if "." in text else 0
+    scale = 10 ** decimals
+    scaled = bound * scale
+    scaled = math.ceil(scaled - 1e-9) if up else math.floor(scaled + 1e-9)
+    return scaled / scale
+
+
+def _quantize_quantity_to_precision(clip: float, reference: float) -> float:
+    """Floor a clip quantity onto the reference quantity's lot precision."""
+    text = f"{reference:.10f}".rstrip("0")
+    decimals = len(text.split(".")[1]) if "." in text else 0
+    scale = 10 ** decimals
+    return math.floor(clip * scale + 1e-9) / scale
+
+
+def _clipped_close_quantity(position_id: str, remaining: float) -> float:
+    """Clip the next close order below sizes the venue has already refused."""
+    clip = float(remaining)
+    for _ in range(_venue_match_cap_cancel_count(position_id)):
+        clip /= 2.0
+    clip = max(clip, remaining * _CLOSE_CLIP_MIN_FRACTION)
+    return round(clip, 8)
+
 
 def _client_mode_for_execution_mode(execution_mode: str) -> str:
     """Map authoritative Order mode to the matching Bitget account."""
@@ -71,10 +124,15 @@ def _client_mode_for_execution_mode(execution_mode: str) -> str:
 
 
 def _configured_bitget_profile() -> str:
-    """Return the configured Bitget profile (classic_v2 | uta_v3) from active config."""
-    from aletheia.config.loader import load_config
+    """Return the configured Bitget profile (classic_v2 | uta_v3).
 
-    return load_config().exchange.bitget_profile
+    Delegates to the shared resolver in ``exchanges.bitget.profile_config`` so
+    every construction site (execution, sync, reconciliation, adapters) reads
+    one source of truth and never drifts apart.
+    """
+    from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+
+    return configured_bitget_profile()
 
 
 def _guard_unresolved_submission(proposal_id: str, execution_mode: str) -> None:
@@ -464,13 +522,74 @@ def close_demo_position(
     hold_side = "long" if is_long else "short"
     # Close `side` mirrors the OPEN side (verified empirically): close long = buy.
     side = "buy" if is_long else "sell"
-    quantity = float(row["quantity"])
+    remaining_quantity = float(row["quantity"])
     exchange_symbol = to_bitget(row["symbol"])
+    order_type = "market"
+    limit_price = None
+    quantity = remaining_quantity
+    match_cap_cancels = _venue_match_cap_cancel_count(position_id)
+    if match_cap_cancels > 0:
+        # The demo venue can break an entire symbol's market path while its
+        # limit path stays healthy (XRPUSDT 2026-08-22). After the first
+        # zero-fill match-cap cancel, submit the close as a marketable GTC
+        # limit: the bound caps price like a market order would, the unfilled
+        # remainder rests, and partial-close materialization converges it —
+        # so the FULL remaining quantity is safe here; clipping is only a
+        # mitigation for runaway market sweeps.
+        try:
+            ticker = _run_coro(client.get_ticker(
+                exchange_symbol, market_type=row["market_type"],
+            ))
+            reference = float(getattr(ticker, "last_price", 0.0) or 0.0)
+            if reference > 0:
+                # The UTA client flips hedge-mode closes to the side OPPOSITE
+                # the position (close short = venue buy), so bound the limit
+                # through the far touch on the venue side, not the broker-side
+                # mirror passed in OrderRequest.side. The bound is quantized
+                # onto the reference price's tick precision — the venue rejects
+                # prices off its tick grid ("multiple of 0.0001").
+                venue_buy = not is_long
+                factor = (
+                    1.0 + _MARKETABLE_LIMIT_TOLERANCE if venue_buy
+                    else 1.0 - _MARKETABLE_LIMIT_TOLERANCE
+                )
+                limit_price = _quantize_to_reference_precision(
+                    reference * factor, reference, up=not venue_buy,
+                )
+                order_type = "limit"
+                logger.info(
+                    "marketable-limit Bitget close for %s at %s covering %s "
+                    "remaining (last=%s, market path venue-cancelled previously)",
+                    position_id, limit_price, remaining_quantity, reference,
+                )
+        except Exception as exc:
+            logger.warning(
+                "marketable-limit pricing unavailable for %s close; falling "
+                "back to clipped market order: %s", position_id, exc,
+            )
+    if order_type == "market" and match_cap_cancels > 0:
+        # Market fallback on a venue with match-cap history: clip below sizes
+        # the venue has already refused, lot-quantized like the venue floors.
+        # The claimed Order row was written with the full remaining quantity;
+        # align it with the clip actually submitted so materialization's
+        # order-completeness check compares against the real clip.
+        quantity = _quantize_quantity_to_precision(
+            _clipped_close_quantity(position_id, remaining_quantity),
+            remaining_quantity,
+        )
+        if quantity < remaining_quantity:
+            with transaction():
+                update_order(close_order["id"], quantity=quantity)
+            logger.info(
+                "clipped Bitget close for %s: submitting %s of %s remaining "
+                "(venue match-cap cancel history)",
+                position_id, quantity, remaining_quantity,
+            )
 
     try:
         order_resp = _run_coro(client.place_order(OrderRequest(
             symbol=exchange_symbol, market_type=row["market_type"], side=side,
-            order_type="market", quantity=quantity,
+            order_type=order_type, quantity=quantity, price=limit_price,
             client_oid=f"close-{position_id}",
             hold_side=hold_side,
         )))
