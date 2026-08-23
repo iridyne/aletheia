@@ -5,8 +5,8 @@ RiskDecision, entry/close Orders and Fills, Position, and Outcome state must all
 be produced by their production entry points against the isolated e2e SQLite DB.
 """
 
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
 
 import pytest
 

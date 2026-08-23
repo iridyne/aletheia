@@ -11,8 +11,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
-import time
 import urllib.request
 import uuid
 import xml.etree.ElementTree as ET

@@ -8,16 +8,17 @@ transient capacity/rate-limit failure (429/502/503/504, "at capacity", etc.).
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, asdict
 import logging
 import threading
 import time
+from dataclasses import asdict, dataclass
 from typing import Any
 
 import httpx
 
 from aletheia.config.loader import load_config
 from aletheia.infra.events import emit_infra_event
+from aletheia.model_provider import router as provider_router
 from aletheia.model_provider.base import ModelProvider, ModelRequest, ModelResponse
 from aletheia.model_provider.broker import (
     InferenceBrokerClosed,
@@ -28,7 +29,6 @@ from aletheia.model_provider.broker import (
     InferenceTimeout,
     brokered_complete,
 )
-from aletheia.model_provider import router as provider_router
 
 logger = logging.getLogger("aletheia.model_provider.fallback")
 
@@ -221,9 +221,10 @@ def _observe_would_block(
 
         if not tracing_enabled():
             return
+        from datetime import datetime, timezone
+
         from aletheia.economics.budgets import check_would_block
         from aletheia.economics.tracing import resolve_pricing_snapshot
-        from datetime import datetime, timezone
 
         model = str(getattr(provider, "model", "") or "")
         if not model:

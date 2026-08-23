@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -52,6 +51,7 @@ def _setup_env(tmp_path: Path, monkeypatch) -> None:
     # before it updates the position — an order-dependent failure. Pinning avoids
     # both that and a flaky live refresh (bitget/binance params ignore this cache).
     import time as _time
+
     import aletheia.execution.okx_broker as _okxb
     _okxb._okx_demo_symbols = {
         "swap": frozenset({"BTC/USDT", "ETH/USDT"}),
@@ -386,8 +386,9 @@ def test_replace_exchange_protective_stop_binance_logs_and_skips(
 
     position_id = _make_open_position(execution_mode="binance_testnet")
 
-    from aletheia.execution.stops import replace_exchange_protective_stop
     import logging
+
+    from aletheia.execution.stops import replace_exchange_protective_stop
 
     with caplog.at_level(logging.WARNING, logger="aletheia.execution.stops"):
         assert replace_exchange_protective_stop(position_id, 97.5) is False

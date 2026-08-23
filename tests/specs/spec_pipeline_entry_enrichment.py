@@ -28,9 +28,9 @@ from tests.execution_authority import seed_order_authority
 from tests.specs.spec_meta import SpecClaim, spec_claim
 from tests.specs.spec_pipeline_stop_propagation import (
     _BROKERS,
+    _materialize_exchange_result,
     _patch_filled_place_order,
     _patch_private_fill_history,
-    _materialize_exchange_result,
     _setup_db,
     _stub_exchange_secrets,
 )
@@ -161,9 +161,9 @@ def test_gateway_persists_decision_reasoning(tmp_path, monkeypatch):
     _patch_enrichment_lookups(monkeypatch)
 
     from aletheia.execution.gateway import submit_proposal
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.models import MarketSnapshot
     from aletheia.storage.repositories import insert_market_snapshot
+    from aletheia.storage.sqlite import get_db
 
     rationale = "ENRICH-TEST: momentum breakout, ADX rising, regime risk_on"
     insert_market_snapshot(MarketSnapshot(symbol="ETH/USDT", market_type="usdt_futures", price=1551.57))
@@ -231,9 +231,9 @@ def test_close_routes_through_exchange(
     )
     _patch_enrichment_lookups(monkeypatch)
 
+    from aletheia.portfolio.position_manager import close_position_routed
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
-    from aletheia.portfolio.position_manager import close_position_routed
 
     broker = __import__(broker_path, fromlist=["execute_live_order"])
     proposal_id = f"p-close-{label}"
@@ -305,10 +305,10 @@ def test_router_refuses_autonomous_live_close(tmp_path, monkeypatch):
     )
     _patch_enrichment_lookups(monkeypatch)
 
+    from aletheia.execution.okx_broker import execute_live_order
+    from aletheia.portfolio.position_manager import close_position_routed
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
-    from aletheia.portfolio.position_manager import close_position_routed
-    from aletheia.execution.okx_broker import execute_live_order
 
     seed_order_authority(
         proposal_id="p-live-guard",

@@ -17,7 +17,6 @@ import logging
 import shutil
 
 from aletheia.gateway.logs import redact_log_text
-from aletheia.model_provider.cli_harness import run_cli
 from aletheia.model_provider.base import (
     ModelHealth,
     ModelProvider,
@@ -26,6 +25,7 @@ from aletheia.model_provider.base import (
     StructuredModelRequest,
     model_json_schema_payload,
 )
+from aletheia.model_provider.cli_harness import run_cli
 
 logger = logging.getLogger("aletheia.model_provider.claude_cli")
 

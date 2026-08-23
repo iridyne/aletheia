@@ -5,11 +5,13 @@ admission; market_observer adds structured advisory context; paper_trader skips
 neutral and low-confidence signals while preserving lifecycle evidence.
 """
 
-from datetime import datetime, timedelta, timezone
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
-from aletheia.storage.sqlite import reset_db
+from aletheia.agent_runtime.orchestrator import run_agent
+from aletheia.agent_runtime.tool_registry import init_tool_registry
+from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import (
     MarketSnapshot,
@@ -18,9 +20,7 @@ from aletheia.storage.models import (
     UniverseMember,
     UniverseSnapshot,
 )
-from aletheia.storage import repositories as repo
-from aletheia.agent_runtime.tool_registry import init_tool_registry
-from aletheia.agent_runtime.orchestrator import run_agent
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -145,8 +145,9 @@ def _seed_admitted_opportunity(
 
 async def test_llm_structured_degrades_gracefully(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agents.helpers import llm_structured
     from pydantic import BaseModel
+
+    from aletheia.agents.helpers import llm_structured
 
     class Schema(BaseModel):
         direction_bias: str = "neutral"

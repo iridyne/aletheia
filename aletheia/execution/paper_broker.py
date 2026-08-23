@@ -1,20 +1,20 @@
 """Paper broker — simulates order fills for paper/demo trading."""
 
-from typing import Any
 import json
 import math
 from datetime import datetime, timezone
+from typing import Any
 
-from aletheia.storage.models import Order, Fill, Position
+from aletheia.execution.position_enrichment import liquidation_price_for as _liq_price
+from aletheia.storage.models import Fill, Order, Position
 from aletheia.storage.repositories import (
     find_compatible_open_position,
-    insert_order,
-    update_order,
     insert_fill,
+    insert_order,
     insert_position,
+    update_order,
     update_position,
 )
-from aletheia.execution.position_enrichment import liquidation_price_for as _liq_price
 
 
 def _apply_slippage(price: float, direction: str, slippage_bps: float) -> float:
@@ -307,10 +307,10 @@ def _materialize_paper_entry(
             insert_position(position)
             position_id = position.id
             if execution_mode == "paper_internal":
+                from aletheia.portfolio.paper_account import record_position_opened
                 from aletheia.portfolio.protective_barrier import (
                     activate_new_paper_position,
                 )
-                from aletheia.portfolio.paper_account import record_position_opened
 
                 # When the approved entry has a resolved protective level, the
                 # Position, first immutable ExitPlan, protection cursor and paper

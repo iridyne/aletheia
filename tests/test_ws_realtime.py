@@ -89,7 +89,7 @@ def _fake_fingerprints(queries):
 
 
 def test_ws_ticket_issuance_and_single_use():
-    from aletheia.server.routes.ws import _issue_ws_ticket, _consume_ws_ticket
+    from aletheia.server.routes.ws import _consume_ws_ticket, _issue_ws_ticket
 
     ticket = _issue_ws_ticket()
     assert len(ticket) > 20
@@ -99,7 +99,6 @@ def test_ws_ticket_issuance_and_single_use():
 
 
 def test_ws_ticket_expiry(monkeypatch):
-    import time as _time
     from aletheia.server.routes import ws as ws_routes
 
     monkeypatch.setattr(ws_routes, "_WS_TICKET_TTL", -1)  # already expired
@@ -109,8 +108,9 @@ def test_ws_ticket_expiry(monkeypatch):
 
 def test_ws_rejected_without_ticket_when_auth_required(monkeypatch):
     from fastapi.testclient import TestClient
-    import aletheia.server.routes.ws as ws_routes
+
     import aletheia.server.app as app_module
+    import aletheia.server.routes.ws as ws_routes
 
     monkeypatch.setattr(ws_routes, "_ws_remote_auth_required", lambda: True)
 
@@ -122,8 +122,9 @@ def test_ws_rejected_without_ticket_when_auth_required(monkeypatch):
 
 def test_ws_rejected_with_invalid_ticket_when_auth_required(monkeypatch):
     from fastapi.testclient import TestClient
-    import aletheia.server.routes.ws as ws_routes
+
     import aletheia.server.app as app_module
+    import aletheia.server.routes.ws as ws_routes
 
     monkeypatch.setattr(ws_routes, "_ws_remote_auth_required", lambda: True)
 
@@ -148,8 +149,9 @@ class _NoopHub:
 
 def test_ws_accepted_with_valid_ticket_when_auth_required(monkeypatch):
     from fastapi.testclient import TestClient
-    import aletheia.server.routes.ws as ws_routes
+
     import aletheia.server.app as app_module
+    import aletheia.server.routes.ws as ws_routes
 
     monkeypatch.setattr(ws_routes, "_ws_remote_auth_required", lambda: True)
     monkeypatch.setattr(ws_routes, "_run_fingerprints", _fake_fingerprints)
@@ -166,8 +168,9 @@ def test_ws_accepted_with_valid_ticket_when_auth_required(monkeypatch):
 
 def test_ws_ticket_single_use_via_connection(monkeypatch):
     from fastapi.testclient import TestClient
-    import aletheia.server.routes.ws as ws_routes
+
     import aletheia.server.app as app_module
+    import aletheia.server.routes.ws as ws_routes
 
     monkeypatch.setattr(ws_routes, "_ws_remote_auth_required", lambda: True)
     monkeypatch.setattr(ws_routes, "_run_fingerprints", _fake_fingerprints)
@@ -187,8 +190,9 @@ def test_ws_ticket_single_use_via_connection(monkeypatch):
 
 def test_ws_accepted_without_ticket_in_local_mode(monkeypatch):
     from fastapi.testclient import TestClient
-    import aletheia.server.routes.ws as ws_routes
+
     import aletheia.server.app as app_module
+    import aletheia.server.routes.ws as ws_routes
 
     monkeypatch.setattr(ws_routes, "_ws_remote_auth_required", lambda: False)
     monkeypatch.setattr(ws_routes, "_run_fingerprints", _fake_fingerprints)
@@ -203,6 +207,7 @@ def test_ws_accepted_without_ticket_in_local_mode(monkeypatch):
 def test_ws_ticket_endpoint_requires_owner_auth_when_remote_auth_active(monkeypatch):
     """GET /api/ws/ticket is behind HTTP auth when remote auth is active."""
     from fastapi.testclient import TestClient
+
     import aletheia.config.secrets as secret_store
     import aletheia.server.app as app_module
 

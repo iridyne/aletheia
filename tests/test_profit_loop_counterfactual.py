@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-import aletheia.analytics.profit_loop_counterfactual as counterfactual
 import pytest
+
+import aletheia.analytics.profit_loop_counterfactual as counterfactual
 from aletheia.storage.proposal_hypothesis import evaluate_hypothesis_prefix
 
 
@@ -345,6 +346,7 @@ def test_registry_rejects_mismatched_behavior_fingerprint():
 
 def test_registry_rejects_wrong_registry_hash_duplicate_and_shortened_epoch():
     import json
+
     from aletheia.storage.sqlite import get_db
 
     db = get_db()

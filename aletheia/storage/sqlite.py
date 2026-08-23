@@ -1,8 +1,5 @@
 """SQLite connection management and process-local write serialization."""
 
-from concurrent.futures import Future
-from contextlib import contextmanager
-from dataclasses import dataclass
 import logging
 import os
 import queue
@@ -10,6 +7,9 @@ import re
 import sqlite3
 import threading
 import time
+from concurrent.futures import Future
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, TypeVar
 

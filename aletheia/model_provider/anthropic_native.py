@@ -4,7 +4,6 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 
-from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.base import (
     ModelHealth,
     ModelProvider,
@@ -14,6 +13,7 @@ from aletheia.model_provider.base import (
     StructuredModelRequest,
     model_json_schema_payload,
 )
+from aletheia.net import httpx_client, raise_for_status_without_secrets
 
 BASE_URL = "https://api.anthropic.com"
 API_VERSION = "2023-06-01"

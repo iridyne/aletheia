@@ -15,7 +15,6 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean, median
 from typing import Any
 
-
 _COUNT_KEYS = (
     "opportunities_created",
     "open_opportunities",

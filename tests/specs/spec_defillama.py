@@ -12,7 +12,6 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -144,9 +143,10 @@ def test_defillama_stablecoin_total_usd():
     assert _FIXTURE_STABLE.exists(), f"Fixture missing: {_FIXTURE_STABLE}"
     raw = json.loads(_FIXTURE_STABLE.read_text(encoding="utf-8"))
 
-    from aletheia.data.collectors.defillama import _fetch_stablecoin_mcap
-    import aletheia.data.collectors.defillama as mod
     from datetime import datetime, timezone
+
+    import aletheia.data.collectors.defillama as mod
+    from aletheia.data.collectors.defillama import _fetch_stablecoin_mcap
 
     now = datetime.now(timezone.utc).isoformat()
 
@@ -211,8 +211,8 @@ def test_defillama_db_write_three_rows(tmp_path, monkeypatch):
 
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
     from aletheia.storage import migrations as mig
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
 
@@ -289,8 +289,8 @@ def test_defillama_one_endpoint_failure_isolated(tmp_path, monkeypatch):
 
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
     from aletheia.storage import migrations as mig
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
 
@@ -371,8 +371,8 @@ async def test_defillama_live_e2e(tmp_path, monkeypatch):
 
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
     from aletheia.storage import migrations as mig
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
 

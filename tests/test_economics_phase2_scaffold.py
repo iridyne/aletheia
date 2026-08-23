@@ -19,7 +19,6 @@ import pytest
 from aletheia.config.schema import AletheiaConfig, EconomicsConfig
 from aletheia.economics.schema import ensure_economics_schema
 
-
 # ── EconomicsConfig defaults ─────────────────────────────────────────────────
 
 

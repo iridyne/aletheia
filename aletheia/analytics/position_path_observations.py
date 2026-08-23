@@ -7,14 +7,14 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from aletheia.storage import repositories as repo
-from aletheia.portfolio.position_path_observer import (
-    expected_position_path_bucket_bounds,
-)
 from aletheia.analytics.outcome_integrity import (
     assess_reportable_outcome,
     validated_funding_economics,
 )
+from aletheia.portfolio.position_path_observer import (
+    expected_position_path_bucket_bounds,
+)
+from aletheia.storage import repositories as repo
 
 
 def _finite(value: object) -> float | None:

@@ -6,10 +6,10 @@ their separate broker-ledger requirement and are deliberately out of scope.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -983,12 +983,13 @@ def test_paper_broker_funding_failure_overwrites_stale_position_economics(
     tmp_path, monkeypatch, failure_mode,
 ):
     _setup_db(tmp_path, monkeypatch)
+    from types import SimpleNamespace
+
     from aletheia.execution import paper_broker
     from aletheia.portfolio.local_funding import LocalFundingResult
     from aletheia.portfolio.paper_account import record_position_opened
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
-    from types import SimpleNamespace
 
     position = Position(
         id=f"position-broker-{failure_mode}",

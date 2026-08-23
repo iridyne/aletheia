@@ -40,7 +40,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import platform
 import shutil
 import subprocess
 import sys
@@ -272,7 +271,6 @@ class LocalFeedServer(AbstractContextManager["LocalFeedServer"]):
 
 def _release_id_from_archive(archive: Path) -> str:
     from scripts.release import sign_update_feed
-    from scripts.release import build_packaged_runtime as rb
 
     manifest = sign_update_feed._load_manifest(archive)  # noqa: SLF001
     version = str(manifest["version"])

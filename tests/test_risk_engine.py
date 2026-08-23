@@ -1,16 +1,15 @@
 """Tests for Risk Engine + Paper Broker + Execution Gateway."""
 
-import pytest
-import json
-from unittest.mock import patch
 
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
-from aletheia.storage.models import RiskDecision, TradeProposal
-from aletheia.storage import repositories as repo
-from aletheia.risk.engine import evaluate_proposal
+import pytest
+
 from aletheia.execution.gateway import submit_proposal
 from aletheia.execution.paper_broker import execute_paper_order
+from aletheia.risk.engine import evaluate_proposal
+from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.models import RiskDecision, TradeProposal
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_test_env(tmp_path, monkeypatch):

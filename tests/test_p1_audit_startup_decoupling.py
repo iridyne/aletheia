@@ -8,10 +8,8 @@ Tests:
 """
 from __future__ import annotations
 
-import json
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -84,7 +82,7 @@ def test_write_audit_waits_for_lock_and_preserves_record(tmp_path):
 
 def test_write_audit_succeeds_normally_without_contention(tmp_path):
     """write_audit must still work correctly when the lock is uncontested."""
-    from aletheia.files.jsonl import write_audit, verify_audit_chain
+    from aletheia.files.jsonl import verify_audit_chain, write_audit
 
     ok = write_audit({"event_type": "gateway_started", "timestamp": "2026-01-01T00:00:00"})
     assert ok is True

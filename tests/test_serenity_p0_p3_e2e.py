@@ -9,9 +9,8 @@ These tests exercise the actual code paths (not just source-string assertions):
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
 
 def _seed_promoted_serenity_opportunity(
@@ -50,7 +49,7 @@ class TestP0AutoPromote:
     def _setup_db_with_opps(self, score: int = 80):
         """Seed DB with a theme + opportunity that will score `score`."""
         from aletheia.storage import repositories as repo
-        from aletheia.storage.models import SerenityTheme, SerenityOpportunity, SerenityEvidence
+        from aletheia.storage.models import SerenityEvidence, SerenityOpportunity, SerenityTheme
 
         theme = SerenityTheme(name="Test auto-promote chain", status="active")
         repo.insert_serenity_theme(theme)
@@ -169,7 +168,7 @@ class TestP1ThesisInvalidation:
     def _make_serenity_position(self, opp_status="active"):
         """Create a serenity position + linked opportunity with given status."""
         from aletheia.storage import repositories as repo
-        from aletheia.storage.models import SerenityTheme, SerenityOpportunity
+        from aletheia.storage.models import SerenityOpportunity, SerenityTheme
 
         theme = SerenityTheme(name="Thesis test", status="active")
         repo.insert_serenity_theme(theme)
@@ -243,7 +242,7 @@ class TestP1ThesisInvalidation:
     def test_dismiss_cascade_marks_child_opps(self):
         """When a theme is dismissed, its active opps are also set to 'dismissed'."""
         from aletheia.storage import repositories as repo
-        from aletheia.storage.models import SerenityTheme, SerenityOpportunity
+        from aletheia.storage.models import SerenityOpportunity, SerenityTheme
 
         theme = SerenityTheme(name="Cascade test", status="active")
         repo.insert_serenity_theme(theme)
@@ -284,7 +283,8 @@ class TestPendingSignalDirectMatch:
         """A serenity pending_signal with opportunity_id is matched even when
         layer3 serenity_opportunities is empty (simulating limit=5 truncation)."""
         from aletheia.agent_shell.trading_decision import (
-            TradingDecision, _attach_opportunity_context,
+            TradingDecision,
+            _attach_opportunity_context,
         )
 
         decision = TradingDecision(
@@ -316,7 +316,8 @@ class TestPendingSignalDirectMatch:
     def test_pending_signal_authority_wins_over_unqueued_market_observer(self):
         """A durable pending carrier outranks an analysis-only open opportunity."""
         from aletheia.agent_shell.trading_decision import (
-            TradingDecision, _attach_opportunity_context,
+            TradingDecision,
+            _attach_opportunity_context,
         )
 
         decision = TradingDecision(
@@ -354,7 +355,8 @@ class TestPendingSignalDirectMatch:
     def test_pending_signal_without_opportunity_id_skipped(self):
         """A pending_signal with no opportunity_id is skipped (honest None)."""
         from aletheia.agent_shell.trading_decision import (
-            TradingDecision, _attach_opportunity_context,
+            TradingDecision,
+            _attach_opportunity_context,
         )
 
         decision = TradingDecision(
@@ -445,7 +447,7 @@ class TestP2XStocksExecution:
         """Seed a serenity opp with equity_tradeable, build context, verify
         it appears in layer3 as execution_eligible=True."""
         from aletheia.storage import repositories as repo
-        from aletheia.storage.models import SerenityTheme, SerenityOpportunity
+        from aletheia.storage.models import SerenityOpportunity, SerenityTheme
 
         theme = SerenityTheme(name="xStock test", status="active")
         repo.insert_serenity_theme(theme)
@@ -465,11 +467,8 @@ class TestP2XStocksExecution:
 
         # Now exercise the same logic as trading_context Layer 3
         from aletheia.storage.repositories import (
-            list_serenity_evidence,
             list_serenity_opportunities,
-            list_serenity_risk_gates,
         )
-        from aletheia.trading.serenity_scoring import score_serenity_opportunity
 
         opps = list_serenity_opportunities(status="active", limit=10)
         found = [o for o in opps if o["id"] == opp.id]
@@ -539,6 +538,7 @@ class TestP3FlowContextBlock:
     def test_flow_block_empty_when_no_data(self):
         """Without recent data, returns empty string."""
         from aletheia.agents.research_worker import _get_flow_context_block
+
         # DB exists but no recent rows (all older than 4h or empty)
         # The autouse fixture gives us a clean DB, so this should be empty
         from aletheia.storage.sqlite import get_db
@@ -606,7 +606,7 @@ class TestSerenityFeedbackLoop:
         """Create a serenity position with linked opportunity, ready to close."""
         from aletheia.portfolio.paper_account import record_position_opened
         from aletheia.storage import repositories as repo
-        from aletheia.storage.models import Position, SerenityTheme, SerenityOpportunity
+        from aletheia.storage.models import Position, SerenityOpportunity, SerenityTheme
         from tests.test_outcome_closure import _insert_entry_chain
 
         theme = SerenityTheme(name="Feedback loop test", status="promoted")
@@ -708,8 +708,8 @@ class TestSerenityFeedbackLoop:
     def test_close_short_term_position_no_post_mortem(self):
         """Non-serenity positions do NOT write PostMortem (no pollution)."""
         from aletheia.storage import repositories as repo
-        from aletheia.storage.sqlite import get_db
         from aletheia.storage.models import new_id
+        from aletheia.storage.sqlite import get_db
 
         pos_id = new_id()
         db = get_db()

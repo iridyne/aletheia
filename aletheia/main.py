@@ -2,8 +2,9 @@
 
 import atexit
 import sys
-import typer
 from pathlib import Path
+
+import typer
 
 # Windows: enforce SelectorEventLoop before any CLI command calls asyncio.run()
 # (doctor / data backfill / model probe / bitget sync, etc.). See §17 in
@@ -12,35 +13,37 @@ from aletheia.async_utils import apply_windows_selector_policy
 
 apply_windows_selector_policy()
 
-from aletheia.cli.gateway import gateway_app
-from aletheia.cli.model import model_app
-from aletheia.cli.permission import permission_app
-from aletheia.cli.secrets_cmd import secrets_app
-from aletheia.cli.bitget_cmd import bitget_app
-from aletheia.cli.risk_cmd import risk_app
-from aletheia.cli.update_cmd import update_app
-from aletheia.cli.runtime_cmd import runtime_app
-from aletheia.cli.knowledge_cmd import knowledge_app
-from aletheia.cli.guard_cmd import guard_app
-from aletheia.cli.doctor_cmd import doctor_app
-from aletheia.cli.audit_cmd import audit_app
-from aletheia.cli.install import install as _run_install, uninstall as _run_uninstall, _is_interactive
-from aletheia.cli.operator import agent_app
-from aletheia.cli.tunnel import tunnel_app
-from aletheia.cli.inspect_cmd import inspect_app
-from aletheia.cli.data_cmd import data_app
-from aletheia.cli.exchange_cmd import exchange_app
-from aletheia.cli.network_cmd import network_app
 from aletheia.cli.alpha import alpha_app
-from aletheia.cli.opportunity import opportunity_app
+from aletheia.cli.audit_cmd import audit_app
+from aletheia.cli.bitget_cmd import bitget_app
+from aletheia.cli.control_cmd import control_app
+from aletheia.cli.data_cmd import data_app
+from aletheia.cli.dev import dev_app
+from aletheia.cli.doctor_cmd import doctor_app
+from aletheia.cli.evidence_cmd import evidence_app
+from aletheia.cli.exchange_cmd import exchange_app
 from aletheia.cli.flow import flow_app
 from aletheia.cli.funnel import funnel_app
+from aletheia.cli.gateway import gateway_app
+from aletheia.cli.guard_cmd import guard_app
+from aletheia.cli.inspect_cmd import inspect_app
+from aletheia.cli.install import _is_interactive
+from aletheia.cli.install import install as _run_install
+from aletheia.cli.install import uninstall as _run_uninstall
+from aletheia.cli.knowledge_cmd import knowledge_app
+from aletheia.cli.model import model_app
+from aletheia.cli.network_cmd import network_app
+from aletheia.cli.observe_cmd import observe_app
+from aletheia.cli.operator import agent_app
+from aletheia.cli.opportunity import opportunity_app
+from aletheia.cli.permission import permission_app
+from aletheia.cli.risk_cmd import risk_app
+from aletheia.cli.runtime_cmd import runtime_app
+from aletheia.cli.secrets_cmd import secrets_app
 from aletheia.cli.sizing import sizing_app
 from aletheia.cli.thesis import thesis_app
-from aletheia.cli.dev import dev_app
-from aletheia.cli.evidence_cmd import evidence_app
-from aletheia.cli.control_cmd import control_app
-from aletheia.cli.observe_cmd import observe_app
+from aletheia.cli.tunnel import tunnel_app
+from aletheia.cli.update_cmd import update_app
 
 app = typer.Typer(
     name="aletheia",

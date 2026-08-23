@@ -7,13 +7,12 @@ private fill history. Any incomplete or ambiguous evidence remains inconclusive.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import math
 import time
+from dataclasses import dataclass, field
 from typing import Literal
 
 from aletheia.data.symbols import to_canonical
-
 
 VerifiedExitState = Literal[
     "verified_fill",

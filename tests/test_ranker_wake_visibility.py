@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 from typer.testing import CliRunner
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -91,8 +90,8 @@ def test_ranker_run_records_coalesced_wake_sources_and_result(monkeypatch):
 
 
 def test_entry_status_cli_uses_authoritative_progress_projection(monkeypatch):
-    from aletheia.cli.inspect_cmd import inspect_app
     import aletheia.server.routes.analytics as analytics
+    from aletheia.cli.inspect_cmd import inspect_app
 
     payload = {
         "window_hours": 1,

@@ -5,15 +5,14 @@ by the position manager's market-aware exit rules. Tests the SEAM between
 the observer (writer) and position_manager (reader).
 """
 
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
-from aletheia.storage.models import Opportunity, Position
-from aletheia.storage import repositories as repo
 from aletheia.portfolio.market_signal_reader import (
     MarketSignalRequest,
     get_market_signals_for_positions,
 )
+from aletheia.storage import repositories as repo
+from aletheia.storage.models import Opportunity
 
 
 def _seed_instrument(

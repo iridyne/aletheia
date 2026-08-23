@@ -76,8 +76,8 @@ async def test_orchestrator_persists_registered_agent_output_artifacts(monkeypat
 
 @pytest.mark.anyio
 async def test_portfolio_agent_returns_current_snapshot_as_output_artifact(monkeypatch):
-    from aletheia.agents.portfolio_agent import run_portfolio_agent
     from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.agents.portfolio_agent import run_portfolio_agent
     from aletheia.portfolio import pnl
     from aletheia.storage.models import PortfolioSnapshot
 

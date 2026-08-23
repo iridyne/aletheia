@@ -8,20 +8,20 @@ Existing selections are never overwritten; normal signed updates own all later c
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import sys
+from contextlib import contextmanager
+from pathlib import Path
 from uuid import uuid4
 
-from aletheia.update import packaged
 from aletheia.package_integrity import (
     iter_payload_entries,
     validate_filesystem_symlink,
 )
+from aletheia.update import packaged
 
 _RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 

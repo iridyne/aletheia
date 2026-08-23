@@ -2,9 +2,9 @@
 
 from datetime import datetime, timezone
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
-from uuid import uuid4
 
 
 def new_id() -> str:

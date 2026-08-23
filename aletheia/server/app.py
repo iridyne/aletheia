@@ -1,9 +1,8 @@
 """FastAPI application for Aletheia Trading OS."""
 
-import logging
 import asyncio
+import logging
 import os
-import sys
 import time
 
 # Windows: enforce SelectorEventLoop process-wide BEFORE uvicorn imports this
@@ -23,32 +22,32 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from aletheia import __version__
-from aletheia.config.loader import load_config
-from aletheia.config.loader import bootstrap
-from aletheia.server.routes.health import infra_router, router as health_router
-from aletheia.server.routes.settings import router as settings_router
-from aletheia.server.routes.data import router as data_router
-from aletheia.server.routes.live import router as live_router
-from aletheia.server.routes.model import router as model_router
-from aletheia.server.routes.bitget import router as bitget_router
-from aletheia.server.routes.risk import router as risk_router
-from aletheia.server.routes.update import router as update_router
-from aletheia.server.routes.gateway import router as gateway_router
-from aletheia.server.routes.telegram import router as telegram_router
-from aletheia.server.routes.news import router as news_router
-from aletheia.server.routes.command import router as command_router
-from aletheia.server.routes.operator import router as operator_router
-from aletheia.server.routes.runtime import router as runtime_router
-from aletheia.server.routes.persistence import router as persistence_router
-from aletheia.server.routes.prediction import router as prediction_router
-from aletheia.server.routes.universe import router as universe_router
+from aletheia.config.loader import bootstrap, load_config
+from aletheia.server.compression import JsonCompressionMiddleware
 from aletheia.server.routes.analytics import router as analytics_router
+from aletheia.server.routes.bitget import router as bitget_router
 from aletheia.server.routes.capital import router as capital_router
+from aletheia.server.routes.command import router as command_router
+from aletheia.server.routes.data import router as data_router
 from aletheia.server.routes.economics import router as economics_router
 from aletheia.server.routes.export import router as export_router
-from aletheia.server.routes.ws import router as ws_router
+from aletheia.server.routes.gateway import router as gateway_router
+from aletheia.server.routes.health import infra_router
+from aletheia.server.routes.health import router as health_router
+from aletheia.server.routes.live import router as live_router
+from aletheia.server.routes.model import router as model_router
+from aletheia.server.routes.news import router as news_router
+from aletheia.server.routes.operator import router as operator_router
+from aletheia.server.routes.persistence import router as persistence_router
+from aletheia.server.routes.prediction import router as prediction_router
+from aletheia.server.routes.risk import router as risk_router
+from aletheia.server.routes.runtime import router as runtime_router
+from aletheia.server.routes.settings import router as settings_router
+from aletheia.server.routes.telegram import router as telegram_router
 from aletheia.server.routes.ui import router as ui_router
-from aletheia.server.compression import JsonCompressionMiddleware
+from aletheia.server.routes.universe import router as universe_router
+from aletheia.server.routes.update import router as update_router
+from aletheia.server.routes.ws import router as ws_router
 
 logger = logging.getLogger("aletheia")
 
@@ -428,7 +427,7 @@ async def lifespan(app: FastAPI):
     # Ensure PID file exists regardless of how we were launched (background
     # supervisor, foreground CLI, or bare uvicorn). Without this, /api/status
     # and /api/gateway/restart break when the supervisor PID file is missing.
-    from aletheia.gateway.pidfile import write_pid, read_pid
+    from aletheia.gateway.pidfile import read_pid, write_pid
 
     _owns_pid = should_write_gateway_pidfile(runtime_context) and read_pid() is None
     if _owns_pid:
@@ -467,9 +466,9 @@ async def lifespan(app: FastAPI):
     stage_started = _log_startup_stage("secret_migration", stage_started, startup_started)
     # Database upgrades belong to the owner-controlled gateway/deployment phase.
     # The backend only verifies the durable ledger before starting any writer.
-    from aletheia.storage.migrations import assert_migrations_current
-    from aletheia.agent_runtime.tool_registry import init_tool_registry
     from aletheia.agent_runtime.scheduler import init_scheduler, stop_scheduler
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.storage.migrations import assert_migrations_current
 
     stage_started = _log_startup_stage("startup_dependency_imports", stage_started, startup_started)
     assert_migrations_current()
@@ -586,7 +585,7 @@ async def lifespan(app: FastAPI):
     # immediately and start auto-resume (same pattern as LLM gate).
     exchange_gate_task = None
     if background_services_enabled:
-        from aletheia.agent_runtime.connectivity import startup_exchange_gate, set_uvicorn_loop
+        from aletheia.agent_runtime.connectivity import set_uvicorn_loop, startup_exchange_gate
 
         # #145: capture the persistent uvicorn loop so a mid-run connectivity loss (detected
         # on an ephemeral scheduler-job loop) can schedule its auto-resume task HERE, where it
@@ -937,8 +936,9 @@ async def _tunnel_auth_guard(request, call_next):
                 request.state.operator_service_authenticated = True
                 return await call_next(request)
 
-            from aletheia.config.secrets import get_secret
             from fastapi.responses import JSONResponse
+
+            from aletheia.config.secrets import get_secret
 
             # remote_control_api_token is the independent name for private-network
             # API access. The legacy tunnel name remains valid for existing installs.

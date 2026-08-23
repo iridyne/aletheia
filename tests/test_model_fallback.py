@@ -27,8 +27,8 @@ async def client(tmp_path, monkeypatch):
 
 def _setup_config(tmp_path, monkeypatch, *, fallback_models=None):
     import aletheia.config.loader as loader
-    from aletheia.config.schema import AletheiaConfig, ProviderConfig
     from aletheia.config.loader import save_config
+    from aletheia.config.schema import AletheiaConfig, ProviderConfig
     from aletheia.model_provider.router import clear_cache
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -44,8 +44,8 @@ def _setup_config(tmp_path, monkeypatch, *, fallback_models=None):
     pcfg.fallback_models = fallback_models or []
     save_config(cfg)
     clear_cache()
-    from aletheia.model_provider.fallback import reset_model_health
     from aletheia.infra.events import clear_infra_events
+    from aletheia.model_provider.fallback import reset_model_health
     reset_model_health()
     clear_infra_events()
     return cfg
@@ -226,8 +226,7 @@ async def test_complete_with_fallback_does_not_hide_non_transient_errors(tmp_pat
 async def test_terminal_broker_failures_emit_safe_typed_events(tmp_path, monkeypatch, exc, code):
     _setup_config(tmp_path, monkeypatch, fallback_models=["claude-fallback"])
     from aletheia.infra.events import list_infra_events
-    from aletheia.model_provider import fallback
-    from aletheia.model_provider import broker
+    from aletheia.model_provider import broker, fallback
 
     secret = "sk-terminal-secret"
     prompt = "prompt that must never reach observability"

@@ -5,8 +5,8 @@ import threading
 
 import pytest
 
-from aletheia.data.ccxt_provider import CCXTProvider
 from aletheia.data.cache import get_cache
+from aletheia.data.ccxt_provider import CCXTProvider
 
 _GET_OHLCV = CCXTProvider.get_ohlcv
 

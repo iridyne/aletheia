@@ -1,10 +1,10 @@
 """Cash ledger and affordability view for the local ``paper_internal`` account."""
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import logging
 import math
+from datetime import datetime, timezone
 
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import PaperAccountEvent
@@ -527,8 +527,8 @@ async def _backfill_historical_funding_for_position(row: dict) -> int:
 
     Returns the number of new rows inserted.
     """
-    from aletheia.data.collectors.derivatives import _insert_historical_funding_snapshot_pair
     from aletheia.data.ccxt_provider import get_market_data_provider
+    from aletheia.data.collectors.derivatives import _insert_historical_funding_snapshot_pair
     from aletheia.data.symbols import to_ccxt_perp
 
     sym = str(row.get("symbol") or "")
@@ -636,9 +636,9 @@ async def settle_unsettled_paper_closes() -> dict:
     a collection outage.  Returns
     {'settled': int, 'revived': int, 'still_pending': int, 'errors': list[str]}.
     """
-    from aletheia.storage.sqlite import get_db
-    from aletheia.portfolio.local_funding import compute_local_funding
     from aletheia.files.jsonl import write_audit
+    from aletheia.portfolio.local_funding import compute_local_funding
+    from aletheia.storage.sqlite import get_db
 
     # First pass excludes every terminal row so an invalidated result can never
     # be recreated. The revival pass below explicitly re-checks funding-only

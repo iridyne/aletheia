@@ -1,6 +1,5 @@
 """Seed active guards — written on first run, never overwrite existing files."""
 
-from pathlib import Path
 
 from aletheia.config.loader import get_data_dir
 from aletheia.knowledge.frontmatter import render_frontmatter

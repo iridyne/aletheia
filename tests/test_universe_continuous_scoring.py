@@ -6,8 +6,8 @@ import ast
 import copy
 import inspect
 import math
-from pathlib import Path
 import random
+from pathlib import Path
 
 import pytest
 from hypothesis import given, settings

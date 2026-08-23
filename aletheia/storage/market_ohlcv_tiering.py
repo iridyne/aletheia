@@ -8,11 +8,10 @@ SQLite BLOBs, external files, or compressed frames.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
+from dataclasses import dataclass
 from typing import Any, Iterable, Protocol
-
 
 TIERING_CONTRACT_VERSION = "ohlcv-hot-cold-v1"
 

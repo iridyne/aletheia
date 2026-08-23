@@ -6,10 +6,11 @@ trading state. `--fetch` does a `git fetch` first so the code-sync line reflects
 live origin rather than the last fetch.
 """
 
-import typer
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+import typer
 
 doctor_app = typer.Typer(no_args_is_help=False)
 

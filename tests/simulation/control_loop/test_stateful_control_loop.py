@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import os
-from pathlib import Path
 import tempfile
+from copy import deepcopy
+from pathlib import Path
 
 from hypothesis import seed as hypothesis_seed
-from hypothesis import settings, strategies as st
+from hypothesis import settings
+from hypothesis import strategies as st
 from hypothesis.stateful import (
     RuleBasedStateMachine,
     invariant,
@@ -18,7 +19,6 @@ from hypothesis.stateful import (
 
 from aletheia.simulation.control_loop import ControlLoopHarness
 from aletheia.simulation.control_loop.invariants import assert_invariants
-
 
 SEED = int(os.getenv("DCLS_SEED", "20260713"))
 EXAMPLES = int(os.getenv("DCLS_MAX_EXAMPLES", "8"))

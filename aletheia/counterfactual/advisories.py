@@ -42,7 +42,6 @@ from typing import Any
 
 from aletheia.counterfactual.trades import list_deduped_shadows
 
-
 ADVISORY_TYPE = "policy_epoch_rotation"
 ADVISORY_VERSION = "v1"
 

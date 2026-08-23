@@ -389,7 +389,7 @@ def risk(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """List risk decisions (enriched with proposal symbol/direction)."""
-    from aletheia.storage.repositories import list_risk_decisions, get_trade_proposal
+    from aletheia.storage.repositories import get_trade_proposal, list_risk_decisions
     rows = list_risk_decisions(limit=limit)
     if rejected_only:
         rows = [r for r in rows if not r.get("approved")]
@@ -837,12 +837,13 @@ def status(
 ):
     """One-shot system dashboard: portfolio, PnL, orders, universe, data quality."""
     from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
-    from aletheia.analytics.trade_stats import compute_rolling_trade_stats, compute_order_stats
+    from aletheia.analytics.trade_stats import compute_order_stats, compute_rolling_trade_stats
     from aletheia.data.price_feed import cache_stats
-    from aletheia.portfolio.pnl import mark_positions_to_market
     from aletheia.maintenance.historical_accounting import historical_accounting_summary
+    from aletheia.portfolio.pnl import mark_positions_to_market
     from aletheia.storage.repositories import (
-        get_active_universe_snapshot, get_active_universe_members,
+        get_active_universe_members,
+        get_active_universe_snapshot,
     )
 
     # Portfolio
@@ -985,8 +986,8 @@ def pnl(
         eligible_strategy_outcomes,
     )
     from aletheia.analytics.trade_stats import compute_rolling_trade_stats
-    from aletheia.portfolio.pnl import mark_positions_to_market
     from aletheia.maintenance.historical_accounting import historical_accounting_summary
+    from aletheia.portfolio.pnl import mark_positions_to_market
 
     # Today detail
     today_str = datetime.now(timezone.utc).date().isoformat()
@@ -1173,8 +1174,7 @@ def liquidations(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Show recent liquidation events from Binance Futures."""
-    from aletheia.storage.repositories import recent_liquidations
-    from aletheia.storage.repositories import get_active_universe_members
+    from aletheia.storage.repositories import get_active_universe_members, recent_liquidations
     if symbol:
         rows = recent_liquidations(symbol, hours=hours)[:limit]
     else:
@@ -1487,8 +1487,8 @@ def _gateway_base() -> str:
 
 def _gateway_fetch(path: str, *, base: str | None = None, timeout: int = 5) -> dict:
     """Fetch a gateway JSON endpoint; raises typer.Exit(1) if unreachable."""
-    import urllib.request
     import urllib.error
+    import urllib.request
     b = base or _gateway_base()
     url = f"{b}{path}"
     try:

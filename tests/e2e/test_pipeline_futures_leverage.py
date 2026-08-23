@@ -7,13 +7,13 @@ is explicitly ``local_simulation``; exchange-account funding remains a separate
 broker-ledger requirement.
 """
 
-from datetime import datetime, timedelta, timezone
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from aletheia.storage.models import MarketSnapshot, Opportunity, StrategyRecord
 from aletheia.storage import repositories as repo
+from aletheia.storage.models import MarketSnapshot, Opportunity, StrategyRecord
 
 
 def _seed_fresh_schedule(symbol: str) -> tuple[datetime, datetime]:

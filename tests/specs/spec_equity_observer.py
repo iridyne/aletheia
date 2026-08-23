@@ -12,10 +12,7 @@ Without that registration the conformance matrix collects zero EQ-* cases.
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
-
-import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -176,7 +173,7 @@ def test_schema_has_observed_stock_tokens():
     ),
 )
 def test_stock_token_market_type():
-    from aletheia.data.symbols import stock_token_market_type, MARKET_SPOT
+    from aletheia.data.symbols import MARKET_SPOT, stock_token_market_type
 
     # r-series are spot by default
     assert stock_token_market_type("rNVDA/USDT") == MARKET_SPOT

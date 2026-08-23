@@ -13,10 +13,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import MarketSnapshot, Position
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):

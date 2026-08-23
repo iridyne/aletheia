@@ -56,9 +56,9 @@ def test_entry_point_import_installs_selector_policy(module: str) -> None:
 @pytest.mark.skipif(sys.platform != "win32", reason="policy only changes on Windows")
 def test_apply_is_idempotent_and_effective() -> None:
     """apply_windows_selector_policy flips Proactor→Selector and is idempotent."""
-    from aletheia.async_utils import apply_windows_selector_policy
-
     import asyncio
+
+    from aletheia.async_utils import apply_windows_selector_policy
 
     original = asyncio.get_event_loop_policy()
     try:
@@ -79,9 +79,9 @@ def test_apply_is_idempotent_and_effective() -> None:
 @pytest.mark.skipif(sys.platform == "win32", reason="non-Windows no-op path")
 def test_apply_is_noop_off_windows() -> None:
     """On non-Windows the helper must not touch the policy at all."""
-    from aletheia.async_utils import apply_windows_selector_policy
-
     import asyncio
+
+    from aletheia.async_utils import apply_windows_selector_policy
 
     before = asyncio.get_event_loop_policy()
     apply_windows_selector_policy()

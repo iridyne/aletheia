@@ -75,13 +75,13 @@ def test_serenity_backstop_uses_days_school_max():
 # ── _maybe_wake_on_horizon (side-effecting, once per horizon) ────────────────
 
 def test_extended_horizon_ack_waits_until_new_due_time_then_rearms(monkeypatch):
-    from aletheia.storage.sqlite import get_db
+    import aletheia.agent_runtime.pi_daemon as pd
     from aletheia.storage.repositories import (
         _select_one,
         list_audit_events,
         update_position,
     )
-    import aletheia.agent_runtime.pi_daemon as pd
+    from aletheia.storage.sqlite import get_db
 
     opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
     get_db().execute(
@@ -135,9 +135,9 @@ def test_extended_horizon_ack_waits_until_new_due_time_then_rearms(monkeypatch):
 
 
 def test_legacy_due_ack_is_rearmed_once_and_redelivered(monkeypatch):
-    from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import _select_one, list_audit_events
     import aletheia.agent_runtime.pi_daemon as pd
+    from aletheia.storage.repositories import _select_one, list_audit_events
+    from aletheia.storage.sqlite import get_db
 
     opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
     legacy_ack = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
@@ -174,9 +174,9 @@ def test_legacy_due_ack_is_rearmed_once_and_redelivered(monkeypatch):
 
 
 def test_due_ack_with_durable_pending_close_claim_is_not_rearmed(monkeypatch):
-    from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import _select_one, list_audit_events
     import aletheia.agent_runtime.pi_daemon as pd
+    from aletheia.storage.repositories import _select_one, list_audit_events
+    from aletheia.storage.sqlite import get_db
 
     opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
     acknowledged = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
@@ -208,9 +208,9 @@ def test_due_ack_with_durable_pending_close_claim_is_not_rearmed(monkeypatch):
 
 
 def test_concurrent_future_extension_wins_before_legacy_ack_rearm(monkeypatch):
-    from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import _select_one, update_position
     import aletheia.agent_runtime.pi_daemon as pd
+    from aletheia.storage.repositories import _select_one, update_position
+    from aletheia.storage.sqlite import get_db
 
     opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
     acknowledged = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
@@ -239,9 +239,9 @@ def test_concurrent_future_extension_wins_before_legacy_ack_rearm(monkeypatch):
 
 
 def test_failed_wake_is_not_stamped_and_can_retry(monkeypatch):
-    from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import _select_one
     import aletheia.agent_runtime.pi_daemon as pd
+    from aletheia.storage.repositories import _select_one
+    from aletheia.storage.sqlite import get_db
 
     opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
     get_db().execute(
@@ -271,9 +271,9 @@ def test_scheduled_wake_is_not_acknowledged_before_review_and_survives_restart(
     monkeypatch,
 ):
     """Scheduling is not completion; a lost in-memory event must be recoverable."""
-    from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import _select_one
     import aletheia.agent_runtime.pi_daemon as pd
+    from aletheia.storage.repositories import _select_one
+    from aletheia.storage.sqlite import get_db
 
     opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
     get_db().execute(

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import importlib
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -232,8 +232,8 @@ def test_run_reconcile_fails_closed_when_incident_detector_is_unavailable(monkey
 
 
 def test_active_incident_refreezes_jobs_treatments_prompts_and_survives_reload(monkeypatch):
-    from aletheia.portfolio import reconciliation_integrity as integrity
     from aletheia.learning import control
+    from aletheia.portfolio import reconciliation_integrity as integrity
 
     incident, _ = integrity.record_reconciliation_integrity_incident({
         "is_thrashing": True, "window_minutes": 30, "churn_count": 2,

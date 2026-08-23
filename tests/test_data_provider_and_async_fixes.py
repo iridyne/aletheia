@@ -14,11 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # #91 — universe modules use ccxt_fallback (not same-exchange fallback)

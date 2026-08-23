@@ -27,6 +27,7 @@ def _setup_env(tmp_path: Path, monkeypatch) -> None:
 
 def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
     from aletheia.agent_runtime import build_info
+    from aletheia.learning.behavior_contracts import current_behavior_contract_hash
     from aletheia.learning.experiments import _policy_epoch
     from aletheia.learning.ledger import (
         insert_experiment,
@@ -40,7 +41,6 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
         LearningJobHealth,
     )
     from aletheia.learning.verdicts import METRIC_VERSION
-    from aletheia.learning.behavior_contracts import current_behavior_contract_hash
 
     monkeypatch.setattr(build_info, "_boot_commit", "commit-current")
     hypothesis = LearningHypothesis(
@@ -338,8 +338,8 @@ def test_lco_projection_never_recommends_promotion_from_monitoring_positive(
 def test_lco_projection_reports_resolved_treatment_authority(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     _seed_current_experiment(monkeypatch)
-    from aletheia.learning.authority import AuthorityDecision
     import aletheia.learning.authority as authority
+    from aletheia.learning.authority import AuthorityDecision
 
     monkeypatch.setattr(
         authority,
@@ -975,7 +975,6 @@ def test_lco_projection_reads_the_newest_evaluation_not_the_latest_window(
     from aletheia.learning.ledger import get_record, insert_record
     from aletheia.learning.models import LearningContributionVerdict
     from aletheia.learning.verdicts import METRIC_VERSION
-
     from aletheia.storage.sqlite import get_db
 
     seeded_id = _seeded_verdict_id(experiment_id)
@@ -1121,10 +1120,10 @@ def test_lco_projection_reports_an_overdue_evaluator_as_overdue(
     """
     _setup_env(tmp_path, monkeypatch)
     _seed_current_experiment(monkeypatch)
-    from aletheia.storage.sqlite import get_db
     from aletheia.learning.read_models import (
         build_learning_contribution_projection,
     )
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     db.execute(
@@ -1153,10 +1152,10 @@ def test_lco_projection_does_not_mark_a_job_overdue_before_it_is_due(
     _seed_current_experiment(monkeypatch)
     from datetime import datetime, timedelta, timezone
 
-    from aletheia.storage.sqlite import get_db
     from aletheia.learning.read_models import (
         build_learning_contribution_projection,
     )
+    from aletheia.storage.sqlite import get_db
 
     due = datetime.now(timezone.utc) + timedelta(minutes=30)
     db = get_db()

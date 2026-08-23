@@ -4,16 +4,16 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 
-from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.base import (
+    ModelHealth,
     ModelProvider,
     ModelRequest,
-    StructuredModelRequest,
     ModelResponse,
-    ModelHealth,
     StreamChunk,
+    StructuredModelRequest,
     model_json_schema_payload,
 )
+from aletheia.net import httpx_client, raise_for_status_without_secrets
 
 BASE_URL = "https://api.openai.com/v1"
 

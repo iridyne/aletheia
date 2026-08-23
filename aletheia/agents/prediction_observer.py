@@ -24,22 +24,22 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from aletheia.agents import register_agent
-from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool, record_step, observer_llm_deadline
 from aletheia.agent_runtime.permissions import is_tool_permitted
+from aletheia.agents import register_agent
+from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool, observer_llm_deadline, record_step
+from aletheia.config.loader import load_config
 from aletheia.config.prediction import prediction_observer_blocked_reason
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
     insert_opportunity,
+    insert_prediction_claim,
+    insert_probability_snapshot,
+    insert_serenity_evidence,
+    list_serenity_themes,
     list_strategies,
     upsert_prediction_event,
     upsert_prediction_market,
-    insert_probability_snapshot,
-    insert_prediction_claim,
-    insert_serenity_evidence,
-    list_serenity_themes,
 )
-from aletheia.config.loader import load_config
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 
 _VALID_DIRECTIONS = {"long", "short", "neutral"}
@@ -246,11 +246,11 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
     categories = cfg.market_data.observed_prediction_markets
 
     # Start observer run record
+    from aletheia.storage.models import new_id as _new_id
     from aletheia.storage.repositories import (
         insert_prediction_run,
         update_prediction_run,
     )
-    from aletheia.storage.models import new_id as _new_id
 
     obs_run_id = _new_id()
     insert_prediction_run(obs_run_id, categories)

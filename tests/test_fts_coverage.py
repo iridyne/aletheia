@@ -2,14 +2,14 @@
 
 import sqlite3
 
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
 from aletheia.knowledge.manager import (
-    create_research_note,
     create_post_trade_review,
+    create_research_note,
     create_trade_case_study,
 )
 from aletheia.knowledge.retrieval import reindex_all, retrieve_lessons
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_test_env(tmp_path, monkeypatch):
@@ -196,7 +196,7 @@ def test_doctor_fts_probe(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
 
     # No items yet → ok
-    from aletheia.diagnostics.doctor import _probe_fts_coverage, Report
+    from aletheia.diagnostics.doctor import Report, _probe_fts_coverage
     report = Report()
     _probe_fts_coverage(report)
     assert report.checks[-1].severity == "ok"

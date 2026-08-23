@@ -1,8 +1,8 @@
 import asyncio
-import sqlite3
 import os
+import sqlite3
 import threading
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -46,7 +46,12 @@ def _insert_eligible_closed_position(*, position_id: str, strategy_id: str) -> N
     from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import (
-        Fill, Opportunity, Order, Position, RiskDecision, TradeProposal,
+        Fill,
+        Opportunity,
+        Order,
+        Position,
+        RiskDecision,
+        TradeProposal,
     )
 
     opened_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
@@ -515,10 +520,8 @@ async def test_operator_recommendations_escalate_queue_review_to_urgent_for_deep
 async def test_operator_recommendations_include_shell_specialist_work_from_backend_truth(client):
     from aletheia.agent_shell.operator_store import create_artifact
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import StrategyRecord
+    from aletheia.storage.models import PiDecision, StrategyRecord
     from aletheia.storage.repositories import insert_strategy, update_strategy
-
-    from aletheia.storage.models import PiDecision
     review_strategy = StrategyRecord(name="Review Candidate", description="needs operator review", state="draft")
     insert_strategy(review_strategy)
     repo.insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=review_strategy.id, debate_ran=False))

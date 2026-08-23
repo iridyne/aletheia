@@ -4,7 +4,6 @@ from pathlib import Path
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 

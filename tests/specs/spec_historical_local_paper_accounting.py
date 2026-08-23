@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import sqlite3
+from datetime import datetime, timezone
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -48,7 +48,10 @@ def _legacy_closed_future(conn, *, position_id: str = "legacy-position", complet
 def test_historical_repair_is_dry_run_first_idempotent_and_separate(tmp_path, monkeypatch):
     conn = _setup(tmp_path, monkeypatch)
     _legacy_closed_future(conn)
-    from aletheia.maintenance.historical_accounting import reconcile_historical_local_paper_accounting, historical_accounting_summary
+    from aletheia.maintenance.historical_accounting import (
+        historical_accounting_summary,
+        reconcile_historical_local_paper_accounting,
+    )
 
     dry = reconcile_historical_local_paper_accounting()
     assert dry["summary"] == {"link_repairs_planned": 1, "reconstructed": 1, "unavailable": 0}

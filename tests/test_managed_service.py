@@ -217,7 +217,8 @@ def test_windows_start_then_stop_runs_and_removes_the_task(monkeypatch):
 
 def test_windows_stop_is_idempotent_with_localized_not_found_bytes(monkeypatch):
     """schtasks emits console-code-page bytes; an absent task is still a clean stop."""
-    from aletheia.gateway import console_text, managed_service as service
+    from aletheia.gateway import console_text
+    from aletheia.gateway import managed_service as service
 
     monkeypatch.setattr(console_text, "console_encoding", lambda: "gbk")
     absent = "错误: 系统找不到指定的文件。\r\r\n".encode("gbk")
@@ -286,7 +287,8 @@ def test_windows_start_retries_interactive_token_after_s4u_access_denied(monkeyp
 
 def test_windows_stop_keeps_failure_when_the_task_survives(monkeypatch):
     """An unrecognized delete failure is only forgiven when the task is really gone."""
-    from aletheia.gateway import console_text, managed_service as service
+    from aletheia.gateway import console_text
+    from aletheia.gateway import managed_service as service
 
     monkeypatch.setattr(console_text, "console_encoding", lambda: "cp932")
     unknown = "エラー: 不明なエラーが発生しました。".encode("cp932")

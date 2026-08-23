@@ -96,7 +96,7 @@ class LessonStore:
 
     def accept(self, lesson_id: str) -> None:
         """Move a lesson from proposed to accepted; stamps guard timestamps."""
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
         now = datetime.now(timezone.utc)
         activated_at = now.isoformat()
         dry_run_until = (now + timedelta(hours=24)).isoformat()

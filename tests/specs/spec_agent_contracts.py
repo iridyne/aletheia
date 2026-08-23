@@ -5,10 +5,10 @@ Scheduler job structure, agent IO shapes, max_workers cap.
 
 import inspect
 from pathlib import Path
+
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
-
 
 # ---------------------------------------------------------------------------
 # L2a — Structural claims
@@ -383,8 +383,8 @@ def test_registered_scheduler_jobs_record_swallowed_failures():
 )
 def test_llm_fallback_retries_on_transient_error():
     import asyncio
-    import aletheia.model_provider.fallback as fb
 
+    import aletheia.model_provider.fallback as fb
     from aletheia.model_provider.base import ModelProvider, ModelRequest, ModelResponse
     from aletheia.model_provider.fallback import complete_with_fallback, reset_model_health
 
@@ -436,9 +436,10 @@ def test_llm_fallback_retries_on_transient_error():
 )
 def test_llm_fallback_retries_on_connect_error():
     import asyncio
-    import httpx
-    import aletheia.model_provider.fallback as fb
 
+    import httpx
+
+    import aletheia.model_provider.fallback as fb
     from aletheia.model_provider.base import ModelProvider, ModelRequest, ModelResponse
 
     call_log: list[str] = []

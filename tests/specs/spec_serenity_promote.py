@@ -183,6 +183,7 @@ def _make_test_client():
     without pytest treating them as errors.
     """
     from fastapi.testclient import TestClient
+
     from aletheia.server.app import app
     return TestClient(app, raise_server_exceptions=False)
 
@@ -203,8 +204,8 @@ def _switch_to_filebacked_db():
     TestClient worker thread.
     """
     import aletheia.storage.sqlite as _sq
-    from aletheia.storage.sqlite import reset_db
     from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import reset_db
 
     reset_db()                      # close the autouse :memory: conn on this thread
     _sq._db_conn = None             # clear so subsequent get_db() opens the file
@@ -214,7 +215,7 @@ def _switch_to_filebacked_db():
 def _seed_theme_with_opportunities(n: int = 2):
     """Insert a SerenityTheme with n active opportunities and return ids."""
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import SerenityTheme, SerenityOpportunity
+    from aletheia.storage.models import SerenityOpportunity, SerenityTheme
 
     theme = SerenityTheme(name="Test industrial chain — semis", status="active")
     repo.insert_serenity_theme(theme)

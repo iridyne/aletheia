@@ -1,5 +1,4 @@
 import sqlite3
-from pathlib import Path
 
 
 def test_operator_shell_root_can_be_overridden(tmp_path, monkeypatch):

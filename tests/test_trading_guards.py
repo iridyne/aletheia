@@ -1,15 +1,13 @@
 """Tests for the deterministic trading guard engine."""
 
 from aletheia.knowledge.guards import (
-    TradingGuard,
-    GuardPredicate,
     GuardAppliesTo,
-    GuardEvaluation,
-    evaluate_guards,
+    GuardPredicate,
+    TradingGuard,
     _applies_to_from_meta,
-    _predicates_match,
     _eval_predicate,
-    ALLOWED_GUARD_FIELDS,
+    _predicates_match,
+    evaluate_guards,
 )
 
 

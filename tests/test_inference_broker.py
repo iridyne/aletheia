@@ -9,9 +9,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from aletheia.model_provider.base import ModelRequest, StreamChunk
 from aletheia.model_provider.broker import (
-    brokered_stream,
-    inference_priority,
     InferenceBroker,
     InferenceBrokerClosed,
     InferencePolicyReload,
@@ -20,8 +19,9 @@ from aletheia.model_provider.broker import (
     InferenceRateLimitExceeded,
     InferenceTimeout,
     ProviderPolicy,
+    brokered_stream,
+    inference_priority,
 )
-from aletheia.model_provider.base import ModelRequest, StreamChunk
 
 
 def _policy(**overrides) -> ProviderPolicy:

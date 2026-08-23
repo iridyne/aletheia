@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import logging
 import math
+from datetime import datetime, timezone
 
 from aletheia.analytics.outcome_integrity import outcome_write_eligibility
 from aletheia.execution.broker_funding import (

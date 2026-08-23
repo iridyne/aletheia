@@ -3,18 +3,19 @@
 Each test maps to one of the 16 acceptance criteria in IMPLEMENTATION_GUIDE.md §32.
 """
 
-import json
 import asyncio
+import json
 from datetime import datetime, timezone
+
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 from typer.testing import CliRunner
 
-from aletheia.server.app import app
 from aletheia.main import app as cli_app
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
+from aletheia.server.app import app
 from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 runner = CliRunner()
 
@@ -330,7 +331,8 @@ async def test_ac15_live_locked_by_default(client):
 
 # #1/#2 helpers exist (gateway start + browser) — smoke that lifespan wiring imports
 def test_ac01_lifespan_imports():
-    from aletheia.server.app import lifespan, app as fastapi_app
+    from aletheia.server.app import app as fastapi_app
+    from aletheia.server.app import lifespan
     assert lifespan is not None
     # health route registered
     paths = {r.path for r in fastapi_app.routes}

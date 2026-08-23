@@ -5,8 +5,10 @@ import logging
 
 from aletheia.storage.models import KnowledgeItem
 from aletheia.storage.repositories import (
-    insert_knowledge_item, update_knowledge_item, list_knowledge_items,
-    knowledge_hash_exists, knowledge_title_exists_within,
+    insert_knowledge_item,
+    knowledge_hash_exists,
+    knowledge_title_exists_within,
+    update_knowledge_item,
 )
 
 logger = logging.getLogger("aletheia.knowledge.manager")
@@ -314,6 +316,7 @@ def _force_shadow_only_if_auto(metadata: dict | None) -> dict | None:
     # Finite TTL: auto-generated candidates expire after LEARNED_GUARD_TTL_DAYS (#195).
     if not meta.get("created_at") or not meta.get("expires_at"):
         from datetime import datetime, timedelta, timezone
+
         from aletheia.knowledge.guards import LEARNED_GUARD_TTL_DAYS
         now = datetime.now(timezone.utc)
         if not meta.get("created_at"):
@@ -450,8 +453,8 @@ def _extract_contradiction_signal(item: dict) -> dict | None:
 
 
 def _item_meta_and_body(item: dict) -> tuple[dict, str]:
-    from pathlib import Path
     import json
+    from pathlib import Path
 
     from aletheia.knowledge.frontmatter import parse_frontmatter, parse_frontmatter_text
 

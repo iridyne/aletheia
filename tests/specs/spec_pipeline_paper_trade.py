@@ -16,7 +16,6 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 # ---------------------------------------------------------------------------
 # Shared DB setup
 # ---------------------------------------------------------------------------
@@ -106,6 +105,7 @@ def test_paper_trader_produces_signal_pending(tmp_path, monkeypatch):
 
     # Use asyncio to run the async paper_trader
     import asyncio
+
     from aletheia.agents.paper_trader import run_paper_trader
 
     result = asyncio.run(run_paper_trader(permission_mode="Paper"))
@@ -198,6 +198,7 @@ def test_paper_trader_ranker_filters_low_score(tmp_path, monkeypatch):
     ).fetchone()["n"]
 
     import asyncio
+
     from aletheia.agents.paper_trader import run_paper_trader
 
     result = asyncio.run(run_paper_trader(permission_mode="Paper"))
@@ -248,6 +249,7 @@ def test_paper_trader_symbol_stays_canonical(tmp_path, monkeypatch):
     _insert_market_snapshot(conn, "BTC/USDT", price=62000.0)
 
     import asyncio
+
     from aletheia.agents.paper_trader import run_paper_trader
 
     asyncio.run(run_paper_trader(permission_mode="Paper"))
@@ -302,6 +304,7 @@ def test_paper_trader_signal_has_opportunity_id(tmp_path, monkeypatch):
     _insert_market_snapshot(conn, "BTC/USDT", price=60000.0)
 
     import asyncio
+
     from aletheia.agents.paper_trader import run_paper_trader
 
     asyncio.run(run_paper_trader(permission_mode="Paper"))
@@ -360,6 +363,7 @@ def test_paper_trader_marks_opportunity_consumed(tmp_path, monkeypatch):
     _insert_market_snapshot(conn, "BTC/USDT", price=60000.0)
 
     import asyncio
+
     from aletheia.agents.paper_trader import run_paper_trader
 
     result = asyncio.run(run_paper_trader(permission_mode="Paper"))
@@ -409,6 +413,7 @@ def test_paper_trader_skips_recent_duplicate_signal_pair(tmp_path, monkeypatch):
     ).fetchone()["n"]
 
     import asyncio
+
     from aletheia.agents.paper_trader import run_paper_trader
 
     result = asyncio.run(run_paper_trader(permission_mode="Paper"))
@@ -475,6 +480,7 @@ def test_paper_trader_does_not_requeue_operator_evaluated_opportunity(tmp_path, 
     )
 
     import asyncio
+
     from aletheia.agents.paper_trader import run_paper_trader
 
     result = asyncio.run(run_paper_trader(permission_mode="Paper"))
@@ -512,6 +518,7 @@ def test_paper_trader_marks_ttl_rejection_expired(tmp_path, monkeypatch):
 
     init_tool_registry()
     import asyncio
+
     from aletheia.agents.paper_trader import run_paper_trader
 
     result = asyncio.run(run_paper_trader(permission_mode="Paper"))
@@ -564,6 +571,7 @@ def test_stale_queued_opportunity_becomes_expired(tmp_path, monkeypatch):
 
     init_tool_registry()
     import asyncio
+
     from aletheia.agents.paper_trader import run_paper_trader
 
     result = asyncio.run(run_paper_trader(permission_mode="Paper"))

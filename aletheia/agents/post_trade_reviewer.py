@@ -9,9 +9,9 @@ import json
 import logging
 import time
 
+from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, llm_complete, log_tool
-from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.knowledge.manager import create_post_trade_review
 

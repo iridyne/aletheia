@@ -1,11 +1,11 @@
 """Functional API tests for Serenity Lens endpoints."""
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 from aletheia.server.app import app
-from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 @pytest.fixture

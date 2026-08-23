@@ -25,9 +25,9 @@ import pytest
 from aletheia.agent_shell.trading_decision import (
     DecisionUnavailable,
     TradingDecision,
-    _parse_decision,
     _attach_opportunity_context,
     _build_assessment_prompt,
+    _parse_decision,
 )
 
 
@@ -163,6 +163,7 @@ def test_incomplete_trade_uses_bounded_output_repair(
 ):
     """Semantic plan failure takes the existing one-shot repair path, not Risk."""
     import asyncio
+
     import aletheia.agent_shell.trading_decision as td
 
     incomplete = _complete_trade_payload(**updates)
@@ -207,6 +208,7 @@ def test_incomplete_trade_uses_bounded_output_repair(
 def test_unrepaired_trade_plan_is_typed_entry_plan_unavailability(monkeypatch):
     """Two incomplete outputs stay retryable and are not mislabeled as a skip."""
     import asyncio
+
     import aletheia.agent_shell.trading_decision as td
 
     incomplete = _complete_trade_payload(stop_price=None)
@@ -232,6 +234,7 @@ def test_unrepaired_trade_plan_is_typed_entry_plan_unavailability(monkeypatch):
 def test_complete_trade_without_authoritative_mark_is_retryable(monkeypatch):
     """The model cannot author absolute protection against an unknown entry."""
     import asyncio
+
     import aletheia.agent_shell.trading_decision as td
 
     async def assess(_ctx):
@@ -251,6 +254,7 @@ def test_complete_trade_without_authoritative_mark_is_retryable(monkeypatch):
 
 def test_complete_trade_rejects_same_symbol_mark_from_wrong_venue(monkeypatch):
     import asyncio
+
     import aletheia.agent_shell.trading_decision as td
 
     async def assess(_ctx):
@@ -297,6 +301,7 @@ def test_complete_trade_rejects_same_symbol_mark_from_wrong_venue(monkeypatch):
 def test_inverted_prompt_mark_geometry_uses_bounded_output_repair(monkeypatch):
     """A reversed authored stop is repaired before Proposal preparation."""
     import asyncio
+
     import aletheia.agent_shell.trading_decision as td
 
     inverted = _complete_trade_payload(stop_price=101.0)
@@ -352,6 +357,7 @@ def test_inverted_prompt_mark_geometry_uses_bounded_output_repair(monkeypatch):
 def test_unrepaired_prompt_mark_geometry_is_typed_entry_plan_defer(monkeypatch):
     """A second inverted plan cannot escape the bounded correction lifecycle."""
     import asyncio
+
     import aletheia.agent_shell.trading_decision as td
 
     inverted = _complete_trade_payload(stop_price=101.0)
@@ -398,6 +404,7 @@ def test_out_of_envelope_risk_reward_uses_bounded_output_repair(
 ):
     """A plausible geometry still needs a bounded reward:risk magnitude."""
     import asyncio
+
     import aletheia.agent_shell.trading_decision as td
 
     invalid = _complete_trade_payload(
@@ -443,6 +450,7 @@ def test_out_of_envelope_risk_reward_uses_bounded_output_repair(
 def test_unrepaired_out_of_envelope_risk_reward_is_typed_defer(monkeypatch):
     """A second implausible plan cannot become a Proposal-ready decision."""
     import asyncio
+
     import aletheia.agent_shell.trading_decision as td
 
     invalid = _complete_trade_payload(stop_price=99.0, take_profit=655.09)
@@ -485,6 +493,7 @@ def test_unrepaired_out_of_envelope_risk_reward_is_typed_defer(monkeypatch):
 def test_operator_spot_short_repairs_then_defers_without_relabel(monkeypatch):
     """A spot carrier cannot silently become a futures short after inference."""
     import asyncio
+
     import aletheia.agent_shell.trading_decision as td
 
     spot_short = _complete_trade_payload(
@@ -531,6 +540,7 @@ def test_operator_spot_short_repairs_then_defers_without_relabel(monkeypatch):
 def test_proposal_defense_rejects_parsed_operator_spot_short(tmp_path, monkeypatch):
     """Proposal preparation cannot bypass the exact-instrument planning seam."""
     import asyncio
+
     import aletheia.agent_shell.trading_decision as td
     from tests.test_entry_logic import setup_env
 
@@ -560,6 +570,7 @@ def test_real_structured_validator_exhaustion_is_typed_and_content_free(
 ):
     """Production schema retries cannot collapse into an unclassified command error."""
     import asyncio
+
     from aletheia.agent_shell import trading_decision as td
     from aletheia.agents import helpers
     from aletheia.model_provider.base import ModelResponse
@@ -603,6 +614,7 @@ def test_structured_empty_content_keeps_existing_daemon_retry_semantics(
 ):
     """A transient empty reasoning-model response is not a two-hour context defer."""
     import asyncio
+
     from aletheia.agent_shell import trading_decision as td
     from aletheia.agents import helpers
     from aletheia.model_provider.base import ModelResponse
@@ -777,6 +789,7 @@ def test_exchange_backed_planning_and_submission_use_exact_venue(
 ):
     """A newer same-instrument row from another venue cannot price either phase."""
     import asyncio
+
     import aletheia.agent_shell.trading_decision as td
     from tests.test_entry_logic import setup_env
 
@@ -888,6 +901,7 @@ def test_assessment_prompt_handles_none_equity():
 def test_submit_decision_reads_snapshot_for_final_market_type(tmp_path, monkeypatch):
     """A local-paper perp proposal uses only a fresh exact-venue perp mark."""
     import asyncio
+
     import aletheia.agent_shell.trading_decision as td
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import MarketSnapshot
@@ -946,6 +960,7 @@ def test_submit_decision_replaces_invalid_protection_with_defaults(
 ):
     """LLM sentinel values (0/negative) must not become a rejected entry plan."""
     import asyncio
+
     import aletheia.agent_shell.trading_decision as td
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import MarketSnapshot
@@ -994,6 +1009,7 @@ def test_parsed_operator_trade_never_defaults_invalid_authored_geometry(
 ):
     """A model trade keeps its own plan or defers; config cannot rewrite it."""
     import asyncio
+
     import aletheia.agent_shell.trading_decision as td
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import MarketSnapshot
@@ -1132,12 +1148,13 @@ def test_historical_spot_short_claim_survives_legacy_futures_coercion():
     This reflection exception remains only so an already-persisted legacy claim can
     finish recovery instead of becoming permanently stuck.
     """
+    from aletheia.agent_shell.reflection import _pending_claim_authority_failure
     from aletheia.storage.models import Opportunity, PiDecision
     from aletheia.storage.repositories import (
-        insert_opportunity, insert_pi_decision,
+        insert_opportunity,
+        insert_pi_decision,
         transition_open_opportunity_to_queued,
     )
-    from aletheia.agent_shell.reflection import _pending_claim_authority_failure
 
     opp = Opportunity(
         id="opp-spot-short",

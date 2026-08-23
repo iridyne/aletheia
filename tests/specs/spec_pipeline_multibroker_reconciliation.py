@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-from collections import Counter
-from datetime import datetime, timezone
 import importlib
 import json
 import sqlite3
+from collections import Counter
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
-
 
 BROKERS = (
     pytest.param(
@@ -151,10 +150,10 @@ def test_delayed_private_fill_materializes_actual_economics(
     tmp_path, monkeypatch, broker_module, client_name, execution_mode
 ):
     db = _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.reconciliation import reconcile
     from aletheia.execution.exchange_materialization import (
         durable_private_fill_id,
     )
+    from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
 
@@ -623,9 +622,9 @@ def test_six_account_modes_construct_only_their_mapped_private_client(
     tmp_path, monkeypatch
 ):
     _setup_db(tmp_path, monkeypatch)
+    from aletheia.exchanges.bitget import client as bitget_client
     from aletheia.execution import binance_broker, okx_broker
     from aletheia.execution.reconciliation import reconcile
-    from aletheia.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
 
@@ -743,12 +742,12 @@ def test_same_remote_trade_id_is_isolated_across_six_accounts(
     tmp_path, monkeypatch
 ):
     db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.exchanges.bitget import client as bitget_client
     from aletheia.execution import binance_broker, okx_broker
     from aletheia.execution.exchange_materialization import (
         durable_private_fill_id,
     )
     from aletheia.execution.reconciliation import reconcile
-    from aletheia.exchanges.bitget import client as bitget_client
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
 

@@ -3,11 +3,11 @@
 from unittest.mock import patch
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 from aletheia.server.app import app
-from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 @pytest.fixture
@@ -17,9 +17,10 @@ async def client(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
-    from aletheia.config.loader import load_config, save_config
-    import aletheia.trust.live_unlock as trust
     from datetime import datetime, timedelta, timezone
+
+    import aletheia.trust.live_unlock as trust
+    from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
     cfg.exchange.name = "bitget"
@@ -94,9 +95,10 @@ async def test_live_unlock_with_confirm(client):
 
 @pytest.mark.anyio
 async def test_expired_live_evidence_revokes_state_and_records_reason(client):
+    import json
+
     from aletheia.config.loader import load_config, save_config
     from aletheia.storage.repositories import list_audit_events
-    import json
 
     with patch("aletheia.analytics.go_live_scorecard.compute_scorecard") as sc:
         sc.return_value = {"composite_score": 95.0, "traffic_light": "green", "blockers": []}

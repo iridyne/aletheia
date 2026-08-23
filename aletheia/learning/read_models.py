@@ -2,24 +2,23 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import math
+from datetime import datetime, timezone
 from typing import Any
 
-from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
 from aletheia.learning.behavior_contracts import current_behavior_contract_hash
+from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
 from aletheia.learning.experiments import current_policy_epoch
-from aletheia.learning.ledger import get_latest_measurement_verdict
-from aletheia.learning.registry import LEARNING_PATHS, get_learning_path
-from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.learning.fixed_look import (
     get_consumed_fixed_look_verdict,
     get_fixed_look_decision,
     inference_authority_reason,
 )
+from aletheia.learning.ledger import get_latest_measurement_verdict
+from aletheia.learning.registry import LEARNING_PATHS, get_learning_path
+from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.storage.sqlite import get_db
-
 
 SCHEMA_VERSION = "lco-v1"
 _OUTCOME_CONTRACT_VERSION = "v1"
@@ -38,13 +37,12 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
     generated_at = datetime.now(timezone.utc).isoformat()
 
     from aletheia.agent_runtime.build_info import get_boot_commit
+    from aletheia.config.loader import load_config
     from aletheia.learning.control import (
         get_learning_job_health,
         job_health_view,
         measurement_catchup_due,
     )
-
-    from aletheia.config.loader import load_config
 
     cfg = load_config(persist_migrations=False)
     stale_after_sec = max(

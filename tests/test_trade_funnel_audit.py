@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
+from datetime import datetime, timedelta, timezone
 
 
 def _iso(hours_ago: int = 1) -> str:
@@ -577,6 +577,7 @@ def test_trade_funnel_points_tiny_positions_to_sizing_trace():
 
 def test_trade_funnel_cli_outputs_human_and_json_reports():
     import json
+
     from typer.testing import CliRunner
 
     from aletheia.main import app

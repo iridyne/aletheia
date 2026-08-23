@@ -11,8 +11,8 @@ boundary; no pre-pull config/model object is ever serialized into target state.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from aletheia.gateway.pidfile import _no_window_kwargs

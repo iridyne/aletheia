@@ -9,7 +9,6 @@ from typing import Literal
 
 from aletheia.config.schema import ModeRiskPolicy
 
-
 DEMO_EXECUTION_MODES = frozenset({
     "paper_internal",
     "bitget_demo",

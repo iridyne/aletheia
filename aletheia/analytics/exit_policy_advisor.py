@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 from collections import Counter, defaultdict
-from typing import Any
 
 from aletheia.analytics.trade_attribution import factor_key
 from aletheia.analytics.trade_path import build_trade_path_rows

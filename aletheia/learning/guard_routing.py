@@ -7,9 +7,8 @@ import json
 from typing import Any
 
 from aletheia.knowledge.manager import create_guard_candidate
-from aletheia.learning.hypothesis_research import research_learning_hypothesis
 from aletheia.learning.hypotheses import HypothesisResearchEvidenceV1
-
+from aletheia.learning.hypothesis_research import research_learning_hypothesis
 
 _BLOCK_ACTIONS = {"block_scanner", "block_direction", "block_symbol"}
 

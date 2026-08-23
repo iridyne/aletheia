@@ -2,20 +2,21 @@
 
 import asyncio
 import concurrent.futures
-from contextvars import ContextVar
-from functools import partial
 import json
 import logging
 import queue
 import threading
 import time
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from typing import Awaitable
 from zoneinfo import ZoneInfo
-from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
+
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_MISSED
 from apscheduler.executors.pool import ThreadPoolExecutor as APSchedulerThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING, STATE_STOPPED
 from apscheduler.triggers.interval import IntervalTrigger
 
 from aletheia.config.loader import load_config
@@ -2637,10 +2638,10 @@ def _run_position_manager():
     # `if cfg.runtime.paused: return` here is a safety regression.
     # Invariant: execution_contract §10 + spec PL-PM-07.
     try:
+        from aletheia.portfolio.position_manager import evaluate_open_positions
         from aletheia.portfolio.protective_barrier import (
             run_due_position_protection_cycle,
         )
-        from aletheia.portfolio.position_manager import evaluate_open_positions
 
         barrier_summary = run_due_position_protection_cycle()
         summary = evaluate_open_positions()
@@ -2678,7 +2679,7 @@ def _run_position_reconcile():
     # new risk). Like position_manager it manages existing state and must run even
     # when paused. Invariant: execution_contract §10 (aligned with kill_switch).
     try:
-        from aletheia.agent_runtime.run_logger import start_run, end_run
+        from aletheia.agent_runtime.run_logger import end_run, start_run
         from aletheia.portfolio.position_reconciler import run_reconcile
 
         run = start_run("position_reconciler", "scheduled", cfg.agent.permission_mode)
@@ -2740,6 +2741,7 @@ def _claim_observed_tpsl_close(
 ):
     """Atomically register an observed Bitget TPSL execution without placing it."""
     from datetime import datetime, timezone
+
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
 
@@ -2800,12 +2802,13 @@ def _tpsl_fill_check_body():
     try:
         import asyncio
         import json as _json
-        from aletheia.storage.repositories import list_all_open_positions
+
         from aletheia.data.symbols import to_bitget
+        from aletheia.exchanges.bitget.client import BitgetClient
         from aletheia.execution.exchange_materialization import (
             materialize_bitget_close,
         )
-        from aletheia.exchanges.bitget.client import BitgetClient
+        from aletheia.storage.repositories import list_all_open_positions
 
         positions = list_all_open_positions()
         candidates = []
@@ -3025,10 +3028,10 @@ def _cleanup_catchup_due(*, now: datetime | None = None) -> bool:
 def _run_cleanup():
     cfg = load_config()
     try:
+        from aletheia.execution.stale_order_cleanup import cleanup_stale_orphan_orders
+        from aletheia.files.jsonl import write_audit
         from aletheia.storage import repositories as repo
         from aletheia.storage.sqlite import get_db
-        from aletheia.files.jsonl import write_audit
-        from aletheia.execution.stale_order_cleanup import cleanup_stale_orphan_orders
         r = cfg.retention
         # ------------------------------------------------------------------
         # FK cascade ordering (Phase 3 retention) — the agent_shell hierarchy
@@ -3374,6 +3377,7 @@ def _prune_agent_task_claims_tasks_db() -> int:
     """
     try:
         import sqlite3
+
         from aletheia.config.loader import get_data_dir
         db_file = get_data_dir() / "tasks.db"
         if not db_file.exists():
@@ -3951,6 +3955,7 @@ def _run_active_ohlcv_backfill():
 
 def _active_ohlcv_backfill_body():
     import asyncio as _asyncio
+
     from aletheia.data.active_ohlcv_backfill import run_active_ohlcv_backfill
 
     cfg = load_config()
@@ -3963,6 +3968,7 @@ def _active_ohlcv_backfill_body():
 
 def _ohlcv_backfill_body():
     import asyncio as _asyncio
+
     from aletheia.data.history_downloader import download_symbol_history
 
     cfg = load_config()
@@ -3995,9 +4001,9 @@ def _run_okx_demo_symbols():
 
 
 async def _async_universe_refresh():
-    from aletheia.universe.service import UniverseService
     from aletheia.files.jsonl import write_agent_run_log
     from aletheia.storage.models import _utcnow
+    from aletheia.universe.service import UniverseService
     started = _utcnow()
     svc = UniverseService()
     try:
@@ -4241,8 +4247,9 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
 
 async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
     import time as _time
-    from aletheia.data.collectors.microstructure import MicrostructureCollector
+
     from aletheia.data.collectors.derivatives import DerivativesCollector
+    from aletheia.data.collectors.microstructure import MicrostructureCollector
     from aletheia.storage import repositories as repo
 
     _DC_HEALTH_TICK.set(tick)
@@ -4343,6 +4350,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     persistence remains synchronous and therefore serial on the same thread.
     """
     import time as _time
+
     from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
     from aletheia.data.collectors.defillama import DefiLlamaCollector
     from aletheia.data.collectors.hyperliquid import HyperliquidCollector
@@ -4602,7 +4610,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
 
 def _get_observed_instruments(cfg):
     """Return executable active-universe instruments with full venue identity."""
-    from aletheia.data.symbols import InstrumentId, MARKET_PERP, MARKET_SPOT
+    from aletheia.data.symbols import MARKET_PERP, MARKET_SPOT, InstrumentId
 
     # Primary: active universe members
     try:

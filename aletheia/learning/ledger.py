@@ -7,7 +7,6 @@ from pydantic import BaseModel
 from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
 
-
 _TABLE_ID = {
     "learning_hypotheses": "hypothesis_id",
     "learning_experiments": "experiment_id",

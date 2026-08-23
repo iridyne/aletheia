@@ -33,9 +33,9 @@ def test_available_balance_risk_budget_is_cost_then_futures_notional():
 
 
 def test_active_operator_sizing_does_not_use_strategy_sample_scaling(monkeypatch):
+    import aletheia.agent_shell.trading_decision as decision_module
     import aletheia.risk.engine as risk_engine
     import aletheia.risk.policy as risk_policy
-    import aletheia.agent_shell.trading_decision as decision_module
 
     cfg = _cfg(2.0)
     monkeypatch.setattr(

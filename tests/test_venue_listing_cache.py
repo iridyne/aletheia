@@ -12,13 +12,12 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aletheia.data.symbols import InstrumentId, MARKET_PERP, MARKET_SPOT
+from aletheia.data.symbols import MARKET_PERP, MARKET_SPOT, InstrumentId
 from aletheia.data.venue_listing_cache import (
     _CACHE,
     _CACHE_LOCK,
@@ -28,7 +27,6 @@ from aletheia.data.venue_listing_cache import (
     invalidate_all,
     invalidate_venue_listing,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

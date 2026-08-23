@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 FRONTEND = Path("frontend/src")
 
 

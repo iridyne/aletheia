@@ -178,8 +178,8 @@ def test_sizing_policy_is_named_as_deterministic_not_ai_requested():
 def test_protective_close_persists_honest_exit_reasoning(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
     from aletheia.portfolio.pnl import close_position
-    from aletheia.storage.models import Position
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
 
     position = Position(
         symbol="ETH/USDT", market_type="spot", direction="long", quantity=1.0,
@@ -212,8 +212,8 @@ def test_protective_close_persists_honest_exit_reasoning(tmp_path, monkeypatch):
 def test_operator_close_persists_original_ai_reason_after_success(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
     from aletheia.portfolio.position_manager import close_position_routed
-    from aletheia.storage.models import MarketSnapshot, Position
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import MarketSnapshot, Position
 
     position = Position(
         symbol="SOL/USDT", market_type="spot", direction="long", quantity=1.0,
@@ -255,8 +255,8 @@ def test_operator_close_persists_original_ai_reason_after_success(tmp_path, monk
 def test_administrative_close_persists_non_ai_exit_reasoning(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
     from aletheia.portfolio.outcome_closure import close_position_administrative
-    from aletheia.storage.models import Position
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
 
     position = Position(
         symbol="ADA/USDT", market_type="spot", direction="long", quantity=2.0,

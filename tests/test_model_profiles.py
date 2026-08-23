@@ -17,9 +17,9 @@ async def client(tmp_path, monkeypatch):
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
     monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
 
+    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
     from aletheia.model_provider.base import ModelHealth, ModelResponse
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
-    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
 
     async def healthy(provider):
         return ModelHealth(provider=provider.name, available=True, model=provider.model, models=[provider.model])
@@ -64,8 +64,8 @@ async def test_clean_model_state_has_no_enabled_provider_or_routing_role(client)
 
 @pytest.mark.anyio
 async def test_failed_profile_verification_does_not_persist_config_or_secret(client, monkeypatch):
-    from aletheia.model_provider.base import ModelHealth
     import aletheia.model_provider.broker as broker
+    from aletheia.model_provider.base import ModelHealth
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 
     async def unavailable(provider):
@@ -390,7 +390,8 @@ async def test_confirmed_delete_clears_roles_and_provider_owned_secret(client):
 @pytest.mark.anyio
 async def test_delete_failure_restores_prior_secret_and_keeps_profile(client, monkeypatch):
     from aletheia.config.loader import load_config, save_config
-    from aletheia.config.secrets import delete_secret as real_delete_secret, set_secret
+    from aletheia.config.secrets import delete_secret as real_delete_secret
+    from aletheia.config.secrets import set_secret
 
     http, _ = client
     await http.post(

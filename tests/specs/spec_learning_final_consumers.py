@@ -85,8 +85,9 @@ def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch):
     assert diagnostic["manifest"]["lesson_ids"] == ["current-reviewed-lesson"]
     assert [row["lesson_id"] for row in diagnostic["lessons"]] == ["current-reviewed-lesson"]
 
-    from aletheia.server.routes.operator import operator_llm_session
     import inspect
+
+    from aletheia.server.routes.operator import operator_llm_session
     source = inspect.getsource(operator_llm_session)
     assert '["system", "market", "agents", "trading", "learning"]' in source
     assert '"learning_manifest": learning_manifest' in source
@@ -725,9 +726,9 @@ def test_sizing_records_baseline_learned_and_actual_notional(monkeypatch):
     assert unavailable["reason"] == "adapter_error"
 
     monkeypatch.setattr("aletheia.learning.experiments.apply_numeric_treatment", refrozen)
+    import aletheia.config.loader as loader
     from aletheia.config.schema import AletheiaConfig
     from aletheia.trading import persona, sizing
-    import aletheia.config.loader as loader
     cfg = AletheiaConfig()
     cfg.trading.vol_sizing_enabled = False
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
@@ -789,6 +790,7 @@ def test_final_learning_consumers_do_not_gain_execution_or_risk_authority():
             assert token not in source, f"{path.name} crosses the Learning authority boundary"
 
     import inspect
+
     from aletheia.agents import paper_trader_ranker
     ranker_learning_source = inspect.getsource(paper_trader_ranker._compute_trade_score)
     ranker_learning_source += inspect.getsource(paper_trader_ranker._authorized_ranker_delta)

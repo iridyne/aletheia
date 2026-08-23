@@ -12,13 +12,15 @@ Assertions:
 
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 
 def _setup_env(tmp_path: Path, monkeypatch) -> None:
     import sqlite3
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     from aletheia.storage.migrations import run_migrations
@@ -39,8 +41,9 @@ def _setup_env(tmp_path: Path, monkeypatch) -> None:
 
 def _insert_verdict(verdict_value: str, verdict_id: str | None = None) -> None:
     """Insert a verdict row directly, bypassing FK chain (SQLite doesn't enforce by default)."""
-    from aletheia.storage.sqlite import get_db
     import uuid
+
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     vid = verdict_id or str(uuid.uuid4())
@@ -62,6 +65,7 @@ async def test_verdicts_by_verdict_returned(tmp_path, monkeypatch):
     _insert_verdict("insufficient_data", "exp-insufficient")
 
     from httpx import ASGITransport, AsyncClient
+
     from aletheia.server.app import app
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -97,6 +101,7 @@ async def test_db_error_is_not_silently_zero(tmp_path, monkeypatch):
     monkeypatch.setattr(sq, "get_db", lambda: _FailingConn())
 
     from httpx import ASGITransport, AsyncClient
+
     from aletheia.server.app import app
 
     # The route must not turn DB errors into zero. It exposes a stable code rather
@@ -134,6 +139,7 @@ async def test_legacy_activity_failures_are_distinct_from_empty_and_zero(
 
     monkeypatch.setattr(sq, "get_db", lambda: _FailingLegacyConn())
     from httpx import ASGITransport, AsyncClient
+
     from aletheia.server.app import app
 
     async with AsyncClient(
@@ -183,6 +189,7 @@ async def test_legacy_job_health_does_not_leak_raw_errors(tmp_path, monkeypatch)
     )
 
     from httpx import ASGITransport, AsyncClient
+
     from aletheia.server.app import app
 
     async with AsyncClient(
@@ -205,8 +212,8 @@ async def test_unavailable_projection_preserves_configured_freshness_threshold(
     tmp_path, monkeypatch,
 ):
     _setup_env(tmp_path, monkeypatch)
-    from aletheia.config.loader import load_config, save_config
     import aletheia.learning.read_models as read_models
+    from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
     cfg.learning.evaluation_interval_minutes = 180
@@ -218,6 +225,7 @@ async def test_unavailable_projection_preserves_configured_freshness_threshold(
     )
 
     from httpx import ASGITransport, AsyncClient
+
     from aletheia.server.app import app
 
     async with AsyncClient(

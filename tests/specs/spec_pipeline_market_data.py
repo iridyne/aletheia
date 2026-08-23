@@ -11,10 +11,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-import pytest
-
 from tests.specs.spec_meta import SpecClaim, spec_claim
-
 
 # ---------------------------------------------------------------------------
 # Shared DB setup
@@ -183,11 +180,11 @@ def test_market_data_stale_snapshot_triggers_risk_violation(tmp_path, monkeypatc
 
     _insert_fresh_snapshot(conn, "BTC/USDT", price=60000.0, age_seconds=125.0)
 
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
-    from aletheia.risk.engine import evaluate_proposal
     import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     cfg = AletheiaConfig()
     cfg.live.state = "live_enabled"
@@ -242,10 +239,11 @@ def test_xstock_consecutive_failures_emit_one_threshold_event(tmp_path, monkeypa
     keeps accumulating without turning every later failure into another durable write.
     """
     import asyncio
-    import aletheia.trading.market_data as md_mod
+
     import aletheia.config.loader as loader_mod
     import aletheia.data.ccxt_provider as ccxt_mod
     import aletheia.data.venue_listing_cache as venue_cache_mod
+    import aletheia.trading.market_data as md_mod
 
     conn = _setup_db(tmp_path, monkeypatch)
 
@@ -332,9 +330,10 @@ def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monke
     not a substitute venue. Two failures on that venue still load its listing only once.
     """
     import asyncio
-    import aletheia.trading.market_data as md_mod
+
     import aletheia.config.loader as loader_mod
     import aletheia.data.ccxt_provider as ccxt_mod
+    import aletheia.trading.market_data as md_mod
 
     _setup_db(tmp_path, monkeypatch)
 
@@ -424,9 +423,10 @@ def test_xstock_listing_check_failure_does_not_remove(tmp_path, monkeypatch):
     A transient network error must never trigger auto-removal.
     """
     import asyncio
-    import aletheia.trading.market_data as md_mod
+
     import aletheia.config.loader as loader_mod
     import aletheia.data.ccxt_provider as ccxt_mod
+    import aletheia.trading.market_data as md_mod
 
     _setup_db(tmp_path, monkeypatch)
 

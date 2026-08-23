@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 import platform
 import plistlib
-import re
 import shlex
 import subprocess
 import tempfile

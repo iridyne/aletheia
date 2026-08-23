@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
-from datetime import datetime, timezone
 import json
 import logging
 import math
+from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Any
 
 from aletheia.analytics.outcome_integrity import (
@@ -19,7 +19,6 @@ from aletheia.execution.verified_exit import VerifiedExitResult
 from aletheia.portfolio.pnl import build_exit_reasoning
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent, Fill, Order
-
 
 logger = logging.getLogger("aletheia.portfolio.outcome_closure")
 

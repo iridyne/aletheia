@@ -1,9 +1,10 @@
 """Intent classification — LLM structured output with keyword fallback."""
 
 import logging
+
 from pydantic import BaseModel, Field
 
-from aletheia.agent_shell.registry import list_command_names, FORBIDDEN_INTENTS
+from aletheia.agent_shell.registry import list_command_names
 
 logger = logging.getLogger("aletheia.agent_shell.intent")
 

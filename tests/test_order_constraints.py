@@ -1,7 +1,7 @@
 """Regression coverage for exchange-side order size rules."""
 
-from decimal import Decimal
 import time
+from decimal import Decimal
 
 import pytest
 
@@ -68,8 +68,10 @@ def test_quantity_is_rounded_up_to_step_and_minimum_notional():
 
 def test_missing_price_or_unsupported_precision_rejects_fail_closed():
     from aletheia.execution.order_constraints import (
-        ConstraintUnavailable, constraints_from_market, normalize_quantity,
+        ConstraintUnavailable,
         OrderConstraints,
+        constraints_from_market,
+        normalize_quantity,
     )
 
     constraints = OrderConstraints(

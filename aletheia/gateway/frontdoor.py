@@ -9,6 +9,7 @@ agent runtime. `/api/*` is proxied to the supervised backend worker.
 from __future__ import annotations
 
 import asyncio
+
 # Windows: enforce SelectorEventLoop process-wide before uvicorn creates the
 # front-door server loop — eliminates the IOCP AcceptEx WinError 64 crash (§23).
 # See aletheia/async_utils.py for the CLI-provider incompatibility constraint.
@@ -16,9 +17,9 @@ from aletheia.async_utils import apply_windows_selector_policy
 
 apply_windows_selector_policy()
 
+import mimetypes
 import os
 import time
-import mimetypes
 from pathlib import Path
 from typing import AsyncIterator, Iterable
 
@@ -71,6 +72,7 @@ def _remote_auth_check(request: Request) -> JSONResponse | None:
     front door remains reachable for local diagnostics when config is broken.
     """
     import hmac as _hmac
+
     from aletheia.config.loader import load_config
     from aletheia.config.secrets import get_secret
     try:

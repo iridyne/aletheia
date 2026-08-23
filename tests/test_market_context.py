@@ -9,12 +9,11 @@ Covers:
 
 import asyncio
 import json
-import sqlite3
 import math
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from aletheia.trading import indicators
-
 
 # === Indicators ===
 
@@ -263,8 +262,8 @@ def test_build_context_marks_missing_timeframe_in_partial_bundle():
 
 def test_build_context_falls_back_on_total_failure(tmp_path, monkeypatch):
     """If every OHLCV call fails, we degrade to the legacy 1-line context."""
-    from aletheia.trading.market_context import build_market_context
     from aletheia.data.cache import get_cache
+    from aletheia.trading.market_context import build_market_context
     get_cache().invalidate()  # clear any state from previous tests
 
     provider = _FakeProvider(fail_after=0)  # fail immediately
@@ -372,8 +371,8 @@ def test_observer_system_prompt_matches_normalized_technical_fields():
 def _setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
-    from aletheia.storage.sqlite import reset_db
     from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import reset_db
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     for sub in ("logs", "knowledge/research_notes", "knowledge/strategies",

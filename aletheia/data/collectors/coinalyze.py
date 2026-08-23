@@ -36,11 +36,11 @@ from __future__ import annotations
 import logging
 import math
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from aletheia.net import httpx_client
 from aletheia.data.models import LiquidationEvent, OpenInterestSnapshot
+from aletheia.net import httpx_client
 
 logger = logging.getLogger("aletheia.data.collectors.coinalyze")
 

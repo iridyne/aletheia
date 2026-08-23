@@ -239,8 +239,8 @@ def test_opportunity_flow_candidate_supply_uses_wide_event_window(monkeypatch):
     # directly rather than calling operator_store.list_events. This test therefore
     # seeds the real table and asserts on the audit OUTPUT (same intent as the
     # master-side version that mocked list_events with limit=100).
-    import aletheia.storage.sqlite as sq
     import aletheia.analytics.opportunity_flow as flow
+    import aletheia.storage.sqlite as sq
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

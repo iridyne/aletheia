@@ -1,19 +1,20 @@
 """Tests for divergence_scanner — Polymarket/crypto price divergence detection."""
 
 import json
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
-from aletheia.storage import repositories as repo
+import pytest
+
 from aletheia.agents.divergence_scanner import (
-    _map_question_to_symbol,
     _compute_divergence_score,
+    _map_question_to_symbol,
     run_divergence_scanner,
 )
 from aletheia.data.providers import Ticker
+from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 def _setup_db(tmp_path, monkeypatch):

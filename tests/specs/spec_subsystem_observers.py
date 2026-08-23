@@ -9,8 +9,6 @@ Contract: agent_contracts.md §4 (observer agents)
 import ast
 from pathlib import Path
 
-import pytest
-
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
@@ -252,6 +250,7 @@ def test_equity_observer_opportunity_execution_eligible():
 )
 def test_observer_has_pre_filter_function():
     import inspect
+
     import aletheia.agents.market_observer as mo
     assert hasattr(mo, "_has_sufficient_signal"), (
         "_has_sufficient_signal 不存在 — OBS-PRE-FILTER 未实现"
@@ -295,6 +294,7 @@ def test_pre_filter_signal_detection():
 )
 def test_pre_filter_rejection_returns_without_error():
     import inspect
+
     import aletheia.agents.market_observer as mo
 
     src = inspect.getsource(mo._analyze_symbol)

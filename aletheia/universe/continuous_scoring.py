@@ -7,11 +7,10 @@ it for diagnostics, but ``universe-step-v2`` remains the only authority.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import math
+from dataclasses import dataclass, replace
 from numbers import Real
 from typing import Callable, Iterable, Mapping, Sequence
-
 
 CONTINUOUS_SCORER_BEHAVIOR_VERSION = "universe-continuous-shadow-v2"
 

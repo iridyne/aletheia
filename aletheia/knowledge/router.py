@@ -12,8 +12,8 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
-from aletheia.knowledge.guards import evaluate_guards, format_guard_block, GuardEvaluation
-from aletheia.knowledge.retrieval import retrieve_lessons, format_memory_block, Lesson
+from aletheia.knowledge.guards import evaluate_guards, format_guard_block
+from aletheia.knowledge.retrieval import Lesson, format_memory_block, retrieve_lessons
 
 logger = logging.getLogger("aletheia.knowledge.router")
 

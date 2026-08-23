@@ -1,7 +1,6 @@
 import json
-from pathlib import Path
-from types import SimpleNamespace
 import xml.etree.ElementTree as ET
+from types import SimpleNamespace
 
 
 def test_source_checkout_cannot_install_machine_service(monkeypatch):

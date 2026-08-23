@@ -1,6 +1,6 @@
 """Regression test for OKX demo whitelist dict-format bug."""
 
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

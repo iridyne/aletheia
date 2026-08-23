@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import stat
+from pathlib import Path
 
 import pytest
 
-from aletheia.update import bootstrap, packaged
 from aletheia.package_integrity import manifest_entry, sha256_file
+from aletheia.update import bootstrap, packaged
 
 
 def test_bootstrap_preserves_safe_internal_symlink(tmp_path: Path):

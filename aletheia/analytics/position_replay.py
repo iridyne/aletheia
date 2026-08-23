@@ -5,19 +5,18 @@ This module reports evidence only. It never imports or calls behavior owners.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import math
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from aletheia.analytics.outcome_integrity import assess_reportable_outcome
 from aletheia.analytics import trade_path as trade_path_analytics
+from aletheia.analytics.outcome_integrity import assess_reportable_outcome
 from aletheia.storage import repositories as repo
 from aletheia.storage.market_ohlcv_tiering import _canonical_row, _content_hash
 from aletheia.trading.trading_mandate import (
     validate_frozen_trading_mandate_provenance,
 )
-
 
 FACT_CONTRACT_VERSION = "profit_loop_fact/v1"
 _BAR_MS = 60_000

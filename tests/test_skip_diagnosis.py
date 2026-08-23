@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 
 def _setup(tmp_path, monkeypatch):
     from tests.test_entry_logic import setup_env

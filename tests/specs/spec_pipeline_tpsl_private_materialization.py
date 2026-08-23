@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import sqlite3
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -38,9 +38,9 @@ def _setup_db(tmp_path, monkeypatch):
 
 
 def _seed_position(execution_mode: str, *, suffix: str, plan_ids: dict):
-    from tests.execution_authority import seed_order_authority
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Fill, Order, Position
+    from tests.execution_authority import seed_order_authority
 
     proposal, decision = seed_order_authority(
         proposal_id=f"proposal-tpsl-{suffix}",
@@ -517,8 +517,8 @@ def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
     monkeypatch,
 ):
     from aletheia.agent_runtime import scheduler
-    from aletheia.execution import exchange_materialization
     from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.execution import exchange_materialization
     from aletheia.learning import control
     from aletheia.storage import repositories, sqlite
 

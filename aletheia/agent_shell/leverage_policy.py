@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
 
-
 _EPOCH_KIND = "system_operator_leverage_policy"
 
 _EFFECTIVE_VALUES = {

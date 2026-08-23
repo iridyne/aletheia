@@ -5,7 +5,6 @@ from typing import Optional
 
 import typer
 
-
 audit_app = typer.Typer(no_args_is_help=True)
 
 
@@ -41,10 +40,11 @@ def data(
     output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON"),
 ):
     """Check OHLCV coverage and signal effectiveness for all active members."""
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.config.loader import load_config
     from aletheia.storage.repositories import get_active_universe_members
     from aletheia.storage.sqlite import get_db
-    from aletheia.config.loader import load_config
-    from datetime import datetime, timezone, timedelta
 
     cfg = load_config()
     min_bars = cfg.historical_data.min_bars_for_backtest
@@ -398,6 +398,7 @@ def costs(
 ):
     """Inspect append-only runtime cost events and unknown-cost gaps."""
     from datetime import datetime, timedelta, timezone
+
     from aletheia.economics.tracing import list_cost_summary
 
     end = datetime.now(timezone.utc)
@@ -430,6 +431,7 @@ def tokens(
 ):
     """Inspect provider-reported input/output/cache token telemetry."""
     from datetime import datetime, timedelta, timezone
+
     from aletheia.economics.tracing import list_token_summary
 
     end = datetime.now(timezone.utc)

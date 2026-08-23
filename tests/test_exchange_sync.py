@@ -8,13 +8,13 @@ Governance under test:
 """
 
 import sqlite3
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 import pytest
 
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -126,9 +126,9 @@ def test_sync_writes_cache_and_status_ok(tmp_path, monkeypatch):
 
 def test_sync_unconfigured_returns_none_no_raise(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.portfolio import exchange_sync as es
     # Force _client_or_unconfigured to return (None, mode) by patching BitgetClient.
     import aletheia.exchanges.bitget.client as bg_client
+    from aletheia.portfolio import exchange_sync as es
 
     class _NoCreds:
         def __init__(self, mode="demo"): self.mode = mode
@@ -261,7 +261,8 @@ async def test_exchange_account_endpoint(tmp_path, monkeypatch):
     es = _patch_client(monkeypatch)
     es.sync_exchange_account()
 
-    from httpx import AsyncClient, ASGITransport
+    from httpx import ASGITransport, AsyncClient
+
     from aletheia.server.app import app
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
@@ -288,7 +289,8 @@ async def test_positions_reconciliation_endpoint(tmp_path, monkeypatch):
                        positions=[_FakePosition(symbol="BTCUSDT", side="short")])
     es.sync_exchange_account()
 
-    from httpx import AsyncClient, ASGITransport
+    from httpx import ASGITransport, AsyncClient
+
     from aletheia.server.app import app
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
@@ -387,8 +389,8 @@ def test_adopt_live_position_is_human_only_by_execution_mode(tmp_path, monkeypat
     cfg = load_config()
     cfg.exchange.name = "bitget"
     save_config(cfg)
-    from aletheia.portfolio.position_reconciler import adopt_position
     from aletheia.portfolio import position_manager as pm
+    from aletheia.portfolio.position_reconciler import adopt_position
 
     ex = {"symbol": "ETHUSDT", "side": "long", "quantity": 0.5,
           "entry_price": 3000.0, "unrealized_pnl": 5.0, "mark_price": 3010.0,
@@ -404,8 +406,9 @@ def test_adopt_refuses_zero_entry_or_quantity(tmp_path, monkeypatch):
     """Never synthesize a chain off a missing size/entry — that would fabricate the
     very causal facts the design exists to keep honest."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.portfolio.position_reconciler import adopt_position
     import pytest as _pytest
+
+    from aletheia.portfolio.position_reconciler import adopt_position
     with _pytest.raises(ValueError):
         adopt_position({"symbol": "BTCUSDT", "side": "short", "quantity": 0.001,
                         "entry_price": 0.0}, "demo")

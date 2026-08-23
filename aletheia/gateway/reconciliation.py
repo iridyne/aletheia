@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from aletheia.storage.models import PSFill, PSPosition, PSReconciliationDiff, PSReconciliationReport, new_id
 from aletheia.gateway.exchange_adapter import RemoteFill, RemoteOrder, RemotePosition
 from aletheia.gateway.state_store import GatewayStateStore
+from aletheia.storage.models import PSFill, PSPosition, PSReconciliationDiff, PSReconciliationReport
 
 
 def _utcnow() -> str:

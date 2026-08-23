@@ -1,13 +1,13 @@
 """Phase 3 tests: scheduler, market data, LLM-backed agents, tool logging."""
 
-import pytest
-from unittest.mock import patch, AsyncMock
 
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
-from aletheia.storage import repositories as repo
-from aletheia.agent_runtime.tool_registry import init_tool_registry
+import pytest
+
 from aletheia.agent_runtime.orchestrator import run_agent
+from aletheia.agent_runtime.tool_registry import init_tool_registry
+from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -61,6 +61,7 @@ def test_scheduler_disabled_returns_none(tmp_path, monkeypatch):
 def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from datetime import datetime, timedelta
+
     import aletheia.agent_runtime.scheduler as sched
     sched._scheduler = None
     started_at = datetime.now()
@@ -116,9 +117,10 @@ def test_scheduler_guard_rolls_back_leaked_sqlite_transaction(tmp_path, monkeypa
     """
     setup_real_db_env(tmp_path, monkeypatch)
 
+    import sqlite3
+
     from aletheia.agent_runtime import scheduler as sched
     from aletheia.storage.sqlite import db_path, get_db
-    import sqlite3
 
     def leaky_job():
         db = get_db()
@@ -152,8 +154,8 @@ def test_scheduler_guard_rolls_back_leaked_sqlite_transaction(tmp_path, monkeypa
 @pytest.mark.anyio
 async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.data.providers import Ticker
     from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Ticker
 
     class _FakeCCXT:
         async def get_ticker(self, symbol):
@@ -191,8 +193,8 @@ async def test_market_data_rejects_cross_venue_fallback_snapshot(
     tmp_path, monkeypatch
 ):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.data.providers import Ticker
     from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Ticker
 
     class _CrossVenueProvider:
         async def get_ticker(self, symbol):

@@ -14,7 +14,6 @@ All proposals still pass through Risk Engine gates after sizing.
 """
 from __future__ import annotations
 
-
 _DEFAULT_KELLY_FRACTION = 0.25   # legacy name: conviction-policy scaling factor
 _MIN_MULTIPLIER = 0.3            # floor: $25 base → $7.50 minimum at lowest conviction
 _MAX_MULTIPLIER = 2.5            # cap: $25 base → $62.50 maximum at peak conviction

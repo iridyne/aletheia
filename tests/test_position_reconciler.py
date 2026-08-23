@@ -13,14 +13,15 @@ import sqlite3
 
 import pytest
 
-from aletheia.storage.sqlite import reset_db
+from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import Position
-from aletheia.storage import repositories as repo
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
     import yaml
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -189,6 +190,7 @@ def test_paper_internal_never_reconciles_against_exchange_cache(tmp_path, monkey
     """A local-only position has no exchange counterpart by design, not by drift."""
     setup_env(tmp_path, monkeypatch)
     import yaml
+
     import aletheia.config.loader as loader
 
     loader.CONFIG_PATH.write_text(
@@ -220,6 +222,7 @@ def test_reconcile_scopes_locals_to_active_execution_account(tmp_path, monkeypat
     """External demo reconciliation excludes local-only and other-account rows."""
     setup_env(tmp_path, monkeypatch)
     import yaml
+
     import aletheia.config.loader as loader
 
     loader.CONFIG_PATH.write_text(
@@ -247,6 +250,7 @@ def test_reconcile_scopes_locals_to_active_execution_account(tmp_path, monkeypat
 def test_live_reconcile_execution_mode_follows_active_exchange(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     import yaml
+
     import aletheia.config.loader as loader
     from aletheia.portfolio.position_reconciler import _execution_mode_for
 
@@ -266,6 +270,7 @@ def test_live_reconcile_execution_mode_follows_active_exchange(tmp_path, monkeyp
 def test_unified_positions_are_scoped_to_active_broker(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     import yaml
+
     import aletheia.config.loader as loader
 
     loader.CONFIG_PATH.write_text(
@@ -299,6 +304,7 @@ def test_unified_positions_are_scoped_to_active_broker(tmp_path, monkeypatch):
 def test_unified_position_without_broker_id_never_infers_orphan(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     import yaml
+
     import aletheia.config.loader as loader
 
     loader.CONFIG_PATH.write_text(
@@ -330,6 +336,7 @@ def test_malformed_unified_quantity_degrades_view_without_inferring_orphan(
 ):
     setup_env(tmp_path, monkeypatch)
     import yaml
+
     import aletheia.config.loader as loader
 
     loader.CONFIG_PATH.write_text(
@@ -400,6 +407,7 @@ def test_invalid_local_quantity_degrades_identity_without_classification(
 
 def _stub_okx_unified(monkeypatch, positions):
     import yaml
+
     import aletheia.config.loader as loader
     from aletheia.portfolio import position_reconciler as pr
 
@@ -673,6 +681,7 @@ def test_account_fingerprint_mismatch_blocks_identity(tmp_path, monkeypatch):
 def test_legacy_fallback_orphan_close_is_removed():
     """No caller can turn current/entry fallback price into a synthetic close."""
     import inspect
+
     from aletheia.portfolio import position_reconciler
 
     source = inspect.getsource(position_reconciler)
@@ -685,6 +694,7 @@ def test_run_reconcile_demo_adopts_and_records_disappearance(tmp_path, monkeypat
     setup_env(tmp_path, monkeypatch)
 
     import yaml
+
     import aletheia.config.loader as loader
     loader.CONFIG_PATH.write_text(yaml.safe_dump({
         "exchange": {"mode": "demo", "paper_execution_mode": "bitget_demo"},
@@ -726,6 +736,7 @@ def test_run_reconcile_live_never_adopts(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
     import yaml
+
     import aletheia.config.loader as loader
     loader.CONFIG_PATH.write_text(yaml.safe_dump({
         "exchange": {"mode": "live", "name": "bitget"},
@@ -757,6 +768,7 @@ def test_run_reconcile_respects_auto_adopt_disabled(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
     import yaml
+
     import aletheia.config.loader as loader
     loader.CONFIG_PATH.write_text(yaml.safe_dump({
         "exchange": {"mode": "demo", "paper_execution_mode": "bitget_demo"},

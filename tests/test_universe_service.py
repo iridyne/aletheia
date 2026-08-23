@@ -1,13 +1,13 @@
 """Tests for UniverseService — fallback behavior, get_current_universe, refresh."""
 
 import json
-from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock, AsyncMock
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from aletheia.config.schema import UniverseConfig
 from aletheia.universe.service import UniverseService
-from aletheia.config.schema import UniverseConfig, AletheiaConfig
 
 
 @pytest.fixture

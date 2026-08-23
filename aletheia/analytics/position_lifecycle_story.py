@@ -9,11 +9,11 @@ evidence, write trading state, call an LLM, or select a causal winner.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta, timezone
 import json
 import math
 import sqlite3
+from collections.abc import Mapping, Sequence
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aletheia.analytics.position_replay import build_position_replay

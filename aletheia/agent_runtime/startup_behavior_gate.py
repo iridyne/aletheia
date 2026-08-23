@@ -261,13 +261,13 @@ def _check_pending_closes(cfg, state_store) -> tuple[bool, str]:
     existing stale threshold.
     """
     try:
+        from aletheia.execution.close_convergence import (
+            IMMEDIATE_RECONCILIATION_STATES,
+        )
         from aletheia.portfolio.position_manager import (
             _OPEN_CLOSE_STATES,
             _PENDING_CLOSE_STALE_HOURS,
             _pending_close_age_hours,
-        )
-        from aletheia.execution.close_convergence import (
-            IMMEDIATE_RECONCILIATION_STATES,
         )
         from aletheia.storage import sqlite as _sqlite
 

@@ -11,7 +11,6 @@ do not claim the delta is currently authorized or improves later decisions.
 """
 from unittest.mock import patch
 
-
 # ---------------------------------------------------------------------------
 # P1: Proposed lesson delta calculation (pre-authority)
 # ---------------------------------------------------------------------------

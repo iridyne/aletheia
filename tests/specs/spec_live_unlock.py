@@ -9,7 +9,6 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 # ---------------------------------------------------------------------------
 # L2a — Structural claims
 # ---------------------------------------------------------------------------
@@ -23,6 +22,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 )
 def test_live_default_disabled():
     import inspect
+
     from aletheia.config.schema import LiveConfig
 
     source = inspect.getsource(LiveConfig)
@@ -82,8 +82,8 @@ def test_forbidden_intents_blocked_by_permissions():
     ),
 )
 def test_restricted_tools_permission_class():
-    from aletheia.agent_runtime.tool_registry import RESTRICTED_TOOLS, init_tool_registry
     from aletheia.agent_runtime.permissions import TOOL_REGISTRY
+    from aletheia.agent_runtime.tool_registry import RESTRICTED_TOOLS, init_tool_registry
 
     init_tool_registry()
     for tool in RESTRICTED_TOOLS:
@@ -123,6 +123,7 @@ def test_no_mode_permits_forbidden_intents():
 def _make_live_app():
     """Minimal FastAPI app with only the live-unlock router mounted."""
     from fastapi import FastAPI
+
     from aletheia.server.routes.live import router as live_router
 
     app = FastAPI()
@@ -133,6 +134,7 @@ def _make_live_app():
 def _seed_test_live_identity(cfg, monkeypatch):
     """Provide deterministic sanitized evidence for unlock contract tests."""
     from datetime import datetime, timedelta, timezone
+
     import aletheia.trust.live_unlock as trust
 
     cfg.exchange.name = "bitget"
@@ -228,6 +230,7 @@ def test_live_unlock_no_escalation_from_limited(tmp_path, monkeypatch):
 
     # Pre-seed config with live_limited state
     import yaml
+
     from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()
@@ -271,6 +274,7 @@ def test_live_unlock_writes_audit_event(tmp_path, monkeypatch):
     jsonl_mod._last_audit_hash = None
 
     import yaml
+
     from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()
@@ -360,14 +364,16 @@ def test_restricted_tool_class_is_empty_set():
 )
 def test_live_unlock_sets_operator_auto(tmp_path, monkeypatch):
     import yaml
+
     import aletheia.config.loader as loader
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
 
-    from aletheia.config.schema import AletheiaConfig
     from fastapi.testclient import TestClient
+
+    from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()
     _seed_test_live_identity(cfg, monkeypatch)
@@ -407,14 +413,16 @@ def test_live_unlock_sets_operator_auto(tmp_path, monkeypatch):
 )
 def test_unlock_invariant_state_and_permission(tmp_path, monkeypatch):
     import yaml
+
     import aletheia.config.loader as loader
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
 
-    from aletheia.config.schema import AletheiaConfig
     from fastapi.testclient import TestClient
+
+    from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()
     _seed_test_live_identity(cfg, monkeypatch)
@@ -521,14 +529,16 @@ def test_auto_mode_scope_main_track_only():
 )
 def test_live_lock_resets_operator_permission(tmp_path, monkeypatch):
     import yaml
+
     import aletheia.config.loader as loader
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
 
-    from aletheia.config.schema import AletheiaConfig
     from fastapi.testclient import TestClient
+
+    from aletheia.config.schema import AletheiaConfig
 
     # Pre-seed with live_limited + Auto (as if unlock already ran)
     cfg = AletheiaConfig()

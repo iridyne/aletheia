@@ -20,10 +20,10 @@ Three filter kinds currently register experiments:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
 from aletheia.counterfactual.filter_replay import (
@@ -36,7 +36,6 @@ from aletheia.observation_lab import units as lab_units
 from aletheia.storage import repositories as repo
 from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
-
 
 # Fallback gates when a replay does not declare its own gates in the top-level
 # dict. family_ttl currently relies on these; observer_pre_filter declares its

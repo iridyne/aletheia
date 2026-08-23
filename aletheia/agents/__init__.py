@@ -1,6 +1,6 @@
 """Agent registry — maps agent names to their run functions."""
 
-from typing import Callable, Awaitable
+from typing import Awaitable, Callable
 
 _AGENTS: dict[str, Callable[..., Awaitable[dict]]] = {}
 

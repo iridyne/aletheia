@@ -5,7 +5,6 @@ from __future__ import annotations
 from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
 from aletheia.trading.trade_motivation import TRADE_MOTIVATION_VERSION
 
-
 POLICY_EPOCH_LABEL = "opportunity_information_integrity/v2"
 _EPOCH_KIND = "opportunity_information_integrity"
 _EFFECTIVE_VALUES = {

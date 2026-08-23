@@ -14,10 +14,10 @@ Raw Position economics and external/demo history are intentionally immutable.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import math
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from aletheia.portfolio.local_funding import (
@@ -26,7 +26,6 @@ from aletheia.portfolio.local_funding import (
     _parse_utc,
     compute_local_funding_from_entry_fills,
 )
-
 
 RECONCILIATION_VERSION = "historical-local-paper-accounting-v1"
 _METHOD = "deterministic_legacy_entry_ledger_plus_complete_local_funding"

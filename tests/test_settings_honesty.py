@@ -6,10 +6,10 @@ The UI/API must not accept mutations for dead fields or return a successful
 "updated" response implying runtime behavior changed.
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
-from fastapi.testclient import TestClient
+from unittest.mock import MagicMock, patch
 
+import pytest
+from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
 # Shared app + config fixtures
@@ -17,9 +17,10 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture()
 def settings_app():
-    from aletheia.server.routes import settings as settings_mod
-    from aletheia.config.schema import StrategyFactoryConfig, EventTriggerConfig, AletheiaConfig
     from fastapi import FastAPI
+
+    from aletheia.config.schema import AletheiaConfig, EventTriggerConfig, StrategyFactoryConfig
+    from aletheia.server.routes import settings as settings_mod
 
     cfg = MagicMock(spec=AletheiaConfig)
     cfg.strategy_factory = StrategyFactoryConfig()
@@ -84,9 +85,10 @@ def test_strategy_factory_post_lists_deprecated_fields(settings_app):
 
 @pytest.fixture()
 def event_trigger_app():
-    from aletheia.server.routes import settings as settings_mod
-    from aletheia.config.schema import EventTriggerConfig, AletheiaConfig
     from fastapi import FastAPI
+
+    from aletheia.config.schema import AletheiaConfig, EventTriggerConfig
+    from aletheia.server.routes import settings as settings_mod
 
     cfg = MagicMock(spec=AletheiaConfig)
     cfg.event_triggers = EventTriggerConfig()

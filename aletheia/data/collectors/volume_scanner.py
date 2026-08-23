@@ -7,7 +7,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
-from aletheia.data.symbols import InstrumentId, MARKET_SPOT
+from aletheia.data.symbols import MARKET_SPOT, InstrumentId
 
 logger = logging.getLogger("aletheia.data.collectors.volume_scanner")
 

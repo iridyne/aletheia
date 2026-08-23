@@ -21,7 +21,7 @@ def build_trade_insights() -> dict:
 
     rows = eligible_strategy_outcomes(closed_after=_SINCE_UTC)
     raw_rows = raw_account_events(closed_after=_SINCE_UTC, limit=10_000)
-    
+
     # #1254: truncation metadata
     source_total = len(raw_rows)
     loaded_count = len(rows)
@@ -280,7 +280,7 @@ def _pnl_distribution(rows) -> list[dict]:
 
 
 def _by_regime(rows) -> list[dict]:
-    from aletheia.regime.detector import REGIME_BULL, REGIME_BEAR, REGIME_SIDEWAYS, REGIME_VOLATILE
+    from aletheia.regime.detector import REGIME_BEAR, REGIME_BULL, REGIME_SIDEWAYS, REGIME_VOLATILE
 
     buckets: dict[str, dict] = {}
     for r in rows:

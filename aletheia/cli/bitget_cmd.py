@@ -1,6 +1,7 @@
 """Bitget CLI commands."""
 
 import asyncio
+
 import typer
 
 bitget_app = typer.Typer(no_args_is_help=True)
@@ -27,8 +28,8 @@ def test():
 @bitget_app.command()
 def sync():
     """Pull real account state from Bitget once (debug helper for the cached sync)."""
+    from aletheia.portfolio.exchange_sync import get_cached_state, status_for, sync_exchange_account
     from aletheia.storage.migrations import assert_migrations_current
-    from aletheia.portfolio.exchange_sync import sync_exchange_account, get_cached_state, status_for
 
     assert_migrations_current()
     state = sync_exchange_account()

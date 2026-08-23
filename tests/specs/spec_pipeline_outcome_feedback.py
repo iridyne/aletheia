@@ -593,11 +593,11 @@ def test_producer_rejects_pre_clean_close_before_persisting_or_running_hooks(
     tmp_path, monkeypatch,
 ):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.counterfactual import trades as shadow_trades
     from aletheia.analytics.outcome_integrity import (
         assess_reportable_outcome,
         raw_account_events,
     )
+    from aletheia.counterfactual import trades as shadow_trades
     from aletheia.portfolio.pnl import close_position
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
@@ -675,8 +675,8 @@ def test_producer_rejects_pre_clean_close_before_persisting_or_running_hooks(
     )
 )
 def test_concurrent_verified_close_claims_position_once(tmp_path, monkeypatch):
-    from concurrent.futures import ThreadPoolExecutor
     import threading
+    from concurrent.futures import ThreadPoolExecutor
 
     _setup_db(tmp_path, monkeypatch)
     from aletheia.portfolio import outcome_closure
@@ -885,11 +885,11 @@ def test_transient_attribution_read_failure_does_not_block_verified_close(
     _setup_db(tmp_path, monkeypatch)
     import aletheia.analytics.outcome_integrity as _oi_module
     import aletheia.portfolio.outcome_hooks as _oh_module
-    from aletheia.counterfactual import trades as shadow_trades
     from aletheia.analytics.outcome_integrity import (
         AttributionReadError,
         assess_position_closure,
     )
+    from aletheia.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
@@ -978,8 +978,8 @@ def test_local_paper_close_recovers_transient_attribution_read_failure(
     _setup_db(tmp_path, monkeypatch)
     import aletheia.analytics.outcome_integrity as _oi_module
     import aletheia.portfolio.outcome_hooks as _oh_module
-    from aletheia.counterfactual import trades as shadow_trades
     from aletheia.analytics.outcome_integrity import AttributionReadError
+    from aletheia.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_hooks, paper_account, pnl
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position
@@ -1055,8 +1055,8 @@ def test_local_paper_close_recovers_transient_attribution_read_failure(
 def test_transient_attribution_read_failure_remains_retryable(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     import aletheia.portfolio.outcome_hooks as _oh_module
-    from aletheia.counterfactual import trades as shadow_trades
     from aletheia.analytics.outcome_integrity import AttributionReadError
+    from aletheia.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result
@@ -1149,8 +1149,8 @@ def test_proven_missing_attribution_is_permanently_skipped(tmp_path, monkeypatch
     )
 )
 def test_concurrent_replay_workers_invoke_hook_once(tmp_path, monkeypatch):
-    from concurrent.futures import ThreadPoolExecutor
     import threading
+    from concurrent.futures import ThreadPoolExecutor
 
     _setup_db(tmp_path, monkeypatch)
     from aletheia.counterfactual import trades as shadow_trades

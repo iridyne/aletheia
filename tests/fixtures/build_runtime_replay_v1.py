@@ -9,9 +9,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import sqlite3
-
+from pathlib import Path
 
 FIXED_TIMES = [f"2026-01-{day:02d}T00:00:00+00:00" for day in range(1, 25)]
 SYMBOLS = ("BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT")

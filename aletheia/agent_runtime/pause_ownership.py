@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import threading
 
 from aletheia.config import loader as _config_loader
 from aletheia.config.schema import PauseOwnerLease

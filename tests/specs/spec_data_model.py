@@ -8,7 +8,6 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 # ---------------------------------------------------------------------------
 # L2a — Structural claims
 # ---------------------------------------------------------------------------
@@ -22,6 +21,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 )
 def test_per_thread_connection_model():
     import threading
+
     from aletheia.storage.sqlite import _local
 
     assert isinstance(_local, threading.local)
@@ -34,7 +34,6 @@ def test_per_thread_connection_model():
     ),
 )
 def test_wal_mode_in_source():
-    import ast
     from pathlib import Path
 
     src = Path(__file__).parent.parent.parent / "aletheia" / "storage" / "sqlite.py"
@@ -49,7 +48,6 @@ def test_wal_mode_in_source():
     ),
 )
 def test_autocommit_isolation_level():
-    import ast
     from pathlib import Path
 
     src = Path(__file__).parent.parent.parent / "aletheia" / "storage" / "sqlite.py"
@@ -326,9 +324,9 @@ def test_collector_health_state_is_bounded_by_domain_primary_key():
 )
 def test_outcome_hook_outbox_and_serenity_idempotency_schema():
     from aletheia.storage.migrations import (
-        SCHEMA_SQL,
         _ADDITIVE_COLUMNS,
         _OUTCOME_INTEGRITY_DDL,
+        SCHEMA_SQL,
     )
 
     outcome_ddl = "\n".join(_OUTCOME_INTEGRITY_DDL)
@@ -398,8 +396,8 @@ def test_select_one_tolerates_broken_json(tmp_path, monkeypatch):
 
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
-    from aletheia.storage.migrations import run_migrations
     from aletheia.storage import repositories as repo
+    from aletheia.storage.migrations import run_migrations
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -502,9 +500,9 @@ def test_insert_trade_proposal_id_format(tmp_path, monkeypatch):
 
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
+    from aletheia.storage import repositories as repo
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -547,10 +545,10 @@ def test_pi_decision_carries_opportunity_id(tmp_path, monkeypatch):
 
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
-    from aletheia.storage.migrations import run_migrations
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Opportunity, PiDecision
     from aletheia.agent_shell.reflection import record_decision
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.models import Opportunity, PiDecision
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -637,8 +635,8 @@ def test_pi_decisions_tie_broken_by_rowid(tmp_path, monkeypatch):
 
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
-    from aletheia.storage.migrations import run_migrations
     from aletheia.storage import repositories as repo
+    from aletheia.storage.migrations import run_migrations
     from aletheia.storage.models import PiDecision
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -696,8 +694,8 @@ def test_pi_decisions_tie_broken_by_rowid(tmp_path, monkeypatch):
     ),
 )
 def test_pi_decision_debate_trace_fields_and_migrations_exist():
-    from aletheia.storage.models import PiDecision
     from aletheia.storage import migrations
+    from aletheia.storage.models import PiDecision
 
     fields = PiDecision.model_fields
     for name in (
@@ -727,8 +725,8 @@ def test_pi_decision_debate_trace_fields_and_migrations_exist():
     ),
 )
 def test_operator_evaluation_event_carrier_and_schema_exist():
-    from aletheia.storage.models import OperatorEvaluationEvent
     from aletheia.storage import migrations
+    from aletheia.storage.models import OperatorEvaluationEvent
 
     fields = OperatorEvaluationEvent.model_fields
     for name in (
@@ -818,9 +816,9 @@ def test_insert_trade_proposal_links_hash_chain(tmp_path, monkeypatch):
 
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
+    from aletheia.storage import repositories as repo
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -875,9 +873,9 @@ def test_proposal_hash_chain_integrity(tmp_path, monkeypatch):
 
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
+    from aletheia.storage import repositories as repo
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
     from aletheia.storage.repositories import _compute_proposal_hash
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)

@@ -180,8 +180,8 @@ def test_bitget_rejects_invalid_preset_price_before_http(monkeypatch, field, val
     )
 )
 def test_bitget_broker_forwards_approved_proposal_protection(monkeypatch):
-    from aletheia.execution import bitget_broker
     from aletheia.exchanges.bitget.client import OrderResponse
+    from aletheia.execution import bitget_broker
     from tests.execution_authority import seed_order_authority
 
     proposal, decision = seed_order_authority(
@@ -227,8 +227,8 @@ def test_bitget_broker_forwards_approved_proposal_protection(monkeypatch):
 
 
 def test_bitget_broker_rejects_protection_not_in_approved_proposal(monkeypatch):
-    from aletheia.execution import bitget_broker
     from aletheia.exchanges.bitget.client import OrderResponse
+    from aletheia.execution import bitget_broker
     from aletheia.storage import repositories as repo
     from tests.execution_authority import seed_order_authority
 

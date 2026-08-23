@@ -16,8 +16,8 @@ class BitgetDemoAdapter:
     display_name = "Bitget Demo"
 
     def __init__(self):
-        from aletheia.exchanges.bitget.client import BitgetClient
         from aletheia.config.loader import load_config
+        from aletheia.exchanges.bitget.client import BitgetClient
         cfg = load_config()
         self._client = BitgetClient(mode=cfg.exchange.mode)
         self._client._get_creds()  # raises RuntimeError when not configured

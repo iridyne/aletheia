@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 def test_gateway_restart_reports_stop_and_start_durations(monkeypatch):
     from typer.testing import CliRunner
+
     from aletheia.cli import gateway as gateway_cli
     from aletheia.gateway import lifecycle
 
@@ -20,6 +21,7 @@ def test_gateway_restart_reports_stop_and_start_durations(monkeypatch):
 
 def test_gateway_restart_reports_pending_readiness_after_timeout(monkeypatch):
     from typer.testing import CliRunner
+
     from aletheia.cli import gateway as gateway_cli
     from aletheia.gateway import lifecycle
 

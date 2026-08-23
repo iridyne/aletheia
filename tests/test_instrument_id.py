@@ -1,13 +1,16 @@
 """Tests for InstrumentId and symbol conversion helpers."""
 
 import pytest
-from aletheia.data.symbols import (
-    InstrumentId,
-    to_canonical, to_bitget, to_ccxt, to_ccxt_perp, to_yfinance,
-    canonical_of,
-    MARKET_SPOT, MARKET_PERP, MARKET_FUTURES,
-)
 
+from aletheia.data.symbols import (
+    MARKET_SPOT,
+    InstrumentId,
+    canonical_of,
+    to_bitget,
+    to_canonical,
+    to_ccxt_perp,
+    to_yfinance,
+)
 
 # ---------------------------------------------------------------------------
 # InstrumentId construction and string round-trip

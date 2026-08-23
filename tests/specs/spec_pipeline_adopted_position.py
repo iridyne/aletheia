@@ -30,7 +30,6 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 # ---------------------------------------------------------------------------
 # Shared DB + secrets setup  (mirrors spec_pipeline_stop_propagation pattern)
 # ---------------------------------------------------------------------------
@@ -74,6 +73,7 @@ def _stub_audit(monkeypatch, tmp_path):
 def _configure_exchange(name: str) -> None:
     """Set the active exchange required by live execution-mode resolution."""
     import yaml
+
     import aletheia.config.loader as loader
 
     loader.CONFIG_PATH.write_text(
@@ -298,8 +298,8 @@ def test_adopted_sltp_matches_config_pct(tmp_path, monkeypatch):
     _stub_notifications(monkeypatch)
     _stub_audit(monkeypatch, tmp_path)
 
-    from aletheia.portfolio.position_reconciler import adopt_position
     from aletheia.config.loader import load_config
+    from aletheia.portfolio.position_reconciler import adopt_position
     from aletheia.storage.sqlite import get_db
 
     entry = 562.73
@@ -354,9 +354,10 @@ def test_adopted_audit_row_has_stop_source(tmp_path, monkeypatch):
     except Exception:
         pass
 
+    import json
+
     from aletheia.portfolio.position_reconciler import adopt_position
     from aletheia.storage.sqlite import get_db
-    import json
 
     exchange_pos = _make_exchange_pos(symbol="ETH/USDT", side="short", entry_price=3000.0)
     ids = adopt_position(exchange_pos, account_mode="demo")
@@ -475,8 +476,8 @@ def test_demo_adopted_position_stop_fires(tmp_path, monkeypatch):
     except Exception:
         pass
 
-    import aletheia.portfolio.position_manager as pm_mod
     import aletheia.config.loader as loader_mod
+    import aletheia.portfolio.position_manager as pm_mod
     from aletheia.config.schema import AletheiaConfig
 
     # Use paper_internal so close routing stays local (no exchange call needed).
@@ -484,8 +485,8 @@ def test_demo_adopted_position_stop_fires(tmp_path, monkeypatch):
     cfg.exchange.paper_execution_mode = "paper_internal"
     monkeypatch.setattr(loader_mod, "load_config", lambda: cfg)
 
-    from aletheia.portfolio.position_reconciler import adopt_position
     from aletheia.portfolio.position_manager import evaluate_open_positions
+    from aletheia.portfolio.position_reconciler import adopt_position
     from aletheia.storage.sqlite import get_db
 
     # Adopt a short BNB position at 562.73
@@ -568,11 +569,12 @@ def test_adopted_audit_carries_commit_hash(tmp_path, monkeypatch):
     except Exception:
         pass
 
-    from aletheia.portfolio.position_reconciler import adopt_position
-    from aletheia.storage.sqlite import get_db
-    from aletheia.storage import repositories as repo
     import json
     import re
+
+    from aletheia.portfolio.position_reconciler import adopt_position
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
 
     _hex16 = re.compile(r"^[0-9a-f]{16}$")
 
@@ -649,6 +651,7 @@ def _write_config(
 ):
     """Write a config.yaml selecting the active paper broker and reset the cache."""
     import yaml
+
     import aletheia.config.loader as loader
     config_path = tmp_path / "config.yaml"
     exchange = {"mode": mode, "paper_execution_mode": paper_execution_mode}
@@ -675,8 +678,8 @@ def test_non_bitget_stale_unified_never_orphans(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
     _write_config(tmp_path, monkeypatch, paper_execution_mode="okx_demo")
 
-    from aletheia.storage.models import Position
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
     repo.insert_position(Position(
         symbol="BNB/USDT", market_type="usdt_futures", direction="short",
         quantity=0.03, entry_price=562.73, execution_mode="okx_demo",
@@ -711,8 +714,8 @@ def test_non_bitget_fresh_unified_manages(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
     _write_config(tmp_path, monkeypatch, paper_execution_mode="okx_demo")
 
-    from aletheia.storage.models import Position
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
     repo.insert_position(Position(
         symbol="BNB/USDT", market_type="usdt_futures", direction="short",
         quantity=0.03, entry_price=562.73, execution_mode="okx_demo",
@@ -747,8 +750,8 @@ def test_run_reconcile_non_bitget_no_orphan_close(tmp_path, monkeypatch):
     _stub_audit(monkeypatch, tmp_path)
     _write_config(tmp_path, monkeypatch, paper_execution_mode="okx_demo")
 
-    from aletheia.storage.models import Position
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
     repo.insert_position(Position(
         symbol="ETH/USDT", market_type="usdt_futures", direction="short",
         quantity=1.0, entry_price=1574.8, current_price=1560.0, execution_mode="okx_demo",
@@ -809,9 +812,9 @@ def test_protective_order_dispatch_gating(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
     _stub_audit(monkeypatch, tmp_path)
 
-    from aletheia.storage.models import Position
-    from aletheia.storage import repositories as repo
     from aletheia.execution import okx_broker
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
 
     def _insert_okx_short():
         p = Position(symbol="BNB/USDT", market_type="usdt_futures", direction="short",
@@ -932,9 +935,10 @@ def test_adopt_recovers_strategy_id_from_recent_thrash_close(tmp_path, monkeypat
     _write_config(tmp_path, monkeypatch, "okx_demo")
 
     from datetime import datetime, timezone
-    from aletheia.storage.models import Position
-    from aletheia.storage import repositories as repo
+
     from aletheia.portfolio.position_reconciler import adopt_position
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
 
     now = datetime.now(timezone.utc).isoformat()
     # A strategy position that was just thrash-closed (reconciled_gone) seconds ago.
@@ -972,9 +976,10 @@ def test_adopt_no_false_strategy_attribution(tmp_path, monkeypatch):
     _stub_audit(monkeypatch, tmp_path)
 
     from datetime import datetime, timezone
-    from aletheia.storage.models import Position
-    from aletheia.storage import repositories as repo
+
     from aletheia.portfolio.position_reconciler import adopt_position
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
 
     now = datetime.now(timezone.utc).isoformat()
     # A genuine EXIT (stop_loss) of a strategy position — NOT a thrash close.
@@ -1037,9 +1042,9 @@ def _mk_churn_signature(repo, Position, symbol, direction="short", entry=100.0):
 )
 def test_detect_reconcile_thrash_fingerprint(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
-    from aletheia.storage.models import Position
-    from aletheia.storage import repositories as repo
     from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
 
     # Clean → no thrash.
     r0 = detect_reconcile_thrash(window_minutes=30)
@@ -1076,9 +1081,9 @@ def test_run_reconcile_circuit_breaker_suspends(tmp_path, monkeypatch):
     # bitget_demo so classify uses the (stubbed) legacy cache and WOULD orphan.
     _write_config(tmp_path, monkeypatch, "bitget_demo")
 
-    from aletheia.storage.models import Position
-    from aletheia.storage import repositories as repo
     from aletheia.portfolio import position_reconciler as pr
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
 
     # Thrash fingerprint present (2 churned symbols, recent, status=closed).
     _mk_churn_signature(repo, Position, "BNB/USDT", "short", 562.73)
@@ -1165,8 +1170,8 @@ def test_fresh_but_incomplete_unified_never_orphans(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     _write_config(tmp_path, monkeypatch, "okx_demo")
 
-    from aletheia.storage.models import Position
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
     repo.insert_position(Position(
         symbol="BNB/USDT", market_type="usdt_futures", direction="short",
         quantity=0.03, entry_price=562.73, execution_mode="okx_demo", status="open",
@@ -1203,8 +1208,8 @@ def test_paper_internal_is_outside_exchange_reconciliation_scope(tmp_path, monke
     _setup_db(tmp_path, monkeypatch)
     _write_config(tmp_path, monkeypatch, "paper_internal")
 
-    from aletheia.storage.models import Position
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
     repo.insert_position(Position(
         symbol="VIRTUAL/USDT", market_type="usdt_futures", direction="short",
         quantity=100.0, entry_price=0.6, execution_mode="paper_internal", status="open",
@@ -1235,8 +1240,8 @@ def test_unified_position_identity_is_required_for_destructive_reconcile(tmp_pat
     _setup_db(tmp_path, monkeypatch)
     _write_config(tmp_path, monkeypatch, "okx_demo")
 
-    from aletheia.storage.models import Position
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
     repo.insert_position(Position(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=0.01, entry_price=60_000.0, execution_mode="okx_demo", status="open",
@@ -1265,6 +1270,7 @@ def test_unified_position_identity_is_required_for_destructive_reconcile(tmp_pat
 def test_live_reconcile_scope_follows_configured_exchange(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     import yaml
+
     import aletheia.config.loader as loader
     from aletheia.portfolio.position_reconciler import _execution_mode_for
 
@@ -1288,8 +1294,8 @@ def test_drawdown_scale_skips_on_incomplete_view(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
     _write_config(tmp_path, monkeypatch, "okx_demo")
 
-    from aletheia.storage.models import PortfolioSnapshot
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import PortfolioSnapshot
     # exchange_account snapshots that WOULD read as a ~99% drawdown (peak 89000 →
     # current 167). Explicit increasing created_at so the NEWEST (current, values[-1]
     # in the chronological window) is the 167 low — deterministic, not timestamp-tied.
@@ -1300,8 +1306,8 @@ def test_drawdown_scale_skips_on_incomplete_view(tmp_path, monkeypatch):
             snapshot_at=f"2026-07-02T00:0{i}:00+00:00",
         ))
 
-    from aletheia.risk import engine
     import aletheia.portfolio.exchange_sync as es
+    from aletheia.risk import engine
 
     # Incomplete view (okx missing) → guard must fire → 1.0 (NOT the false DD → 0).
     monkeypatch.setattr(es, "get_unified_cached_state", lambda: {
@@ -1337,10 +1343,11 @@ def test_recovered_attribution_threads_to_proposal_and_order(tmp_path, monkeypat
     _write_config(tmp_path, monkeypatch, "bitget_demo")
 
     from datetime import datetime, timezone
-    from aletheia.storage.models import Opportunity, Position
-    from aletheia.storage import repositories as repo
-    from aletheia.portfolio.position_reconciler import adopt_position
+
     from aletheia.analytics.outcome_integrity import attribution_chain_complete
+    from aletheia.portfolio.position_reconciler import adopt_position
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Opportunity, Position
 
     now = datetime.now(timezone.utc).isoformat()
     # The Opportunity must exist so attribution_chain_complete()'s EXISTS check passes.

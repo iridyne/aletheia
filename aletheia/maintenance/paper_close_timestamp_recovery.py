@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any
-
 
 COMMAND_VERSION = "paper-close-timestamp-recovery-v1"
 _MAX_SKEW = timedelta(milliseconds=1)

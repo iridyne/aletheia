@@ -4,13 +4,12 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from aletheia.analytics.trade_attribution import (
+    _compute_holding_hours,
     build_trade_attribution_rows,
     confidence_bucket,
     factor_key,
     late_entry_bucket,
-    _compute_holding_hours,
 )
-
 
 # ---------------------------------------------------------------------------
 # confidence_bucket

@@ -63,7 +63,8 @@ def test_spot_is_not_leveraged():
 )
 def test_decision_inherits_market_type_from_opportunity():
     from aletheia.agent_shell.trading_decision import (
-        TradingDecision, _attach_opportunity_context,
+        TradingDecision,
+        _attach_opportunity_context,
     )
 
     # PI picked a symbol+direction but did NOT specify market_type.
@@ -94,7 +95,8 @@ def test_decision_inherits_market_type_from_opportunity():
 )
 def test_explicit_pi_market_type_preserved():
     from aletheia.agent_shell.trading_decision import (
-        TradingDecision, _attach_opportunity_context,
+        TradingDecision,
+        _attach_opportunity_context,
     )
 
     decision = TradingDecision(

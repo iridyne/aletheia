@@ -10,10 +10,9 @@ from __future__ import annotations
 import asyncio
 from urllib.parse import urlparse
 
-from aletheia.net import httpx_client, raise_for_status_without_secrets
-from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.base import ModelHealth, ModelResponse
-
+from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+from aletheia.net import httpx_client, raise_for_status_without_secrets
 
 DATABRICKS_PROTOCOLS = {
     "serving_endpoint",

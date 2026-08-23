@@ -7,7 +7,6 @@ needs-demo stubs and are NOT exercised here.
 from aletheia.execution.oco import OcoLeg, resolve_oco
 from aletheia.execution.reconciliation import resolve_orders_missing_from_exchange
 
-
 # ── OCO resolution ───────────────────────────────────────────────────────────
 
 def _leg(kind, status, filled=0.0, total=0.0):

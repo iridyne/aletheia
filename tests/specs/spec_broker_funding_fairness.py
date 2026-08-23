@@ -6,10 +6,10 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 from tests.test_broker_funding_economics import (
-    test_expired_history_prefix_does_not_starve_recoverable_close
-    as _assert_expired_prefix_progress,
-    test_funding_queue_cursor_rotates_past_retryable_or_conflicting_prefix
-    as _assert_cursor_rotation,
+    test_expired_history_prefix_does_not_starve_recoverable_close as _assert_expired_prefix_progress,
+)
+from tests.test_broker_funding_economics import (
+    test_funding_queue_cursor_rotates_past_retryable_or_conflicting_prefix as _assert_cursor_rotation,
 )
 
 

@@ -8,14 +8,13 @@ import pytest
 
 from aletheia.analytics.trade_path import (
     _analyze_path,
-    _compute_mfe_mae,
-    _compute_exit_efficiency,
     _classify_path_bucket,
+    _compute_exit_efficiency,
+    _compute_mfe_mae,
     _iso_to_ms,
     _resolve_instrument_identity,
     build_post_exit_path_observation,
 )
-
 
 _BASE_TS = 1_800_000_000_000
 _BAR_MS = 60_000

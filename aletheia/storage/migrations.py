@@ -1,10 +1,10 @@
 """Versioned SQLite schema migrations."""
 
-from dataclasses import dataclass
 import hashlib
 import logging
 import sqlite3
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 

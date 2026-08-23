@@ -570,9 +570,10 @@ def detect_reconcile_thrash(window_minutes: int = 30) -> dict:
     explicit unequal account fingerprints never match.  The source label explains
     how the position reappeared but is not part of the incident definition.
     """
-    from collections import Counter
-    from datetime import datetime, timezone, timedelta
     import json
+    from collections import Counter
+    from datetime import datetime, timedelta, timezone
+
     from aletheia.analytics.outcome_integrity import classify_closure
 
     out = {
@@ -1012,7 +1013,7 @@ def _recover_strategy_link(
     genuinely-new external position is never mis-attributed. Returns (None, None)
     when there is no confident match.
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
     try:
         cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
         rows = list_positions(status="closed")
@@ -1061,11 +1062,15 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
     protective-order placement belongs to Gateway-owned execution flows. Returns
     the created ids. Raises ValueError on bad input.
     """
-    from aletheia.storage.models import TradeProposal, Order, Position
-    from aletheia.storage.repositories import (
-        transaction, insert_trade_proposal, insert_order, insert_position, update_position,
-    )
     from aletheia.files.jsonl import write_audit
+    from aletheia.storage.models import Order, Position, TradeProposal
+    from aletheia.storage.repositories import (
+        insert_order,
+        insert_position,
+        insert_trade_proposal,
+        transaction,
+        update_position,
+    )
 
     execution_mode = _execution_mode_for(account_mode)
     if execution_mode is None:

@@ -20,7 +20,6 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 # This is the behavior-changing inventory, not every legitimate raw/audit reader.
@@ -260,6 +259,7 @@ def test_portfolio_has_separate_verified_and_administrative_close_paths():
 )
 def test_reconcile_incident_detector_is_not_adopted_only():
     import inspect
+
     from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
 
     source = inspect.getsource(detect_reconcile_thrash)

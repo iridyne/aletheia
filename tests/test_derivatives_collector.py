@@ -16,10 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from datetime import datetime, timezone, timedelta
-
-import pytest
-
+from datetime import datetime, timedelta, timezone
 
 # ---------------------------------------------------------------------------
 # _parse_oi — LSR threading
@@ -202,9 +199,9 @@ def test_maybe_backfill_funding_idempotent_with_3_rows(tmp_path, monkeypatch):
     """
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
-    from aletheia.storage import repositories as repo
     from aletheia.storage import migrations as mig
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
 
@@ -248,8 +245,8 @@ def test_maybe_backfill_oi_swallows_not_supported(tmp_path, monkeypatch):
     """
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
     from aletheia.storage import migrations as mig
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
 
@@ -335,9 +332,9 @@ def _seed_oi(repo, *, symbol, exchange, usd, age_min, now):
 def test_open_interest_near_picks_band_and_scopes_exchange(tmp_path, monkeypatch):
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
-    from aletheia.storage import repositories as repo
     from aletheia.storage import migrations as mig
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
 
@@ -362,10 +359,10 @@ def test_parse_oi_delta_true_1h_ignores_foreign_venue(tmp_path, monkeypatch):
     freshest cross-venue row (that mixing fabricated ±100%–2500% deltas)."""
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
-    from aletheia.storage import repositories as repo
-    from aletheia.storage import migrations as mig
     from aletheia.data.collectors.derivatives import _parse_oi
+    from aletheia.storage import migrations as mig
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
 
@@ -385,10 +382,10 @@ def test_parse_oi_delta_sanity_cap_drops_artifact(tmp_path, monkeypatch):
     """A >300% computed delta (unit transition / relisted market) → None."""
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
-    from aletheia.storage import repositories as repo
-    from aletheia.storage import migrations as mig
     from aletheia.data.collectors.derivatives import _parse_oi
+    from aletheia.storage import migrations as mig
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
 
@@ -409,8 +406,8 @@ def _patch_collect_env(monkeypatch, tmp_path, exchange, *, lsr=False):
     """Wire a fake provider + config + fresh DB for a DerivativesCollector.collect run."""
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
     from aletheia.storage import migrations as mig
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
 
@@ -510,9 +507,9 @@ def test_funding_backfill_not_suppressed_by_foreign_venue_rows(tmp_path, monkeyp
     """
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
-    from aletheia.storage import repositories as repo
     from aletheia.storage import migrations as mig
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
 
@@ -553,9 +550,9 @@ def test_oi_backfill_not_suppressed_by_foreign_venue_rows(tmp_path, monkeypatch)
     """
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
-    from aletheia.storage import repositories as repo
     from aletheia.storage import migrations as mig
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
 

@@ -82,8 +82,8 @@ def test_proactive_market_closes(monkeypatch):
 
 
 def test_proactive_limit_sets_level():
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import _select_one
+    from aletheia.storage.sqlite import get_db
 
     _insert_open(get_db(), "l1")
     res = pm.proactive_exit("l1", order_type="limit", limit_price=110.0, reason="scale out at resistance")

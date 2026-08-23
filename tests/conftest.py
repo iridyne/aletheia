@@ -28,13 +28,15 @@ import pytest
 # the production entry-points use (5bfa4a0) so the test process matches production.
 # Idempotent; no-op off Windows. MUST run before any asyncio use → at import time.
 from aletheia.async_utils import apply_windows_selector_policy as _apply_selector_policy
+
 _apply_selector_policy()
 
 # ---------------------------------------------------------------------------
 # Hypothesis global settings
 # ---------------------------------------------------------------------------
 try:
-    from hypothesis import settings as _h_settings, HealthCheck
+    from hypothesis import HealthCheck
+    from hypothesis import settings as _h_settings
     _h_settings.register_profile("ci", max_examples=50, suppress_health_check=[HealthCheck.too_slow])
     _h_settings.register_profile("dev", max_examples=20, suppress_health_check=[HealthCheck.too_slow])
     _h_settings.load_profile("dev")
@@ -325,8 +327,9 @@ def _fast_network_timeout(request, monkeypatch):
     """
     if request.node.get_closest_marker("real_network"):
         return
-    from aletheia import net as _net
     import httpx as _httpx
+
+    from aletheia import net as _net
 
     _original_httpx_client = _net.httpx_client
 

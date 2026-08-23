@@ -10,15 +10,14 @@ Covers:
 """
 from __future__ import annotations
 
-import json
 import inspect
-from urllib.parse import parse_qs, urlparse
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
 from tests.async_test_utils import closing_coro_runner
-
 
 # ─── BitgetClient TPSL methods ───────────────────────────────────────────────
 

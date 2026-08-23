@@ -201,10 +201,10 @@ def test_risk_always_persists_decision(tmp_path, monkeypatch):
 
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
-    from aletheia.risk.engine import evaluate_proposal
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -238,11 +238,11 @@ def test_risk_kill_switch_blocks(tmp_path, monkeypatch):
 
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
-    from aletheia.storage.migrations import run_migrations
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
     from aletheia.risk.engine import evaluate_proposal
     from aletheia.risk.kill_switch import activate, deactivate
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.models import TradeProposal
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -278,8 +278,8 @@ def test_risk_kill_switch_blocks(tmp_path, monkeypatch):
               "RESTRICTED_TOOLS never permitted regardless of permission_mode"),
 )
 def test_restricted_tools_never_permitted():
-    from aletheia.agent_runtime.tool_registry import RESTRICTED_TOOLS, init_tool_registry
     from aletheia.agent_runtime.permissions import is_tool_permitted
+    from aletheia.agent_runtime.tool_registry import RESTRICTED_TOOLS, init_tool_registry
 
     init_tool_registry()
     for mode in ("Observe", "Paper", "Full"):
@@ -300,6 +300,7 @@ def test_restricted_tools_never_permitted():
 )
 def test_lesson_constraints_error_produces_violation(monkeypatch):
     from unittest.mock import MagicMock
+
     from aletheia.storage.models import TradeProposal
 
     broken_store = MagicMock()
@@ -330,6 +331,7 @@ def test_lesson_constraints_error_produces_violation(monkeypatch):
 async def test_lesson_constraint_category_gate_is_risk_only():
     """block_* enforcement requires category='risk'; other categories are silently skipped."""
     import inspect
+
     from aletheia.risk import engine as eng
 
     src = inspect.getsource(eng._check_lesson_constraints)
@@ -338,9 +340,10 @@ async def test_lesson_constraint_category_gate_is_risk_only():
     )
     # Verify guard routing ensures dreaming_agent block_* never reaches ps_lessons
     # as a block_* recommendation (they become guard_shadow_candidate instead).
+    from unittest.mock import patch
+
     from aletheia.learning.guard_routing import route_automatic_block_recommendation
     from tests.specs.spec_learning_attribution import _ready_research
-    from unittest.mock import patch
 
     # Evidence must include scanner_families scope so the guard is not global (#197).
     scoped_evidence = {
@@ -365,11 +368,11 @@ async def test_lesson_constraint_category_gate_is_risk_only():
               "_check_correlation_exposure returns violation on internal error (safe-reject)"),
 )
 def test_correlation_exposure_error_produces_violation(monkeypatch):
+    from unittest.mock import patch
+
+    from aletheia.config.loader import load_config
     from aletheia.risk.engine import _check_correlation_exposure
     from aletheia.storage.models import TradeProposal
-    from aletheia.config.loader import load_config
-
-    from unittest.mock import patch
     with patch(
         "aletheia.storage.repositories.list_all_open_positions",
         side_effect=RuntimeError("DB gone"),
@@ -652,10 +655,11 @@ def test_sector_concentration_isolated_by_live_demo_pool(
 )
 def test_beta_enforced_below_concentration_depth_gate(monkeypatch):
     """Beta guard must fire even when the portfolio is too shallow for sector concentration."""
+    from unittest.mock import patch
+
     import aletheia.risk.engine as eng
     from aletheia.config.schema import AletheiaConfig
     from aletheia.storage.models import TradeProposal
-    from unittest.mock import patch
 
     cfg = AletheiaConfig()
     cfg.risk.correlation_guard_enabled = True
@@ -795,6 +799,7 @@ def test_drawdown_scale_uses_real_equity_not_notional(monkeypatch):
 def _setup_db(tmp_path, monkeypatch):
     """Wire a fresh SQLite DB into aletheia storage for one test."""
     import sqlite3
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     from aletheia.storage.migrations import run_migrations
@@ -822,11 +827,11 @@ def _setup_db(tmp_path, monkeypatch):
               "symbol_filter_mode=blacklist rejects a proposal whose symbol is in symbol_list"),
 )
 def test_symbol_blacklist_rejects(tmp_path, monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
-    from aletheia.risk.engine import evaluate_proposal
     import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     _setup_db(tmp_path, monkeypatch)
 
@@ -858,11 +863,11 @@ def test_symbol_blacklist_rejects(tmp_path, monkeypatch):
               "live.state=live_disabled rejects an okx_live_limited proposal"),
 )
 def test_live_disabled_rejects_live_proposal(tmp_path, monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
-    from aletheia.risk.engine import evaluate_proposal
     import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     _setup_db(tmp_path, monkeypatch)
 
@@ -894,11 +899,11 @@ def test_live_disabled_rejects_live_proposal(tmp_path, monkeypatch):
               "permission_mode=Observe rejects any non-paper_internal proposal"),
 )
 def test_observe_mode_rejects_non_paper(tmp_path, monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
-    from aletheia.risk.engine import evaluate_proposal
     import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     _setup_db(tmp_path, monkeypatch)
 
@@ -930,11 +935,11 @@ def test_observe_mode_rejects_non_paper(tmp_path, monkeypatch):
               "exceeds_demo_position_margin fires when proposal margin > max_demo_position_margin_usdt"),
 )
 def test_demo_notional_cap_fires(tmp_path, monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
-    from aletheia.risk.engine import evaluate_proposal
     import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     _setup_db(tmp_path, monkeypatch)
 
@@ -963,9 +968,9 @@ def test_demo_notional_cap_fires(tmp_path, monkeypatch):
 )
 def test_account_balance_tightens_matching_mode_cap(tmp_path, monkeypatch):
     """Demo/live must read separate cached accounts; local paper has no account."""
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.portfolio.exchange_sync as sync
     import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import TradeProposal
 
@@ -1078,11 +1083,11 @@ def test_local_paper_balance_reader_failure_rejects_authoritative_proposal(
               "max_demo_positions_reached fires when open demo positions >= max_open_positions_demo"),
 )
 def test_max_open_demo_positions_blocks(tmp_path, monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.storage.models import TradeProposal, Position
-    from aletheia.storage import repositories as repo
-    from aletheia.risk.engine import evaluate_proposal
     import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position, TradeProposal
 
     _setup_db(tmp_path, monkeypatch)
 
@@ -1124,11 +1129,11 @@ def test_max_open_demo_positions_blocks(tmp_path, monkeypatch):
               "short_not_allowed_demo fires for a short proposal when allow_short_demo=False"),
 )
 def test_short_not_allowed_demo_fires(tmp_path, monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
-    from aletheia.risk.engine import evaluate_proposal
     import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     _setup_db(tmp_path, monkeypatch)
 
@@ -1159,11 +1164,11 @@ def test_short_not_allowed_demo_fires(tmp_path, monkeypatch):
               "max_single_trade_risk_missing_stop_price fires when live proposal has no stop_price"),
 )
 def test_live_missing_stop_price_fires(tmp_path, monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
-    from aletheia.risk.engine import evaluate_proposal
     import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     _setup_db(tmp_path, monkeypatch)
 
@@ -1244,8 +1249,8 @@ def test_paper_proposal_cannot_accept_live_mode():
     ),
 )
 def test_default_capital_base_tracks_account_equity_and_fails_closed(monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()
     monkeypatch.setattr(eng, "_account_equity", lambda *_: 4321.0)
@@ -1273,12 +1278,12 @@ def test_demo_daily_loss_uses_demo_capital_base(tmp_path, monkeypatch):
       - vs demo base: 25 < 10000*1% = 100  → must NOT fire
       - vs live cap:  25 > 100*1%   = 1    → the OLD bug fired here
     """
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.storage.models import TradeProposal, Position
-    from aletheia.storage import repositories as repo
-    from aletheia.risk.engine import evaluate_proposal
-    from aletheia.portfolio.pnl import close_position
     import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.portfolio.pnl import close_position
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position, TradeProposal
 
     _setup_db(tmp_path, monkeypatch)
 
@@ -1330,8 +1335,8 @@ def test_demo_daily_loss_uses_demo_capital_base(tmp_path, monkeypatch):
 )
 def test_risk_checks_fail_closed_on_internal_error(monkeypatch):
     import aletheia.risk.engine as eng
-    from aletheia.storage.models import TradeProposal
     from aletheia.config.loader import load_config
+    from aletheia.storage.models import TradeProposal
 
     cfg = load_config()
     proposal = TradeProposal(
@@ -2194,8 +2199,8 @@ def test_account_leverage_is_gross_notional_over_equity_not_leverage_squared(mon
 )
 def test_per_symbol_cumulative_notional_cap(monkeypatch):
     import aletheia.risk.engine as eng
-    from aletheia.storage.models import Position, TradeProposal
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position, TradeProposal
 
     # The ceiling now derives from account equity, so the denominator must exist.
     # Without it `_resolve_capital_base` fails closed and every percentage limit
@@ -2244,9 +2249,9 @@ def test_per_symbol_cumulative_notional_cap(monkeypatch):
 )
 def test_per_symbol_cap_never_rejects_a_first_entry(monkeypatch):
     import aletheia.risk.engine as eng
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
     from aletheia.config.loader import load_config
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     # The equity that triggered the real deadlock on the paper deployment.
     equity = 668.52648937
@@ -2282,8 +2287,8 @@ def test_per_symbol_cap_never_rejects_a_first_entry(monkeypatch):
 )
 def test_same_symbol_duplicate_position_rejected():
     import aletheia.risk.engine as eng
-    from aletheia.storage.models import Position, TradeProposal
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position, TradeProposal
 
     # Existing demo position for ETHUSDT (paper_internal broker).
     repo.insert_position(Position(
@@ -2548,11 +2553,11 @@ def test_d2_s01_market_disabled_tokens_exist():
               "在 enabled_markets=True 时不产生该 violation；两者对称成立"),
 )
 def test_d2_b01_market_disabled_behavior(tmp_path, monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
-    from aletheia.risk.engine import evaluate_proposal
     import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     _setup_db(tmp_path, monkeypatch)
 
@@ -2814,7 +2819,6 @@ def test_paper_internal_proposal_not_rejected_during_funding_settler_window(
     """Regression: unsettled funding economics must not zero available_balance_usdt."""
     _setup_db(tmp_path, monkeypatch)
 
-    import math
 
     from aletheia.portfolio.paper_account import (
         ensure_paper_account,
@@ -2823,7 +2827,6 @@ def test_paper_internal_proposal_not_rejected_during_funding_settler_window(
     from aletheia.risk.engine import evaluate_proposal
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position, TradeProposal
-    from aletheia.storage.sqlite import get_db
 
     ensure_paper_account()
 
@@ -2910,8 +2913,8 @@ def test_paper_internal_proposal_not_rejected_during_funding_settler_window(
 )
 def test_position_cap_bounds_pledged_cash_not_raw_notional(monkeypatch):
     import aletheia.risk.engine as eng
-    from aletheia.storage.models import TradeProposal
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     available = 668.52648937
     monkeypatch.setattr(eng, "_account_equity", lambda *_: available)
@@ -2942,8 +2945,8 @@ def test_position_cap_bounds_pledged_cash_not_raw_notional(monkeypatch):
 )
 def test_position_cap_still_rejects_margin_beyond_available_cash(monkeypatch):
     import aletheia.risk.engine as eng
-    from aletheia.storage.models import TradeProposal
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     available = 100.0
     monkeypatch.setattr(eng, "_account_equity", lambda *_: 10_000.0)

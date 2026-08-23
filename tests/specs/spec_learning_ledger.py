@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 
 import pytest
@@ -17,8 +16,13 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 ))
 def test_learning_ledger_tables_and_models_exist():
     from aletheia.learning.models import (
-        LearningContributionVerdict, LearningExperiment, LearningExposure,
-        LearningHypothesis, LearningJobHealth, LearningLifecycleEvent, LearningPolicyEpoch,
+        LearningContributionVerdict,
+        LearningExperiment,
+        LearningExposure,
+        LearningHypothesis,
+        LearningJobHealth,
+        LearningLifecycleEvent,
+        LearningPolicyEpoch,
     )
     from aletheia.storage.sqlite import get_db
 

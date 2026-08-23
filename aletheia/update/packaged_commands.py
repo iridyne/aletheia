@@ -9,11 +9,11 @@ pre-update backup still represents the current release transition.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from pathlib import Path
 import re
 import threading
 import time
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Iterator
 from uuid import uuid4
 

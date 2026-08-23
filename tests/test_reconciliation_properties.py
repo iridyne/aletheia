@@ -28,7 +28,8 @@ from __future__ import annotations
 import math
 
 import pytest
-from hypothesis import HealthCheck, given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from aletheia.execution.reconciliation import (
     _OPEN_LOCAL_STATES,

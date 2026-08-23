@@ -4,7 +4,7 @@ import ast
 import inspect
 import textwrap
 from types import SimpleNamespace
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -119,8 +119,9 @@ class TestLayeredPause:
 
     def test_resume_clears_selective_pause(self, monkeypatch):
         """resume_scheduler should resume all selectively-paused jobs."""
-        from aletheia.agent_runtime import scheduler
         from apscheduler.schedulers.base import STATE_RUNNING
+
+        from aletheia.agent_runtime import scheduler
 
         monkeypatch.setattr(scheduler, "load_config", lambda: _cfg(layered=True))
 
@@ -142,8 +143,9 @@ class TestLayeredPause:
 
     def test_resume_handles_blanket_and_selective(self, monkeypatch):
         """If both blanket-paused AND selectively-paused jobs exist, resume all."""
-        from aletheia.agent_runtime import scheduler
         from apscheduler.schedulers.base import STATE_PAUSED
+
+        from aletheia.agent_runtime import scheduler
 
         monkeypatch.setattr(scheduler, "load_config", lambda: _cfg(layered=True))
 
@@ -159,8 +161,9 @@ class TestLayeredPause:
 
     def test_get_pause_state_layered(self, monkeypatch):
         """get_pause_state reports layered mode correctly."""
-        from aletheia.agent_runtime import scheduler
         from apscheduler.schedulers.base import STATE_RUNNING
+
+        from aletheia.agent_runtime import scheduler
 
         mock_sched = MagicMock()
         mock_sched.state = STATE_RUNNING
@@ -178,8 +181,9 @@ class TestLayeredPause:
 
     def test_get_pause_state_running(self, monkeypatch):
         """get_pause_state reports running when nothing is paused."""
-        from aletheia.agent_runtime import scheduler
         from apscheduler.schedulers.base import STATE_RUNNING
+
+        from aletheia.agent_runtime import scheduler
 
         mock_sched = MagicMock()
         mock_sched.state = STATE_RUNNING
@@ -195,7 +199,7 @@ class TestEssentialJobsCoverage:
 
     def test_essential_jobs_are_subset_of_known_jobs(self):
         """Every essential job ID must exist in the timeout registry."""
-        from aletheia.agent_runtime.scheduler import _ESSENTIAL_JOBS, _ASYNC_JOB_TIMEOUT_SEC
+        from aletheia.agent_runtime.scheduler import _ASYNC_JOB_TIMEOUT_SEC, _ESSENTIAL_JOBS
         known_jobs = set(_ASYNC_JOB_TIMEOUT_SEC.keys())
         # Some essential jobs might not have explicit timeouts (they use defaults)
         # but core ones should be recognizable

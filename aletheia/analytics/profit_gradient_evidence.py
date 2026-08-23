@@ -9,27 +9,23 @@ contract remain unavailable instead of being turned into a guessed delta.
 
 from __future__ import annotations
 
-from collections import Counter
-from datetime import datetime, timedelta, timezone
 import json
 import math
 import sqlite3
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
 from aletheia.analytics.candidate_facts import (
     FACT_CONTRACT_VERSION as PROFIT_LOOP_FACT_CONTRACT_VERSION,
+)
+from aletheia.analytics.candidate_facts import (
     build_candidate_facts,
 )
-from aletheia.analytics.learning_window import LEARNING_DATA_FLOOR_ISO
-from aletheia.learning.outcomes import (
-    CANDIDATE_OUTCOME_TEMPORAL_REASONS,
-    assess_candidate_outcome,
-    candidate_outcome_temporal_reason,
-)
-from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.analytics.execution_contribution import (
     _paired_position_cost,
 )
+from aletheia.analytics.learning_window import LEARNING_DATA_FLOOR_ISO
 from aletheia.analytics.position_replay import build_position_replay
 from aletheia.analytics.profit_gradient import (
     LAYERS,
@@ -41,9 +37,14 @@ from aletheia.analytics.profit_loop_counterfactual import (
     profit_loop_registry_hash,
 )
 from aletheia.config.secrets import SECRET_KEY_FRAGMENTS, is_secret_key
+from aletheia.learning.outcomes import (
+    CANDIDATE_OUTCOME_TEMPORAL_REASONS,
+    assess_candidate_outcome,
+    candidate_outcome_temporal_reason,
+)
+from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.storage.hashing import sha256_json
 from aletheia.storage.sqlite import readonly_db
-
 
 LEGACY_PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION = "profit_gradient_evidence/v1"
 PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION = "profit_gradient_evidence/v2"

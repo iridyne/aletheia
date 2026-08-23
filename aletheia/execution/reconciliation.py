@@ -10,12 +10,13 @@ bookkeeping when the exchange provides direct evidence.
 """
 
 import asyncio
-from datetime import datetime, timezone
 import hashlib
 import json
 import logging
 import math
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+
 from aletheia.data.symbols import to_bitget, to_canonical
 from aletheia.execution.exchange_materialization import (
     MaterializationIntegrityError,
@@ -25,11 +26,11 @@ from aletheia.execution.exchange_materialization import (
     materialize_bitget_close,
     materialize_bitget_entry,
 )
+from aletheia.files.jsonl import write_audit
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.repositories import update_order
 from aletheia.storage.sqlite import get_db
-from aletheia.files.jsonl import write_audit
 
 logger = logging.getLogger("aletheia.reconciliation")
 

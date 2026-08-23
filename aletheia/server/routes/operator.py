@@ -12,7 +12,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from aletheia.agent_shell.runtime import CommandResponse
 
 from aletheia.agent_shell.context import (
     ALL_SECTIONS,
@@ -28,28 +27,29 @@ from aletheia.agent_shell.context import (
 from aletheia.agent_shell.operator_recommendations import build_recommendations
 from aletheia.agent_shell.operator_store import (
     append_message,
-    create_session_record,
     create_artifact,
     create_event,
-    get_latest_heartbeat,
+    create_session_record,
+    create_task,
     get_extension,
     get_extension_run,
+    get_latest_heartbeat,
     get_session,
     get_task,
     list_artifacts,
     list_commands,
     list_events,
-    list_extensions,
     list_extension_runs,
+    list_extensions,
     list_messages,
     list_sessions,
     list_tasks,
     record_heartbeat,
-    update_task,
     update_extension,
-    create_task,
+    update_task,
 )
-from aletheia.config.loader import load_config, save_config
+from aletheia.agent_shell.runtime import CommandResponse
+from aletheia.config.loader import load_config
 
 router = APIRouter(prefix="/api/operator", tags=["operator"])
 
@@ -997,6 +997,7 @@ async def operator_loop_latest(limit: int = 5):
 async def operator_loop_trigger():
     """Manually trigger an operator loop run."""
     import asyncio
+
     from aletheia.agent_shell.operator_loop import run_operator_loop
     summary = await asyncio.to_thread(run_operator_loop, trigger="manual")
     return summary
@@ -1474,10 +1475,10 @@ async def operator_llm_session(payload: LlmSessionRequest):
     Runs a goal-directed loop: build context → LLM → tool_call → execute → repeat.
     Returns when the LLM produces a final answer or max_turns is reached.
     """
-    from aletheia.agents.helpers import current_inference_call_id, llm_complete
     from aletheia.agent_shell.executor import execute_typed_command
-    from aletheia.agent_shell.registry import COMMANDS
     from aletheia.agent_shell.permissions import check_permission
+    from aletheia.agent_shell.registry import COMMANDS
+    from aletheia.agents.helpers import current_inference_call_id, llm_complete
 
     cfg = load_config()
     session_id = payload.session_id or cfg.operator.main_session_id

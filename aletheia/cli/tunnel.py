@@ -83,7 +83,7 @@ def enable():
 def disable():
     """Disable tunnel (stops if running)."""
     from aletheia.config.loader import load_config, save_config
-    from aletheia.gateway.tunnel import stop_tunnel, is_tunnel_running
+    from aletheia.gateway.tunnel import is_tunnel_running, stop_tunnel
 
     if is_tunnel_running():
         stop_tunnel()

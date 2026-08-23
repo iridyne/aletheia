@@ -11,7 +11,6 @@ from __future__ import annotations
 import sqlite3
 import time
 
-
 MARKET_OHLCV_COLUMNS = "exchange,symbol,market_type,timeframe,ts,open,high,low,close,volume,provider"
 MARKET_OHLCV_PRIMARY_KEY = (
     "exchange",

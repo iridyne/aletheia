@@ -4,15 +4,21 @@ from datetime import datetime, timezone
 
 import pytest
 
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
-from aletheia.storage import repositories as repo
-from aletheia.knowledge.manager import (
-    create_daily_review, create_post_trade_review, create_research_note,
-    create_dreaming_log, create_strategy_memory,
-    archive_item, deprecate_item, delete_item, detect_contradictions,
-)
 from aletheia.agents.post_trade_reviewer import run_post_trade_reviewer
+from aletheia.knowledge.manager import (
+    archive_item,
+    create_daily_review,
+    create_dreaming_log,
+    create_post_trade_review,
+    create_research_note,
+    create_strategy_memory,
+    delete_item,
+    deprecate_item,
+    detect_contradictions,
+)
+from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_test_env(tmp_path, monkeypatch):
@@ -120,10 +126,10 @@ def test_post_trade_review_creation(tmp_path, monkeypatch):
 async def test_post_trade_review_links_strategy_from_order_chain(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
 
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
     from aletheia.agents import post_trade_reviewer
     from aletheia.storage.models import Position, StrategyRecord
     from aletheia.storage.repositories import insert_strategy
-    from aletheia.agent_runtime.tool_registry import init_tool_registry
     from tests.test_outcome_closure import _insert_entry_chain
 
     init_tool_registry()

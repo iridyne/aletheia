@@ -93,6 +93,7 @@ def _market_data_stale_minutes(cfg) -> float | None:
     if cfg.runtime.paused or not cfg.runtime.scheduler_enabled:
         return None
     from datetime import datetime, timezone
+
     from aletheia.storage.repositories import list_market_snapshots
     rows = list_market_snapshots(limit=1)
     if not rows:
@@ -153,6 +154,7 @@ def _observer_latest_session_run_info() -> dict | None:
     """
     try:
         from datetime import datetime, timezone
+
         from aletheia.storage.sqlite import get_db
         db = get_db()
         session_row = db.execute(
@@ -432,6 +434,7 @@ def _recent_self_heal_restarts() -> list[float]:
     compare against utcnow() the same way. Best-effort: returns [] on any error
     (fail-open is acceptable — the supervisor 5/600 budget is the last backstop)."""
     from datetime import datetime
+
     from aletheia.files.jsonl import read_jsonl
     ages: list[float] = []
     now = datetime.utcnow()
@@ -465,6 +468,7 @@ def _code_drift_already_tried() -> bool:
     consuming restart budget and let other signals (market_data_stale) through.
     """
     from datetime import datetime
+
     from aletheia.files.jsonl import read_jsonl
     now = datetime.utcnow()
     try:
@@ -564,7 +568,9 @@ def _heal_port_cleanup() -> bool:
     where the owner requested start/stop/restart. Returns True if anything was
     cleaned."""
     from aletheia.gateway.pidfile import (
-        find_gateway_orphans, kill_pid_tree, read_pid,
+        find_gateway_orphans,
+        kill_pid_tree,
+        read_pid,
     )
     keep = {os.getpid()}
     sup = read_pid()
@@ -602,7 +608,8 @@ def _ranker_session_coverage(window_hours: float) -> float:
     suppress the starvation check).
     """
     try:
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
+
         from aletheia.storage.sqlite import get_db
         now = datetime.now(timezone.utc)
         cutoff = (now - timedelta(hours=window_hours)).isoformat()
@@ -653,10 +660,11 @@ def _check_ranker_admission_starvation() -> None:
     Purely read-only. Never modifies state.
     """
     try:
-        from datetime import datetime, timezone, timedelta
         import json as _json
-        from aletheia.storage.sqlite import get_db
+        from datetime import datetime, timedelta, timezone
+
         from aletheia.infra.events import emit_infra_event
+        from aletheia.storage.sqlite import get_db
 
         coverage = _ranker_session_coverage(_RANKER_STARVATION_WINDOW_HOURS)
         if coverage < _RANKER_ONLINE_COVERAGE_MIN:

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -13,10 +13,10 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 def _enable_legacy_paper_authority(monkeypatch, path_id: str) -> None:
     from dataclasses import replace
 
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.learning.authority as authority
     import aletheia.learning.behavior_contracts as behavior_contracts
     import aletheia.learning.experiments as experiments
+    from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()
     cfg.agent.autonomous_learning = True
@@ -669,9 +669,9 @@ def test_factor_history_without_measurement_adapter_stays_diagnostic(monkeypatch
     status="implemented",
 ))
 def test_universe_calibration_is_neutral_shadow_before_authority(monkeypatch):
+    from aletheia.config.schema import UniverseConfig
     from aletheia.storage.sqlite import get_db
     from aletheia.universe.allocator import compute_total_score
-    from aletheia.config.schema import UniverseConfig
 
     feat = {
         "feature_snapshot_id": "feature-1", "asset_id": "asset-1",
@@ -814,21 +814,21 @@ def test_operator_factor_context_uses_factor_key(monkeypatch):
 ))
 def test_dropped_experiment_candidates_settle_into_both_arms():
     from aletheia.learning.behavior_contracts import build_behavior_contract_hash
-    from aletheia.universe.service import _register_experiment_candidate_outcomes
     from aletheia.learning.contribution_runner import evaluate_experiment
+    from aletheia.learning.ledger import (
+        insert_experiment,
+        insert_exposure,
+        insert_hypothesis,
+    )
     from aletheia.learning.models import (
         LearningExperiment,
         LearningExposure,
         LearningHypothesis,
         LearningPolicyEpoch,
     )
-    from aletheia.learning.ledger import (
-        insert_experiment,
-        insert_exposure,
-        insert_hypothesis,
-    )
-    from aletheia.storage.sqlite import get_db
     from aletheia.learning.verdicts import METRIC_VERSION
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.service import _register_experiment_candidate_outcomes
 
     epoch, exp = "epoch-p03", "exp-p03"
     ck_t = "universe:featT:momentum:long:perp"
@@ -1022,9 +1022,9 @@ def test_stale_epoch_verdict_does_not_authorize(monkeypatch):
     status="implemented",
 ))
 def test_policy_epoch_ignores_code_only_rebuild_and_rotates_on_config_change(monkeypatch):
-    from aletheia.learning import experiments as exp
     import aletheia.agent_runtime.build_info as build_info
     from aletheia.config.loader import load_config
+    from aletheia.learning import experiments as exp
     from aletheia.learning.ledger import get_record
     from aletheia.storage.sqlite import get_db
 

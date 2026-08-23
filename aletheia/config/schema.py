@@ -1,8 +1,8 @@
 """Config schema using Pydantic v2 models."""
 
+import logging
 from collections.abc import Mapping
 from datetime import datetime, timezone
-import logging
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 

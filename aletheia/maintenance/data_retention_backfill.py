@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
-import io
 import json
-import os
 import shutil
 import sqlite3
 import sys
@@ -18,7 +16,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
-
 
 # --- Audit-chain + learning invariants -------------------------------------
 #

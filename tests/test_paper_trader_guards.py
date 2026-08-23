@@ -13,8 +13,6 @@ NOT modify it, only verify its existing behavior.
 
 import sqlite3
 
-import pytest
-
 from aletheia.agents.paper_trader_ranker import _evaluate_guards_safe, _make_candidate
 from aletheia.knowledge.guards import GuardEvaluation, GuardHit
 

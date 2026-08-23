@@ -14,10 +14,10 @@ from datetime import datetime, timedelta, timezone
 
 from aletheia.data.history_downloader import download_symbol_history
 from aletheia.data.symbols import (
-    InstrumentId,
     MARKET_FUTURES,
     MARKET_PERP,
     MARKET_SPOT,
+    InstrumentId,
 )
 from aletheia.storage import repositories as repo
 

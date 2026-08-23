@@ -29,7 +29,6 @@ from aletheia.economics.pricing_sync import (
     start_pricing_refresh,
 )
 from aletheia.economics.schema import ensure_economics_schema
-from aletheia.economics.usage_insights import build_usage_insights
 from aletheia.economics.tracing import (
     list_cost_breakdown_by_provider,
     list_cost_breakdown_by_tool,
@@ -37,6 +36,7 @@ from aletheia.economics.tracing import (
     list_token_summary,
     tracing_enabled,
 )
+from aletheia.economics.usage_insights import build_usage_insights
 from aletheia.economics.viability import (
     audit_enabled,
     build_operator_viability,

@@ -1,23 +1,22 @@
 """Shared helpers for agents: LLM calls with graceful degradation + tool logging."""
 
 import asyncio
-import logging
 import json
+import logging
 import re
+import threading
 import time
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
-from dataclasses import dataclass
-from enum import StrEnum
-import threading
 from contextvars import ContextVar
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Literal
 
-from aletheia.model_provider.base import ModelRequest, StreamChunk
-from aletheia.model_provider.base import model_json_schema_payload
-from aletheia.model_provider.inference_contract import InferenceCall, build_inference_call
-from aletheia.model_provider.router import get_provider_async, get_provider
+from aletheia.model_provider.base import ModelRequest, StreamChunk, model_json_schema_payload
 from aletheia.model_provider.fallback import BudgetExceededError, complete_with_fallback
+from aletheia.model_provider.inference_contract import InferenceCall, build_inference_call
+from aletheia.model_provider.router import get_provider_async
 
 logger = logging.getLogger("aletheia.agents")
 
@@ -1032,7 +1031,7 @@ def _record_llm(success: bool) -> None:
     Local import avoids any import-time cycle with agent_runtime.health.
     """
     try:
-        from aletheia.agent_runtime.health import record_llm_success, record_llm_failure
+        from aletheia.agent_runtime.health import record_llm_failure, record_llm_success
 
         (record_llm_success if success else record_llm_failure)()
     except Exception:

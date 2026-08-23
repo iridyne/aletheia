@@ -11,7 +11,6 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 # ---------------------------------------------------------------------------
 # Shared DB setup
 # ---------------------------------------------------------------------------
@@ -312,7 +311,7 @@ def test_execution_chain_atomicity_on_fill_error(tmp_path, monkeypatch):
 def test_execution_chain_idempotency(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.execution.gateway import submit_proposal, execute_existing_proposal
+    from aletheia.execution.gateway import execute_existing_proposal, submit_proposal
     from aletheia.storage import repositories as repo
 
     result = submit_proposal(**_seed_executable_paper_entry(

@@ -17,9 +17,9 @@ monkeypatched so we can assert on its call arguments.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 
 def _setup_db(tmp_path, monkeypatch):

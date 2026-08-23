@@ -1,22 +1,22 @@
 """Phase 5 tests: market/chart data routes."""
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 from aletheia.server.app import app
-from aletheia.storage.sqlite import reset_db
+from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import MarketSnapshot, PortfolioSnapshot
-from aletheia.storage import repositories as repo
+from aletheia.storage.sqlite import reset_db
 
 
 @pytest.fixture
 async def client(tmp_path, monkeypatch):
-    from aletheia.agent_runtime import connectivity
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
+    from aletheia.agent_runtime import connectivity
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
@@ -105,8 +105,8 @@ async def test_collector_health_route_returns_durable_domain_state(client):
 async def test_collector_health_route_groups_confirmed_connectivity_outage(
     client, monkeypatch
 ):
-    from aletheia.data.collector_health import record_collector_status
     from aletheia.agent_runtime import connectivity
+    from aletheia.data.collector_health import record_collector_status
 
     now = datetime.now(timezone.utc)
     failed_at = (now - timedelta(seconds=20)).isoformat()
@@ -156,8 +156,8 @@ async def test_data_coverage_route_separates_persisted_data_from_job_health(clie
 
 @pytest.mark.anyio
 async def test_ohlcv_route_returns_candles_or_error(client, monkeypatch):
-    from aletheia.data.providers import Candle
     from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Candle
 
     class _FakeCCXT:
         # signature mirrors the real CCXTProvider (since added for history paging)
@@ -237,8 +237,8 @@ async def test_ohlcv_route_falls_back_to_exact_database_history(client, monkeypa
 async def test_ohlcv_route_before_filters_to_history(client, monkeypatch):
     """`before` (unix seconds) must drop any candle at/after the cutoff so a
     scroll-back page never overlaps the chart's left-most bar."""
-    from aletheia.data.providers import Candle
     from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Candle
 
     cutoff = 1700000000  # seconds
     captured = {}

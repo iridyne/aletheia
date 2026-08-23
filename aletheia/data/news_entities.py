@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 
-
 _ENTITY_ALIASES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("BTC/USDT", "BTC", ("Bitcoin",)),
     ("ETH/USDT", "ETH", ("Ethereum", "Ether")),

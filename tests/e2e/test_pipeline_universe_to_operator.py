@@ -134,7 +134,6 @@ async def test_real_universe_refresh_reaches_one_operator_defer(
     e2e_db, monkeypatch, tmp_path
 ):
     import aletheia.config.loader as config_loader
-
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     from aletheia.agent_shell import reflection
     from aletheia.agent_shell.commands import evaluate_trading_opportunity

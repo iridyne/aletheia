@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
-
 NOW = datetime(2026, 7, 11, 10, 0, tzinfo=timezone.utc)
 
 

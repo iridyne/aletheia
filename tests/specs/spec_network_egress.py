@@ -339,6 +339,7 @@ def test_sync_urllib_uses_net_opener():
 )
 def test_config_read_failure_raises_policy_unavailable(monkeypatch):
     import pytest
+
     from aletheia import net
 
     def _raise():

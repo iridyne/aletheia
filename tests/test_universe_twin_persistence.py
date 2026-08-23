@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
 import json
 import logging
 import random
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest

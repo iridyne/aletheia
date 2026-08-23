@@ -922,8 +922,7 @@ def test_scheduler_guard_allows_concurrent_job_bodies():
 
 
 def test_guard_records_swallowed_job_failure_and_resets_on_success(monkeypatch):
-    from aletheia.agent_runtime import scheduler
-    from aletheia.agent_runtime import connectivity
+    from aletheia.agent_runtime import connectivity, scheduler
 
     async def fail_check():
         raise RuntimeError("probe down")
@@ -1196,6 +1195,7 @@ def test_derivatives_history_uses_bounded(monkeypatch):
 def test_bounded_slow_cancel_does_not_stall_caller(monkeypatch):
     """A coroutine that delays CancelledError cleanup cannot stall _bounded() past its cap."""
     import time
+
     from aletheia.agent_runtime import scheduler
 
     monkeypatch.setattr(scheduler, "_record_collector_health", lambda *a, **kw: None)

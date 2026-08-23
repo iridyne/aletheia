@@ -3,14 +3,13 @@
 import json
 import shutil
 import tarfile
-from pathlib import Path
-
 import uuid
+from pathlib import Path
 
 from aletheia.config.loader import get_data_dir
 from aletheia.storage.hashing import sha256_file
-from aletheia.storage.sqlite import get_db
 from aletheia.storage.repositories import transaction as _db_transaction
+from aletheia.storage.sqlite import get_db
 
 # Tables the importer is allowed to write — exactly the set emitted by the
 # supported exporter modes (research-pack, proposal-pack, runtime-snapshot).

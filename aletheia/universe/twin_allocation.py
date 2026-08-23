@@ -16,7 +16,6 @@ from aletheia.universe.twin_scoring import (
     build_shadow_allocation_candidates,
 )
 
-
 TWIN_ALLOCATION_REPLAY_CONTRACT = "universe-twin-allocation-diagnostic-v1"
 
 

@@ -2,23 +2,23 @@
 
 from datetime import datetime, timezone
 
-from aletheia.config.loader import load_config
-from aletheia.learning.lessons import LessonStore
 from aletheia.agent_shell.operator_store import (
     get_latest_heartbeat,
     get_session,
     list_messages,
     list_tasks,
 )
+from aletheia.config.loader import load_config
+from aletheia.learning.lessons import LessonStore
 from aletheia.storage.repositories import (
     list_agent_runs,
-    list_trade_proposals,
     list_fills,
     list_knowledge_items,
     list_market_snapshots,
     list_orders,
     list_positions,
     list_strategies,
+    list_trade_proposals,
 )
 
 ALL_SECTIONS = (

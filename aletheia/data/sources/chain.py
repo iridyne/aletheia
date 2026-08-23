@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 
 from aletheia.data.providers import OHLCVAttempt, OHLCVResult, Ticker
-from aletheia.data.symbols import InstrumentId, MARKET_SPOT
+from aletheia.data.symbols import MARKET_SPOT, InstrumentId
 
 logger = logging.getLogger("aletheia.data.sources.chain")
 

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 
 def test_candidate_supply_snapshot_empty_candidates_survives_event_write_failure(monkeypatch):
-    from aletheia.agent_shell.trading_context import _record_candidate_supply_snapshot
     from aletheia.agent_shell import operator_store
+    from aletheia.agent_shell.trading_context import _record_candidate_supply_snapshot
 
     def fail_create_event(**kwargs):  # noqa: ARG001
         raise RuntimeError("db unavailable")

@@ -17,7 +17,6 @@ import pytest
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.sqlite import reset_db
 
-
 BROKERS = (
     pytest.param(
         "aletheia.execution.bitget_broker", "BitgetClient", "bitget_demo",
@@ -817,8 +816,8 @@ def test_bitget_success_without_order_id_is_unknown_through_gateway_and_not_retr
     monkeypatch,
 ):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution import bitget_broker, gateway
     from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.execution import bitget_broker, gateway
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import RiskDecision, TradeProposal
 

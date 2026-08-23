@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from aletheia.infra.events import emit_infra_event
 from aletheia.storage import repositories as repo
-
 
 COLLECTOR_CADENCE_SEC: dict[str, int] = {
     "microstructure": 120,

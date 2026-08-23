@@ -24,11 +24,16 @@ from pathlib import Path
 
 from aletheia.config.loader import bootstrap, get_data_dir
 from aletheia.gateway.frontdoor_route import frontdoor_route_path, write_frontdoor_route
-from aletheia.gateway.pidfile import (
-    write_pid, _resolve_real_python,
-    find_gateway_orphans, find_port_holders, kill_pid_tree, port_in_use, wait_port_free,
-)
 from aletheia.gateway.network import backend_bind_host, frontdoor_bind_hosts
+from aletheia.gateway.pidfile import (
+    _resolve_real_python,
+    find_gateway_orphans,
+    find_port_holders,
+    kill_pid_tree,
+    port_in_use,
+    wait_port_free,
+    write_pid,
+)
 from aletheia.runtime_continuity.processes import current_gateway_launch_context, runtime_process_env
 
 logger = logging.getLogger("aletheia.gateway.supervisor")
@@ -646,7 +651,7 @@ def run_supervised(spawn_fn=None) -> dict:
         # Guard on ownership so a supervisor that already lost the pidfile to a
         # newer instance (start/stop race) does not clear the new owner's pid.
         try:
-            from aletheia.gateway.pidfile import read_pid, clear_pid
+            from aletheia.gateway.pidfile import clear_pid, read_pid
             if read_pid() == os.getpid():
                 clear_pid()
         except Exception:
@@ -734,6 +739,7 @@ def _write_restart_history(history: list[dict]) -> None:
         return
     try:
         import datetime as _dt
+
         from aletheia.config.loader import get_data_dir
         log_dir = get_data_dir() / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -764,8 +770,8 @@ def _write_ready_beacon(cfg) -> None:
     Windows or when not running under systemd.
     """
     try:
-        import json as _json
         import datetime as _dt
+        import json as _json
         path = _ready_beacon_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {

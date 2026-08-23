@@ -8,7 +8,6 @@ import pytest
 
 from scripts.release.build_bundle import build_bundle
 
-
 _UNIX_ONLY = pytest.mark.skipif(os.name == "nt", reason="requires Unix shell and symlink semantics")
 
 

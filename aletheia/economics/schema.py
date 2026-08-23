@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import sqlite3
 
-
 ECONOMICS_SCHEMA_VERSION = "economic-viability-v1"
 _TOOL_BACKFILL_KEY = "tool_cost_backfill_v1"
 

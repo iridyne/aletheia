@@ -12,7 +12,6 @@ from typer.testing import CliRunner
 import aletheia.main as main_mod
 from aletheia.cli import install as install_cli
 
-
 runner = CliRunner()
 
 

@@ -3,14 +3,14 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from unittest.mock import AsyncMock, patch
 
-from aletheia.server.app import app
 from aletheia.agent_shell.context import sections_for_profile
 from aletheia.agent_shell.intent import CommandIntent
+from aletheia.server.app import app
 
 
 @pytest.fixture
@@ -505,7 +505,8 @@ async def test_operator_pause_resume_and_wake(client, monkeypatch):
     # permission mode against pause_agents/resume_agents, matching the /command
     # gating. Default ReadOnly denies — lift to PaperAuto so this route test
     # exercises the happy path.
-    from aletheia.config.loader import load_config as _load_cfg, save_config as _save_cfg
+    from aletheia.config.loader import load_config as _load_cfg
+    from aletheia.config.loader import save_config as _save_cfg
     _cfg = _load_cfg()
     _cfg.agent.permission_mode = "Paper"
     _cfg.operator.permission_mode = "PaperAuto"

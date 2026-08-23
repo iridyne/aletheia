@@ -77,8 +77,8 @@ def test_research_worker_prompt_includes_verdict():
 )
 def test_trading_decision_bear_case_field():
     from aletheia.agent_shell.trading_decision import (
-        TradingDecision,
         _DECISION_SCHEMA,
+        TradingDecision,
         _build_assessment_prompt,
         _parse_decision,
     )
@@ -122,7 +122,7 @@ def test_trading_decision_bear_case_field():
 def test_pipeline_persists_verdict():
     """Mock-LLM pipeline run should produce verdict_json with required keys."""
     import json
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import patch
 
     from aletheia.agents.research_worker import _run_pipeline_inner
     from aletheia.storage import repositories as repo
@@ -181,6 +181,7 @@ def test_pipeline_persists_verdict():
 
     # Create a minimal run dict (pipeline reads from this)
     import asyncio
+
     from aletheia.storage.models import SerenityResearchRun
 
     run = SerenityResearchRun(mode="standard", trigger_type="test")
@@ -244,7 +245,6 @@ def test_trading_context_exposes_verdict():
     ),
 )
 def test_trading_decision_key_assumptions_field():
-    import inspect
     from aletheia.agent_shell.trading_decision import TradingDecision
     fields = {f.name for f in TradingDecision.__dataclass_fields__.values()}
     assert "key_assumptions" in fields, (

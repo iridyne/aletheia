@@ -33,13 +33,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from aletheia.agents import register_agent
-from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool, record_step, observer_llm_deadline
 from aletheia.agent_runtime.permissions import is_tool_permitted
-from aletheia.data.symbols import ticker_to_stock_tokens, stock_token_exchange
+from aletheia.agents import register_agent
+from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool, observer_llm_deadline, record_step
+from aletheia.config.loader import load_config
+from aletheia.data.symbols import stock_token_exchange, ticker_to_stock_tokens
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import insert_opportunity, list_strategies
-from aletheia.config.loader import load_config
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 
 logger = logging.getLogger("aletheia.agents.equity_observer")
@@ -121,7 +121,7 @@ def _fetch_equity_indicators(ticker: str, _retry: bool = True) -> dict | _FetchE
     import time
 
     try:
-        from aletheia.trading.indicators import sma, rsi, atr, bollinger, momentum_pct, zscore_last
+        from aletheia.trading.indicators import atr, bollinger, momentum_pct, rsi, sma, zscore_last
 
         hist = yf.download(
             ticker,

@@ -117,9 +117,9 @@ async def resume_if_llm_available(
         LLM_STARTUP_OWNER,
         MANUAL_OWNER,
         STARTUP_BEHAVIOR_OWNER,
+        acquire_pause,
         active_pause_blocker_names,
         active_pause_owners,
-        acquire_pause,
         pause_blocked_reason,
     )
 

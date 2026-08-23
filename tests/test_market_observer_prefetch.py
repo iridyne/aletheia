@@ -81,7 +81,7 @@ def test_signal_score_no_signal():
 
 
 def test_signal_score_rsi_deviation():
-    from aletheia.agents.market_observer import _signal_score, _PREFILTER_RSI_DEVIATION
+    from aletheia.agents.market_observer import _PREFILTER_RSI_DEVIATION, _signal_score
 
     rsi = 35.0  # deviation = |35 - 50| = 15
     pf = {"passed": True, "rsi": rsi, "atr_pct": None, "keyword_hits": [], "matched_rules": ["rsi_deviation"]}
@@ -91,7 +91,7 @@ def test_signal_score_rsi_deviation():
 
 
 def test_signal_score_atr_pct():
-    from aletheia.agents.market_observer import _signal_score, _PREFILTER_ATR_PCT
+    from aletheia.agents.market_observer import _PREFILTER_ATR_PCT, _signal_score
 
     pf = {"passed": True, "rsi": None, "atr_pct": 1.6, "keyword_hits": [], "matched_rules": ["atr_pct"]}
     score = _signal_score(pf)
@@ -106,7 +106,7 @@ def test_signal_score_does_not_accept_keyword_only():
 
 
 def test_signal_score_takes_max_of_dimensions():
-    from aletheia.agents.market_observer import _signal_score, _PREFILTER_RSI_DEVIATION, _PREFILTER_ATR_PCT
+    from aletheia.agents.market_observer import _PREFILTER_ATR_PCT, _PREFILTER_RSI_DEVIATION, _signal_score
 
     # RSI deviation = 14 → 14/12 ≈ 1.17; ATR% = 1.6 → 1.6/0.8 = 2.0 — ATR wins
     pf = {
@@ -545,7 +545,7 @@ async def test_prefetch_failure_isolates_to_single_symbol(tmp_path, monkeypatch)
     from unittest.mock import patch
 
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.agents.market_observer import _SymbolPrefetch, _DbCache
+    from aletheia.agents.market_observer import _DbCache, _SymbolPrefetch
 
     # Build a minimal _DbCache (empty — no DB data needed for this test)
     empty_cache = _DbCache(
@@ -669,8 +669,7 @@ async def test_spot_prefetch_omits_hl_and_position_x(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_failed_prefetch_does_not_reach_llm(tmp_path, monkeypatch):
     """When _prefetched.failed=True, _analyze_symbol() returns early without LLM call."""
-    import asyncio
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import patch
 
     _prepare_db(tmp_path, monkeypatch)
     from aletheia.agents.market_observer import _analyze_symbol, _SymbolPrefetch
@@ -1025,7 +1024,6 @@ async def test_llm_loop_runs_concurrently(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_llm_loop_concurrent_results_collected(tmp_path, monkeypatch):
     """Concurrent _analyze_symbol results (outputs/errors) are all captured."""
-    import asyncio
     from types import SimpleNamespace
 
     _prepare_db(tmp_path, monkeypatch)
@@ -1526,7 +1524,6 @@ async def test_pressure_skips_low_signal_symbols_when_budget_tight(tmp_path, mon
     → second symbol should be pressure-skipped.  Third (also low signal) should
     also be skipped.
     """
-    import asyncio
     import time
     from types import SimpleNamespace
 
@@ -1635,7 +1632,6 @@ async def test_pressure_skips_low_signal_symbols_when_budget_tight(tmp_path, mon
 @pytest.mark.asyncio
 async def test_pressure_does_not_skip_high_signal_symbols(tmp_path, monkeypatch):
     """High-signal symbols (score >= threshold) are never pressure-skipped."""
-    import asyncio
     import time
     from types import SimpleNamespace
 
@@ -1739,11 +1735,11 @@ def test_observer_llm_latency_persisted_and_readable(tmp_path, monkeypatch):
     """_record_observer_llm_latency persists and _read_observer_llm_latency_p50 reads back."""
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sqlite
-    from aletheia.storage.migrations import run_migrations
     from aletheia.agents.market_observer import (
-        _record_observer_llm_latency,
         _read_observer_llm_latency_p50,
+        _record_observer_llm_latency,
     )
+    from aletheia.storage.migrations import run_migrations
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(sqlite, "_db_path", None, raising=False)
@@ -1764,16 +1760,16 @@ def test_observer_llm_latency_persisted_and_readable(tmp_path, monkeypatch):
 
 def test_latency_history_rolling_window_capped_at_n(tmp_path, monkeypatch):
     """Rolling history is capped at _LLM_LATENCY_ROLLING_N (100) entries."""
+    import json
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sqlite
-    from aletheia.storage.migrations import run_migrations
     from aletheia.agents.market_observer import (
-        _record_observer_llm_latency,
-        _read_observer_llm_latency_p50,
-        _LLM_LATENCY_SETTINGS_KEY,
         _LLM_LATENCY_ROLLING_N,
+        _LLM_LATENCY_SETTINGS_KEY,
+        _record_observer_llm_latency,
     )
-    import json
+    from aletheia.storage.migrations import run_migrations
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(sqlite, "_db_path", None, raising=False)

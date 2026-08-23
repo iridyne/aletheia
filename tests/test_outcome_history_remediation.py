@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+
 import pytest
 
 
@@ -163,6 +164,7 @@ def test_apply_rolls_back_classification_when_archive_step_fails():
 
 def test_maintenance_source_has_no_delete_or_compensation_apply_path():
     from pathlib import Path
+
     import aletheia.maintenance.outcome_integrity as module
 
     source = Path(module.__file__).read_text()
@@ -174,6 +176,7 @@ def test_maintenance_source_has_no_delete_or_compensation_apply_path():
 
 def test_cli_defaults_to_dry_run_and_doctor_reports_pending_cleanup():
     from typer.testing import CliRunner
+
     from aletheia.diagnostics.doctor import Report, _probe_outcome_history_integrity
     from aletheia.main import app
 

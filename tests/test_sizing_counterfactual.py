@@ -130,8 +130,8 @@ def test_counterfactual_robustness_halves_reuse_cohort_cap():
 
 
 def test_proposal_input_read_failure_stays_unknown(monkeypatch):
-    from aletheia.analytics.sizing_counterfactual import _attach_immutable_proposal_inputs
     import aletheia.storage.sqlite as sqlite
+    from aletheia.analytics.sizing_counterfactual import _attach_immutable_proposal_inputs
 
     rows = [{"proposal_id": "proposal-1"}]
     monkeypatch.setattr(sqlite, "get_db", lambda: (_ for _ in ()).throw(RuntimeError("unavailable")))

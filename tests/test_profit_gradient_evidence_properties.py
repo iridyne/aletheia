@@ -38,9 +38,9 @@ import math
 from datetime import datetime, timezone
 
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
-from aletheia.config.secrets import is_secret_key
 from aletheia.analytics.profit_gradient_evidence import (
     _SECRET_FRAGMENTS,
     _epoch_hash,
@@ -50,7 +50,7 @@ from aletheia.analytics.profit_gradient_evidence import (
     _parse_utc,
     _redact,
 )
-
+from aletheia.config.secrets import is_secret_key
 
 # --------------------------------------------------------------------------- #
 # _epoch_hash — determinism and semantic salt

@@ -1,6 +1,5 @@
 """Operator shell spawn helpers and supervision."""
 
-from contextlib import contextmanager
 import hmac
 import json
 import os
@@ -9,10 +8,11 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.request
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
-import urllib.request
-from datetime import datetime, timezone
 
 from aletheia.config.loader import get_data_dir
 from aletheia.gateway.network import local_frontdoor_host
@@ -20,7 +20,6 @@ from aletheia.operator_service_identity import (
     OPERATOR_SERVICE_ENV,
     OPERATOR_SERVICE_HEADER,
     current_operator_service_token,
-    ensure_operator_service_token,
     issue_session_token,
     revoke_session_token,
     rotate_operator_service_token,

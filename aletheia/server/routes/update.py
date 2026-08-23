@@ -208,8 +208,8 @@ def update_continuity(body: ContinuityBody = ContinuityBody()):
             "detail": str(exc),
             "update_status": status,
         }
-    from aletheia.runtime_continuity.service import RuntimeContinuityService
     from aletheia.config.loader import load_config as _load_cfg
+    from aletheia.runtime_continuity.service import RuntimeContinuityService
 
     cfg = _load_cfg()
     candidate = RuntimeContinuityService(

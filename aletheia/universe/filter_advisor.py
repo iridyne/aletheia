@@ -16,8 +16,8 @@ These feed into apply_fine_tradability_filters() and the operator system assessm
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import logging
+from datetime import datetime, timezone
 
 logger = logging.getLogger("aletheia.universe.filter_advisor")
 

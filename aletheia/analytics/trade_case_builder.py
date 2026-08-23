@@ -8,14 +8,14 @@ No LLM. Deterministic. Read-only except for case study / guard candidate creatio
 """
 from __future__ import annotations
 
-import logging
 import json
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 
 from aletheia.analytics.trade_attribution import build_trade_attribution_rows, factor_key
-from aletheia.knowledge.manager import create_trade_case_study, create_guard_candidate
 from aletheia.knowledge.frontmatter import render_frontmatter
+from aletheia.knowledge.manager import create_guard_candidate, create_trade_case_study
 
 logger = logging.getLogger("aletheia.analytics.trade_case_builder")
 

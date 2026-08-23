@@ -58,6 +58,7 @@ def _setup_env(tmp_path: Path, monkeypatch) -> None:
 def _seed_positions(days_ago_list: list[int], pnl: float = 1.0) -> None:
     """Insert ordered post-clean-window closes for equity-curve truncation."""
     from datetime import datetime, timedelta, timezone
+
     from aletheia.storage.models import Position
     from aletheia.storage.repositories import insert_position
     from tests.test_outcome_closure import _insert_entry_chain
@@ -109,6 +110,7 @@ async def test_equity_curve_returns_recent_points_when_over_limit(tmp_path, monk
     _seed_positions(days_ago_list=list(range(30, 0, -3)))  # 30, 27, 24, ..., 3
 
     from httpx import ASGITransport, AsyncClient
+
     from aletheia.server.app import app
 
     transport = ASGITransport(app=app)

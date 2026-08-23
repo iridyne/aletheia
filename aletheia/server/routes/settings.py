@@ -6,7 +6,7 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, ValidationError, field_validator
 
-from aletheia.config.loader import load_config, save_config, mutate_config, config_file_hash
+from aletheia.config.loader import load_config, mutate_config, save_config
 from aletheia.config.schema import (
     AgentConfig,
     AppConfig,
@@ -23,6 +23,7 @@ from aletheia.config.schema import (
     ModeRiskPolicy,
     NetworkConfig,
     NewsConfig,
+    NotificationHour,
     ObservationConfig,
     OperatorConfig,
     PiDaemonConfig,
@@ -33,10 +34,8 @@ from aletheia.config.schema import (
     RuntimeConfig,
     SerenityConfig,
     StrategyFactoryConfig,
-    NotificationHour,
     TelegramConfig,
     TradingConfig,
-    TunnelConfig,
     UniverseConfig,
     UpdateConfig,
     WebhookConfig,
@@ -523,7 +522,8 @@ async def credit_paper_account(req: PaperAccountAdjustmentRequest):
 
     def _credit():
         _require_local_paper_mode()
-        from aletheia.portfolio.paper_account import adjust_cash, get_paper_account as _get
+        from aletheia.portfolio.paper_account import adjust_cash
+        from aletheia.portfolio.paper_account import get_paper_account as _get
         before = _get(event_limit=0)
         try:
             after = adjust_cash(req.amount_usdt, note=req.note)
@@ -542,7 +542,8 @@ async def debit_paper_account(req: PaperAccountAdjustmentRequest):
 
     def _debit():
         _require_local_paper_mode()
-        from aletheia.portfolio.paper_account import adjust_cash, get_paper_account as _get
+        from aletheia.portfolio.paper_account import adjust_cash
+        from aletheia.portfolio.paper_account import get_paper_account as _get
         before = _get(event_limit=0)
         try:
             after = adjust_cash(-req.amount_usdt, note=req.note)
@@ -561,7 +562,8 @@ async def set_paper_account_balance(req: PaperAccountSetBalanceRequest):
 
     def _set_balance():
         _require_local_paper_mode()
-        from aletheia.portfolio.paper_account import set_cash_balance, get_paper_account as _get
+        from aletheia.portfolio.paper_account import get_paper_account as _get
+        from aletheia.portfolio.paper_account import set_cash_balance
         before = _get(event_limit=0)
         after = set_cash_balance(req.cash_balance_usdt, note=req.note)
         _invalidate_paper_account_views()
@@ -1092,8 +1094,9 @@ async def update_controller_config(req: ControllerConfigUpdate):
     _CONTROLLER_SCHEDULER_FIELDS = {"shadow_enabled", "observe_interval_hours"}
     rescheduled = False
     if _CONTROLLER_SCHEDULER_FIELDS.intersection(updates):
-        from aletheia.agent_runtime.scheduler import reconcile_filter_controller
         from starlette.concurrency import run_in_threadpool
+
+        from aletheia.agent_runtime.scheduler import reconcile_filter_controller
         rescheduled = await run_in_threadpool(
             reconcile_filter_controller,
             cfg.controller.shadow_enabled,
@@ -1177,8 +1180,9 @@ async def update_learning_config(req: LearningConfigUpdate):
         "evaluation_interval_minutes" in updates
         and updates["evaluation_interval_minutes"] != old.get("evaluation_interval_minutes")
     ):
-        from aletheia.agent_runtime.scheduler import reschedule_learning_jobs
         from starlette.concurrency import run_in_threadpool
+
+        from aletheia.agent_runtime.scheduler import reschedule_learning_jobs
         rescheduled = await run_in_threadpool(
             reschedule_learning_jobs,
             cfg.learning.evaluation_interval_minutes,
@@ -1217,11 +1221,11 @@ def list_learning_experiments(limit: int = 100):
 @router.get("/learning/experiments/{experiment_id}")
 def get_learning_experiment(experiment_id: str):
     """Read-only lifecycle/operator view for one experiment."""
-    from aletheia.learning.lifecycle import inspect_learning_experiment
     from aletheia.learning.experiments import (
         current_policy_epoch as resolve_current_policy_epoch,
     )
     from aletheia.learning.ledger import get_record
+    from aletheia.learning.lifecycle import inspect_learning_experiment
     try:
         row = get_record("learning_experiments", experiment_id)
     except Exception as exc:
@@ -1503,8 +1507,9 @@ async def update_telegram_config(req: TelegramConfigUpdate):
         "daily_summary_hour_cst" in updates
         and updates["daily_summary_hour_cst"] != old.get("daily_summary_hour_cst")
     ):
-        from aletheia.agent_runtime.scheduler import reschedule_telegram_summary
         from starlette.concurrency import run_in_threadpool
+
+        from aletheia.agent_runtime.scheduler import reschedule_telegram_summary
         try:
             rescheduled = await run_in_threadpool(
                 reschedule_telegram_summary, cfg.telegram.daily_summary_hour_cst,
@@ -2059,7 +2064,7 @@ def update_tradable_symbols(req: SymbolsUpdate):
     cfg.exchange.symbol_list = normalized
 
     # In whitelist mode, sync observed_symbols so the data layer fetches them.
-    from aletheia.data.symbols import to_canonical, InstrumentId, MARKET_SPOT
+    from aletheia.data.symbols import MARKET_SPOT, InstrumentId, to_canonical
     if req.mode == "whitelist" and normalized:
         canonical_symbols = [to_canonical(s) for s in normalized]
         cfg.market_data.observed_symbols = canonical_symbols
@@ -2224,8 +2229,8 @@ async def update_trading_config(req: TradingConfigUpdate):
         from aletheia.trading.persona_rollout import current_persona_rollout
 
         current_persona_rollout(cfg, create=True)
-    from aletheia.trading.persona_rollout import persona_rollout_status
     from aletheia.files.jsonl import write_audit
+    from aletheia.trading.persona_rollout import persona_rollout_status
     write_audit({"actor": "human", "source": "dashboard", "event_type": "trading_config_changed",
                  "entity_type": "trading_config", "before": old,
                  "after": cfg.trading.model_dump(mode="json"),
@@ -2534,8 +2539,9 @@ def get_remote_control_interfaces():
 
 @router.get("/tunnel/status")
 async def get_tunnel_status():
-    from aletheia.gateway.tunnel import tunnel_status
     from starlette.concurrency import run_in_threadpool
+
+    from aletheia.gateway.tunnel import tunnel_status
     return await run_in_threadpool(tunnel_status)
 
 
@@ -2602,8 +2608,9 @@ def update_remote_control_config(req: RemoteControlConfigUpdate):
 
 @router.post("/tunnel/start")
 async def start_tunnel_api():
-    from aletheia.gateway.tunnel import start_tunnel
     from starlette.concurrency import run_in_threadpool
+
+    from aletheia.gateway.tunnel import start_tunnel
     result = await run_in_threadpool(start_tunnel)
     if not result.get("ok"):
         raise HTTPException(400, result.get("reason", "unknown error"))
@@ -2612,8 +2619,9 @@ async def start_tunnel_api():
 
 @router.post("/tunnel/stop")
 async def stop_tunnel_api():
-    from aletheia.gateway.tunnel import stop_tunnel
     from starlette.concurrency import run_in_threadpool
+
+    from aletheia.gateway.tunnel import stop_tunnel
     return await run_in_threadpool(stop_tunnel)
 
 
@@ -2667,6 +2675,7 @@ def update_network_config(req: NetworkConfigUpdate):
 async def test_network_proxy():
     """Test proxy connectivity by pinging Binance API through the configured proxy."""
     import time
+
     from aletheia.net import httpx_client
     url = "https://api.binance.com/api/v3/ping"
     t0 = time.monotonic()
@@ -2717,8 +2726,9 @@ async def update_historical_data_config(req: HistoricalDataConfigUpdate):
     }
     rescheduled = False
     if _SCHEDULER_FIELDS.intersection(updates):
-        from aletheia.agent_runtime.scheduler import reconcile_historical_data_jobs
         from starlette.concurrency import run_in_threadpool
+
+        from aletheia.agent_runtime.scheduler import reconcile_historical_data_jobs
         rescheduled = await run_in_threadpool(
             reconcile_historical_data_jobs, cfg.historical_data,
         )
@@ -2810,8 +2820,9 @@ async def update_news_config(req: NewsConfigUpdate):
         req.fetch_interval_minutes is not None
         and req.fetch_interval_minutes != old.get("fetch_interval_minutes")
     ):
-        from aletheia.agent_runtime.scheduler import reschedule_news_fetch
         from starlette.concurrency import run_in_threadpool
+
+        from aletheia.agent_runtime.scheduler import reschedule_news_fetch
         rescheduled = await run_in_threadpool(
             reschedule_news_fetch, cfg.news.fetch_interval_minutes,
         )

@@ -15,7 +15,6 @@ from typing import Literal
 
 from aletheia.storage.sqlite import get_db
 
-
 Finding = Literal[
     "not_applicable",
     "awaiting_outcomes",

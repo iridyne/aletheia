@@ -6,8 +6,8 @@ import os
 import sqlite3
 import subprocess
 import time
-from pathlib import Path
 import urllib.request
+from pathlib import Path
 
 from aletheia.config.loader import _PROJECT_ROOT, get_data_dir
 from aletheia.gateway.network import backend_bind_host

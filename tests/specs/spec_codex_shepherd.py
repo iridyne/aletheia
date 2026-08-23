@@ -9,7 +9,6 @@ import yaml
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 pytestmark = pytest.mark.tier_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

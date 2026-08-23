@@ -1,9 +1,10 @@
 """Secrets management CLI commands (secondary surface — dashboard is primary)."""
 
 import asyncio
+
 import typer
 
-from aletheia.config.secrets import set_secret, get_secret, redact
+from aletheia.config.secrets import get_secret, redact, set_secret
 
 secrets_app = typer.Typer(no_args_is_help=True)
 

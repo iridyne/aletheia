@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import inspect
 import ast
-from pathlib import Path
+import inspect
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -898,8 +898,8 @@ def _legacy_active_ufc_db(*, fingerprint: str) -> sqlite3.Connection:
 
 
 def test_ufc_canonical_identity_v25_materializes_verified_active_paper(monkeypatch):
-    import aletheia.storage.migrations as migrations
     import aletheia.learning.hypotheses as live_hypotheses
+    import aletheia.storage.migrations as migrations
 
     connection = _legacy_active_ufc_db(
         fingerprint="64b53e9eade95232da73ba2760080dabbbeb8f8297e05de4fbd22b17b96dfec8"

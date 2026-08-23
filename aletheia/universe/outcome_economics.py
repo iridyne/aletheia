@@ -10,7 +10,6 @@ from typing import Any
 
 from aletheia.data.symbols import MARKET_FUTURES, MARKET_PERP, MARKET_SPOT
 
-
 _FUNDING_INTERVAL_SEC = 8 * 3600
 _PERP_MARKETS = frozenset({MARKET_PERP, MARKET_FUTURES, "swap", "usdt_futures"})
 _VALID_DIRECTIONS = frozenset({"long", "short"})

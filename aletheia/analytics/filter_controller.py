@@ -20,15 +20,14 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from aletheia.analytics.filter_registry import (
-    FilterSpec,
     FILTER_REGISTRY,
-    tunable_filters,
     report_only_filters,
+    tunable_filters,
 )
 
 logger = logging.getLogger("aletheia.analytics.filter_controller")
@@ -296,7 +295,7 @@ def compute_filter_feedback(
     days ago to prevent FIRST_EXPOSURE_CTE from scanning all of filter_decisions
     (319k+ rows) on every observe cycle.  Pass an explicit value to override.
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
 
     if evaluated_since is None:
         evaluated_since = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
@@ -788,10 +787,10 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
     # bounded pass advances every Observation Window under one exception
     # boundary.
     try:
-        from aletheia.counterfactual.filter_replay import build_bounded_filter_replays
         from aletheia.counterfactual.filter_experiments import (
             register_replay_ready_experiments,
         )
+        from aletheia.counterfactual.filter_replay import build_bounded_filter_replays
 
         replays = build_bounded_filter_replays(recs, min_samples=min_samples)
         experiment_registration = register_replay_ready_experiments(replays)

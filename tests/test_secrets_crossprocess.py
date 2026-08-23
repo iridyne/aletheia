@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ─── Multiprocessing workers (module-level so they're picklable under 'spawn') ─
 
 

@@ -5,7 +5,6 @@ import json
 
 import httpx
 
-from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.base import (
     ModelHealth,
     ModelProvider,
@@ -14,6 +13,7 @@ from aletheia.model_provider.base import (
     StructuredModelRequest,
     model_json_schema_payload,
 )
+from aletheia.net import httpx_client, raise_for_status_without_secrets
 
 # Backwards-compatible alias — the implementation now lives in aletheia.net so every
 # provider shares one credential-scrubbing path (error-leak 2.7).

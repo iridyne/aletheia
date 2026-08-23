@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from importlib.metadata import version as installed_version
 import json
-from pathlib import Path
 import runpy
 import tomllib
+from importlib.metadata import version as installed_version
+from pathlib import Path
 
 from aletheia import __version__
 from scripts.release.build_bundle import _project_metadata
-
 
 ROOT = Path(__file__).resolve().parents[1]
 

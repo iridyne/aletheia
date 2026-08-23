@@ -11,8 +11,8 @@
 关联契约: docs/design/contracts/kill_conditions_contract.md
 """
 import pytest
-from tests.specs.spec_meta import SpecClaim, spec_claim
 
+from tests.specs.spec_meta import SpecClaim, spec_claim
 
 # ---------------------------------------------------------------------------
 # L2a — Structural claims
@@ -232,10 +232,11 @@ def test_live_unlock_blocked_when_scorecard_fails(tmp_path, monkeypatch):
     )
 
     import yaml
-    from aletheia.config.schema import AletheiaConfig
     from fastapi import FastAPI
-    from aletheia.server.routes.live import router as live_router
     from fastapi.testclient import TestClient
+
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.server.routes.live import router as live_router
 
     cfg = AletheiaConfig()
     cfg.live.state = "live_disabled"
@@ -334,6 +335,7 @@ def test_loss_first_curve_does_not_report_zero_drawdown(monkeypatch):
 )
 def test_personal_stop_loss_not_yet_in_risk_config():
     import inspect
+
     from aletheia.config.schema import RiskConfig
 
     source = inspect.getsource(RiskConfig)

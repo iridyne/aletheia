@@ -15,7 +15,6 @@ from aletheia.execution.exchange_materialization import (
     evidence_for_order,
 )
 
-
 # ──────────────────────────────────────────────────────────────────────────────
 # #1722 — non-finite fill economics must be rejected
 # ──────────────────────────────────────────────────────────────────────────────
@@ -144,6 +143,7 @@ def test_fee_in_quote_base_asset_converted():
 def test_explicit_cancellation_branch_in_okx_broker():
     """#1502: okx_broker.execute_live_order contains explicit-rejection branch."""
     import inspect
+
     import aletheia.execution.okx_broker as mod
     src = inspect.getsource(mod.execute_live_order)
     assert "explicit_venue_rejection" in src, (
@@ -158,6 +158,7 @@ def test_explicit_cancellation_branch_in_okx_broker():
 def test_explicit_cancellation_branch_in_binance_broker():
     """#1502: binance_broker.execute_live_order contains explicit-rejection branch."""
     import inspect
+
     import aletheia.execution.binance_broker as mod
     src = inspect.getsource(mod.execute_live_order)
     assert "explicit_venue_rejection" in src, (

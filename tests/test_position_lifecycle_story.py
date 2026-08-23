@@ -9,7 +9,6 @@ from typer.testing import CliRunner
 import aletheia.analytics.position_lifecycle_story as lifecycle
 from aletheia.cli.inspect_cmd import inspect_app
 
-
 _ENTRY = "2026-08-13T00:00:00+00:00"
 _CUTOFF = "2026-08-13T00:02:30+00:00"
 _EXIT = "2026-08-13T00:05:00+00:00"

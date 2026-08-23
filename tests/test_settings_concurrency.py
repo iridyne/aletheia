@@ -22,7 +22,6 @@ from aletheia.config.loader import (
 )
 from aletheia.config.schema import AletheiaConfig
 
-
 # ─── Multiprocessing workers (module-level so they're picklable under 'spawn') ─
 
 
@@ -84,6 +83,7 @@ def _seed(config_file: Path) -> None:
 def _patch_loader(config_file: Path):
     """Return a list of patches for the config loader — matches test_config_crossprocess style."""
     from unittest.mock import patch
+
     import aletheia.config.loader as cl
 
     return [

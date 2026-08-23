@@ -4,11 +4,10 @@ Verifies that trade outcomes remain queryable for Learning and that an
 unmeasured lesson proposal stays on the ranker's zero-impact baseline.
 """
 
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
-from aletheia.storage.models import Position
 from aletheia.storage import repositories as repo
+from aletheia.storage.models import Position
 
 
 class TestClosedTradeToKnowledge:

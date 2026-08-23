@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
 import math
+from collections import Counter, defaultdict
 from statistics import fmean
 from typing import Any
 
@@ -11,7 +11,6 @@ from aletheia.analytics.outcome_integrity import (
     eligible_strategy_outcomes,
     validated_funding_economics,
 )
-
 
 CONTRACT_VERSION = "execution-cost-pair/v1"
 BASELINE_POLICY = "frictionless-requested-fill/v1"

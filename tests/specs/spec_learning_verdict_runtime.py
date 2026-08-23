@@ -78,9 +78,10 @@ def test_learning_contribution_route_returns_verdict_counts(monkeypatch):
     Calls the route function directly (bypassing TestClient thread isolation) with
     a mocked DB that has pre-populated verdict rows.
     """
-    import sqlite3
     import importlib
+    import sqlite3
     from unittest.mock import patch
+
     from aletheia.server.routes import analytics as analytics_routes
     importlib.import_module("aletheia.learning.read_models")
 
@@ -148,9 +149,10 @@ def test_learning_contribution_route_error_is_not_silent_zero():
     Calls the route function directly with a DB whose verdicts table is intentionally
     absent to simulate a schema/read failure.
     """
-    import sqlite3
     import importlib
+    import sqlite3
     from unittest.mock import patch
+
     from aletheia.server.routes import analytics as analytics_routes
     importlib.import_module("aletheia.learning.read_models")
 

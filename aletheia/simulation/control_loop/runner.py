@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from contextlib import ExitStack
-from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
+from contextlib import ExitStack
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -208,13 +208,18 @@ class ControlLoopHarness:
         closed_at: datetime,
     ) -> None:
         """Insert one complete native paper chain for deterministic simulation."""
-        from aletheia.files import jsonl
         from aletheia import notifications
+        from aletheia.files import jsonl
         from aletheia.portfolio import pnl
         from aletheia.portfolio.paper_account import record_position_opened
         from aletheia.storage import repositories as repo
         from aletheia.storage.models import (
-            Fill, Opportunity, Order, Position, RiskDecision, TradeProposal,
+            Fill,
+            Opportunity,
+            Order,
+            Position,
+            RiskDecision,
+            TradeProposal,
         )
 
         opportunity = Opportunity(

@@ -8,10 +8,9 @@ that bundle.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
-import json
-
 
 _CANDIDATE_TECHNICAL_MAX_AGE_SEC = 7200
 

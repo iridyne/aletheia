@@ -1,7 +1,6 @@
 import re
 from pathlib import Path
 
-
 SETTINGS_PAGE = Path("frontend/src/pages/Settings.tsx").resolve()
 SETTINGS_FEATURE_ROOT = Path("frontend/src/features/settings").resolve()
 

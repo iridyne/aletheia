@@ -41,8 +41,8 @@ def test_close_writes_one_ledger_event_matching_realized():
 def test_ledger_sum_equals_positions_sum_for_full_closes():
     """Aggregate equivalence (Stage 2 foundation): summing realized_pnl from the close
     ledger equals summing it from closed positions, when every close is a full close."""
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import list_closed_positions
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     _insert_open(db, "a", entry=100.0, qty=1.0)
@@ -111,8 +111,8 @@ def _insert_open_qty(db, pid, *, entry=100.0, qty=2.0, entry_fee=0.12, mode="bit
 
 
 def test_reduce_position_partial():
-    from aletheia.storage.sqlite import get_db
     from aletheia.portfolio.pnl import reduce_position
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     _insert_open_qty(db, "p1", entry=100.0, qty=2.0, entry_fee=0.12)  # bitget_demo, fee 0.0006
@@ -135,8 +135,8 @@ def test_reduce_position_partial():
 
 
 def test_reduce_guards():
-    from aletheia.storage.sqlite import get_db
     from aletheia.portfolio.pnl import reduce_position
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     _insert_open_qty(db, "g1", qty=1.0)
@@ -148,9 +148,9 @@ def test_reduce_guards():
 def test_reduce_rejected_on_paper_internal():
     """Product boundary: paper_internal is limited to full closes — partial reduce is
     honestly rejected because no execution mode has an authorized product path."""
-    from aletheia.storage.sqlite import get_db
     from aletheia.portfolio.pnl import reduce_position
     from aletheia.storage.repositories import list_position_close_events
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     _insert_open_qty(db, "pi1", qty=2.0, mode="paper_internal")
@@ -167,10 +167,10 @@ def test_reduce_then_full_close_economics_consistent():
     + partial term) must equal the true multi-leg realized, with no double-count."""
     from datetime import datetime, timezone
 
-    from aletheia.storage.sqlite import get_db
-    from aletheia.portfolio.pnl import reduce_position, close_position
     from aletheia.portfolio.account_loss import _partial_close_realized_today
+    from aletheia.portfolio.pnl import close_position, reduce_position
     from aletheia.storage.repositories import list_closed_positions
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     _insert_open_qty(db, "m1", entry=100.0, qty=2.0, entry_fee=0.12)

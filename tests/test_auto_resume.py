@@ -252,8 +252,9 @@ async def test_probe_exception_does_not_kill_loop(tmp_path, monkeypatch):
 class TestStartAutoResumeTask:
     @pytest.mark.asyncio
     async def test_starts_task(self):
-        import aletheia.agent_runtime.auto_resume as mod
         from unittest.mock import AsyncMock, patch
+
+        import aletheia.agent_runtime.auto_resume as mod
         mod._active_task = None
         with patch.object(mod, "_auto_resume_loop", new_callable=AsyncMock):
             task = mod.start_auto_resume_task(interval_sec=1)
@@ -268,8 +269,9 @@ class TestStartAutoResumeTask:
 
     @pytest.mark.asyncio
     async def test_stop_cancels_and_clears_owned_task(self):
-        import aletheia.agent_runtime.auto_resume as mod
         from unittest.mock import patch
+
+        import aletheia.agent_runtime.auto_resume as mod
 
         started = asyncio.Event()
 
@@ -289,8 +291,9 @@ class TestStartAutoResumeTask:
 
     @pytest.mark.asyncio
     async def test_does_not_duplicate(self):
-        import aletheia.agent_runtime.auto_resume as mod
         from unittest.mock import AsyncMock, patch
+
+        import aletheia.agent_runtime.auto_resume as mod
         mod._active_task = None
         with patch.object(mod, "_auto_resume_loop", new_callable=AsyncMock):
             task1 = mod.start_auto_resume_task(interval_sec=1)

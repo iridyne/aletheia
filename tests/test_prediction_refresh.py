@@ -12,7 +12,6 @@ from __future__ import annotations
 import threading
 import time
 
-import pytest
 from httpx import ASGITransport, AsyncClient
 
 from aletheia.agent_runtime.job_queue import AgentJobManager, AgentJobQueueFull
@@ -22,7 +21,6 @@ from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import AgentRun
 from aletheia.storage.sqlite import reset_db
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -67,6 +65,7 @@ def test_refresh_route_does_not_import_get_agent():
     verify statically that the broken symbol is gone.
     """
     import inspect
+
     import aletheia.server.routes.prediction as mod
 
     source = inspect.getsource(mod)

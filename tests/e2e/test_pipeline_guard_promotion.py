@@ -17,8 +17,8 @@ The corrected chain (verified end-to-end here, real DB, no module mocking):
 
 from datetime import datetime, timezone
 
-from aletheia.storage.models import Opportunity, TradeProposal, Position
 from aletheia.storage import repositories as repo
+from aletheia.storage.models import Opportunity, Position, TradeProposal
 
 
 def _losing_momentum_long_trade(i: int):
@@ -44,9 +44,9 @@ def _losing_momentum_long_trade(i: int):
 
 class TestGuardPromotionChain:
     def test_auto_candidate_is_shadow_and_not_auto_promoted(self, e2e_db):
-        from aletheia.knowledge.manager import create_guard_candidate
-        from aletheia.knowledge.guards import load_trading_guards, guard_origin
         from aletheia.analytics.guard_promotion import run_promotion_check
+        from aletheia.knowledge.guards import guard_origin, load_trading_guards
+        from aletheia.knowledge.manager import create_guard_candidate
 
         # 1) create an auto-style candidate (mirrors outcome_recorder's metadata)
         guard_id = "auto_momentum_long_solusdt"
@@ -91,9 +91,9 @@ class TestGuardPromotionChain:
     def test_manual_candidate_can_still_be_promoted_by_owner(self, e2e_db):
         """The promotion MECHANISM is intact: an owner-authored (non-shadow, non-learned)
         candidate is promotable via the explicit owner route."""
-        from aletheia.knowledge.manager import create_guard_candidate
-        from aletheia.knowledge.guards import load_trading_guards, guard_origin
         from aletheia.analytics.guard_promotion import promote_guard_candidate_to_active
+        from aletheia.knowledge.guards import guard_origin, load_trading_guards
+        from aletheia.knowledge.manager import create_guard_candidate
 
         guard_id = "manual-sol-momentum-block"
         create_guard_candidate(

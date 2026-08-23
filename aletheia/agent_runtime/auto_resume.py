@@ -20,8 +20,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from aletheia.config.loader import load_config
 from aletheia.agent_runtime.resume_gate import resume_if_llm_available
+from aletheia.config.loader import load_config
 
 logger = logging.getLogger("aletheia.auto_resume")
 

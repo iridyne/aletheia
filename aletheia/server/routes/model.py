@@ -5,8 +5,8 @@ returns a key. GET responses only report whether a key is configured + last-4.
 """
 
 import asyncio
-from datetime import datetime, timezone
 import hashlib
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Response  # pyright: ignore[reportMissingImports]
@@ -24,15 +24,15 @@ from aletheia.model_provider.registry import (  # pyright: ignore[reportMissingI
     provider_kind,
 )
 from aletheia.model_provider.router import (
+    PROVIDER_REGISTRY,
+    _classify_health_error,
     clear_cache,
     clear_cache_async,
     clear_provider_verification,
-    _classify_health_error,
     healthcheck_all_with_metadata,
     persist_provider_verification,
     provider_configuration_identity,
     provider_is_configured,
-    PROVIDER_REGISTRY,
 )
 
 router = APIRouter(prefix="/api", tags=["model"])
@@ -292,18 +292,19 @@ async def ping_model():
     in the response body.
     """
     import time
-    from aletheia.model_provider.router import get_provider_async
-    from aletheia.model_provider.base import ModelRequest
-    from aletheia.model_provider.inference_contract import build_inference_call
+
+    from aletheia.config.loader import load_config
     from aletheia.economics.inference_calls import (
         record_inference_finished,
         record_inference_started,
     )
+    from aletheia.model_provider.base import ModelRequest
     from aletheia.model_provider.broker import (
         InferencePriority,
         brokered_complete,
     )
-    from aletheia.config.loader import load_config
+    from aletheia.model_provider.inference_contract import build_inference_call
+    from aletheia.model_provider.router import get_provider_async
 
     t0 = time.monotonic()
     provider_name: str | None = None
@@ -483,13 +484,13 @@ def _resolve_candidate_provider(provider_id: str, requested_type: str | None, cf
 @router.post("/model/detect-models")
 async def detect_models(req: DetectModelsRequest):
     """Probe a candidate provider identity without persisting credentials."""
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
-    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-    from aletheia.model_provider.databricks import DatabricksProvider
-    from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
-    from aletheia.model_provider.openai_native import OpenAINativeProvider
-    from aletheia.config.secrets import get_secret
     from aletheia.config.loader import load_config
+    from aletheia.config.secrets import get_secret
+    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+    from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
+    from aletheia.model_provider.databricks import DatabricksProvider
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from aletheia.model_provider.openai_native import OpenAINativeProvider
 
     cfg = load_config()
     provider_type, pcfg = _resolve_candidate_provider(req.provider, req.type, cfg)
@@ -569,13 +570,13 @@ async def test_model_candidate(req: TestCandidateRequest):
     inference verification and persists evidence only when the candidate matches
     the currently saved provider identity.
     """
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
-    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-    from aletheia.model_provider.databricks import DatabricksProvider
-    from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
-    from aletheia.model_provider.openai_native import OpenAINativeProvider
-    from aletheia.config.secrets import get_secret
     from aletheia.config.loader import load_config
+    from aletheia.config.secrets import get_secret
+    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+    from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
+    from aletheia.model_provider.databricks import DatabricksProvider
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from aletheia.model_provider.openai_native import OpenAINativeProvider
 
     cfg = load_config()
     provider_type, pcfg = _resolve_candidate_provider(req.provider, req.type, cfg)
@@ -652,13 +653,13 @@ async def test_model_candidate(req: TestCandidateRequest):
             }
 
         if req.probe:
-            from aletheia.model_provider.base import ModelRequest
-            from aletheia.model_provider.broker import InferencePriority, brokered_complete
-            from aletheia.model_provider.inference_contract import build_inference_call
             from aletheia.economics.inference_calls import (
                 record_inference_finished,
                 record_inference_started,
             )
+            from aletheia.model_provider.base import ModelRequest
+            from aletheia.model_provider.broker import InferencePriority, brokered_complete
+            from aletheia.model_provider.inference_contract import build_inference_call
 
             inference_call = None
             try:
@@ -1335,8 +1336,8 @@ def openai_oauth_status():
 @router.post("/model/openai-oauth/finalize")
 def openai_oauth_finalize():
     """Persist completed OpenAI OAuth tokens. Idempotent — safe to call multiple times."""
-    from aletheia.model_provider import openai_oauth
     from aletheia.config.secrets import get_secret
+    from aletheia.model_provider import openai_oauth
 
     status = openai_oauth.get_status()
     if status["state"] != "completed":

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 
-
 ENTRY_PLAN_MIN_RISK_REWARD = 1.0
 ENTRY_PLAN_MAX_RISK_REWARD = 10.0
 

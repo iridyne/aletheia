@@ -6,11 +6,11 @@ telemetry is pruned. JSONL rotates at a size cap without losing content.
 """
 
 import sqlite3
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -48,6 +48,7 @@ def test_usage_retention_defaults_are_90_days():
 def test_retention_settings_usage_windows_are_limited_to_90_days(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
     from aletheia.config.schema import AletheiaConfig
     from aletheia.server.routes import settings
 
@@ -455,6 +456,7 @@ def test_prune_session_logs_keeps_main_and_recent_deletes_old(tmp_path, monkeypa
     can never reap a live or pinned transcript. Guards the DB-SIZE-2 retention."""
     import os
     import time
+
     from aletheia.agent_shell.file_artifacts import prune_session_logs
 
     setup_env(tmp_path, monkeypatch)

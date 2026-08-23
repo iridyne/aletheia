@@ -375,9 +375,9 @@ def _reuse_recent_skip_validation(trading_context: dict, decision) -> dict | Non
         ):
             return None
         from aletheia.agent_shell.trading_context import (
-            material_fingerprint_from_candidate_ctx,
             _normalize_direction,
             _normalize_market_type,
+            material_fingerprint_from_candidate_ctx,
         )
         from aletheia.storage.repositories import latest_skip_validation_for_setup
 
@@ -1954,8 +1954,9 @@ def _proposal_direction_overheated(
     if direction not in ("long", "short") or conviction >= override_conviction:
         return None
     try:
-        from datetime import datetime, timedelta, timezone
         from collections import Counter
+        from datetime import datetime, timedelta, timezone
+
         from aletheia.storage.sqlite import get_db
 
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
@@ -2137,6 +2138,7 @@ def _direct_skip_validation_reason(
 async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateResult | None:
     """Run Bull/Bear adversarial debate for a symbol."""
     import asyncio
+
     from aletheia.agents.helpers import llm_structured
     from aletheia.model_provider.router import get_provider_for_tier
 

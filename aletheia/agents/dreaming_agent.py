@@ -1,21 +1,20 @@
 """Dreaming Agent — consolidates daily activity into learning summaries."""
 
-import json
 import logging
 import time
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, llm_complete, llm_structured, log_tool
-from aletheia.agent_runtime.permissions import is_tool_permitted
-from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.knowledge.manager import create_daily_review, create_dreaming_log
 from aletheia.learning.control import (
     advance_learning_job_cursor,
     get_learning_job_health,
 )
+from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.storage.repositories import list_agent_runs
 
 logger = logging.getLogger("aletheia.agents.dreaming_agent")
@@ -144,7 +143,7 @@ def _build_learning_ledger() -> str:
     The quality block is north-star §7 stage-1 evidence — before closing the
     experience loop end-to-end we need to see learning *converge*, not just *write*.
     """
-    from aletheia.storage.repositories import list_strategies, list_knowledge_items
+    from aletheia.storage.repositories import list_knowledge_items, list_strategies
 
     strategies = list_strategies(limit=500)
     counts = {s: 0 for s in _LEDGER_STATES}
@@ -210,7 +209,7 @@ def _build_learning_ledger() -> str:
     try:
         from aletheia.storage.repositories import list_tool_calls
         recent_calls = list_tool_calls(limit=2000)
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
 
         def _fresh(c) -> bool:
@@ -263,7 +262,8 @@ def _build_trading_performance_block() -> str:
     Returns PROFIT_DAY, LOSS_DAY, FLAT_DAY, or NOT_AVAILABLE.
     Missing evidence is reported explicitly — never coerced to zero or FLAT.
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
+
     from aletheia.storage.sqlite import get_db
 
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
@@ -323,8 +323,8 @@ async def _extract_lessons(
     C4: reads trade_case_study (real closed-trade PnL) not post_trade_review, which was
     reclassified to medium_confidence and contained LLM-generated narrative, not signal.
     """
-    from aletheia.storage.repositories import list_pending_trade_case_studies
     from aletheia.learning.lessons import LessonStore
+    from aletheia.storage.repositories import list_pending_trade_case_studies
 
     if deadline is None:
         deadline = time.monotonic() + _LESSON_EXTRACTION_BUDGET_SECONDS
@@ -361,8 +361,9 @@ async def _extract_lessons(
     # concrete to summarise and the evidence_json is populated for lesson_reviewer.
     case_lines = []
     for r in reviews:
-        from aletheia.knowledge.frontmatter import parse_frontmatter
         from pathlib import Path
+
+        from aletheia.knowledge.frontmatter import parse_frontmatter
         meta: dict = {}
         fpath = r.get("file_path")
         if fpath:
@@ -433,6 +434,7 @@ async def _extract_lessons(
     agg_evidence: dict = {}
     if reviews:
         from pathlib import Path
+
         from aletheia.knowledge.frontmatter import parse_frontmatter
         case_facts: dict[str, dict] = {}
         factor_source_ids: dict[str, list[str]] = {}
@@ -572,7 +574,7 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
         errors.append("write_dreaming_log not permitted in current mode")
         return {"outputs": outputs, "errors": errors}
 
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     started_at = time.monotonic()
     all_recent_runs = list_agent_runs(limit=200)
@@ -664,8 +666,9 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
     # to avoid duplicate content under different item_types.
     trigger = kwargs.get("trigger_type", "")
     if trigger in ("cron", "scheduler", ""):
+        from datetime import datetime, timedelta, timezone
+
         from aletheia.storage.repositories import list_knowledge_items
-        from datetime import datetime, timezone, timedelta
         today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         existing_reviews = [
             r for r in list_knowledge_items(item_type="daily_review", limit=10)

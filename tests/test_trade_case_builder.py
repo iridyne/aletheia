@@ -1,15 +1,15 @@
 """Tests for trade_case_builder module."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from aletheia.analytics.trade_case_builder import (
     _build_case_from_row,
-    _render_case_body,
     _build_tags,
-    _opened_after,
     _is_synthetic_closure,
-    detect_guard_candidates,
+    _opened_after,
+    _render_case_body,
     build_case_studies,
+    detect_guard_candidates,
 )
 
 

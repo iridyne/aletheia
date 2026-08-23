@@ -10,12 +10,12 @@ Safety:
 """
 
 import os
+import py_compile
+import subprocess
 import sys
 import time
-import subprocess
-import py_compile
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -123,7 +123,7 @@ def main():
     if not check_live_guard():
         sys.exit(1)
 
-    from watchfiles import watch, Change
+    from watchfiles import Change, watch
 
     log(f"Watching {ALETHEIA_DIR} for .py changes...")
     log(f"Debounce={DEBOUNCE_SEC}s, Cooldown={COOLDOWN_SEC}s, MaxRestarts={MAX_RESTARTS_PER_MINUTE}/min")

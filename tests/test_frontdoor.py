@@ -1,5 +1,5 @@
-from pathlib import Path
 import gzip
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -82,6 +82,7 @@ async def test_frontdoor_serves_static_without_backend(tmp_path):
 @pytest.mark.anyio
 async def test_frontdoor_infra_status_stays_available_when_backend_down(tmp_path, monkeypatch):
     from types import SimpleNamespace
+
     import aletheia.config.loader as _loader
 
     monkeypatch.setattr(
@@ -108,6 +109,7 @@ async def test_frontdoor_infra_status_stays_available_when_backend_down(tmp_path
 @pytest.mark.anyio
 async def test_frontdoor_backend_route_file_can_switch_without_restart(tmp_path, monkeypatch):
     from types import SimpleNamespace
+
     import aletheia.config.loader as _loader
 
     monkeypatch.setattr(
@@ -151,6 +153,7 @@ async def test_frontdoor_backend_route_file_can_switch_without_restart(tmp_path,
 @pytest.mark.anyio
 async def test_frontdoor_api_returns_structured_503_when_backend_down(tmp_path, monkeypatch):
     from types import SimpleNamespace
+
     import aletheia.config.loader as _loader
 
     monkeypatch.setattr(
@@ -230,6 +233,7 @@ def test_frontdoor_websocket_scope_rejected_without_assertion_error(tmp_path):
     unhandled AssertionError (#357).
     """
     from starlette.testclient import TestClient
+
     from aletheia.gateway.frontdoor import create_app
 
     app = create_app(static_dir=_static_fixture(tmp_path), backend_url="http://127.0.0.1:9")
@@ -362,6 +366,7 @@ async def test_proxy_stream_interrupted_ends_cleanly(tmp_path, monkeypatch):
     generator now ends the body early and emits a proxy_stream_interrupted event.
     """
     import httpx
+
     from aletheia.gateway import frontdoor
     from aletheia.infra.events import clear_infra_events, list_infra_events
 
@@ -411,8 +416,8 @@ async def test_proxy_stream_interrupted_ends_cleanly(tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_frontdoor_livez_and_readyz_return_minimal_schema(tmp_path, monkeypatch):
-    from aletheia.gateway.frontdoor import create_app
     import aletheia.gateway.frontdoor as _fd
+    from aletheia.gateway.frontdoor import create_app
 
     # Mock backend as ready so readyz can succeed
     async def _mock_probe(backend_url: str) -> dict:
@@ -439,6 +444,7 @@ async def test_frontdoor_livez_and_readyz_return_minimal_schema(tmp_path, monkey
 @pytest.mark.anyio
 async def test_frontdoor_status_requires_auth_when_remote_active(tmp_path, monkeypatch):
     from types import SimpleNamespace
+
     import aletheia.config.loader as _loader
     import aletheia.config.secrets as _secrets
     from aletheia.gateway.frontdoor import create_app
@@ -473,8 +479,10 @@ async def test_frontdoor_status_requires_auth_when_remote_active(tmp_path, monke
 
 @pytest.mark.anyio
 async def test_frontdoor_doctor_requires_auth_and_forwards_token(tmp_path, monkeypatch):
-    import httpx
     from types import SimpleNamespace
+
+    import httpx
+
     import aletheia.config.loader as _loader
     import aletheia.config.secrets as _secrets
     from aletheia.gateway import frontdoor

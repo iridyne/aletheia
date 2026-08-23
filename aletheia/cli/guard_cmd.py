@@ -5,6 +5,7 @@ old auto-promotion chain turned into live blockers/scorers back to shadow-only.
 """
 
 import json
+
 import typer
 
 guard_app = typer.Typer(no_args_is_help=True)

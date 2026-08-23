@@ -23,7 +23,7 @@ async def _make_async_provider(provider):
     return provider
 
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -32,8 +32,8 @@ import pytest
 async def test_llm_complete_threads_provider_name_to_complete_with_fallback():
     """#161: caller passes provider="deep_provider_xyz"; helpers must forward
     that exact string as provider_name= to complete_with_fallback (not None)."""
-    from aletheia.model_provider.base import ModelResponse
     from aletheia.agents import helpers
+    from aletheia.model_provider.base import ModelResponse
 
     captured: dict = {}
 
@@ -60,8 +60,8 @@ async def test_llm_complete_forwards_none_when_caller_did_not_specify():
     """#161 corollary: when the caller omits provider, we still forward
     provider_name=None so complete_with_fallback falls back to default_provider
     (its existing behaviour, which is correct in that case)."""
-    from aletheia.model_provider.base import ModelResponse
     from aletheia.agents import helpers
+    from aletheia.model_provider.base import ModelResponse
 
     captured: dict = {}
 
@@ -97,9 +97,11 @@ async def test_llm_structured_threads_provider_name_to_complete_with_fallback():
     """#161: llm_structured must apply the same fix — its loop calls
     complete_with_fallback and must forward provider_name too."""
     import json
-    from aletheia.model_provider.base import ModelResponse
-    from aletheia.agents import helpers
+
     from pydantic import BaseModel
+
+    from aletheia.agents import helpers
+    from aletheia.model_provider.base import ModelResponse
 
     class DummySchema(BaseModel):
         value: int

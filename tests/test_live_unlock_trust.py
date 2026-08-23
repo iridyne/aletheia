@@ -46,8 +46,8 @@ async def test_okx_preflight_does_not_use_bitget_cache_or_client(monkeypatch):
         def __init__(self, mode):
             raise AssertionError("selected OKX preflight must not construct Bitget")
 
-    import aletheia.exchanges.okx.client as okx_client
     import aletheia.exchanges.bitget.client as bitget_client
+    import aletheia.exchanges.okx.client as okx_client
 
     monkeypatch.setattr(okx_client, "OKXClient", FakeOKX)
     monkeypatch.setattr(bitget_client, "BitgetClient", UnexpectedBitget)
@@ -85,8 +85,8 @@ async def test_valid_bitget_does_not_rescue_invalid_selected_okx(monkeypatch):
         async def close(self):
             pass
 
-    import aletheia.exchanges.okx.client as okx_client
     import aletheia.exchanges.bitget.client as bitget_client
+    import aletheia.exchanges.okx.client as okx_client
 
     monkeypatch.setattr(okx_client, "OKXClient", InvalidOKX)
     monkeypatch.setattr(bitget_client, "BitgetClient", ValidBitget)
@@ -272,6 +272,7 @@ def test_active_selected_live_profile_is_locked(monkeypatch):
 
 def _route_evidence(cfg, monkeypatch):
     from datetime import datetime, timedelta, timezone
+
     import aletheia.trust.live_unlock as trust
 
     monkeypatch.setattr(trust, "get_secret", lambda ref: f"secret:{ref}")
@@ -296,9 +297,10 @@ def _route_evidence(cfg, monkeypatch):
 
 def test_live_unlock_persists_and_lock_clears_selected_evidence(tmp_path, monkeypatch):
     import yaml
-    import aletheia.config.loader as loader
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
+    import aletheia.config.loader as loader
     from aletheia.config.loader import load_config
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -338,8 +340,9 @@ def test_live_unlock_persists_and_lock_clears_selected_evidence(tmp_path, monkey
     assert saved.live.unlock_evidence["broker"] == "okx"
     assert saved.live.unlock_evidence["account_fingerprint"] == "sha256:route-account"
 
-    from aletheia.storage.repositories import list_audit_events
     import json as json_module
+
+    from aletheia.storage.repositories import list_audit_events
 
     unlock_event = next(
         event for event in list_audit_events(limit=20)
@@ -356,9 +359,10 @@ def test_live_unlock_persists_and_lock_clears_selected_evidence(tmp_path, monkey
 
 def test_live_unlock_rechecks_config_revision_after_preflight(tmp_path, monkeypatch):
     import yaml
-    import aletheia.config.loader as loader
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
+    import aletheia.config.loader as loader
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")

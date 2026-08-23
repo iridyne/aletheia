@@ -12,8 +12,8 @@ Every test patches health._os_exit so nothing actually exits the test process.
 
 import sqlite3
 
-from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -43,6 +43,7 @@ def _seed_restart_audit(seconds_ago):
     _can_self_restart() (which reads the persisted log) sees prior restart history
     exactly as it would across a real os._exit restart."""
     from datetime import datetime, timedelta
+
     from aletheia.files.jsonl import write_audit
     ts = (datetime.utcnow() - timedelta(seconds=seconds_ago)).isoformat()
     write_audit({
@@ -97,9 +98,9 @@ def test_code_drift_triggers_restart(tmp_path, monkeypatch):
 
 def test_code_drift_no_supervisor_suppresses_and_alerts(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health
-    import aletheia.gateway.pidfile as pidfile
     import aletheia.gateway.autostart as autostart
+    import aletheia.gateway.pidfile as pidfile
+    from aletheia.agent_runtime import health
     monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: False)
     monkeypatch.setattr(autostart, "status", lambda: {"enabled": False})
 
@@ -117,8 +118,8 @@ def test_code_drift_no_supervisor_suppresses_and_alerts(tmp_path, monkeypatch):
 
 def test_stale_feed_triggers_restart(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health
     import aletheia.gateway.pidfile as pidfile
+    from aletheia.agent_runtime import health
     monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: True)
 
     exits, sent = _patch_health(monkeypatch, ["market_data_stale:120min"])
@@ -134,8 +135,8 @@ def test_stale_feed_triggers_restart(tmp_path, monkeypatch):
 
 def test_cooldown_blocks_second_restart(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health
     import aletheia.gateway.pidfile as pidfile
+    from aletheia.agent_runtime import health
     monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: True)
     # A restart happened 60s ago — within the 1800s default cooldown.
     _seed_restart_audit(seconds_ago=60)
@@ -152,8 +153,8 @@ def test_cooldown_blocks_second_restart(tmp_path, monkeypatch):
 
 def test_hourly_ceiling_blocks_restart(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health
     import aletheia.gateway.pidfile as pidfile
+    from aletheia.agent_runtime import health
     monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: True)
     # Two restarts within the hour but BOTH older than the 1800s cooldown, so the
     # cooldown rule passes and only the per-hour ceiling (default 2) can block.
@@ -175,8 +176,8 @@ def test_rate_limit_survives_simulated_restart(tmp_path, monkeypatch):
     the persisted audit log — a restart event written by a PRIOR process (here,
     seeded directly) is honored by THIS process with no shared in-memory state."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health
     import aletheia.gateway.pidfile as pidfile
+    from aletheia.agent_runtime import health
     monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: True)
     # Prior process restarted 30s ago and then exited; only the audit row remains.
     _seed_restart_audit(seconds_ago=30)
@@ -195,8 +196,8 @@ def test_self_heal_disabled_is_legacy_alert_only(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.health.self_heal_enabled = False; save_config(cfg)
-    from aletheia.agent_runtime import health
     import aletheia.gateway.pidfile as pidfile
+    from aletheia.agent_runtime import health
     monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: True)
 
     exits, sent = _patch_health(monkeypatch, ["code_updated_pending_restart:a..b"])
@@ -213,8 +214,8 @@ def test_self_heal_disabled_is_legacy_alert_only(tmp_path, monkeypatch):
 
 def test_llm_unavailable_never_restarts(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health
     import aletheia.gateway.pidfile as pidfile
+    from aletheia.agent_runtime import health
     monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: True)
 
     exits, sent = _patch_health(monkeypatch, ["llm_unavailable:5"])
@@ -229,8 +230,8 @@ def test_llm_unavailable_never_restarts(tmp_path, monkeypatch):
 
 def test_kill_switch_never_restarts(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health
     import aletheia.gateway.pidfile as pidfile
+    from aletheia.agent_runtime import health
     monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: True)
 
     exits, sent = _patch_health(monkeypatch, ["kill_switch_active"])
@@ -244,9 +245,10 @@ def test_kill_switch_never_restarts(tmp_path, monkeypatch):
 
 def test_port_cleanup_excludes_self_and_supervisor(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health
-    import aletheia.gateway.pidfile as pidfile
     import os
+
+    import aletheia.gateway.pidfile as pidfile
+    from aletheia.agent_runtime import health
 
     me = os.getpid()
     supervisor = me + 1
@@ -268,9 +270,10 @@ def test_port_cleanup_excludes_self_and_supervisor(tmp_path, monkeypatch):
 def test_port_cleanup_ignores_unverified_dashboard_listener(tmp_path, monkeypatch):
     """An active gateway must never tree-kill a process merely for using its port."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health
-    import aletheia.gateway.pidfile as pidfile
     import os
+
+    import aletheia.gateway.pidfile as pidfile
+    from aletheia.agent_runtime import health
 
     unverified_listener = os.getpid() + 10
     killed: list[int] = []
@@ -290,9 +293,10 @@ def test_port_cleanup_ignores_unverified_dashboard_listener(tmp_path, monkeypatc
 
 def test_port_cleanup_noop_when_no_orphans(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health
-    import aletheia.gateway.pidfile as pidfile
     import os
+
+    import aletheia.gateway.pidfile as pidfile
+    from aletheia.agent_runtime import health
 
     killed: list[int] = []
     monkeypatch.setattr(pidfile, "read_pid", lambda: os.getpid() + 1)
@@ -311,8 +315,8 @@ def test_port_cleanup_noop_when_no_orphans(tmp_path, monkeypatch):
 
 def test_transition_alert_dedupes_with_self_heal_on(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health
     import aletheia.gateway.pidfile as pidfile
+    from aletheia.agent_runtime import health
     monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: True)
 
     # Use an alert-only issue so neither call restarts; both should keep running.
@@ -333,8 +337,9 @@ def test_transition_alert_dedupes_with_self_heal_on(tmp_path, monkeypatch):
 
 def test_supervisor_owns_pid_logic(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    import aletheia.gateway.pidfile as pidfile
     import os
+
+    import aletheia.gateway.pidfile as pidfile
 
     monkeypatch.setattr(pidfile, "read_pid", lambda: os.getpid())
     assert pidfile.supervisor_owns_pid() is False  # we own it -> no supervisor

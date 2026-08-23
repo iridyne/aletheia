@@ -1,9 +1,9 @@
 """Gateway lifecycle CLI commands."""
 
 import platform
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
 import typer
 
@@ -145,7 +145,7 @@ def restart(
     held — so a failed stop no longer stacks crash-looping supervisors.
     """
     _maybe_configure_windows_lan_firewall(enabled=lan_firewall)
-    from aletheia.gateway.lifecycle import do_stop, do_start
+    from aletheia.gateway.lifecycle import do_start, do_stop
     started_at = time.monotonic()
     do_stop()
     stopped_at = time.monotonic()
@@ -322,6 +322,7 @@ def firewall_disable_lan(
 def open_dashboard():
     """Open the dashboard in the default browser."""
     import webbrowser
+
     from aletheia.config.loader import load_config
     cfg = load_config()
     webbrowser.open(f"http://127.0.0.1:{cfg.app.dashboard_port}")

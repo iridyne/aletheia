@@ -9,10 +9,10 @@ behavior authority.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import math
+from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
@@ -22,7 +22,6 @@ from aletheia.storage.models import (
     ExitBreakevenShadowAssignment,
     ExitBreakevenShadowOutcome,
 )
-
 
 EXPERIMENT_VERSION = "exit-breakeven-shadow/v1"
 TREATMENT_ID = "entry-lock-after-1.5pct/v1"

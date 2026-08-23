@@ -26,16 +26,15 @@ and is wired into the daily ``_run_cleanup`` scheduler job.
 """
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
-from aletheia.data.symbols import to_bitget
+from aletheia.files.jsonl import write_audit
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.sqlite import get_db
-from aletheia.files.jsonl import write_audit
 
 logger = logging.getLogger("aletheia.stale_order_cleanup")
 

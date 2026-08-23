@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from collections import Counter
 import json
-from pathlib import Path
 import sqlite3
-
+from collections import Counter
+from pathlib import Path
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 PACK = FIXTURES / "runtime_replay_v1.sqlite"

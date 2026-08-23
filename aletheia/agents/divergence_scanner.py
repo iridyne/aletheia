@@ -13,11 +13,11 @@ import logging
 import math
 import re
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
+from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, log_tool, record_step
-from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.data.ccxt_provider import get_market_data_provider
 from aletheia.data.symbols import MARKET_SPOT
 from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL

@@ -8,9 +8,9 @@ promotion logic switch backend workers without rebinding `:8787`.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 

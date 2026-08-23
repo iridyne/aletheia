@@ -11,7 +11,6 @@ from aletheia.config.schema import AletheiaConfig
 from aletheia.trading.trading_mandate import (
     TRADING_MANDATE_FIT_VERSION,
     TRADING_MANDATE_VERSION,
-    EdgeScope,
     TradingMandate,
     assess_trading_mandate_fit,
     build_trading_mandate_provenance,
@@ -351,10 +350,10 @@ def test_assessment_does_not_mutate_behavior_inputs():
 
 
 def test_compliance_aggregate_is_read_only_and_keeps_denominators(tmp_path, monkeypatch):
+    from aletheia.analytics.trading_mandate_compliance import build_mandate_compliance_report
     from aletheia.config import loader
     from aletheia.storage import sqlite as sqlite_store
     from aletheia.storage.migrations import apply_migrations
-    from aletheia.analytics.trading_mandate_compliance import build_mandate_compliance_report
 
     sqlite_store.reset_db()
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)

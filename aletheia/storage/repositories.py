@@ -1,17 +1,51 @@
 """Thin repository functions for SQLite CRUD."""
 
-from contextlib import contextmanager
-from datetime import datetime, timezone, timedelta
 import hashlib
 import json
 import logging
 import math
 import os
-import threading
 import sqlite3
+import threading
 import time
 import uuid
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+
+from pydantic import BaseModel
+
+from aletheia.data.symbols import to_canonical
+from aletheia.storage.models import (
+    AgentRun,
+    AgentRunArtifact,
+    AuditEvent,
+    ExitBreakevenShadowAssignment,
+    ExitBreakevenShadowOutcome,
+    Fill,
+    KnowledgeItem,
+    Opportunity,
+    Order,
+    OutcomeHookJob,
+    PaperAccountEvent,
+    Position,
+    PositionDisappearanceCandidate,
+    PositionDisappearanceObservation,
+    PositionExitPlanVersion,
+    PositionProtectionState,
+    PositionProtectionTrigger,
+    ReconciliationIntegrityIncident,
+    RiskDecision,
+    RuntimeSession,
+    SerenityEvidence,
+    SerenityOpportunity,
+    SerenityPostMortem,
+    SerenityReplaySnapshot,
+    SerenityRiskGate,
+    SerenityTheme,
+    StrategyRecord,
+    TradeProposal,
+)
 from aletheia.storage.sqlite import (
     acquire_write_lock,
     execute_many_write,
@@ -19,39 +53,6 @@ from aletheia.storage.sqlite import (
     get_db,
     release_write_lock,
 )
-from aletheia.storage.models import (
-    AuditEvent,
-    AgentRunArtifact,
-    AgentRun,
-    Opportunity,
-    TradeProposal,
-    RiskDecision,
-    Order,
-    Fill,
-    Position,
-    PositionExitPlanVersion,
-    PositionProtectionState,
-    PositionProtectionTrigger,
-    ExitBreakevenShadowAssignment,
-    ExitBreakevenShadowOutcome,
-    PositionDisappearanceCandidate,
-    PositionDisappearanceObservation,
-    ReconciliationIntegrityIncident,
-    StrategyRecord,
-    KnowledgeItem,
-    RuntimeSession,
-    SerenityTheme,
-    SerenityEvidence,
-    SerenityOpportunity,
-    SerenityRiskGate,
-    SerenityReplaySnapshot,
-    SerenityPostMortem,
-    SerenityClaim,
-    OutcomeHookJob,
-    PaperAccountEvent,
-)
-from aletheia.data.symbols import to_canonical
-from pydantic import BaseModel
 
 _PROVENANCE_FIELDS = ("runtime_session_id", "producer_commit", "behavior_fingerprint")
 _sqlite_logger = logging.getLogger("aletheia.storage.sqlite")
@@ -1838,6 +1839,7 @@ def has_paper_account_position_event(action: str, position_id: str) -> bool:
 
 def insert_prediction_run(run_id: str, categories: list) -> None:
     import json as _json
+
     from aletheia.storage.models import _utcnow
 
     _insert(
@@ -1860,6 +1862,7 @@ def update_prediction_run(
     errors: list | None = None,
 ) -> None:
     import json as _json
+
     from aletheia.storage.models import _utcnow
 
     data: dict = {
@@ -1887,7 +1890,7 @@ def get_latest_prediction_run() -> dict | None:
 
 def upsert_prediction_event(data: dict) -> str:
     """Insert or update a prediction event by external_event_id."""
-    from aletheia.storage.models import new_id, _utcnow
+    from aletheia.storage.models import _utcnow, new_id
 
     db = get_db()
     ext_id = data["external_event_id"]
@@ -1915,7 +1918,7 @@ def upsert_prediction_event(data: dict) -> str:
 
 def upsert_prediction_market(data: dict) -> str:
     """Insert or update a prediction market by external_market_id."""
-    from aletheia.storage.models import new_id, _utcnow
+    from aletheia.storage.models import _utcnow, new_id
 
     db = get_db()
     ext_id = data["external_market_id"]
@@ -1940,7 +1943,7 @@ def upsert_prediction_market(data: dict) -> str:
 
 
 def insert_probability_snapshot(snapshot: dict) -> None:
-    from aletheia.storage.models import new_id, _utcnow
+    from aletheia.storage.models import _utcnow, new_id
 
     snapshot.setdefault("id", new_id())
     snapshot.setdefault("created_at", _utcnow())
@@ -1985,7 +1988,7 @@ def list_probability_snapshots(market_id: str, since: str | None = None, limit: 
 
 
 def insert_prediction_claim(data: dict) -> None:
-    from aletheia.storage.models import new_id, _utcnow
+    from aletheia.storage.models import _utcnow, new_id
 
     data.setdefault("id", new_id())
     data.setdefault("created_at", _utcnow())
@@ -5641,7 +5644,7 @@ def list_serenity_claims_for_theme(theme_id: str, limit: int = 200) -> list[dict
 
 
 def acquire_serenity_lock(lock_key: str, owner_run_id: str, ttl_seconds: int = 600) -> bool:
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
 
     now = datetime.now(timezone.utc)
     expires_at = (now + timedelta(seconds=ttl_seconds)).isoformat()
@@ -6831,8 +6834,8 @@ def plan_market_ohlcv_tiering(
     """
     from aletheia.storage.market_ohlcv_tiering import (
         OHLCVSeriesIdentity,
-        OHLCVTierManager,
         OHLCVTieringPolicy,
+        OHLCVTierManager,
     )
 
     db = get_db()
@@ -6855,10 +6858,10 @@ def plan_market_ohlcv_tiering(
 from aletheia.storage.models import (
     UniverseAsset,
     UniverseFeatureSnapshot,
-    UniverseScannerRun,
-    UniverseSnapshot,
     UniverseMember,
     UniversePolicy,
+    UniverseScannerRun,
+    UniverseSnapshot,
     UniverseTwinShadowBatch,
     UniverseTwinShadowEvidence,
 )
@@ -10108,7 +10111,6 @@ def expire_stale_opportunities(ttl_hours: int = 48) -> int:
 
 
 def insert_shadow_trade(shadow) -> None:
-    from aletheia.storage.models import ShadowTrade
 
     data = _to_payload_dict(shadow)
     _insert("shadow_trades", data)

@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Mapping, TypeVar
 
-
 FreshnessState = Literal["fresh", "missing", "invalid", "future", "stale"]
 
 # These are decision-use limits, not source update frequencies. They allow several

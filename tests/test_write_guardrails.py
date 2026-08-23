@@ -22,7 +22,6 @@ import pytest
 
 from aletheia.storage.sqlite import get_db
 
-
 # ---------------------------------------------------------------------------
 # content.context: agent_shell_messages does NOT persist the full snapshot
 # ---------------------------------------------------------------------------

@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from aletheia.analytics import filter_controller as fc
 from aletheia.analytics.filter_registry import (
-    tunable_filters,
     FILTER_REGISTRY,
+    tunable_filters,
 )
 
 

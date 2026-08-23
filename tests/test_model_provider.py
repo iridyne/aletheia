@@ -1,21 +1,21 @@
 """Tests for model provider layer."""
 
 import asyncio
-import pytest  # pyright: ignore[reportMissingImports]
-from unittest.mock import patch, AsyncMock
-import json
+from unittest.mock import AsyncMock, patch
 
-from aletheia.model_provider.base import ModelRequest, ModelHealth, ModelProvider
-from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+import pytest  # pyright: ignore[reportMissingImports]
+
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-from aletheia.model_provider.databricks import DatabricksProvider, _normalize_workspace_url
+from aletheia.model_provider.base import ModelHealth, ModelProvider, ModelRequest
 from aletheia.model_provider.codex_cli import CodexCLIProvider
+from aletheia.model_provider.databricks import DatabricksProvider, _normalize_workspace_url
+from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.router import (
     clear_cache,
+    get_provider,
     healthcheck_all,
     invalidate_health_cache,
     invalidate_model_directory,
-    get_provider,
     list_models_cached,
 )
 
@@ -881,7 +881,6 @@ def test_router_returns_openai_native(tmp_path, monkeypatch):
 
 # ── Streaming tests ──────────────────────────────────────────────────────────
 
-from aletheia.model_provider.base import StreamChunk
 
 
 @pytest.mark.anyio
@@ -976,7 +975,8 @@ async def test_openai_native_stream():
 @pytest.mark.anyio
 async def test_base_stream_fallback():
     """Base ModelProvider.stream() falls back to complete() and yields one chunk."""
-    from aletheia.model_provider.base import ModelProvider, ModelResponse as MR
+    from aletheia.model_provider.base import ModelProvider
+    from aletheia.model_provider.base import ModelResponse as MR
 
     class FakeProvider(ModelProvider):
         async def complete(self, request):
@@ -1168,9 +1168,10 @@ async def test_healthcheck_all_includes_oauth_provider(tmp_path, monkeypatch):
 
 def test_resolve_oauth_token_preserves_old_token_on_async_skip(monkeypatch):
     """When refresh is skipped (async context), old token must be preserved."""
-    from aletheia.model_provider.router import _resolve_oauth_token
-    from aletheia.config.schema import ProviderConfig
     import time
+
+    from aletheia.config.schema import ProviderConfig
+    from aletheia.model_provider.router import _resolve_oauth_token
 
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
 

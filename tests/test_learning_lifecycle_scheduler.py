@@ -24,9 +24,9 @@ def _cfg(*, autonomous: bool = False, lifecycle: bool = False, paper: bool = Fal
 
 
 def test_measurement_job_runs_when_autonomous_learning_is_disabled(monkeypatch):
+    import aletheia.storage.sqlite as sqlite
     from aletheia.agent_runtime import scheduler
     from aletheia.learning import control
-    import aletheia.storage.sqlite as sqlite
 
     monkeypatch.setattr(control, "load_config", lambda: _cfg(autonomous=False))
     monkeypatch.setattr(sqlite, "close_db", lambda: None)
@@ -40,9 +40,9 @@ def test_measurement_job_runs_when_autonomous_learning_is_disabled(monkeypatch):
 
 
 def test_controller_is_skipped_for_global_integrity_or_runtime_pause(monkeypatch):
+    import aletheia.storage.sqlite as sqlite
     from aletheia.agent_runtime import scheduler
     from aletheia.learning import control
-    import aletheia.storage.sqlite as sqlite
 
     cfg = _cfg(autonomous=True, lifecycle=True, paper=True)
     monkeypatch.setattr(control, "load_config", lambda: cfg)
@@ -58,9 +58,9 @@ def test_controller_is_skipped_for_global_integrity_or_runtime_pause(monkeypatch
 
 
 def test_controller_partial_cycle_is_degraded_then_recovers(monkeypatch):
+    import aletheia.storage.sqlite as sqlite
     from aletheia.agent_runtime import scheduler
     from aletheia.learning import control
-    import aletheia.storage.sqlite as sqlite
 
     cfg = _cfg(autonomous=True, lifecycle=True, paper=True)
     monkeypatch.setattr(control, "load_config", lambda: cfg)

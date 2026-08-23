@@ -17,9 +17,9 @@ from types import SimpleNamespace
 
 from aletheia.config import loader
 from aletheia.data.ccxt_provider import (
+    CCXTProvider,
     _install_market_id_guard,
     get_market_data_provider,
-    CCXTProvider,
 )
 from aletheia.data.sources.chain import FallbackChainProvider
 

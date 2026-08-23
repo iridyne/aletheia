@@ -18,8 +18,8 @@ the e2e in-process SQLite (network/LLM are never touched on the paper path).
 
 from datetime import datetime, timezone
 
-from aletheia.storage.models import MarketSnapshot, Opportunity, StrategyRecord
 from aletheia.storage import repositories as repo
+from aletheia.storage.models import MarketSnapshot, Opportunity, StrategyRecord
 
 
 def _run_paper_trade(

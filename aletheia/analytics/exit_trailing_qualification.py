@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections import Counter
-from datetime import datetime, timezone
 import hashlib
 import json
 import math
+from collections import Counter
+from datetime import datetime, timezone
 from statistics import mean
 from typing import Any
 
@@ -21,7 +21,6 @@ from aletheia.portfolio.protective_barrier import (
     _trailing_qualification_assignment,
 )
 from aletheia.storage import repositories as repo
-
 
 _QUALIFICATION_SELECT = (
     "SELECT position.*, first_plan.plan_json AS qualification_plan_json, "

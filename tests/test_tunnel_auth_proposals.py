@@ -11,13 +11,13 @@ Covers the acceptance criteria from issue #394:
 """
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 from aletheia.server.app import app
-from aletheia.storage.sqlite import reset_db
+from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import TradeProposal
-from aletheia.storage import repositories as repo
+from aletheia.storage.sqlite import reset_db
 
 
 @pytest.fixture
@@ -32,7 +32,6 @@ async def client(tmp_path, monkeypatch):
     import aletheia.storage.sqlite as sq
 
     def _clear_portfolio_cache():
-        import threading
         with data_routes._portfolio_cache_lock:
             data_routes._portfolio_cache = None
 
@@ -242,7 +241,6 @@ async def test_reject_actor_source_is_owner_for_tunnel_authenticated_calls(clien
     proposal = _make_pending_proposal()
 
     audit_events: list[dict] = []
-    import aletheia.server.routes.data as data_routes
     _real_write_audit = None
 
     def _capture_audit(event):

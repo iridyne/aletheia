@@ -15,10 +15,10 @@ import pytest  # pyright: ignore[reportMissingImports]
 async def test_llm_complete_refreshes_expired_oauth_token(tmp_path, monkeypatch):
     """llm_complete with expired OAuth profile triggers async refresh and uses fresh token."""
     import aletheia.config.loader as loader
+    from aletheia.agents.helpers import llm_complete
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
     from aletheia.config.secrets import set_secret
-    from aletheia.agents.helpers import llm_complete
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -101,8 +101,8 @@ async def test_get_provider_async_replaces_cached_provider_on_expiry(tmp_path, m
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
     from aletheia.config.secrets import set_secret
-    from aletheia.model_provider.router import get_provider_async, _cache
     from aletheia.model_provider.openai_native import OpenAINativeProvider
+    from aletheia.model_provider.router import _cache, get_provider_async
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -152,10 +152,10 @@ async def test_get_provider_async_replaces_cached_provider_on_expiry(tmp_path, m
 async def test_concurrent_agent_calls_single_flight_oauth_refresh(tmp_path, monkeypatch):
     """Concurrent async Agent calls trigger exactly one OAuth refresh (single-flight)."""
     import aletheia.config.loader as loader
+    from aletheia.agents.helpers import llm_complete
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
     from aletheia.config.secrets import set_secret
-    from aletheia.agents.helpers import llm_complete
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -236,8 +236,8 @@ async def test_hard_expiry_fails_closed_no_stale_token(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
     from aletheia.config.secrets import set_secret
-    from aletheia.model_provider.router import get_provider_async, _cache
     from aletheia.model_provider.openai_native import OpenAINativeProvider
+    from aletheia.model_provider.router import _cache, get_provider_async
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")

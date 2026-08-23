@@ -12,12 +12,11 @@ it does not interpret a value as a trade instruction.
 
 from __future__ import annotations
 
-from collections import deque
-from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 import math
-from statistics import mean, stdev
+from collections import deque
+from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable
 
 from aletheia.trading.indicators import (
@@ -34,7 +33,6 @@ from aletheia.trading.indicators import (
     vwap,
     zscore_last,
 )
-
 
 TECHNICAL_ANALYSIS_VERSION = "technical-analysis-v1"
 DEFAULT_MAX_HISTORY = 256

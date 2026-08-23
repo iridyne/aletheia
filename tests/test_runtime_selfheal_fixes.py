@@ -33,6 +33,7 @@ def test_choose_resume_scheduling_prefers_persistent_loop():
 
 def test_connectivity_resume_defers_when_llm_down(monkeypatch):
     import asyncio
+
     import aletheia.agent_runtime.connectivity as conn
     from aletheia.config.schema import AletheiaConfig
 
@@ -78,6 +79,7 @@ def test_capital_route_does_not_own_database_migrations():
 def test_retention_prunes_wired_into_cleanup():
     """#149/#150: onchain + prediction snapshots now have a prune wired into _run_cleanup."""
     import inspect
+
     import aletheia.agent_runtime.scheduler as sched
     from aletheia.storage import repositories as repo
     src = inspect.getsource(sched._run_cleanup)

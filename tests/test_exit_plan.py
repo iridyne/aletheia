@@ -60,8 +60,8 @@ def test_to_columns_and_back_lossless():
 
 
 def test_db_roundtrip():
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import _select_one
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     db.execute(

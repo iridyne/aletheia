@@ -9,11 +9,11 @@ outcome. Assignment and propensity are never inferred here.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 import hashlib
 import json
 import math
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
 
@@ -37,7 +37,6 @@ from aletheia.universe.twin_scoring import (
     annotate_authority_selection,
     build_twin_shadow_batch,
 )
-
 
 TWIN_FEATURE_SOURCE_CONTRACT = "universe-twin-feature-source-v2"
 TWIN_METRIC_VERSION = "universe-continuous-shadow-cluster-allocation-utility-v1"

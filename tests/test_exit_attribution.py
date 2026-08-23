@@ -111,9 +111,9 @@ def _insert_closed(db, *, pid, reason, mode="paper_internal", closed_at, strateg
 
 
 def test_db_roundtrip_filters_and_report():
-    from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import list_closed_positions
     from aletheia.analytics.exit_attribution import attribution_report
+    from aletheia.storage.repositories import list_closed_positions
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     now = datetime.now(timezone.utc)

@@ -10,10 +10,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
-from pathlib import Path
 import stat
 import sys
-import time
+from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives import serialization

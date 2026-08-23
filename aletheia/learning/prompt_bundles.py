@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import hashlib
 import json
+from copy import deepcopy
 from typing import Any
-
 
 _LAYER2_COMPONENTS = {
     "reflection": "reflection",

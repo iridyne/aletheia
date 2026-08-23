@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 import platform
 import shutil
@@ -222,6 +222,7 @@ def _verify_copy(source: Path, staging: Path) -> None:
     if config_path.exists():
         try:
             import yaml
+
             from aletheia.config.schema import AletheiaConfig
 
             payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))

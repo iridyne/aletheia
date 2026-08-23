@@ -11,9 +11,9 @@ from __future__ import annotations
 import json
 import logging
 
-from aletheia.config.loader import load_config, get_data_dir
+from aletheia.config.loader import get_data_dir, load_config
 from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
-from aletheia.knowledge.guards import load_trading_guards, guard_origin
+from aletheia.knowledge.guards import guard_origin, load_trading_guards
 
 logger = logging.getLogger("aletheia.analytics.guard_promotion")
 
@@ -34,7 +34,7 @@ def _deprecate_expired_learned_guards() -> int:
     Only learned guards are touched. Seed and manual guards remain persistent.
     Returns the count of guards deprecated in this pass.
     """
-    from aletheia.knowledge.guards import guard_origin, _learned_guard_is_expired
+    from aletheia.knowledge.guards import _learned_guard_is_expired, guard_origin
 
     deprecated = 0
     for guards_dir in [
@@ -101,7 +101,7 @@ def run_promotion_check() -> dict:
     if refreeze_reason is not None:
         return {"skipped": True, "refrozen": True, "reason": refreeze_reason}
 
-    from aletheia.analytics.guard_effectiveness import _rows_matching_guard, _clean_rows
+    from aletheia.analytics.guard_effectiveness import _clean_rows, _rows_matching_guard
     from aletheia.analytics.trade_attribution import build_trade_attribution_rows
     from aletheia.knowledge.guards import learned_guard_block_authorized
 
@@ -186,7 +186,7 @@ def promote_guard_candidate_to_active(
 
     Refuses promotion of expired learned candidates (#195).
     """
-    from aletheia.knowledge.guards import guard_origin, _learned_guard_is_expired
+    from aletheia.knowledge.guards import _learned_guard_is_expired, guard_origin
 
     guards_dir = get_data_dir() / "knowledge" / "guards"
     candidates_dir = get_data_dir() / "knowledge" / "guard_candidates"

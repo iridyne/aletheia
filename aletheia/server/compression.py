@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import gzip
 
-
 _MINIMUM_BYTES = 1024
 
 

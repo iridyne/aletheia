@@ -1,7 +1,8 @@
 """Tests for fallback price divergence alerting."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from aletheia.data.providers import Ticker
 from aletheia.data.sources.chain import (

@@ -10,9 +10,9 @@ from datetime import datetime, timezone
 
 from aletheia.config.schema import AletheiaConfig
 from aletheia.data.freshness import fresh_row
-from aletheia.storage.models import UniverseFeatureSnapshot
 from aletheia.storage import repositories as repo
-from aletheia.trading.indicators import rsi, atr, sma, bollinger, volume_sma_ratio
+from aletheia.storage.models import UniverseFeatureSnapshot
+from aletheia.trading.indicators import atr, bollinger, volume_sma_ratio
 from aletheia.trading.technical_analysis import TechnicalBar, timeframe_milliseconds
 from aletheia.trading.technical_snapshot_service import get_technical_snapshot_service
 
@@ -144,7 +144,7 @@ def _record_priority_failure(asset: dict, component: str, reason: str) -> None:
         from aletheia.data.candidate_market_facts import (
             record_candidate_refresh_failure,
         )
-        from aletheia.data.symbols import InstrumentId, MARKET_PERP, MARKET_SPOT
+        from aletheia.data.symbols import MARKET_PERP, MARKET_SPOT, InstrumentId
 
         market_type = (
             MARKET_PERP if _is_derivatives_market(asset.get("market_type"))

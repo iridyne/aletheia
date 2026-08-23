@@ -14,12 +14,9 @@ Four断点场景:
 
 from __future__ import annotations
 
-import pytest
-
 from aletheia.config.loader import load_config, save_config
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import Opportunity
-
 
 # ─── 1. Zero eligible candidates ─────────────────────────────────────────────
 
@@ -138,8 +135,8 @@ def test_risk_rejects_when_daily_loss_limit_exceeded_proposal_archived(e2e_db, m
     and the gateway's archival of the rejected proposal.
     """
     import aletheia.config.loader as loader
-    from aletheia.portfolio.account_loss import AccountLossSnapshot
     from aletheia.execution.gateway import submit_proposal
+    from aletheia.portfolio.account_loss import AccountLossSnapshot
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -205,9 +202,9 @@ def test_kill_switch_suppresses_config_patches_emits_notify(e2e_db, monkeypatch,
     - At least one notify_operator result is requested or rate_limited
     - The returned assessment correctly reflects kill_switch=True
     """
-    import aletheia.config.loader as loader
     import aletheia.agent_shell.operator_loop as operator_loop
     import aletheia.agent_shell.trading_context as trading_context
+    import aletheia.config.loader as loader
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")

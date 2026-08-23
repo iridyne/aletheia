@@ -2,12 +2,12 @@
 
 import time
 
+from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, llm_complete, log_tool
-from aletheia.agent_runtime.permissions import is_tool_permitted
-from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.knowledge.manager import create_research_note
-from aletheia.storage.repositories import list_trade_proposals, list_risk_decisions
+from aletheia.model_provider.router import get_provider_for_tier
+from aletheia.storage.repositories import list_risk_decisions, list_trade_proposals
 
 
 @register_agent("risk_critic")

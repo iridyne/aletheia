@@ -8,12 +8,12 @@ live, and never fake the causal chain (trust_and_change_control §1.1/§1.2/§1.
 import sqlite3
 from types import SimpleNamespace
 
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
-from aletheia.storage.models import Opportunity, MarketSnapshot
-from aletheia.storage import repositories as repo
-from aletheia.agent_runtime.tool_registry import init_tool_registry
 from aletheia.agent_runtime.orchestrator import run_agent
+from aletheia.agent_runtime.tool_registry import init_tool_registry
+from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.models import MarketSnapshot, Opportunity
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -94,8 +94,8 @@ def test_observe_mode_scheduler_gate(tmp_path, monkeypatch):
     _set_mode("Observe")
     _seed()
 
-    import aletheia.config.loader as loader
     import aletheia.agent_runtime.scheduler as sched
+    import aletheia.config.loader as loader
 
     # Other scheduler tests replace this module-local alias with partial configs.
     # Bind this integration-style test to the isolated config it writes above.
@@ -175,8 +175,9 @@ async def test_opportunity_id_linkage_and_idempotency(tmp_path, monkeypatch):
 def test_paper_tools_rejects_non_paper_mode(tmp_path, monkeypatch):
     """The paper wrapper must hard-reject any non-paper execution mode."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.execution.paper_tools import create_paper_proposal
     import pytest
+
+    from aletheia.execution.paper_tools import create_paper_proposal
     with pytest.raises(ValueError):
         create_paper_proposal(symbol="BTCUSDT", market_type="spot", direction="long",
                               quantity=0.001, price=60000.0, execution_mode="bitget_live_limited")

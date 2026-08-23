@@ -72,9 +72,9 @@ async def test_backup_request_does_not_starve_event_loop(monkeypatch, tmp_path) 
 @pytest.mark.anyio
 async def test_slow_risk_route_does_not_starve_readyz(monkeypatch) -> None:
     """A slow config read on /api/risk/boundaries must not freeze /readyz (event-loop isolation)."""
-    from aletheia.server.app import app
-    import aletheia.server.routes.risk as risk_mod
     import aletheia.config.loader as loader_mod
+    import aletheia.server.routes.risk as risk_mod
+    from aletheia.server.app import app
 
     started = threading.Event()
     release = threading.Event()

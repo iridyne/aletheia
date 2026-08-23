@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
@@ -61,8 +61,8 @@ def test_entry_client_mode_comes_from_authoritative_order(
 ):
     _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.execution import bitget_broker
     from aletheia.config.loader import load_config, save_config
+    from aletheia.execution import bitget_broker
     from aletheia.storage import repositories as repo
 
     cfg = load_config()

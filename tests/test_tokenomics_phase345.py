@@ -3,9 +3,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from aletheia.model_provider.base import ModelRequest
-from aletheia.model_provider.fallback import BudgetExceededError, _enforce_budget_if_configured
-from aletheia.model_provider.guardrails import detect_prompt_secrets
 from aletheia.agents.helpers import (
     ContextAdapter,
     _prepare_context_adapter,
@@ -13,6 +10,9 @@ from aletheia.agents.helpers import (
     prepend_environment_header,
     render_context_adapter,
 )
+from aletheia.model_provider.base import ModelRequest
+from aletheia.model_provider.fallback import BudgetExceededError, _enforce_budget_if_configured
+from aletheia.model_provider.guardrails import detect_prompt_secrets
 
 
 def _request() -> ModelRequest:

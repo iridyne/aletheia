@@ -24,11 +24,11 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import socket
 import time
-import asyncio
 from urllib.parse import urlparse
 
 import aiohttp

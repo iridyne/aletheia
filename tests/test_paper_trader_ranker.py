@@ -1,7 +1,7 @@
 """Unit tests for aletheia.agents.paper_trader_ranker."""
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1343,6 +1343,7 @@ def test_open_candidate_is_not_buried_by_reviewed_history(tmp_path, monkeypatch)
 def test_regime_scoring_is_direction_aware():
     """Bear regime should reward shorts and penalize longs; bull should do the opposite."""
     from unittest.mock import patch
+
     from aletheia.agents.paper_trader_ranker import _compute_trade_score
     from aletheia.regime.detector import MarketRegime
 

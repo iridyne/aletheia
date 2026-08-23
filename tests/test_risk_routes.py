@@ -3,14 +3,14 @@
 import sqlite3
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
-from aletheia.server.app import app
 from aletheia.agent_shell.operator_store import create_artifact
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
+from aletheia.server.app import app
 from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import RiskDecision, TradeProposal
+from aletheia.storage.sqlite import reset_db
 
 
 @pytest.fixture

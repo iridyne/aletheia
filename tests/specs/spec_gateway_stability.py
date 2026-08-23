@@ -90,6 +90,7 @@ def test_market_observer_loop_has_wallclock_budget():
 )
 def test_market_observer_has_module_logger():
     import logging
+
     from aletheia.agents import market_observer as mo
     assert isinstance(getattr(mo, "logger", None), logging.Logger), (
         "market_observer must define a module-level logging.Logger named 'logger'"
@@ -105,7 +106,7 @@ def test_market_observer_has_module_logger():
     ),
 )
 def test_market_observer_budget_rotation_is_durable_and_cancellation_safe():
-    from aletheia.agents.round_robin import DurableRoundRobin, rotate_from_next
+    from aletheia.agents.round_robin import rotate_from_next
 
     assert rotate_from_next(["a", "b", "c"], next_key="b", key=str) == ["b", "c", "a"]
     source = _MARKET_OBS.read_text(encoding="utf-8")
@@ -338,8 +339,8 @@ def test_llm_structured_fallback_to_defaults(monkeypatch):
     ),
 )
 def test_llm_structured_budget_is_below_observer_caps():
-    from aletheia.agents import helpers, market_observer
     from aletheia.agent_runtime.scheduler import _ASYNC_JOB_TIMEOUT_SEC
+    from aletheia.agents import helpers, market_observer
 
     assert helpers._LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC < market_observer._MARKET_OBSERVER_LOOP_BUDGET_SEC
     assert helpers._LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC < _ASYNC_JOB_TIMEOUT_SEC["market_observer"]
@@ -438,6 +439,7 @@ def test_data_collector_context_has_an_independent_bounded_lane():
 )
 def test_bounded_caps_hanging_collector():
     import time
+
     from aletheia.agent_runtime.scheduler import _bounded
 
     async def fast():

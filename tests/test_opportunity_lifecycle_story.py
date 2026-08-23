@@ -6,7 +6,6 @@ import pytest
 
 import aletheia.analytics.opportunity_lifecycle_story as lifecycle
 
-
 _PRE_CLOSE = "2026-08-13T00:02:30+00:00"
 _POST_CLOSE = "2026-08-13T00:06:00+00:00"
 

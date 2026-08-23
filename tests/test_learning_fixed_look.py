@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 import pytest
-
 
 _BASE = datetime(2026, 8, 1, 12, tzinfo=timezone.utc)
 

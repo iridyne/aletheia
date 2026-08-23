@@ -14,17 +14,17 @@ operation currently owned by the request.
 from __future__ import annotations
 
 import asyncio
+import itertools
+import logging
+import math
+import threading
+import time
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from enum import IntEnum
-import itertools
-import logging
-import math
-import threading
-import time
 from typing import Any, TypeVar
 
 from aletheia.model_provider.base import ModelRequest, ModelResponse, StreamChunk

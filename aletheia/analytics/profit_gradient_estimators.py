@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
-from dataclasses import dataclass
 import hashlib
 import math
 import random
+from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
-
 
 _RANDOMIZED_ARMS = ("control", "treatment")
 _MINIMUM_RANDOMIZED_SMALLER_ARM = 20

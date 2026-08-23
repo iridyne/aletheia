@@ -1,6 +1,6 @@
 """Unit tests for Serenity scoring and replay payload composition."""
 
-from aletheia.trading.serenity_scoring import score_serenity_opportunity, make_replay_snapshot_payload
+from aletheia.trading.serenity_scoring import make_replay_snapshot_payload, score_serenity_opportunity
 
 
 def test_serenity_score_candidate_bucket_and_reasons():

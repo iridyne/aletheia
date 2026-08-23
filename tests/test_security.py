@@ -10,13 +10,13 @@ Invariants:
 
 import json
 from unittest.mock import patch
+
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 from aletheia.server.app import app
-from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
-from aletheia.storage import repositories as repo
+from aletheia.storage.sqlite import reset_db
 
 
 def _isolate(tmp_path, monkeypatch):
@@ -27,9 +27,10 @@ def _isolate(tmp_path, monkeypatch):
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
     monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
-    from aletheia.config.loader import load_config, save_config
-    import aletheia.trust.live_unlock as trust
     from datetime import datetime, timedelta, timezone
+
+    import aletheia.trust.live_unlock as trust
+    from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
     cfg.exchange.name = "bitget"
@@ -79,8 +80,8 @@ async def client(tmp_path, monkeypatch):
 # --- Restricted tools ---
 
 def test_agent_cannot_invoke_restricted_tools():
-    from aletheia.agent_runtime.tool_registry import init_tool_registry
     from aletheia.agent_runtime.permissions import is_tool_permitted
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
     init_tool_registry()
     restricted = ["unlock_live", "place_live_order", "change_hard_risk_limits",
                   "modify_credentials", "modify_execution_gateway"]
@@ -109,7 +110,7 @@ def test_live_disabled_blocks_live_execution(tmp_path, monkeypatch):
 # --- Risk hard limits unmodifiable by agent ---
 
 def test_agent_has_no_tool_to_change_risk_limits():
-    from aletheia.agent_runtime.tool_registry import init_tool_registry, RESTRICTED_TOOLS
+    from aletheia.agent_runtime.tool_registry import RESTRICTED_TOOLS, init_tool_registry
     init_tool_registry()
     assert "change_hard_risk_limits" in RESTRICTED_TOOLS
 
@@ -187,7 +188,7 @@ async def test_okx_test_connection_does_not_leak_exception_string(monkeypatch):
     """A failing OKX test-connection returns the exception CLASS name, never the
     raw message (which CCXT can populate with the request body / credentials)."""
     import aletheia.exchanges.okx.client as okx_mod
-    from aletheia.server.routes.bitget import okx_test_connection, OkxTestRequest
+    from aletheia.server.routes.bitget import OkxTestRequest, okx_test_connection
 
     SECRET = "okx-secret-DEADBEEF-should-not-leak"
     closed = []
@@ -212,7 +213,8 @@ async def test_binance_test_candidate_does_not_leak_exception_string(monkeypatch
     """A failing Binance candidate test returns the class name, not the raw error
     (which would echo the candidate api_key/secret submitted in the request)."""
     import ccxt.async_support as ccxt
-    from aletheia.server.routes.bitget import binance_test_candidate, BinanceCandidateRequest
+
+    from aletheia.server.routes.bitget import BinanceCandidateRequest, binance_test_candidate
 
     SECRET = "cand-secret-CAFEBABE-should-not-leak"
 
@@ -294,6 +296,7 @@ async def test_exchange_candidate_checks_use_private_balance_endpoint(monkeypatc
 
 def test_raise_for_status_without_secrets_scrubs_credentials():
     import httpx
+
     from aletheia.net import raise_for_status_without_secrets
 
     SECRET = "sk-LEAKME-DEADBEEF"

@@ -5,11 +5,10 @@
 #1785 — Binance: fix userTrades window violations (>7-day, fromId+endTime)
 """
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers

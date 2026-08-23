@@ -1290,9 +1290,9 @@ def _persist_assessment(summary: dict) -> None:
                 lines.append(f"- [{r.get('status','?')}] {r.get('action',r.get('kind','?'))}")
         content = "\n".join(lines)
 
+        from aletheia.knowledge.manager import _index
         from aletheia.storage.models import KnowledgeItem
         from aletheia.storage.repositories import insert_knowledge_item
-        from aletheia.knowledge.manager import _index
 
         item = KnowledgeItem(
             item_type="operator_assessment",

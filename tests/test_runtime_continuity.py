@@ -1,5 +1,5 @@
-import sqlite3
 import inspect
+import sqlite3
 
 import pytest
 from httpx import ASGITransport, AsyncClient

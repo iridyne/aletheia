@@ -45,6 +45,7 @@ def test_pid_alive_for_current_process(tmp_path, monkeypatch):
     the command line of any Python test runner."""
     import os
     import platform
+
     from aletheia.gateway import pidfile
     if platform.system() == "Windows":
         from aletheia.gateway import _win32_proc
@@ -106,6 +107,7 @@ def test_wait_port_free_times_out_when_stuck(monkeypatch):
 def test_find_port_holders_posix_queries_listeners_only(monkeypatch):
     """Connected API clients must never be classified as killable port owners."""
     from types import SimpleNamespace
+
     from aletheia.gateway import pidfile
 
     seen = {}
@@ -128,6 +130,7 @@ def test_find_port_holders_windows_decodes_bytes_lossily(monkeypatch):
     """Windows netstat output with non-ASCII bytes must not raise; listener PID
     is still parsed correctly from the ASCII port/PID fields (#232)."""
     from types import SimpleNamespace
+
     from aletheia.gateway import pidfile
 
     seen: dict = {}
@@ -321,6 +324,7 @@ def test_resolve_real_python_case_b_base_interp_grafts_venv_from_syspath(tmp_pat
     pyvenv.cfg) but a venv site-packages is on sys.path → graft via that venv's
     shim so the spawned child reactivates the venv at its own startup."""
     import sys
+
     from aletheia.gateway import pidfile
     _force_windows(monkeypatch)
 
@@ -341,6 +345,7 @@ def test_resolve_real_python_case_b_no_venv_on_syspath_returns_empty_patch(tmp_p
     """Base interpreter with no venv anywhere on sys.path → empty patch (the
     pre-existing honest behavior, preserved)."""
     import sys
+
     from aletheia.gateway import pidfile
     _force_windows(monkeypatch)
 
@@ -360,6 +365,7 @@ def test_resolve_real_python_case_a_venv_shim_resolves_to_base(tmp_path, monkeyp
     """Case A (manual / uv run): sys.executable IS the venv shim → resolve to
     base python via pyvenv.cfg 'home' and graft via the shim itself."""
     import sys
+
     from aletheia.gateway import pidfile
     _force_windows(monkeypatch)
 

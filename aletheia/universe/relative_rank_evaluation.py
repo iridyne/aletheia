@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 from statistics import fmean
-import json
 from typing import Any
 
 from aletheia.storage.sqlite import get_db

@@ -28,7 +28,8 @@ from __future__ import annotations
 
 import math
 
-from hypothesis import HealthCheck, given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from aletheia.counterfactual.filter_replay import (
     _MAX_ALTERNATIVES,
@@ -37,7 +38,6 @@ from aletheia.counterfactual.filter_replay import (
     _outcome_metrics,
     _shrunk_mean,
 )
-
 
 # --------------------------------------------------------------------------- #
 # _bounded_alternatives

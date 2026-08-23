@@ -25,6 +25,8 @@ from aletheia.gateway.console_text import decode_console
 from aletheia.gateway.pidfile import _no_window_kwargs, _resolve_real_python, is_running
 from aletheia.gateway.windows_identity import (
     current_windows_user as _current_user,
+)
+from aletheia.gateway.windows_identity import (
     current_windows_user_ids as _current_user_ids,
 )
 from aletheia.packaged_process import gateway_runner_command, is_frozen_runtime

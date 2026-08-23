@@ -19,7 +19,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
               "RiskConfig has per-tier leverage limits + account leverage cap + margin thresholds"),
 )
 def test_config_schema_futures_fields():
-    from aletheia.config.schema import RiskConfig, ExchangeConfig
+    from aletheia.config.schema import ExchangeConfig, RiskConfig
 
     risk = RiskConfig()
     assert risk.max_demo_position_margin_usdt == 100_000.0
@@ -63,8 +63,8 @@ def test_asset_tier_classification():
               "get_max_leverage returns tier-appropriate cap respecting account flat cap"),
 )
 def test_max_leverage_per_tier():
-    from aletheia.trading.instruments import get_max_leverage
     from aletheia.config.schema import AletheiaConfig
+    from aletheia.trading.instruments import get_max_leverage
 
     cfg = AletheiaConfig()
 
@@ -84,7 +84,7 @@ def test_max_leverage_per_tier():
               "notional_to_contracts correctly converts USDT notional to contract count"),
 )
 def test_notional_to_contracts():
-    from aletheia.trading.instruments import notional_to_contracts, contracts_to_notional
+    from aletheia.trading.instruments import contracts_to_notional, notional_to_contracts
 
     # BTC: ctVal = 0.001 BTC/contract. $120 at $60000 = 0.002 BTC = 2 contracts
     assert notional_to_contracts(120, 60000, "BTC/USDT") == 2.0
@@ -121,6 +121,7 @@ def test_liquidation_price():
 )
 def test_paper_tools_leverage_param():
     import inspect
+
     from aletheia.execution.paper_tools import create_paper_proposal
 
     sig = inspect.signature(create_paper_proposal)
@@ -175,6 +176,7 @@ def test_risk_engine_liquidation_buffer():
 )
 def test_leverage_threaded_through_execution():
     import inspect
+
     from aletheia.storage.models import Position
 
     # Position model carries the futures fields.
@@ -183,10 +185,10 @@ def test_leverage_threaded_through_execution():
     assert "liquidation_price" in fields
 
     # All four broker entry points accept leverage (clone rule).
-    from aletheia.execution.paper_broker import execute_paper_order
+    from aletheia.execution.binance_broker import execute_live_order as binance_exec
     from aletheia.execution.bitget_broker import execute_live_order as bitget_exec
     from aletheia.execution.okx_broker import execute_live_order as okx_exec
-    from aletheia.execution.binance_broker import execute_live_order as binance_exec
+    from aletheia.execution.paper_broker import execute_paper_order
     for fn in (execute_paper_order, bitget_exec, okx_exec, binance_exec):
         assert "leverage" in inspect.signature(fn).parameters, fn.__module__
 
@@ -264,7 +266,9 @@ def test_paper_open_records_leverage_and_liquidation(tmp_path, monkeypatch):
 )
 def test_pi_decision_schema_market_type_and_leverage():
     from aletheia.agent_shell.trading_decision import (
-        _DECISION_SCHEMA, TradingDecision, _parse_decision,
+        _DECISION_SCHEMA,
+        TradingDecision,
+        _parse_decision,
     )
 
     props = _DECISION_SCHEMA["properties"]
@@ -346,9 +350,8 @@ async def test_submit_decision_clamps_leverage(tmp_path, monkeypatch):
               "account leverage ratio + margin headroom; the assessment prompt renders it"),
 )
 def test_futures_context_injection():
-    import inspect
-    from aletheia.agent_shell.trading_context import _build_futures_context
     import aletheia.agent_shell.trading_decision as td
+    from aletheia.agent_shell.trading_context import _build_futures_context
     from aletheia.config.loader import load_config
 
     cfg = load_config()
@@ -377,6 +380,7 @@ def test_futures_context_injection():
 )
 def test_opportunity_carries_derivatives_fields():
     import inspect
+
     from aletheia.storage.models import Opportunity
 
     fields = Opportunity.model_fields
@@ -399,9 +403,13 @@ def test_opportunity_carries_derivatives_fields():
 )
 def test_exchange_set_leverage_wiring():
     import inspect
-    from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest as BgOR
-    from aletheia.exchanges.okx.client import OKXClient, OrderRequest as OkxOR
-    from aletheia.exchanges.binance.client import BinanceClient, OrderRequest as BnOR
+
+    from aletheia.exchanges.binance.client import BinanceClient
+    from aletheia.exchanges.binance.client import OrderRequest as BnOR
+    from aletheia.exchanges.bitget.client import BitgetClient
+    from aletheia.exchanges.bitget.client import OrderRequest as BgOR
+    from aletheia.exchanges.okx.client import OKXClient
+    from aletheia.exchanges.okx.client import OrderRequest as OkxOR
 
     # set_leverage exists + place_order invokes it on every client. Read the module
     # source (not client.place_order, which the autouse exchange-block fixture patches).
@@ -416,9 +424,9 @@ def test_exchange_set_leverage_wiring():
         assert "leverage" in OR.__dataclass_fields__, OR.__module__
 
     # The three live brokers forward leverage into OrderRequest
+    import aletheia.execution.binance_broker as bnb
     import aletheia.execution.bitget_broker as bgb
     import aletheia.execution.okx_broker as okxb
-    import aletheia.execution.binance_broker as bnb
     for mod in (bgb, okxb, bnb):
         src = inspect.getsource(mod.execute_live_order)
         assert "leverage=leverage" in src, mod.__name__
@@ -437,8 +445,9 @@ def test_strategy_market_type_affinity_filters_ranker():
         "market affinity."
     )
     import json as _json
-    from aletheia.storage.models import StrategyRecord, Opportunity, MarketSnapshot
+
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import MarketSnapshot, Opportunity, StrategyRecord
 
     assert "market_type_affinity" in StrategyRecord.model_fields
 

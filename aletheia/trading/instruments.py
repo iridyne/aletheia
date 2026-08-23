@@ -1,8 +1,12 @@
 """Tradable instrument definitions and timeframes (guide §3.2, §22.1)."""
 
 from aletheia.data.symbols import (
-    InstrumentId, to_canonical, MARKET_SPOT, MARKET_PERP,
-    stock_token_exchange, is_stock_token,
+    MARKET_PERP,
+    MARKET_SPOT,
+    InstrumentId,
+    is_stock_token,
+    stock_token_exchange,
+    to_canonical,
 )
 
 # MVP tradable symbols — Bitget execution format (used by risk engine + order router)

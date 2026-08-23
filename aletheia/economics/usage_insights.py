@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-from datetime import datetime, timedelta, timezone
 import json
 import math
 import sqlite3
+from collections import Counter, defaultdict
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from aletheia.economics.agent_roles import role_for_logical_agent
 from aletheia.economics.tracing import estimate_llm_cost, normalize_usage
 from aletheia.model_provider.fallback import get_model_health_snapshot
 from aletheia.storage.sqlite import readonly_db
-
 
 _WINDOW_DAYS = {1, 7, 30, 90}
 _GROUPS = {"summary", "operations", "analysis"}

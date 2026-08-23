@@ -7,7 +7,7 @@ clean shape and assert the probe's severity verdict. A probe that always returne
 """
 
 import sqlite3
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 

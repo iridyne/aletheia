@@ -7,7 +7,6 @@ from pathlib import Path
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SCOPE_PATH = ROOT / "docs" / "product" / "ACTIVE_RUNTIME_SCOPE.md"
 
@@ -210,8 +209,14 @@ def test_position_carries_active_mainline_causal_ids():
 ))
 def test_core_entities_carry_runtime_session_provenance():
     from aletheia.storage.models import (
-        Opportunity, PiDecision, TradeProposal, RiskDecision, Order, Fill, Position,
+        Fill,
+        Opportunity,
+        Order,
+        PiDecision,
+        Position,
+        RiskDecision,
         RuntimeSession,
+        TradeProposal,
     )
 
     provenance = {"runtime_session_id", "producer_commit", "behavior_fingerprint"}

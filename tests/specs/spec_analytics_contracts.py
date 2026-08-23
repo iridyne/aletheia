@@ -104,9 +104,9 @@ def test_resolve_stale_shadows_uses_historical_bar():
     """Behavioral proof on the autouse in-memory DB (no network, no mocks)."""
     from datetime import datetime, timezone
 
-    from aletheia.storage.sqlite import get_db
-    from aletheia.storage.models import new_id
     from aletheia.counterfactual.trades import resolve_stale_shadows
+    from aletheia.storage.models import new_id
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     entry_dt = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
@@ -272,9 +272,9 @@ def test_scorecard_excludes_synthetic_closes():
     and PF to ~0 and the trade count would read 13. Post-fix it must read the
     genuine cohort only.
     """
-    from aletheia.storage.models import Position
-    from aletheia.storage import repositories as repo
     from aletheia.analytics import go_live_scorecard as sc
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
     from tests.test_outcome_closure import _insert_entry_chain
 
     def _closed(symbol, direction, pnl, reason):

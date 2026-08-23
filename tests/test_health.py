@@ -12,10 +12,10 @@ async def _make_async_provider(provider):
     return provider
 
 
-from aletheia.storage.sqlite import reset_db
+from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import AgentRun
-from aletheia.storage import repositories as repo
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -300,7 +300,7 @@ def test_code_drift_flagged_in_health(tmp_path, monkeypatch):
     the build_info module (the import source), not on health.
     """
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health, build_info
+    from aletheia.agent_runtime import build_info, health
     monkeypatch.setattr(build_info, "code_drift_issue",
                         lambda: "code_updated_pending_restart:aaaaaaa..bbbbbbb")
     h = health.compute_health()
@@ -310,7 +310,7 @@ def test_code_drift_flagged_in_health(tmp_path, monkeypatch):
 
 def test_no_code_drift_keeps_health_clean(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health, build_info
+    from aletheia.agent_runtime import build_info, health
     monkeypatch.setattr(build_info, "code_drift_issue", lambda: None)
     for _ in range(5):
         _add_run("completed")
@@ -353,7 +353,7 @@ def test_code_drift_does_not_restart_twice(tmp_path, monkeypatch):
     """After one code_drift restart in the last hour, if drift persists, fall
     through to market_data_stale instead of consuming another restart slot."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health, build_info
+    from aletheia.agent_runtime import build_info, health
     from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
@@ -363,8 +363,9 @@ def test_code_drift_does_not_restart_twice(tmp_path, monkeypatch):
     save_config(cfg)
 
     # Simulate a previous code_drift restart 20 minutes ago
-    from aletheia.files.jsonl import write_audit
     from datetime import datetime, timedelta
+
+    from aletheia.files.jsonl import write_audit
     ts = (datetime.utcnow() - timedelta(minutes=20)).isoformat()
     write_audit({
         "actor": "system", "source": "self_heal",
@@ -395,7 +396,7 @@ def test_code_drift_first_time_still_restarts(tmp_path, monkeypatch):
     """First occurrence of code_drift (no prior restart in last hour) should
     still trigger a restart as before."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health, build_info
+    from aletheia.agent_runtime import build_info, health
     from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
@@ -559,6 +560,7 @@ def test_observer_run_info_reads_completion_timestamp(tmp_path, monkeypatch):
     real_observer_info = health._observer_latest_session_run_info
     setup_env(tmp_path, monkeypatch)
     from datetime import datetime, timedelta, timezone
+
     from aletheia.storage.sqlite import get_db
 
     # setup_env patches this helper for unrelated health tests; restore it so
@@ -642,6 +644,7 @@ def test_observer_warmup_requires_successful_run(tmp_path, monkeypatch):
     monkeypatch.setattr(health, "_mo_ran_in_current_session", real_mo_ran)
 
     from datetime import datetime, timezone
+
     from aletheia.storage.sqlite import get_db
 
     started_at = datetime.now(timezone.utc).isoformat()

@@ -28,10 +28,7 @@ becomes an ``evaluation_deferred`` with a persisted event.
 """
 
 import asyncio
-import dataclasses
 from datetime import datetime, timezone
-
-import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -409,6 +406,7 @@ def test_conviction_gate_defer_is_excluded_from_terminal_operator_decisions_api(
     import sqlite3
     from datetime import timedelta
     from unittest.mock import patch
+
     import aletheia.storage.sqlite as sqlite_mod
 
     conn = sqlite3.connect(":memory:")

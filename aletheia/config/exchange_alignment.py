@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-
 _EXECUTION_MODE_EXCHANGES = {
     "bitget_demo": "bitget",
     "binance_testnet": "binance",

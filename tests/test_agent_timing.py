@@ -8,7 +8,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 _NO_EXECUTION_LOGS = {
     ("market_observer.py", "reuse_terminal_opportunity"),
     ("paper_trader.py", "create_paper_proposal"),

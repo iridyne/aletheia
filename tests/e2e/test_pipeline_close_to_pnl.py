@@ -6,11 +6,10 @@ Verifies that closed positions with realized_pnl correctly appear in:
 - today_realized_pnl() for risk engine daily-loss check
 """
 
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
-from aletheia.storage.models import Position
 from aletheia.storage import repositories as repo
+from aletheia.storage.models import Position
 
 
 class TestClosedPositionToPortfolio:

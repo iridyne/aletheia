@@ -19,7 +19,6 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 from tests.test_learning_read_models import _seed_current_experiment, _setup_env
 
-
 _CONTRACT = "learning_observability"
 
 
@@ -229,11 +228,12 @@ async def test_lco_reads_are_side_effect_free_and_off_the_event_loop(
     _, experiment_id = _seed_current_experiment(monkeypatch)
 
     from httpx import ASGITransport, AsyncClient
+
+    import aletheia.config.loader as config_loader
     from aletheia.learning import lifecycle
     from aletheia.server.app import app
     from aletheia.server.routes import analytics, settings
     from aletheia.storage.sqlite import get_db
-    import aletheia.config.loader as config_loader
 
     config_loader.CONFIG_PATH.write_text(
         "agent:\n  permission_mode: Research\n"
@@ -425,6 +425,7 @@ async def test_lco_limits_monotonic_cache_and_server_timing(tmp_path, monkeypatc
     _seed_current_experiment(monkeypatch)
 
     from httpx import ASGITransport, AsyncClient
+
     from aletheia.server.app import app
     from aletheia.server.routes import analytics, settings
 
@@ -480,6 +481,7 @@ def test_lco_cache_values_are_not_shared_with_callers(tmp_path, monkeypatch):
     _seed_current_experiment(monkeypatch)
 
     from fastapi import Response
+
     from aletheia.server.routes import analytics
 
     analytics._learning_contribution_cache.clear()
@@ -497,8 +499,10 @@ def test_lco_older_concurrent_miss_cannot_overwrite_newer_projection(
 ):
     _setup_env(tmp_path, monkeypatch)
 
-    from fastapi import Response
     from threading import Event, Thread, current_thread
+
+    from fastapi import Response
+
     from aletheia.server.routes import analytics
 
     older_started = Event()

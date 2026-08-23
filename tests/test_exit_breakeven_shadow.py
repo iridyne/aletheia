@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -18,7 +18,6 @@ from aletheia.storage.models import (
     PositionExitPlanVersion,
     PositionProtectionState,
 )
-
 
 OPENED = "2026-08-08T00:00:00+00:00"
 ASSIGNED = "2026-08-08T00:00:10+00:00"
@@ -319,8 +318,8 @@ def test_missing_exact_bar_fails_closed_and_does_not_invent_delta():
 
 
 def test_existing_outcome_outbox_replays_shadow_without_trading_authority(monkeypatch):
-    from aletheia.portfolio import outcome_hooks
     import aletheia.analytics.exit_breakeven_shadow as shadow
+    from aletheia.portfolio import outcome_hooks
 
     position = _seed_position()
     assert repo.insert_exit_breakeven_shadow_assignment(_assignment(position))

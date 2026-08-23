@@ -20,7 +20,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
 
-
 DURATION_RE = re.compile(
     r"^\s*(?P<seconds>\d+(?:\.\d+)?)s\s+"
     r"(?P<phase>setup|call|teardown)\s+"

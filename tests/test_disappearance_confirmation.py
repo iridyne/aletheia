@@ -5,8 +5,8 @@ from __future__ import annotations
 import importlib
 import json
 
-from aletheia.storage.models import Position
 from aletheia.storage import repositories as repo
+from aletheia.storage.models import Position
 from tests.test_position_reconciler import _ex, setup_env
 
 

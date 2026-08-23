@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from aletheia.gateway.pidfile import _no_window_kwargs
-
 
 _ALLOWED_ENV_KEYS = {
     "ALL_PROXY",

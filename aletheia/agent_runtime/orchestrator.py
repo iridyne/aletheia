@@ -1,11 +1,10 @@
 """Agent orchestrator — runs agents with permission enforcement."""
 
-import traceback
 
-from aletheia.agent_runtime.run_logger import begin_queued_run, start_run, end_run
-from aletheia.storage.models import AgentArtifactRef, AgentRun
+from aletheia.agent_runtime.run_logger import begin_queued_run, end_run, start_run
 from aletheia.config.loader import load_config
 from aletheia.files.jsonl import write_audit
+from aletheia.storage.models import AgentArtifactRef, AgentRun
 
 
 async def run_agent(

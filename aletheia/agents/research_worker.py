@@ -19,11 +19,17 @@ from datetime import datetime, timezone
 
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
-    SerenityRunEvent, SerenityEvidence, SerenityTheme, SerenityClaim,
+    SerenityClaim,
+    SerenityEvidence,
     SerenityOpportunity,
+    SerenityRunEvent,
+    SerenityTheme,
 )
 from aletheia.trading.serenity_evidence import (
-    assess_evidence_tier, assess_opportunity_tier, assess_researchability, normalize_tier,
+    assess_evidence_tier,
+    assess_opportunity_tier,
+    assess_researchability,
+    normalize_tier,
 )
 
 logger = logging.getLogger("aletheia.research_worker")
@@ -204,7 +210,7 @@ def _get_equity_context_block() -> str:
     """
     try:
         from aletheia.config.loader import load_config
-        from aletheia.data.symbols import stock_token_to_ticker, is_stock_token
+        from aletheia.data.symbols import is_stock_token, stock_token_to_ticker
 
         cfg = load_config()
         tokens = list(cfg.market_data.observed_stock_tokens or [])
@@ -899,6 +905,8 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
                     # slash/no-slash display rule in the frontend via fmtSymbol().
                     from aletheia.data.symbols import (
                         is_stock_token as _is_stock_token,
+                    )
+                    from aletheia.data.symbols import (
                         stock_token_market_type as _stock_mkt_type,
                     )
                     _sym = item.get("symbol", "BTC/USDT")
@@ -1101,8 +1109,8 @@ def _mark_failed(
 
 
 def _handle_rate_limit(run_id: str, run: dict, error_message: str) -> None:
-    from datetime import timedelta
     import random
+    from datetime import timedelta
 
     now = datetime.now(timezone.utc)
     retry_count = (run.get("retry_count") or 0)
@@ -1143,8 +1151,8 @@ def _schedule_auto_retry(run_id: str, run: dict, retry_count: int) -> None:
     try:
         from aletheia.agent_runtime.scheduler import _scheduler
         if _scheduler and _scheduler.running:
-            from datetime import timedelta
             import random
+            from datetime import timedelta
             backoff_seconds = [60, 180, 600]
             delay = backoff_seconds[min(retry_count, len(backoff_seconds) - 1)]
             jitter = random.randint(0, delay // 4)

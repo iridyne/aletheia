@@ -1,16 +1,16 @@
 """Operator recommendation synthesis from authoritative backend state."""
 
-from datetime import datetime, timedelta, timezone
 import json
 import math
+from datetime import datetime, timedelta, timezone
 
 from aletheia.agent_shell.operator_store import (
     get_latest_heartbeat,
     list_artifacts,
     list_commands,
-    list_extensions,
-    list_extension_runs,
     list_events,
+    list_extension_runs,
+    list_extensions,
     list_sessions,
     list_tasks,
 )

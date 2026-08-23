@@ -2,14 +2,12 @@
 import json
 import sqlite3
 
-import pytest
-
 
 def _init_test_db(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
-    from aletheia.storage.sqlite import reset_db
     from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import reset_db
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -44,7 +42,7 @@ class TestBuildSystemAssessment:
     def test_assessment_returns_dataclass(self, tmp_path, monkeypatch):
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
-        from aletheia.agent_shell.operator_loop import build_system_assessment, SystemAssessment
+        from aletheia.agent_shell.operator_loop import SystemAssessment, build_system_assessment
 
         assessment = build_system_assessment()
         assert isinstance(assessment, SystemAssessment)
@@ -61,7 +59,6 @@ class TestBuildSystemAssessment:
             "risk": {"max_demo_position_margin_usdt": 200.0},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
-        import aletheia.config.loader as loader
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
 
         from aletheia.agent_shell.operator_loop import build_system_assessment
@@ -206,7 +203,9 @@ class TestActionExecution:
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import (
-            OperatorAction, _execute_level1_action, _action_log,
+            OperatorAction,
+            _action_log,
+            _execute_level1_action,
         )
         _action_log.clear()
 
@@ -221,8 +220,8 @@ class TestActionExecution:
     def test_notify_dispatch_failure_is_not_executed(self, tmp_path, monkeypatch):
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
-        from aletheia.agent_shell.operator_loop import OperatorAction, _execute_level1_action
         import aletheia.notifications as notifications
+        from aletheia.agent_shell.operator_loop import OperatorAction, _execute_level1_action
 
         def fail_notify(*_args, **_kwargs):
             raise RuntimeError("injected notification failure")
@@ -284,8 +283,10 @@ class TestRateLimiting:
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import (
-            OperatorAction, _execute_level1_action, _action_log,
             _MAX_CONFIG_PATCHES_PER_DAY,
+            OperatorAction,
+            _action_log,
+            _execute_level1_action,
         )
         _action_log.clear()
 
@@ -307,7 +308,9 @@ class TestRateLimiting:
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import (
-            OperatorAction, _execute_level1_action, _action_log,
+            OperatorAction,
+            _action_log,
+            _execute_level1_action,
         )
         _action_log.clear()
 
@@ -334,7 +337,9 @@ class TestCapitalAllocation:
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import (
-            OperatorAction, _execute_level1_action, _action_log,
+            OperatorAction,
+            _action_log,
+            _execute_level1_action,
         )
         _action_log.clear()
 
@@ -359,7 +364,9 @@ class TestCapitalAllocation:
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
         from aletheia.agent_shell.operator_loop import (
-            OperatorAction, _execute_level1_action, _action_log,
+            OperatorAction,
+            _action_log,
+            _execute_level1_action,
         )
         _action_log.clear()
 
@@ -376,7 +383,9 @@ class TestCapitalAllocation:
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import (
-            OperatorAction, _execute_level1_action, _action_log,
+            OperatorAction,
+            _action_log,
+            _execute_level1_action,
         )
         _action_log.clear()
 
@@ -393,7 +402,9 @@ class TestCapitalAllocation:
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import (
-            OperatorAction, _execute_level1_action, _action_log,
+            OperatorAction,
+            _action_log,
+            _execute_level1_action,
         )
         _action_log.clear()
 
@@ -453,10 +464,9 @@ class TestRunOperatorLoop:
             "risk": {"max_demo_position_margin_usdt": 200.0},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
-        import aletheia.config.loader as loader
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
 
-        from aletheia.agent_shell.operator_loop import run_operator_loop, _action_log
+        from aletheia.agent_shell.operator_loop import _action_log, run_operator_loop
         _action_log.clear()
         summary = run_operator_loop(trigger="test")
         assert summary["status"] == "skipped"
@@ -465,7 +475,7 @@ class TestRunOperatorLoop:
     def test_full_loop_runs_and_persists(self, tmp_path, monkeypatch):
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
-        from aletheia.agent_shell.operator_loop import run_operator_loop, _action_log
+        from aletheia.agent_shell.operator_loop import _action_log, run_operator_loop
         _action_log.clear()
 
         summary = run_operator_loop(trigger="test")
@@ -496,7 +506,8 @@ class TestRunOperatorLoop:
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import (
-            OperatorAction, classify_action, _LEVEL_3_ACTIONS,
+            _LEVEL_3_ACTIONS,
+            classify_action,
         )
         for action_type in _LEVEL_3_ACTIONS:
             assert classify_action(action_type) == 3
@@ -727,9 +738,7 @@ class TestConsecutiveEscalation:
     def test_escalation_after_3_consecutive_tightens(self, tmp_path, monkeypatch):
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
-        from aletheia.agent_shell.operator_loop import (
-            OperatorAction, _maybe_escalate, _persist_action
-        )
+        from aletheia.agent_shell.operator_loop import OperatorAction, _maybe_escalate, _persist_action
 
         # Simulate 3 prior tighten actions
         for _ in range(3):
@@ -747,9 +756,7 @@ class TestConsecutiveEscalation:
     def test_no_escalation_below_threshold(self, tmp_path, monkeypatch):
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
-        from aletheia.agent_shell.operator_loop import (
-            OperatorAction, _maybe_escalate, _persist_action
-        )
+        from aletheia.agent_shell.operator_loop import OperatorAction, _maybe_escalate, _persist_action
 
         # Only 2 prior tightens
         for _ in range(2):
@@ -769,8 +776,10 @@ class TestPersistentActionLog:
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import (
-            _persist_action, _count_actions_today_persistent,
-            _last_action_time_persistent, _action_log,
+            _action_log,
+            _count_actions_today_persistent,
+            _last_action_time_persistent,
+            _persist_action,
         )
 
         _persist_action("config_patch", param="test_param",
@@ -800,8 +809,7 @@ class TestLoosenHandlers:
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
-        from aletheia.agent_shell.operator_loop import OperatorAction, _action_loosen_confidence, _action_log
-        from aletheia.config.loader import load_config
+        from aletheia.agent_shell.operator_loop import OperatorAction, _action_log, _action_loosen_confidence
 
         _action_log.clear()
         action = OperatorAction(action_type="loosen_confidence", level=2, reason="test")
@@ -822,7 +830,6 @@ class TestLoosenHandlers:
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
         from aletheia.agent_shell.operator_loop import OperatorAction, _action_increase_sizing, _action_log
-        from aletheia.config.loader import load_config
 
         _action_log.clear()
         action = OperatorAction(action_type="increase_sizing", level=2,
@@ -844,8 +851,7 @@ class TestLoosenHandlers:
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
-        from aletheia.agent_shell.operator_loop import OperatorAction, _action_widen_stop_loss, _action_log
-        from aletheia.config.loader import load_config
+        from aletheia.agent_shell.operator_loop import OperatorAction, _action_log, _action_widen_stop_loss
 
         _action_log.clear()
         # Request +1.5 delta, should cap at neutral=2.0
@@ -864,7 +870,9 @@ class TestContentHealthSelfSupervision:
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import (
-            SystemAssessment, decide_actions, classify_action,
+            SystemAssessment,
+            classify_action,
+            decide_actions,
         )
         assessment = SystemAssessment(
             timestamp="2026-01-01T00:00:00Z",
@@ -903,12 +911,12 @@ class TestContentHealthSelfSupervision:
         from datetime import datetime, timezone
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
-        import aletheia.storage.sqlite as sq
         # 20 one-directional (short) proposals in 24h → content.proposal_bias warn.
         # (The strategy-FSM zombie WARN was removed with the rules engine, Position C
         # 2026-07-02; proposal_bias is a still-live content probe that WARNs.)
         # Disable the direction brake so the probe emits "warn" (unmitigated bias).
         import aletheia.agent_shell.trading_decision as td
+        import aletheia.storage.sqlite as sq
         monkeypatch.setattr(td, "_proposal_direction_overheated", lambda *a, **kw: None)
         now = datetime.now(timezone.utc).isoformat()
         for i in range(20):

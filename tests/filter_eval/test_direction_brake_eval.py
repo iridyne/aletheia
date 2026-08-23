@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from aletheia.agent_shell.trading_decision import _proposal_direction_overheated
+
 from .scenarios.direction_brake import ALL_SCENARIOS
 
 

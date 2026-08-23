@@ -8,19 +8,19 @@ trading or changes Risk, provider, or scheduler policy.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Iterator
 import urllib.request
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterator
 
 try:  # Windows supports the rest of the update CLI, but not Fedora auto deployment.
     import fcntl

@@ -13,8 +13,8 @@ list_market_snapshots has a clean injectable interface.
 """
 
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Literal
 
 
 @dataclass

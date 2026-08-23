@@ -9,8 +9,6 @@ from typer.testing import CliRunner
 from aletheia.economics.context_artifacts import record_context_artifacts
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.main import app
-from aletheia.storage.sqlite import get_db
-
 
 runner = CliRunner()
 

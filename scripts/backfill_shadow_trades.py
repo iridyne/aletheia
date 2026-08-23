@@ -46,8 +46,8 @@ def main() -> int:
                         help="max rows to process in one run (default 100000)")
     args = parser.parse_args()
 
-    from aletheia.storage.migrations import run_migrations
     from aletheia.counterfactual.trades import resolve_stale_shadows
+    from aletheia.storage.migrations import run_migrations
 
     run_migrations()
 

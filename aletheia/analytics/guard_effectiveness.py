@@ -7,8 +7,8 @@ Deterministic. No LLM. Read-only (queries attribution + ranker logs).
 """
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import sqlite3
 from collections import defaultdict
 
@@ -109,9 +109,10 @@ def _blocked_candidate_stats_by_guard(
     is an operational metric; historical blocks beyond that window have low
     actionability). Pass None to scan all history (OOM risk on large DBs).
     """
+    from datetime import datetime, timedelta, timezone
+
     from aletheia.learning.outcomes import assess_candidate_outcome
     from aletheia.storage.sqlite import get_db
-    from datetime import datetime, timezone, timedelta
 
     if evaluated_since is None:
         evaluated_since = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()

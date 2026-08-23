@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import random
+from datetime import datetime, timezone
 from statistics import mean, median
 from typing import Any, Iterable
 
 from aletheia.analytics.filter_evidence import FIRST_EXPOSURE_CTE_SQL
 from aletheia.storage.sqlite import get_db
-
 
 _MAX_REPLAYS = 8
 _MAX_OBSERVER_REPLAYS = 3

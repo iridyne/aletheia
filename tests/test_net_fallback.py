@@ -1,16 +1,15 @@
 """Tests for proxy fallback transport in aletheia.net."""
-import asyncio
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
 from aletheia.net import (
+    _proxy_reachable_cache,
     _ProxyFallbackTransport,
     _RetryingTransport,
     httpx_client,
     invalidate_proxy_cache,
-    _proxy_reachable_cache,
 )
 
 

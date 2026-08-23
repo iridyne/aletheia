@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
 import sqlite3
-import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -1353,8 +1352,8 @@ def test_operator_decisions_excludes_non_terminal_deferrals_but_trace_preserves_
     )
     conn.commit()
 
-    from aletheia.server.routes.analytics import get_operator_decisions
     from aletheia.analytics.opportunity_flow import trace_opportunity_flow
+    from aletheia.server.routes.analytics import get_operator_decisions
 
     data = get_operator_decisions(hours=24, limit=50)
     assert data["counts"] == {

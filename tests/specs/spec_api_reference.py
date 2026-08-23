@@ -22,8 +22,6 @@ Claim hierarchy
 import ast
 from pathlib import Path
 
-import pytest
-
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -260,6 +258,7 @@ def _make_test_client():
     """
     # Deferred import to avoid triggering lifespan at collection time.
     from fastapi.testclient import TestClient
+
     from aletheia.server.app import app
 
     return TestClient(app, raise_server_exceptions=False)

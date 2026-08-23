@@ -8,24 +8,22 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from aletheia.config.loader import is_preview_mode, load_config
-from aletheia.risk.engine import ProposalIntegrityError, evaluate_proposal
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.execution.paper_broker import execute_paper_order
 from aletheia.execution.post_commit_audit import (
     write_post_commit_audit as _write_best_effort_post_commit_audit,
 )
-from aletheia.trading.entry_snapshot import (
-    capture_attribution_snapshot as capture_paper_attribution_snapshot,
-)
+from aletheia.files.jsonl import write_audit
+from aletheia.risk.engine import ProposalIntegrityError, evaluate_proposal
 from aletheia.storage.models import TradeProposal
 from aletheia.storage.repositories import (
     get_authoritative_risk_decision,
-    get_proposal_execution_claim,
     get_order,
+    get_proposal_execution_claim,
     get_trade_proposal,
     has_order_for_proposal,
-    insert_trade_proposal,
     insert_proposal_execution_claim,
+    insert_trade_proposal,
     proposal_execution_claim_owned,
     release_entry_risk_reservation,
     release_proposal_execution_claim,
@@ -34,7 +32,9 @@ from aletheia.storage.repositories import (
     update_position,
     update_trade_proposal,
 )
-from aletheia.files.jsonl import write_audit
+from aletheia.trading.entry_snapshot import (
+    capture_attribution_snapshot as capture_paper_attribution_snapshot,
+)
 
 logger = logging.getLogger("aletheia.execution_gateway")
 
@@ -112,7 +112,8 @@ def _prepare_exchange_quantity(
     if execution_mode == "paper_internal":
         return quantity, None
     from aletheia.execution.order_constraints import (
-        ConstraintUnavailable, prepare_exchange_quantity,
+        ConstraintUnavailable,
+        prepare_exchange_quantity,
     )
     try:
         from aletheia.data.symbols import to_canonical

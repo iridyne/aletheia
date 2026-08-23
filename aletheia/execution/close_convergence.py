@@ -10,7 +10,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
-
 CLOSE_CLAIM_STATES = frozenset({
     "pending",
     "submitted",

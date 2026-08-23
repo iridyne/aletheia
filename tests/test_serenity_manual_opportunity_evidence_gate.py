@@ -54,9 +54,9 @@ async def test_manual_opportunity_with_no_evidence_is_floored_to_speculative(
     evidence-less claims), not the submitted 'disclosed'."""
     _setup_env(tmp_path, monkeypatch)
 
+    from aletheia.server.app import app
     from aletheia.storage.models import SerenityTheme
     from aletheia.storage.repositories import insert_serenity_theme
-    from aletheia.server.app import app
 
     # Seed a theme with NO evidence rows.
     theme = SerenityTheme(

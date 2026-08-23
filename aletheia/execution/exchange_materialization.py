@@ -8,11 +8,11 @@ falls back to requested price/quantity/fees when private evidence is incomplete.
 
 from __future__ import annotations
 
+import json
+import math
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import json
-import math
 from typing import Iterable
 
 from aletheia.data.symbols import to_canonical

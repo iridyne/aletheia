@@ -17,10 +17,7 @@ import pytest
 from aletheia.agent_shell.trading_decision import (
     TradingDecision,
     _resolve_post_debate_leverage,
-    _LIQ_SAFETY_MARGIN,
-    _CONVICTION_MAX_LEV,
 )
-
 
 # ── minimal helpers ────────────────────────────────────────────────────────────
 

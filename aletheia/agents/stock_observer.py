@@ -22,11 +22,11 @@ from pydantic import BaseModel, Field
 from aletheia.agents import register_agent
 
 logger = logging.getLogger("aletheia.agents.stock_observer")
-from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool, record_step, observer_llm_deadline
 from aletheia.agent_runtime.permissions import is_tool_permitted
+from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool, observer_llm_deadline, record_step
+from aletheia.config.loader import load_config
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import insert_opportunity, list_strategies
-from aletheia.config.loader import load_config
 from aletheia.trading.strategy_lifecycle import is_active_paper_strategy
 
 _VALID_DIRECTIONS = {"long", "short", "neutral"}
@@ -98,7 +98,7 @@ def _fetch_stock_indicators(ticker: str, _retry: bool = True) -> dict | _FetchEr
     import time
 
     try:
-        from aletheia.trading.indicators import sma, rsi, atr, bollinger, momentum_pct, zscore_last
+        from aletheia.trading.indicators import atr, bollinger, momentum_pct, rsi, sma, zscore_last
 
         hist = yf.download(
             ticker,

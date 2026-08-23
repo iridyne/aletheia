@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import math
+from datetime import datetime, timedelta, timezone
 from statistics import mean, median
 from typing import Iterable
-
 
 POLICY_VERSION = "sizing-counterfactual/v2"
 

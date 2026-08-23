@@ -59,8 +59,8 @@ def test_thesis_no_autoclose_when_disabled(monkeypatch):
 
 
 def test_thesis_review_wake(monkeypatch):
-    import aletheia.storage.repositories as repo
     import aletheia.agent_runtime.pi_daemon as pd
+    import aletheia.storage.repositories as repo
     monkeypatch.setattr(repo, "get_serenity_opportunity", lambda oid: {"status": "dismissed"})
     captured = []
     monkeypatch.setattr(
@@ -80,11 +80,11 @@ def test_thesis_review_wake(monkeypatch):
 # ── market-aware → wake (not auto-close) ─────────────────────────────────────
 
 def test_market_aware_wakes_not_closes(monkeypatch):
-    from aletheia.storage.sqlite import get_db
-    from aletheia.config.loader import load_config
     import aletheia.agent_runtime.pi_daemon as pd
     import aletheia.portfolio.exit_rules as exit_rules
     import aletheia.portfolio.market_signal_reader as msr
+    from aletheia.config.loader import load_config
+    from aletheia.storage.sqlite import get_db
 
     get_db().execute(
         "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
@@ -157,12 +157,12 @@ def test_market_aware_wakes_not_closes(monkeypatch):
 
 
 def test_market_aware_reports_operator_wake_unavailable(monkeypatch):
-    from aletheia.storage.repositories import _select_one
-    from aletheia.storage.sqlite import get_db
-    from aletheia.config.loader import load_config
     import aletheia.agent_runtime.pi_daemon as pd
     import aletheia.portfolio.exit_rules as exit_rules
     import aletheia.portfolio.market_signal_reader as msr
+    from aletheia.config.loader import load_config
+    from aletheia.storage.repositories import _select_one
+    from aletheia.storage.sqlite import get_db
 
     get_db().execute(
         "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
@@ -218,11 +218,11 @@ def test_market_aware_reports_operator_wake_unavailable(monkeypatch):
 
 
 def test_market_aware_identity_mismatch_never_wakes(monkeypatch):
-    from aletheia.config.loader import load_config
-    from aletheia.storage.sqlite import get_db
     import aletheia.agent_runtime.pi_daemon as pd
     import aletheia.portfolio.exit_rules as exit_rules
     import aletheia.portfolio.market_signal_reader as msr
+    from aletheia.config.loader import load_config
+    from aletheia.storage.sqlite import get_db
 
     get_db().execute(
         "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"

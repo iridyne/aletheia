@@ -3,21 +3,25 @@
 import logging
 import platform
 import sys
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 import typer
 
-from aletheia.config.loader import bootstrap, load_config, save_config, get_data_dir
-from aletheia.gateway.pidfile import (
-    is_running, read_pid, write_pid, clear_pid, pid_path,
-    kill_pid_tree, port_in_use, wait_port_free, find_gateway_orphans,
-    find_port_holders,
-)
+from aletheia.config.loader import bootstrap, get_data_dir, load_config
+from aletheia.gateway.logs import tail_all_logs
 from aletheia.gateway.network import local_frontdoor_host
-from aletheia.gateway.logs import tail_all_logs, log_path
-
+from aletheia.gateway.pidfile import (
+    clear_pid,
+    find_gateway_orphans,
+    find_port_holders,
+    is_running,
+    kill_pid_tree,
+    port_in_use,
+    read_pid,
+    wait_port_free,
+    write_pid,
+)
 
 _GATEWAY_STARTUP_TIMEOUT_SEC = 15.0
 _GATEWAY_STARTUP_TIMEOUT_DEBUG_HINT = (
@@ -103,7 +107,7 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> bool | No
             raise typer.Exit(1)
         _echo_stdout_safe("Gateway machine service start requested; use `gateway status` to confirm readiness.")
         return False
-    from aletheia.gateway.preflight import run_preflight_checks, assert_preflight_or_exit
+    from aletheia.gateway.preflight import assert_preflight_or_exit, run_preflight_checks
 
     try:
         cfg = bootstrap()
@@ -257,6 +261,7 @@ def _read_ready_beacon(cfg) -> bool:
     """
     try:
         import json as _json
+
         from aletheia.config.loader import get_data_dir
         path = get_data_dir() / "gateway.ready"
         if not path.exists():
@@ -367,8 +372,8 @@ def _circuit_break_state_path():
 def _write_circuit_break_state() -> None:
     """Persist a circuit-break timestamp so auto-reset can evaluate elapsed time."""
     try:
-        import json as _json
         import datetime as _dt
+        import json as _json
         path = _circuit_break_state_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
@@ -395,8 +400,8 @@ def _check_circuit_break_auto_reset() -> None:
     _RESET_WINDOW_SEC = 1800  # 30 minutes — same as the circuit-breaker trip window
 
     try:
-        import json as _json
         import datetime as _dt
+        import json as _json
         path = _circuit_break_state_path()
         if not path.exists():
             return
@@ -472,7 +477,6 @@ def _check_spawn_circuit_breaker() -> None:
     _CIRCUIT_BREAKER_WINDOW_SEC = 1800  # 30 minutes
 
     try:
-        import time
         from aletheia.files.jsonl import read_jsonl
         events = list(read_jsonl("audit.jsonl"))
         spawn_failures = [

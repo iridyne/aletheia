@@ -20,9 +20,9 @@ def _insert(db, pid, *, mode, qty=2.0, entry=100.0, entry_fee=0.1):
 # ── OKX reduce-only reference (mock the client) ──────────────────────────────
 
 def test_reduce_okx_places_reduce_only_and_records(monkeypatch):
-    from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import _select_one, list_position_close_events
     import aletheia.execution.okx_broker as okxb
+    from aletheia.storage.repositories import _select_one, list_position_close_events
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     _insert(db, "ok1", mode="okx_demo", qty=2.0, entry=100.0, entry_fee=0.1)
@@ -80,8 +80,8 @@ def test_router_full_exit_delegates_to_close(monkeypatch):
 
 
 def test_router_rejects_okx_reference_path(monkeypatch):
-    from aletheia.storage.sqlite import get_db
     import aletheia.execution.okx_broker as okxb
+    from aletheia.storage.sqlite import get_db
     _insert(get_db(), "ok2", mode="okx_demo", qty=2.0)
     monkeypatch.setattr(okxb, "reduce_okx_position",
                         lambda *args, **kwargs: (_ for _ in ()).throw(

@@ -13,7 +13,6 @@ from aletheia.trading.trading_mandate import (
     validate_frozen_trading_mandate_provenance,
 )
 
-
 HYPOTHESIS_CONTRACT_VERSION = "position_hypothesis/v1"
 _ALLOWED_INVALIDATIONS = frozenset(
     {

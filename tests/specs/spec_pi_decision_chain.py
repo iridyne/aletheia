@@ -420,9 +420,10 @@ def test_entry_discipline_market_default_local_limit_rejection_and_native_gate(m
     4. 四要素齐全的 exchange native limit 入场 → 不再触发 incomplete_entry_plan。
     """
     import inspect
+
     from aletheia.execution import paper_tools
-    from aletheia.storage.models import TradeProposal
     from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage.models import TradeProposal
 
     # 1. local paper is an immediate simulated fill, not a fake maker promise.
     sig = inspect.signature(paper_tools.create_paper_proposal)
@@ -784,11 +785,12 @@ def test_inverted_stop_tp_replaced_by_config_defaults(tmp_path, monkeypatch):
     """Short with tp=110 and stop=80 at price=100 (both inverted) must be corrected
     to config-default values before the Risk Engine, and stop_source must be 'default'."""
     import sqlite3
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
-    from aletheia.storage.sqlite import reset_db
-    from aletheia.storage.migrations import run_migrations
     from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import reset_db
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -802,9 +804,9 @@ def test_inverted_stop_tp_replaced_by_config_defaults(tmp_path, monkeypatch):
     run_migrations()
     init_tool_registry()
 
-    from aletheia.agent_shell.trading_decision import TradingDecision, prepare_decision_as_proposal
     import aletheia.agent_shell.trading_decision as td_module
     import aletheia.trust.guard_chain as gc
+    from aletheia.agent_shell.trading_decision import TradingDecision, prepare_decision_as_proposal
 
     monkeypatch.setattr(
         "aletheia.data.price_feed.get_fresh_price_for_protective_close",

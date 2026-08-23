@@ -16,7 +16,6 @@ from aletheia.storage.models import (
 )
 from aletheia.storage.sqlite import get_db
 
-
 _ACTIVATED_AT = "2026-08-08T03:00:00+00:00"
 _FIRST_BAR_OPEN_MS = 1_786_158_060_000
 

@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from threading import Lock
-import logging
-import time
 
 from aletheia.storage.sqlite import get_db
-
 
 logger = logging.getLogger("aletheia.data.data_coverage")
 _CACHE_TTL_SEC = 30.0

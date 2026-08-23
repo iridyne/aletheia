@@ -24,8 +24,6 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-import pytest
-
 
 def _setup_env(tmp_path: Path, monkeypatch) -> None:
     import aletheia.config.loader as loader
@@ -170,6 +168,7 @@ def test_inspect_config_reports_agent_permission_mode_under_agent_namespace(
     save_config(cfg)
 
     from typer.testing import CliRunner
+
     from aletheia.cli.inspect_cmd import inspect_app
 
     result = CliRunner().invoke(inspect_app, ["config", "--json"])

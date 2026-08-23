@@ -7,7 +7,6 @@ import json
 
 from aletheia.learning.registry import get_learning_path
 
-
 BEHAVIOR_CONTRACT_SCHEMA = "learning-behavior-contract/v1"
 
 

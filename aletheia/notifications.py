@@ -325,7 +325,7 @@ def notify_daily_summary() -> None:
         return
 
     try:
-        from aletheia.portfolio.pnl import today_realized_pnl, compute_portfolio
+        from aletheia.portfolio.pnl import compute_portfolio, today_realized_pnl
         realized = today_realized_pnl()
         portfolio = compute_portfolio()
         unrealized = float(portfolio.get("unrealized_pnl") or 0.0)

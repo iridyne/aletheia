@@ -9,11 +9,11 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+from aletheia.analytics.learning_window import outcome_window_metadata
 from aletheia.analytics.outcome_integrity import (
     eligible_strategy_outcomes,
     is_current_outcome_artifact,
 )
-from aletheia.analytics.learning_window import outcome_window_metadata
 
 logger = logging.getLogger("aletheia.analytics.confidence_calibration")
 
@@ -37,8 +37,8 @@ def build_calibration_report(window_days: int = CALIBRATION_WINDOW_DAYS) -> dict
     Returns CalibrationReport dict or None when insufficient data.
     """
     try:
-        from aletheia.storage.sqlite import get_db
         from aletheia.analytics.learning_window import clean_window_cutoff
+        from aletheia.storage.sqlite import get_db
         db = get_db()
         # Clean-window floor: never ingest pre-2026-06-25T15:22 dirty Round 1 data.
         cutoff = clean_window_cutoff(
@@ -228,8 +228,8 @@ def _persist_report(report: dict) -> None:
             if age_h < MIN_CALIBRATION_INTERVAL_HOURS:
                 return
 
-        from aletheia.storage.repositories import insert_knowledge_item
         from aletheia.storage.models import KnowledgeItem
+        from aletheia.storage.repositories import insert_knowledge_item
 
         insert_knowledge_item(KnowledgeItem(
             item_type="calibration_report",

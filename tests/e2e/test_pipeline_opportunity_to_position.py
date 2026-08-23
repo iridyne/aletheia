@@ -4,18 +4,15 @@ Verifies the SEAM between modules: field names match, filters align,
 and a valid opportunity can actually flow through to become a position.
 """
 
-import pytest
 from datetime import datetime, timezone
 
+from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
     MarketSnapshot,
     Opportunity,
     Position,
     TradeProposal,
-    RiskDecision,
-    Order,
 )
-from aletheia.storage import repositories as repo
 
 
 class TestOpportunityToRankerSeam:

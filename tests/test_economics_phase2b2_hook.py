@@ -29,7 +29,7 @@ from aletheia.model_provider.base import (
     ModelResponse,
     StructuredModelRequest,
 )
-from aletheia.model_provider.fallback import _observe_would_block, complete_with_fallback
+from aletheia.model_provider.fallback import _observe_would_block
 
 
 class _FakeProvider(ModelProvider):

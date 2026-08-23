@@ -8,8 +8,8 @@ authority score.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import math
+from dataclasses import dataclass, replace
 from numbers import Real
 from typing import Mapping, Sequence
 
@@ -20,7 +20,6 @@ from aletheia.universe.continuous_scoring import (
     evaluate_continuous_candidate,
 )
 from aletheia.universe.scanners import UNIVERSE_SCORER_BEHAVIOR_VERSION
-
 
 TWIN_SHADOW_RECORD_VERSION = "universe-twin-shadow-record-v1"
 

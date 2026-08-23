@@ -42,8 +42,8 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 def test_lifecycle_runtime_surface_exists():
     from aletheia.learning.authority import resolve_learning_authority
     from aletheia.learning.lifecycle import (
-        admit_shadow_trial,
         EXPERIMENT_IDLE_AFTER,
+        admit_shadow_trial,
         inspect_learning_experiment,
         measurement_to_lifecycle_action,
         process_lifecycle,

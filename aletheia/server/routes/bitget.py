@@ -4,15 +4,14 @@ Credentials are write-only over the API: POST accepts api_key/secret,
 GET only reports configured + last-4. Raw secrets are never returned.
 """
 
-import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from aletheia.config.loader import load_config
-from aletheia.config.secrets import set_secret, get_secret
-from aletheia.files.jsonl import write_audit
+from aletheia.config.secrets import get_secret, set_secret
 from aletheia.exchanges.bitget.auth import build_headers
-from aletheia.exchanges.bitget.client import BitgetClient, BASE_URL
+from aletheia.exchanges.bitget.client import BASE_URL, BitgetClient
+from aletheia.files.jsonl import write_audit
 from aletheia.trust.live_unlock import active_live_profile_conflict
 
 router = APIRouter(prefix="/api", tags=["bitget"])
@@ -402,9 +401,7 @@ async def uta_state():
     Never blocks on a network call.
     """
     from aletheia.config.loader import load_config
-    from aletheia.portfolio.exchange_sync import (
-        get_unified_cached_state, get_cached_state, status_for
-    )
+    from aletheia.portfolio.exchange_sync import get_cached_state, get_unified_cached_state, status_for
 
     unified = get_unified_cached_state()
     if unified is not None:

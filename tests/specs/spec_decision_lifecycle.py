@@ -250,12 +250,12 @@ def test_opportunity_producers_do_not_bypass_ranker_when_waking_operator():
 )
 def test_skip_decision_persists_evaluated_symbol_and_direction(tmp_path, monkeypatch):
     import asyncio
+
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
     _bypass_candidate_technical_preflight(monkeypatch)
-    from aletheia.agent_shell import commands, reflection, trading_decision
-    from aletheia.agent_shell import b2_evidence_policy
+    from aletheia.agent_shell import b2_evidence_policy, commands, reflection, trading_decision
     from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
     from aletheia.storage.repositories import (
         insert_market_snapshot,
@@ -426,6 +426,7 @@ def test_pending_queue_is_oldest_first_unresolved_and_reports_overflow(tmp_path,
 )
 def test_existing_final_decision_blocks_duplicate_proposal(tmp_path, monkeypatch):
     import asyncio
+
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
@@ -512,6 +513,7 @@ def test_existing_final_decision_blocks_duplicate_proposal(tmp_path, monkeypatch
 )
 def test_submission_exception_keeps_pending_source_retryable(tmp_path, monkeypatch):
     import asyncio
+
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
@@ -520,9 +522,8 @@ def test_submission_exception_keeps_pending_source_retryable(tmp_path, monkeypat
         DecisionUnavailable,
         TradingDecision,
     )
-    from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
+    from aletheia.storage.models import Opportunity, PiDecision
     from aletheia.storage.repositories import (
-        insert_market_snapshot,
         insert_opportunity,
         insert_pi_decision,
     )
@@ -617,6 +618,7 @@ def test_submission_exception_keeps_pending_source_retryable(tmp_path, monkeypat
 )
 def test_concurrent_duplicate_wake_submits_one_proposal(tmp_path, monkeypatch):
     import asyncio
+
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
@@ -731,7 +733,9 @@ def test_concurrent_duplicate_wake_submits_one_proposal(tmp_path, monkeypatch):
 )
 def test_final_claim_failure_prevents_proposal_side_effect(tmp_path, monkeypatch):
     import asyncio
+
     import pytest
+
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
@@ -817,6 +821,7 @@ def test_final_claim_failure_prevents_proposal_side_effect(tmp_path, monkeypatch
 )
 def test_llm_unavailable_keeps_oldest_pending_signal_retryable(tmp_path, monkeypatch):
     import asyncio
+
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
@@ -1809,7 +1814,9 @@ def test_serenity_pending_signal_is_not_hidden_by_market_queue_ttl(tmp_path, mon
     from aletheia.agent_shell.trading_context import _build_pending_signal_queue
     from aletheia.storage.models import PiDecision, SerenityOpportunity, SerenityTheme
     from aletheia.storage.repositories import (
-        insert_pi_decision, insert_serenity_opportunity, insert_serenity_theme,
+        insert_pi_decision,
+        insert_serenity_opportunity,
+        insert_serenity_theme,
     )
 
     # An active SerenityTheme + SerenityOpportunity are required for the signal to
@@ -1856,7 +1863,9 @@ def test_serenity_pending_signal_is_invisible_after_source_expires(tmp_path, mon
     from aletheia.agent_shell.trading_context import _build_pending_signal_queue
     from aletheia.storage.models import PiDecision, SerenityOpportunity, SerenityTheme
     from aletheia.storage.repositories import (
-        insert_pi_decision, insert_serenity_opportunity, insert_serenity_theme,
+        insert_pi_decision,
+        insert_serenity_opportunity,
+        insert_serenity_theme,
         update_serenity_theme,
     )
 
@@ -2634,9 +2643,9 @@ def test_unmatched_position_action_never_falls_back_to_opportunity_identity(acti
 def test_active_operator_rejects_unsupported_actions_as_retryable(action):
     from aletheia.agent_shell.trading_decision import (
         _DECISION_SCHEMA,
+        DecisionUnavailable,
         _build_assessment_prompt,
         _parse_decision,
-        DecisionUnavailable,
     )
 
     assert _DECISION_SCHEMA["properties"]["action"]["enum"] == ["trade", "skip"]
@@ -3208,7 +3217,9 @@ def test_neutral_skip_defers_but_adjacent_qualified_negative_becomes_terminal(
     from aletheia.agent_shell import b2_evidence_policy, commands, trading_decision
     from aletheia.storage.models import MarketSnapshot, Opportunity, PiDecision
     from aletheia.storage.repositories import (
-        insert_market_snapshot, insert_opportunity, insert_pi_decision,
+        insert_market_snapshot,
+        insert_opportunity,
+        insert_pi_decision,
     )
     from aletheia.storage.sqlite import get_db
 
@@ -5472,8 +5483,8 @@ def _seed_deferred_signal_pending(
 ) -> None:
     """Insert one queued Opportunity + its signal_pending carrier + an active
     defer event in a shape identical to production writes."""
-    from datetime import datetime, timedelta, timezone
     import json as _json
+    from datetime import datetime, timedelta, timezone
 
     from aletheia.storage.models import (
         OperatorEvaluationEvent,
@@ -5973,11 +5984,11 @@ def test_evicted_opportunity_not_in_operator_evaluated_set(tmp_path, monkeypatch
 )
 def test_trade_output_requires_authored_entry_plan_while_skip_does_not():
     from aletheia.agent_shell.trading_decision import (
-        DecisionUnavailable,
         _DECISION_SCHEMA,
-        _DummySchema,
         _ENTRY_PARAMETER_KEYS,
+        DecisionUnavailable,
         _build_assessment_prompt,
+        _DummySchema,
         _parse_decision,
     )
     from aletheia.agents.helpers import _validate_structured_payload

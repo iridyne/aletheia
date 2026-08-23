@@ -18,7 +18,6 @@ from typing import Any
 import aletheia.data.collectors.macro as macro_mod
 from aletheia.data.collectors.macro import MacroCollector, _fetch_fng
 
-
 # ---------------------------------------------------------------------------
 # Test scaffolding: fake httpx client
 # ---------------------------------------------------------------------------

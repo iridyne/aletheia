@@ -1,10 +1,9 @@
 """Bitget API authentication — HMAC-SHA256 request signing."""
 
-import hmac
-import hashlib
 import base64
+import hashlib
+import hmac
 import time
-from datetime import datetime, timezone
 
 
 def get_timestamp() -> str:

@@ -1,6 +1,5 @@
 """Tests for the secrets CLI (real implementation, not stubs)."""
 
-from unittest.mock import patch
 from typer.testing import CliRunner
 
 from aletheia.main import app

@@ -16,13 +16,12 @@ Usage:
 
 from __future__ import annotations
 
-from aletheia.analytics.outcome_integrity import (
-    eligible_strategy_outcomes,
-)
-
 from dataclasses import dataclass, field
 from typing import Callable
 
+from aletheia.analytics.outcome_integrity import (
+    eligible_strategy_outcomes,
+)
 from aletheia.config.loader import load_config
 from aletheia.storage import repositories as repo
 

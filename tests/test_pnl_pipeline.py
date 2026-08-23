@@ -10,18 +10,18 @@ Covers:
 """
 
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ISO
+from aletheia.portfolio.pnl import compute_and_store_snapshot, compute_portfolio
 from aletheia.server.app import app
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
-from aletheia.storage.models import Position, PortfolioSnapshot
 from aletheia.storage import repositories as repo
-from aletheia.portfolio.pnl import compute_portfolio, compute_and_store_snapshot
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.models import PortfolioSnapshot, Position
+from aletheia.storage.sqlite import reset_db
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -93,7 +93,7 @@ def db(tmp_path, monkeypatch):
 
 def test_exchange_upnl_is_scoped_to_its_broker_and_duplicate_is_rejected(db, monkeypatch):
     """Same-symbol exchange uPnL must never cross broker/account projections."""
-    from aletheia.portfolio import pnl, exchange_sync
+    from aletheia.portfolio import exchange_sync, pnl
 
     for mode in ("bitget_demo", "okx_demo", "binance_testnet"):
         repo.insert_position(Position(
@@ -561,6 +561,7 @@ class TestMarkExactInstrumentIdentity:
 
     def test_spot_and_perp_marked_independently(self, db, monkeypatch):
         from datetime import datetime, timezone
+
         from aletheia.data import price_feed
         from aletheia.portfolio import pnl
 
@@ -979,9 +980,10 @@ class TestAutoDeposit:
     """auto-record deposit should use available_usdt, not equity_usdt."""
 
     def test_uses_available_not_equity(self, db, monkeypatch):
+        from dataclasses import dataclass
+
         from aletheia.portfolio.exchange_sync import sync_all_exchanges
         from aletheia.portfolio.uta import manager as uta_mgr
-        from dataclasses import dataclass
 
         @dataclass
         class FakeUnified:
@@ -1023,9 +1025,10 @@ class TestAutoDeposit:
         assert events[0]["broker_id"] == "test_broker"
 
     def test_falls_back_to_equity_when_available_zero(self, db, monkeypatch):
+        from dataclasses import dataclass
+
         from aletheia.portfolio.exchange_sync import sync_all_exchanges
         from aletheia.portfolio.uta import manager as uta_mgr
-        from dataclasses import dataclass
 
         @dataclass
         class FakeUnified:
@@ -1064,9 +1067,10 @@ class TestAutoDeposit:
         assert events[0]["amount_usdt"] == 5000.0
 
     def test_no_duplicate_deposit_on_repeat_sync(self, db, monkeypatch):
+        from dataclasses import dataclass
+
         from aletheia.portfolio.exchange_sync import sync_all_exchanges
         from aletheia.portfolio.uta import manager as uta_mgr
-        from dataclasses import dataclass
 
         @dataclass
         class FakeUnified:
@@ -1145,8 +1149,8 @@ class TestTodayRawClosedRealizedPnl:
         execution_mode: str = "paper_internal",
     ) -> None:
         """Insert a futures close with NULL funding (economics incomplete)."""
-        from aletheia.storage.models import Position
         from aletheia.storage import repositories as repo
+        from aletheia.storage.models import Position
 
         closed_at = datetime.now(timezone.utc).isoformat()
         repo.insert_position(Position(
@@ -1176,7 +1180,7 @@ class TestTodayRawClosedRealizedPnl:
 
     def test_all_complete_closes_returns_numeric_total(self, db):
         """All closes complete: scalar returns the exact sum."""
-        from aletheia.portfolio.pnl import today_realized_pnl, today_raw_closed_realized_pnl
+        from aletheia.portfolio.pnl import today_raw_closed_realized_pnl, today_realized_pnl
 
         self._insert_complete_spot_close(position_id="c-all-1", realized_pnl=-5.0)
         self._insert_complete_spot_close(position_id="c-all-2", realized_pnl=2.0)
@@ -1187,7 +1191,7 @@ class TestTodayRawClosedRealizedPnl:
 
     def test_mixed_complete_and_incomplete_returns_none(self, db):
         """One incomplete close contaminates the scalar: must return None."""
-        from aletheia.portfolio.pnl import today_realized_pnl, today_raw_closed_realized_pnl
+        from aletheia.portfolio.pnl import today_raw_closed_realized_pnl, today_realized_pnl
 
         self._insert_complete_spot_close(position_id="m-complete", realized_pnl=-5.0)
         self._insert_incomplete_close("m-incomplete")

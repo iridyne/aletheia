@@ -7,12 +7,10 @@ are untouched. Network is mocked.
 
 import sqlite3
 
-import pytest
-
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import Fill, Order, Position
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):

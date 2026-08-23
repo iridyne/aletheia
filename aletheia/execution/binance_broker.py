@@ -18,9 +18,10 @@ from aletheia.data.symbols import to_binance, to_ccxt_perp
 from aletheia.exchanges.binance.client import BinanceClient, OrderRequest
 from aletheia.exchanges.submission_errors import (
     ClosePositionAbsentError,
+)
+from aletheia.exchanges.submission_errors import (
     is_ambiguous_submission_error as _is_ambiguous_submission_error,
 )
-from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.execution.broker_utils import (
     close_acknowledgement_result,
     entry_acknowledgement_result,
@@ -29,15 +30,16 @@ from aletheia.execution.close_convergence import (
     CLOSE_CLAIM_STATES,
     has_unresolved_close_claim,
 )
+from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.execution.post_commit_audit import write_post_commit_audit
-from aletheia.execution.position_enrichment import build_entry_enrichment, liquidation_price_for
-from aletheia.execution.stops import merge_protective_stop
-from aletheia.storage.models import Order, Fill, Position
+from aletheia.storage.models import Order
 from aletheia.storage.repositories import (
     finalize_exchange_acknowledgement,
     find_compatible_open_position,
-    insert_order, insert_fill, insert_position, update_position,
-    update_order, transaction,
+    insert_order,
+    transaction,
+    update_order,
+    update_position,
 )
 from aletheia.storage.sqlite import get_db
 
@@ -541,7 +543,6 @@ def close_testnet_position(
     `binance_live_limited` that dangling position holds REAL funds.
     """
     from aletheia.storage import repositories as repo
-    from aletheia.portfolio.pnl import close_position
 
     row, close_order, close_requested_at = _claim_close_order(
         position_id,

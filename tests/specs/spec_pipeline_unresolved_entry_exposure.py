@@ -12,7 +12,6 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 _UNRESOLVED_ENTRY_STATES = (
     "submitted",
     "partial",
@@ -91,9 +90,9 @@ def _seed_entry_order(
     position_quantity: float | None = None,
     leverage: int | None = None,
 ):
-    from tests.execution_authority import seed_order_authority
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Fill, Order, Position
+    from tests.execution_authority import seed_order_authority
 
     proposal, decision = seed_order_authority(
         proposal_id=f"proposal-uee-{suffix}",
@@ -877,10 +876,10 @@ def test_partial_averaging_leg_uses_all_position_entry_fills(
     )
     assert position is not None
 
-    from tests.execution_authority import seed_order_authority
     from aletheia.risk import engine
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Fill, Order
+    from tests.execution_authority import seed_order_authority
 
     proposal, decision = seed_order_authority(
         proposal_id="proposal-averaging-later",
@@ -1059,9 +1058,9 @@ def test_unresolved_close_order_does_not_add_entry_exposure(tmp_path, monkeypatc
     _setup_db(tmp_path, monkeypatch)
     _risk_config(monkeypatch)
 
-    from tests.execution_authority import seed_order_authority
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order, Position
+    from tests.execution_authority import seed_order_authority
 
     proposal, _ = seed_order_authority(
         proposal_id="proposal-uee-close",

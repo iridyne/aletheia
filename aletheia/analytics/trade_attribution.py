@@ -199,13 +199,13 @@ def build_trade_attribution_rows(
                 rows.append(row)
         except AttributionReadError as e:
             read_errors.append(str(e))
-    
+
     # Log read errors (cannot change return signature to include error count)
     if read_errors:
         logger.warning("build_trade_attribution_rows: %d read errors", len(read_errors))
         for err in read_errors[:5]:  # first 5 for diagnosis
             logger.warning("  %s", err)
-    
+
     return (rows, source_truncated) if include_source_status else rows
 
 
@@ -422,7 +422,6 @@ def _compute_holding_hours(opened_at: str | None, closed_at: str | None) -> floa
     if not opened_at or not closed_at:
         return None
     try:
-        from datetime import datetime, timezone
         fmt_patterns = ["%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"]
         t_open = _parse_dt(opened_at, fmt_patterns)
         t_close = _parse_dt(closed_at, fmt_patterns)

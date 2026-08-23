@@ -29,7 +29,6 @@ from aletheia.universe.scanners import (
     score_volatility,
 )
 
-
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "universe_step_score_v3.json"
 _SCANNERS = {
     "momentum": score_momentum,

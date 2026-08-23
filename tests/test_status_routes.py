@@ -106,12 +106,12 @@ async def test_infra_status_includes_runtime_routing_context(client, tmp_path, m
 
 @pytest.mark.anyio
 async def test_status_reports_actual_scheduler_and_health(client, monkeypatch):
-    import aletheia.agent_runtime.scheduler as scheduler
-    import aletheia.agent_runtime.health as health
     import aletheia.agent_runtime.build_info as build_info
-    import aletheia.update.git_ops as git_ops
-    import aletheia.server.routes.health as health_routes
     import aletheia.agent_runtime.connectivity as connectivity
+    import aletheia.agent_runtime.health as health
+    import aletheia.agent_runtime.scheduler as scheduler
+    import aletheia.server.routes.health as health_routes
+    import aletheia.update.git_ops as git_ops
 
     monkeypatch.setattr(health_routes, "_cached_head_commit", lambda ttl_sec=60.0: "new")
     monkeypatch.setattr(

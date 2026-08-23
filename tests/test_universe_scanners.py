@@ -1,9 +1,15 @@
 """Tests for universe scanner families."""
 
 import pytest
+
 from aletheia.universe.scanners import (
-    score_momentum, score_mean_reversion, score_volatility,
-    score_derivatives, score_event, score_short_bias, run_all_scanners,
+    run_all_scanners,
+    score_derivatives,
+    score_event,
+    score_mean_reversion,
+    score_momentum,
+    score_short_bias,
+    score_volatility,
 )
 
 

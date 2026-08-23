@@ -1,8 +1,8 @@
 """B1.1 regression: Ranker supply drought cannot permanently seal PI input."""
 
 import json
-from pathlib import Path
 from datetime import timedelta
+from pathlib import Path
 
 from aletheia.simulation.control_loop import ControlLoopHarness
 from aletheia.simulation.control_loop.invariants import assert_invariants

@@ -19,16 +19,16 @@ closes positions itself.
 """
 from __future__ import annotations
 
-import logging
 import dataclasses
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import log_tool
 from aletheia.agents.paper_trader_ranker import build_paper_candidate_workset
-from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
 from aletheia.storage.repositories import (
     atomic_replace_queued_carrier,

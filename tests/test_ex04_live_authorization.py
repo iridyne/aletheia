@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 
 def _fresh_live_evidence(cfg, trust) -> dict:
     """Build a valid unlock_evidence dict for the configured live account.
@@ -65,8 +63,8 @@ def _setup_live_workspace(tmp_path, monkeypatch, *, broker: str = "okx", unlock:
     sq._db_conn = conn
     run_migrations()
 
-    from aletheia.config.loader import load_config, save_config
     import aletheia.trust.live_unlock as trust
+    from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
     cfg.exchange.name = broker
@@ -205,7 +203,6 @@ def test_execution_rejects_scope_mismatch_after_reunlock(tmp_path, monkeypatch):
     even when Risk approves — this is the "wrong scope / Proposal predates
     authorization" defense line."""
     cfg, trust = _setup_live_workspace(tmp_path, monkeypatch, broker="okx", unlock=True)
-    from aletheia.config.loader import load_config, save_config
     from aletheia.execution.gateway import execute_existing_proposal
     from aletheia.storage.models import TradeProposal
     from aletheia.storage.repositories import insert_trade_proposal

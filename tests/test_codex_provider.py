@@ -177,8 +177,9 @@ async def test_structured_extracts_json_from_prose(monkeypatch):
     )
     procs = {"exec": _FakeProc(stdout=stdout, returncode=0)}
     monkeypatch.setattr("asyncio.create_subprocess_exec", _fake_exec_factory([], procs))
-    from aletheia.model_provider.base import StructuredModelRequest
     from pydantic import BaseModel
+
+    from aletheia.model_provider.base import StructuredModelRequest
 
     class S(BaseModel):
         direction_bias: str = "neutral"

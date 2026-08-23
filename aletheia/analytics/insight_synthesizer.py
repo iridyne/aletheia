@@ -16,11 +16,11 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypedDict
 
+from aletheia.analytics.learning_window import outcome_window_metadata
 from aletheia.analytics.outcome_integrity import (
     eligible_strategy_outcomes,
     is_current_outcome_artifact,
 )
-from aletheia.analytics.learning_window import outcome_window_metadata
 
 logger = logging.getLogger("aletheia.analytics.insight_synthesizer")
 
@@ -177,8 +177,8 @@ async def synthesize_trading_memo(window_days: int = 30) -> TradingMemo | None:
 def _gather_statistics(window_days: int) -> dict[str, Any] | None:
     """Gather all statistics needed for memo generation."""
     try:
-        from aletheia.storage.repositories import get_latest_market_regime
         from aletheia.analytics.learning_window import clean_window_cutoff
+        from aletheia.storage.repositories import get_latest_market_regime
         # Clean-window floor: never ingest pre-2026-06-25T15:22 dirty Round 1 data.
         cutoff = clean_window_cutoff(
             (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
@@ -494,8 +494,8 @@ Focus on: what specific combination of regime + direction + timing gives the str
 def _persist_memo(memo: TradingMemo) -> None:
     """Store memo as a knowledge item for FTS retrieval + direct lookup."""
     try:
-        from aletheia.storage.repositories import insert_knowledge_item
         from aletheia.storage.models import KnowledgeItem
+        from aletheia.storage.repositories import insert_knowledge_item
 
         k = KnowledgeItem(
             item_type="trading_memo",

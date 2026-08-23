@@ -5,11 +5,11 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 
 from aletheia.analytics.factor_feedback import (
-    build_factor_feedback,
-    lookup_factor_signal,
     _classify_factor,
     _compute_group_stats,
     _max_consecutive_losses,
+    build_factor_feedback,
+    lookup_factor_signal,
 )
 
 

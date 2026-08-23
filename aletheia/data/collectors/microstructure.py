@@ -23,7 +23,7 @@ class MicrostructureCollector:
         errors: list[str] = []
 
         try:
-            from aletheia.data.symbols import to_ccxt_perp, InstrumentId
+            from aletheia.data.symbols import InstrumentId
 
             exchange = provider._ensure_primary()
             try:

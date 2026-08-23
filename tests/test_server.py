@@ -3,7 +3,7 @@
 import logging
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 from aletheia.server.app import app
 
@@ -17,8 +17,8 @@ def anyio_backend():
 async def client(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
-    from aletheia.storage.sqlite import reset_db
     from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import reset_db
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
@@ -188,8 +188,8 @@ async def test_tunnel_guard_protects_lesson_management_actions(client):
 
 @pytest.mark.anyio
 async def test_guard_candidate_can_be_listed_and_manually_promoted(client):
-    from aletheia.knowledge.manager import create_guard_candidate
     from aletheia.knowledge.guards import load_trading_guards
+    from aletheia.knowledge.manager import create_guard_candidate
     from aletheia.storage import repositories as repo
     from aletheia.storage.event_store import get_event_store
 
@@ -241,8 +241,8 @@ async def test_guard_candidate_promote_rejects_missing_guard(client):
 
 @pytest.mark.anyio
 async def test_guard_reads_fail_with_stable_unavailable_response(client, monkeypatch):
-    import aletheia.knowledge.guards as guards
     import aletheia.analytics.guard_effectiveness as guard_effectiveness
+    import aletheia.knowledge.guards as guards
 
     monkeypatch.setattr(
         guards,

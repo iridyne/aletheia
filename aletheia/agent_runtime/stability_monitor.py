@@ -10,13 +10,16 @@ Read-only against state. Never modifies anything (an inconsistency is REPORTED,
 not silently repaired — repair is a deliberate human act, trust §1.1).
 """
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aletheia.storage.repositories import (
-    list_orders, list_fills, list_positions, list_trade_proposals, list_agent_runs,
+    list_agent_runs,
+    list_fills,
+    list_orders,
+    list_positions,
+    list_trade_proposals,
 )
-
 
 _FAILED_STATUSES = {"failed", "error", "stale", "timed_out"}
 

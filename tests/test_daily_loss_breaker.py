@@ -9,10 +9,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from aletheia.storage.sqlite import reset_db
+from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import TradeProposal
-from aletheia.storage import repositories as repo
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -37,8 +37,8 @@ def test_realized_losses_trip_breaker_via_close(tmp_path, monkeypatch):
     save_config(cfg)
 
     from aletheia.portfolio.pnl import today_realized_pnl
-    from aletheia.risk.engine import evaluate_proposal
     from aletheia.risk import kill_switch
+    from aletheia.risk.engine import evaluate_proposal
     from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     # The default Demo denominator is authoritative paper account equity; this
@@ -74,6 +74,7 @@ def test_partial_close_ledger_read_failure_marks_snapshot_unavailable(tmp_path, 
     setup_env(tmp_path, monkeypatch)
 
     import sqlite3 as _sqlite3
+
     import aletheia.storage.repositories as _repo
     monkeypatch.setattr(_repo, "list_position_close_events",
                         lambda **_kw: (_ for _ in ()).throw(_sqlite3.OperationalError("no such table")))
@@ -87,9 +88,9 @@ def test_partial_close_ledger_read_failure_marks_snapshot_unavailable(tmp_path, 
     assert snapshot.loss_usdt is None
 
     # Risk engine must emit account_loss_unavailable and reject any proposal.
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
     from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     p = TradeProposal(symbol="ETH/USDT", market_type="spot", direction="long",
                       execution_mode="paper_internal", quantity=0.001, price=3000)

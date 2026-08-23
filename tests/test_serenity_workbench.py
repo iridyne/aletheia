@@ -1,18 +1,20 @@
 """Tests for the Serenity Research Workbench: runs, events, profiles, worker."""
 
 import json
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, AsyncMock
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 from aletheia.server.app import app
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import (
-    SerenityResearchRun, SerenityRunEvent, SerenityUserProfile,
-    SerenityProfileSnapshot, SerenityFeedbackEvent, SerenityTheme,
+    SerenityResearchRun,
+    SerenityRunEvent,
+    SerenityTheme,
 )
+from aletheia.storage.sqlite import reset_db
 
 
 @pytest.fixture
@@ -755,7 +757,7 @@ def test_lock_same_owner_blocked(db):
 
 
 def test_lock_expiry(db):
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
     # Insert an already-expired lock directly — avoids a real 1.2s sleep.
     past = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
     db.execute(
@@ -1057,7 +1059,6 @@ async def test_pipeline_full_stages(tmp_path, monkeypatch):
     assert len(stage_events) >= 8  # started+completed for 4 stages
 
     # Check claims created
-    from aletheia.storage.models import SerenityClaim
     claims = repo.list_serenity_claims(run_id=run.id)
     assert len(claims) >= 1
 
@@ -1087,7 +1088,7 @@ async def test_pipeline_cancellation(tmp_path, monkeypatch):
     run = SerenityResearchRun(trigger_type="manual", mode="standard", status="running")
     repo.insert_serenity_research_run(run)
 
-    from aletheia.agents.research_worker import _should_cancel, _check_cancellation, _CancelledError
+    from aletheia.agents.research_worker import _CancelledError, _check_cancellation, _should_cancel
 
     assert _should_cancel(run.id) is False
 

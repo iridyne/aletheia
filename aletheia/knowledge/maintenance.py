@@ -41,8 +41,8 @@ def reclassify_legacy_reviews(*, dry_run: bool = False) -> dict:
     Never raises into the caller for the count probe; the UPDATE itself is allowed to
     surface errors so a partial mutation is visible rather than silently swallowed.
     """
-    from aletheia.storage.sqlite import get_db
     from aletheia.knowledge.retrieval import reindex_all
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     matched = db.execute(
@@ -90,9 +90,9 @@ def archive_synthetic_trade_case_studies(*, dry_run: bool = False) -> dict:
     archived so they disappear from active Learning reads and from the high-confidence
     FTS retrieval pool after reindexing.
     """
-    from aletheia.storage.sqlite import get_db
-    from aletheia.knowledge.retrieval import reindex_all
     from aletheia.analytics.close_reasons import SYNTHETIC_CLOSE_REASONS
+    from aletheia.knowledge.retrieval import reindex_all
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     like_clauses: list[str] = []
@@ -156,8 +156,8 @@ def downgrade_unindexable_high_confidence_items(*, dry_run: bool = False) -> dic
     stubs, not learnable material. This keeps the row intact but changes confidence
     to medium_confidence so FTS coverage probes stop counting it as eligible.
     """
-    from aletheia.storage.sqlite import get_db
     from aletheia.knowledge.retrieval import reindex_all
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     rows = db.execute(
@@ -229,8 +229,8 @@ def backfill_content_from_disk(*, dry_run: bool = False) -> dict:
     that gap so a subsequent runtime move / disk cleanup cannot break FTS.
     Idempotent, additive — never truncates or hard-deletes.
     """
-    from aletheia.storage.sqlite import get_db
     from aletheia.knowledge.retrieval import _read_body, reindex_all
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     rows = db.execute(
@@ -283,9 +283,9 @@ def downgrade_unattributed_trade_case_studies(*, dry_run: bool = False) -> dict:
     direction, or prose would fabricate attribution. Keep the row active/auditable,
     but move it out of the high-confidence learning pool.
     """
-    from aletheia.storage.sqlite import get_db
     from aletheia.knowledge.frontmatter import parse_frontmatter, parse_frontmatter_text
     from aletheia.knowledge.retrieval import reindex_all
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     rows = db.execute(

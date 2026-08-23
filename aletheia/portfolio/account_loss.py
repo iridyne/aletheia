@@ -193,8 +193,8 @@ def _inline_reconcile_orphans(orphaned_ids: set, row_by_id: dict) -> None:
     calling settle_position_closed().  Prevention: always go through the normal
     close path or explicitly call settle_position_closed() after any direct write.
     """
-    from aletheia.portfolio.paper_account import settle_position_closed
     from aletheia.files.jsonl import write_audit, write_error
+    from aletheia.portfolio.paper_account import settle_position_closed
 
     for position_id in sorted(orphaned_ids):
         row = row_by_id.get(position_id)

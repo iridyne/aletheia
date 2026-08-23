@@ -12,18 +12,17 @@ trading/risk/execution behavior.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone, timedelta
 import hashlib
 import json
 import math
-from pathlib import Path
 import re
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
 from aletheia.data.models import PerpStructureSnapshot
-
 
 _COMPOSITE_WEIGHTS = {
     "cgo": 0.95136998,

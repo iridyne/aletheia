@@ -1,12 +1,12 @@
 """Tests for the knowledge reference router."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from aletheia.knowledge.router import (
+    _ITEM_TYPES_BY_ROLE,
+    _build_guard_advisory,
     build_advisory_context,
     retrieve_for_role,
-    _build_guard_advisory,
-    _ITEM_TYPES_BY_ROLE,
 )
 
 

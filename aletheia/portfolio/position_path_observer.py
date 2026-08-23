@@ -8,9 +8,9 @@ rather than guessed, so later analysis can distinguish absence from zero.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
 import math
 import time
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, cast
 

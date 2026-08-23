@@ -6,7 +6,6 @@ the verification URL + user code from its stdout to show in the web UI, and poll
 All subprocess interaction is mocked.
 """
 
-import asyncio
 
 import pytest
 
@@ -147,8 +146,8 @@ async def test_codex_auth_passes_create_no_window_on_windows(monkeypatch, tmp_pa
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
-    import aletheia.model_provider.codex_auth as auth
     import aletheia.gateway.pidfile as pidfile
+    import aletheia.model_provider.codex_auth as auth
     monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
     monkeypatch.setattr(auth.shutil, "which", lambda c: "/usr/bin/codex")
 

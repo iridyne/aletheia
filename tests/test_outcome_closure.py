@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-import json
 
 import pytest
 
@@ -734,7 +734,9 @@ def _position(*, execution_mode: str = "paper_internal") -> Position:
 
 def _verified_result(position: Position):
     from aletheia.execution.verified_exit import (
-        VerifiedExitFill, VerifiedExitRequest, classify_verified_exit,
+        VerifiedExitFill,
+        VerifiedExitRequest,
+        classify_verified_exit,
     )
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     request = VerifiedExitRequest(
@@ -1007,6 +1009,7 @@ def test_verified_close_applies_clean_window_before_running_outcome_hooks(monkey
 
 def test_ready_candidate_uses_protocol_and_resolves_after_admin_close(monkeypatch):
     from dataclasses import replace
+
     from aletheia.portfolio import disappearance_settlement
     from aletheia.storage.models import PositionDisappearanceCandidate
 
@@ -1049,6 +1052,7 @@ def test_ready_candidate_uses_protocol_and_resolves_after_admin_close(monkeypatc
 
 def test_live_ready_candidate_queries_read_only_and_inconclusive_stays_open(monkeypatch):
     from dataclasses import replace
+
     from aletheia.portfolio import disappearance_settlement
     from aletheia.storage.models import PositionDisappearanceCandidate
 

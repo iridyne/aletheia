@@ -1,6 +1,7 @@
 """Common file path helpers."""
 
 from pathlib import Path
+
 from aletheia.config.loader import get_data_dir
 
 

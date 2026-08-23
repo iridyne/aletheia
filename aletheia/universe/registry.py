@@ -10,9 +10,8 @@ import logging
 from datetime import datetime, timezone
 
 from aletheia.config.schema import AletheiaConfig
-from aletheia.data.symbols import to_canonical
-from aletheia.storage.models import UniverseAsset
 from aletheia.storage import repositories as repo
+from aletheia.storage.models import UniverseAsset
 
 logger = logging.getLogger("aletheia.universe.registry")
 

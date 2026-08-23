@@ -1,6 +1,5 @@
 """Tests for the spot-sweep gamma flip estimation (issue #1161)."""
 
-import math
 
 from aletheia.data.collectors.options_structure import _bsm_gamma, _gamma_flip_spot_sweep
 

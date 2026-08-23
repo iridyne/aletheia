@@ -4,12 +4,12 @@ Verifies that an open position with stop_loss set correctly triggers close
 when price breaches it, and that the close writes realized_pnl correctly.
 """
 
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
-from aletheia.storage.models import Position
+import pytest
+
 from aletheia.storage import repositories as repo
-from aletheia.portfolio.pnl import close_position
+from aletheia.storage.models import Position
 
 
 class TestStopLossCloses:
@@ -236,8 +236,8 @@ class TestMarketAwareExitIntegration:
             "aletheia.agents.helpers.llm_structured",
             choose_hold,
         )
-        from aletheia.agent_shell.commands import review_portfolio_state
         from aletheia.agent_runtime.wake_events import WakeBatch
+        from aletheia.agent_shell.commands import review_portfolio_state
 
         review = await review_portfolio_state({
             "trigger": ADVERSE_SIGNAL,

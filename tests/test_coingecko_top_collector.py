@@ -12,14 +12,11 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from aletheia.data.collectors import coingecko_top as cg_mod
 from aletheia.data.collectors.coingecko_top import (
     CoinGeckoTopCollector,
     _build_movers_summary,
 )
-
 
 # ---------- helpers ----------
 

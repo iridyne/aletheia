@@ -1,10 +1,10 @@
 """Tests for universe signal_emitter — deterministic direction inference + opportunity emission."""
 
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 from aletheia.universe.signal_emitter import _infer_direction, emit_deterministic_opportunities
-
 
 # ── _infer_direction ────────────────────────────────────────────────────────
 
@@ -469,6 +469,7 @@ class TestEmitDeterministicOpportunities:
 
         setup_env(tmp_path, monkeypatch)
         from contextlib import nullcontext
+
         from aletheia.analytics import filter_evidence
         from aletheia.storage import repositories as repo
         from aletheia.storage.sqlite import get_db

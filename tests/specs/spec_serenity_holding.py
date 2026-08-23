@@ -27,7 +27,6 @@ pipeline contracts).
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from tests.specs.spec_meta import SpecClaim, spec_claim

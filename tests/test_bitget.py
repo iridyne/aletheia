@@ -1,6 +1,6 @@
 """Tests for Bitget adapter: auth signing, demo header, live blocking."""
 
-from aletheia.exchanges.bitget.auth import sign_request, build_headers, get_timestamp
+from aletheia.exchanges.bitget.auth import build_headers, get_timestamp, sign_request
 
 
 def test_sign_request_deterministic():

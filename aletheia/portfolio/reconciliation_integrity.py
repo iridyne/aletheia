@@ -8,15 +8,14 @@ explicit operator action resolves the incident.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
-from aletheia.storage.models import AuditEvent, ReconciliationIntegrityIncident
 from aletheia.storage import repositories as repo
-
+from aletheia.storage.models import AuditEvent, ReconciliationIntegrityIncident
 
 INCIDENT_TYPE = "close_reopen_churn"
 MIN_CLEAN_OBSERVATIONS = 2

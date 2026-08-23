@@ -14,19 +14,19 @@ without GitHub Actions, GitHub Pages, or a permanently running release service.
 from __future__ import annotations
 
 import argparse
-from contextlib import AbstractContextManager
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from functools import partial
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import threading
 import time
+from contextlib import AbstractContextManager
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 

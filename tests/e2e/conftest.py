@@ -7,6 +7,7 @@ Key difference from unit tests:
 """
 
 import sqlite3
+
 import pytest
 
 import aletheia.config.loader as loader

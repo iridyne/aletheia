@@ -389,7 +389,6 @@ def test_live_reconciler_routes_ready_candidate_to_verified_settlement(
 ):
     import yaml
 
-    from tests.test_position_reconciler import _stub_cache, setup_env
     from aletheia.config import loader
     from aletheia.portfolio import (
         disappearance_confirmation,
@@ -398,6 +397,7 @@ def test_live_reconciler_routes_ready_candidate_to_verified_settlement(
     )
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
+    from tests.test_position_reconciler import _stub_cache, setup_env
 
     setup_env(tmp_path, monkeypatch)
     loader.CONFIG_PATH.write_text(

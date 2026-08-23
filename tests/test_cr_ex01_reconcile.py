@@ -67,8 +67,8 @@ def _insert_order(db, oid, mode, *, status="submitted", ex_id="ex-1"):
 
 
 def test_reconcile_marks_missing_as_filled(monkeypatch):
+    from aletheia.storage.repositories import _select_one, list_orders
     from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import list_orders, _select_one
 
     db = get_db()
     _insert_order(db, "o1", "okx_live_limited", ex_id="still-open")
@@ -83,8 +83,8 @@ def test_reconcile_marks_missing_as_filled(monkeypatch):
 
 
 def test_reconcile_fetch_failure_infers_nothing(monkeypatch):
+    from aletheia.storage.repositories import _select_one, list_orders
     from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import list_orders, _select_one
 
     db = get_db()
     _insert_order(db, "o3", "binance_live_limited", ex_id="whatever")

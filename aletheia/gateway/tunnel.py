@@ -5,8 +5,8 @@ via a Cloudflare Named Tunnel. The tunnel process is started/stopped alongside
 the gateway and tracked via a pidfile at data/tunnel.pid.
 """
 
-import logging
 import json
+import logging
 import os
 import platform
 import shutil

@@ -8,9 +8,9 @@ import asyncio
 import logging
 
 from aletheia.config.loader import load_config
-from aletheia.data.symbols import InstrumentId, MARKET_SPOT, MARKET_PERP, to_canonical, to_bitget
+from aletheia.data.symbols import MARKET_PERP, MARKET_SPOT, InstrumentId, to_bitget, to_canonical
 from aletheia.storage.models import MarketSnapshot
-from aletheia.storage.repositories import insert_market_snapshot, insert_market_snapshot_batch
+from aletheia.storage.repositories import insert_market_snapshot_batch
 from aletheia.trading.instruments import (
     MARKET_USDT_FUTURES,
     observed_instruments_from_config,
@@ -327,7 +327,7 @@ async def collect_market_snapshots() -> dict:
     # tokens (AAPLON/USDT etc.) are dropped here before any network call is made.
     # fail-open: if the cache cannot load (network down), all xStocks are kept.
     if _xstocks_raw:
-        from aletheia.data.venue_listing_cache import get_venue_listing, filter_by_listing
+        from aletheia.data.venue_listing_cache import filter_by_listing, get_venue_listing
         _bitget_listing = await get_venue_listing("bitget")
         xstocks = filter_by_listing(_xstocks_raw, listing=_bitget_listing, venue="bitget")
     else:

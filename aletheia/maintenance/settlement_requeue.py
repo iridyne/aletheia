@@ -36,7 +36,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 # Queues that share the one observation layer and therefore shared the defect.
 _TABLES = (
     "filter_candidate_outcomes",

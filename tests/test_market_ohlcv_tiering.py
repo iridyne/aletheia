@@ -1,12 +1,13 @@
-import pytest
 import sqlite3
+
+import pytest
 
 from aletheia.storage.market_ohlcv_tiering import (
     ColdWriteReceipt,
     MemoryColdOHLCVBackend,
     OHLCVSeriesIdentity,
-    OHLCVTierManager,
     OHLCVTieringPolicy,
+    OHLCVTierManager,
 )
 
 

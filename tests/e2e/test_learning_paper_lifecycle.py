@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from collections import Counter
-from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import math
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 
-from httpx import ASGITransport, AsyncClient
 import pytest
+from httpx import ASGITransport, AsyncClient
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
-
 
 _PATH_ID = "universe_family_calibration"
 _FAMILY = "momentum"
@@ -34,8 +33,6 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     tmp_path,
 ):
     """Prove expose -> settle -> admit -> treat -> harm -> refreeze -> fallback."""
-    from aletheia.config import loader, secrets
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.files.jsonl as jsonl_file
     import aletheia.learning.contribution_runner as contribution_runner
     import aletheia.learning.experiments as experiments
@@ -43,6 +40,8 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     import aletheia.learning.models as learning_models
     import aletheia.learning.policy_epochs as policy_epochs
     import aletheia.universe.filter_outcome_recorder as filter_settler
+    from aletheia.config import loader, secrets
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.learning.authority import resolve_learning_authority
     from aletheia.learning.cohorts import build_experiment_cohorts
     from aletheia.learning.contribution_runner import evaluate_experiment

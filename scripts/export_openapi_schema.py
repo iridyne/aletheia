@@ -10,7 +10,6 @@ import argparse
 import json
 from pathlib import Path
 
-
 DEFAULT_OUTPUT = Path("docs/_generated/openapi.json")
 
 

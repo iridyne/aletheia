@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import fcntl
-from pathlib import Path
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest

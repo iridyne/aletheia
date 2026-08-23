@@ -34,7 +34,8 @@ from __future__ import annotations
 
 import json
 
-from hypothesis import HealthCheck, given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from aletheia.economics.context_artifacts import (
     _ALLOWED_FRESHNESS,
@@ -44,7 +45,6 @@ from aletheia.economics.context_artifacts import (
     _metadata,
     record_context_artifacts,
 )
-
 
 # --------------------------------------------------------------------------- #
 # Strategies

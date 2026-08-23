@@ -347,8 +347,8 @@ def test_paper_replay_rechecks_kill_switch_before_dispatch(tmp_path, monkeypatch
     conn = _setup_db(tmp_path, monkeypatch)
     cfg = _risk_config(monkeypatch, demo_slots=2)
 
-    from aletheia.execution import gateway
     import aletheia.risk.engine as engine
+    from aletheia.execution import gateway
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Opportunity, TradeProposal
 
@@ -453,8 +453,8 @@ def test_terminal_no_order_reservation_is_inactive_after_cleanup_failure(
     conn = _setup_db(tmp_path, monkeypatch)
     _risk_config(monkeypatch, demo_slots=1)
 
-    from aletheia.execution import gateway
     import aletheia.risk.engine as engine
+    from aletheia.execution import gateway
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Opportunity, TradeProposal
 
@@ -613,10 +613,10 @@ def test_open_position_working_set_and_paper_merge_are_unbounded(tmp_path, monke
 def test_market_collection_keeps_every_open_position_instrument(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
 
+    import aletheia.trading.market_data as market_data
     from aletheia.config.schema import AletheiaConfig
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
-    import aletheia.trading.market_data as market_data
 
     for index in range(61):
         repo.insert_position(Position(
@@ -653,10 +653,10 @@ def test_market_collection_keeps_every_open_position_instrument(tmp_path, monkey
 def test_market_collection_keeps_same_symbol_spot_and_futures(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
 
+    import aletheia.trading.market_data as market_data
     from aletheia.config.schema import AletheiaConfig
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
-    import aletheia.trading.market_data as market_data
 
     for market_type in ("spot", "usdt_futures"):
         repo.insert_position(Position(
@@ -694,10 +694,10 @@ def test_market_collection_keeps_same_symbol_spot_and_futures(tmp_path, monkeypa
 def test_trailing_does_not_invent_native_null_stop(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
 
+    import aletheia.portfolio.position_manager as manager
     from aletheia.config.schema import AletheiaConfig
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position, TradeProposal
-    import aletheia.portfolio.position_manager as manager
 
     cfg = AletheiaConfig()
     cfg.trading.trail_enabled = True
@@ -934,6 +934,7 @@ def test_snapshot_opportunity_identity_claim_is_atomic(tmp_path, monkeypatch):
     assert queued["thesis"] != "late observer output must not rewrite a queued owner"
     assert queued["direction_bias"] == "long"
     import inspect
+
     from aletheia.agents import market_observer
     from aletheia.universe import signal_emitter
 
@@ -1005,6 +1006,7 @@ def test_divergence_source_version_identity_claim_is_atomic(tmp_path, monkeypatc
     assert len({owner for owner, _created in results}) == 1
     assert [row["id"] for row in rows] == [results[0][0]]
     import inspect
+
     from aletheia.agents import divergence_scanner
 
     assert "insert_divergence_opportunity_once(" in inspect.getsource(

@@ -10,9 +10,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool, record_step
-from aletheia.agent_runtime.permissions import is_tool_permitted
+from aletheia.config.loader import load_config
 from aletheia.data.freshness import fresh_row
 from aletheia.model_provider.router import get_provider_for_tier
 from aletheia.storage.repositories import (
@@ -22,7 +23,6 @@ from aletheia.storage.repositories import (
 from aletheia.trading.instruments import (
     instrument_market_to_db_market,
 )
-from aletheia.config.loader import load_config
 
 logger = logging.getLogger("aletheia.agents.market_observer")
 
@@ -111,7 +111,7 @@ def _admitted_observer_workset(
         return [], {}, None, []
 
     from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
-    from aletheia.data.symbols import InstrumentId, MARKET_SPOT
+    from aletheia.data.symbols import MARKET_SPOT, InstrumentId
     from aletheia.universe.service import UniverseService
 
     members = UniverseService().get_current_universe(
@@ -224,6 +224,7 @@ def _record_observer_llm_latency(duration_s: float) -> None:
     """
     try:
         import json as _json
+
         from aletheia.storage.sqlite import get_db
 
         db = get_db()
@@ -253,6 +254,7 @@ def _read_observer_llm_latency_p50() -> float | None:
     """Return the p50 of the persisted LLM latency samples, or None if none exist."""
     try:
         import json as _json
+
         from aletheia.storage.sqlite import get_db
 
         row = get_db().execute("SELECT value FROM settings WHERE key = ?", (_LLM_LATENCY_SETTINGS_KEY,)).fetchone()
@@ -750,8 +752,8 @@ def _opportunity_evidence_manifest(
 
 def _batch_prefetch_db(symbols: list[str]) -> _DbCache:
     """Batch-fetch all per-symbol DB data at run start. Sync, single transaction window."""
-    from aletheia.storage import repositories as repo
     from aletheia.data.freshness import fresh_rows
+    from aletheia.storage import repositories as repo
 
     news_since = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
     return _DbCache(
@@ -784,6 +786,7 @@ async def _prefetch_symbol(
     Exchange OHLCV calls (the wall-clock bottleneck) run concurrently across symbols.
     """
     import time as _time
+
     from aletheia.trading.market_context import build_market_context
 
     symbol = instrument.symbol
@@ -833,7 +836,7 @@ async def _prefetch_symbol(
             render_enriched_context_md,
         )
         from aletheia.data.freshness import fresh_row as _fresh_row
-        from aletheia.data.models import TradabilityScore, LeverageState, MacroSnapshot
+        from aletheia.data.models import LeverageState, MacroSnapshot, TradabilityScore
 
         enriched_snapshot = build_market_context_from_db(
             [symbol],
@@ -1177,8 +1180,8 @@ async def _analyze_symbol(
                 render_enriched_context_md,
             )
             from aletheia.data.freshness import fresh_rows
+            from aletheia.data.models import LeverageState, MacroSnapshot, TradabilityScore
             from aletheia.storage import repositories as repo
-            from aletheia.data.models import TradabilityScore, LeverageState, MacroSnapshot
 
             # The shared DB builder applies exact-instrument identity and the same
             # fail-closed freshness policy used by Universe feature collection.

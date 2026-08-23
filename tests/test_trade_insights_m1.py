@@ -1,9 +1,10 @@
 """Regression tests for M1 analytics fixes: #1255 #1257 #1258 #1260."""
 from __future__ import annotations
 
-from aletheia.analytics.trade_insights import _profit_factor
-from aletheia.analytics.streaks import classify, WIN, LOSS, FLAT
 import statistics
+
+from aletheia.analytics.streaks import FLAT, LOSS, WIN, classify
+from aletheia.analytics.trade_insights import _profit_factor
 
 
 def test_flat_outcomes_not_counted_as_losses():

@@ -1,18 +1,20 @@
 """Tests for agent runtime: permissions, tool registry, orchestrator."""
 
 import json
-import pytest
 from unittest.mock import MagicMock
-from unittest.mock import patch
 
+import pytest
+
+from aletheia.agent_runtime.orchestrator import run_agent
 from aletheia.agent_runtime.permissions import (
-    register_tool, is_tool_permitted, get_permitted_tools, TOOL_REGISTRY,
+    TOOL_REGISTRY,
+    get_permitted_tools,
+    is_tool_permitted,
 )
 from aletheia.agent_runtime.tool_registry import init_tool_registry
-from aletheia.agent_runtime.orchestrator import run_agent
-from aletheia.storage.sqlite import get_db, reset_db
-from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import get_db, reset_db
 
 
 def setup_test_env(tmp_path, monkeypatch):
@@ -196,8 +198,8 @@ async def test_agent_blocked_in_readonly(tmp_path, monkeypatch):
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
 
     # Save config with ReadOnly mode
-    from aletheia.config.schema import AletheiaConfig
     from aletheia.config.loader import save_config
+    from aletheia.config.schema import AletheiaConfig
     cfg = AletheiaConfig()
     cfg.agent.permission_mode = "Observe"
     save_config(cfg)

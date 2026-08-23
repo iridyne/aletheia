@@ -3,7 +3,7 @@
 import platform
 from datetime import datetime, timezone
 
-from aletheia.storage.models import PSGatewaySession, new_id
+from aletheia.storage.models import PSGatewaySession
 from aletheia.storage.sqlite import get_db
 
 

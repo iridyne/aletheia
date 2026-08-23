@@ -7,10 +7,10 @@ this state machine; elapsed time never counts as evidence.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 

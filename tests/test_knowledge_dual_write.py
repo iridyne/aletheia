@@ -26,9 +26,9 @@ def _delete_markdown_body(file_path: str) -> None:
 def test_reindex_survives_disk_body_loss(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.knowledge.manager import (
-        create_research_note,
-        create_dreaming_log,
         create_daily_review,
+        create_dreaming_log,
+        create_research_note,
         create_trading_guard,
     )
     from aletheia.knowledge.retrieval import reindex_all, retrieve_lessons

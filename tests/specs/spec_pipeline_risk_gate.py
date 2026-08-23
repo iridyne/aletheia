@@ -9,12 +9,10 @@ Claim prefix: PL-RG
 
 import math
 import threading
-import time
 
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
-
 
 # ---------------------------------------------------------------------------
 # Shared DB setup
@@ -125,7 +123,6 @@ def test_risk_gate_reject_propagation(tmp_path, monkeypatch):
     from aletheia.execution.gateway import submit_proposal
     from aletheia.risk.kill_switch import activate, deactivate
     from aletheia.storage.sqlite import get_db
-    from aletheia.storage import repositories as repo
 
     activate("test_pl_rg_02", actor="human")
     try:
@@ -191,9 +188,9 @@ def test_risk_gate_eval_lock_serialization(tmp_path, monkeypatch):
     """
     _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
     import aletheia.risk.engine as eng
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     # Track concurrent overlap
     concurrent_overlap_detected = threading.Event()
@@ -256,10 +253,10 @@ def test_risk_gate_eval_lock_serialization(tmp_path, monkeypatch):
 def test_risk_gate_always_persists_exactly_one_row(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
     from aletheia.risk.engine import evaluate_proposal
     from aletheia.risk.kill_switch import activate, deactivate
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -314,11 +311,11 @@ def test_risk_gate_stale_market_data_for_live(tmp_path, monkeypatch):
     """Verify check #11: stale data fires on live proposals when no fresh snapshot."""
     _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
-    from aletheia.risk.engine import evaluate_proposal
     import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     # Configure for live-mode evaluation (all other checks unlocked)
     cfg = AletheiaConfig()
@@ -904,6 +901,7 @@ def test_local_market_plan_gate_does_not_capture_exchange_or_adopted_rows(
 def test_vol_target_size_accepts_paper_trade_count():
     """vol_target_size 必须有 paper_trade_count 参数（L2a structural）。"""
     import inspect
+
     from aletheia.trading import sizing
 
     sig = inspect.signature(sizing.vol_target_size)
@@ -930,6 +928,7 @@ def test_vol_target_size_accepts_paper_trade_count():
 def test_vol_target_size_reduced_for_new_strategy():
     """paper_trade_count=3 的 size 不超过 paper_trade_count=50 的 50%。"""
     import pytest
+
     from aletheia.trading.sizing import vol_target_size
 
     try:

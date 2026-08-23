@@ -8,14 +8,14 @@ These tests exercise the FULL behavior chain, not just structure:
 """
 
 import asyncio
-from datetime import datetime
 import sqlite3
-from unittest.mock import AsyncMock, patch, MagicMock
+from datetime import datetime
+from unittest.mock import AsyncMock
 
 import pytest
 
-from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -66,9 +66,9 @@ async def test_network_pause_persists_owner_generation_and_timestamp(
     setup_env(tmp_path, monkeypatch)
     _reset_connectivity_state()
 
+    import aletheia.agent_runtime.connectivity as conn_mod
     import aletheia.config.loader as loader
     from aletheia.config.loader import load_config
-    import aletheia.agent_runtime.connectivity as conn_mod
 
     cfg = load_config()
     resume_loop = AsyncMock(return_value=None)
@@ -161,8 +161,8 @@ async def test_generation_changed_during_llm_await_keeps_pause(tmp_path, monkeyp
     setup_env(tmp_path, monkeypatch)
     _reset_connectivity_state()
 
-    from aletheia.config.loader import load_config, save_config
     import aletheia.agent_runtime.connectivity as conn_mod
+    from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
     _claim_connectivity_pause(cfg, generation="outage-n")
@@ -199,8 +199,9 @@ async def test_generation_changed_during_llm_await_keeps_pause(tmp_path, monkeyp
 
 
 def test_connectivity_status_retains_outage_and_recovery_transitions(monkeypatch):
-    import aletheia.agent_runtime.connectivity as conn_mod
     from types import SimpleNamespace
+
+    import aletheia.agent_runtime.connectivity as conn_mod
 
     _reset_connectivity_state()
     monkeypatch.setattr(
@@ -240,8 +241,8 @@ async def test_exchange_failure_with_working_internet_is_not_global_outage(
     setup_env(tmp_path, monkeypatch)
     _reset_connectivity_state()
 
-    from aletheia.config.loader import load_config, save_config
     import aletheia.agent_runtime.connectivity as conn_mod
+    from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
     cfg.health.exchange_probe_failure_threshold = 5
@@ -557,8 +558,8 @@ async def test_startup_gate_logs_zero_latency_when_probe_has_no_latency(tmp_path
     setup_env(tmp_path, monkeypatch)
     _reset_connectivity_state()
 
-    from aletheia.config.loader import load_config
     import aletheia.agent_runtime.connectivity as conn_mod
+    from aletheia.config.loader import load_config
 
     cfg = load_config()
     cfg.exchange.name = "local-paper"
@@ -586,8 +587,8 @@ def test_self_heal_no_restart_when_exchange_down(tmp_path, monkeypatch):
     """market_data_stale + exchange unreachable → self-heal defers (no restart)."""
     setup_env(tmp_path, monkeypatch)
 
-    from aletheia.agent_runtime import health
     import aletheia.gateway.pidfile as pidfile
+    from aletheia.agent_runtime import health
     monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: True)
     monkeypatch.setattr(health, "_last_alerted_unhealthy", False)
     monkeypatch.setattr(health, "_self_heal_suppressed_alerted", False)
@@ -617,8 +618,8 @@ def test_self_heal_restarts_when_exchange_up_but_data_stale(tmp_path, monkeypatc
     """market_data_stale + exchange reachable → self-heal triggers restart."""
     setup_env(tmp_path, monkeypatch)
 
-    from aletheia.agent_runtime import health
     import aletheia.gateway.pidfile as pidfile
+    from aletheia.agent_runtime import health
     monkeypatch.setattr(pidfile, "supervisor_owns_pid", lambda: True)
     monkeypatch.setattr(health, "_last_alerted_unhealthy", False)
     monkeypatch.setattr(health, "_self_heal_suppressed_alerted", False)
@@ -786,8 +787,8 @@ async def test_network_recovery_keeps_a_pause_not_owned_by_connectivity(tmp_path
     setup_env(tmp_path, monkeypatch)
     _reset_connectivity_state()
 
-    from aletheia.config.loader import load_config, save_config
     import aletheia.agent_runtime.connectivity as conn_mod
+    from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
     cfg.runtime.paused = True
@@ -811,8 +812,8 @@ async def test_operator_pause_after_network_pause_coexists_with_connectivity(tmp
     setup_env(tmp_path, monkeypatch)
     _reset_connectivity_state()
 
-    from aletheia.config.loader import load_config, save_config
     import aletheia.agent_runtime.connectivity as conn_mod
+    from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
     _claim_connectivity_pause(cfg)
@@ -842,8 +843,8 @@ async def test_network_recovery_keeps_startup_gate_owner_paused(tmp_path, monkey
     setup_env(tmp_path, monkeypatch)
     _reset_connectivity_state()
 
-    from aletheia.config.loader import load_config, save_config
     import aletheia.agent_runtime.connectivity as conn_mod
+    from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
     _claim_connectivity_pause(cfg, generation="outage-1")
@@ -884,8 +885,8 @@ async def test_network_recovery_clears_its_own_pause(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _reset_connectivity_state()
 
-    from aletheia.config.loader import load_config, save_config
     import aletheia.agent_runtime.connectivity as conn_mod
+    from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
     _claim_connectivity_pause(cfg)
@@ -913,8 +914,8 @@ async def test_network_recovery_keeps_pause_when_required_llm_probe_raises(
     setup_env(tmp_path, monkeypatch)
     _reset_connectivity_state()
 
-    from aletheia.config.loader import load_config, save_config
     import aletheia.agent_runtime.connectivity as conn_mod
+    from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
     _claim_connectivity_pause(cfg)
@@ -949,8 +950,8 @@ async def test_auto_resume_recollects_successes_after_failure_during_llm_probe(t
     setup_env(tmp_path, monkeypatch)
     _reset_connectivity_state()
 
-    from aletheia.config.loader import load_config, save_config
     import aletheia.agent_runtime.connectivity as conn_mod
+    from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
     _claim_connectivity_pause(cfg)
@@ -1018,8 +1019,8 @@ async def test_network_recovery_keeps_pause_after_new_failure_during_llm_probe(t
     setup_env(tmp_path, monkeypatch)
     _reset_connectivity_state()
 
-    from aletheia.config.loader import load_config, save_config
     import aletheia.agent_runtime.connectivity as conn_mod
+    from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
     _claim_connectivity_pause(cfg)

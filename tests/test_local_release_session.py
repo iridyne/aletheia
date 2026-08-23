@@ -4,10 +4,10 @@ import base64
 import importlib.util
 import json
 import os
-from pathlib import Path
 import stat
 import subprocess
 import sys
+from pathlib import Path
 from urllib.request import urlopen
 
 import pytest

@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import math
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping
 
 from ..storage.proposal_hypothesis import evaluate_hypothesis_prefix
-
 
 COUNTERFACTUAL_CONTRACT_VERSION = "profit_loop_counterfactual/v1"
 COUNTERFACTUAL_SCOPE = "first_60_minutes"

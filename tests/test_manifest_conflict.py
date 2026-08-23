@@ -170,12 +170,12 @@ def test_record_lab_exposure_persists_row_and_rejects_update():
     """Append-only trigger fires on UPDATE."""
     import sqlite3
 
+    from aletheia.observation_lab.db import get_lab_db
     from aletheia.observation_lab.exposure import (
         LabExposureFact,
         list_lab_exposures,
         record_lab_exposure,
     )
-    from aletheia.observation_lab.db import get_lab_db
 
     fact = LabExposureFact(
         observation_id="obs-a",

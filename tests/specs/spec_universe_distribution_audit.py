@@ -31,9 +31,9 @@ def test_universe_refresh_post_fix_distribution(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage import repositories as repo
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage.models import UniverseAsset
-    from aletheia.storage import repositories as repo
     from aletheia.universe.service import UniverseService
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)

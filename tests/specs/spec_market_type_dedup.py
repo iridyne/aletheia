@@ -22,7 +22,6 @@ import inspect
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 # ---------------------------------------------------------------------------
 # OD-S01 — L2b Behavioral: legacy path emits ≤1 instrument per symbol
 # ---------------------------------------------------------------------------
@@ -35,8 +34,8 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
               "preferred_market_type is not 'spot'"),
 )
 def test_legacy_path_single_instrument_per_symbol():
-    from aletheia.trading.instruments import observed_instruments_from_config
     from aletheia.config.schema import AletheiaConfig
+    from aletheia.trading.instruments import observed_instruments_from_config
 
     cfg = AletheiaConfig()
     cfg.market_data.observed_symbols = ["BTC/USDT", "ETH/USDT"]
@@ -62,8 +61,8 @@ def test_legacy_path_single_instrument_per_symbol():
               "observed_instruments_from_config emits spot, not perp"),
 )
 def test_legacy_path_respects_spot_preference():
-    from aletheia.trading.instruments import observed_instruments_from_config
     from aletheia.config.schema import AletheiaConfig
+    from aletheia.trading.instruments import observed_instruments_from_config
 
     cfg = AletheiaConfig()
     cfg.market_data.observed_symbols = ["BTC/USDT"]
@@ -109,8 +108,8 @@ def test_lifecycle_lookup_reuses_reviewed_opportunity(tmp_path, monkeypatch):
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
-    from aletheia.storage.models import Opportunity
     from aletheia.storage import repositories
+    from aletheia.storage.models import Opportunity
 
     original = Opportunity(
         symbol="WLD/USDT",
@@ -224,13 +223,14 @@ async def test_e2e_observer_dedups(tmp_path, monkeypatch):
     """E2E: two symbols × both markets enabled → exactly 2 opportunities (one per
     symbol), not 4 (2 per symbol). Mock the LLM like test_entry_logic does."""
     import sqlite3
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
+    from aletheia.agent_runtime.orchestrator import run_agent
     from aletheia.config.loader import load_config, save_config
+    from aletheia.storage import repositories as repo
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage.models import MarketSnapshot
-    from aletheia.storage import repositories as repo
-    from aletheia.agent_runtime.orchestrator import run_agent
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")

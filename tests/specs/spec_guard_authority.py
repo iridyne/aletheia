@@ -18,8 +18,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -202,7 +200,10 @@ def test_guard_api_projection_has_no_unsupported_experiment_context():
 )
 def test_learned_guard_enforcement_suppressed_seed_honored():
     from aletheia.knowledge.guards import (
-        evaluate_guards, TradingGuard, GuardAppliesTo, GuardPredicate,
+        GuardAppliesTo,
+        GuardPredicate,
+        TradingGuard,
+        evaluate_guards,
         learned_guard_block_authorized,
     )
 
@@ -377,12 +378,12 @@ def test_real_authorized_learned_guard_exposure_applies_only_treatment(monkeypat
         TradingGuard,
         evaluate_guards,
     )
+    from aletheia.learning.experiments import stable_assignment
     from aletheia.learning.ledger import get_record, insert_record
     from aletheia.learning.models import (
         LearningContributionVerdict,
         LearningExperiment,
     )
-    from aletheia.learning.experiments import stable_assignment
     from aletheia.storage.sqlite import get_db
     from tests.specs.spec_learning_authority import (
         _enable_legacy_paper_authority,
@@ -493,8 +494,8 @@ def test_real_authorized_learned_guard_exposure_applies_only_treatment(monkeypat
     "GA-S03", "guard_authority", "§no auto-promotion of learned/shadow", "L2b",
     "run_promotion_check never auto-promotes a shadow-only learned candidate."))
 def test_promotion_never_auto_promotes_shadow_learned():
-    from aletheia.knowledge.guards import TradingGuard, GuardAppliesTo, GuardPredicate
     from aletheia.analytics import guard_promotion as gp
+    from aletheia.knowledge.guards import GuardAppliesTo, GuardPredicate, TradingGuard
 
     shadow_candidate = TradingGuard(
         guard_id="auto_momentum_long_solusdt", title="learned", status="candidate",
@@ -531,8 +532,8 @@ def test_promotion_never_auto_promotes_shadow_learned():
 )
 def test_audit_and_reversible_downgrade(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
-    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
     from aletheia.analytics.guard_promotion import audit_auto_guards, downgrade_learned_guards_to_shadow
+    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     guards_dir = tmp_path / "knowledge" / "guards"
@@ -601,8 +602,8 @@ def test_audit_and_reversible_downgrade(tmp_path, monkeypatch):
     "and never touches manual candidates awaiting owner review."))
 def test_prune_deprecates_learned_candidates_only(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
-    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
     from aletheia.analytics.guard_promotion import prune_learned_guard_candidates
+    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     cand_dir = tmp_path / "knowledge" / "guard_candidates"
@@ -652,9 +653,10 @@ def test_prune_deprecates_learned_candidates_only(tmp_path, monkeypatch):
     "Every auto-generated guard candidate is stamped with created_at and expires_at "
     "(now + LEARNED_GUARD_TTL_DAYS) at creation (#195). Manual candidates are never stamped."))
 def test_auto_candidate_gets_ttl_stamps():
-    from aletheia.knowledge.manager import _force_shadow_only_if_auto
-    from aletheia.knowledge.guards import LEARNED_GUARD_TTL_DAYS
     from datetime import datetime, timedelta, timezone
+
+    from aletheia.knowledge.guards import LEARNED_GUARD_TTL_DAYS
+    from aletheia.knowledge.manager import _force_shadow_only_if_auto
 
     before = datetime.now(timezone.utc)
     meta = _force_shadow_only_if_auto({"guard_id": "auto_momentum_btc", "auto_generated": True})
@@ -681,8 +683,9 @@ def test_auto_candidate_gets_ttl_stamps():
     "load_trading_guards silently skips learned guards past their expires_at at load time (#195). "
     "Non-expired and seed/manual guards are always visible."))
 def test_loader_excludes_expired_learned_guards(tmp_path, monkeypatch):
-    import aletheia.config.loader as loader
     from datetime import datetime, timedelta, timezone
+
+    import aletheia.config.loader as loader
     from aletheia.knowledge.frontmatter import render_frontmatter
     from aletheia.knowledge.guards import load_trading_guards
 
@@ -733,12 +736,13 @@ def test_loader_excludes_expired_learned_guards(tmp_path, monkeypatch):
     "Learned guards without created_at or expires_at receive the bounded migration deadline "
     "LEARNED_GUARD_MIGRATION_DEADLINE_ISO rather than living forever (#195)."))
 def test_effective_expires_at_precedence():
+    from datetime import datetime, timedelta, timezone
+
     from aletheia.knowledge.guards import (
         LEARNED_GUARD_MIGRATION_DEADLINE_ISO,
         LEARNED_GUARD_TTL_DAYS,
         _effective_learned_expires_at,
     )
-    from datetime import datetime, timedelta, timezone
 
     # Explicit expires_at wins.
     explicit = "2027-01-01T00:00:00+00:00"
@@ -760,10 +764,11 @@ def test_effective_expires_at_precedence():
     "_deprecate_expired_learned_guards marks expired learned guards deprecated in their markdown "
     "files. Manual and seed guards are never touched. Returns the count deprecated (#195)."))
 def test_deprecate_expired_learned_guards(tmp_path, monkeypatch):
-    import aletheia.config.loader as loader
     from datetime import datetime, timedelta, timezone
-    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+
+    import aletheia.config.loader as loader
     from aletheia.analytics.guard_promotion import _deprecate_expired_learned_guards
+    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     guards_dir = tmp_path / "knowledge" / "guards"
@@ -828,10 +833,11 @@ def test_deprecate_expired_learned_guards(tmp_path, monkeypatch):
     "promote_guard_candidate_to_active refuses to promote a learned candidate whose "
     "effective expires_at is in the past and returns False (#195)."))
 def test_promote_refuses_expired_learned_candidate(tmp_path, monkeypatch):
-    import aletheia.config.loader as loader
     from datetime import datetime, timedelta, timezone
-    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+
+    import aletheia.config.loader as loader
     from aletheia.analytics.guard_promotion import promote_guard_candidate_to_active
+    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     candidates_dir = tmp_path / "knowledge" / "guard_candidates"
@@ -861,10 +867,11 @@ def test_promote_refuses_expired_learned_candidate(tmp_path, monkeypatch):
     "run_promotion_check still runs _deprecate_expired_learned_guards when auto_promote_enabled=False "
     "and returns expired_deprecated in the skipped result (#195)."))
 def test_expiry_deprecation_runs_when_auto_promote_disabled(tmp_path, monkeypatch):
-    import aletheia.config.loader as loader
     from datetime import datetime, timedelta, timezone
-    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
+
+    import aletheia.config.loader as loader
     from aletheia.analytics import guard_promotion as gp
+    from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     guards_dir = tmp_path / "knowledge" / "guards"

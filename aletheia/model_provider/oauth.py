@@ -12,15 +12,14 @@ Implements the core OAuth primitives without provider-specific knowledge:
 import asyncio
 import hashlib
 import logging
-import os
 import secrets
-import time
 from base64 import urlsafe_b64encode
 from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
-from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aiohttp import web
+
+from aletheia.net import httpx_client, raise_for_status_without_secrets
 
 logger = logging.getLogger("aletheia.model_provider.oauth")
 

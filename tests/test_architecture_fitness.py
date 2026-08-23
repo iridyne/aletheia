@@ -104,6 +104,7 @@ def test_restricted_tools_complete():
 def test_risk_engine_eval_lock_exists():
     """_eval_lock threading.Lock exists in risk/engine (TOCTOU prevention)."""
     import threading
+
     import aletheia.risk.engine as eng
 
     assert hasattr(eng, "_eval_lock")

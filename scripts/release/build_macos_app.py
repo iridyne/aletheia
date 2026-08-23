@@ -10,12 +10,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
-from pathlib import Path
 import plistlib
 import shutil
 import stat
 import zipfile
+from pathlib import Path
 
 from aletheia.package_integrity import (
     iter_payload_entries,

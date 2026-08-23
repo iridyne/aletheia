@@ -10,11 +10,11 @@ source as the emitted opportunity) and the config-consumption / market_type /
 feature-keying invariants against regression.
 """
 
-import asyncio
 import ast
-from contextlib import nullcontext
+import asyncio
 import inspect
 import textwrap
+from contextlib import nullcontext
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -282,8 +282,8 @@ def test_infer_direction_event_branch():
               "cfg.scanner_weights[family] (PI-adjustable weight is no longer inert)"),
 )
 def test_scanner_weights_scale_opportunity_score():
-    from aletheia.universe.allocator import compute_total_score
     from aletheia.config.schema import UniverseConfig
+    from aletheia.universe.allocator import compute_total_score
 
     feat = {"tradability_score": 50.0, "quote_volume_24h": 1e12, "spread_bps": 2.0}
     sr = {"opportunity_score": 50.0, "scanner_family": "momentum"}
@@ -381,8 +381,8 @@ def test_key_observations_reach_pi():
               "(the run-level symbol-LIST context never matched any guard)"),
 )
 def test_market_observer_per_symbol_guard():
-    from aletheia.knowledge import router
     from aletheia.agents import market_observer
+    from aletheia.knowledge import router
 
     assert hasattr(router, "build_guard_advisory")
     mo_src = inspect.getsource(market_observer)
@@ -446,6 +446,7 @@ def test_short_disable_is_hard():
 )
 def test_snapshot_freshness_is_market_type_scoped(monkeypatch):
     from datetime import datetime, timezone
+
     from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
 
     calls: list[dict] = []
@@ -522,8 +523,8 @@ def test_rs_rank_omitted_for_single_symbol():
               "'0/100' (which the LLM reads as 'not crowded')"),
 )
 def test_crowding_na_without_inputs():
-    from aletheia.data.normalizer import compute_leverage_state
     from aletheia.data.context_builder import build_market_context_snapshot
+    from aletheia.data.normalizer import compute_leverage_state
 
     lv = compute_leverage_state("BTC/USDT")  # no funding/oi/lsr → crowding 0, no input
     out = build_market_context_snapshot(["BTC/USDT"], {}, {"BTC/USDT": lv}, macro=None)
@@ -576,8 +577,8 @@ def test_all_scores_persists_round_trip(tmp_path, monkeypatch):
     # 3. DB round-trip
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
-    from aletheia.storage.migrations import run_migrations
     from aletheia.storage import repositories as repo
+    from aletheia.storage.migrations import run_migrations
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -670,8 +671,8 @@ def test_allocate_universe_regime_aware_quota():
       3. allocate_universe 在 bear regime 下,short_bias 候选获得的名额
          多于同一批候选在 static(None)下的名额
     """
-    from aletheia.universe.allocator import resolve_family_quota, allocate_universe
     from aletheia.config.schema import UniverseConfig
+    from aletheia.universe.allocator import allocate_universe, resolve_family_quota
 
     cfg = UniverseConfig(max_candidates=20, explore_ratio=0.0)
 
@@ -718,8 +719,8 @@ def test_explore_respects_family_quota():
     又塞回去(84% 偏斜真因)。新行为:explore 只从「仍在配额内」的 family 取样 →
     momentum 已达上限 → explore 不再追加 → 最终 momentum 数 ≤ 配额上限。
     """
-    from aletheia.universe.allocator import allocate_universe
     from aletheia.config.schema import UniverseConfig
+    from aletheia.universe.allocator import allocate_universe
 
     cfg = UniverseConfig(
         max_candidates=10, explore_ratio=0.2,
@@ -955,8 +956,8 @@ def test_learning_candidate_key_persists_round_trip(tmp_path, monkeypatch):
 
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
-    from aletheia.storage.migrations import run_migrations
     from aletheia.storage import repositories as repo
+    from aletheia.storage.migrations import run_migrations
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -1013,8 +1014,8 @@ def test_live_duplicate_suppressed_when_active_opportunity_exists(tmp_path, monk
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
-    import aletheia.storage.sqlite as sq
     import aletheia.storage.repositories as repo
+    import aletheia.storage.sqlite as sq
     from aletheia.storage.migrations import run_migrations
 
     sq._db_conn = None
@@ -1024,9 +1025,9 @@ def test_live_duplicate_suppressed_when_active_opportunity_exists(tmp_path, monk
     sq._db_conn = conn
     run_migrations()
 
-    from aletheia.universe.signal_emitter import emit_deterministic_opportunities
-    from aletheia.storage.models import UniverseSnapshot, UniverseMember
     from aletheia.config.loader import load_config
+    from aletheia.storage.models import UniverseMember, UniverseSnapshot
+    from aletheia.universe.signal_emitter import emit_deterministic_opportunities
 
     cfg = load_config()
     cfg.universe.enabled = True

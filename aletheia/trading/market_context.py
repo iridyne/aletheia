@@ -34,7 +34,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from aletheia.trading.indicators import (
-    sma, rsi, atr, bollinger, momentum_pct, zscore_last, relative_strength_rank,
+    atr,
+    bollinger,
+    momentum_pct,
+    relative_strength_rank,
+    rsi,
+    sma,
+    zscore_last,
 )
 from aletheia.trading.technical_snapshot_service import get_technical_snapshot_service
 
@@ -371,10 +377,10 @@ async def build_market_context(
 
     try:
         from aletheia.data.symbols import (
-            InstrumentId,
             MARKET_FUTURES,
             MARKET_PERP,
             MARKET_SPOT,
+            InstrumentId,
         )
 
         raw_market_type = str(market_type or MARKET_SPOT).lower()

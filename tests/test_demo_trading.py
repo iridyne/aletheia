@@ -25,11 +25,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
+from aletheia.exchanges.bitget.client import OrderRequest, OrderResponse
 from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import MarketSnapshot, Position
-from aletheia.exchanges.bitget.client import OrderResponse, OrderRequest
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -47,11 +47,12 @@ def setup_env(tmp_path, monkeypatch):
 
 
 def _demo_config(monkeypatch, permission="Paper"):
+    from decimal import Decimal
+
     from aletheia.config.loader import load_config, save_config
     from aletheia.execution import order_constraints
     from aletheia.execution.order_constraints import OrderConstraints
     from aletheia.storage.sqlite import get_db
-    from decimal import Decimal
 
     cfg = load_config()
     cfg.agent.permission_mode = permission
@@ -310,6 +311,7 @@ def test_place_order_mix_body_has_margin_coin_and_tradeside(tmp_path, monkeypatc
     setup_env(tmp_path, monkeypatch)
     _demo_config(monkeypatch)
     import json
+
     from aletheia.exchanges.bitget import client as bg
 
     sent = {}
@@ -355,6 +357,7 @@ def test_place_order_hedge_close_body_has_holdside(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _demo_config(monkeypatch)
     import json
+
     from aletheia.exchanges.bitget import client as bg
 
     sent = {}

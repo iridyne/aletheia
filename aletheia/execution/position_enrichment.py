@@ -85,6 +85,7 @@ def _entry_market_summary(symbol: str, fill_price: float, regime_tag: str) -> st
     """Capture an entry-time market-context snapshot as JSON (truncated). Best-effort."""
     try:
         import json as _json
+
         from aletheia.data.context_builder import build_market_context_from_db
         ctx = build_market_context_from_db([symbol])
         return _json.dumps({

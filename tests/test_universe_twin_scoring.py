@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-import asyncio
 import ast
+import asyncio
 import copy
-from dataclasses import replace
 import inspect
 import json
-from pathlib import Path
 import random
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from aletheia.config.schema import UniverseConfig
+from aletheia.universe import twin_scoring
 from aletheia.universe.allocator import compute_total_score
 from aletheia.universe.continuous_scoring import (
     ContinuousScoringPolicy,
@@ -21,7 +22,7 @@ from aletheia.universe.continuous_scoring import (
 )
 from aletheia.universe.features import _relative_squeeze_state
 from aletheia.universe.scanners import UNIVERSE_SCORER_BEHAVIOR_VERSION
-from aletheia.universe import twin_scoring
+from aletheia.universe.twin_allocation import replay_twin_shadow_allocations
 from aletheia.universe.twin_scoring import (
     TWIN_SHADOW_RECORD_VERSION,
     TwinShadowInput,
@@ -31,7 +32,6 @@ from aletheia.universe.twin_scoring import (
     rank_twin_shadow_records,
     summarize_twin_shadow_records,
 )
-from aletheia.universe.twin_allocation import replay_twin_shadow_allocations
 
 
 def _feature(**overrides: object) -> dict[str, object]:

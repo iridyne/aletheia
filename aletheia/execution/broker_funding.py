@@ -8,11 +8,11 @@ Public funding rates and guessed zeros are deliberately outside this boundary.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import hashlib
 import json
 import math
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Iterable, Mapping
 
 from aletheia.data.symbols import to_canonical

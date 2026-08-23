@@ -1,12 +1,12 @@
 """Tests for guard effectiveness analytics and promotion pipeline."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from aletheia.analytics.guard_effectiveness import (
-    compute_guard_stats,
     _row_to_guard_context,
+    compute_guard_stats,
 )
 from aletheia.analytics.guard_promotion import run_promotion_check
 
@@ -43,7 +43,7 @@ class TestComputeGuardStats:
     @patch("aletheia.analytics.guard_effectiveness.build_trade_attribution_rows")
     @patch("aletheia.analytics.guard_effectiveness.load_trading_guards")
     def test_no_rows_zero_counts(self, mock_guards, mock_rows):
-        from aletheia.knowledge.guards import TradingGuard, GuardPredicate, GuardAppliesTo
+        from aletheia.knowledge.guards import GuardAppliesTo, GuardPredicate, TradingGuard
         mock_guards.return_value = [TradingGuard(
             guard_id="test", title="Test", status="active",
             predicates=[GuardPredicate(field="late_entry_penalty", op="gte", value=20)],
@@ -56,7 +56,7 @@ class TestComputeGuardStats:
     @patch("aletheia.analytics.guard_effectiveness.build_trade_attribution_rows")
     @patch("aletheia.analytics.guard_effectiveness.load_trading_guards")
     def test_counts_matching_rows(self, mock_guards, mock_rows):
-        from aletheia.knowledge.guards import TradingGuard, GuardPredicate, GuardAppliesTo
+        from aletheia.knowledge.guards import GuardAppliesTo, GuardPredicate, TradingGuard
         mock_guards.return_value = [TradingGuard(
             guard_id="late_guard", title="Late Guard", status="active",
             predicates=[GuardPredicate(field="late_entry_penalty", op="gte", value=20)],

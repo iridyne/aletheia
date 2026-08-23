@@ -65,9 +65,9 @@ def test_spot_and_missing_market_type_default_to_spot(monkeypatch):
 
 
 def test_pending_candidate_precedes_config_and_universe_discovery(monkeypatch):
+    import aletheia.storage.repositories as repo
     from aletheia.data import candidate_market_facts
     from aletheia.data.symbols import InstrumentId
-    import aletheia.storage.repositories as repo
 
     monkeypatch.setattr(
         candidate_market_facts,

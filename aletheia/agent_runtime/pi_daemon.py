@@ -20,10 +20,10 @@ when the daemon is running it simply calls notify_pi_daemon("heartbeat").
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import logging
 import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from aletheia.agent_runtime.wake_events import WakeCoalescer, WakeEvent
@@ -575,11 +575,11 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
     global _last_error_summary
     try:
         from aletheia.agent_runtime.run_context import bind_economic_attribution
+        from aletheia.agent_runtime.scheduler import _record_job_success
         from aletheia.agent_shell.commands import (
             evaluate_trading_opportunity,
             review_portfolio_state,
         )
-        from aletheia.agent_runtime.scheduler import _record_job_success
 
         logger.info(
             "pi_daemon: evaluating (trigger=%s, positions=%d)",
@@ -665,7 +665,7 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
     finally:
         # Release thread-local SQLite connection to prevent WAL lock across cooldown
         try:
-            from aletheia.storage.sqlite import rollback_if_in_transaction, close_db
+            from aletheia.storage.sqlite import close_db, rollback_if_in_transaction
             rollback_if_in_transaction()
             close_db()
         except Exception:

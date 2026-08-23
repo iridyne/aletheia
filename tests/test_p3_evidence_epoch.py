@@ -214,8 +214,8 @@ def test_ensure_evidence_epochs_rotates_on_new_commit(db):
 
 def test_evidence_epoch_summary_sha_consistent(db, monkeypatch):
     """Summary shows sha_consistent=True when epoch commit matches HEAD."""
-    import aletheia.learning.evidence_epoch as ev_mod
     import aletheia.agent_runtime.runtime_session as runtime_session
+    import aletheia.learning.evidence_epoch as ev_mod
     from aletheia.learning.evidence_epoch import ensure_evidence_epochs, evidence_epoch_summary
 
     sha = "abcdef1234567890"

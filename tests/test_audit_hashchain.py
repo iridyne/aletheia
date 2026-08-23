@@ -1,6 +1,5 @@
 """Tests for audit JSONL hash chain integrity."""
 
-import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
 
@@ -18,7 +17,7 @@ def _isolate_logs(tmp_path, monkeypatch):
 
 
 def test_first_record_has_genesis_prev_hash(tmp_path):
-    from aletheia.files.jsonl import write_audit, _GENESIS_HASH
+    from aletheia.files.jsonl import _GENESIS_HASH, write_audit
 
     write_audit({"action": "test", "timestamp": "2026-01-01T00:00:00"})
 
@@ -28,7 +27,7 @@ def test_first_record_has_genesis_prev_hash(tmp_path):
 
 
 def test_chain_links_correctly(tmp_path):
-    from aletheia.files.jsonl import write_audit, _hash_record
+    from aletheia.files.jsonl import _hash_record, write_audit
 
     write_audit({"action": "first", "timestamp": "2026-01-01T00:00:00"})
     write_audit({"action": "second", "timestamp": "2026-01-01T00:01:00"})
@@ -45,7 +44,7 @@ def test_chain_links_correctly(tmp_path):
 def test_write_audit_ignores_stale_process_cache(tmp_path, monkeypatch):
     """A second process may append while this process has a cached chain tail."""
     import aletheia.files.jsonl as jmod
-    from aletheia.files.jsonl import write_audit, _hash_record, verify_audit_chain
+    from aletheia.files.jsonl import _hash_record, verify_audit_chain, write_audit
 
     write_audit({"action": "first", "timestamp": "2026-01-01T00:00:00"})
     path = tmp_path / "audit.jsonl"
@@ -73,7 +72,7 @@ def test_write_audit_ignores_stale_process_cache(tmp_path, monkeypatch):
 
 
 def test_verify_valid_chain(tmp_path):
-    from aletheia.files.jsonl import write_audit, verify_audit_chain
+    from aletheia.files.jsonl import verify_audit_chain, write_audit
 
     for i in range(5):
         write_audit({"action": f"event_{i}", "timestamp": f"2026-01-01T00:0{i}:00"})
@@ -85,7 +84,7 @@ def test_verify_valid_chain(tmp_path):
 
 
 def test_verify_detects_tamper(tmp_path):
-    from aletheia.files.jsonl import write_audit, verify_audit_chain
+    from aletheia.files.jsonl import verify_audit_chain, write_audit
 
     for i in range(3):
         write_audit({"action": f"event_{i}", "timestamp": f"2026-01-01T00:0{i}:00"})
@@ -126,7 +125,7 @@ def test_verify_empty_file(tmp_path):
 
 def test_concurrent_audit_writes_preserve_single_hash_chain(tmp_path):
     """Concurrent writers must not reuse the same previous hash."""
-    from aletheia.files.jsonl import write_audit, verify_audit_chain
+    from aletheia.files.jsonl import verify_audit_chain, write_audit
 
     def _write(i: int) -> None:
         write_audit({"action": f"event_{i}", "timestamp": f"2026-01-01T00:00:{i:02d}"})
@@ -146,7 +145,7 @@ def test_concurrent_audit_writes_preserve_single_hash_chain(tmp_path):
 def test_verify_audit_chain_spans_rotated_files(tmp_path, monkeypatch):
     """The first current-file record may link to the last rotated record."""
     import aletheia.files.jsonl as jmod
-    from aletheia.files.jsonl import write_audit, verify_audit_chain
+    from aletheia.files.jsonl import verify_audit_chain, write_audit
 
     monkeypatch.setattr(jmod, "_max_bytes", lambda: 1)
 

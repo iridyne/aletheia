@@ -28,10 +28,8 @@ is where manifest identity lives.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from aletheia.observation_lab.manifest import ExecutionManifest
-
 
 # Composability-contract enum values that survive an audit — MUST match the
 # CHECK constraint in ``execution_manifests.composability_contract`` and the

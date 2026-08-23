@@ -24,7 +24,6 @@ from typing import Any, Iterable
 
 from aletheia.economics.schema import ensure_economics_schema
 
-
 _VALID_SCOPES = ("system", "agent_run", "logical_agent", "provider", "provider_tier")
 _VALID_WINDOWS = ("daily", "weekly", "session")
 

@@ -7,8 +7,7 @@ not just API mutation time.
 import pytest  # pyright: ignore[reportMissingImports]
 from pydantic import ValidationError
 
-from aletheia.config.schema import HistoricalDataConfig, NewsConfig, PiDaemonConfig, HealthConfig
-
+from aletheia.config.schema import HealthConfig, HistoricalDataConfig, NewsConfig, PiDaemonConfig
 
 # --- HistoricalDataConfig ---
 

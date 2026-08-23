@@ -16,6 +16,7 @@ import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from aletheia.data.freshness import fresh_row
 from aletheia.data.models import (
     LeverageState,
     MacroSnapshot,
@@ -23,7 +24,6 @@ from aletheia.data.models import (
     TradabilityScore,
 )
 from aletheia.data.position_x import build_position_x_agent_context
-from aletheia.data.freshness import fresh_row
 
 logger = logging.getLogger("aletheia.data.context_builder")
 

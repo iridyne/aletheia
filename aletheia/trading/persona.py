@@ -111,8 +111,8 @@ def build_sizing_context(
         # Account drawdown (defensive when bleeding). Reuse the risk engine's scale
         # (1.0=healthy, <1.0=in drawdown) as a direct appetite dampener.
         try:
-            from aletheia.risk.engine import _portfolio_drawdown_scale
             from aletheia.config.loader import load_config as _lc
+            from aletheia.risk.engine import _portfolio_drawdown_scale
             _mode = (cfg or _lc()).exchange.paper_execution_mode or "paper_internal"
             dd = _portfolio_drawdown_scale(_mode)
             if dd < 1.0:

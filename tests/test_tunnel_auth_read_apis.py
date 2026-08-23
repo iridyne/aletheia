@@ -11,13 +11,13 @@ Covers the acceptance criteria from issue #398:
 """
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
-from aletheia.server.app import app, _PUBLIC_PATHS
-from aletheia.storage.sqlite import reset_db
+from aletheia.server.app import _PUBLIC_PATHS, app
+from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import TradeProposal
-from aletheia.storage import repositories as repo
+from aletheia.storage.sqlite import reset_db
 
 
 @pytest.fixture
@@ -32,7 +32,6 @@ async def client(tmp_path, monkeypatch):
     import aletheia.storage.sqlite as sq
 
     def _clear_portfolio_cache():
-        import threading
         with data_routes._portfolio_cache_lock:
             data_routes._portfolio_cache = None
 

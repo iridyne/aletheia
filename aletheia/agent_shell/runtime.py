@@ -75,6 +75,8 @@ class AgentShellRuntime:
         permission_scope: str = "worker",
         session_id: str | None = None,
     ) -> CommandResponse:
+        from aletheia.agent_shell.audit import record_command
+        from aletheia.agent_shell.commands import HANDLERS
         from aletheia.agent_shell.context import (
             build_app_context,
             context_summary_text,
@@ -88,11 +90,9 @@ class AgentShellRuntime:
             get_session,
         )
         from aletheia.agent_shell.permissions import check_permission
-        from aletheia.agent_shell.commands import HANDLERS
-        from aletheia.agent_shell.registry import COMMANDS, FORBIDDEN_INTENTS
+        from aletheia.agent_shell.registry import COMMANDS
+        from aletheia.agent_shell.sessions import close_session, create_session
         from aletheia.agent_shell.synthesis import synthesize_answer
-        from aletheia.agent_shell.sessions import create_session, close_session
-        from aletheia.agent_shell.audit import record_command
         from aletheia.config.loader import load_config
 
         text = user_input.strip()

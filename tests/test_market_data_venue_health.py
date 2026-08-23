@@ -115,7 +115,7 @@ async def test_spot_chain_skips_binance_public_during_binance_cooldown(monkeypat
 
 def test_perpetual_chain_never_reintroduces_spot_fallback_during_cooldown(monkeypatch):
     import aletheia.data.venue_health as health
-    from aletheia.data.symbols import InstrumentId, MARKET_PERP
+    from aletheia.data.symbols import MARKET_PERP, InstrumentId
 
     monkeypatch.setattr(health, "emit_infra_event", lambda **_kwargs: None)
     record_venue_failure("binance", RuntimeError("418 IP banned"))

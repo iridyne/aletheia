@@ -267,8 +267,7 @@ def get_watched_instruments():
     the filter is skipped (fail-open) so startup is not blocked on a network call.
     """
     from aletheia.config.loader import load_config
-    from aletheia.data.symbols import InstrumentId, MARKET_PERP, MARKET_SPOT
-    from aletheia.data.symbols import is_stock_token, stock_token_exchange
+    from aletheia.data.symbols import MARKET_PERP, MARKET_SPOT, InstrumentId, is_stock_token, stock_token_exchange
     from aletheia.data.venue_listing_cache import get_cached_listing
 
     seen: set[tuple[str, str, str]] = set()
@@ -361,8 +360,7 @@ def get_watched_instruments():
                 do_universe = (_tick_counter % _UNIVERSE_TICK_EVERY == 0)
 
             if do_universe:
-                from aletheia.storage.repositories import get_active_universe_members
-                from aletheia.storage.repositories import get_universe_asset
+                from aletheia.storage.repositories import get_active_universe_members, get_universe_asset
                 members = get_active_universe_members(limit=50)
                 for m in members:
                     if not m.get("execution_eligible", True):
@@ -413,13 +411,13 @@ async def refresh_watched_prices() -> dict:
     try:
         from collections import defaultdict
 
+        from aletheia.config.loader import load_config
         from aletheia.data.ccxt_provider import (
             CCXTProvider,
             get_market_data_provider,
             require_exact_ticker_venue,
         )
         from aletheia.data.symbols import is_stock_token
-        from aletheia.config.loader import load_config
 
         cfg = load_config()
         from aletheia.data.candidate_market_facts import (

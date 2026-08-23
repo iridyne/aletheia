@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import json
-import math
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
-import aletheia.analytics.outcome_integrity as oi_module
 import aletheia.analytics.profit_loop_qualification as qual_module
 from aletheia.analytics.profit_loop_qualification import (
     QUALIFICATION_CONTRACT_VERSION,
@@ -16,8 +14,6 @@ from aletheia.analytics.profit_loop_qualification import (
     compile_qualification_verdict,
 )
 from aletheia.cli.inspect_cmd import inspect_app
-from typer.testing import CliRunner
-
 
 runner = CliRunner()
 

@@ -198,8 +198,8 @@ def test_level3_defense_in_depth():
     and the intent/tool names used in the registry.
     """
     import aletheia.agent_shell.operator_loop as ol
-    from aletheia.agent_shell.registry import FORBIDDEN_INTENTS
     from aletheia.agent_runtime.tool_registry import RESTRICTED_TOOLS
+    from aletheia.agent_shell.registry import FORBIDDEN_INTENTS
 
     restricted_set = set(RESTRICTED_TOOLS)
 
@@ -327,6 +327,7 @@ def test_bounded_neutral_recoveries_are_the_only_level1_loosen_exceptions():
 )
 def test_content_health_ingestion_surface_exists():
     import dataclasses
+
     import aletheia.agent_shell.operator_loop as ol
     from aletheia.diagnostics import doctor as dx
 
@@ -351,6 +352,7 @@ def test_content_health_ingestion_surface_exists():
 )
 def test_content_health_response_is_level1_notify_only():
     import ast
+
     import aletheia.agent_shell.operator_loop as ol
 
     src = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
@@ -530,6 +532,7 @@ def test_observers_do_not_insert_pi_decisions():
 def test_l1_selfheal_requires_pi_approval():
     """An action cannot satisfy its own approval precondition."""
     import ast as _ast
+
     import aletheia.agent_shell.operator_loop as _ol
 
     src = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
@@ -569,6 +572,7 @@ def test_l2_proposal_requires_human_confirmation():
     and the operator loop respects it before execution.
     """
     import inspect
+
     import aletheia.agent_shell.operator_loop as _ol
 
     src = inspect.getsource(_ol._create_proposal)
@@ -877,6 +881,7 @@ def test_l2_proposal_artifact_carries_human_confirm_required():
     the key 'human_confirm_required' set to True.
     """
     import inspect
+
     import aletheia.agent_shell.operator_loop as _ol
 
     src = inspect.getsource(_ol._create_proposal)
@@ -906,9 +911,10 @@ def test_l2_proposal_artifact_carries_human_confirm_required():
 )
 def test_score_norm_confidence_capped():
     """confidence_score=100 时贡献不超过 75 分（clip_norm 后上限 50 + default offsets）。"""
+    import unittest.mock as mock
+
     from aletheia.agents.paper_trader_ranker import _compute_trade_score
     from aletheia.regime.detector import MarketRegime
-    import unittest.mock as mock
 
     neutral_regime = MarketRegime(state="sideways", confidence=0.3)
     with mock.patch("aletheia.agents.paper_trader_ranker.get_current_regime",
@@ -934,9 +940,10 @@ def test_score_norm_confidence_capped():
 )
 def test_sideways_trend_tax_applied():
     """sideways + breakout scanner 应比 reversion 低至少 15 分。"""
+    import unittest.mock as mock
+
     from aletheia.agents.paper_trader_ranker import _compute_trade_score
     from aletheia.regime.detector import MarketRegime
-    import unittest.mock as mock
 
     sideways = MarketRegime(state="sideways", confidence=0.75)
     with mock.patch("aletheia.agents.paper_trader_ranker.get_current_regime",
@@ -964,9 +971,10 @@ def test_sideways_trend_tax_applied():
 )
 def test_factor_scoring_is_continuous():
     """Unapproved history is neutral; authorized bounded deltas remain continuous."""
+    import unittest.mock as mock
+
     from aletheia.agents.paper_trader_ranker import _compute_trade_score
     from aletheia.regime.detector import MarketRegime
-    import unittest.mock as mock
 
     flat = MarketRegime(state="sideways", confidence=0.1)
     with mock.patch("aletheia.agents.paper_trader_ranker.get_current_regime",
@@ -998,9 +1006,10 @@ def test_factor_scoring_is_continuous():
 )
 def test_regime_scoring_no_cliff():
     """regime.confidence=0.49 vs 0.51 分差应 < 5（无断崖）。"""
+    import unittest.mock as mock
+
     from aletheia.agents.paper_trader_ranker import _compute_trade_score
     from aletheia.regime.detector import MarketRegime
-    import unittest.mock as mock
 
     base_opp = {"confidence_score": 50, "symbol": "BTC/USDT", "scanner_family": "test"}
 
@@ -1033,7 +1042,7 @@ def test_regime_scoring_no_cliff():
 )
 def test_scanner_weight_persistence():
     """Verify scanner_weight adjustments persist to config (CR-PI-01 fix)."""
-    from aletheia.config.schema import UniverseConfig, AletheiaConfig
+    from aletheia.config.schema import UniverseConfig
 
     # Schema: UniverseConfig must have scanner_weights field
     u = UniverseConfig()

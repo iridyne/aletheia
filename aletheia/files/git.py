@@ -11,7 +11,7 @@ import logging
 import shutil
 import subprocess
 
-from aletheia.config.loader import load_config, get_data_dir
+from aletheia.config.loader import get_data_dir, load_config
 from aletheia.gateway.pidfile import _no_window_kwargs
 
 logger = logging.getLogger("aletheia.git")

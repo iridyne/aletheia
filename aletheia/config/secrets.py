@@ -268,14 +268,12 @@ def migrate_keyring_to_file() -> int:
     """
     if is_preview_mode():
         return 0
-    import json
     kr = _get_keyring()
     if kr is None:
         return 0
     try:
         # Windows Credential Manager exposes enumerate via win32cred;
         # fall back to a known-key list when enumeration is unavailable.
-        import keyring.backends.Windows as _wb  # pyright: ignore[reportMissingImports]
         import win32cred  # type: ignore[import]
         creds = win32cred.CredEnumerate(None, 0) or []
         our_creds = [

@@ -28,8 +28,8 @@ def main() -> None:
     parser.add_argument("--before", default="2026-06-25", help="Archive items created before this date (YYYY-MM-DD)")
     args = parser.parse_args()
 
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import get_db
 
     run_migrations()
     db = get_db()

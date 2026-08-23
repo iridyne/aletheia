@@ -286,7 +286,8 @@ def _active_defer_stats(
     oldest_age_seconds: int | None = None
     if oldest_iso:
         try:
-            from datetime import datetime as _dt, timezone as _tz
+            from datetime import datetime as _dt
+            from datetime import timezone as _tz
 
             parsed = _dt.fromisoformat(oldest_iso.replace("Z", "+00:00"))
             if parsed.tzinfo is None:
@@ -354,6 +355,7 @@ def summarize(
     successfully-measured empty window.
     """
     from datetime import datetime, timedelta, timezone
+
     from aletheia.storage.sqlite import get_db
 
     db = get_db()

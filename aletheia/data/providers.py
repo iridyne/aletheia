@@ -7,8 +7,8 @@ is the concrete implementation; tests supply lightweight fakes that satisfy the
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 from typing import Iterable, Literal, Protocol, runtime_checkable
 
 from aletheia.data.symbols import InstrumentId

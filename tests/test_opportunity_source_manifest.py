@@ -24,9 +24,9 @@ async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
     _prepare_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     from aletheia.agents import market_observer as observer
+    from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.storage.models import Opportunity
     from aletheia.storage.repositories import get_opportunity, insert_opportunity
-    from aletheia.analytics.filter_evidence import record_filter_decision
 
     init_tool_registry()
     original = Opportunity(
@@ -404,11 +404,11 @@ async def test_proposal_preflight_rejects_legacy_observer_producer(
     tmp_path, monkeypatch,
 ):
     _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.reflection import claim_decision
     from aletheia.agent_shell.trading_decision import (
         TradingDecision,
         prepare_decision_as_proposal,
     )
-    from aletheia.agent_shell.reflection import claim_decision
     from aletheia.storage.models import Opportunity, PiDecision
     from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
     from aletheia.storage.sqlite import get_db

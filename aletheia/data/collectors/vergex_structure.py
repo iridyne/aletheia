@@ -8,14 +8,13 @@ return PerpStructureSnapshot models for repository persistence by the caller.
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aletheia.data.models import PerpStructureSnapshot
 from aletheia.data.position_x import compute_position_x_batch, extract_position_x_snapshot
-
 
 _ALLOWED_FIELDS = {
     "symbol",

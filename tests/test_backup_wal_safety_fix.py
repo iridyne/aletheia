@@ -89,6 +89,7 @@ def test_backup_fails_on_non_sqlite_app_db(tmp_path):
     (tmp_path / "app.db").write_bytes(b"not a sqlite file at all")
 
     import sqlite3
+
     from aletheia.backup.service import BackupService
 
     svc = BackupService(data_dir=tmp_path)

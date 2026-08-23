@@ -10,7 +10,7 @@ Only imported on Windows; POSIX callers never reach this module.
 
 import ctypes
 import ctypes.wintypes as wt
-from ctypes import byref, sizeof, POINTER, Structure, c_void_p, c_ulong
+from ctypes import POINTER, Structure, byref, c_ulong, c_void_p, sizeof
 
 # --- Win32 constants ---
 

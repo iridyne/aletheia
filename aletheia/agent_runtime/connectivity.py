@@ -10,9 +10,9 @@ This module is NOT frozen — it monitors infrastructure, not AI decisions.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 import logging
 import time
+from datetime import datetime, timezone
 from uuid import uuid4
 
 logger = logging.getLogger("aletheia.connectivity")
@@ -367,8 +367,8 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
         CONNECTIVITY_OWNER,
         acquire_pause,
     )
-    from aletheia.infra.events import emit_infra_event
     from aletheia.files.jsonl import write_audit
+    from aletheia.infra.events import emit_infra_event
 
     logger.warning(
         "Exchange %s unreachable for %d consecutive probes — pausing scheduler",
@@ -591,8 +591,8 @@ async def _resume_from_network(
         CONNECTIVITY_OWNER,
         release_pause,
     )
-    from aletheia.infra.events import emit_infra_event
     from aletheia.files.jsonl import write_audit
+    from aletheia.infra.events import emit_infra_event
 
     # Re-read after the asynchronous LLM probe so a newer pause cannot be
     # released by this older recovery task.

@@ -18,8 +18,6 @@ import json
 import sqlite3
 from pathlib import Path
 
-import pytest
-
 
 def _setup_env(tmp_path: Path, monkeypatch) -> None:
     import aletheia.config.loader as loader

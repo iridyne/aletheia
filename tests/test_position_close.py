@@ -7,10 +7,10 @@ import sqlite3
 
 import pytest
 
-from aletheia.storage.sqlite import reset_db
+from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import Position
-from aletheia.storage import repositories as repo
+from aletheia.storage.sqlite import reset_db
 
 # Paper round-trip fee model (see portfolio/pnl.close_position):
 # realized = gross_pnl - (entry_price + exit_price) * qty * PAPER_FEE_RATE
@@ -163,8 +163,8 @@ def test_account_loss_unblocked_after_paper_close(tmp_path, monkeypatch):
     """Regression: close_position() on paper_internal must not block
     authoritative_account_realized_loss with legacy_unverified_close."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.portfolio.pnl import close_position
     from aletheia.portfolio.account_loss import authoritative_account_realized_loss
+    from aletheia.portfolio.pnl import close_position
 
     p = Position(symbol="BTC/USDT", market_type="spot", direction="long",
                  quantity=1.0, entry_price=100.0, execution_mode="paper_internal")

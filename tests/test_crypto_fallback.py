@@ -1,16 +1,16 @@
 """Tests for crypto fallback data sources (CoinGecko + Binance public + chain)."""
 
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from aletheia.data.providers import Candle, Ticker
-from aletheia.data.sources.coingecko import _to_coingecko_id as to_coingecko_id
-from aletheia.data.symbols import to_binance as to_binance_symbol
-from aletheia.data.sources.coingecko import CoinGeckoProvider
 from aletheia.data.sources.binance_public import BinancePublicProvider
 from aletheia.data.sources.chain import FallbackChainProvider
-
+from aletheia.data.sources.coingecko import CoinGeckoProvider
+from aletheia.data.sources.coingecko import _to_coingecko_id as to_coingecko_id
+from aletheia.data.symbols import to_binance as to_binance_symbol
 
 # ---------------------------------------------------------------------------
 # symbol_map
@@ -334,7 +334,7 @@ class TestFactory:
 
     def test_fallback_disabled_returns_ccxt(self, monkeypatch):
         from aletheia.config import loader
-        from aletheia.data.ccxt_provider import get_market_data_provider, CCXTProvider
+        from aletheia.data.ccxt_provider import CCXTProvider, get_market_data_provider
 
         md = SimpleNamespace(
             ccxt_exchange="binance",

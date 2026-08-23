@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import logging
-from pathlib import Path
 import shutil
 import sqlite3
-from statistics import median
 import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from statistics import median
 from typing import Callable
-
 
 _MIB = 1024 * 1024
 _CAPACITY_LOG = "database_capacity.jsonl"

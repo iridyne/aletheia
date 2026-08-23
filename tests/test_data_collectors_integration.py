@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from datetime import datetime, timezone
 
 import pytest
 
@@ -28,8 +27,8 @@ def fresh_db(tmp_path, monkeypatch):
     """Standard DB fixture mirroring spec_macro_signals.py — fresh app.db in tmp_path."""
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
     from aletheia.storage import migrations as mig
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
     yield tmp_path
@@ -129,9 +128,9 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
     monkeypatch.setattr(cg_mod, "httpx_client", _fake_httpx_client)
 
     # Drive the collectors directly in the Phase B order the scheduler uses.
+    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
     from aletheia.data.collectors.derivatives import DerivativesCollector
     from aletheia.data.collectors.macro import MacroCollector
-    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
     from aletheia.storage import repositories as repo
 
     symbols = ["BTC/USDT"]
@@ -196,7 +195,7 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
 
     # 6. enriched_context render emits all five LLM-visible tokens
     from aletheia.data.context_builder import render_enriched_context_md
-    from aletheia.data.models import LeverageState, MacroSnapshot
+    from aletheia.data.models import MacroSnapshot
     from aletheia.data.normalizer import compute_leverage_state
     lv = compute_leverage_state(
         symbol="BTC/USDT",

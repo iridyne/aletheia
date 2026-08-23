@@ -206,6 +206,7 @@ def _read_body(file_path: str | None) -> str:
         return ""
     try:
         from pathlib import Path, PurePosixPath, PureWindowsPath
+
         from aletheia.config.loader import get_data_dir
 
         p = Path(file_path)

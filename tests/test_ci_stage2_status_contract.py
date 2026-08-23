@@ -4,7 +4,6 @@ from pathlib import Path
 
 import yaml
 
-
 WORKFLOW_PATH = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
 EXPECTED_STAGE1_GATE = (
     "${{ !cancelled() && needs.review.result == 'success' && "

@@ -13,15 +13,14 @@ cancellation.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import sqlite3
+from datetime import datetime, timezone
 
 import pytest
 
 from tests.execution_authority import seed_order_authority
 from tests.specs.spec_meta import SpecClaim, spec_claim
-
 
 _FILL_TIME_MS = 1_784_500_000_000
 _FILL_TIME = datetime.fromtimestamp(
@@ -640,8 +639,8 @@ def test_entry_gap_selector_excludes_durable_close_identity(
     tmp_path, monkeypatch
 ):
     db = _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution import reconciliation
     from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.execution import reconciliation
     from aletheia.storage import repositories as repo
 
     position, close_order = _seed_closed_pending(suffix="close-identity")
@@ -689,8 +688,8 @@ def test_verified_closed_position_clears_stale_pending_locally(
     tmp_path, monkeypatch
 ):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution import reconciliation
     from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.execution import reconciliation
     from aletheia.storage import repositories as repo
 
     position, close_order = _seed_closed_pending(suffix="clear")
@@ -732,8 +731,8 @@ def test_closed_pending_cleanup_survives_jsonl_audit_outage(
     tmp_path, monkeypatch
 ):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution import reconciliation
     from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.execution import reconciliation
     from aletheia.storage import repositories as repo
 
     position, _ = _seed_closed_pending(suffix="audit-outage")
@@ -777,8 +776,8 @@ def test_closed_pending_cleanup_rejects_incomplete_local_chain(
     tmp_path, monkeypatch, defect
 ):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution import reconciliation
     from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.execution import reconciliation
     from aletheia.storage import repositories as repo
 
     position, close_order = _seed_closed_pending(suffix=defect)

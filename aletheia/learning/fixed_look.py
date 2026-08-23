@@ -7,11 +7,11 @@ and consume one matching confirmatory verdict.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-import hashlib
-import json
 from typing import Any
 
 from aletheia.learning.cohorts import _exposure_behavior_change, _manifest_authority
@@ -25,7 +25,6 @@ from aletheia.learning.models import (
 from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
-
 
 INFERENCE_CONTRACT_VERSION = "ufc-fixed-look/v2"
 AUTHORITY_ALPHA = 0.025

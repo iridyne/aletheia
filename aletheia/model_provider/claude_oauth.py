@@ -18,8 +18,11 @@ import time
 from aletheia.files.jsonl import write_audit
 from aletheia.model_provider.oauth import (
     OAuthConfig,
-    generate_pkce, generate_state, build_auth_url,
-    exchange_code, refresh_tokens,
+    build_auth_url,
+    exchange_code,
+    generate_pkce,
+    generate_state,
+    refresh_tokens,
 )
 
 logger = logging.getLogger("aletheia.model_provider.claude_oauth")

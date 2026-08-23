@@ -27,13 +27,14 @@ _PROFIT_LOOP_PATH_ID = "profit_loop_observability"
 def _disk_commit() -> str:
     """Return on-disk source/release SHA; empty on error."""
     try:
-        from aletheia.update.git_ops import current_commit as _git_sha, is_repo
+        from aletheia.update.git_ops import current_commit as _git_sha
+        from aletheia.update.git_ops import is_repo
         if is_repo():
             return _git_sha() or ""
     except Exception:
         pass
     try:
-        from aletheia.update.packaged import current_selection, _paths, _read_json
+        from aletheia.update.packaged import _paths, _read_json, current_selection
         sel = current_selection()
         current = sel.get("current")
         if isinstance(current, str) and current:
@@ -261,8 +262,8 @@ def _connectivity_snapshot() -> dict[str, Any]:
     """Project cached connectivity only; status must never probe an exchange."""
 
     try:
-        from aletheia.agent_runtime.runtime_session import current_session
         from aletheia.agent_runtime.connectivity import get_status
+        from aletheia.agent_runtime.runtime_session import current_session
 
         if current_session() is None:
             return {
@@ -341,8 +342,8 @@ def _open_policy_epochs(limit: int = 10) -> list[dict[str, Any]] | dict[str, Any
 
 def _evidence_epochs() -> dict[str, Any]:
     try:
-        from aletheia.storage.sqlite import get_db
         from aletheia.learning.evidence_epoch import evidence_epoch_summary
+        from aletheia.storage.sqlite import get_db
 
         # Force missing/read-only DB state to remain explicit; the summary helper
         # intentionally treats a failed epoch query as an empty historical view.
@@ -360,8 +361,8 @@ def _evidence_epochs() -> dict[str, Any]:
 def _learning_authority() -> dict[str, Any]:
     try:
         from aletheia.learning.control import (
-            learning_influence_gate_reason,
             global_learning_refreeze_reason,
+            learning_influence_gate_reason,
         )
         gate_reason = learning_influence_gate_reason()
         refreeze_reason = global_learning_refreeze_reason()
@@ -430,13 +431,13 @@ def _durable_scheduler_snapshot(
 
 def _runtime_continuity() -> dict[str, Any]:
     try:
-        from aletheia.config.loader import load_config
         from aletheia.agent_runtime import scheduler
         from aletheia.agent_runtime.pause_ownership import (
             active_pause_blocker_names,
             active_pause_owners,
             pause_blocked_reason,
         )
+        from aletheia.config.loader import load_config
         try:
             cfg = load_config(persist_migrations=False)
         except TypeError:
@@ -1034,10 +1035,10 @@ def _profit_loop_status(evidence: dict[str, Any] | None = None) -> dict[str, Any
             "unavailable_reason": "malformed_profit_loop_coverage",
         }
     try:
+        import aletheia.analytics.profit_gradient_evidence as compiler_module
         from aletheia.analytics.profit_gradient_evidence import (
             PROFIT_GRADIENT_EVIDENCE_CONTRACT_VERSION,
         )
-        import aletheia.analytics.profit_gradient_evidence as compiler_module
 
         compiler_source_hash = hashlib.sha256(
             Path(compiler_module.__file__).read_bytes()

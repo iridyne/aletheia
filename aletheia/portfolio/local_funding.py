@@ -9,12 +9,11 @@ fail-closed while the protective close can still complete.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 import json
 import math
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
-
 
 _CROSS_VENUE_EXCHANGES = frozenset({
     "hyperliquid",
@@ -1039,11 +1038,12 @@ async def _seed_close_anchor_snapshot_async(
     funding_evidence). The `inserted` key is True iff a snapshot was
     written to `funding_rate_snapshots`.
     """
-    from aletheia.data.ccxt_provider import get_market_data_provider
-    from aletheia.data.symbols import to_ccxt_perp
-    from aletheia.data.collectors.derivatives import _parse_funding
-    from aletheia.storage.repositories import insert_funding_rate_snapshot
     import asyncio
+
+    from aletheia.data.ccxt_provider import get_market_data_provider
+    from aletheia.data.collectors.derivatives import _parse_funding
+    from aletheia.data.symbols import to_ccxt_perp
+    from aletheia.storage.repositories import insert_funding_rate_snapshot
 
     diagnostic: dict = {"inserted": False, "attempts": [], "skipped": None}
 

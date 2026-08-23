@@ -13,7 +13,6 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -22,6 +21,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 def _make_live_app():
     """Minimal FastAPI app with only the live-unlock router mounted."""
     from fastapi import FastAPI
+
     from aletheia.server.routes.live import router as live_router
 
     app = FastAPI()
@@ -32,6 +32,7 @@ def _make_live_app():
 def _setup_config(tmp_path, monkeypatch, state="live_disabled", first_done=False):
     """Seed config.yaml and wire monkeypatches for HTTP-level tests."""
     import yaml
+
     import aletheia.config.loader as loader
     import aletheia.files.jsonl as jsonl_mod
     from aletheia.config.schema import AletheiaConfig
@@ -51,8 +52,9 @@ def _setup_config(tmp_path, monkeypatch, state="live_disabled", first_done=False
     # The route now requires selected-account evidence.  Keep these legacy
     # pipeline tests deterministic with a sanitized fake identity; dedicated
     # issue-412 tests exercise the real adapter preflight separately.
-    import aletheia.trust.live_unlock as trust
     from datetime import datetime, timedelta, timezone
+
+    import aletheia.trust.live_unlock as trust
 
     monkeypatch.setattr(trust, "get_secret", lambda ref: f"test-secret:{ref}")
     identity = trust.resolve_live_execution_identity(cfg)
@@ -108,6 +110,7 @@ def test_live_unlock_confirm_required(tmp_path, monkeypatch):
     _setup_config(tmp_path, monkeypatch, state="live_disabled")
 
     from fastapi.testclient import TestClient
+
     from aletheia.config.loader import load_config
 
     client = TestClient(_make_live_app(), raise_server_exceptions=False)
@@ -369,6 +372,7 @@ def test_scorecard_gate_blocks_high_score_without_clear_green_readiness(
     )
 
     from fastapi.testclient import TestClient
+
     from aletheia.config.loader import load_config
 
     client = TestClient(_make_live_app(), raise_server_exceptions=False)

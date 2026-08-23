@@ -7,23 +7,22 @@ not register the future factor-suppression Learning path.
 
 from __future__ import annotations
 
-from dataclasses import asdict
 import hashlib
 import json
+from dataclasses import asdict
 from typing import Mapping, Sequence
 
 from aletheia.config.schema import UniverseConfig
 from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
 from aletheia.universe.continuous_scoring import ContinuousScoringPolicy
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 from aletheia.universe.twin_persistence import (
     TwinExperimentContext,
     TwinShadowBundle,
     build_twin_shadow_bundle,
     feature_source_fingerprint,
 )
-from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 from aletheia.universe.twin_scoring import TwinShadowInput, TwinShadowRecord
-
 
 TWIN_EXPERIMENT_PATH_ID = "universe_continuous_shadow_comparison"
 TWIN_EXPERIMENT_CONTRACT_VERSION = "universe-continuous-shadow-experiment/v2"

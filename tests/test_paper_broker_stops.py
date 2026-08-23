@@ -8,9 +8,9 @@ import sqlite3
 
 import pytest
 
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -29,7 +29,6 @@ def setup_env(tmp_path, monkeypatch):
 
 def test_paper_order_stores_stop_and_tp(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    import pytest
     from aletheia.execution.paper_broker import execute_paper_order
     from tests.execution_authority import seed_order_authority
     seed_order_authority(

@@ -22,8 +22,6 @@ from __future__ import annotations
 import importlib
 import pathlib
 
-import pytest
-
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -70,8 +68,8 @@ def test_all_learners_apply_clean_window_floor():
 )
 def test_clean_window_cutoff_behavior():
     from aletheia.analytics.learning_window import (
-        clean_window_cutoff,
         LEARNING_DATA_FLOOR_ISO,
+        clean_window_cutoff,
     )
 
     # rolling cutoff BEFORE the floor -> clamped up to the floor (dirty data excluded)
@@ -116,6 +114,7 @@ def test_prior_memo_overturned_by_subsequent_results(tmp_path, monkeypatch):
 
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
+    from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage.models import KnowledgeItem, Position
     from aletheia.storage.repositories import (
@@ -123,7 +122,6 @@ def test_prior_memo_overturned_by_subsequent_results(tmp_path, monkeypatch):
         insert_position,
         list_knowledge_items,
     )
-    from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
     from tests.test_outcome_closure import _insert_entry_chain
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -294,8 +292,8 @@ def test_position_regime_reads_market_regime(tmp_path, monkeypatch):
 
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
+    from aletheia.execution import paper_broker, position_enrichment
     from aletheia.storage.migrations import run_migrations
-    from aletheia.execution import position_enrichment, paper_broker
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")

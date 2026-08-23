@@ -13,8 +13,8 @@ class TestMemoRotationFixes:
 
     def test_evaluate_prior_memo_accepts_old_memo_for_rotation(self):
         """evaluate_prior_memo with for_rotation=True accepts a memo older than 72h."""
-        from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
         from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ID
+        from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
         from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
 
         # 10-day-old memo: past 72h but within 30 days
@@ -46,8 +46,8 @@ class TestMemoEffectivenessTradeFiltering:
 
     def test_excludes_non_paper_internal_trades(self):
         """Trade with execution_mode != 'paper_internal' is excluded from memo cohort."""
-        from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
         from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ID
+        from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
         from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
 
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -175,7 +175,7 @@ class TestAttributionReadError:
 
     def test_read_one_raises_attribution_read_error_on_db_exception(self):
         """_read_one raises AttributionReadError on DB exception (not returns None)."""
-        from aletheia.analytics.trade_attribution import _read_one, AttributionReadError
+        from aletheia.analytics.trade_attribution import AttributionReadError, _read_one
 
         mock_db = MagicMock()
         mock_db.execute.side_effect = Exception("DB connection failed")

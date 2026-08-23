@@ -10,6 +10,10 @@ reaching into each submodule:
 """
 
 from aletheia.analytics.attribution import attribute
+from aletheia.analytics.opportunity_lifecycle_story import (
+    build_opportunity_lifecycle_story,
+    render_opportunity_lifecycle_story,
+)
 from aletheia.analytics.performance_summary import (
     calmar,
     consolidate_report,
@@ -19,6 +23,11 @@ from aletheia.analytics.performance_summary import (
     profit_factor,
     summarize,
     win_rate,
+)
+from aletheia.analytics.position_lifecycle_story import (
+    POSITION_LIFECYCLE_EVENT_TYPES,
+    build_position_lifecycle_story,
+    render_position_lifecycle_story,
 )
 from aletheia.analytics.streaks import (
     current_streak,
@@ -31,17 +40,6 @@ from aletheia.analytics.temporal import (
     bucket_by_hour,
     bucket_by_weekday,
     temporal_summary,
-)
-
-from aletheia.analytics.position_lifecycle_story import (
-    POSITION_LIFECYCLE_EVENT_TYPES,
-    build_position_lifecycle_story,
-    render_position_lifecycle_story,
-)
-
-from aletheia.analytics.opportunity_lifecycle_story import (
-    build_opportunity_lifecycle_story,
-    render_opportunity_lifecycle_story,
 )
 
 __all__ = [

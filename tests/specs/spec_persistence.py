@@ -9,8 +9,6 @@ Contract: persistence_recovery_contract
 Claim prefix: PR
 """
 
-import ast
-import asyncio
 import sqlite3
 from pathlib import Path
 
@@ -34,7 +32,9 @@ _ROOT = Path(__file__).parents[2]
 )
 def test_gateway_state_machine_surface():
     from aletheia.gateway.state_machine import (
-        GatewayStatus, GatewayStateMachine, FreezeBlockedError,
+        FreezeBlockedError,
+        GatewayStateMachine,
+        GatewayStatus,
     )
 
     names = {s.name for s in GatewayStatus}
@@ -68,8 +68,8 @@ def test_idempotency_generators_exist():
     ),
 )
 def test_event_and_artifact_stores_exist():
-    from aletheia.storage.event_store import EventStore, get_event_store
     from aletheia.storage.artifact_store import ArtifactStore, get_artifact_store
+    from aletheia.storage.event_store import EventStore, get_event_store
 
     assert callable(getattr(EventStore, "append", None))
     assert callable(get_event_store)

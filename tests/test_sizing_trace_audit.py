@@ -266,6 +266,7 @@ def test_sizing_trace_render_labels_current_config_projection(monkeypatch):
 
 def test_sizing_trace_cli_outputs_human_and_json_reports(monkeypatch):
     import json
+
     from typer.testing import CliRunner
 
     from aletheia.main import app

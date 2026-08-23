@@ -10,7 +10,7 @@ It does not call the ranker, LLMs, HTTP clients, exchanges, or any mutation API.
 from __future__ import annotations
 
 import json
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any

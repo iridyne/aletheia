@@ -9,7 +9,6 @@ import yaml
 from aletheia.simulation.control_loop import ControlLoopHarness
 from aletheia.simulation.control_loop.invariants import assert_invariants
 
-
 SCENARIO_PATH = (
     Path(__file__).resolve().parents[2]
     / "fixtures/control_loop/confidence_deadlock_20260713.yaml"

@@ -1,28 +1,28 @@
 """Model provider router — creates and caches provider instances from config."""
 
 import asyncio
-from concurrent.futures import Future
-from datetime import datetime, timezone
 import hashlib
 import json
 import logging
 import threading
 import time
+from concurrent.futures import Future
+from datetime import datetime, timezone
 
 from aletheia.config.loader import load_config, mutate_config, save_config
 from aletheia.config.secrets import get_secret
+from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
 from aletheia.model_provider.base import (
     MODEL_HEALTH_STALE_AFTER_SECONDS,
     ModelHealth,
     ModelProvider,
 )
-from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
-from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-from aletheia.model_provider.databricks import DatabricksProvider
-from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
-from aletheia.model_provider.openai_native import OpenAINativeProvider
-from aletheia.model_provider.codex_cli import CodexCLIProvider
 from aletheia.model_provider.claude_cli import ClaudeCLIProvider
+from aletheia.model_provider.codex_cli import CodexCLIProvider
+from aletheia.model_provider.databricks import DatabricksProvider
+from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+from aletheia.model_provider.openai_native import OpenAINativeProvider
 from aletheia.model_provider.pi_cli import PiCLIProvider
 
 logger = logging.getLogger("aletheia.model_provider.router")
@@ -311,6 +311,7 @@ def _resolve_oauth_token(name: str, pcfg) -> str | None:
 def _do_refresh(name: str, pcfg, refresh_val: str) -> str | None:
     """Synchronously run async refresh (called from get_provider hot path)."""
     import asyncio
+
     from aletheia.config.secrets import set_secret
 
     loop = None

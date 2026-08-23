@@ -1,7 +1,7 @@
-from pathlib import Path
-from types import SimpleNamespace
 import asyncio
 import threading
+from pathlib import Path
+from types import SimpleNamespace
 
 from aletheia.gateway import tunnel
 

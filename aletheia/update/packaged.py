@@ -23,12 +23,9 @@ The public key is never downloaded from the feed; it is installed out-of-band as
 from __future__ import annotations
 
 import base64
-from contextlib import contextmanager
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
 import platform
 import re
 import shutil
@@ -37,6 +34,9 @@ import sys
 import tarfile
 import threading
 import time
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterator
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -849,9 +849,10 @@ def request_rollback() -> dict[str, Any]:
 def validate_current_data() -> dict[str, Any]:
     """Run candidate migration/config/SQLite/audit checks for preflight or activation."""
 
+    import sqlite3
+
     from aletheia.files.jsonl import verify_audit_chain
     from aletheia.storage.migrations import apply_migrations
-    import sqlite3
 
     apply_migrations()
     load_config()

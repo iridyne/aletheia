@@ -13,13 +13,12 @@ Contract verified here:
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from aletheia.storage import repositories as repo
-
 
 # ---------------------------------------------------------------------------
 # 1. ExperimentStateReadError raised instead of silent None

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
+from datetime import datetime, timedelta, timezone
 
 
 def _insert_closed(
@@ -148,8 +148,8 @@ def test_family_scorecard_resolves_eligible_outcomes_through_source_module(monke
     ``test_family_pi_context... trade_count == 2`` (the leaked 2-row stub) under
     xdist. Resolving through the module keeps the patch honored and undone.
     """
-    import aletheia.analytics.outcome_integrity as oi
     import aletheia.analytics.family_scorecard as fsc
+    import aletheia.analytics.outcome_integrity as oi
 
     # family_scorecard must not hold its own copy of the name.
     assert not hasattr(fsc, "eligible_strategy_outcomes")
@@ -258,8 +258,8 @@ def test_old_or_stale_calibration_report_is_rejected_before_pi_consumption():
 
 def test_current_fresh_calibration_report_is_accepted():
     from aletheia.analytics.confidence_calibration import get_latest_calibration_report
-    from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
     from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ID
+    from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import insert_knowledge_item
 

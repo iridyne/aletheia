@@ -2,8 +2,8 @@
 
 import sqlite3
 
-from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_test_env(tmp_path, monkeypatch):
@@ -47,8 +47,8 @@ def test_kill_switch_deactivate(tmp_path, monkeypatch):
 
 def test_kill_switch_writes_audit_event(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    from aletheia.risk import kill_switch
     from aletheia.files.jsonl import read_jsonl
+    from aletheia.risk import kill_switch
 
     kill_switch.activate(reason="loss limit", actor="system")
     events = read_jsonl("audit.jsonl")
@@ -61,8 +61,8 @@ def test_kill_switch_blocks_all_proposals(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     from aletheia.risk import kill_switch
     from aletheia.risk.engine import evaluate_proposal
-    from aletheia.storage.models import TradeProposal
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     kill_switch.activate(reason="brake")
     proposal = TradeProposal(

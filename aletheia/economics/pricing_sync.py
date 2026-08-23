@@ -18,7 +18,6 @@ from aletheia.config.loader import get_data_dir
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.tracing import add_pricing_snapshot
 
-
 LITELLM_PRICE_MAP_URL = (
     "https://raw.githubusercontent.com/BerriAI/litellm/main/"
     "model_prices_and_context_window.json"

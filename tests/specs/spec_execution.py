@@ -5,13 +5,11 @@ is the most critical invariant in the entire system.
 """
 
 import ast
-import textwrap
 
 import pytest
 
-from tests.specs.spec_meta import SpecClaim, spec_claim
 from tests.async_test_utils import closing_coro_runner
-
+from tests.specs.spec_meta import SpecClaim, spec_claim
 
 # ---------------------------------------------------------------------------
 # L2a — Structural claims
@@ -63,7 +61,7 @@ def test_execution_internal_is_private():
     ),
 )
 def test_broker_modules_exist():
-    from aletheia.execution import paper_broker, bitget_broker, okx_broker
+    from aletheia.execution import bitget_broker, okx_broker, paper_broker
 
     assert callable(paper_broker.execute_paper_order)
     assert callable(bitget_broker.execute_live_order)
@@ -99,8 +97,8 @@ def test_submit_calls_risk_first(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     from aletheia.execution.gateway import submit_proposal
-    from aletheia.storage.migrations import run_migrations
     from aletheia.storage import repositories as repo
+    from aletheia.storage.migrations import run_migrations
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -205,8 +203,8 @@ def test_causal_chain_integrity(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     from aletheia.execution.gateway import submit_proposal
-    from aletheia.storage.migrations import run_migrations
     from aletheia.storage import repositories as repo
+    from aletheia.storage.migrations import run_migrations
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -350,7 +348,7 @@ def test_re_execute_already_executed_proposal_rejected(tmp_path, monkeypatch):
     circuits with status='already_executed' (gateway.py:61-66)."""
     _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.execution.gateway import submit_proposal, execute_existing_proposal
+    from aletheia.execution.gateway import execute_existing_proposal, submit_proposal
     from aletheia.storage import repositories as repo
 
     result = submit_proposal(
@@ -566,7 +564,6 @@ def test_expired_exchange_execution_lease_never_resubmits(tmp_path, monkeypatch)
 )
 def test_reconciliation_never_imports_place_order():
     """AST-scan reconciliation.py imports — no 'place_order' name must appear."""
-    import importlib.util
     from pathlib import Path
 
     src = Path(__file__).parents[2] / "aletheia" / "execution" / "reconciliation.py"
@@ -695,7 +692,6 @@ def test_order_proposal_foreign_key_integrity(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
 
     from aletheia.execution.gateway import submit_proposal
-    from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
 
     result = submit_proposal(
@@ -786,14 +782,15 @@ def test_fill_model_defaults_fee_source_estimated():
 )
 def test_opportunity_id_threaded_through_execution():
     import inspect
+
     from aletheia.storage.models import Position
 
     assert "opportunity_id" in Position.model_fields
 
-    from aletheia.execution.paper_broker import execute_paper_order
+    from aletheia.execution.binance_broker import execute_live_order as binance_exec
     from aletheia.execution.bitget_broker import execute_live_order as bitget_exec
     from aletheia.execution.okx_broker import execute_live_order as okx_exec
-    from aletheia.execution.binance_broker import execute_live_order as binance_exec
+    from aletheia.execution.paper_broker import execute_paper_order
     for fn in (execute_paper_order, bitget_exec, okx_exec, binance_exec):
         assert "opportunity_id" in inspect.signature(fn).parameters, fn.__module__
 

@@ -1,18 +1,13 @@
 """Integration test — full universe pipeline with mocked CCXT."""
 
-import json
-from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock, AsyncMock
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
-import pytest
-
-from aletheia.config.schema import UniverseConfig, AletheiaConfig
-from aletheia.universe.service import UniverseService
-from aletheia.universe.registry import sync_registry
-from aletheia.universe.features import collect_features
+from aletheia.config.schema import UniverseConfig
+from aletheia.universe.allocator import allocate_universe, compute_total_score
 from aletheia.universe.filters import apply_tradability_filters
 from aletheia.universe.scanners import run_all_scanners
-from aletheia.universe.allocator import allocate_universe, compute_total_score
+from aletheia.universe.service import UniverseService
 
 # Authoritative registered-family set — derived from run_all_scanners itself so
 # these assertions track the code instead of a hardcoded list that silently goes

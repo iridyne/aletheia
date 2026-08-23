@@ -7,8 +7,6 @@ TradeProposal through evaluate_proposal and asserts on the resulting violations.
 
 import sqlite3
 
-import pytest
-
 
 def _prepare(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
@@ -37,9 +35,9 @@ def _set_live_state(state):
 def test_live_gate_fails_closed_on_non_unlocked_state(tmp_path, monkeypatch):
     """#7: a *_live_limited order is permitted ONLY when live.state == 'live_limited'."""
     _prepare(tmp_path, monkeypatch)
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
     from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     def _mk():
         p = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
@@ -64,9 +62,9 @@ def test_live_gate_fails_closed_on_non_unlocked_state(tmp_path, monkeypatch):
 def test_spot_short_rejected(tmp_path, monkeypatch):
     """#24: a spot instrument cannot be shorted."""
     _prepare(tmp_path, monkeypatch)
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
     from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="short",
                       execution_mode="paper_internal", quantity=0.001, price=60000)
@@ -79,9 +77,9 @@ def test_spot_short_rejected(tmp_path, monkeypatch):
 def test_entry_plan_geometry_rejects_inverted_sides(tmp_path, monkeypatch):
     """#98: native LIMIT entry with stop/TP on the wrong side of entry is rejected."""
     _prepare(tmp_path, monkeypatch)
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
     from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     # Inverted long: stop ABOVE entry, TP BELOW entry.
     bad = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
@@ -113,9 +111,9 @@ def test_lesson_hard_block_requires_risk_category(tmp_path, monkeypatch):
     _prepare(tmp_path, monkeypatch)
     import aletheia.storage.sqlite as sq
     from aletheia.learning.lessons import LessonStore
-    from aletheia.storage.models import TradeProposal
-    from aletheia.storage import repositories as repo
     from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
     store = LessonStore()
 

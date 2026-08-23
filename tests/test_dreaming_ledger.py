@@ -299,8 +299,8 @@ async def test_nomination_failure_keeps_case_pending(tmp_path, monkeypatch):
 
     from aletheia.agents import dreaming_agent
     from aletheia.learning import guard_routing, hypotheses
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import pending_trade_case_studies_summary
+    from aletheia.storage.sqlite import get_db
     from tests.specs.spec_learning_attribution import _ready_research
 
     factor = "momentum:BTC/USDT:long:medium_confidence:not_late"
@@ -435,8 +435,7 @@ async def test_dreaming_review_includes_learning_ledger(tmp_path, monkeypatch):
 
     # Seed strategies across lifecycle states + a couple of knowledge items.
     from aletheia.storage.models import StrategyRecord
-    from aletheia.storage.repositories import insert_strategy
-    from aletheia.storage.repositories import update_strategy
+    from aletheia.storage.repositories import insert_strategy, update_strategy
     s1 = StrategyRecord(name="S1", description="draft one", state="draft")
     insert_strategy(s1)
     s2 = StrategyRecord(name="S2", description="to hypothesis", state="draft")
@@ -533,7 +532,8 @@ async def test_dreaming_git_snapshot_failure_does_not_break_run(tmp_path, monkey
 # ---------------------------------------------------------------------------
 
 def _seed_closed_position(realized_pnl: float, outcome_eligible: bool = True) -> None:
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
+
     from aletheia.storage.models import Position
     from aletheia.storage.repositories import insert_position, update_position
 

@@ -455,9 +455,9 @@ def test_latest_coingecko_top_pins_to_single_batch(tmp_path, monkeypatch):
     # Point the data dir at tmp_path so a fresh app.db is created.
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
-    from aletheia.storage import repositories as repo
     from aletheia.storage import migrations as mig
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import sqlite as sq
     sq.close_db()  # drop any cached connection bound to the production DB
 
     mig.run_migrations()  # no-arg — picks up DATA_DIR via cfg_loader
@@ -526,13 +526,13 @@ def test_backfill_idempotent_with_existing_rows(tmp_path, monkeypatch):
 
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
-    from aletheia.storage import repositories as repo
     from aletheia.storage import migrations as mig
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
 
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
     now = datetime.now(timezone.utc)
     sym = "BTC/USDT"
     # Seed 3 recent rows.
@@ -570,8 +570,8 @@ def test_oi_history_swallows_not_supported(tmp_path, monkeypatch):
 
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
     from aletheia.storage import migrations as mig
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
 

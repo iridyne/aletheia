@@ -13,10 +13,8 @@ All LLM calls are mocked — no real network or subprocess here.
 import asyncio
 import sqlite3
 
-import pytest
-
+from aletheia.config.loader import _invalidate_config_cache, save_config
 from aletheia.config.schema import AletheiaConfig, ProviderConfig
-from aletheia.config.loader import save_config, _invalidate_config_cache
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -186,8 +184,8 @@ def test_no_enabled_providers(tmp_path, monkeypatch):
 
 def test_startup_gate_pauses_and_audits(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime.health import compute_health, reset_llm_failures
     from aletheia.server import app as appmod
-    from aletheia.agent_runtime.health import reset_llm_failures, compute_health
 
     reset_llm_failures()
     cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
@@ -216,8 +214,8 @@ def test_startup_gate_pauses_and_audits(tmp_path, monkeypatch):
 
 def test_startup_gate_passes_when_usable(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_runtime.health import get_llm_consecutive_failures, reset_llm_failures
     from aletheia.server import app as appmod
-    from aletheia.agent_runtime.health import reset_llm_failures, get_llm_consecutive_failures
 
     reset_llm_failures()
     cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
@@ -232,8 +230,8 @@ def test_startup_gate_passes_when_usable(tmp_path, monkeypatch):
 
 def test_startup_gate_does_not_release_new_llm_generation(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.server import app as appmod
     from aletheia.config.loader import load_config, save_config
+    from aletheia.server import app as appmod
 
     cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
     cfg.runtime.acquire_pause(
@@ -333,8 +331,8 @@ def test_retry_all_attempts_fail(tmp_path, monkeypatch):
 
 def test_notification_called_on_pause(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.server import app as appmod
     from aletheia.agent_runtime import startup_gate
+    from aletheia.server import app as appmod
 
     cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
     cfg.runtime.paused = False
@@ -477,8 +475,7 @@ def test_resume_gate_keeps_startup_behavior_blocker_paused(tmp_path, monkeypatch
     the LLM probe and silently cleared the gate-owned pause.
     """
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import resume_gate
-    from aletheia.agent_runtime import startup_behavior_gate
+    from aletheia.agent_runtime import resume_gate, startup_behavior_gate
     from aletheia.config.loader import load_config, save_config
 
     cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
@@ -613,6 +610,7 @@ def test_dns_failure_short_circuits_retries(tmp_path, monkeypatch):
     """
     setup_env(tmp_path, monkeypatch)
     import httpx
+
     from aletheia.agent_runtime import startup_gate
 
     cfg = _cfg_with({"openai_compatible": True}, "openai_compatible")
@@ -642,6 +640,7 @@ def test_mixed_dns_and_non_dns_failures_still_retry(tmp_path, monkeypatch):
     must continue — only an ALL-DNS round is hopeless."""
     setup_env(tmp_path, monkeypatch)
     import httpx
+
     from aletheia.agent_runtime import startup_gate
 
     cfg = _cfg_with({"a": True, "b": True}, "a")
@@ -666,10 +665,10 @@ def test_startup_gate_probe_exception_causes_pause(tmp_path, monkeypatch):
     exception the scheduler must be paused (fail-safe), not silently skipped
     (fail-open).  The old code returned early, leaving the scheduler running."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.server import app as appmod
+    import aletheia.notifications as notif_mod
     from aletheia.agent_runtime import startup_gate
     from aletheia.agent_runtime.health import reset_llm_failures
-    import aletheia.notifications as notif_mod
+    from aletheia.server import app as appmod
 
     reset_llm_failures()
     cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")

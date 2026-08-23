@@ -1,5 +1,6 @@
 """Check current strategy state"""
 import sqlite3
+
 from aletheia.storage.sqlite import db_path
 
 conn = sqlite3.connect(str(db_path()))

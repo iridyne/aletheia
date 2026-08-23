@@ -1,9 +1,7 @@
 """Universe Generator API routes."""
 
-import asyncio
-import json
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException
 
 from aletheia.config.loader import load_config
 from aletheia.storage import repositories as repo

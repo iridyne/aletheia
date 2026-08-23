@@ -1,6 +1,7 @@
 """Focused regression tests for orderbook normalization."""
 
 import asyncio
+
 import pytest
 
 
@@ -26,8 +27,8 @@ def test_parse_orderbook_accepts_ccxt_count_column_and_contract_size():
 
 
 def test_futures_instrument_uses_derivatives_orderbook_and_keeps_identity(monkeypatch):
-    from aletheia.data.collectors.microstructure import MicrostructureCollector
     from aletheia.data import ccxt_provider
+    from aletheia.data.collectors.microstructure import MicrostructureCollector
     from aletheia.data.symbols import InstrumentId
 
     class Exchange:

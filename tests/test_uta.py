@@ -9,18 +9,16 @@ Covers:
 - get_unified_state_sync() smoke test
 """
 
-import asyncio
 from types import SimpleNamespace
 
 import pytest
 
 from aletheia.portfolio.uta.broker_protocol import AccountInfo, BrokerPosition, IBroker
+from aletheia.portfolio.uta.manager import UnifiedState, get_unified_state
 from aletheia.portfolio.uta.registry import (
-    register_broker, create_broker, create_all_configured, available_brokers,
     _BROKER_REGISTRY,
+    create_broker,
 )
-from aletheia.portfolio.uta.manager import get_unified_state, UnifiedState
-
 
 # ---------------------------------------------------------------------------
 # Minimal mock broker for testing

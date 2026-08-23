@@ -1,21 +1,30 @@
 """Tests for storage layer: SQLite, JSONL, Markdown, repositories."""
 
-import json
-import pytest
 from unittest.mock import patch
-from pathlib import Path
 
-from aletheia.storage.sqlite import get_db, reset_db
+import pytest
+
+from aletheia.files.jsonl import append_jsonl, read_jsonl, write_audit
+from aletheia.files.markdown import write_dreaming_log, write_research_note
+from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import (
-    AuditEvent, AgentRun, Opportunity, TradeProposal,
-    RiskDecision, Order, Fill, Position, StrategyRecord, KnowledgeItem,
-    SerenityTheme, SerenityEvidence, SerenityOpportunity,
-    SerenityRiskGate, SerenityReplaySnapshot, SerenityPostMortem,
+    AgentRun,
+    AuditEvent,
+    Fill,
+    Opportunity,
+    Order,
+    Position,
+    RiskDecision,
+    SerenityEvidence,
+    SerenityOpportunity,
+    SerenityPostMortem,
+    SerenityReplaySnapshot,
+    SerenityRiskGate,
+    SerenityTheme,
+    TradeProposal,
 )
-from aletheia.storage import repositories as repo
-from aletheia.files.jsonl import append_jsonl, read_jsonl, write_audit
-from aletheia.files.markdown import write_research_note, write_dreaming_log
+from aletheia.storage.sqlite import get_db, reset_db
 
 
 def setup_test_db(tmp_path):
@@ -306,6 +315,7 @@ def _real_db_env(tmp_path, monkeypatch):
 @pytest.mark.real_db
 def test_insert_commits_and_releases_lock(tmp_path, monkeypatch):
     import sqlite3
+
     from aletheia.storage.sqlite import db_path
     _real_db_env(tmp_path, monkeypatch)
 
@@ -333,6 +343,7 @@ def test_insert_commits_and_releases_lock(tmp_path, monkeypatch):
 @pytest.mark.real_db
 def test_update_commits_and_releases_lock(tmp_path, monkeypatch):
     import sqlite3
+
     from aletheia.storage.sqlite import db_path
     _real_db_env(tmp_path, monkeypatch)
 

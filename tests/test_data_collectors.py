@@ -5,10 +5,9 @@ All tests are offline (no network, no DB). We mock ccxt and httpx.
 
 from __future__ import annotations
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # microstructure.py
@@ -354,6 +353,7 @@ def test_classify_risk_regime_neutral():
 async def test_fetch_fred_parses_response(monkeypatch):
     """FRED fetcher extracts latest non-'.' observation value."""
     import httpx
+
     from aletheia.data.collectors.macro import _fetch_fred
 
     # Mock a FRED-like JSON response
@@ -396,6 +396,7 @@ async def test_fetch_fred_parses_response(monkeypatch):
 async def test_fetch_fred_skips_dots(monkeypatch):
     """All '.' values → returns None for that series."""
     import httpx
+
     from aletheia.data.collectors.macro import _fetch_fred
 
     class FakeResponse:
@@ -482,8 +483,8 @@ def test_render_enriched_context_md_empty():
 
 def test_render_enriched_context_md_with_data():
     from aletheia.data.context_builder import render_enriched_context_md
-    from aletheia.data.normalizer import compute_tradability, compute_leverage_state
     from aletheia.data.models import MacroSnapshot
+    from aletheia.data.normalizer import compute_leverage_state, compute_tradability
 
     t = compute_tradability("BTC/USDT", "binance", 2.5, 300_000, 100_000_000)
     lv = compute_leverage_state(
@@ -609,7 +610,7 @@ async def test_vergex_structure_fixture_persists_btc_eth_sol():
 
 def test_build_market_context_snapshot_completeness():
     from aletheia.data.context_builder import build_market_context_snapshot
-    from aletheia.data.normalizer import compute_tradability, compute_leverage_state
+    from aletheia.data.normalizer import compute_leverage_state, compute_tradability
 
     symbols = ["BTC/USDT", "ETH/USDT"]
     t = {s: compute_tradability(s, "binance", 2.0, 200_000, 50_000_000) for s in symbols}
@@ -624,6 +625,7 @@ def test_build_market_context_snapshot_completeness():
 
 def test_perp_structure_repository_roundtrip_and_prune():
     from datetime import datetime, timedelta, timezone
+
     from aletheia.storage import repositories as repo
 
     old_ts = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()

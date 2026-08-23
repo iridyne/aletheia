@@ -3,14 +3,13 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
-from pathlib import Path
 import plistlib
 import stat
 import sys
 import zipfile
+from pathlib import Path
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILDER = ROOT / "scripts" / "release" / "build_macos_app.py"

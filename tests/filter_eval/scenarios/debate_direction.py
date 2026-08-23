@@ -16,6 +16,7 @@ _MIN_CONVICTION_TO_TRADE = 55
 _DEBATE_RANGE = (40, 80)
 """
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Literal
 

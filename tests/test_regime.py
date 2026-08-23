@@ -1,21 +1,21 @@
 """Tests for market regime detection + signal_emitter regime gate."""
 
-import pytest
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
+from aletheia.data.providers import Candle
 from aletheia.regime.detector import (
-    detect_regime,
-    debounced_detect,
-    reset_state,
-    MarketRegime,
-    REGIME_BULL,
     REGIME_BEAR,
+    REGIME_BULL,
     REGIME_SIDEWAYS,
     REGIME_VOLATILE,
+    MarketRegime,
+    debounced_detect,
+    detect_regime,
+    reset_state,
 )
 from aletheia.universe.signal_emitter import _passes_regime_gate
-from aletheia.data.providers import Candle
-
 
 # ── detect_regime ──────────────────────────────────────────────────────────────
 

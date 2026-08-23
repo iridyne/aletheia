@@ -37,7 +37,6 @@ from aletheia.economics.viability import (
 from aletheia.main import app
 from aletheia.storage.sqlite import get_db
 
-
 runner = CliRunner()
 
 

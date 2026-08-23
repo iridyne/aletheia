@@ -7,8 +7,8 @@ from pathlib import Path
 
 
 def test_runtime_consumers_inherit_selected_home(tmp_path, monkeypatch):
-    import aletheia.config.loader as loader
     import aletheia.agent_shell.reflection as reflection
+    import aletheia.config.loader as loader
     from aletheia.config import secrets
     from aletheia.gateway.frontdoor_route import frontdoor_route_path
     from aletheia.gateway.logs import errors_log_path, log_path

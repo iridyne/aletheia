@@ -31,12 +31,13 @@ from aletheia.execution.close_convergence import (
     has_unresolved_close_claim,
     pending_close_age_hours,
 )
+from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exit_plan
+from aletheia.portfolio.pnl import _latest_price, build_exit_reasoning
 from aletheia.storage.repositories import (
     PositionProtectionConflict,
     list_all_open_positions,
 )
-from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exit_plan
-from aletheia.portfolio.pnl import build_exit_reasoning, close_position, _latest_price
+
 logger = logging.getLogger("aletheia.position_manager")
 
 _PAPER_MODES = {"paper_internal", "bitget_demo", "binance_testnet", "okx_demo"}
@@ -947,6 +948,7 @@ def _emit_wake(
     Return whether delivery to the daemon event loop was scheduled."""
     try:
         import time
+
         from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
         from aletheia.agent_runtime.wake_events import WakeEvent
         delivered = notify_pi_daemon(
@@ -1160,6 +1162,7 @@ def _maybe_wake_on_horizon(position: dict) -> bool:
 
     try:
         import time
+
         from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
         from aletheia.agent_runtime.wake_events import HORIZON_DUE, WakeEvent
         delivered = notify_pi_daemon(
@@ -1376,8 +1379,8 @@ def evaluate_open_positions() -> dict:
                     record_error(p, "market_signal_identity_mismatch")
                     continue
                 try:
-                    from aletheia.portfolio.exit_rules import evaluate_market_exit_rules
                     from aletheia.agent_runtime.wake_events import ADVERSE_SIGNAL, adverse_signal_priority
+                    from aletheia.portfolio.exit_rules import evaluate_market_exit_rules
                     action = evaluate_market_exit_rules(p, float(price), signal, cfg)
                     if action.action in ("urgent_exit", "tighten_stop"):
                         score = getattr(signal, "confidence_score", None)

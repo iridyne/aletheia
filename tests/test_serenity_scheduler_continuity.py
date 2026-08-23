@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from aletheia.storage.models import SerenityResearchRun
 from aletheia.storage import repositories as repo
+from aletheia.storage.models import SerenityResearchRun
 
 
 def test_serenity_boundary_uses_latest_0200_cst():

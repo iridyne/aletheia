@@ -6,8 +6,8 @@
 - data.symbols  转换安全性（任意输入不崩溃）
 """
 
-import pytest
-from hypothesis import given, assume, strategies as st
+from hypothesis import assume, given
+from hypothesis import strategies as st
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -37,7 +37,7 @@ class TestQualityGate:
     """
 
     def setup_method(self):
-        from aletheia.knowledge.manager import _is_quality_pass, _MIN_CONTENT_LENGTH, _PLACEHOLDER_PATTERNS
+        from aletheia.knowledge.manager import _MIN_CONTENT_LENGTH, _PLACEHOLDER_PATTERNS, _is_quality_pass
         self._gate = _is_quality_pass
         self._min_len = _MIN_CONTENT_LENGTH
         self._placeholders = _PLACEHOLDER_PATTERNS
@@ -92,7 +92,7 @@ class TestSymbolConversions:
     """
 
     def setup_method(self):
-        from aletheia.data.symbols import to_canonical, to_bitget, to_ccxt_perp, to_yfinance
+        from aletheia.data.symbols import to_bitget, to_canonical, to_ccxt_perp, to_yfinance
         self.to_canonical = to_canonical
         self.to_bitget = to_bitget
         self.to_ccxt_perp = to_ccxt_perp

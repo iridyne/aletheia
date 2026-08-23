@@ -215,8 +215,8 @@ def reconcile_local_paper_accounting(
     This command never writes an exchange, Risk decision, Position economics, or
     paper cash event.  It reports unavailable evidence instead of estimating it.
     """
-    from aletheia.storage.migrations import assert_migrations_current
     from aletheia.maintenance.historical_accounting import reconcile_historical_local_paper_accounting
+    from aletheia.storage.migrations import assert_migrations_current
 
     assert_migrations_current()
     typer.echo(json.dumps(
@@ -406,8 +406,8 @@ def backfill(
     market_type: str = typer.Option("spot", help="Market type for explicit --symbols"),
 ):
     """Batch-backfill OHLCV history for all active universe members."""
-    from aletheia.data.history_downloader import download_symbol_history
     from aletheia.config.loader import load_config
+    from aletheia.data.history_downloader import download_symbol_history
     from aletheia.storage.repositories import get_active_universe_members, get_universe_asset
 
     if symbols:

@@ -14,11 +14,11 @@ Covers acceptance criteria from issue #395:
 from __future__ import annotations
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 from aletheia.server.app import app
-from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 @pytest.fixture
@@ -33,7 +33,6 @@ async def client(tmp_path, monkeypatch):
     import aletheia.storage.sqlite as sq
 
     def _clear_portfolio_cache():
-        import threading
         with data_routes._portfolio_cache_lock:
             data_routes._portfolio_cache = None
 
@@ -255,7 +254,6 @@ async def test_all_allowlisted_agents_accepted_locally(client, tmp_path, monkeyp
     """Every agent in _MANUAL_AGENT_ALLOWLIST passes the allowlist check."""
     from aletheia.server.routes.data import _MANUAL_AGENT_ALLOWLIST
     from aletheia.storage.models import AgentRun
-    from aletheia.agent_runtime.job_queue import AgentJobAlreadyQueued
 
     monkeypatch.setattr("aletheia.server.routes.data._ensure_db", lambda: None)
 
@@ -297,8 +295,8 @@ def test_all_allowlisted_agents_resolve_via_registry():
     a stale allowlist entry (module exists but no @register_agent, or missing module)
     causes the test to fail at the resolution step rather than at the user's click.
     """
-    from aletheia.server.routes.data import _MANUAL_AGENT_ALLOWLIST
     from aletheia.agents import get_agent_fn
+    from aletheia.server.routes.data import _MANUAL_AGENT_ALLOWLIST
 
     for name in _MANUAL_AGENT_ALLOWLIST:
         try:
@@ -507,8 +505,8 @@ async def test_owner_token_can_still_start_paper_trader(client, tmp_path, monkey
 @pytest.mark.anyio
 async def test_duplicate_enqueue_same_agent_returns_409(client, tmp_path, monkeypatch):
     """Enqueuing the same agent while it's already pending → 409 with run_id."""
-    from aletheia.storage.models import AgentRun
     from aletheia.agent_runtime.job_queue import AgentJobAlreadyQueued
+    from aletheia.storage.models import AgentRun
 
     existing_run = AgentRun(agent_name="research_agent", trigger_type="manual", status="queued")
 
@@ -562,7 +560,7 @@ async def test_operator_service_run_has_trigger_type_operator_service(client, tm
 @pytest.mark.anyio
 async def test_operator_service_trigger_type_is_not_interactive_priority():
     """operator_service trigger_type must not map to INTERACTIVE inference priority."""
-    from aletheia.model_provider.broker import priority_for_agent, InferencePriority
+    from aletheia.model_provider.broker import InferencePriority, priority_for_agent
 
     p = priority_for_agent("research_agent", "operator_service")
     assert p != InferencePriority.INTERACTIVE, (

@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from aletheia.agent_shell.registry import COMMANDS, get_command, FORBIDDEN_INTENTS
-from aletheia.agent_shell.permissions import check_permission, allowed_commands
-from aletheia.agent_shell.intent import _classify_keyword, CommandIntent
 from aletheia.agent_shell.context import build_app_context, context_summary_text, sections_for_profile
+from aletheia.agent_shell.intent import CommandIntent, _classify_keyword
+from aletheia.agent_shell.permissions import allowed_commands, check_permission
+from aletheia.agent_shell.registry import COMMANDS, FORBIDDEN_INTENTS, get_command
 from aletheia.agent_shell.synthesis import _format_fallback
 
 
@@ -123,10 +123,10 @@ async def test_portfolio_review_can_close_old_target_beyond_default_position_pag
     from aletheia.config.loader import load_config
     from aletheia.storage.models import MarketSnapshot, Position
     from aletheia.storage.repositories import (
+        _select_one,
         insert_market_snapshot,
         insert_position,
         list_positions,
-        _select_one,
     )
 
     target = Position(
@@ -207,7 +207,7 @@ async def test_wake_driven_portfolio_review_scopes_and_persists_hold(
     conn = _init_agent_shell_db(tmp_path, monkeypatch)
     from aletheia.agent_shell.commands import review_portfolio_state
     from aletheia.storage.models import Position
-    from aletheia.storage.repositories import _select_one, insert_position, update_position
+    from aletheia.storage.repositories import _select_one, insert_position
 
     target = Position(
         id="wake-review-target",
@@ -2066,10 +2066,10 @@ async def test_runtime_reads_operator_status_from_heartbeat(tmp_path, monkeypatc
 async def test_runtime_handles_what_is_the_system_doing_with_operator_evidence(tmp_path, monkeypatch):
     _init_agent_shell_db(tmp_path, monkeypatch)
 
+    import aletheia.config.loader as loader
     from aletheia.agent_shell.operator_store import create_task, record_heartbeat
     from aletheia.storage.models import AgentRun, Position
     from aletheia.storage.repositories import insert_agent_run, insert_position
-    import aletheia.config.loader as loader
 
     cfg = loader.load_config()
     cfg.agent.permission_mode = "Observe"

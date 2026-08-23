@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import random
 import logging
+import random
 
 from aletheia.config.schema import UniverseConfig
 from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot

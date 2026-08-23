@@ -12,15 +12,15 @@ but never exercise end-to-end:
 
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 import pytest
 
 import aletheia.config.loader as loader
 import aletheia.storage.sqlite as sq
-from aletheia.storage.migrations import run_migrations
 from aletheia.learning.lessons import LessonStore
-from aletheia.learning.skills import SkillStore, SkillPermissionError
+from aletheia.learning.skills import SkillPermissionError, SkillStore
+from aletheia.storage.migrations import run_migrations
 
 
 def _setup_test_db(tmp_path, monkeypatch):

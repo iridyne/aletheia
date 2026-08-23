@@ -195,7 +195,7 @@ async def _run_context_pair(
         }
 
     from aletheia.agents.helpers import llm_structured
-    from aletheia.agents.market_observer import MarketRead, _SYSTEM_PROMPT
+    from aletheia.agents.market_observer import _SYSTEM_PROMPT, MarketRead
 
     pair_id = pair_prefix + uuid4().hex[:16]
     arms = ["control", "treatment"]

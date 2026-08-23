@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 import hashlib
 import json
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 
 from aletheia.analytics.filter_evidence import build_candidate_outcomes
 from aletheia.storage.models import (
@@ -17,7 +17,6 @@ from aletheia.storage.models import (
 from aletheia.universe.relative_rank_shadow import RelativeRankBatch
 from aletheia.universe.twin_persistence import TwinExperimentContext
 from aletheia.universe.twin_scoring import TwinShadowInput
-
 
 RELATIVE_RANK_CAPTURE_INTERVAL_SEC = 55 * 60
 RELATIVE_RANK_FEATURE_SOURCE_CONTRACT = "universe-relative-rank-feature-source/v1"

@@ -22,7 +22,6 @@ import time
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Unit tests for _shielded_wait_for (run via asyncio.run from sync tests)
 # ---------------------------------------------------------------------------
@@ -205,6 +204,7 @@ def test_shielded_wait_for_function_exists():
 def test_bounded_source_uses_shielded_wait_for():
     """_bounded must call _shielded_wait_for, not bare asyncio.wait_for (#253)."""
     import inspect
+
     from aletheia.agent_runtime import scheduler
     source = inspect.getsource(scheduler._bounded)
     assert "_shielded_wait_for" in source, (
@@ -218,6 +218,7 @@ def test_bounded_source_uses_shielded_wait_for():
 def test_shielded_wait_for_source_uses_shield():
     """_shielded_wait_for must use asyncio.shield to prevent 3.12 drain (#253)."""
     import inspect
+
     from aletheia.agent_runtime import scheduler
     source = inspect.getsource(scheduler._shielded_wait_for)
     assert "asyncio.shield" in source, (
@@ -236,6 +237,7 @@ def test_derivatives_history_source_uses_bounded():
     back to bare asyncio.wait_for.
     """
     import inspect
+
     from aletheia.agent_runtime import scheduler
     source = inspect.getsource(scheduler._async_data_collector_context)
     assert "_bounded(" in source, (

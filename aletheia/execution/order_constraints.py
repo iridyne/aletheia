@@ -9,13 +9,12 @@ reason to guess at an order size.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
-from decimal import Decimal, ROUND_CEILING, InvalidOperation
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from decimal import ROUND_CEILING, Decimal, InvalidOperation
 from typing import Any
-
 
 _VENUES = {
     "bitget_demo": "bitget",

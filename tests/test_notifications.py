@@ -1,5 +1,5 @@
-import sqlite3
 import json
+import sqlite3
 
 import pytest
 
@@ -167,8 +167,9 @@ def test_webhook_respects_notify_trade_fills_false(tmp_path, monkeypatch):
     cfg.webhook.notify_trade_fills = False
     save_config(cfg)
 
-    from aletheia import notifications
     import urllib.request
+
+    from aletheia import notifications
     monkeypatch.setattr(
         urllib.request, "urlopen",
         lambda req, timeout=None: (_ for _ in ()).throw(AssertionError("should not be called")),
@@ -187,8 +188,9 @@ def test_webhook_respects_notify_daily_summary_false(tmp_path, monkeypatch):
     cfg.webhook.notify_daily_summary = False
     save_config(cfg)
 
-    from aletheia import notifications
     import urllib.request
+
+    from aletheia import notifications
     monkeypatch.setattr(
         urllib.request, "urlopen",
         lambda req, timeout=None: (_ for _ in ()).throw(AssertionError("should not be called")),

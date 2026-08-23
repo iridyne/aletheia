@@ -26,9 +26,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from aletheia.config.loader import _invalidate_config_cache, load_config, save_config
 from aletheia.config.schema import AletheiaConfig
-from aletheia.config.loader import save_config, load_config, _invalidate_config_cache
-
 
 # --------------------------------------------------------------------------- #
 # Fixtures / helpers
@@ -131,8 +130,6 @@ def test_evaluate_passes_on_healthy_paper_internal(tmp_path, monkeypatch):
 def test_sqlite_integrity_failure_blocks(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _healthy_cfg()
-    from aletheia.agent_runtime import startup_behavior_gate as gate
-
     # Pre-import state_store so its `get_db` binding captures the real function
     # BEFORE we patch sq.get_db below.  evaluate_startup_gate() lazily imports
     # state_store on first call; if that import happens while the patch is active,
@@ -143,6 +140,7 @@ def test_sqlite_integrity_failure_blocks(tmp_path, monkeypatch):
     # Force integrity_check to report corruption by wrapping the connection
     # (setattr on a C sqlite3.Connection is unreliable, so wrap get_db instead).
     import aletheia.storage.sqlite as sq
+    from aletheia.agent_runtime import startup_behavior_gate as gate
     real_conn = sq.get_db()
 
     class _Cur:

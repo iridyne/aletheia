@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from typer.testing import CliRunner
-
 import pytest
+from typer.testing import CliRunner
 
 
 @pytest.fixture(autouse=True)
@@ -864,8 +863,10 @@ def test_learning_alpha_consumes_exact_confirmatory_authority_verdict(monkeypatc
     from tests.test_learning_verdict_runtime import (
         _experiment,
         _exposure,
-        _iso as learning_iso,
         _outcome,
+    )
+    from tests.test_learning_verdict_runtime import (
+        _iso as learning_iso,
     )
 
     monkeypatch.setattr(
@@ -917,8 +918,10 @@ def test_learning_alpha_rejects_authority_verdict_spanning_before_audit_window(m
     from tests.test_learning_verdict_runtime import (
         _experiment,
         _exposure,
-        _iso as learning_iso,
         _outcome,
+    )
+    from tests.test_learning_verdict_runtime import (
+        _iso as learning_iso,
     )
 
     monkeypatch.setattr(

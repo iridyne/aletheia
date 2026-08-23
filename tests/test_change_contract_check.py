@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from scripts.check_change_contract import check_pr_description
 
 # Valid minimal PR description with D0

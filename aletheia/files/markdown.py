@@ -2,9 +2,10 @@
 
 import os
 import re
-import yaml
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
+import yaml
 
 from aletheia.config.loader import get_data_dir
 

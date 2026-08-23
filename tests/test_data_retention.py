@@ -24,7 +24,6 @@ import pytest
 
 from aletheia.storage.sqlite import get_db
 
-
 # ---------------------------------------------------------------------------
 # Audit / learning invariant helpers
 # ---------------------------------------------------------------------------

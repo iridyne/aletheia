@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-
 _BASE = datetime(2026, 7, 13, 12, tzinfo=timezone.utc)
 
 
@@ -2100,8 +2099,9 @@ def test_real_shadow_flow_stays_shadow_after_at01_and_at02(monkeypatch):
 
 def test_pre_floor_outcomes_are_excluded_not_invalid():
     """Outcomes before the data-quality floor must be excluded (not corrupt the cohort)."""
+    from datetime import datetime, timedelta
+
     from aletheia.analytics.learning_window import LEARNING_DATA_FLOOR_ISO
-    from datetime import datetime, timezone, timedelta
 
     hypothesis, experiment = _experiment()
     _exposure(experiment, hypothesis, candidate="pre-floor-t", assignment="treatment")
@@ -2219,11 +2219,11 @@ def test_legacy_authority_verdict_without_behavior_hash_cannot_authorize(monkeyp
     _exposure(experiment, hypothesis, candidate="authority-control", assignment="control")
     _outcome("authority-treatment", net=1.0)
     _outcome("authority-control", net=0.0)
+    import aletheia.learning.authority as authority
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.learning.experiments import _verdict_authorizes
     from aletheia.learning.ledger import insert_record
     from aletheia.learning.models import LearningContributionVerdict, LearningExperiment
-    from aletheia.learning.experiments import _verdict_authorizes
-    from aletheia.config.schema import AletheiaConfig
-    import aletheia.learning.authority as authority
 
     cfg = AletheiaConfig()
     cfg.learning.paper_influence_enabled = True

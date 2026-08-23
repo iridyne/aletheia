@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import shutil
 import time
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Response
 
 from aletheia import __version__
 from aletheia.config.exchange_alignment import exchange_alignment
-from aletheia.config.secrets import get_secret
 from aletheia.config.loader import load_config
+from aletheia.config.secrets import get_secret
 from aletheia.server.routes.health import _cached_compute_health, _cached_head_commit
-from aletheia.storage.sqlite import get_db
 from aletheia.storage import repositories as repo
+from aletheia.storage.sqlite import get_db
 
 router = APIRouter(prefix="/api/ui", tags=["ui"])
 

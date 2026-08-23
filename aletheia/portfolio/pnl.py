@@ -1,7 +1,7 @@
 """Portfolio PnL computation + snapshots (guide §7 portfolio/)."""
 
-import logging
 import json
+import logging
 import math
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -11,12 +11,10 @@ from aletheia.storage.models import PortfolioSnapshot
 
 logger = logging.getLogger("aletheia.pnl")
 from aletheia.storage.repositories import (
-    list_all_open_positions,
     insert_portfolio_snapshot,
+    list_all_open_positions,
     update_position,
-    list_market_snapshots,
 )
-
 
 _CLOSE_ECONOMIC_SNAPSHOT_FIELDS = (
     "symbol",
@@ -398,9 +396,9 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
     """
     positions = list_all_open_positions()
     exc_upnl_index = _build_exchange_upnl_index()
-    from aletheia.data.symbols import to_canonical
     from aletheia.config.loader import load_config as _load_cfg
     from aletheia.data import price_feed as _pf
+    from aletheia.data.symbols import to_canonical
     _default_exchange = _load_cfg().market_data.ccxt_exchange or "binance"
 
     # A venue Position is an aggregate exposure. Without a direct broker
@@ -655,8 +653,8 @@ def close_position(
 
     if is_synthetic_close(reason):
         raise ValueError("administrative close reasons must use close_position_administrative")
-    from aletheia.storage import repositories as repo
     from aletheia.files.jsonl import write_audit
+    from aletheia.storage import repositories as repo
 
     row = repo._select_one("positions", position_id)
     if row is None:
@@ -1104,9 +1102,9 @@ def reduce_position(
     real-exchange reduce-only order are not wired here. The risk-critical realized-PnL
     accounting IS complete via the per-close ledger + the Stage-2 breaker term.
     """
+    from aletheia.files.jsonl import write_audit
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import new_id
-    from aletheia.files.jsonl import write_audit
 
     row = repo._select_one("positions", position_id)
     if row is None:

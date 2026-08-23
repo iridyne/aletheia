@@ -455,8 +455,8 @@ def sync_all_exchanges() -> Optional[dict]:
         # Use available_usdt (excludes unrealized PnL) as the deposit amount
         # to avoid inflating the baseline when the account already has open gains.
         try:
-            from aletheia.storage.repositories import has_capital_event_for_broker, insert_capital_event
             from aletheia.storage.models import CapitalEvent
+            from aletheia.storage.repositories import has_capital_event_for_broker, insert_capital_event
             for acct in unified.accounts:
                 broker_id = acct.get("broker_id", "")
                 available = acct.get("available_usdt", 0)

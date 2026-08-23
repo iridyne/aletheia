@@ -19,8 +19,8 @@ Owner 决策（2026-07-14）：Golden Path 冻结在当前形态，不继续扩�
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -32,6 +32,7 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     The LLM response is deterministic and external I/O is contained. No business
     module between the System Operator command and durable side effects is mocked.
     """
+    from aletheia.agent_runtime import runtime_session as rs
     from aletheia.config.loader import load_config, save_config
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import (
@@ -40,8 +41,6 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
         UniverseAsset,
         UniverseFeatureSnapshot,
     )
-
-    from aletheia.agent_runtime import runtime_session as rs
 
     cfg = load_config()
     cfg.exchange.paper_execution_mode = "paper_internal"
@@ -416,8 +415,8 @@ async def test_btc_spot_paper_internal_golden_path(e2e_db, monkeypatch, tmp_path
     )
     rs.reset_current_session()
 
-    from aletheia.agents import post_trade_reviewer
     from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.agents import post_trade_reviewer
 
     # The reviewer imports llm_complete into its module namespace. Patch that
     # external boundary too so collection order cannot resurrect a real provider.

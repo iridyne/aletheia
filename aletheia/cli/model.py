@@ -1,6 +1,7 @@
 """Model provider CLI commands."""
 
 import asyncio
+
 import typer
 
 model_app = typer.Typer(no_args_is_help=True)
@@ -121,8 +122,8 @@ def test():
 @model_app.command()
 def probe():
     """Probe enabled providers with a real minimal inference call."""
-    from aletheia.config.loader import load_config
     from aletheia.agent_runtime import startup_gate
+    from aletheia.config.loader import load_config
 
     result = asyncio.run(startup_gate.probe_llm_providers_at_startup(load_config()))
     for row in result.get("results") or []:

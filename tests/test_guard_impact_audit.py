@@ -182,8 +182,8 @@ def test_guard_impact_no_active_guards_returns_clean_report():
 
 
 def test_guard_impact_flags_positive_blocked_outcome_as_overbroad_suspect(tmp_path):
-    from aletheia.storage.sqlite import get_db
     from aletheia.analytics.guard_impact import build_guard_impact_audit
+    from aletheia.storage.sqlite import get_db
 
     _write_guard(tmp_path)
     db = get_db()
@@ -208,8 +208,8 @@ def test_guard_impact_flags_positive_blocked_outcome_as_overbroad_suspect(tmp_pa
 
 
 def test_guard_impact_negative_blocked_outcome_is_protective(tmp_path):
-    from aletheia.storage.sqlite import get_db
     from aletheia.analytics.guard_impact import build_guard_impact_audit
+    from aletheia.storage.sqlite import get_db
 
     _write_guard(tmp_path)
     db = get_db()
@@ -224,8 +224,8 @@ def test_guard_impact_negative_blocked_outcome_is_protective(tmp_path):
 
 
 def test_guard_impact_excludes_local_pre_guard_skips(tmp_path):
-    from aletheia.storage.sqlite import get_db
     from aletheia.analytics.guard_impact import build_guard_impact_audit
+    from aletheia.storage.sqlite import get_db
 
     _write_guard(tmp_path)
     db = get_db()
@@ -242,8 +242,8 @@ def test_guard_impact_excludes_local_pre_guard_skips(tmp_path):
 
 
 def test_guard_impact_cli_outputs_human_and_json(tmp_path):
-    from aletheia.storage.sqlite import get_db
     from aletheia.cli.inspect_cmd import inspect_app
+    from aletheia.storage.sqlite import get_db
 
     _write_guard(tmp_path)
     db = get_db()

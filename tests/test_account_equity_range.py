@@ -177,10 +177,8 @@ def test_portfolio_snapshots_no_days_uses_cap(monkeypatch):
 
 def test_equity_history_cache_key_includes_limit(monkeypatch):
     """Different limit values must not share a cache slot."""
-    import time
-    import threading
-    import aletheia.storage.repositories as repo
     import aletheia.server.routes.data as data_routes
+    import aletheia.storage.repositories as repo
 
     con, _ = _make_db()
     monkeypatch.setattr(repo, "get_db", lambda: con)

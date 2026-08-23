@@ -19,10 +19,9 @@ Safe to run multiple times (idempotent).
 """
 
 import hashlib
-import re
 import sys
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

@@ -17,7 +17,6 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 _PAPER_TRADING_SETTINGS = (
     Path(__file__).resolve().parents[2]
     / "frontend"
@@ -104,8 +103,8 @@ def test_effective_sizing_params_flag_gated():
               "Switching persona changes the resulting size (the seam is live)."),
 )
 def test_vol_target_size_uses_persona_base(monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.trading import sizing
 
     cfg = AletheiaConfig()
@@ -126,8 +125,8 @@ def test_vol_target_size_uses_persona_base(monkeypatch):
 
 
 def test_vol_target_size_emits_complete_non_kelly_policy_trace(monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.trading.sizing import vol_target_size
 
     cfg = AletheiaConfig()
@@ -153,8 +152,8 @@ def test_vol_target_size_emits_complete_non_kelly_policy_trace(monkeypatch):
 
 
 def test_vol_target_size_freezes_selected_atr_instrument_lineage(monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.trading import sizing
 
     cfg = AletheiaConfig()
@@ -181,8 +180,8 @@ def test_vol_target_size_freezes_selected_atr_instrument_lineage(monkeypatch):
 def test_trading_settings_reject_invalid_legacy_sizing_scalars(tmp_path, monkeypatch):
     import asyncio
 
-    from fastapi import HTTPException
     import pytest
+    from fastapi import HTTPException
 
     from aletheia.config.schema import AletheiaConfig
     from aletheia.server.routes import settings as settings_routes
@@ -214,9 +213,9 @@ def test_trading_settings_reject_invalid_legacy_sizing_scalars(tmp_path, monkeyp
 )
 def test_persona_notional_reaches_proposal_quantity(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
+    import aletheia.config.loader as loader
     from aletheia.agent_shell import trading_decision as td
     from aletheia.config.schema import AletheiaConfig
-    import aletheia.config.loader as loader
 
     cfg = AletheiaConfig()
     cfg.trading.vol_sizing_enabled = False
@@ -330,9 +329,9 @@ def test_decide_param_value_interpolates():
 def test_operator_decidable_param_is_context_decided(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.config.schema import AletheiaConfig
-    from aletheia.trading.persona import effective_sizing_params
     from aletheia.storage.models import MarketRegimeRecord
     from aletheia.storage.repositories import insert_market_regime
+    from aletheia.trading.persona import effective_sizing_params
 
     insert_market_regime(MarketRegimeRecord(state="bear", confidence=0.9))
 
@@ -418,10 +417,10 @@ def _closed(
 )
 def test_learned_appetite_adjustment(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
-    from aletheia.storage.models import Position
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
     from aletheia.trading import sizing_policy
 
     cfg = AletheiaConfig()
@@ -458,10 +457,10 @@ def test_learned_appetite_adjustment(tmp_path, monkeypatch):
 )
 def test_learning_excludes_synthetic_closes(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
-    from aletheia.storage.models import Position
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
     from aletheia.trading import sizing_policy
 
     cfg = AletheiaConfig()
@@ -489,10 +488,10 @@ def test_learning_excludes_synthetic_closes(tmp_path, monkeypatch):
 )
 def test_sizing_policy_health(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
-    from aletheia.storage.models import Position
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
     from aletheia.trading import sizing_policy
 
     cfg = AletheiaConfig()
@@ -520,10 +519,10 @@ def test_progressive_unlock_ladder(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from datetime import datetime, timedelta, timezone
 
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
-    from aletheia.storage.models import Position
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
     from aletheia.trading.persona import effective_operator_decidable
     from aletheia.trading.persona_rollout import (
         build_sizing_manifest,
@@ -608,8 +607,8 @@ def test_progressive_rollout_identity_is_restart_safe_and_switching_refreezes(tm
     conn = _setup_db(tmp_path, monkeypatch)
     from datetime import datetime, timezone
 
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.trading.persona_rollout import (
         current_persona_rollout,
         start_persona_rollout,
@@ -651,8 +650,8 @@ def test_progressive_rollout_negative_exact_cohort_refreezes(tmp_path, monkeypat
     _setup_db(tmp_path, monkeypatch)
     from datetime import datetime, timedelta, timezone
 
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
     from aletheia.trading.persona_rollout import (
@@ -698,8 +697,8 @@ def test_progressive_rollout_negative_exact_cohort_refreezes(tmp_path, monkeypat
 )
 def test_pyramid_plan(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.trading import sizing_policy
 
     cfg = AletheiaConfig()
@@ -738,6 +737,7 @@ def test_pyramid_plan(tmp_path, monkeypatch):
     # Product boundary: the helper has no production trigger/materializer, so the
     # API and Settings must not let a user newly enable a no-op capability.
     from fastapi import HTTPException
+
     from aletheia.server.routes import settings as settings_routes
 
     saved_configs = []
@@ -783,9 +783,9 @@ def test_pyramid_plan(tmp_path, monkeypatch):
 )
 def test_pyramid_never_exceeds_exposure_cap(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
     import aletheia.risk.engine as eng
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.trading import sizing_policy
 
     cfg = AletheiaConfig()
@@ -817,8 +817,8 @@ def test_pyramid_never_exceeds_exposure_cap(tmp_path, monkeypatch):
 )
 def test_advance_persona_rollout(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.trading.persona_rollout import advance_persona_rollout
 
     saved = {}
@@ -873,8 +873,8 @@ def test_persona_rollout_audit_failure_refreezes_and_records_retry(tmp_path, mon
     conn = _setup_db(tmp_path, monkeypatch)
     from datetime import datetime, timezone
 
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.trading.persona_rollout import current_persona_rollout, start_persona_rollout
 
     cfg = AletheiaConfig()
@@ -905,8 +905,8 @@ def test_persona_rollout_audit_failure_refreezes_and_records_retry(tmp_path, mon
 )
 def test_atr_lookup_exact_instrument_identity(tmp_path, monkeypatch):
     """Regression for #947: spot and perp ATR rows with the same ts must not collide."""
-    import aletheia.storage.sqlite as sq
     import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sq
     from aletheia.storage.migrations import run_migrations
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)

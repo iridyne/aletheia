@@ -13,7 +13,6 @@ from aletheia.config.loader import load_config, save_config
 from aletheia.config.schema import BRAKE_OWNERS_BY_SCOPE
 from aletheia.files.jsonl import write_audit
 
-
 _SCOPES = {"global", "demo", "live"}
 
 

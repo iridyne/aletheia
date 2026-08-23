@@ -1,12 +1,11 @@
 """Tests for aletheia.data.history_downloader."""
 
-import asyncio
 from dataclasses import dataclass
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aletheia.data.history_downloader import download_symbol_history, check_coverage
+from aletheia.data.history_downloader import check_coverage, download_symbol_history
 
 
 def _mock_config():

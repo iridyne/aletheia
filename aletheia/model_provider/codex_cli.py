@@ -14,11 +14,14 @@ import logging
 import shutil
 
 from aletheia.gateway.logs import redact_log_text
-from aletheia.model_provider.cli_harness import run_cli
 from aletheia.model_provider.base import (
-    ModelProvider, ModelRequest, StructuredModelRequest,
-    ModelResponse, ModelHealth,
+    ModelHealth,
+    ModelProvider,
+    ModelRequest,
+    ModelResponse,
+    StructuredModelRequest,
 )
+from aletheia.model_provider.cli_harness import run_cli
 
 logger = logging.getLogger("aletheia.model_provider.codex")
 

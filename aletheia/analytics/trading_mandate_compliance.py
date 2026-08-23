@@ -6,10 +6,10 @@ SQLite state and never re-evaluates historical rows against current config.
 
 from __future__ import annotations
 
-from collections import Counter
-from datetime import datetime, timedelta, timezone
 import json
 import math
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aletheia.analytics.outcome_integrity import assess_reportable_outcome

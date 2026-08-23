@@ -1,8 +1,6 @@
 """Tests for OKX broker symbol filter and execution routing."""
 
-import importlib
-import types
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -142,7 +140,6 @@ class TestPositionManagerRouting:
     """Verify position_manager knows about OKX modes."""
 
     def test_paper_modes_includes_okx(self):
-        from aletheia.portfolio.position_manager import _PAPER_MODES
         # okx_demo should NOT be in position_manager's _PAPER_MODES (it uses exchange close)
         # but it should be handled in the close routing
         # The actual routing is in evaluate_open_positions() — just verify module loads

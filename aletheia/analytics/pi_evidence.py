@@ -13,7 +13,6 @@ from typing import Any
 
 from aletheia.learning.outcomes import assess_candidate_outcome
 
-
 _MIN_NET_SAMPLES = 20
 _MIN_OUTCOME_COVERAGE = 0.70
 _SHRINKAGE_K = 20.0

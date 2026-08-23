@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import math
 import random
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import Any
 
 from aletheia.config.schema import UniverseConfig
@@ -16,7 +16,6 @@ from aletheia.universe.continuous_scoring import (
 )
 from aletheia.universe.filters import apply_fine_tradability_filters
 from aletheia.universe.twin_scoring import TwinShadowInput
-
 
 RELATIVE_RANK_BEHAVIOR_VERSION = "universe-relative-rank-shadow-v1"
 RELATIVE_RANK_RECORD_VERSION = "universe-relative-rank-record-v1"

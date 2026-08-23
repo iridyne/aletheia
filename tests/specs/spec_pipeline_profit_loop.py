@@ -19,12 +19,11 @@ Claim prefix: PL-PROFIT
 
 import sqlite3
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
-
 
 # ---------------------------------------------------------------------------
 # Shared DB setup
@@ -75,6 +74,7 @@ def _put_setting(conn, key: str, value: str):
 )
 def test_default_cached_state_reflects_active_broker(tmp_path, monkeypatch):
     import json
+
     import aletheia.config.loader as loader
     from aletheia.portfolio import exchange_sync
 
@@ -133,6 +133,7 @@ def test_default_cached_state_reflects_active_broker(tmp_path, monkeypatch):
 )
 def test_bitget_active_keeps_legacy_cache(tmp_path, monkeypatch):
     import json
+
     import aletheia.config.loader as loader
     from aletheia.portfolio import exchange_sync
 

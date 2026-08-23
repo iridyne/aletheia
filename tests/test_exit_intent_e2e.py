@@ -58,12 +58,12 @@ def test_default_provenance_when_no_operator_stop():
 def test_adjust_then_proactive_exit_lifecycle(monkeypatch):
     """Full managed lifecycle on a real position: authorize → adjust → proactive limit
     exit → executor fires it — all through the real components."""
+    import aletheia.portfolio.position_manager as pm
     from aletheia.portfolio.position_manager import (
         apply_operator_adjustment,
-        proactive_exit,
         evaluate_open_positions,
+        proactive_exit,
     )
-    import aletheia.portfolio.position_manager as pm
 
     pid = _open_paper_position(stop_price=95.0, expected_horizon_hours=24.0, stop_source="operator")
     monkeypatch.setattr(

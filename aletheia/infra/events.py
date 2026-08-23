@@ -7,10 +7,10 @@ payloads in these events.
 
 from __future__ import annotations
 
-from collections import deque
-from datetime import datetime, timezone
 import threading
 import time
+from collections import deque
+from datetime import datetime, timezone
 from typing import Any
 
 _MAX_EVENTS = 100

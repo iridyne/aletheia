@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from collections import Counter
-from datetime import datetime, timedelta, timezone
 import json
 import logging
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from typing import Iterable
 
 from aletheia.data.symbols import InstrumentId, to_canonical
 from aletheia.storage import repositories as repo
-
 
 logger = logging.getLogger("aletheia.candidate_market_facts")
 

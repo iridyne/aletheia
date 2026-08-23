@@ -8,8 +8,6 @@ Four cases:
 """
 
 import json
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -44,7 +42,6 @@ def test_starvation_emits_infra_event(monkeypatch):
     monkeypatch.setattr(_h, "_ranker_session_coverage", lambda _w: 1.0)
 
     # Patch get_db so the function sees synthetic agent_runs + opportunity count
-    import types
 
     class FakeCursor:
         def __init__(self, rows):

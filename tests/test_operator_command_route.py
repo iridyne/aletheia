@@ -1,11 +1,11 @@
-from unittest.mock import AsyncMock, patch
 import json
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from aletheia.server.app import app
 from aletheia.agent_shell.runtime import CommandResponse
+from aletheia.server.app import app
 
 
 @pytest.fixture
@@ -16,6 +16,7 @@ def anyio_backend():
 @pytest.fixture
 def operator_env(tmp_path, monkeypatch):
     import sqlite3
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     from aletheia.storage.migrations import run_migrations

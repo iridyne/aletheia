@@ -1,8 +1,6 @@
 """Tests for event-driven triggers in price_feed."""
 
-import threading
-from datetime import datetime, timezone
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 

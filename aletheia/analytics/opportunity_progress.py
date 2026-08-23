@@ -7,10 +7,9 @@ or infers that an open Opportunity passed filters without evidence.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any
-
 
 _RANKER_DELIVERY_EPOCH = "opportunity_ranker_delivery/v2"
 _CARRIER_CONTINUITY_EPOCH = "opportunity_carrier_continuity/v1"
@@ -527,10 +526,10 @@ def build_current_entry_status(
         "queue_capacity": None,
     }
     try:
-        from aletheia.diagnostics.pipeline_progress import summarize as _pp_summarize
         from aletheia.agents.paper_trader import (
             _PENDING_SIGNAL_QUEUE_CAPACITY as _QUEUE_CAP,
         )
+        from aletheia.diagnostics.pipeline_progress import summarize as _pp_summarize
 
         _snap = _pp_summarize(hours=12)
         _op = _snap.get("operator") or {}

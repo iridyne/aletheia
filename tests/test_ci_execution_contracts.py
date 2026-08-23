@@ -3,8 +3,6 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 
-import pytest
-
 
 def _setup_db(tmp_path, monkeypatch):
     import aletheia.config.loader as loader

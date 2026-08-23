@@ -58,7 +58,6 @@ _OPERATOR_LOOP = _ROOT / "aletheia" / "agent_shell" / "operator_loop.py"
     ),
 )
 def test_index_is_sole_fts_write_gate():
-    import ast
     import glob
     src = _MANAGER.read_text(encoding="utf-8")
     assert "def _index(" in src, "manager.py missing _index() function"
@@ -161,9 +160,9 @@ def test_reindex_skips_empty_body():
     ),
 )
 def test_index_is_idempotent():
-    from aletheia.storage.sqlite import get_db
-    from aletheia.knowledge.retrieval import index_knowledge_item, _fts_table_exists
+    from aletheia.knowledge.retrieval import _fts_table_exists, index_knowledge_item
     from aletheia.storage.models import KnowledgeItem
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     if not _fts_table_exists(db):
@@ -206,9 +205,8 @@ def test_index_is_idempotent():
     ),
 )
 def test_reindex_skips_missing_file_items():
-    from aletheia.knowledge.retrieval import reindex_all, _fts_table_exists, index_knowledge_item
+    from aletheia.knowledge.retrieval import _fts_table_exists
     from aletheia.storage.sqlite import get_db
-    from aletheia.storage.models import KnowledgeItem
 
     db = get_db()
     if not _fts_table_exists(db):

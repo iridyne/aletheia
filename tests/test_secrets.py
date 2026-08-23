@@ -1,7 +1,9 @@
 """Tests for secrets handling and redaction."""
 
 from unittest.mock import patch
+
 import pytest  # pyright: ignore[reportMissingImports]
+
 from aletheia.config.secrets import (
     delete_secret,
     get_secret,

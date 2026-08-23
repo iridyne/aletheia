@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -138,8 +138,8 @@ def test_observe_close_stops_collection_without_deleting_history(
 
 
 def test_observe_evaluate_targets_one_observation(runner: CliRunner) -> None:
-    from tests.test_filter_shadow_experiments import _seed_ranker_cohort
     from aletheia.storage.sqlite import get_db
+    from tests.test_filter_shadow_experiments import _seed_ranker_cohort
 
     start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
     _register_ranker(start)

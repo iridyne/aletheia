@@ -10,12 +10,12 @@ Governance under test:
 import sqlite3
 from datetime import datetime, timezone
 
-from aletheia.storage.sqlite import reset_db
+from aletheia.agent_runtime.orchestrator import run_agent
+from aletheia.agent_runtime.tool_registry import init_tool_registry
+from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import MarketSnapshot
-from aletheia.storage import repositories as repo
-from aletheia.agent_runtime.tool_registry import init_tool_registry
-from aletheia.agent_runtime.orchestrator import run_agent
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -60,7 +60,7 @@ def test_retrieve_only_high_confidence_active(tmp_path, monkeypatch):
 
 def test_archived_item_not_recalled(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_research_note, archive_item
+    from aletheia.knowledge.manager import archive_item, create_research_note
     from aletheia.knowledge.retrieval import retrieve_lessons
 
     item = create_research_note("Drawdown lesson",
@@ -75,7 +75,7 @@ def test_archived_item_not_recalled(tmp_path, monkeypatch):
 def test_memory_block_has_provenance(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.knowledge.manager import create_research_note
-    from aletheia.knowledge.retrieval import retrieve_lessons, format_memory_block
+    from aletheia.knowledge.retrieval import format_memory_block, retrieve_lessons
 
     create_research_note("Volatility lesson",
                          "Volatility expands after contraction periods; sizing down into squeezes protects capital and preserves powder for the eventual breakout move.",
@@ -89,7 +89,7 @@ def test_memory_block_has_provenance(tmp_path, monkeypatch):
 
 def test_empty_query_and_empty_index_return_nothing(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.retrieval import retrieve_lessons, format_memory_block
+    from aletheia.knowledge.retrieval import format_memory_block, retrieve_lessons
     assert retrieve_lessons("", k=3) == []
     assert retrieve_lessons("anything at all", k=3) == []  # empty index
     assert format_memory_block([]) == ""
@@ -98,9 +98,9 @@ def test_empty_query_and_empty_index_return_nothing(tmp_path, monkeypatch):
 
 def test_reindex_backfills_existing(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.knowledge.manager import create_research_note
-    from aletheia.knowledge.retrieval import retrieve_lessons, reindex_all
     import aletheia.storage.sqlite as sq
+    from aletheia.knowledge.manager import create_research_note
+    from aletheia.knowledge.retrieval import reindex_all, retrieve_lessons
 
     create_research_note("Trend lesson",
                          "In a confirmed uptrend, buying pullbacks to the 50-period moving average offers favorable risk-reward with clear invalidation level below the MA.",
@@ -119,7 +119,7 @@ def test_reindex_backfills_existing(tmp_path, monkeypatch):
 
 def test_load_playbooks_reads_seeds(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.trading.playbooks import seed_playbooks, load_playbooks, format_playbook_block
+    from aletheia.trading.playbooks import format_playbook_block, load_playbooks, seed_playbooks
     seed_playbooks(tmp_path)
     pbs = load_playbooks()
     assert len(pbs) == 5
@@ -136,8 +136,8 @@ async def test_observer_logs_retrieval_and_survives_offline_llm(tmp_path, monkey
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
 
-    from aletheia.knowledge.manager import create_research_note
     import aletheia.agents.market_observer as observer
+    from aletheia.knowledge.manager import create_research_note
     from tests.observer_admission_fixture import admit_observer_instrument
 
     admit_observer_instrument(monkeypatch, observer)
@@ -287,8 +287,8 @@ async def test_risk_critic_writes_medium_confidence_only(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
-    from aletheia.storage.models import TradeProposal
     from aletheia.knowledge.retrieval import retrieve_lessons
+    from aletheia.storage.models import TradeProposal
     repo.insert_trade_proposal(TradeProposal(id="p1", strategy_id="s1", symbol="BTC/USDT",
                                              market_type="futures", direction="long"))
 

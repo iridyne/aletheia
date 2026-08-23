@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -131,8 +131,8 @@ def test_private_history_retention_cannot_fabricate_complete_zero_funding():
 
 def test_private_history_retention_exposes_typed_terminal_evidence():
     from aletheia.execution.broker_funding import (
-        BrokerFundingIntegrityError,
         BrokerFundingHistoryExpired,
+        BrokerFundingIntegrityError,
         require_retained_history,
     )
 

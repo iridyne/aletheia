@@ -5,9 +5,9 @@ import math
 import pytest
 
 from aletheia.trading.technical_analysis import (
+    TECHNICAL_ANALYSIS_VERSION,
     BatchTechnicalAnalyzer,
     IncrementalTechnicalAnalyzer,
-    TECHNICAL_ANALYSIS_VERSION,
     TechnicalBar,
 )
 

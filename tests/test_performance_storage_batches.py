@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import asyncio
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from aletheia.agents import helpers

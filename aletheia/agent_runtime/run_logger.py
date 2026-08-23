@@ -1,8 +1,9 @@
 """Agent run logging to SQLite + JSONL."""
 
-from datetime import datetime, timezone, timedelta
 import json
+from datetime import datetime, timedelta, timezone
 
+from aletheia.files.jsonl import write_agent_run_log, write_audit
 from aletheia.storage.models import AgentArtifactRef, AgentRun, AgentRunArtifact
 from aletheia.storage.repositories import (
     insert_agent_run,
@@ -11,7 +12,6 @@ from aletheia.storage.repositories import (
     update_agent_run,
 )
 from aletheia.storage.sqlite import get_db
-from aletheia.files.jsonl import write_agent_run_log, write_audit
 
 
 def _create_run(

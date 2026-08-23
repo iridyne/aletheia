@@ -1,7 +1,7 @@
 """Base model provider abstraction."""
 
-from collections.abc import AsyncIterator
 import asyncio
+from collections.abc import AsyncIterator
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Literal

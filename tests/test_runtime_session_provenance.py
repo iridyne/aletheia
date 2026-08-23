@@ -22,8 +22,8 @@ import sqlite3
 
 import pytest
 
+from aletheia.config.loader import _invalidate_config_cache, save_config
 from aletheia.config.schema import AletheiaConfig
-from aletheia.config.loader import save_config, _invalidate_config_cache
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -337,8 +337,8 @@ def test_health_reports_degraded_on_persist_failure(tmp_path, monkeypatch):
     """Health check must surface runtime_session_provenance_degraded for non-durable sessions."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import runtime_session as rs
-    from aletheia.storage import repositories as repo
     from aletheia.agent_runtime.health import compute_health
+    from aletheia.storage import repositories as repo
 
     def _fail_insert(session):
         raise RuntimeError("simulated DB failure")
@@ -355,8 +355,8 @@ def test_health_recovers_after_retry_durability(tmp_path, monkeypatch):
     """After retry_session_durability() succeeds health must no longer be degraded."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import runtime_session as rs
-    from aletheia.storage import repositories as repo
     from aletheia.agent_runtime.health import compute_health
+    from aletheia.storage import repositories as repo
 
     inserted = []
 
@@ -475,7 +475,6 @@ def test_verification_fails_on_fingerprint_mismatch(tmp_path, monkeypatch):
     """If the persisted row has a different fingerprint verification must fail (non-durable)."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import runtime_session as rs
-    from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
 
     # Let insert succeed normally.
@@ -507,10 +506,10 @@ def test_verification_fails_on_fingerprint_mismatch(tmp_path, monkeypatch):
 def test_doctor_probe_ok_for_durable_session(tmp_path, monkeypatch):
     """Doctor must show ok for current and orphans when session is durable."""
     setup_env(tmp_path, monkeypatch)
+    from datetime import datetime, timezone
+
     from aletheia.agent_runtime import runtime_session as rs
-    from aletheia.diagnostics.doctor import _probe_runtime_session_provenance, Report
-    from datetime import timezone
-    from datetime import datetime
+    from aletheia.diagnostics.doctor import Report, _probe_runtime_session_provenance
 
     rs.start_runtime_session()
     report = Report(generated_at=datetime.now(timezone.utc).isoformat())
@@ -525,11 +524,11 @@ def test_doctor_probe_ok_for_durable_session(tmp_path, monkeypatch):
 def test_doctor_probe_warn_for_non_durable_session(tmp_path, monkeypatch):
     """Doctor must show warn on current when session is non-durable."""
     setup_env(tmp_path, monkeypatch)
+    from datetime import datetime, timezone
+
     from aletheia.agent_runtime import runtime_session as rs
+    from aletheia.diagnostics.doctor import Report, _probe_runtime_session_provenance
     from aletheia.storage import repositories as repo
-    from aletheia.diagnostics.doctor import _probe_runtime_session_provenance, Report
-    from datetime import timezone
-    from datetime import datetime
 
     def _fail_insert(session):
         raise RuntimeError("simulated DB failure")
@@ -547,9 +546,9 @@ def test_doctor_probe_warn_for_non_durable_session(tmp_path, monkeypatch):
 def test_doctor_probe_no_session(tmp_path, monkeypatch):
     """Doctor must show info (not warn) when no session is active."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.diagnostics.doctor import _probe_runtime_session_provenance, Report
-    from datetime import timezone
-    from datetime import datetime
+    from datetime import datetime, timezone
+
+    from aletheia.diagnostics.doctor import Report, _probe_runtime_session_provenance
 
     report = Report(generated_at=datetime.now(timezone.utc).isoformat())
     _probe_runtime_session_provenance(report)
@@ -561,11 +560,11 @@ def test_doctor_probe_no_session(tmp_path, monkeypatch):
 def test_doctor_probe_recognizes_external_managed_gateway_session(tmp_path, monkeypatch):
     """CLI Doctor must not label the live Gateway's DB session as a stale crash."""
     setup_env(tmp_path, monkeypatch)
+    from datetime import datetime, timezone
+
     from aletheia.agent_runtime import runtime_session as rs
     from aletheia.diagnostics import doctor
-    from aletheia.diagnostics.doctor import _probe_runtime_session_provenance, Report
-    from datetime import timezone
-    from datetime import datetime
+    from aletheia.diagnostics.doctor import Report, _probe_runtime_session_provenance
 
     session = rs.start_runtime_session()
     rs.reset_current_session()
@@ -588,9 +587,10 @@ def test_external_gateway_session_matches_live_process_start(tmp_path, monkeypat
     setup_env(tmp_path, monkeypatch)
     from datetime import datetime
 
+    import psutil
+
     from aletheia.diagnostics import doctor
     from aletheia.gateway import pidfile
-    import psutil
 
     started_at = "2026-08-08T00:01:08+00:00"
 
@@ -615,11 +615,10 @@ def test_external_gateway_session_matches_live_process_start(tmp_path, monkeypat
 def test_doctor_probe_stale_open_sessions(tmp_path, monkeypatch):
     """Doctor must surface stale open sessions from prior crashes."""
     setup_env(tmp_path, monkeypatch)
+    from datetime import datetime, timezone
+
     from aletheia.agent_runtime import runtime_session as rs
-    from aletheia.storage import repositories as repo
-    from aletheia.diagnostics.doctor import _probe_runtime_session_provenance, Report
-    from datetime import timezone
-    from datetime import datetime
+    from aletheia.diagnostics.doctor import Report, _probe_runtime_session_provenance
 
     # Session A starts but crashes (no clean end).
     rs.start_runtime_session()
@@ -642,10 +641,10 @@ def test_doctor_probe_stale_open_sessions(tmp_path, monkeypatch):
 def test_doctor_probe_orphan_references(tmp_path, monkeypatch):
     """Doctor must warn when orphan runtime_session_id references exist."""
     setup_env(tmp_path, monkeypatch)
+    from datetime import datetime, timezone
+
+    from aletheia.diagnostics.doctor import Report, _probe_runtime_session_provenance
     from aletheia.storage.sqlite import get_db
-    from aletheia.diagnostics.doctor import _probe_runtime_session_provenance, Report
-    from datetime import timezone
-    from datetime import datetime
 
     db = get_db()
     db.execute(

@@ -1,11 +1,12 @@
 """Tests for portfolio PnL computation."""
 
-from datetime import datetime, timezone, timedelta
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
-from aletheia.storage.models import Position, MarketSnapshot, PortfolioSnapshot
+from datetime import datetime, timedelta, timezone
+
+from aletheia.portfolio.pnl import compute_and_store_snapshot, compute_portfolio
 from aletheia.storage import repositories as repo
-from aletheia.portfolio.pnl import compute_portfolio, compute_and_store_snapshot
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.models import MarketSnapshot, PortfolioSnapshot, Position
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):

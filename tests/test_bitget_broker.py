@@ -9,11 +9,11 @@ import sqlite3
 
 import pytest
 
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
-from aletheia.storage import repositories as repo
 from aletheia.exchanges.bitget.client import OrderResponse
+from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import Position, RiskDecision, TradeProposal
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -206,6 +206,7 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
 
     # fresh market data so the data-freshness check passes
     from datetime import datetime, timezone
+
     from aletheia.storage.models import MarketSnapshot, Opportunity, UniverseForwardOutcome
 
     # #14 scanner-family evidence gate (Position C 2026-07-02): a LIVE order is

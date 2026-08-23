@@ -1,19 +1,17 @@
 """Bitget API client — ExchangeAdapter implementation."""
 
-from dataclasses import dataclass
-from datetime import datetime
 import math
+from dataclasses import dataclass
 from urllib.parse import urlencode
 
-from aletheia.net import httpx_client
+from aletheia.config.secrets import get_secret
+from aletheia.data.symbols import to_canonical
 from aletheia.exchanges.bitget.auth import build_headers
 from aletheia.exchanges.submission_errors import (
     ClosePositionAbsentError,
     SubmissionResponseUnknownError,
 )
-from aletheia.config.secrets import get_secret, redact
-from aletheia.data.symbols import to_canonical
-
+from aletheia.net import httpx_client
 
 BASE_URL = "https://api.bitget.com"
 DEMO_BASE_URL = "https://api.bitget.com"  # Same URL, demo distinguished by header

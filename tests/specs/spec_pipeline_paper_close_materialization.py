@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import datetime, timezone
 from types import SimpleNamespace
-import sqlite3
 
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
-
 
 SLIPPAGE_BPS = 10.0
 FEE_RATE = 0.0006
@@ -72,8 +71,8 @@ def _patch_config(monkeypatch):
     # Import every module-level consumer before replacing loader.load_config.
     # Otherwise a consumer first imported while the fake is installed captures
     # that fake permanently, after monkeypatch restores only the loader module.
-    from aletheia.agent_shell import context as agent_context
     import aletheia.config.loader as loader
+    from aletheia.agent_shell import context as agent_context
     from aletheia.portfolio import position_manager
 
     cfg = _config()
@@ -750,8 +749,8 @@ def test_stop_or_tp_materializes_one_close_from_observed_mark(
     conn = _setup_db(tmp_path, monkeypatch)
     _patch_config(monkeypatch)
 
-    from aletheia.portfolio import position_manager
     from aletheia.files import jsonl
+    from aletheia.portfolio import position_manager
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
 
@@ -854,10 +853,10 @@ def test_paper_close_failure_rolls_back_all_state_and_side_effects(
     conn = _setup_db(tmp_path, monkeypatch)
     _patch_config(monkeypatch)
 
+    import aletheia.notifications as notifications_module
     from aletheia.counterfactual import trades as shadow_trades
     from aletheia.execution import paper_broker
     from aletheia.files import jsonl
-    import aletheia.notifications as notifications_module
     from aletheia.portfolio import paper_account, pnl
     from aletheia.storage import repositories as repo
 
@@ -1413,6 +1412,7 @@ def _seed_stuck_paper_close(
     economics never settled — the exact shape a settler retry loop
     or a give-up transition operates on."""
     from datetime import timedelta
+
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
 
@@ -1506,6 +1506,7 @@ def test_delayed_funding_materialization_converges_every_projection_once(
     _patch_config(monkeypatch)
 
     from datetime import timedelta
+
     from aletheia.portfolio.paper_account import materialize_position_economics
     from aletheia.storage import repositories as repo
 
@@ -1606,6 +1607,7 @@ def test_paper_funding_audit_failure_replays_without_reapplying_settlement(
     _patch_config(monkeypatch)
 
     from datetime import timedelta
+
     from aletheia.files import jsonl as jsonl_mod
     from aletheia.portfolio.paper_account import materialize_position_economics
     from aletheia.storage import repositories as repo
@@ -1721,6 +1723,7 @@ def test_delayed_funding_materialization_rolls_back_every_projection(
     _patch_config(monkeypatch)
 
     from datetime import timedelta
+
     from aletheia.portfolio.paper_account import materialize_position_economics
     from aletheia.storage import repositories as repo
 
@@ -1778,6 +1781,7 @@ def test_numeric_funding_correction_appends_one_cash_compensation(
     _patch_config(monkeypatch)
 
     from datetime import timedelta
+
     from aletheia.portfolio.paper_account import materialize_position_economics
 
     closed_at = datetime.now(timezone.utc) - timedelta(hours=1)
@@ -1881,6 +1885,7 @@ def test_paper_funding_settler_transitions_to_terminal_after_giveup_window(
 
     import asyncio
     from datetime import timedelta
+
     from aletheia.portfolio import paper_account as pa
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
@@ -1951,6 +1956,7 @@ def test_paper_funding_settler_revives_terminal_row_once_backfill_lands(
 
     import asyncio
     from datetime import timedelta
+
     from aletheia.portfolio import paper_account as pa
     from aletheia.portfolio.local_funding import LocalFundingResult
     from aletheia.storage import repositories as repo
@@ -2058,6 +2064,7 @@ def test_overview_hero_unblocks_when_all_unsettled_closes_are_terminal(
     _patch_config(monkeypatch)
 
     from datetime import timedelta
+
     from aletheia.portfolio.paper_account import (
         FUNDING_PERMANENTLY_UNRECOVERABLE,
         get_paper_account,

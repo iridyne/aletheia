@@ -5,8 +5,8 @@ import sqlite3
 def _init_test_db(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
-    from aletheia.storage.sqlite import reset_db
     from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import reset_db
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")

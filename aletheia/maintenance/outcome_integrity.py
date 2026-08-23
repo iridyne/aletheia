@@ -7,10 +7,10 @@ history, changes stored economics, or applies a paper-cash compensation candidat
 
 from __future__ import annotations
 
-from collections import Counter
-from datetime import datetime, timezone
 import hashlib
 import json
+from collections import Counter
+from datetime import datetime, timezone
 from typing import Any
 
 from aletheia.analytics.learning_window import (
@@ -22,7 +22,6 @@ from aletheia.analytics.outcome_integrity import (
     MAINTENANCE_CLOSE_REASONS,
     OUTCOME_SEMANTICS_VERSION,
 )
-
 
 REMEDIATION_BATCH_ID = f"{CLEAN_WINDOW_ANCHOR_ID}:{OUTCOME_SEMANTICS_VERSION}"
 _DERIVED_ITEM_TYPES = frozenset({

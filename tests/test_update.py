@@ -252,9 +252,10 @@ def test_cli_update_runs_full_source_deployment_without_subcommand(
     tmp_path, monkeypatch
 ):
     setup_env(tmp_path, monkeypatch)
+    from typer.testing import CliRunner
+
     from aletheia.cli import update_cmd
     from aletheia.update import applier
-    from typer.testing import CliRunner
 
     seen = {}
 
@@ -279,9 +280,10 @@ def test_cli_update_runs_full_source_deployment_without_subcommand(
 
 
 def test_cli_update_same_source_commit_reports_noop(monkeypatch):
+    from typer.testing import CliRunner
+
     from aletheia.cli import update_cmd
     from aletheia.update import continuity
-    from typer.testing import CliRunner
 
     monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
     monkeypatch.setattr(
@@ -306,9 +308,10 @@ def test_cli_update_same_source_commit_reports_noop(monkeypatch):
 
 
 def test_cli_update_restart_reports_runtime_version_transition(monkeypatch):
+    from typer.testing import CliRunner
+
     from aletheia.cli import update_cmd
     from aletheia.update import continuity
-    from typer.testing import CliRunner
 
     monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
     monkeypatch.setattr(
@@ -335,9 +338,10 @@ def test_cli_update_restart_reports_runtime_version_transition(monkeypatch):
 
 
 def test_cli_update_same_source_commit_failure_is_not_labeled_updated(monkeypatch):
+    from typer.testing import CliRunner
+
     from aletheia.cli import update_cmd
     from aletheia.update import continuity
-    from typer.testing import CliRunner
 
     monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
     monkeypatch.setattr(
@@ -363,9 +367,10 @@ def test_cli_update_same_source_commit_failure_is_not_labeled_updated(monkeypatc
 
 
 def test_cli_update_without_subcommand_stages_packaged_release(monkeypatch):
+    from typer.testing import CliRunner
+
     from aletheia.cli import update_cmd
     from aletheia.update import packaged_commands
-    from typer.testing import CliRunner
 
     monkeypatch.setattr(update_cmd, "_is_packaged", lambda: True)
     monkeypatch.setattr(
@@ -388,9 +393,10 @@ def test_cli_update_without_subcommand_stages_packaged_release(monkeypatch):
 
 
 def test_cli_update_rejects_no_restart_in_packaged_mode(monkeypatch):
+    from typer.testing import CliRunner
+
     from aletheia.cli import update_cmd
     from aletheia.update import packaged_commands
-    from typer.testing import CliRunner
 
     monkeypatch.setattr(update_cmd, "_is_packaged", lambda: True)
     monkeypatch.setattr(
@@ -406,8 +412,9 @@ def test_cli_update_rejects_no_restart_in_packaged_mode(monkeypatch):
 
 
 def test_top_level_update_help_has_no_apply_subcommand():
-    from aletheia.main import app
     from typer.testing import CliRunner
+
+    from aletheia.main import app
 
     result = CliRunner().invoke(app, ["update", "--help"])
 
@@ -423,6 +430,7 @@ def test_cli_update_check_smoke(tmp_path, monkeypatch):
                         lambda: {"ok": True, "has_update": False, "behind_count": 0,
                                  "current_commit": "abc", "remote_commit": "abc", "branch": "master"})
     from typer.testing import CliRunner
+
     from aletheia.cli.update_cmd import update_app
     result = CliRunner().invoke(update_app, ["check"])
     assert result.exit_code == 0
@@ -446,7 +454,8 @@ async def test_api_update_status_is_local_until_explicit_check(tmp_path, monkeyp
         "update_progress",
         lambda: {"mode": "development", "status": "idle"},
     )
-    from httpx import AsyncClient, ASGITransport
+    from httpx import ASGITransport, AsyncClient
+
     from aletheia.server.app import app
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
@@ -475,6 +484,7 @@ async def test_api_update_check_does_not_block_the_event_loop(tmp_path, monkeypa
 
     monkeypatch.setattr(applier, "check_for_update", blocking_check)
     from httpx import ASGITransport, AsyncClient
+
     from aletheia.server.app import app
 
     transport = ASGITransport(app=app)
@@ -491,8 +501,8 @@ async def test_api_update_check_does_not_block_the_event_loop(tmp_path, monkeypa
 def test_update_not_agent_callable(tmp_path, monkeypatch):
     """Governance guard: update must never be an LLM-callable tool."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime.tool_registry import init_tool_registry
     from aletheia.agent_runtime import permissions
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
     init_tool_registry()
     # No self-upgrade tool may ever be registered as agent-callable.
     forbidden = {"apply_update", "check_update", "check_for_update", "self_upgrade",
@@ -501,6 +511,7 @@ def test_update_not_agent_callable(tmp_path, monkeypatch):
 
     # tool_registry must not import the update package
     import inspect
+
     from aletheia.agent_runtime import tool_registry
     src = inspect.getsource(tool_registry)
     assert "aletheia.update" not in src
@@ -510,7 +521,7 @@ def test_update_not_agent_callable(tmp_path, monkeypatch):
 
 def _stub_clean_pull(monkeypatch, pyproject_changed=False, changed_files=None):
     """Stub git_ops so apply_update reaches the smoke stage with a clean pull."""
-    from aletheia.update import git_ops, applier
+    from aletheia.update import applier, git_ops
     commits = iter(["old111", "new222", "old111"])
     monkeypatch.setattr(git_ops, "git_available", lambda: True)
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
@@ -523,7 +534,7 @@ def _stub_clean_pull(monkeypatch, pyproject_changed=False, changed_files=None):
 
 def test_apply_rolls_back_on_smoke_failure(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import git_ops, applier
+    from aletheia.update import applier, git_ops
     _stub_clean_pull(monkeypatch)
     reset_calls = []
     monkeypatch.setattr(git_ops, "reset_hard", lambda commit: reset_calls.append(commit) or {"ok": True})
@@ -542,7 +553,7 @@ def test_apply_rolls_back_on_smoke_failure(tmp_path, monkeypatch):
 
 def test_apply_succeeds_when_smoke_passes(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import git_ops, applier
+    from aletheia.update import applier, git_ops
     _stub_clean_pull(monkeypatch)
     reset_calls = []
     monkeypatch.setattr(git_ops, "reset_hard", lambda commit: reset_calls.append(commit))
@@ -704,9 +715,9 @@ def test_apply_restart_rolls_back_when_frontend_build_fails(tmp_path, monkeypatc
 
 def test_smoke_import_gate_detects_broken_module(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import smoke
     # Force the import subprocess to fail.
-    import subprocess
+
+    from aletheia.update import smoke
 
     class _Fail:
         returncode = 1
@@ -722,7 +733,7 @@ def test_smoke_import_gate_detects_broken_module(tmp_path, monkeypatch):
 def test_apply_no_auto_restart(tmp_path, monkeypatch):
     """Neither success nor rollback may restart the gateway (user requirement)."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import git_ops, applier
+    from aletheia.update import applier
     _stub_clean_pull(monkeypatch)
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
     import aletheia.gateway.lifecycle as lifecycle
@@ -740,8 +751,8 @@ def test_apply_no_auto_restart(tmp_path, monkeypatch):
 
 def test_git_ops_passes_create_no_window_on_windows(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import git_ops
     from aletheia.gateway import pidfile
+    from aletheia.update import git_ops
     monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
     calls = {}
     def fake_run(argv, **kwargs):
@@ -756,8 +767,8 @@ def test_git_ops_passes_create_no_window_on_windows(tmp_path, monkeypatch):
 
 def test_git_ops_no_creationflags_on_posix(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import git_ops
     from aletheia.gateway import pidfile
+    from aletheia.update import git_ops
     monkeypatch.setattr(pidfile.platform, "system", lambda: "Linux")
     calls = {}
     def fake_run(argv, **kwargs):
@@ -771,8 +782,8 @@ def test_git_ops_no_creationflags_on_posix(tmp_path, monkeypatch):
 
 def test_reinstall_deps_passes_create_no_window_on_windows(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import applier
     from aletheia.gateway import pidfile
+    from aletheia.update import applier
     monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")
     calls = {}
     def fake_run(cmd, **kwargs):
@@ -786,8 +797,8 @@ def test_reinstall_deps_passes_create_no_window_on_windows(tmp_path, monkeypatch
 
 def test_smoke_import_gate_passes_create_no_window_on_windows(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import smoke
     from aletheia.gateway import pidfile
+    from aletheia.update import smoke
     # Force the helper's platform check to Windows even though the test runs on
     # whatever the host is (helper reads pidfile's platform module).
     monkeypatch.setattr(pidfile.platform, "system", lambda: "Windows")

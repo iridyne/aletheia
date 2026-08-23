@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 import threading
 import time
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from aletheia.infra.events import emit_infra_event

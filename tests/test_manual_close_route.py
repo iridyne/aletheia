@@ -15,10 +15,10 @@ import sqlite3
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import Position
 from aletheia.storage.sqlite import reset_db
-from aletheia.storage import repositories as repo
 
 
 # ponytail: copy of _setup_env from test_paper_account.py; extract to conftest if a third copy appears
@@ -58,8 +58,9 @@ def _insert_open(execution_mode: str = "paper_internal") -> str:
 
 
 def test_decide_exit_human_limit_exit():
-    import aletheia.portfolio.position_manager as pm
     from types import SimpleNamespace
+
+    import aletheia.portfolio.position_manager as pm
 
     cfg = SimpleNamespace(
         trading=SimpleNamespace(
@@ -86,8 +87,9 @@ def test_decide_exit_human_limit_exit():
 
 
 def test_decide_exit_operator_limit_exit_for_system_operator():
-    import aletheia.portfolio.position_manager as pm
     from types import SimpleNamespace
+
+    import aletheia.portfolio.position_manager as pm
 
     cfg = SimpleNamespace(
         trading=SimpleNamespace(
@@ -112,8 +114,9 @@ def test_decide_exit_operator_limit_exit_for_system_operator():
 
 def test_decide_exit_legacy_null_source_defaults_to_operator():
     """Backward compat: pre-existing positions with no exit_limit_source → operator_limit_exit."""
-    import aletheia.portfolio.position_manager as pm
     from types import SimpleNamespace
+
+    import aletheia.portfolio.position_manager as pm
 
     cfg = SimpleNamespace(
         trading=SimpleNamespace(
@@ -215,8 +218,8 @@ def test_proactive_exit_missing_position_returns_error(tmp_path, monkeypatch):
 async def test_manual_close_route_market_dispatches_human_close(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
 
-    from aletheia.server.app import app
     import aletheia.portfolio.position_manager as pm
+    from aletheia.server.app import app
 
     pid = _insert_open()
     calls = []
@@ -237,8 +240,8 @@ async def test_manual_close_route_market_dispatches_human_close(tmp_path, monkey
 async def test_manual_close_route_live_returns_409(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
 
-    from aletheia.server.app import app
     import aletheia.portfolio.position_manager as pm
+    from aletheia.server.app import app
 
     pid = _insert_open(execution_mode="bitget_live_limited")
     calls = []
@@ -360,7 +363,7 @@ def test_protected_method_prefixes_includes_positions_post():
 
 
 def test_exit_driver_human_reasons_classified_correctly():
-    from aletheia.analytics.exit_driver_comparison import exit_driver, HUMAN_DRIVEN
+    from aletheia.analytics.exit_driver_comparison import HUMAN_DRIVEN, exit_driver
 
     assert "human_manual_close" in HUMAN_DRIVEN
     assert "human_limit_exit" in HUMAN_DRIVEN

@@ -9,7 +9,6 @@ import aletheia.analytics.position_replay as position_replay_module
 import aletheia.analytics.profit_loop_counterfactual as counterfactual_module
 from aletheia.cli.inspect_cmd import inspect_app
 
-
 runner = CliRunner()
 
 

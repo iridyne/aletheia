@@ -45,6 +45,7 @@ def _fit_outcome(
     bias at end), or ``[]`` when there are too few rows to fit.
     """
     import numpy as np
+
     from aletheia.counterfactual.propensity import _encode
 
     if len(sel_rows) < 5:
@@ -83,6 +84,7 @@ def _predict_outcome(
         return [fallback] * len(rows)
 
     import numpy as np
+
     from aletheia.counterfactual.propensity import _encode
 
     X_raw, _, _, _ = _encode(rows, vocab=vocab)

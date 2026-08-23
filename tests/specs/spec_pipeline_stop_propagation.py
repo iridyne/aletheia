@@ -28,7 +28,6 @@ import pytest
 from tests.execution_authority import seed_order_authority
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 # ---------------------------------------------------------------------------
 # Shared DB + secrets setup
 # ---------------------------------------------------------------------------
@@ -433,10 +432,9 @@ def test_gateway_demo_proposal_propagates_stop(tmp_path, monkeypatch):
     )
 
     from aletheia.execution.gateway import submit_proposal
-    from aletheia.storage.sqlite import get_db
-    from aletheia.config.loader import load_config
     from aletheia.storage.models import MarketSnapshot
     from aletheia.storage.repositories import insert_market_snapshot
+    from aletheia.storage.sqlite import get_db
 
     entry = 1551.57
     stop = round(entry * 1.02, 8)  # short stop ~2% above entry
@@ -501,9 +499,9 @@ def test_no_open_position_silently_loses_proposal_stop(tmp_path, monkeypatch):
     )
 
     from aletheia.execution.gateway import submit_proposal
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.models import MarketSnapshot
     from aletheia.storage.repositories import insert_market_snapshot
+    from aletheia.storage.sqlite import get_db
 
     # Drive a few demo proposals, each carrying a protective stop.
     for i, (sym, direction, stop) in enumerate([

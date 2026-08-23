@@ -11,7 +11,6 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 _CONTRACT = "opportunity_information_integrity"
 
 
@@ -161,8 +160,7 @@ def test_market_observer_entry_persists_information_epoch_before_early_return():
 
 
 def test_information_epoch_is_persisted_before_zero_pending_return(monkeypatch):
-    from aletheia.agent_shell import commands, trading_context
-    from aletheia.agent_shell import b2_evidence_policy, skip_policy, vergex_policy
+    from aletheia.agent_shell import b2_evidence_policy, commands, skip_policy, trading_context, vergex_policy
     from aletheia.learning import opportunity_information_policy
 
     events = []

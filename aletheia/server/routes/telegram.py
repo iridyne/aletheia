@@ -8,9 +8,8 @@ telegram.bot_token`) — this route adds no write surface.
 
 from fastapi import APIRouter
 
-from aletheia.net import httpx_client
-
 from aletheia.config.secrets import get_secret
+from aletheia.net import httpx_client
 
 router = APIRouter(prefix="/api", tags=["telegram"])
 

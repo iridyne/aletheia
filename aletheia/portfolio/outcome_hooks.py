@@ -13,7 +13,6 @@ from aletheia.analytics.outcome_integrity import (
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 
-
 logger = logging.getLogger("aletheia.portfolio.outcome_hooks")
 
 SHADOW_TRADES_HOOK = "shadow_trades"

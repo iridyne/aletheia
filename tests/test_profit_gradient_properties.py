@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
-import json
 
-from hypothesis import given, settings, strategies as st
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 import aletheia.analytics.profit_gradient as gradient
 import aletheia.analytics.profit_gradient_estimators as estimators
-
 
 _BOOTSTRAP_ITERATIONS = 64
 _ESTIMATORS = (

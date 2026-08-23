@@ -21,27 +21,30 @@ from aletheia.data.symbols import to_canonical
 from aletheia.exchanges.okx.client import OKXClient, OrderRequest, okx_ccxt_symbol
 from aletheia.exchanges.submission_errors import (
     ClosePositionAbsentError,
-    is_ambiguous_submission_error as _is_ambiguous_submission_error,
 )
-from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
-from aletheia.execution.close_convergence import (
-    CLOSE_CLAIM_STATES,
-    has_unresolved_close_claim,
+from aletheia.exchanges.submission_errors import (
+    is_ambiguous_submission_error as _is_ambiguous_submission_error,
 )
 from aletheia.execution.broker_utils import (
     clean_error_message,
     close_acknowledgement_result,
     entry_acknowledgement_result,
 )
+from aletheia.execution.close_convergence import (
+    CLOSE_CLAIM_STATES,
+    has_unresolved_close_claim,
+)
+from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.execution.post_commit_audit import write_post_commit_audit
-from aletheia.execution.position_enrichment import build_entry_enrichment, liquidation_price_for
-from aletheia.execution.stops import merge_protective_stop
-from aletheia.storage.models import Order, Fill, Position
+from aletheia.storage.models import Fill, Order
 from aletheia.storage.repositories import (
     finalize_exchange_acknowledgement,
     find_compatible_open_position,
-    insert_order, insert_fill, insert_position, update_position,
-    update_order, transaction,
+    insert_fill,
+    insert_order,
+    transaction,
+    update_order,
+    update_position,
 )
 from aletheia.storage.sqlite import get_db
 
@@ -519,6 +522,7 @@ def place_okx_protective_orders(
     caller's job (execution.stops.place_exchange_protective_orders).
     """
     import json as _json
+
     from aletheia.storage.repositories import update_position
 
     close_side = "sell" if direction in ("long", "buy") else "buy"
@@ -558,6 +562,7 @@ def replace_okx_exchange_stop(position_id: str, new_stop_price: float) -> None:
     caller has already updated positions.stop_price for the local check path).
     """
     import json as _json
+
     from aletheia.storage import repositories as repo
 
     row = repo._select_one("positions", position_id)
@@ -687,7 +692,6 @@ def close_okx_position(
     Works for both okx_demo and okx_live_limited positions.
     """
     from aletheia.storage import repositories as repo
-    from aletheia.portfolio.pnl import close_position
 
     row, close_order, close_requested_at = _claim_close_order(
         position_id,
@@ -876,8 +880,8 @@ def reduce_okx_position(position_id: str, reduce_qty: float, reason: str = "oper
     (else it becomes oversized/orphaned) — must be confirmed once against an OKX demo
     account and captured as a fixture. See PARTIAL_REDUCE_RESEARCH.md.
     """
-    from aletheia.storage import repositories as repo
     from aletheia.portfolio.pnl import reduce_position
+    from aletheia.storage import repositories as repo
 
     row = repo._select_one("positions", position_id)
     if row is None or row.get("status") != "open":

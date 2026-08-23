@@ -39,9 +39,9 @@ def _setup(tmp: Path):
 
 async def _drive(cycles: int) -> dict:
     from aletheia.agent_runtime.orchestrator import run_agent
-    from aletheia.trading.market_data import collect_market_snapshots
-    from aletheia.storage.models import MarketSnapshot
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import MarketSnapshot
+    from aletheia.trading.market_data import collect_market_snapshots
 
     statuses = {"completed": 0, "completed_with_errors": 0, "other": 0}
     crashes = []

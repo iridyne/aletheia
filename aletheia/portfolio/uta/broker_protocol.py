@@ -1,7 +1,7 @@
 """IBroker Protocol — unified interface for read-only account queries."""
 
-from dataclasses import dataclass, field
 import math
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 

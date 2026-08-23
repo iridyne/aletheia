@@ -8,10 +8,10 @@ investigate it; readiness is not close or settlement authority.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any
 
 from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
@@ -22,7 +22,6 @@ from aletheia.storage.models import (
     PositionDisappearanceCandidate,
     PositionDisappearanceObservation,
 )
-
 
 MIN_INDEPENDENT_COMPLETE_OBSERVATIONS = 2
 DIRECT_CONFIRMED_ABSENT = "confirmed_absent"

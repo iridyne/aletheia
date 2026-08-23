@@ -493,8 +493,8 @@ def _verify_after_prime(timeout: float = 30.0) -> dict:
     Checks pidfile existence + port liveness. Returns verification result dict.
     """
     from aletheia.config.loader import load_config
-    from aletheia.gateway.pidfile import is_running, port_in_use
     from aletheia.gateway.network import local_frontdoor_host
+    from aletheia.gateway.pidfile import is_running, port_in_use
 
     cfg = load_config()
     port = cfg.app.dashboard_port
@@ -1006,6 +1006,7 @@ def status() -> dict:
 def write_watchdog_tick(action: str, exit_code: int = 0, duration_ms: int = 0) -> None:
     """Record a watchdog tick to runtime-home logs/watchdog.jsonl for diagnostics."""
     from datetime import timezone as tz
+
     from aletheia.files.jsonl import append_jsonl
 
     append_jsonl("watchdog.jsonl", {

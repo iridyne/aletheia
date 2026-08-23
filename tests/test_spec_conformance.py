@@ -10,8 +10,6 @@ in docs/product/CAPABILITY_GROUND_TRUTH.md.
 import importlib
 import pkgutil
 
-import pytest
-
 import tests.specs as specs_package
 from tests.specs.spec_meta import SPEC_REGISTRY
 

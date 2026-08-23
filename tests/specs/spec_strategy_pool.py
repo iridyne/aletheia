@@ -16,12 +16,7 @@ Note: an earlier audit incorrectly named the helper as
 
 from __future__ import annotations
 
-import ast
-
-import pytest
-
 from tests.specs.spec_meta import SpecClaim, spec_claim
-
 
 _TRADING_CONTEXT = "aletheia/agent_shell/trading_context.py"
 
@@ -49,6 +44,7 @@ def test_strategy_records_ddl_missing_kpi_columns():
     in Round 2 the test must be updated (forcing a deliberate change).
     """
     import sqlite3
+
     from aletheia.storage.sqlite import db_path
 
     conn = sqlite3.connect(db_path())
@@ -128,7 +124,7 @@ def test_short_bias_scanner_family_reachable():
       2. score_short_bias 在 bullish setup 上返回 None（不误发）
       3. short_bias 已注册进 run_all_scanners（出现在 all_scores 里 → 可被选中）
     """
-    from aletheia.universe.scanners import score_short_bias, run_all_scanners
+    from aletheia.universe.scanners import run_all_scanners, score_short_bias
 
     # 1. 干净 bearish setup → 产出 short 信号
     bearish = {
@@ -172,6 +168,7 @@ def test_short_bias_scanner_family_reachable():
 )
 def test_regime_scoring_is_config_driven_noop():
     import pathlib
+
     from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()

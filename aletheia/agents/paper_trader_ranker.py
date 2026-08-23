@@ -16,21 +16,16 @@ from datetime import datetime, timezone
 
 from aletheia.analytics.factor_feedback import lookup_factor_signal
 from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
-from aletheia.analytics.trade_attribution import (
-    confidence_bucket,
-    late_entry_bucket,
-    factor_key as compute_factor_key,
-)
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_canonical
+from aletheia.knowledge.guards import GuardEvaluation, evaluate_guards
+from aletheia.regime.detector import MarketRegime, get_current_regime
 from aletheia.storage.repositories import (
-    get_ohlcv_candles,
     get_universe_member,
     list_open_trade_opportunities,
 )
-from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation
-from aletheia.regime.detector import get_current_regime, MarketRegime
 from aletheia.trading.instruments import tradable_symbols_from_config
+
 # Position C (2026-07-02): strategy rules-engine deleted. The ranker no longer
 # resolves a StrategyRecord, evaluates a RuleSet, or reads backtest evidence.
 # linked_strategy_id is passed through as a pure attribution label; regime

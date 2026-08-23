@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-
 TRADE_MOTIVATION_VERSION = "structured-trade-motivation/v1"
 _FIELDS = {
     "schema_version",

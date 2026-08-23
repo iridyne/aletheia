@@ -11,9 +11,9 @@ import sqlite3
 
 import pytest
 
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -141,7 +141,8 @@ async def test_steps_endpoint_returns_ordered(tmp_path, monkeypatch):
     repo.insert_agent_run(run)
     repo.insert_run_step(run.id, 1, "observe", output_data="snapshot read")
 
-    from httpx import AsyncClient, ASGITransport
+    from httpx import ASGITransport, AsyncClient
+
     from aletheia.server.app import app
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:

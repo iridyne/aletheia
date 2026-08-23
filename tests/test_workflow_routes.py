@@ -1,13 +1,13 @@
 """Phase 4 tests: proposal approve/reject, strategy promote/retire, portfolio, playbooks."""
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 from aletheia.server.app import app
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
-from aletheia.storage.models import TradeProposal, Position, MarketSnapshot, Order
 from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.models import MarketSnapshot, Order, Position, TradeProposal
+from aletheia.storage.sqlite import reset_db
 
 
 @pytest.fixture
@@ -379,6 +379,7 @@ async def test_approve_paper_sanitizes_unexpected_execution_exception(client, mo
 @pytest.mark.anyio
 async def test_portfolio_endpoint(client, monkeypatch):
     from datetime import datetime, timezone
+
     from aletheia.data import price_feed
 
     # #1174: mark_positions_to_market now reads _instrument_price_cache (exact

@@ -6,11 +6,11 @@ prove that an exchange-confirmed fill becomes one durable, replay-safe chain.
 
 from __future__ import annotations
 
-from collections import Counter
-from datetime import datetime, timezone
 import json
 import sqlite3
 import threading
+from collections import Counter
+from datetime import datetime, timezone
 
 import pytest
 
@@ -114,7 +114,12 @@ def _seed_native_chain(
 ):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import (
-        Opportunity, Order, RiskDecision, SerenityOpportunity, SerenityTheme, TradeProposal,
+        Opportunity,
+        Order,
+        RiskDecision,
+        SerenityOpportunity,
+        SerenityTheme,
+        TradeProposal,
     )
 
     if trade_school == "serenity":
@@ -256,8 +261,8 @@ def test_symbol_scoped_history_recovers_fill_missing_from_default_page(
     tmp_path, monkeypatch
 ):
     db = _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.reconciliation import reconcile
     from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.execution.reconciliation import reconcile
 
     private_fill = _private_fill(
         "EX-XM-AGED-OUT",

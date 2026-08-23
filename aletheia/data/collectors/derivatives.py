@@ -13,14 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from aletheia.net import httpx_client
 from aletheia.data.models import (
     FundingRateSnapshot,
     OpenInterestSnapshot,
 )
+from aletheia.net import httpx_client
 
 logger = logging.getLogger("aletheia.data.collectors.derivatives")
 
@@ -42,8 +42,8 @@ class DerivativesCollector:
     domain = "derivatives"
 
     async def collect(self, symbols: list[str]) -> dict[str, Any]:
-        from aletheia.data.ccxt_provider import get_market_data_provider
         from aletheia.config.loader import load_config
+        from aletheia.data.ccxt_provider import get_market_data_provider
 
         provider = get_market_data_provider()
         funding: list[FundingRateSnapshot] = []
@@ -176,8 +176,8 @@ class DerivativesCollector:
 
     async def collect_history(self, symbols: list[str]) -> dict[str, Any]:
         """Best-effort sparse history backfill outside the live Funding/OI path."""
-        from aletheia.data.ccxt_provider import get_market_data_provider
         from aletheia.config.loader import load_config
+        from aletheia.data.ccxt_provider import get_market_data_provider
 
         cfg = load_config()
         history_hours = getattr(cfg.market_data, "derivatives_history_hours", 0)

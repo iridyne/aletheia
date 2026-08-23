@@ -7,14 +7,13 @@ import argparse
 import asyncio
 import hashlib
 import json
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 from aletheia.model_provider.base import ModelRequest
 from aletheia.model_provider.fallback import complete_with_fallback
 from aletheia.model_provider.router import get_provider
-
 
 HEADER = """[Aletheia Harness v0.1]
 Time: 2026-08-01T00:00:00Z

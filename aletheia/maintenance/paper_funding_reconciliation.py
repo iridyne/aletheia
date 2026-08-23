@@ -10,7 +10,6 @@ from typing import Any, Sequence
 
 from aletheia.storage import repositories as repo
 
-
 logger = logging.getLogger(__name__)
 
 

@@ -6,9 +6,9 @@ consumers migrate in later phases; unknown economics always fail closed.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from datetime import datetime, timezone
-import math
 from typing import Any
 
 from aletheia.analytics.learning_window import LEARNING_DATA_FLOOR_ISO

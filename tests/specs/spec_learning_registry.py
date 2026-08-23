@@ -8,7 +8,6 @@ from pathlib import Path
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 _CONTRACT = "learning_evolution"
 
 

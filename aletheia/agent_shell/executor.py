@@ -58,8 +58,8 @@ async def execute_typed_command(
     from aletheia.agent_shell.operator_store import create_session_record, get_session
     from aletheia.agent_shell.permissions import check_permission
     from aletheia.agent_shell.registry import COMMANDS
-    from aletheia.agent_shell.synthesis import _format_fallback
     from aletheia.agent_shell.sessions import close_session
+    from aletheia.agent_shell.synthesis import _format_fallback
     from aletheia.config.loader import load_config
 
     params = parameters or {}

@@ -1,8 +1,6 @@
 """Tests for aletheia.trust.guard_chain."""
 
 import sqlite3
-
-import pytest
 from unittest.mock import patch
 
 
@@ -149,7 +147,7 @@ def test_drawdown_brake_passes_when_healthy():
 
 
 def test_guard_error_produces_warn():
-    from aletheia.trust.guard_chain import run_guards, _guards, GuardResult
+    from aletheia.trust.guard_chain import _guards, run_guards
 
     def _exploding_guard(p):
         raise RuntimeError("boom")

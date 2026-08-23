@@ -2,24 +2,23 @@
 
 import asyncio
 import threading
-from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, AsyncMock, MagicMock
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aletheia.data.symbols import InstrumentId
-
 from aletheia.data.price_feed import (
+    _STALE_THRESHOLD_SEC,
+    _cache_lock,
+    _instrument_price_cache,
+    _price_cache,
+    cache_stats,
     get_cached_price,
     get_watched_instruments,
     get_watched_symbols,
     refresh_watched_prices,
-    cache_stats,
-    _price_cache,
-    _instrument_price_cache,
-    _cache_lock,
-    _STALE_THRESHOLD_SEC,
 )
+from aletheia.data.symbols import InstrumentId
 
 
 @pytest.fixture(autouse=True)
@@ -332,9 +331,9 @@ class TestRefreshWatchedPrices:
         assert result == {"refreshed": 0, "symbols": [], "errors": []}
 
     def test_successful_pending_mark_refresh_wakes_exact_defer(self, monkeypatch):
-        from aletheia.data import candidate_market_facts, price_feed
         import aletheia.config.loader as loader
         import aletheia.data.ccxt_provider as providers
+        from aletheia.data import candidate_market_facts, price_feed
 
         instrument = InstrumentId.from_parts("binance", "BTC/USDT", "perp")
         monkeypatch.setattr(price_feed, "get_watched_instruments", lambda: [instrument])

@@ -21,8 +21,8 @@ import math
 from datetime import datetime, timezone
 from typing import Any
 
-from aletheia.net import httpx_client
 from aletheia.data.models import FundingRateSnapshot, OpenInterestSnapshot
+from aletheia.net import httpx_client
 
 logger = logging.getLogger("aletheia.data.collectors.hyperliquid")
 

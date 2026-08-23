@@ -8,8 +8,6 @@ with no rollback path — a sleeping bomb (identified 2026-06-29).
 
 from __future__ import annotations
 
-import pytest
-
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -32,9 +30,8 @@ def test_pslesson_has_guard_fields():
               "accept() stamps activated_at; dry_run_until=+24h; expires_at=+30d"),
 )
 def test_accept_stamps_guard_timestamps(tmp_path, monkeypatch):
-    from aletheia.storage.sqlite import get_db
-    from aletheia.storage.migrations import run_migrations
     from aletheia.learning.lessons import LessonStore
+    from aletheia.storage.migrations import run_migrations
 
     run_migrations()
     store = LessonStore()
@@ -62,9 +59,10 @@ def test_accept_stamps_guard_timestamps(tmp_path, monkeypatch):
 def test_lesson_block_in_dry_run_window_is_advisory(tmp_path, monkeypatch):
     """A just-accepted lesson (within 24h dry-run window) must NOT add violations."""
     from unittest.mock import MagicMock
-    from aletheia.storage.migrations import run_migrations
+
     from aletheia.learning.lessons import LessonStore
     from aletheia.risk import engine as eng
+    from aletheia.storage.migrations import run_migrations
 
     run_migrations()
     store = LessonStore()
@@ -93,12 +91,13 @@ def test_lesson_block_in_dry_run_window_is_advisory(tmp_path, monkeypatch):
 )
 def test_expired_lesson_does_not_block(tmp_path, monkeypatch):
     """An expired lesson must not produce violations even if recommendation_json says block."""
+    from datetime import datetime, timedelta, timezone
     from unittest.mock import MagicMock
-    from datetime import datetime, timezone, timedelta
-    from aletheia.storage.sqlite import get_db
-    from aletheia.storage.migrations import run_migrations
+
     from aletheia.learning.lessons import LessonStore
     from aletheia.risk import engine as eng
+    from aletheia.storage.migrations import run_migrations
+    from aletheia.storage.sqlite import get_db
 
     run_migrations()
     store = LessonStore()

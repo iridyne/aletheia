@@ -31,8 +31,8 @@ def main() -> None:
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(SystemExit(0)))
 
     from aletheia.agent_runtime.scheduler import (
-        _run_data_collectors,
         _run_data_collector_context,
+        _run_data_collectors,
     )
 
     context_last: float = 0.0

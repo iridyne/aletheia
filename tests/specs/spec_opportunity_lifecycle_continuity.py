@@ -11,7 +11,6 @@ from tests import test_opportunity_funnel_integrity as lifecycle_regressions
 from tests import test_pi_daemon as daemon_regressions
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 _DL = "decision_lifecycle_contract"
 _FE = "filter_evidence_contract"
 _API = "api_reference"

@@ -1,11 +1,12 @@
 """Regression tests for #1181: non-finite capital event amounts must be rejected."""
 
 import math
+
 import pytest
 from pydantic import ValidationError
 
-from aletheia.storage.models import CapitalEvent
 from aletheia.server.routes.capital import CapitalEventRequest
+from aletheia.storage.models import CapitalEvent
 
 
 @pytest.mark.parametrize("amount", [float("inf"), float("-inf"), float("nan")])
@@ -44,11 +45,12 @@ def test_request_model_accepts_valid():
 
 def test_insert_capital_event_rejects_non_finite(tmp_path, monkeypatch):
     import sqlite3
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sqlite
+    from aletheia.storage import repositories as repo
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage.sqlite import reset_db
-    from aletheia.storage import repositories as repo
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -70,11 +72,12 @@ def test_insert_capital_event_rejects_non_finite(tmp_path, monkeypatch):
 
 def test_get_net_deposits_excludes_historical_non_finite(tmp_path, monkeypatch):
     import sqlite3
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sqlite
+    from aletheia.storage import repositories as repo
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage.sqlite import reset_db
-    from aletheia.storage import repositories as repo
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")

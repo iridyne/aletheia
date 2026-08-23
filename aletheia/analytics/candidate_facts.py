@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
-import json
 from typing import Any, Iterable
+
 from aletheia.analytics.filter_evidence import decode_filter_decision_batch
 from aletheia.learning.outcomes import candidate_outcome_temporal_reason
-
 from aletheia.storage import repositories as repo
-
 
 FACT_CONTRACT_VERSION = "profit_loop_fact/v1"
 _FIXED_HORIZONS = frozenset({"15m", "1h", "4h", "24h"})

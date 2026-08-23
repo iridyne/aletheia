@@ -6,17 +6,15 @@ mutation is an idempotent append to the existing measurement ledger.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 from aletheia.learning.cohorts import ContributionCohort, build_experiment_cohorts
-from aletheia.learning.ledger import get_record, insert_record
-from aletheia.learning.models import LearningContributionVerdict
 from aletheia.learning.fixed_look import (
     InferenceContractError,
     consume_fixed_look_verdict,
@@ -24,8 +22,10 @@ from aletheia.learning.fixed_look import (
     freeze_fixed_look_cutoff,
     get_fixed_look_decision,
 )
-from aletheia.learning.verdicts import VerdictEvaluation, evaluate_cohort
+from aletheia.learning.ledger import get_record, insert_record
+from aletheia.learning.models import LearningContributionVerdict
 from aletheia.learning.registry import metric_version_for_path
+from aletheia.learning.verdicts import VerdictEvaluation, evaluate_cohort
 from aletheia.storage.sqlite import get_db
 
 

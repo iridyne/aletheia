@@ -10,10 +10,10 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import Position
 from aletheia.storage.sqlite import reset_db
-from aletheia.storage import repositories as repo
 
 
 def _setup_env(tmp_path, monkeypatch):
@@ -209,9 +209,9 @@ def test_local_paper_available_balance_tightens_risk_without_affecting_external(
 
 def test_agent_context_explains_human_local_cash_adjustments(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
+    from aletheia.agent_shell.trading_context import _build_layer1_snapshot
     from aletheia.config.loader import load_config, save_config
     from aletheia.portfolio.paper_account import adjust_cash
-    from aletheia.agent_shell.trading_context import _build_layer1_snapshot
 
     cfg = load_config()
     cfg.exchange.paper_execution_mode = "paper_internal"

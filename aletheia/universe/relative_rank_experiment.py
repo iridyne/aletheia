@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict
 
 from aletheia.config.schema import UniverseConfig
 from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
@@ -19,7 +19,6 @@ from aletheia.universe.relative_rank_persistence import (
 from aletheia.universe.relative_rank_shadow import RelativeRankBatch
 from aletheia.universe.twin_persistence import TwinExperimentContext
 from aletheia.universe.twin_scoring import TwinShadowInput
-
 
 RELATIVE_RANK_PATH_ID = "universe_relative_rank_shadow_comparison"
 RELATIVE_RANK_EXPERIMENT_CONTRACT = "universe-relative-rank-experiment/v1"

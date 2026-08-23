@@ -8,8 +8,8 @@ from zoneinfo import ZoneInfo
 from aletheia.config.loader import load_config
 from aletheia.learning.ledger import (
     finish_lesson_reviewer_attempt,
-    get_record,
     get_job_health,
+    get_record,
     insert_record,
     latest_lesson_reviewer_attempt,
     running_lesson_reviewer_attempts,
@@ -21,7 +21,6 @@ from aletheia.storage.repositories import (
     transaction,
 )
 from aletheia.storage.sqlite import get_db
-
 
 _CST = ZoneInfo("Asia/Shanghai")
 

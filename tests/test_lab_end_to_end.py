@@ -20,7 +20,7 @@ unit tests are validated together.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 
 def _seed_ranker_experiment_and_cohort(start: datetime, *, count: int = 25) -> str:

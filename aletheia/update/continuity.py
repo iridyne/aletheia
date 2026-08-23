@@ -8,16 +8,16 @@ deployment gate.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
 import time
-from typing import Any
 import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 from aletheia.files.jsonl import write_audit
 

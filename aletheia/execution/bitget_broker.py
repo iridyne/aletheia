@@ -26,9 +26,10 @@ from aletheia.data.symbols import to_bitget
 from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest
 from aletheia.exchanges.submission_errors import (
     ClosePositionAbsentError,
+)
+from aletheia.exchanges.submission_errors import (
     is_ambiguous_submission_error as _is_ambiguous_submission_error,
 )
-from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.execution.broker_utils import (
     close_acknowledgement_result,
     entry_acknowledgement_result,
@@ -37,6 +38,7 @@ from aletheia.execution.close_convergence import (
     CLOSE_CLAIM_STATES,
     has_unresolved_close_claim,
 )
+from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.execution.post_commit_audit import write_post_commit_audit
 from aletheia.storage.models import Order
 from aletheia.storage.repositories import (
@@ -664,6 +666,7 @@ def _try_cancel_tpsl(client: BitgetClient, exchange_symbol: str, tpsl_json: str)
 def replace_exchange_stop(position_id: str, new_stop_price: float) -> None:
     """Cancel old SL trigger and place a new one at the updated stop price."""
     import json as _json
+
     from aletheia.storage import repositories as repo
 
     row = repo._select_one("positions", position_id)

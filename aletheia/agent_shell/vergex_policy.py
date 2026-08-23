@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
 
-
 _EPOCH_KIND = "system_operator_vergex_utilization"
 _EFFECTIVE_VALUES = {
     "version": "v1",

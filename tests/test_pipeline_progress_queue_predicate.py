@@ -1,6 +1,8 @@
 """Tests for pipeline_progress queue depth canonical predicate (#1236)."""
 from __future__ import annotations
+
 from datetime import datetime, timedelta, timezone
+
 from aletheia.diagnostics.pipeline_progress import summarize
 from aletheia.storage.repositories import count_unresolved_signal_pending
 from aletheia.storage.sqlite import get_db

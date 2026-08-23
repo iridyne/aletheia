@@ -9,14 +9,12 @@ xStocks (AAPLON/USDT etc.) are Bitget tokenized equity tokens:
 import asyncio
 import sqlite3
 
-import pytest
-
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
-from aletheia.storage import repositories as repo
 from aletheia.agent_runtime.tool_registry import init_tool_registry
-from aletheia.trading.instruments import xstocks_instruments_from_config
 from aletheia.data.symbols import InstrumentId
+from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
+from aletheia.trading.instruments import xstocks_instruments_from_config
 
 
 def _setup(tmp_path, monkeypatch):
@@ -175,7 +173,7 @@ def test_paper_trader_ignores_xstocks_opportunities(tmp_path, monkeypatch):
     cfg.agent.permission_mode = "Paper"
     save_config(cfg)
 
-    from aletheia.storage.models import Opportunity, MarketSnapshot
+    from aletheia.storage.models import MarketSnapshot, Opportunity
     # Insert an xStocks opportunity.
     opp = Opportunity(
         symbol="AAPLON/USDT",

@@ -1,10 +1,10 @@
 """Read-only analytics API routes."""
 from __future__ import annotations
 
-from copy import deepcopy
-import time
-from datetime import datetime, timedelta, timezone
 import json
+import time
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from threading import RLock
 
 from fastapi import APIRouter, Response
@@ -187,8 +187,8 @@ def get_equity_curve(
         build_outcome_cohort_summary,
         raw_account_events,
     )
-    from aletheia.storage.sqlite import get_db
     from aletheia.config.loader import load_config
+    from aletheia.storage.sqlite import get_db
     db = get_db()
 
     mode = "full_cumulative"
@@ -378,7 +378,7 @@ def get_cost_summary():
 @router.get("/confidence-calibration")
 def get_confidence_calibration():
     """Conviction calibration report — actual vs expected win rate per conviction bucket."""
-    from aletheia.analytics.confidence_calibration import get_latest_calibration_report, build_calibration_report
+    from aletheia.analytics.confidence_calibration import build_calibration_report, get_latest_calibration_report
     report = get_latest_calibration_report()
     if not report:
         report = build_calibration_report()
@@ -935,9 +935,9 @@ def _compute_current_snapshot_payload(
     Optional `phases` dict receives `cohort` and `build_current` timings
     for Server-Timing emission.
     """
+    from aletheia.analytics.opportunity_progress import build_current_entry_status
     from aletheia.config.loader import load_config
     from aletheia.universe.allocator import _FAMILY_TTL
-    from aletheia.analytics.opportunity_progress import build_current_entry_status
     cfg = load_config()
 
     if phases is not None:
@@ -1223,8 +1223,8 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
     For the compact "just enough to render current pipeline state" version see
     /opportunity-funnel/current-snapshot — it skips the extras below.
     """
-    from aletheia.storage.sqlite import get_db
     from aletheia.config.loader import load_config
+    from aletheia.storage.sqlite import get_db
     from aletheia.universe.allocator import _FAMILY_TTL
 
     db = get_db()
@@ -1443,8 +1443,8 @@ def get_operator_decisions(
 
     Read-only. Purely reconstructive over already-persisted evidence.
     """
-    from aletheia.storage.sqlite import get_db
     from aletheia.data.symbols import to_canonical
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     hours_i, window_start = _rolling_cutoff(hours)
@@ -1822,8 +1822,8 @@ def get_learning_funnel():
     active_guards_total: int | None = None
     contradictions_checked = True
     try:
-        from aletheia.knowledge.manager import detect_contradictions
         from aletheia.knowledge.guards import load_trading_guards
+        from aletheia.knowledge.manager import detect_contradictions
 
         # Hot dashboard path: keep this DB-only. Passing file_path would make the
         # detector read hundreds of Markdown files on every Learning refresh.
@@ -1896,8 +1896,8 @@ def _compute_learning_contribution():
     and authority. Legacy aggregate fields remain temporarily for existing
     consumers and are activity context, not evidence of contribution.
     """
-    from aletheia.storage.sqlite import get_db
     from aletheia.learning.control import get_learning_job_health, job_health_view
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     legacy_query_errors: dict[str, str] = {}

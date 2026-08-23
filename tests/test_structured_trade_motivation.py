@@ -93,8 +93,8 @@ def test_action_intent_is_normalized_from_action_and_direction():
 
 def test_pi_decision_persists_the_same_structured_motivation_in_evidence_manifest():
     from aletheia.agent_shell.reflection import _build_pi_decision
-    from aletheia.trading.trade_motivation import build_trade_motivation
     from aletheia.agent_shell.trading_decision import TradingDecision
+    from aletheia.trading.trade_motivation import build_trade_motivation
 
     decision = TradingDecision(
         action="trade",

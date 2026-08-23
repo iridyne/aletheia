@@ -1,8 +1,9 @@
 """Tests for universe tradability filters."""
 
 import pytest
-from aletheia.universe.filters import apply_tradability_filters, _compute_tradability_score
+
 from aletheia.config.schema import UniverseConfig
+from aletheia.universe.filters import _compute_tradability_score, apply_tradability_filters
 
 
 @pytest.fixture

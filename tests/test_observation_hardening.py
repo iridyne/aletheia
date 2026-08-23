@@ -19,7 +19,6 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
-
 # ─── (1) Freshness gate bypass in Worker mode ────────────────────────────────
 
 
@@ -114,6 +113,7 @@ def test_drift_exits_non_zero_when_behind_exceeds_warn_after(
     """``--warn-after`` gates the exit code so the command can be wired into
     a health check."""
     import subprocess
+
     from aletheia.cli.observe_cmd import observe_app
 
     _init_git_repo(tmp_path)

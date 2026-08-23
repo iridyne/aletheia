@@ -9,8 +9,8 @@ human-triggered enable/disable.
 """
 
 import os
-import sqlite3
 import plistlib
+import sqlite3
 from pathlib import Path
 
 
@@ -497,7 +497,7 @@ def test_schtasks_missing_graceful(monkeypatch):
 # --- 12. XML status parsing ---
 
 def test_parse_xml_status():
-    from aletheia.gateway.autostart import _parse_xml_status, _XML_NS
+    from aletheia.gateway.autostart import _XML_NS, _parse_xml_status
     xml = (
         f'<Task xmlns="{_XML_NS}">'
         '<Settings><Enabled>true</Enabled></Settings>'
@@ -519,7 +519,7 @@ def test_parse_xml_status_invalid_xml():
 
 
 def test_parse_xml_status_disabled():
-    from aletheia.gateway.autostart import _parse_xml_status, _XML_NS
+    from aletheia.gateway.autostart import _XML_NS, _parse_xml_status
     xml = f'<Task xmlns="{_XML_NS}"><Settings><Enabled>false</Enabled></Settings></Task>'
     result = _parse_xml_status(xml)
     assert result["task_enabled"] is False
@@ -543,8 +543,8 @@ def test_xml_contains_1m_interval(monkeypatch):
 
 def test_write_watchdog_tick(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway.autostart import write_watchdog_tick
     from aletheia.files.jsonl import read_jsonl
+    from aletheia.gateway.autostart import write_watchdog_tick
 
     write_watchdog_tick("started", exit_code=0, duration_ms=1200)
     write_watchdog_tick("already_running", exit_code=0, duration_ms=50)
@@ -562,7 +562,6 @@ def test_verify_after_prime_success(monkeypatch):
     monkeypatch.setattr("aletheia.gateway.pidfile.is_running", lambda: True)
     monkeypatch.setattr("aletheia.gateway.pidfile.port_in_use", lambda p, h: True)
 
-    from aletheia.config.loader import load_config
     monkeypatch.setattr(autostart, "_verify_after_prime", lambda **kw: {"verified": True})
     result = autostart._verify_after_prime(timeout=1.0)
     assert result["verified"] is True
@@ -607,8 +606,8 @@ def test_macos_plist_uses_safe_periodic_gated_start(tmp_path, monkeypatch):
 
 def test_macos_enable_writes_plist_bootstraps_kickstarts_and_audits(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import autostart
     from aletheia.files.jsonl import read_jsonl
+    from aletheia.gateway import autostart
 
     launch_agents, _ = _force_macos(monkeypatch, autostart, tmp_path)
     calls: list[list[str]] = []
@@ -665,8 +664,8 @@ def test_macos_status_installed_but_not_loaded_is_honest(tmp_path, monkeypatch):
 
 def test_macos_disable_boots_out_and_removes_plist(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import autostart
     from aletheia.files.jsonl import read_jsonl
+    from aletheia.gateway import autostart
 
     launch_agents, _ = _force_macos(monkeypatch, autostart, tmp_path)
     launch_agents.mkdir(parents=True)
@@ -718,8 +717,8 @@ def test_macos_status_loaded_with_stale_path_reports_drift(tmp_path, monkeypatch
 
 def test_macos_enable_bootstrap_failure_is_honest_and_audited(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import autostart
     from aletheia.files.jsonl import read_jsonl
+    from aletheia.gateway import autostart
 
     _force_macos(monkeypatch, autostart, tmp_path)
 
@@ -900,14 +899,15 @@ def test_macos_disable_also_removes_legacy_labels(tmp_path, monkeypatch):
 
 def test_autostart_not_agent_callable(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime.tool_registry import init_tool_registry
     from aletheia.agent_runtime import permissions
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
     init_tool_registry()
     forbidden = {"enable_autostart", "disable_autostart", "autostart",
                  "schtasks", "register_task", "create_task"}
     assert forbidden.isdisjoint(permissions.TOOL_REGISTRY.keys())
 
     import inspect
+
     from aletheia.agent_runtime import tool_registry
     src = inspect.getsource(tool_registry)
     assert "aletheia.gateway.autostart" not in src

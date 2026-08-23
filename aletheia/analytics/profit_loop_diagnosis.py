@@ -9,7 +9,6 @@ from typing import Any, Iterable, Mapping
 
 from ..storage.proposal_hypothesis import evaluate_hypothesis_prefix
 
-
 DIAGNOSIS_CONTRACT_VERSION = "profit_loop_diagnosis/v1"
 
 
@@ -276,7 +275,7 @@ def _group_returns(
         CANDIDATE_OUTCOME_TEMPORAL_REASONS,
         assess_candidate_outcome,
     )
-    
+
     values = []
     rejection_reasons: dict[str, int] = {}
     for fact in facts:
@@ -300,7 +299,7 @@ def _group_returns(
             values.append(assessment.net_return_pct)
         else:
             rejection_reasons[assessment.reason] = rejection_reasons.get(assessment.reason, 0) + 1
-    
+
     return values, rejection_reasons
 
 

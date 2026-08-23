@@ -12,8 +12,8 @@ import sqlite3
 import pytest
 import typer
 
-from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -52,8 +52,7 @@ def setup_env(tmp_path, monkeypatch):
 
 def test_do_stop_clears_pid_only_after_port_freed(tmp_path, monkeypatch, capsys):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import lifecycle
-    from aletheia.gateway import pidfile
+    from aletheia.gateway import lifecycle, pidfile
 
     # Exercise the console path so stdout/stderr messages are emitted (the headless
     # guard suppresses them; tests must pin it like the _echo_safe tests do).
@@ -85,7 +84,6 @@ def test_do_stop_clears_pid_only_after_port_freed(tmp_path, monkeypatch, capsys)
 def test_do_stop_cleans_our_orphans(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle
-    from aletheia.gateway import pidfile
 
     # No tracked supervisor, but an orphan holds the port.
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)
@@ -100,8 +98,7 @@ def test_do_stop_cleans_our_orphans(tmp_path, monkeypatch):
 
 def test_do_stop_reports_when_port_stuck(tmp_path, monkeypatch, capsys):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import lifecycle
-    from aletheia.gateway import pidfile
+    from aletheia.gateway import lifecycle, pidfile
 
     monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
     pidfile.pid_path().write_text("4242", encoding="utf-8")
@@ -118,8 +115,7 @@ def test_do_stop_reports_when_port_stuck(tmp_path, monkeypatch, capsys):
 
 def test_do_stop_blocks_on_service_manager_denial_without_killing_processes(tmp_path, monkeypatch, capsys):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import lifecycle
-    from aletheia.gateway import service_control
+    from aletheia.gateway import lifecycle, service_control
 
     monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
     monkeypatch.setattr(
@@ -332,6 +328,7 @@ def test_do_start_foreground_guard_refuses_when_port_taken(tmp_path, monkeypatch
 
 def test_local_gateway_requests_bypass_environment_proxy(monkeypatch):
     import urllib.request
+
     from aletheia.gateway import lifecycle
 
     seen = {}
@@ -655,11 +652,12 @@ def test_circuit_break_auto_resets_after_stability_window(tmp_path, monkeypatch)
     re-enables the watchdog without operator intervention.
     """
     setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import lifecycle
+    import datetime as _dt
 
     # Write a circuit-break state file timestamped 31 minutes ago.
     import json as _json
-    import datetime as _dt
+
+    from aletheia.gateway import lifecycle
     old_ts = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=31)).isoformat()
     cb_path = tmp_path / "circuit_break.json"
     cb_path.write_text(_json.dumps({"tripped_at": old_ts, "source": "circuit_breaker"}), encoding="utf-8")
@@ -691,10 +689,10 @@ def test_circuit_break_auto_resets_after_stability_window(tmp_path, monkeypatch)
 def test_circuit_break_does_not_reset_within_window(tmp_path, monkeypatch):
     """Within the 30-min protection window the circuit-break file must not be removed."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import lifecycle
-
-    import json as _json
     import datetime as _dt
+    import json as _json
+
+    from aletheia.gateway import lifecycle
     recent_ts = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=5)).isoformat()
     cb_path = tmp_path / "circuit_break.json"
     cb_path.write_text(_json.dumps({"tripped_at": recent_ts, "source": "circuit_breaker"}), encoding="utf-8")
@@ -747,8 +745,8 @@ def test_do_start_background_stops_registration_when_readiness_fails(tmp_path, m
 def test_do_resume_prefers_running_gateway_api(tmp_path, monkeypatch):
     """When the gateway is running, CLI resume must wake the in-process scheduler."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.gateway import lifecycle
     from aletheia.agent_runtime import resume_gate
+    from aletheia.gateway import lifecycle
 
     monkeypatch.setattr(lifecycle, "_is_headless", lambda: False)
     monkeypatch.setattr(lifecycle, "is_running", lambda: True)

@@ -112,9 +112,10 @@ def compute_order_stats(days: int = 7) -> dict:
 
 def build_trade_stats() -> dict:
     """Compute closed-position stats grouped by strategy source and scanner family."""
+    import json
+
     from aletheia.analytics.family_scorecard import compute_family_scorecard
     from aletheia.storage import repositories as repo
-    import json
 
     strategies = {str(row["id"]): row for row in repo.list_strategies(limit=10_000)}
     rows = []

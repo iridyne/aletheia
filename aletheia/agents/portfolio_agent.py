@@ -2,9 +2,9 @@
 
 import time
 
+from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, log_tool
-from aletheia.agent_runtime.permissions import is_tool_permitted
 
 
 @register_agent("portfolio_agent")

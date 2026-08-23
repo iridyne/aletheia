@@ -52,6 +52,7 @@ def test_build_report_to_dict_is_json_serializable():
 
 def test_infra_doctor_endpoint_matches_contract(api_only_runtime):
     from fastapi.testclient import TestClient
+
     from aletheia.server.app import app
 
     with TestClient(app) as client:
@@ -67,6 +68,7 @@ def test_infra_doctor_endpoint_matches_contract(api_only_runtime):
 
 def test_infra_doctor_attributes_process_to_serving_runtime(api_only_runtime, monkeypatch):
     from fastapi.testclient import TestClient
+
     from aletheia.server.app import app
 
     monkeypatch.setenv("ALETHEIA_RUNTIME_ID", "runtime-isolated-8791")
@@ -86,6 +88,7 @@ def test_infra_doctor_attributes_process_to_serving_runtime(api_only_runtime, mo
 
 def test_infra_status_reports_effective_runtime_port(api_only_runtime, monkeypatch):
     from fastapi.testclient import TestClient
+
     from aletheia.server.app import app
 
     monkeypatch.setenv("ALETHEIA_RUNTIME_PORT", "8791")

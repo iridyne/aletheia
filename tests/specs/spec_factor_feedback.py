@@ -96,9 +96,10 @@ def test_factor_hard_blocked_status():
 )
 def test_ranker_hard_blocked_requires_prospective_authority():
     """Retrospective hard_blocked alone must remain neutral."""
+    import unittest.mock as mock
+
     from aletheia.agents.paper_trader_ranker import _evaluate_candidate
     from aletheia.config.loader import load_config
-    import unittest.mock as mock
 
     opp = {
         "id": "test-opp-1",

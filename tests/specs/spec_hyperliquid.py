@@ -12,7 +12,6 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -116,8 +115,9 @@ def test_hyperliquid_parse_real_fixture_btc():
     assert _FIXTURE_META.exists(), f"Fixture not found: {_FIXTURE_META}"
     raw = json.loads(_FIXTURE_META.read_text(encoding="utf-8"))
 
-    from aletheia.data.collectors.hyperliquid import _parse_funding, _parse_oi
     from datetime import datetime, timezone
+
+    from aletheia.data.collectors.hyperliquid import _parse_funding, _parse_oi
 
     now = datetime.now(timezone.utc).isoformat()
     universe = raw[0].get("universe", [])
@@ -164,8 +164,9 @@ def test_hyperliquid_oi_usd_equals_coin_times_mark():
     assert _FIXTURE_META.exists(), f"Fixture not found: {_FIXTURE_META}"
     raw = json.loads(_FIXTURE_META.read_text(encoding="utf-8"))
 
-    from aletheia.data.collectors.hyperliquid import _parse_oi
     from datetime import datetime, timezone
+
+    from aletheia.data.collectors.hyperliquid import _parse_oi
 
     now = datetime.now(timezone.utc).isoformat()
     universe = raw[0].get("universe", [])
@@ -245,8 +246,8 @@ def test_hyperliquid_db_write(tmp_path, monkeypatch):
     # Point DB at tmp_path
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
     from aletheia.storage import migrations as mig
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
 
@@ -342,8 +343,8 @@ async def test_hyperliquid_live_e2e(tmp_path, monkeypatch):
 
     from aletheia.config import loader as cfg_loader
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
     from aletheia.storage import migrations as mig
+    from aletheia.storage import sqlite as sq
     sq.close_db()
     mig.run_migrations()
 

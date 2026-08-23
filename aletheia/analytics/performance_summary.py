@@ -19,7 +19,7 @@ operator-facing dict.
 """
 from __future__ import annotations
 
-from typing import Iterable, Sequence
+from typing import Sequence
 
 
 def equity_curve(pnls: Sequence[float]) -> list[float]:

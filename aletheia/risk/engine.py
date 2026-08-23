@@ -15,9 +15,9 @@ from aletheia.data.symbols import to_canonical
 from aletheia.portfolio.account_loss import authoritative_account_realized_loss
 from aletheia.storage.models import RiskDecision, TradeProposal
 from aletheia.storage.repositories import (
-    _compute_proposal_hash,
     _RISK_DECISION_PREFIX,
     _RISK_PROPOSAL_PREFIX,
+    _compute_proposal_hash,
     _validate_native_entry_order_snapshot,
     acquire_entry_risk_reservation,
     get_authoritative_risk_decision,
@@ -1127,7 +1127,7 @@ def _evaluate_proposal_locked(
 
     # 10. Max leverage (futures). Per-asset-tier caps + account-level flat cap.
     if proposal.market_type == "usdt_futures" and proposal.leverage:
-        from aletheia.trading.instruments import get_max_leverage, get_asset_tier
+        from aletheia.trading.instruments import get_asset_tier, get_max_leverage
         tier_cap = get_max_leverage(proposal.symbol, _is_live(proposal.execution_mode), cfg)
         if proposal.leverage > tier_cap:
             tier = get_asset_tier(proposal.symbol)
@@ -1560,8 +1560,9 @@ def _check_lesson_constraints(proposal) -> list[str]:
     """
     violations = []
     try:
-        from aletheia.learning.lessons import LessonStore
         import json
+
+        from aletheia.learning.lessons import LessonStore
         store = LessonStore()
         # L-Bug-E fix: 'accepted' is a transient state (lesson_reviewer calls
         # accept then mark_applied in the same run), so query 'applied' instead.
@@ -1800,7 +1801,6 @@ def _check_correlation_exposure(
     try:
         from aletheia.storage.repositories import (
             list_all_open_positions,
-            list_opportunities,
         )
         from aletheia.storage.sqlite import get_db
 

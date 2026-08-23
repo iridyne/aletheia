@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from statistics import mean
 from typing import Any
@@ -24,7 +24,6 @@ from aletheia.analytics.outcome_semantics import (
     classify_outcome_row,
     outcome_values,
 )
-
 
 _MISS_THRESHOLD_PCT = 0.5
 _POOR_EXPRESSION_DELTA_PCT = 0.5

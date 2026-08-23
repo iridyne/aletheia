@@ -4,7 +4,6 @@ Each test verifies that batch_* returns results semantically equivalent to
 calling the individual repository function N times.
 """
 
-import pytest
 
 
 def _prepare_db(tmp_path, monkeypatch):
@@ -24,8 +23,8 @@ def _prepare_db(tmp_path, monkeypatch):
 
 def test_batch_perp_structures_returns_latest_per_symbol(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import batch_perp_structures, latest_perp_structure
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     # Insert two rows for BTC — different as_of_time; batch should return the newer one.
@@ -70,8 +69,8 @@ def test_batch_perp_structures_empty_input(tmp_path, monkeypatch):
 
 def test_batch_perp_structures_single_symbol(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import batch_perp_structures, latest_perp_structure
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     db.execute(
@@ -91,8 +90,8 @@ def test_batch_perp_structures_single_symbol(tmp_path, monkeypatch):
 
 def test_batch_funding_rates_returns_latest_per_symbol(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import batch_funding_rates, latest_funding_rate
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     # Three rows for BTC@hyperliquid — batch returns the newest.
@@ -139,8 +138,8 @@ def test_batch_funding_rates_empty_input(tmp_path, monkeypatch):
 
 def test_batch_funding_rates_excludes_other_exchanges(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import batch_funding_rates
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     db.execute(
@@ -183,8 +182,8 @@ def test_batch_open_interest_returns_latest_hyperliquid_row(tmp_path, monkeypatc
 
 def test_batch_news_returns_per_symbol_with_limit(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import batch_news
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     since = "2026-07-13T00:00:00"
@@ -231,8 +230,8 @@ def test_batch_news_empty_input(tmp_path, monkeypatch):
 
 def test_batch_news_returns_exact_ids_in_newest_first_order(tmp_path, monkeypatch):
     _prepare_db(tmp_path, monkeypatch)
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import batch_news
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     since = "2026-07-13T00:00:00"
@@ -266,9 +265,10 @@ def test_batch_prefetch_db_news_cutoff_respects_patched_datetime(monkeypatch):
     This test fails immediately if the local re-import is re-introduced.
     """
     from datetime import datetime, timedelta, timezone
+
     import aletheia.agents.market_observer as mo
-    import aletheia.storage.repositories as repo_mod
     import aletheia.data.freshness as freshness_mod
+    import aletheia.storage.repositories as repo_mod
 
     fixed_now = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     expected_cutoff = (fixed_now - timedelta(hours=48)).isoformat()

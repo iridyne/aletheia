@@ -7,9 +7,9 @@ human-review surface, not a Learning/statistical input.
 
 from __future__ import annotations
 
+import math
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
-import math
 from typing import Any, Iterable, Mapping
 
 from aletheia.analytics.profit_gradient_estimators import (
@@ -17,7 +17,6 @@ from aletheia.analytics.profit_gradient_estimators import (
     estimate_paired_same_unit,
     estimate_prospective_randomized,
 )
-
 
 PROFIT_GRADIENT_CONTRACT_VERSION = "profit_gradient/v3"
 RECONCILIATION_CONTRACT_VERSION = "profit_gradient/reconciliation/v1"

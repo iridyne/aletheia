@@ -6,8 +6,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.analytics.learning_window import outcome_window_metadata
+from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 
 
 def _scorecard_execution_mode() -> str:
@@ -166,7 +166,7 @@ def check_kill_condition_consecutive_rounds(window_days: int = 14) -> dict:
         if not rows:
             return {"consecutive_kill_rounds": 0, "kill_threshold": 0.5, "window_days": window_days}
 
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
         now = datetime.now(timezone.utc)
         kill_floor = 0.5
         consecutive = 0
@@ -333,8 +333,9 @@ def _check_exchange_connectivity(live_evidence: dict | None = None) -> dict:
 
 def _check_risk_violations() -> dict:
     try:
-        from aletheia.storage.sqlite import get_db
         import json
+
+        from aletheia.storage.sqlite import get_db
         db = get_db()
         cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         rows = db.execute(

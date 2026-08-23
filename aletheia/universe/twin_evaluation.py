@@ -8,10 +8,10 @@ Paper, Risk, or Execution changes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
 import json
 import math
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
 from statistics import fmean
 from typing import Any, Mapping
 

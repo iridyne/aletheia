@@ -466,8 +466,8 @@ def test_pre_order_failure_is_terminal_and_sanitized(
 ):
     db = _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.execution import gateway
     from aletheia.config.schema import AletheiaConfig
+    from aletheia.execution import gateway
 
     def _raise_secret(*_args, **_kwargs):
         raise RuntimeError("token=must-not-be-persisted")
@@ -2135,8 +2135,8 @@ def test_position_absence_claim_converges_without_fabricated_economics(
 
     _setup_db(tmp_path, monkeypatch)
     from aletheia.config import loader
-    from aletheia.execution.verified_exit import classify_verified_exit
     from aletheia.exchanges.submission_errors import ClosePositionAbsentError
+    from aletheia.execution.verified_exit import classify_verified_exit
     from aletheia.portfolio import disappearance_settlement, position_reconciler
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position

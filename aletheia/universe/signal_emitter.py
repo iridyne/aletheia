@@ -10,14 +10,12 @@ Called at the end of every universe refresh cycle (source_agent="universe_scanne
 
 from __future__ import annotations
 
-from aletheia.universe.funding_units import (
-    CROWDED_FUNDING_RATE,
-    ELEVATED_FUNDING_RATE,
-)
-
 import json
 import logging
 
+from aletheia.analytics.factor_feedback import lookup_factor_signal
+from aletheia.analytics.filter_evidence import atomic_opportunity_evidence
+from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
     find_live_opportunity_by_symbol_direction,
@@ -25,10 +23,11 @@ from aletheia.storage.repositories import (
     insert_opportunity_once_by_snapshot,
 )
 from aletheia.trading.instruments import instrument_market_to_db_market
-from aletheia.analytics.factor_feedback import lookup_factor_signal
-from aletheia.analytics.filter_evidence import atomic_opportunity_evidence
+from aletheia.universe.funding_units import (
+    CROWDED_FUNDING_RATE,
+    ELEVATED_FUNDING_RATE,
+)
 from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
-from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
 
 logger = logging.getLogger("aletheia.universe.signal_emitter")
 
@@ -251,9 +250,13 @@ def emit_deterministic_opportunities(
         _emit_defer_suppression = False
     if _emit_defer_suppression:
         from aletheia.agent_shell.trading_context import (
-            material_fingerprint_from_features as _emit_material_fp,
             _normalize_direction as _emit_norm_dir,
+        )
+        from aletheia.agent_shell.trading_context import (
             _normalize_market_type as _emit_norm_mkt,
+        )
+        from aletheia.agent_shell.trading_context import (
+            material_fingerprint_from_features as _emit_material_fp,
         )
         from aletheia.storage.repositories import (
             latest_direct_skip_defer_for_setup as _emit_latest_skip,

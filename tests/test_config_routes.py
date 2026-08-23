@@ -6,11 +6,11 @@ Critical security invariant: no GET ever returns a raw secret value.
 from unittest.mock import patch
 
 import pytest  # pyright: ignore[reportMissingImports]
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
-from aletheia.server.app import app
-from aletheia.model_provider.router import clear_cache
 from aletheia.config.schema import AletheiaConfig
+from aletheia.model_provider.router import clear_cache
+from aletheia.server.app import app
 
 
 @pytest.fixture
@@ -326,8 +326,8 @@ async def test_model_health_unknown_profile_is_explicit(client):
 async def test_model_health_reports_probe_and_cache_state(client, monkeypatch):
     from datetime import datetime, timezone
 
-    from aletheia.model_provider.base import ModelHealth
     import aletheia.model_provider.router as router
+    from aletheia.model_provider.base import ModelHealth
 
     observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -1133,10 +1133,10 @@ async def test_tunnel_guard_protects_learning_mutations_before_side_effects(
     client,
     monkeypatch,
 ):
-    from aletheia.config.loader import load_config, save_config
-    from aletheia.config.secrets import set_secret
     import aletheia.files.jsonl as jsonl
     import aletheia.server.routes.settings as settings_routes
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.secrets import set_secret
 
     cfg = load_config()
     cfg.tunnel.enabled = True
@@ -1558,8 +1558,8 @@ async def test_codex_health_honest_not_installed(client, monkeypatch):
 @pytest.mark.anyio
 async def test_model_test_candidate_pass(client, monkeypatch):
     """A reachable candidate key returns available=true, echoes no key, persists nothing."""
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.base import ModelHealth
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 
     async def fake_health(self):
         return ModelHealth(provider="openai_compatible", available=True, model=self.model)
@@ -1588,9 +1588,9 @@ async def test_model_test_candidate_pass(client, monkeypatch):
 @pytest.mark.anyio
 async def test_model_test_candidate_probe_succeeds_without_model_catalogue(client, monkeypatch):
     """An inference probe must not require optional /models list permission."""
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
-    from aletheia.model_provider.base import ModelHealth
     import aletheia.model_provider.broker as broker
+    from aletheia.model_provider.base import ModelHealth
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 
     async def unavailable_catalogue(self):
         return ModelHealth(provider="openai_compatible", available=False, model=self.model)
@@ -1616,8 +1616,8 @@ async def test_model_test_candidate_probe_succeeds_without_model_catalogue(clien
 @pytest.mark.anyio
 async def test_model_test_candidate_fail(client, monkeypatch):
     """An unreachable candidate returns available=false + error, persists nothing."""
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.base import ModelHealth
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 
     async def fake_health(self):
         return ModelHealth(provider="openai_compatible", available=False, error="HTTP 401")
@@ -1988,9 +1988,9 @@ async def test_databricks_save_rejects_base_url_rebinding_and_blank_replacement(
 
 @pytest.mark.anyio
 async def test_databricks_origin_change_save_failure_keeps_old_token_binding(client, monkeypatch):
+    import aletheia.server.routes.model as model_routes
     from aletheia.config.loader import load_config
     from aletheia.config.secrets import get_secret
-    import aletheia.server.routes.model as model_routes
 
     old_token = "dapi-persisted-old-4444"
     created = await client.post("/api/settings/model", json={

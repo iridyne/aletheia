@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 import time
+from dataclasses import replace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 
 NOW_MS = int(time.time() * 1000)
 

@@ -27,12 +27,12 @@ never touches trading state — those stay human decisions per the safety rules.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 import os
 import platform
-from pathlib import Path
 import sys
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Literal
 
 Severity = Literal["ok", "info", "warn", "blocker"]
@@ -475,9 +475,9 @@ def _probe_gateway_service(report: Report) -> None:
 
 
 def _probe_process(report: Report) -> None:
-    from aletheia.gateway.pidfile import is_running, read_pid, port_in_use
     from aletheia.config.loader import load_config
     from aletheia.gateway.network import local_frontdoor_host
+    from aletheia.gateway.pidfile import is_running, port_in_use, read_pid
     cfg = load_config()
     host = local_frontdoor_host()
     runtime_port = os.environ.get("ALETHEIA_RUNTIME_PORT")
@@ -762,8 +762,8 @@ def _probe_credentials(report: Report) -> None:
     "can this system do inference". Keep its wording confined to configuration;
     reachability is `llm.inference`'s job.
     """
-    from aletheia.config.secrets import get_secret
     from aletheia.config.loader import load_config
+    from aletheia.config.secrets import get_secret
     cfg = load_config()
 
     demo_keys = ["bitget.demo.api_key", "bitget.demo.api_secret", "bitget.demo.passphrase"]
@@ -2150,8 +2150,9 @@ def _probe_learning_retrieval(report: Report) -> None:
     deferred to Round 2 (round2_week1_decision_chain_fixes.md Fix L-Bug-C/-D).
     """
     try:
-        from aletheia.storage.sqlite import get_db
         from collections import Counter
+
+        from aletheia.storage.sqlite import get_db
         db = get_db()
 
         # --- 1. eligible retrieval pool composition --------------------------
@@ -2244,6 +2245,7 @@ def _probe_reconciled_ratio(report: Report) -> None:
                        "no closed positions since 2026-06-22")
             return
         from collections import Counter
+
         from aletheia.analytics.outcome_integrity import classify_closure
         categories: Counter = Counter(classify_closure(row).category for row in rows)
         total = len(rows)
@@ -2449,12 +2451,12 @@ def _probe_persona_rollout(report: Report) -> None:
 def _probe_reconcile_thrash(report: Report) -> None:
     """Report current churn plus the durable circuit-breaker/recovery state."""
     try:
+        from aletheia.learning.control import global_learning_refreeze_reason
         from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
         from aletheia.portfolio.reconciliation_integrity import (
             clean_observation_gate,
             get_active_reconciliation_integrity_incident,
         )
-        from aletheia.learning.control import global_learning_refreeze_reason
         t = detect_reconcile_thrash(window_minutes=30)
         incident = get_active_reconciliation_integrity_incident()
         if not t.get("detector_available", True):
@@ -2557,8 +2559,8 @@ def _probe_startup_behavior_gate(report: Report) -> None:
     operator (or agent) can read WHY new AI decisions and trades are suspended
     while data collection keeps running."""
     try:
-        from aletheia.config.loader import load_config
         from aletheia.agent_runtime.startup_behavior_gate import read_gate_state
+        from aletheia.config.loader import load_config
 
         cfg = load_config()
         if not cfg.health.startup_behavior_gate_enabled:
@@ -2815,8 +2817,9 @@ def _probe_content_lesson_chain(report: Report) -> None:
     are a dead loop (post-trade conclusions reach nothing)."""
     try:
         import importlib.util
-        from aletheia.storage.sqlite import get_db
         from collections import Counter
+
+        from aletheia.storage.sqlite import get_db
         db = get_db()
         cnt: Counter = Counter()
         for r in db.execute("SELECT status, COUNT(*) n FROM ps_lessons GROUP BY status"):
@@ -3182,7 +3185,8 @@ def _probe_runtime_session_provenance(report: Report) -> None:
     """
     try:
         from aletheia.agent_runtime.runtime_session import (
-            current_session, current_session_durable,
+            current_session,
+            current_session_durable,
         )
         from aletheia.storage import repositories as repo
         from aletheia.storage.sqlite import get_db
@@ -3496,9 +3500,9 @@ def _probe_fts_coverage(report: Report) -> None:
 def _probe_ohlcv_coverage(report: Report) -> None:
     """Check OHLCV historical data coverage for active universe members."""
     try:
+        from aletheia.config.loader import load_config
         from aletheia.storage.repositories import get_active_universe_members
         from aletheia.storage.sqlite import get_db
-        from aletheia.config.loader import load_config
 
         db = get_db()
         total = db.execute("SELECT COUNT(*) FROM market_ohlcv").fetchone()[0]
@@ -3590,8 +3594,9 @@ def _probe_ohlcv_coverage(report: Report) -> None:
 def _probe_signal_effectiveness(report: Report) -> None:
     """Check universe signal win-rate over the last 7 days."""
     try:
-        from aletheia.storage.sqlite import get_db
         from datetime import timedelta
+
+        from aletheia.storage.sqlite import get_db
 
         db = get_db()
         cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
@@ -3960,6 +3965,7 @@ def _probe_infra_db_size(report: Report) -> None:
     """Report actual disk pressure and freelist waste, not size alone."""
     try:
         import shutil
+
         from aletheia.storage.sqlite import db_path, get_db
         path = db_path()
         database_bytes = path.stat().st_size if path.exists() else 0
@@ -4150,11 +4156,10 @@ def apply_fixes() -> list[str]:
     list of human-readable actions taken.
     """
     actions: list[str] = []
-    from aletheia.gateway.pidfile import is_running
-    from aletheia.gateway.lifecycle import do_start
-
     # Remove legacy implicit-restart hooks before the running-check early return.
     from aletheia.gateway.git_hooks import remove_managed_git_hooks
+    from aletheia.gateway.lifecycle import do_start
+    from aletheia.gateway.pidfile import is_running
     actions.extend(remove_managed_git_hooks())
 
     if is_running():

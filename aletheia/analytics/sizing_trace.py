@@ -14,7 +14,6 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean, median
 from typing import Any
 
-
 _CORE_TABLES = ("trade_proposals",)
 _OPTIONAL_TABLES = ("pi_decisions", "positions", "orders", "fills", "risk_decisions")
 _LOW_BASE_NOTIONAL_USDT = 5.0

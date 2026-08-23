@@ -7,9 +7,9 @@
 
 import sqlite3
 
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -35,7 +35,7 @@ def setup_env(tmp_path, monkeypatch):
 
 def test_log_tool_writes_a_step(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agents.helpers import log_tool, _release_run_counter
+    from aletheia.agents.helpers import _release_run_counter, log_tool
     log_tool("run-A", "get_market_snapshot", "read_tool", True, output="BTCUSDT")
     log_tool("run-A", "create_opportunity", "research_tool", True, output="opp-1")
     steps = repo.list_run_steps("run-A")
@@ -48,7 +48,7 @@ def test_log_tool_writes_a_step(tmp_path, monkeypatch):
 
 def test_record_step_for_non_tool_reasoning(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agents.helpers import log_tool, record_step, _release_run_counter
+    from aletheia.agents.helpers import _release_run_counter, log_tool, record_step
     log_tool("run-B", "get_x", "read_tool", True)
     record_step("run-B", "considered 3 lessons", input_data="q=stop loss")
     log_tool("run-B", "create_y", "research_tool", True)
@@ -60,7 +60,7 @@ def test_record_step_for_non_tool_reasoning(tmp_path, monkeypatch):
 
 def test_step_counters_isolated_per_run(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agents.helpers import log_tool, _release_run_counter
+    from aletheia.agents.helpers import _release_run_counter, log_tool
     log_tool("run-X", "a", "read_tool", True)
     log_tool("run-Y", "b", "read_tool", True)
     log_tool("run-X", "c", "read_tool", True)
@@ -150,10 +150,8 @@ def test_ledger_quality_block_present(tmp_path, monkeypatch):
 def test_ledger_activation_ratio_reflects_state(tmp_path, monkeypatch):
     """A strategy promoted to paper_running should bump activation ratio above 0."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.storage.models import StrategyRecord
-    from aletheia.storage.repositories import insert_strategy, update_strategy
-    from aletheia.storage.models import PiDecision
-    from aletheia.storage.repositories import insert_pi_decision
+    from aletheia.storage.models import PiDecision, StrategyRecord
+    from aletheia.storage.repositories import insert_pi_decision, insert_strategy, update_strategy
     s = StrategyRecord(name="Active", state="draft", parameters='{"k": "v"}')
     insert_strategy(s)
     insert_pi_decision(PiDecision(symbol=None, direction=None, action="recommend_promote", conviction=0, reasoning="test", proposal_id=s.id, debate_ran=False))
@@ -175,7 +173,7 @@ def test_ledger_lessons_consulted_counts_only_hits(tmp_path, monkeypatch):
     SEPARATE "Playbook reads" count, never folded into the lesson signal (it logs
     no count to hit-filter on)."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agents.helpers import log_tool, _release_run_counter
+    from aletheia.agents.helpers import _release_run_counter, log_tool
     log_tool("run-L", "retrieve_lessons", "read_tool", True, output="lessons:3")  # hit
     log_tool("run-L", "retrieve_lessons", "read_tool", True, output="lessons:0")  # empty → NOT counted
     log_tool("run-L", "load_playbooks", "read_tool", True)                         # separate metric

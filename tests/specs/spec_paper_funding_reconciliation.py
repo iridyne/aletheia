@@ -171,11 +171,11 @@ def test_paper_funding_reconciliation_apply_is_guarded_and_idempotent(
 ):
     conn = _setup_db(tmp_path, monkeypatch)
     position_id = _seed_recoverable_position()
-    from aletheia.storage import repositories as repo
     from aletheia.maintenance.paper_funding_reconciliation import (
         apply_paper_funding_reconciliation,
         inspect_paper_funding_reconciliation,
     )
+    from aletheia.storage import repositories as repo
 
     report = inspect_paper_funding_reconciliation(position_ids=[position_id])
     with pytest.raises(ValueError, match="stale"):

@@ -12,16 +12,15 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timezone
-from aletheia.analytics.profit_gradient_evidence import _parse_utc, _iso
 from typing import Any
 
 from aletheia.analytics.outcome_integrity import (
     OUTCOME_SEMANTICS_VERSION,
-    eligible_strategy_outcomes,
     build_outcome_cohort_summary,
+    eligible_strategy_outcomes,
 )
+from aletheia.analytics.profit_gradient_evidence import _parse_utc
 from aletheia.storage.hashing import sha256_json
-
 
 QUALIFICATION_CONTRACT_VERSION = "profit_loop_qualification/v1"
 

@@ -227,8 +227,8 @@ def test_multiple_shadow_runs_have_independent_credentials(monkeypatch):
 def test_stale_keyring_does_not_override_file_after_rotation(monkeypatch):
     """Existing keyring value + failed set_password() must not cause current_operator_service_token()
     to return a different value from the rotated/injected token (issue #1104)."""
-    import aletheia.operator_service_identity as osi
     import aletheia.config.secrets as secrets_mod
+    import aletheia.operator_service_identity as osi
     _reset_token_registry(monkeypatch)
 
     file_store: dict[str, str] = {}
@@ -261,6 +261,7 @@ def test_rotation_file_write_failure_surfaces_error(monkeypatch):
     """If set_secret raises, rotate_operator_service_token must propagate the error rather
     than returning a token that the backend cannot verify."""
     import pytest
+
     import aletheia.operator_service_identity as osi
     _reset_token_registry(monkeypatch)
     monkeypatch.setattr(osi, "_file_get", lambda k: None)

@@ -10,14 +10,11 @@ scanner_family. These tests lock the fix: thesis capped alone, JSON always whole
 """
 
 import json
-from unittest.mock import patch, AsyncMock
-
-import pytest
 
 from aletheia.agent_shell.trading_decision import (
+    _MAX_RATIONALE_TEXT,
     TradingDecision,
     submit_decision_as_proposal,
-    _MAX_RATIONALE_TEXT,
 )
 
 
@@ -132,6 +129,7 @@ def test_rationale_short_thesis_not_truncated(monkeypatch):
 def test_direction_overheated_skips_proposal_creation(monkeypatch):
     """Normal-conviction same-direction trades should not add to an overheated stream."""
     import asyncio
+
     import aletheia.agent_shell.trading_decision as td
 
     called = {"create": 0}
