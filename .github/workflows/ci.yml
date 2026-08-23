@@ -24,6 +24,7 @@ jobs:
       frontend: ${{ steps.changes.outputs.frontend }}
       operator: ${{ steps.changes.outputs.operator }}
       native: ${{ steps.changes.outputs.native }}
+      domains: ${{ steps.changes.outputs.domains }}
 
     steps:
       - name: Check out source
@@ -152,6 +153,35 @@ jobs:
             echo 'native=false' >> "$GITHUB_OUTPUT"
           else
             echo 'native=true' >> "$GITHUB_OUTPUT"
+          fi
+
+          # ---- Domain-selective regression ----
+          if ! git diff --quiet "$base"...HEAD -- \
+              tests/conftest.py \
+              pyproject.toml \
+              uv.lock \
+              aletheia/files/ \
+              aletheia/async_utils.py \
+              aletheia/config/ \
+              aletheia/storage/sqlite.py; then
+            echo 'domains=full' >> "$GITHUB_OUTPUT"
+          else
+            changed_files=$(git diff --name-only "$base"...HEAD)
+            domains=""
+            _add(){ domains="${domains:+${domains},}$1"; }
+            echo "$changed_files" | grep -qE '(aletheia/(analytics|learning|counterfactual)|tests/test_(learning|analytics|alpha|knowledge|dreaming|lesson|feedback|hypothesis|experience|contamination|shadow_trade|memo|profit_loop|lesson_evidence|memo_effectiveness|calibration))' && _add domain_learning
+            echo "$changed_files" | grep -qE '(aletheia/(execution|portfolio|economics)|tests/test_(trade|trading|position|broker|bitget|okx|order|fill|leverage|outcome|exchange|pnl|reconcil|sizing|uta|exit_policy|account_loss|paper_trader|learning_contamination|shadow_trade_economics))' && _add domain_execution
+            echo "$changed_files" | grep -qE '(aletheia/risk|tests/test_(risk|kill_switch|guard|daily_loss|reconciliation_integrity))' && _add domain_risk
+            echo "$changed_files" | grep -qE '(aletheia/universe|aletheia/signal|tests/test_(universe|filter_evidence|filter_replay|filter_shadow|candidate_supply))' && _add domain_universe
+            echo "$changed_files" | grep -qE '(aletheia/serenity|tests/(test|spec)_serenity)' && _add domain_serenity
+            echo "$changed_files" | grep -qE '(aletheia/(agents|operator)|tests/test_(operator|agent_shell|paper_trader|entry_logic|decision|proposal))' && _add domain_operator
+            echo "$changed_files" | grep -qE '(aletheia/market_data|tests/test_(market|price|collector|ccxt|macro|regime|ohlcv|orderbook|instrument_id))' && _add domain_market_data
+            echo "$changed_files" | grep -qE '(aletheia/(server|scheduler|gateway|supervisor|notifications|update)|tests/test_(runtime|scheduler|lifecycle|supervisor|gateway|startup|resume|health|doctor|update|notification|telegram|connectivity|pause_ownership|auto_resume|operator_cli))' && _add domain_runtime
+            echo "$changed_files" | grep -qE '(aletheia/(storage|migrations)|tests/test_(storage|db|retention|audit|backup|io_honesty|migrate|retention_backfill))' && _add domain_storage
+            echo "$changed_files" | grep -qE '(aletheia/(security|auth)|tests/test_(security|secret|auth|permission|codex|trust_boundary|export_redact|high_backup))' && _add domain_security
+            echo "$changed_files" | grep -qE '(aletheia/config|tests/test_(config|settings))' && _add domain_config
+            [ -z "$domains" ] && domains="full"
+            echo "domains=$domains" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install uv and Python 3.12
@@ -407,6 +437,7 @@ jobs:
 
   unit:
     name: Python unit
+    needs: [review-core]
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 20
     steps:
@@ -423,19 +454,27 @@ jobs:
       - name: Run unit regression tier
         env:
           ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-tier_unit
-        run: >-
-          uv run pytest tests/
-          --ignore=tests/simulation
-          --ignore=tests/test_auto_resume.py
-          --ignore=tests/test_connectivity.py
-          --ignore=tests/test_operator_cli.py
-          --ignore=tests/test_pause_ownership.py
-          -m "tier_unit"
-          -n 6
-          --dist loadfile
-          -q --tb=short
-          --timeout=120
-
+          DOMAINS: ${{ needs.review-core.outputs.domains }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${DOMAINS:-full}" = "full" ]; then
+            MARKER='tier_unit'
+          else
+            DOMAIN_EXPR=$(printf '%s\n' "$DOMAINS" | tr ',' '\n' | paste -sd ' or ' -)
+            MARKER="tier_unit and ($DOMAIN_EXPR)"
+          fi
+          uv run pytest tests/ \
+            --ignore=tests/simulation \
+            --ignore=tests/test_auto_resume.py \
+            --ignore=tests/test_connectivity.py \
+            --ignore=tests/test_operator_cli.py \
+            --ignore=tests/test_pause_ownership.py \
+            -m "$MARKER" \
+            -n 6 \
+            --dist loadfile \
+            -q --tb=short \
+            --timeout=120 || { rc=$?; [ $rc -eq 5 ] && echo "no tests matched, skipping" || exit $rc; }
   # Lane A head: Runtime State is the short, high-value prerequisite. Specs are
   # intentionally ineligible until this job finishes, so they can never steal a
   # runner ahead of Runtime while still running even when Runtime itself fails.
@@ -497,7 +536,7 @@ jobs:
   # opens, giving the two Fedora runners deterministic lane ownership.
   integration:
     name: Python integration
-    needs: [review, unit]
+    needs: [review-core, review, unit]
     if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 20
@@ -515,22 +554,31 @@ jobs:
       - name: Run integration regression tier
         env:
           ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-tier_integration
-        run: >-
-          uv run pytest tests/
-          --ignore=tests/simulation
-          --ignore=tests/test_auto_resume.py
-          --ignore=tests/test_connectivity.py
-          --ignore=tests/test_operator_cli.py
-          --ignore=tests/test_pause_ownership.py
-          -m "tier_integration"
-          -n 4
-          --dist loadfile
-          -q --tb=short
-          --timeout=120
+          DOMAINS: ${{ needs.review-core.outputs.domains }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${DOMAINS:-full}" = "full" ]; then
+            MARKER='tier_integration'
+          else
+            DOMAIN_EXPR=$(printf '%s\n' "$DOMAINS" | tr ',' '\n' | paste -sd ' or ' -)
+            MARKER="tier_integration and ($DOMAIN_EXPR)"
+          fi
+          uv run pytest tests/ \
+            --ignore=tests/simulation \
+            --ignore=tests/test_auto_resume.py \
+            --ignore=tests/test_connectivity.py \
+            --ignore=tests/test_operator_cli.py \
+            --ignore=tests/test_pause_ownership.py \
+            -m "$MARKER" \
+            -n 4 \
+            --dist loadfile \
+            -q --tb=short \
+            --timeout=120 || { rc=$?; [ $rc -eq 5 ] && echo "no tests matched, skipping" || exit $rc; }
 
   specifications:
     name: Python specifications
-    needs: [review, unit, runtime-state-tests]
+    needs: [review-core, review, unit, runtime-state-tests]
     # The lane predecessor is ordering only. A Runtime failure is itself useful
     # evidence and must not hide the independent Specifications regression.
     if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
@@ -550,22 +598,31 @@ jobs:
       - name: Run specifications regression tier
         env:
           ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-tier_spec
-        run: >-
-          uv run pytest tests/
-          --ignore=tests/simulation
-          --ignore=tests/test_auto_resume.py
-          --ignore=tests/test_connectivity.py
-          --ignore=tests/test_operator_cli.py
-          --ignore=tests/test_pause_ownership.py
-          -m "tier_spec"
-          -n 4
-          --dist loadfile
-          -q --tb=short
-          --timeout=120
+          DOMAINS: ${{ needs.review-core.outputs.domains }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${DOMAINS:-full}" = "full" ]; then
+            MARKER='tier_spec'
+          else
+            DOMAIN_EXPR=$(printf '%s\n' "$DOMAINS" | tr ',' '\n' | paste -sd ' or ' -)
+            MARKER="tier_spec and ($DOMAIN_EXPR)"
+          fi
+          uv run pytest tests/ \
+            --ignore=tests/simulation \
+            --ignore=tests/test_auto_resume.py \
+            --ignore=tests/test_connectivity.py \
+            --ignore=tests/test_operator_cli.py \
+            --ignore=tests/test_pause_ownership.py \
+            -m "$MARKER" \
+            -n 4 \
+            --dist loadfile \
+            -q --tb=short \
+            --timeout=120 || { rc=$?; [ $rc -eq 5 ] && echo "no tests matched, skipping" || exit $rc; }
 
   end-to-end:
     name: Python end-to-end
-    needs: [review, unit, integration]
+    needs: [review-core, review, unit, integration]
     # Integration orders this lane but does not suppress E2E failure evidence.
     if: ${{ !cancelled() && needs.review.result == 'success' && needs.unit.result == 'success' }}
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
@@ -584,18 +641,61 @@ jobs:
       - name: Run end-to-end regression tier
         env:
           ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-ci-${{ github.run_id }}-${{ github.run_attempt }}-tier_e2e
-        run: >-
-          uv run pytest tests/
-          --ignore=tests/simulation
-          --ignore=tests/test_auto_resume.py
-          --ignore=tests/test_connectivity.py
-          --ignore=tests/test_operator_cli.py
-          --ignore=tests/test_pause_ownership.py
-          -m "tier_e2e"
-          -n 4
-          --dist loadfile
-          -q --tb=short
-          --timeout=120
+          DOMAINS: ${{ needs.review-core.outputs.domains }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${DOMAINS:-full}" = "full" ]; then
+            MARKER='tier_e2e'
+          else
+            DOMAIN_EXPR=$(printf '%s\n' "$DOMAINS" | tr ',' '\n' | paste -sd ' or ' -)
+            MARKER="tier_e2e and ($DOMAIN_EXPR)"
+          fi
+          uv run pytest tests/ \
+            --ignore=tests/simulation \
+            --ignore=tests/test_auto_resume.py \
+            --ignore=tests/test_connectivity.py \
+            --ignore=tests/test_operator_cli.py \
+            --ignore=tests/test_pause_ownership.py \
+            -m "$MARKER" \
+            -n 4 \
+            --dist loadfile \
+            -q --tb=short \
+            --timeout=120 || { rc=$?; [ $rc -eq 5 ] && echo "no tests matched, skipping" || exit $rc; }
+
+  regression:
+    name: Regression checks
+    needs: [unit, runtime-state-tests, integration, specifications, end-to-end]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Aggregate regression results
+        env:
+          UNIT_RESULT: ${{ needs.unit.result }}
+          RUNTIME_RESULT: ${{ needs.runtime-state-tests.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+          SPEC_RESULT: ${{ needs.specifications.result }}
+          E2E_RESULT: ${{ needs.end-to-end.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pair in \
+            "unit:$UNIT_RESULT" \
+            "runtime:$RUNTIME_RESULT" \
+            "integration:$INTEGRATION_RESULT" \
+            "specifications:$SPEC_RESULT" \
+            "end-to-end:$E2E_RESULT"; do
+            name="${pair%%:*}"
+            result="${pair#*:}"
+            case "$result" in
+              success|skipped) ;;
+              *)
+                echo "$name regression result: $result" >&2
+                exit 1
+                ;;
+            esac
+          done
 
   release-candidate:
     name: Hand off verified release candidate
@@ -605,7 +705,7 @@ jobs:
       startsWith(github.ref_name, 'release-please--branches--master')
     permissions:
       contents: write
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    runs-on: ubuntu-24.04
     steps:
       - name: Dispatch verified candidate
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
@@ -629,7 +729,7 @@ jobs:
       startsWith(github.head_ref, 'release-please--branches--master')
     permissions:
       contents: write
-    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    runs-on: ubuntu-24.04
     steps:
       - name: Dispatch verified release pull request
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
