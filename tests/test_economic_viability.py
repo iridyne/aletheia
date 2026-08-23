@@ -25,8 +25,9 @@ def _insert_known_llm_cost(
     cost: float,
     run_id: str | None = None,
     metadata: dict | None = None,
+    started_at: str | None = None,
 ) -> None:
-    now = _now()
+    now = started_at or _now()
     ensure_economics_schema()
     get_db().execute(
         """INSERT INTO runtime_cost_events (
@@ -221,3 +222,86 @@ def test_viability_report_is_idempotent_for_fixed_window(monkeypatch):
         (first["report_id"],),
     ).fetchone()[0]
     assert count == 1
+
+
+@pytest.mark.parametrize("run_id", [None, "boundary-run"])
+def test_cost_summary_uses_half_open_adjacent_windows(run_id):
+    from aletheia.economics.tracing import list_cost_summary
+
+    left_start = "2026-08-23T11:00:00+00:00"
+    boundary = "2026-08-23T12:00:00+00:00"
+    right_end = "2026-08-23T13:00:00+00:00"
+    for event_id, started_at in (
+        ("left-cost", left_start),
+        ("boundary-cost", boundary),
+        ("right-cost", "2026-08-23T12:00:01+00:00"),
+    ):
+        _insert_known_llm_cost(
+            event_id=event_id,
+            cost=1.0,
+            run_id=run_id,
+            started_at=started_at,
+        )
+
+    left = list_cost_summary(
+        window_start=left_start,
+        window_end=boundary,
+        run_id=run_id,
+    )
+    right = list_cost_summary(
+        window_start=boundary,
+        window_end=right_end,
+        run_id=run_id,
+    )
+
+    assert {row["id"] for row in left["events"]} == {"left-cost"}
+    assert {row["id"] for row in right["events"]} == {
+        "boundary-cost",
+        "right-cost",
+    }
+    assert left["known_cost_subtotal_usd"] + right["known_cost_subtotal_usd"] == 3.0
+
+
+def test_operator_cost_rows_use_half_open_adjacent_windows():
+    from aletheia.economics.viability import _operator_cost_rows
+
+    db = ensure_economics_schema()
+    left_start = "2026-08-23T11:00:00+00:00"
+    boundary = "2026-08-23T12:00:00+00:00"
+    right_end = "2026-08-23T13:00:00+00:00"
+    runs = (
+        ("left-operator-run", left_start),
+        ("boundary-operator-run", boundary),
+        ("right-operator-run", "2026-08-23T12:00:01+00:00"),
+    )
+    for run_id, started_at in runs:
+        db.execute(
+            "INSERT INTO agent_runs "
+            "(id,agent_name,permission_mode,started_at) VALUES (?,?,?,?)",
+            (run_id, "system_operator", "Paper", started_at),
+        )
+        _insert_known_llm_cost(
+            event_id=f"cost-{run_id}",
+            cost=1.0,
+            run_id=run_id,
+            started_at=started_at,
+        )
+
+    left_rows, left_runs = _operator_cost_rows(
+        db,
+        start_iso=left_start,
+        end_iso=boundary,
+    )
+    right_rows, right_runs = _operator_cost_rows(
+        db,
+        start_iso=boundary,
+        end_iso=right_end,
+    )
+
+    assert left_runs == ["left-operator-run"]
+    assert {row["id"] for row in left_rows} == {"cost-left-operator-run"}
+    assert set(right_runs) == {"boundary-operator-run", "right-operator-run"}
+    assert {row["id"] for row in right_rows} == {
+        "cost-boundary-operator-run",
+        "cost-right-operator-run",
+    }
