@@ -12,7 +12,7 @@ from aletheia.exchanges.submission_errors import (
     SubmissionResponseUnknownError,
 )
 from aletheia.config.secrets import get_secret, redact
-from aletheia.data.symbols import to_canonical
+from aletheia.data.symbols import to_bitget, to_canonical
 
 
 BASE_URL = "https://api.bitget.com"

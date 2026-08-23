@@ -4,6 +4,8 @@ Covers: get_account, get_positions, get_open_orders, cancel_order, get_fills.
 HTTP is faked (no network); auth/creds are stubbed.
 """
 
+import json
+
 import pytest
 
 from aletheia.exchanges.bitget import client as bg

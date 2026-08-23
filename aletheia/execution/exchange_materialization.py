@@ -22,6 +22,10 @@ from aletheia.storage import repositories as repo
 from aletheia.storage.models import Fill, Position, new_id
 
 
+def _ms_to_iso(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).isoformat()
+
+
 class MaterializationIntegrityError(RuntimeError):
     """Private evidence conflicts with the durable local causal chain."""
 
