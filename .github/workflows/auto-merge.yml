@@ -418,7 +418,7 @@ jobs:
                   ...context.repo,
                   username: pullRequest.user?.login,
                 });
-                const validLevels = ['write', 'maintain', 'admin'];
+                const validLevels = ['write', 'maintain'];
                 if (!validLevels.includes(permission.permission)) {
                   core.info(
                     `PR author ${pullRequest.user?.login} has insufficient permission ` +
