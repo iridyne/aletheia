@@ -264,9 +264,14 @@ class _SerializedConnection(sqlite3.Connection):
         try:
             if self.in_transaction:
                 super().rollback()
+        except sqlite3.ProgrammingError:
+            pass  # already closed; nothing to roll back
         finally:
             self._release_owned_lock()
-        return super().close()
+        try:
+            return super().close()
+        except sqlite3.ProgrammingError:
+            pass  # already closed; idempotent
 
     def _release_owned_lock(self) -> None:
         if self._owns_transaction_lock:

@@ -487,18 +487,9 @@ def _mock_shadow_gateway(monkeypatch) -> None:
 
     # Also stub live_probe_shadow for promotion (issue #1201 fix)
     monkeypatch.setattr(_routes_runtime, "live_probe_shadow", _fake_prober)
+    # Issue #1485: spawn_shadow_operator_shell was removed from the route.
+    # No longer needs patching here.
 
-    # The shadow route also imports spawn_shadow_operator_shell inline via
-    # `from aletheia.gateway.operator_shell import spawn_shadow_operator_shell`.
-    # Patch it at the source module — the inline `from … import …` will resolve
-    # the current attribute of the module at import time, which is inside the
-    # request handler, so this reaches it.
-    from aletheia.gateway import operator_shell as _os_mod
-
-    def fake_spawn_operator_shell(cfg, runtime_id):
-        return None
-
-    monkeypatch.setattr(_os_mod, "spawn_shadow_operator_shell", fake_spawn_operator_shell)
 
 
 @pytest.mark.anyio

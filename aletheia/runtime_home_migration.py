@@ -165,10 +165,27 @@ def _checkpoint_and_verify_database(path: Path) -> None:
 
 
 def _copy_to_staging(source: Path, staging: Path) -> None:
+    """Copy source files to staging, using sqlite3.Connection.backup() for app.db (WAL-safe).
+    
+    Issue #1385: shutil.copy2 on app.db misses uncommitted WAL transactions, causing data loss
+    when the source has active writes. The sqlite3.Connection.backup() API handles WAL correctly
+    (same pattern as exporter.py).
+    """
     for source_file, relative in _source_entries(source):
         destination = staging / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_file, destination)
+        # Issue #1385: Use sqlite3 online backup API for app.db instead of shutil.copy2
+        if relative.name == "app.db":
+            src_conn = sqlite3.connect(str(source_file))
+            dst_conn = sqlite3.connect(str(destination))
+            try:
+                src_conn.backup(dst_conn)
+            finally:
+                dst_conn.close()
+                src_conn.close()
+        else:
+            shutil.copy2(source_file, destination)
+
 
 
 def _sha256(path: Path) -> str:
@@ -211,12 +228,20 @@ def _verify_audit_chain(staging: Path) -> None:
 def _verify_copy(source: Path, staging: Path) -> None:
     for source_file, relative in _source_entries(source):
         copied = staging / relative
-        if (
+        # app.db is copied via sqlite3.Connection.backup(); the output is a clean page-level
+        # copy that will not match the source byte-for-byte (WAL pages are flushed into the
+        # copy rather than being forwarded as-is). Skip byte-equality; integrity_check below
+        # verifies the staging copy is valid.
+        if relative.name == "app.db":
+            if not copied.is_file():
+                raise RuntimeHomeMigrationError(f"Copied file missing: {relative}")
+        elif (
             not copied.is_file()
             or copied.stat().st_size != source_file.stat().st_size
             or _sha256(copied) != _sha256(source_file)
         ):
             raise RuntimeHomeMigrationError(f"Copied file verification failed: {relative}")
+    # Integrity check on the staging copy confirms the backup was consistent.
     _checkpoint_and_verify_database(staging / "app.db")
     config_path = staging / "config.yaml"
     if config_path.exists():

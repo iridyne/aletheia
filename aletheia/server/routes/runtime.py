@@ -140,21 +140,16 @@ def runtime_shadow(payload: RuntimeTransitionRequest):
 
     def _run():
         started = svc.start_shadow(runtime_id, actor=_ROUTE_ACTOR, cause=payload.cause)
-        launch = {"attempted": False, "started": False}
-        try:
-            from aletheia.gateway.operator_shell import spawn_shadow_operator_shell
-
-            proc = spawn_shadow_operator_shell(load_config(), started["runtime_id"])
-            launch = {
-                "attempted": True,
-                "started": proc is not None,
-                "pid": getattr(proc, "pid", None) if proc is not None else None,
-            }
-        except Exception as exc:
-            launch = {"attempted": True, "started": False, "error": str(exc)}
+        # Issue #1485: Do NOT spawn operator shell here — the service launcher
+        # (start_shadow via shadow_gateway_launcher) is the sole authority for
+        # spawning shadow processes. A second spawn here creates unregistered
+        # duplicate processes with no PID tracking. Return the metadata that
+        # the service already persisted (gateway_process PID + any future operator_shell PID).
         validated = svc.validate_shadow(started["runtime_id"], actor=_ROUTE_ACTOR, cause=payload.cause)
-        validated["shadow_process"] = launch
+        metadata = validated.get("metadata") or {}
+        validated["shadow_process"] = metadata.get("gateway_process", {})
         return _with_status_fields(validated, svc=svc, actor=_ROUTE_ACTOR, cause=payload.cause)
+
 
     return _handle_transition(_run)
 

@@ -77,7 +77,7 @@ function TokenComposition({ input, output, cached, reasoning }: { input: number 
 function CoverageList({ axes }: { axes: Array<{ id: string; label: string; status: string; coverage_pct: number | null; reason: string | null }> }) {
   // #2063: guard against Python returning a dict instead of array
   const safeAxes = Array.isArray(axes) ? axes : []
-  return <Card className="usage-coverage-list">{safeAxes.map(axis => <div className="usage-coverage-row" key={axis.id}><div><strong>{axis.label}</strong><span>{axis.reason ?? 'Measured for the selected window.'}</span></div><div className="usage-coverage-value"><span>{fmtPct(axis.coverage_pct, { decimals: 1, dash: 'N/A' })}</span><Badge tone={axis.status === 'available' ? 'green' : 'yellow'}>{axis.status === 'not_available' ? 'N/A' : axis.status}</Badge></div></div>)}</Card>
+  return <Card className="usage-coverage-list">{safeAxes.map(axis => <div className="usage-coverage-row" key={axis.id}><div><strong>{axis.label}</strong><span>{axis.reason ?? 'Measured for the selected window.'}</span></div><div className="usage-coverage-value"><span>{fmtPct(axis.coverage_pct, { decimals: 1, dash: 'N/A', scale: 'percent' })}</span><Badge tone={axis.status === 'available' ? 'green' : 'yellow'}>{axis.status === 'not_available' ? 'N/A' : axis.status}</Badge></div></div>)}</Card>
 }
 
 export default function Usage() {
