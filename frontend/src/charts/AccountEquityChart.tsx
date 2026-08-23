@@ -25,12 +25,6 @@ export default function AccountEquityChart({ days }: Props) {
       return time === null ? null : { time: time as Time, value: point.equity_usdt }
     })
     .filter((row): row is { time: Time; value: number } => row !== null)
-  const adjustedRows = (data?.adjusted_points ?? [])
-    .map(point => {
-      const time = isoToEpochSeconds(point.time)
-      return time === null ? null : { time: time as Time, value: point.adjusted_equity_usdt }
-    })
-    .filter((row): row is { time: Time; value: number } => row !== null)
   useEffect(() => {
     if (!containerRef.current || rows.length === 0) return
     const chart = createChart(containerRef.current, {
@@ -86,16 +80,6 @@ export default function AccountEquityChart({ days }: Props) {
       tooltip.style.left = `${Math.max(8, Math.min(param.point.x + 12, containerRef.current!.clientWidth - 230))}px`
       tooltip.style.top = `${Math.max(8, param.point.y - 54)}px`
     })
-    if ((data?.capital_flow_markers?.length ?? 0) > 0) {
-      const adjustedSeries = chart.addLineSeries({ color: chartTheme.accountEquityAdjusted, lineWidth: 2 })
-      const adjustedSeen = new Set<number>()
-      adjustedSeries.setData(adjustedRows.filter(row => {
-        const time = row.time as number
-        if (adjustedSeen.has(time)) return false
-        adjustedSeen.add(time)
-        return true
-      }))
-    }
     chart.timeScale().fitContent()
     const resizeObserver = new ResizeObserver(entries => {
       const width = entries[0]?.contentRect.width
@@ -103,9 +87,9 @@ export default function AccountEquityChart({ days }: Props) {
     })
     resizeObserver.observe(containerRef.current)
     return () => { resizeObserver.disconnect(); chart.remove() }
-  }, [rows, adjustedRows, data?.capital_flow_markers])
+  }, [rows, data?.capital_flow_markers])
 
-  if (isLoading) return <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.5 }}>Loading account equity...</div>
+  if (isLoading) return <div className="skeleton-bar" style={{ height: 220, width: '100%', borderRadius: 6 }} />
   if (isError) return (
     <div style={{ height: 220, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
       <p className="hint" style={{ color: '#ff5d6c' }}>Failed to load account equity.</p>
@@ -115,11 +99,6 @@ export default function AccountEquityChart({ days }: Props) {
   if (rows.length === 0) return <p className="hint">No account-equity snapshot yet. The curve starts only after the ledger has a complete account reading.</p>
   return (
     <div>
-      {(data?.capital_flow_markers?.length ?? 0) > 0 && (
-        <p className="hint" style={{ marginBottom: 6 }}>
-          Cyan: raw account equity · Green: cash-flow-adjusted equity
-        </p>
-      )}
       <div style={{ position: 'relative' }}>
         <div ref={containerRef} style={{ width: '100%' }} />
         <div ref={tooltipRef} role="tooltip" style={{

@@ -393,8 +393,10 @@ def test_analytics_routes_expose_raw_and_genuine_cohorts():
     assert '"points": genuine_points' in routes
     assert '"total_realized": genuine_total' in routes
     frontend = _source("frontend/src/charts/PnLChart.tsx")
-    assert "Raw recorded account events" in frontend
-    assert "Verified strategy curve" in frontend
+    # Single verified baseline design: raw/live-mark series removed; check
+    # that the verified data source and empty-state are still present.
+    assert "genuine_points" in frontend
+    assert "addBaselineSeries" in frontend
 
 
 @spec_claim(

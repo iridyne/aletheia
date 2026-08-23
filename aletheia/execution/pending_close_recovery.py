@@ -124,7 +124,7 @@ _BITGET_ACCOUNT_MODES = {"bitget_live_limited": "live", "bitget_demo": "demo"}
 
 
 def _run_coro(coro):
-    from aletheia.agent_runtime.async_utils import run_coro_from_sync
+    from aletheia.async_utils import run_coro_from_sync
 
     return run_coro_from_sync(coro)
 

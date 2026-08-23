@@ -147,6 +147,7 @@ def test_prepared_operator_proposal_recomputes_notional_from_final_leverage(
             alt_cap=20,
         )
     cfg.market_data = SimpleNamespace(ccxt_exchange="binance")
+    cfg.exchange = SimpleNamespace(paper_execution_mode="paper_internal")
     cfg.serenity = SimpleNamespace(stop_loss_pct=4.0)
     cfg.trading.default_stop_loss_pct = 2.0
     cfg.trading.default_take_profit_pct = 4.0

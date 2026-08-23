@@ -26,7 +26,26 @@ model_provider/{claude_cli,codex_cli,codex_auth}.py and must first be
 rewritten to run subprocess work in a thread via synchronous subprocess.run.
 """
 
+import asyncio
 import sys
+from concurrent.futures import ThreadPoolExecutor
+
+
+def run_coro_from_sync(coro, *, timeout: float | None = None):
+    """Run a coroutine from synchronous code, even inside a running event loop.
+
+    Spawns a fresh loop in a thread when a loop is already running (avoids
+    blocking the caller's loop). Otherwise runs directly with asyncio.run().
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop and loop.is_running():
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, coro)
+            return future.result(timeout=timeout)
+    return asyncio.run(coro)
 
 
 def apply_windows_selector_policy() -> None:

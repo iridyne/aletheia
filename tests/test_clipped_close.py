@@ -60,7 +60,7 @@ def _seed_position_with_claim(db, *, position_id: str, order_id: str,
         pending_close_order_id=order_id, pending_close_status="submitted",
     ))
     repo.insert_order(Order(
-        id=order_id, proposal_id=proposal.id, client_order_id=f"close-{position_id}-r1",
+        id=order_id, proposal_id=proposal.id, client_order_id=f"close-{position_id}",
         position_id=position_id, close_reason="stop_loss", symbol="XRP/USDT",
         market_type="usdt_futures", direction="short", order_type="market",
         quantity=quantity, price=1.48, execution_mode="bitget_demo",

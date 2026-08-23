@@ -100,7 +100,7 @@ async def test_bitget_live_account_uses_same_private_contract(monkeypatch):
     cfg, trust = _config(monkeypatch, "bitget")
 
     class FakeBitget:
-        def __init__(self, mode):
+        def __init__(self, mode, **_):
             assert mode == "live"
 
         async def get_account(self):
@@ -124,7 +124,7 @@ async def test_bitget_denied_authority_is_reported_without_losing_private_facts(
     cfg, trust = _config(monkeypatch, "bitget")
 
     class FakeBitget:
-        def __init__(self, mode):
+        def __init__(self, mode, **_):
             assert mode == "live"
 
         async def get_account(self):

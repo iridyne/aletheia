@@ -145,10 +145,13 @@ def test_frontend_keeps_dual_curve_and_cohort_labels_visible():
     curve = (root / "frontend/src/charts/PnLChart.tsx").read_text()
     for token in ("Raw close events", "Verified strategy outcomes", "Excluded"):
         assert token in analytics
+    # PnLChart shows a single verified baseline (green/red); raw and live-mark
+    # series were removed. Check that the verified data source and empty-state
+    # copy are still present.
     for token in (
-        "Raw recorded account events",
-        "Verified strategy curve",
-        "recorded closes do not meet the current verification requirements",
+        "genuine_points",
+        "addBaselineSeries",
+        "No verified strategy outcomes yet",
     ):
         assert token in curve
     assert "display: 'none'" not in analytics
