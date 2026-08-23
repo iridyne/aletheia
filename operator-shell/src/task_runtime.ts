@@ -239,18 +239,21 @@ export class TaskRuntime {
 
   private async promoteQueuedTask(): Promise<void> {
     this.sortQueuedTasks()
-    const next = this.queuedTasks.shift()
+    const next = this.queuedTasks[0]
     if (!next) {
       return
     }
     const updated = await this.safeUpdateTask(next.taskId, { status: 'running' })
     if (updated === null) {
-      // Task evicted — try to promote the next one in queue
+      // Task evicted — remove from queue and try to promote the next one
+      this.queuedTasks.shift()
       if (this.queuedTasks.length > 0) {
         await this.promoteQueuedTask()
       }
       return
     }
+    // Confirmed on server — now safe to mutate local state
+    this.queuedTasks.shift()
     this.activeTask = {
       ...next,
       restoredFromRecovery: false,
@@ -373,9 +376,10 @@ export class TaskRuntime {
     const completed = await this.safeUpdateTask(taskId, { status: 'completed', output_data })
     if (completed !== null) {
       this.rememberTerminalTask(this.activeTask)
+      this.activeTask = null
+      this.syncState()
     }
-    this.activeTask = null
-    this.syncState()
+    // On null (404), task was evicted — keep local state unchanged for now
   }
 
   async completeTaskForRecommendation(
@@ -392,12 +396,14 @@ export class TaskRuntime {
       return false
     }
 
-    const [task] = this.queuedTasks.splice(queuedIndex, 1)
+    const task = this.queuedTasks[queuedIndex]
     const completed = await this.safeUpdateTask(task.taskId, { status: 'completed', output_data })
     if (completed !== null) {
       this.rememberTerminalTask(task)
+      // Confirmed on server — now safe to remove from queue
+      this.queuedTasks.splice(queuedIndex, 1)
+      this.syncState()
     }
-    this.syncState()
     return true
   }
 
@@ -409,9 +415,10 @@ export class TaskRuntime {
     const failed = await this.safeUpdateTask(taskId, { status: 'failed', error, output_data })
     if (failed !== null) {
       this.rememberTerminalTask(this.activeTask)
+      this.activeTask = null
+      this.syncState()
     }
-    this.activeTask = null
-    this.syncState()
+    // On null (404), task was evicted — keep local state unchanged for now
   }
 
   async failTaskForRecommendation(
@@ -429,12 +436,14 @@ export class TaskRuntime {
       return false
     }
 
-    const [task] = this.queuedTasks.splice(queuedIndex, 1)
+    const task = this.queuedTasks[queuedIndex]
     const failed = await this.safeUpdateTask(task.taskId, { status: 'failed', error, output_data })
     if (failed !== null) {
       this.rememberTerminalTask(task)
+      // Confirmed on server — now safe to remove from queue
+      this.queuedTasks.splice(queuedIndex, 1)
+      this.syncState()
     }
-    this.syncState()
     return true
   }
 
