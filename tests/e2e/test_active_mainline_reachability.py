@@ -75,7 +75,7 @@ async def test_scheduler_registration_reaches_net_outcome_side_effect(
 
     monkeypatch.setattr(
         "aletheia.data.ccxt_provider.get_market_data_provider",
-        lambda: FixtureMarketProvider(),
+        lambda *args, **kwargs: FixtureMarketProvider(),
     )
     # Guard-candidate generation is a separate downstream feature. Keep its real
     # entry reachable but prevent this positive fixture from writing Markdown.

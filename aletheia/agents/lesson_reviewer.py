@@ -78,7 +78,7 @@ def _fetch_evidence(lesson) -> dict:
         from aletheia.learning.outcomes import assess_candidate_outcome
 
         rows = db.execute(
-            "SELECT id,outcome_candidate_key,status,horizon,entry_ts,direction,market_type,"
+            "SELECT id,outcome_candidate_key,status,horizon,entry_ts,venue,direction,market_type,"
             "entry_price_usd,exit_price_usd,"
             "directional_return_pct,estimated_fee_pct,"
             "estimated_spread_slippage_pct,estimated_funding_pct,"

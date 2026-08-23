@@ -67,11 +67,11 @@ def _insert_forward(
     exit_price = 100.0 * (1.0 + ret / 100.0)
     db.execute(
         "INSERT INTO universe_forward_outcomes "
-        "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, entry_price_usd, "
+        "(id, member_id, snapshot_id, venue, symbol, scanner_family, direction, horizon, entry_price_usd, "
         "entry_ts, due_at, settled_at, exit_price_usd, forward_return_pct, gross_return_pct, "
         "directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, "
         "estimated_funding_pct, net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
-        "VALUES (?, ?, 'snap-debate', ?, 'mean_reversion', ?, ?, 100, datetime('now','-2 hours'), "
+        "VALUES (?, ?, 'snap-debate', 'bitget', ?, 'mean_reversion', ?, ?, 100, datetime('now','-2 hours'), "
         "datetime('now','-1 hour'), datetime('now'), ?, ?, ?, ?, 0.1, 0.1, 0, ?, 0.05, 'v1', 'settled')",
         (
             f"fwd-{member_id}-{horizon}", member_id, symbol, direction,

@@ -44,6 +44,86 @@ def test_directional_decision_registers_one_shared_outcome_per_horizon():
     assert {row["direction"] for row in rows} == {"short"}
 
 
+def test_blank_venue_keeps_filter_decision_report_only():
+    from aletheia.analytics.filter_evidence import record_filter_decision
+    from aletheia.storage.sqlite import get_db
+
+    decision_id = record_filter_decision(
+        candidate_key="opportunity:blank-filter-venue",
+        candidate_kind="opportunity",
+        filter_name="direction_present",
+        stage="paper_ranker",
+        decision="passed",
+        reason_code="direction_available",
+        symbol="BTC/USDT",
+        venue=" \t",
+        market_type="perp",
+        direction="long",
+        entry_price_usd=100.0,
+    )
+
+    row = get_db().execute(
+        "SELECT venue, outcome_candidate_key FROM filter_decisions WHERE id=?",
+        (decision_id,),
+    ).fetchone()
+    assert dict(row) == {"venue": None, "outcome_candidate_key": None}
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key='opportunity:blank-filter-venue'"
+    ).fetchone()[0] == 0
+
+
+def test_risk_filter_uses_exact_universe_asset_venue(monkeypatch):
+    from aletheia.analytics import filter_evidence
+
+    captured = {}
+    monkeypatch.setattr(
+        filter_evidence.repo,
+        "get_opportunity",
+        lambda _opportunity_id: {"universe_member_id": "member-exact"},
+    )
+    monkeypatch.setattr(
+        filter_evidence.repo,
+        "get_universe_member",
+        lambda _member_id: {
+            "asset_id": "asset-exact",
+            "symbol": "BTC/USDT",
+            "market_type": "perp",
+        },
+    )
+    monkeypatch.setattr(
+        filter_evidence.repo,
+        "get_universe_asset",
+        lambda _asset_id: {
+            "venue": " okx ",
+            "symbol": "BTC/USDT",
+            "market_type": "perp",
+        },
+    )
+    monkeypatch.setattr(
+        filter_evidence,
+        "record_filter_decision",
+        lambda **kwargs: captured.update(kwargs) or "risk-evidence",
+    )
+    proposal = SimpleNamespace(
+        id="proposal-exact",
+        opportunity_id="opportunity-exact",
+        symbol="BTC/USDT",
+        market_type="perp",
+        direction="long",
+        execution_mode="paper_internal",
+        price=100.0,
+    )
+
+    assert filter_evidence.record_risk_filter_decision(
+        proposal,
+        risk_decision_id="risk-exact",
+        approved=True,
+        violations=[],
+    ) == "risk-evidence"
+    assert captured["venue"] == "okx"
+
+
 def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import FilterCandidateOutcome, ShadowTrade
@@ -418,7 +498,8 @@ def test_one_request_settles_every_row_it_brought_bars_for(monkeypatch):
     ])
     provider = _PersistingProvider(entry_ms)
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
     )
 
     assert asyncio.run(settle_due_filter_outcomes(max_rows=8, max_fetches=1)) == 2
@@ -501,7 +582,8 @@ def test_a_sibling_the_fetched_span_missed_is_fetched_not_starved(monkeypatch):
     ])
     provider = _SinceHonouringProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
     )
 
     assert asyncio.run(settle_due_filter_outcomes(max_rows=8)) == 2
@@ -538,7 +620,8 @@ def test_an_uncovered_sibling_still_defers_when_the_budget_is_spent(monkeypatch)
     ])
     provider = _SinceHonouringProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
     )
 
     assert asyncio.run(settle_due_filter_outcomes(max_rows=8, max_fetches=1)) == 1
@@ -585,7 +668,8 @@ def test_the_fetch_ceiling_holds_across_every_round(monkeypatch):
     repo.insert_filter_candidate_outcomes_batch(rows)
     provider = _SinceHonouringProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
     )
 
     settled = asyncio.run(settle_due_filter_outcomes(max_rows=64, max_fetches=5))
@@ -620,7 +704,8 @@ def test_each_distinct_instrument_costs_one_unit_of_the_fetch_budget(monkeypatch
     ])
     provider = _PersistingProvider(entry_ms)
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
     )
 
     assert asyncio.run(settle_due_filter_outcomes(max_rows=8, max_fetches=1)) == 1

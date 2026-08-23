@@ -314,6 +314,7 @@ def _exclusion_reason(row: dict[str, Any], cutoff_at: datetime) -> str | None:
         return "incomplete_risk_outcome_economics"
     economics = validated_outcome_economics({
         **{field: row.get(field) for field in economics_fields},
+        "venue": row.get("outcome_venue"),
         "market_type": row.get("outcome_market_type"),
         "cost_model_version": row.get("cost_model_version"),
         "direction": row.get("outcome_direction"),

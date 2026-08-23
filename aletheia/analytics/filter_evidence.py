@@ -142,11 +142,12 @@ def record_filter_decision(
     decision_id = dedup_key[:12]
     side = str(direction or "").lower() or None
     market = _normalize_market(market_type)
+    exact_venue = _normalize_venue(venue)
     timestamp = evaluated_at or _utcnow()
     outcome_entry_ts = entry_ts or timestamp
 
     outcome_ready = (
-        bool(venue)
+        exact_venue is not None
         and entry_price_usd is not None
         and float(entry_price_usd) > 0
     )
@@ -162,7 +163,7 @@ def record_filter_decision(
         universe_snapshot_id=universe_snapshot_id,
         universe_member_id=universe_member_id,
         proposal_id=proposal_id,
-        venue=venue,
+        venue=exact_venue,
         symbol=symbol,
         market_type=market,
         direction=side,
@@ -186,7 +187,7 @@ def record_filter_decision(
         if result_key:
             _ensure_candidate_outcomes(
                 outcome_candidate_key=result_key,
-                venue=str(venue),
+                venue=exact_venue,
                 symbol=symbol,
                 market_type=market,
                 direction=side if side in _VALID_DIRECTIONS else "unknown",
@@ -769,8 +770,24 @@ def record_candidate_filter_trace(
 
     candidate_key = f"opportunity:{opportunity_id}"
     market = _normalize_market(candidate.get("market_type"))
-    venue = candidate.get("venue") or _default_venue()
-    entry_price = _exact_snapshot_price(symbol, market)
+    member = None
+    if candidate.get("universe_member_id"):
+        try:
+            member = repo.get_universe_member(str(candidate["universe_member_id"]))
+        except Exception:
+            member = None
+    snapshot = _exact_snapshot(symbol, market)
+    snapshot_venue = _normalize_venue((snapshot or {}).get("exchange"))
+    venue = (
+        _normalize_venue(candidate.get("venue"))
+        or _member_asset_venue(member, symbol=symbol, market_type=market)
+        or snapshot_venue
+    )
+    entry_price = (
+        _positive_float((snapshot or {}).get("price"))
+        if snapshot_venue == venue
+        else None
+    )
     if entry_price is None:
         entry_price = _positive_float(candidate.get("entry_price_usd"))
     evaluated_at = _utcnow()
@@ -843,9 +860,17 @@ def record_observer_pre_filter_evidence(
 ) -> str:
     """Record an Observer pre-filter without persisting raw market context."""
     market = _normalize_market(market_type)
+    exact_venue = _normalize_venue(venue)
     evaluation_id = run_id or f"direct-{uuid4().hex[:12]}"
-    candidate_key = f"observer:{evaluation_id}:{venue or 'unknown'}:{symbol}:{market}"
-    exact_price = _exact_snapshot_price(symbol, market)
+    candidate_key = (
+        f"observer:{evaluation_id}:{exact_venue or 'unknown'}:{symbol}:{market}"
+    )
+    snapshot = _exact_snapshot(symbol, market)
+    snapshot_price = (
+        _positive_float((snapshot or {}).get("price"))
+        if _normalize_venue((snapshot or {}).get("exchange")) == exact_venue
+        else None
+    )
     return record_filter_decision(
         candidate_key=candidate_key,
         candidate_kind="observer_evaluation",
@@ -855,7 +880,7 @@ def record_observer_pre_filter_evidence(
         run_id=run_id,
         universe_snapshot_id=universe_snapshot_id,
         universe_member_id=universe_member_id,
-        venue=venue,
+        venue=exact_venue,
         symbol=symbol,
         market_type=market,
         direction=scanner_direction,
@@ -867,7 +892,7 @@ def record_observer_pre_filter_evidence(
         inputs=inputs,
         parameters=parameters,
         outcome_candidate_key=candidate_key,
-        entry_price_usd=exact_price or _positive_float(entry_price_usd),
+        entry_price_usd=snapshot_price or _positive_float(entry_price_usd),
         entry_spread_bps=entry_spread_bps,
         funding_rate_at_entry=funding_rate_at_entry,
     )
@@ -890,11 +915,12 @@ def ensure_candidate_outcomes(
     """Public registration seam for non-filter prospective control cohorts."""
     if str(direction or "").lower() not in _VALID_DIRECTIONS:
         return 0
-    if not venue or not symbol or float(entry_price_usd or 0) <= 0:
+    exact_venue = _normalize_venue(venue)
+    if exact_venue is None or not symbol or float(entry_price_usd or 0) <= 0:
         return 0
     return _ensure_candidate_outcomes(
         outcome_candidate_key=outcome_candidate_key,
-        venue=venue,
+        venue=exact_venue,
         symbol=symbol,
         market_type=_normalize_market(market_type),
         direction=str(direction).lower(),
@@ -924,7 +950,7 @@ def record_operator_filter_trace(
     """
     trace = decision_result.get("filter_trace") or []
     symbol = decision_result.get("symbol")
-    direction = decision_result.get("direction")
+    direction = str(decision_result.get("direction") or "").lower()
     if not trace or not symbol:
         if require_trace:
             raise ValueError("terminal_operator_evidence_incomplete")
@@ -942,9 +968,13 @@ def record_operator_filter_trace(
         or (opportunity or {}).get("market")
         or "spot"
     )
-    venue = _default_venue()
     entry_snapshot = _exact_snapshot(str(symbol), market, max_age_seconds=120)
-    entry_price = _positive_float((entry_snapshot or {}).get("price"))
+    venue = _normalize_venue((entry_snapshot or {}).get("exchange"))
+    entry_price = (
+        _positive_float((entry_snapshot or {}).get("price"))
+        if venue is not None
+        else None
+    )
     outcome_entry_ts = evaluated_at = decision_result.get("evaluated_at") or _utcnow()
     entry_spread_bps = _optional_float((member or {}).get("spread_bps"))
     funding_rate_at_entry = _optional_float((opportunity or {}).get("funding_rate"))
@@ -964,7 +994,7 @@ def record_operator_filter_trace(
             funding_rate_at_entry = queued_seed["funding_rate_at_entry"]
             outcome_seed_source = "queued_candidate_fixed"
     if require_outcome_seed and (
-        direction not in _VALID_DIRECTIONS or not venue or entry_price is None
+        direction not in _VALID_DIRECTIONS or venue is None or entry_price is None
     ):
         raise ValueError("terminal_operator_outcome_unavailable")
     candidate_key = f"pi_decision:{decision_id}"
@@ -972,7 +1002,7 @@ def record_operator_filter_trace(
     for sequence, step in enumerate(trace, start=1):
         inputs = dict(step.get("inputs") or {})
         inputs["outcome_seed_source"] = outcome_seed_source
-        if entry_snapshot is not None:
+        if outcome_seed_source == "live_snapshot" and entry_snapshot is not None:
             inputs["entry_snapshot_id"] = entry_snapshot.get("id")
             inputs["entry_snapshot_at"] = entry_snapshot.get("snapshot_at")
             inputs["entry_price_usd"] = entry_price
@@ -1043,13 +1073,14 @@ def _queued_candidate_outcome_seed(
     if len(identities) != 1:
         return None
     venue, seed_symbol, seed_market, seed_direction, entry_price, entry_ts = identities.pop()
-    if (not venue or seed_symbol != symbol or seed_market != market_type
+    exact_venue = _normalize_venue(venue)
+    if (exact_venue is None or seed_symbol != symbol or seed_market != market_type
             or seed_direction != direction or entry_price is None
             or _parse_dt(str(entry_ts or "")) is None):
         return None
     first = normalized_rows[0]
     return {
-        "venue": str(venue), "entry_price_usd": entry_price, "entry_ts": str(entry_ts),
+        "venue": exact_venue, "entry_price_usd": entry_price, "entry_ts": str(entry_ts),
         "entry_spread_bps": _optional_float(first.get("entry_spread_bps")),
         "funding_rate_at_entry": _optional_float(first.get("funding_rate_at_entry")),
     }
@@ -1070,6 +1101,27 @@ def record_risk_filter_decision(
             member = repo.get_universe_member(opportunity["universe_member_id"])
         except Exception:
             member = None
+    market = _normalize_market(proposal.market_type)
+    direction = str(proposal.direction or "").lower()
+    queued_seed = (
+        _queued_candidate_outcome_seed(
+            opportunity_id=str(proposal.opportunity_id),
+            symbol=str(proposal.symbol),
+            market_type=market,
+            direction=direction,
+        )
+        if proposal.opportunity_id
+        else None
+    )
+    venue = (
+        queued_seed["venue"]
+        if queued_seed is not None
+        else _member_asset_venue(
+            member,
+            symbol=str(proposal.symbol),
+            market_type=market,
+        )
+    )
     normalized_codes = sorted({str(item).split(":", 1)[0] for item in violations})
     return record_filter_decision(
         candidate_key=f"proposal:{proposal.id}",
@@ -1081,10 +1133,10 @@ def record_risk_filter_decision(
         universe_snapshot_id=(opportunity or {}).get("universe_snapshot_id"),
         universe_member_id=(opportunity or {}).get("universe_member_id"),
         proposal_id=proposal.id,
-        venue=_default_venue(),
+        venue=venue,
         symbol=proposal.symbol,
-        market_type=proposal.market_type,
-        direction=proposal.direction,
+        market_type=market,
+        direction=direction,
         scanner_family=(opportunity or {}).get("scanner_family"),
         regime_tag=(opportunity or {}).get("regime_tag"),
         filter_name="risk_engine",
@@ -1162,8 +1214,9 @@ def build_candidate_outcomes(
     do not multiply the immutable experiment ledger.
     """
 
+    exact_venue = _normalize_venue(venue)
     entry_dt = _parse_dt(entry_ts)
-    if entry_dt is None:
+    if exact_venue is None or entry_dt is None:
         return []
     outcomes: list[FilterCandidateOutcome] = []
     requested = tuple(_HORIZONS) if horizons is None else tuple(dict.fromkeys(horizons))
@@ -1175,7 +1228,7 @@ def build_candidate_outcomes(
         outcomes.append(FilterCandidateOutcome(
             id=hashlib.sha256(material.encode("utf-8")).hexdigest()[:12],
             outcome_candidate_key=outcome_candidate_key,
-            venue=venue,
+            venue=exact_venue,
             symbol=symbol,
             market_type=market_type,
             direction=direction,
@@ -1230,6 +1283,11 @@ def _normalize_market(market_type: str | None) -> str:
         in {"perp", "futures", "swap", "usdt_futures"}
         else "spot"
     )
+
+
+def _normalize_venue(value: Any) -> str | None:
+    venue = str(value or "").strip()
+    return venue or None
 
 
 def _sanitize_snapshot(value: Any, key: str = "") -> Any:
@@ -1318,19 +1376,31 @@ def _exact_snapshot(
         return None
 
 
-def _exact_snapshot_price(symbol: str, market_type: str) -> float | None:
-    """Read only an exact typed snapshot; never fall back across spot/perp."""
-    snapshot = _exact_snapshot(symbol, market_type)
-    return _positive_float((snapshot or {}).get("price"))
-
-
-def _default_venue() -> str | None:
+def _member_asset_venue(
+    member: dict[str, Any] | None,
+    *,
+    symbol: str,
+    market_type: str,
+) -> str | None:
+    """Resolve the immutable registry venue only for the exact member identity."""
+    if (
+        not member
+        or str(member.get("symbol") or "") != symbol
+        or _normalize_market(member.get("market_type")) != market_type
+        or not member.get("asset_id")
+    ):
+        return None
     try:
-        from aletheia.config.loader import load_config
-
-        return load_config().market_data.ccxt_exchange
+        asset = repo.get_universe_asset(str(member["asset_id"]))
     except Exception:
         return None
+    if (
+        not asset
+        or str(asset.get("symbol") or "") != symbol
+        or _normalize_market(asset.get("market_type")) != market_type
+    ):
+        return None
+    return _normalize_venue(asset.get("venue"))
 
 
 def _positive_float(value: Any) -> float | None:

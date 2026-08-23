@@ -508,6 +508,7 @@ def test_data_health_signal_win_rate_excludes_unknown_direction(tmp_path, monkey
             member_id=f"m_{symbol}_{direction}_{ret}",
             snapshot_id="snap_data_health",
             symbol=symbol,
+            venue="bitget",
             scanner_family="momentum",
             direction=direction,
             horizon="24h",

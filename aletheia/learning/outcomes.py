@@ -30,6 +30,9 @@ def assess_candidate_outcome(row: dict[str, Any]) -> OutcomeAssessment:
         return OutcomeAssessment(False, "unsettled", category="candidate", source="candidate_outcome")
     if not _at_or_after_floor(row.get("entry_ts")):
         return OutcomeAssessment(False, "dirty_or_missing_entry_time", category="candidate", source="candidate_outcome")
+    venue = row.get("venue")
+    if not isinstance(venue, str) or not venue.strip():
+        return OutcomeAssessment(False, "missing_venue", category="candidate", source="candidate_outcome")
     if str(row.get("direction") or "").lower() not in {"long", "short"}:
         return OutcomeAssessment(False, "missing_direction", category="candidate", source="candidate_outcome")
     net = _to_float(row.get("net_return_pct"))

@@ -503,13 +503,13 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
     for _ in range(25):
         db.execute(
             "INSERT INTO universe_forward_outcomes "
-                "(id, outcome_candidate_key, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
+                "(id, outcome_candidate_key, member_id, snapshot_id, venue, symbol, scanner_family, direction, horizon, "
                 " market_type, entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, "
                 " forward_return_pct, gross_return_pct, directional_return_pct, "
                 " estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
                 " net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (new_id(), new_id(), "m", "s", "BTC/USDT", "momentum", "long", "24h",
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (new_id(), new_id(), "m", "s", "bitget", "BTC/USDT", "momentum", "long", "24h",
                  "spot", 100.0, _ts, _ts, _ts, 102.0, 2.0, 2.0, 2.0,
                  0.1, 0.1, 0.0,
                  1.8, 0.05, "v1", "settled"),

@@ -40,6 +40,7 @@ def _settled(
         member_id=member_id or f"m_{symbol}_{direction}_{ret_pct}",
         snapshot_id="snap_1",
         symbol=symbol,
+        venue="bitget",
         scanner_family=family,
         direction=direction,
         market_type="spot",

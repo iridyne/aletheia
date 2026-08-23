@@ -609,6 +609,7 @@ def test_universe_calibration_is_neutral_shadow_before_authority(monkeypatch):
     )
     outcome_recorder.register_pending([{
         "id": "member-1", "snapshot_id": "snapshot-1", "symbol": "BTC/USDT",
+        "venue": "okx",
         "scanner_family": "momentum", "direction": "long", "market_type": "perp",
         "entry_price_usd": 100.0, "learning_candidate_key": proposed_feat["learning_candidate_key"],
     }], entry_ts=datetime.now(timezone.utc).isoformat())
@@ -813,15 +814,8 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
          "allocation_status": "dropped"},
     ]
 
-    class _MD:
-        ccxt_exchange = "okx"
-
-    class _Cfg:
-        market_data = _MD()
-
     _register_experiment_candidate_outcomes(
         scored,
-        _Cfg(),
         entry_ts=now,
         allocated=[scored[0]],
     )

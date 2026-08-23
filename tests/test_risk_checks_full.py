@@ -464,6 +464,7 @@ def test_live_family_gate_requires_complete_edge_evidence(
     for i in range(30):
         repo.insert_forward_outcome(UniverseForwardOutcome(
             member_id=f"m{i}", snapshot_id="snap1", symbol="BTC/USDT",
+            venue="bitget",
             scanner_family="momentum", direction="long", horizon="24h",
             entry_price_usd=100.0, due_at=now, settled_at=now,
             exit_price_usd=105.0, forward_return_pct=5.0,
@@ -562,7 +563,7 @@ def test_live_family_gate_does_not_pool_old_cost_models(tmp_path, monkeypatch):
     def _outcome(index: int, version: str) -> UniverseForwardOutcome:
         return UniverseForwardOutcome(
             member_id=f"mixed-{version}-{index}", snapshot_id="mixed-models",
-            symbol="BTC/USDT", scanner_family="momentum", direction="long",
+            symbol="BTC/USDT", venue="bitget", scanner_family="momentum", direction="long",
             horizon="24h", entry_price_usd=100.0, due_at=now, settled_at=now,
             exit_price_usd=105.0, forward_return_pct=5.0,
             gross_return_pct=5.0, directional_return_pct=5.0,

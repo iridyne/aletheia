@@ -851,12 +851,11 @@ def _register_ranker_case_outcome(
     from aletheia.analytics.filter_evidence import build_candidate_outcomes
     from aletheia.storage.repositories import insert_filter_candidate_outcomes_batch
 
-    if not venue:
-        cfg = load_config()
-        venue = getattr(getattr(cfg, "market_data", None), "ccxt_exchange", None)
+    if not isinstance(venue, str) or not venue.strip():
+        return 0
     outcomes = build_candidate_outcomes(
         outcome_candidate_key=candidate_key,
-        venue=str(venue or "bitget"),
+        venue=venue.strip(),
         symbol=str(opp["symbol"]),
         market_type=str(opp.get("market") or opp.get("market_type") or "spot"),
         direction=direction,

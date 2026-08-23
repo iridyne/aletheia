@@ -752,6 +752,7 @@ def _universe_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         "SELECT symbol, direction, horizon, entry_ts, forward_return_pct "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' "
+        f"AND {complete_outcome_economics_sql()} "
         "AND horizon IN ('1h', '4h', '24h') "
         "AND forward_return_pct IS NOT NULL "
         "AND ABS(forward_return_pct) <= 100 "

@@ -121,6 +121,7 @@ def test_shared_outcome_adapter_fails_closed_on_ineligible_rows():
     clean = now.isoformat()
     dirty = "2026-06-24T00:00:00+00:00"
     complete_economics = {
+        "venue": "bitget",
         "market_type": "perp",
         "entry_price_usd": 100.0,
         "exit_price_usd": 100.8,
@@ -198,6 +199,13 @@ def test_shared_outcome_adapter_fails_closed_on_ineligible_rows():
             "status": "settled", "entry_ts": clean, "direction": "long",
             **complete_economics, "market_type": invalid_market,
         }).eligible
+    missing_venue = assess_candidate_outcome({
+        "outcome_candidate_key": "c-missing-venue", "horizon": "4h",
+        "status": "settled", "entry_ts": clean, "direction": "long",
+        **complete_economics, "venue": " \t",
+    })
+    assert not missing_venue.eligible
+    assert missing_venue.reason == "missing_venue"
     assert not assess_candidate_outcome({
         "outcome_candidate_key": "c-spot-funding", "horizon": "4h",
         "status": "settled", "entry_ts": clean, "direction": "long",

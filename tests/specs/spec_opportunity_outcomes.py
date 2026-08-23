@@ -243,6 +243,7 @@ def test_row_verdict_requires_reconcilable_cost_economics():
     from aletheia.analytics.outcome_semantics import classify_outcome_row
 
     positive = {
+        "venue": "bitget",
         "market_type": "spot",
         "direction": "long",
         "entry_price_usd": 100.0,
@@ -295,6 +296,7 @@ def test_calibration_excludes_gross_only_rows():
 
     common = dict(
         snapshot_id="snap-oo",
+        venue="bitget",
         scanner_family="momentum",
         direction="long",
         market_type="spot",

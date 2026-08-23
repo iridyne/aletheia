@@ -447,13 +447,23 @@ def test_universe_alpha_uses_forward_outcomes_against_deterministic_baseline():
             (f"asset-base-{i}", sym),
         )
         _insert_ohlcv(db, sym, "1h", entry, 100.0, {1: 100.0})
-    for i in range(5):
+    for i in range(6):
+        forward_return = 2.0 if i < 5 else 99.0
+        venue = "bitget" if i < 5 else None
         db.execute(
             "INSERT INTO universe_forward_outcomes "
-            "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
-            "entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, forward_return_pct, status) "
-            "VALUES (?, ?, 'snap', ?, 'momentum', 'long', '1h', 100, ?, ?, ?, 102, 2.0, 'settled')",
-            (f"ufo-{i}", f"member-{i}", f"SEL{i}/USDT", entry, _iso(days_ago=2, hours_after=1), _iso(days_ago=1)),
+            "(id, member_id, snapshot_id, symbol, venue, market_type, scanner_family, "
+            "direction, horizon, entry_price_usd, entry_ts, due_at, settled_at, "
+            "exit_price_usd, forward_return_pct, directional_return_pct, "
+            "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+            "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
+            "VALUES (?, ?, 'snap', ?, ?, 'spot', 'momentum', 'long', '1h', 100, ?, ?, ?, "
+            "?, ?, ?, 0, 0, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
+            (
+                f"ufo-{i}", f"member-{i}", f"SEL{i}/USDT", venue, entry,
+                _iso(days_ago=2, hours_after=1), _iso(days_ago=1),
+                100.0 + forward_return, forward_return, forward_return, forward_return,
+            ),
         )
     db.commit()
 

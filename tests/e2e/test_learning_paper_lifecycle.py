@@ -297,7 +297,6 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
             # Both selected and dropped candidates retain the exposure's declared horizon.
             assert _register_experiment_candidate_outcomes(
                 batch,
-                cfg,
                 entry_ts=entry_at.isoformat(),
                 allocated=batch[:1],
             ) == len(batch)

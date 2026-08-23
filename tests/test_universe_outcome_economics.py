@@ -86,6 +86,185 @@ def test_register_pending_carries_point_in_time_cost_inputs(monkeypatch):
     assert {row.funding_rate_at_entry for row in captured} == {0.0005}
 
 
+def test_register_pending_skips_members_without_exact_venue(monkeypatch):
+    from aletheia.universe.outcome_recorder import register_pending
+
+    captured = []
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder.repo.insert_forward_outcomes_batch",
+        lambda rows: captured.extend(rows),
+    )
+    common = {
+        "snapshot_id": "snapshot-identity",
+        "symbol": "BTC/USDT",
+        "entry_price_usd": 100.0,
+    }
+
+    count = register_pending(
+        [
+            {**common, "id": "missing", "venue": None},
+            {**common, "id": "blank", "venue": " \t"},
+            {**common, "id": "exact", "venue": " okx "},
+        ],
+        entry_ts="2026-07-10T00:00:00+00:00",
+    )
+
+    assert count == 4
+    assert {row.member_id for row in captured} == {"exact"}
+    assert {row.venue for row in captured} == {"okx"}
+
+
+def test_experiment_outcomes_do_not_infer_missing_venue(monkeypatch):
+    from aletheia.universe import service
+
+    captured = []
+    monkeypatch.setattr(
+        service.repo,
+        "insert_filter_candidate_outcomes_batch",
+        lambda rows: captured.extend(rows) or len(rows),
+    )
+    common = {
+        "symbol": "BTC/USDT",
+        "market_type": "perp",
+        "scanner_direction": "long",
+        "learning_target_horizon": "4h",
+        "last_price": 100.0,
+    }
+
+    count = service._register_experiment_candidate_outcomes(
+        [
+            {**common, "learning_candidate_key": "missing", "venue": None},
+            {**common, "learning_candidate_key": "exact", "venue": " okx "},
+        ],
+        entry_ts="2026-07-10T00:00:00+00:00",
+    )
+
+    assert count == 1
+    assert {row.outcome_candidate_key for row in captured} == {"exact"}
+    assert {row.venue for row in captured} == {"okx"}
+
+
+def test_pending_forward_outcome_writer_rejects_missing_venue_atomically():
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseForwardOutcome
+    from aletheia.storage.sqlite import get_db
+
+    common = {
+        "snapshot_id": "snapshot-writer-identity",
+        "symbol": "BTC/USDT",
+        "horizon": "1h",
+        "entry_price_usd": 100.0,
+        "due_at": "2026-07-10T01:00:00+00:00",
+    }
+    valid = UniverseForwardOutcome(member_id="valid", venue="okx", **common)
+    invalid = UniverseForwardOutcome(member_id="invalid", venue=None, **common)
+
+    with pytest.raises(ValueError, match="nonblank venue"):
+        repo.insert_forward_outcomes_batch([valid, invalid])
+
+    stored = get_db().execute(
+        "SELECT id FROM universe_forward_outcomes WHERE id IN (?, ?)",
+        (valid.id, invalid.id),
+    ).fetchall()
+    assert stored == []
+
+    legacy = UniverseForwardOutcome(
+        member_id="legacy", venue=None, status="settled", **common
+    )
+    repo.insert_forward_outcome(legacy)
+    assert repo._select_one("universe_forward_outcomes", legacy.id)["venue"] is None
+    get_db().execute(
+        "UPDATE universe_forward_outcomes SET status='pending' WHERE id=?",
+        (legacy.id,),
+    )
+    with pytest.raises(ValueError, match="forward outcome requires a nonblank venue"):
+        repo.settle_forward_outcome(
+            legacy.id,
+            exit_price=101.0,
+            forward_return=1.0,
+            settled_at="2026-07-10T01:00:00+00:00",
+        )
+    assert repo._select_one("universe_forward_outcomes", legacy.id)["status"] == "pending"
+    assert repo.count_pending_forward_outcomes_missing_venue(
+        "2026-07-11T00:00:00+00:00"
+    ) == 1
+    assert legacy.id not in {
+        row["id"]
+        for row in repo.list_pending_forward_outcomes(
+            "2026-07-11T00:00:00+00:00"
+        )
+    }
+
+
+def test_pending_filter_outcome_writer_and_settler_require_exact_venue_atomically():
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import FilterCandidateOutcome
+    from aletheia.storage.sqlite import get_db
+
+    common = {
+        "symbol": "BTC/USDT",
+        "market_type": "perp",
+        "direction": "long",
+        "horizon": "1h",
+        "entry_price_usd": 100.0,
+        "entry_ts": "2026-07-10T00:00:00+00:00",
+        "due_at": "2026-07-10T01:00:00+00:00",
+    }
+    valid = FilterCandidateOutcome(
+        outcome_candidate_key="filter-valid",
+        venue=" okx ",
+        **common,
+    )
+    invalid = FilterCandidateOutcome(
+        outcome_candidate_key="filter-invalid",
+        venue=" \t",
+        **common,
+    )
+
+    with pytest.raises(ValueError, match="pending filter outcome requires a nonblank venue"):
+        repo.insert_filter_candidate_outcomes_batch([valid, invalid])
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM filter_candidate_outcomes WHERE id IN (?, ?)",
+        (valid.id, invalid.id),
+    ).fetchone()[0] == 0
+    assert repo.insert_filter_candidate_outcomes_batch([valid]) == 1
+    assert repo._select_one("filter_candidate_outcomes", valid.id)["venue"] == "okx"
+
+    legacy = invalid.model_copy(update={"status": "settled"})
+    repo.insert_filter_candidate_outcomes_batch([legacy])
+    get_db().execute(
+        "UPDATE filter_candidate_outcomes SET status='pending' WHERE id=?",
+        (legacy.id,),
+    )
+    with pytest.raises(ValueError, match="filter outcome requires a nonblank venue"):
+        repo.settle_filter_candidate_outcome(
+            legacy.id,
+            exit_price=101.0,
+            settled_at="2026-07-10T01:00:00+00:00",
+            economics={},
+            settlement_price_source="test",
+            settlement_lag_sec=0.0,
+        )
+    assert repo.count_pending_filter_candidate_outcomes_missing_venue(
+        "2026-07-11T00:00:00+00:00"
+    ) == 1
+    assert legacy.id not in {
+        row["id"]
+        for row in repo.list_pending_filter_candidate_outcomes(
+            "2026-07-11T00:00:00+00:00"
+        )
+    }
+    priority_rows, priority_truncated = (
+        repo.list_pending_filter_candidate_outcomes_for_keys(
+            "2026-07-11T00:00:00+00:00",
+            {"filter-invalid:1h"},
+        )
+    )
+    assert priority_rows == []
+    assert priority_truncated is False
+    assert repo._select_one("filter_candidate_outcomes", legacy.id)["status"] == "pending"
+
+
 def test_perp_provider_fallback_never_downgrades_to_spot(monkeypatch):
     from aletheia.data.providers import Ticker
     from aletheia.data.sources.chain import FallbackChainProvider
@@ -127,6 +306,7 @@ def test_settle_due_uses_exact_instrument_and_horizon_candles(monkeypatch):
     due = entry + timedelta(hours=1)
     seen = []
     settled = []
+    factory_calls = []
 
     class Provider:
         async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
@@ -162,7 +342,13 @@ def test_settle_due_uses_exact_instrument_and_horizon_candles(monkeypatch):
         "due_at": due.isoformat(),
         "status": "pending",
     }
-    monkeypatch.setattr("aletheia.data.ccxt_provider.get_market_data_provider", lambda: Provider())
+    def provider_factory(exchange, *, native_ccxt, fallback_exchange):
+        factory_calls.append((exchange, native_ccxt, fallback_exchange))
+        return Provider()
+
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.get_market_data_provider", provider_factory
+    )
     monkeypatch.setattr(
         "aletheia.universe.outcome_recorder.repo.list_pending_forward_outcomes",
         lambda **_: [row],
@@ -185,12 +371,217 @@ def test_settle_due_uses_exact_instrument_and_horizon_candles(monkeypatch):
     assert instrument.exchange == "okx"
     assert instrument.symbol == "BTC/USDT"
     assert instrument.market_type == "perp"
+    assert factory_calls == [("okx", True, "okx")]
     assert timeframe == "1m"
     assert settled[0]["settlement_price_source"] == "horizon_ohlcv"
     assert settled[0]["economics"]["gross_return_pct"] == pytest.approx(2.0)
     assert settled[0]["economics"]["net_return_pct"] == pytest.approx(1.69)
     assert settled[0]["economics"]["mfe_pct"] == pytest.approx(3.0)
     assert settled[0]["economics"]["mae_pct"] == pytest.approx(-1.0)
+
+
+def test_observation_provider_is_pinned_per_persisted_venue(monkeypatch):
+    from aletheia.data.providers import Ticker
+    from aletheia.universe.outcome_recorder import _batch_fetch_market_observations
+
+    now = datetime.now(timezone.utc)
+    entry = now - timedelta(hours=1)
+    factories = []
+    calls = []
+
+    class Provider:
+        def __init__(self, venue):
+            self.venue = venue
+
+        async def get_ohlcv(self, instrument, **kwargs):
+            calls.append((self.venue, "ohlcv", instrument.exchange))
+            assert instrument.exchange == self.venue
+            return []
+
+        async def get_ticker(self, instrument):
+            calls.append((self.venue, "ticker", instrument.exchange))
+            assert instrument.exchange == self.venue
+            return Ticker(
+                instrument.symbol,
+                101.0 if self.venue == "bitget" else 99.0,
+                1.0,
+                0.0,
+                provider=self.venue,
+            )
+
+        async def close(self):
+            pass
+
+    def provider_factory(exchange, *, native_ccxt, fallback_exchange):
+        factories.append((exchange, native_ccxt, fallback_exchange))
+        return Provider(exchange)
+
+    rows = [
+        {
+            "id": f"same-symbol-{venue}",
+            "symbol": "BTC/USDT",
+            "venue": venue,
+            "market_type": "perp",
+            "horizon": "1h",
+            "entry_ts": entry.isoformat(),
+            "due_at": now.isoformat(),
+        }
+        for venue in ("bitget", "binance")
+    ]
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.get_market_data_provider", provider_factory
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._local_observation",
+        lambda plan: (None, "missing"),
+    )
+
+    observations = asyncio.run(
+        _batch_fetch_market_observations(rows, now=now)
+    )
+
+    assert set(factories) == {
+        ("bitget", True, "bitget"),
+        ("binance", True, "binance"),
+    }
+    assert set(calls) == {
+        ("bitget", "ohlcv", "bitget"),
+        ("bitget", "ticker", "bitget"),
+        ("binance", "ohlcv", "binance"),
+        ("binance", "ticker", "binance"),
+    }
+    assert observations["same-symbol-bitget"]["exit_price"] == 101.0
+    assert observations["same-symbol-binance"]["exit_price"] == 99.0
+
+
+def test_partial_exact_provider_construction_closes_created_provider(monkeypatch):
+    from aletheia.universe.outcome_recorder import _batch_fetch_market_observations
+
+    now = datetime.now(timezone.utc)
+    closed = []
+
+    class Provider:
+        async def close(self):
+            closed.append("bitget")
+
+    def provider_factory(exchange, **_kwargs):
+        if exchange == "okx":
+            raise RuntimeError("provider unavailable")
+        return Provider()
+
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.get_market_data_provider", provider_factory
+    )
+
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        asyncio.run(_batch_fetch_market_observations([
+            {
+                "id": f"provider-{venue}",
+                "symbol": "BTC/USDT",
+                "venue": venue,
+                "market_type": "perp",
+                "horizon": "1h",
+                "entry_ts": (now - timedelta(hours=1)).isoformat(),
+                "due_at": now.isoformat(),
+            }
+            for venue in ("bitget", "okx")
+        ], now=now))
+
+    assert closed == ["bitget"]
+
+
+def test_ticker_provider_mismatch_is_not_observation_evidence(monkeypatch):
+    from aletheia.data.providers import Ticker
+    from aletheia.universe.outcome_recorder import (
+        _batch_fetch_market_observations,
+        is_deferred,
+    )
+
+    now = datetime.now(timezone.utc)
+
+    class Provider:
+        async def get_ohlcv(self, instrument, **_kwargs):
+            return []
+
+        async def get_ticker(self, instrument):
+            return Ticker(instrument.symbol, 101.0, 1.0, 0.0, provider="okx")
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: Provider(),
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._local_observation",
+        lambda plan: (None, "missing"),
+    )
+    row = {
+        "id": "ticker-provider-mismatch",
+        "symbol": "BTC/USDT",
+        "venue": "bitget",
+        "market_type": "perp",
+        "horizon": "1h",
+        "entry_ts": (now - timedelta(hours=1)).isoformat(),
+        "due_at": now.isoformat(),
+    }
+
+    observation = asyncio.run(
+        _batch_fetch_market_observations([row], now=now)
+    )[row["id"]]
+
+    assert is_deferred(observation)
+    assert observation["defer_reason"] == "ticker:ValueError"
+
+
+def test_provider_close_failure_does_not_skip_other_cleanup(monkeypatch):
+    from aletheia.universe.outcome_recorder import _batch_fetch_market_observations
+
+    now = datetime.now(timezone.utc)
+    closed = []
+
+    class Provider:
+        def __init__(self, venue):
+            self.venue = venue
+
+        async def close(self):
+            closed.append(self.venue)
+            if self.venue == "bitget":
+                raise RuntimeError("close failed")
+
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda exchange, **_kwargs: Provider(exchange),
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._local_observation",
+        lambda plan: ({
+            "exit_price": 101.0,
+            "range_high": 101.0,
+            "range_low": 100.0,
+            "price_source": "horizon_ohlcv_local",
+            "price_quality_ok": True,
+            "settlement_lag_sec": 0.0,
+        }, "complete"),
+    )
+    rows = [
+        {
+            "id": f"close-{venue}",
+            "symbol": "BTC/USDT",
+            "venue": venue,
+            "market_type": "perp",
+            "horizon": "1h",
+            "entry_ts": (now - timedelta(hours=1)).isoformat(),
+            "due_at": now.isoformat(),
+        }
+        for venue in ("bitget", "okx")
+    ]
+
+    observations = asyncio.run(_batch_fetch_market_observations(rows, now=now))
+
+    assert set(observations) == {"close-bitget", "close-okx"}
+    assert closed == ["bitget", "okx"]
 
 
 def test_migration_backfills_identity_without_inventing_historical_net():
@@ -406,7 +797,8 @@ def _forward_row(entry, due, *, venue="okx"):
 def _install_settle_stubs(monkeypatch, row, provider):
     settled = []
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
     )
     monkeypatch.setattr(
         "aletheia.universe.outcome_recorder.repo.list_pending_forward_outcomes",

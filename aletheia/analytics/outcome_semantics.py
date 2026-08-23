@@ -18,6 +18,9 @@ _SUPPORTED_MARKET_TYPES = frozenset({
 
 def validated_outcome_economics(row: dict[str, Any]) -> dict[str, float] | None:
     """Return one reconcilable persisted cost tuple, otherwise fail closed."""
+    venue = row.get("venue")
+    if not isinstance(venue, str) or not venue.strip():
+        return None
     cost_model = row.get("cost_model_version")
     if not isinstance(cost_model, str) or not cost_model.strip():
         return None

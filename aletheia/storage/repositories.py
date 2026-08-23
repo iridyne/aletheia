@@ -7609,7 +7609,9 @@ def complete_outcome_economics_sql(table_alias: str = "") -> str:
     """Return the shared SQLite predicate for decision-grade net outcomes."""
     prefix = f"{table_alias}." if table_alias else ""
     return (
-        f"typeof({prefix}direction) = 'text' "
+        f"typeof({prefix}venue) = 'text' "
+        f"AND TRIM({prefix}venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> '' "
+        f"AND typeof({prefix}direction) = 'text' "
         f"AND LOWER({prefix}direction) IN ('long', 'short') "
         f"AND typeof({prefix}entry_price_usd) IN ('integer', 'real') "
         f"AND {prefix}entry_price_usd > 0 "
@@ -7651,8 +7653,44 @@ def complete_outcome_economics_sql(table_alias: str = "") -> str:
 _COMPLETE_OUTCOME_ECONOMICS_SQL = complete_outcome_economics_sql()
 
 
+def _forward_outcome_insert_payload(outcome) -> dict:
+    data = outcome.model_dump()
+    if str(data.get("status") or "").lower() == "pending":
+        venue = data.get("venue")
+        if not isinstance(venue, str) or not venue.strip():
+            raise ValueError("pending forward outcome requires a nonblank venue")
+        data["venue"] = venue.strip()
+    return data
+
+
+def _filter_outcome_insert_payload(outcome) -> dict:
+    data = outcome.model_dump()
+    if str(data.get("status") or "").lower() == "pending":
+        venue = data.get("venue")
+        if not isinstance(venue, str) or not venue.strip():
+            raise ValueError("pending filter outcome requires a nonblank venue")
+        data["venue"] = venue.strip()
+    return data
+
+
+def _settle_outcome_with_exact_venue(
+    table: str,
+    outcome_id: str,
+    updates: dict,
+    *,
+    kind: str,
+) -> None:
+    with transaction(immediate=True):
+        row = _select_one(table, outcome_id)
+        if row is not None:
+            venue = row.get("venue")
+            if not isinstance(venue, str) or not venue.strip():
+                raise ValueError(f"{kind} outcome requires a nonblank venue")
+        _update(table, outcome_id, updates)
+
+
 def insert_forward_outcome(outcome) -> None:
-    _insert("universe_forward_outcomes", outcome.model_dump())
+    _insert("universe_forward_outcomes", _forward_outcome_insert_payload(outcome))
 
 
 def insert_forward_outcomes_batch(outcomes: list) -> None:
@@ -7661,18 +7699,34 @@ def insert_forward_outcomes_batch(outcomes: list) -> None:
     with transaction():
         _insert_many(
             "universe_forward_outcomes",
-            [outcome.model_dump() for outcome in outcomes],
+            [_forward_outcome_insert_payload(outcome) for outcome in outcomes],
         )
 
 
 def list_pending_forward_outcomes(before_ts: str, limit: int = 500) -> list[dict]:
     return _select_all(
         "universe_forward_outcomes",
-        where="status = 'pending' AND due_at <= ?",
+        where=(
+            "status = 'pending' AND due_at <= ? "
+            "AND typeof(venue) = 'text' "
+            f"AND TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> ''"
+        ),
         params=(before_ts,),
         order="due_at ASC",
         limit=limit,
     )
+
+
+def count_pending_forward_outcomes_missing_venue(before_ts: str) -> int:
+    db = get_db()
+    row = db.execute(
+        "SELECT COUNT(*) AS n FROM universe_forward_outcomes "
+        "WHERE status = 'pending' AND due_at <= ? AND ("
+        "typeof(venue) <> 'text' "
+        f"OR TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) = '')",
+        (before_ts,),
+    ).fetchone()
+    return int(row["n"] or 0)
 
 
 def settle_forward_outcome(
@@ -7697,7 +7751,12 @@ def settle_forward_outcome(
         updates["settlement_price_source"] = settlement_price_source
     if settlement_lag_sec is not None:
         updates["settlement_lag_sec"] = settlement_lag_sec
-    _update("universe_forward_outcomes", outcome_id, updates)
+    _settle_outcome_with_exact_venue(
+        "universe_forward_outcomes",
+        outcome_id,
+        updates,
+        kind="forward",
+    )
 
 
 def fail_forward_outcome(
@@ -7801,7 +7860,7 @@ def insert_filter_candidate_outcomes_batch(outcomes: list) -> int:
     """
     if not outcomes:
         return 0
-    rows = [outcome.model_dump() for outcome in outcomes]
+    rows = [_filter_outcome_insert_payload(outcome) for outcome in outcomes]
     columns = list(rows[0])
     placeholders = ", ".join("?" for _ in columns)
     db = get_db()
@@ -7823,11 +7882,26 @@ def list_pending_filter_candidate_outcomes(
 ) -> list[dict]:
     return _select_all(
         "filter_candidate_outcomes",
-        where="status = 'pending' AND due_at <= ?",
+        where=(
+            "status = 'pending' AND due_at <= ? "
+            "AND typeof(venue) = 'text' "
+            f"AND TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> ''"
+        ),
         params=(before_ts,),
         order="due_at ASC",
         limit=limit,
     )
+
+
+def count_pending_filter_candidate_outcomes_missing_venue(before_ts: str) -> int:
+    row = get_db().execute(
+        "SELECT COUNT(*) AS n FROM filter_candidate_outcomes "
+        "WHERE status = 'pending' AND due_at <= ? AND ("
+        "typeof(venue) <> 'text' "
+        f"OR TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) = '')",
+        (before_ts,),
+    ).fetchone()
+    return int(row["n"] or 0)
 
 
 def list_open_learning_outcome_candidate_keys(
@@ -7971,6 +8045,8 @@ def list_pending_filter_candidate_outcomes_for_keys(
             "SELECT id, outcome_candidate_key, horizon, due_at "
             "FROM filter_candidate_outcomes "
             "WHERE status='pending' AND due_at <= ? "
+            "AND typeof(venue) = 'text' "
+            f"AND TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> '' "
             "AND (due_at > ? OR (due_at = ? AND id > ?)) "
             "ORDER BY due_at ASC, id ASC LIMIT ?",
             (before_ts, last_due, last_due, last_id, _PRIORITY_SCAN_BATCH_ROWS),
@@ -8024,7 +8100,12 @@ def settle_filter_candidate_outcome(
         updates["settlement_price_source"] = settlement_price_source
     if settlement_lag_sec is not None:
         updates["settlement_lag_sec"] = settlement_lag_sec
-    _update("filter_candidate_outcomes", outcome_id, updates)
+    _settle_outcome_with_exact_venue(
+        "filter_candidate_outcomes",
+        outcome_id,
+        updates,
+        kind="filter",
+    )
 
 
 def fail_filter_candidate_outcome(

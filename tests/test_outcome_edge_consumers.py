@@ -33,12 +33,12 @@ def _insert_outcome(
         exit_price_usd = None
     get_db().execute(
         "INSERT INTO universe_forward_outcomes "
-        "(id, member_id, snapshot_id, symbol, scanner_family, market_type, direction, "
+        "(id, member_id, snapshot_id, symbol, venue, scanner_family, market_type, direction, "
         "horizon, entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, forward_return_pct, "
         "gross_return_pct, directional_return_pct, estimated_fee_pct, "
         "estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, "
         "min_tradable_edge_pct, cost_model_version, status) "
-        "VALUES (?, ?, 'edge-snapshot', 'BTC/USDT', 'momentum', ?, ?, "
+        "VALUES (?, ?, 'edge-snapshot', 'BTC/USDT', 'okx', 'momentum', ?, ?, "
         "'24h', 100, ?, ?, ?, ?, 0.1, 0.1, ?, ?, ?, ?, ?, ?, ?, 'settled')",
         (
             outcome_id, f"member-{outcome_id}", market_type, direction,
@@ -151,6 +151,7 @@ def test_sql_and_python_reject_directional_returns_not_reconciled_to_prices():
     from aletheia.storage.sqlite import get_db
 
     base = {
+        "venue": "okx",
         "direction": "long",
         "entry_price_usd": 100.0,
         "exit_price_usd": 100.1,
@@ -176,6 +177,9 @@ def test_sql_and_python_reject_directional_returns_not_reconciled_to_prices():
         return validated_outcome_economics(row) is not None, sql_eligible
 
     invalid_mutations = (
+        ("missing-venue", "venue", None),
+        ("blank-venue", "venue", " \t"),
+        ("blob-venue", "venue", b"okx"),
         ("forged", "exit_price_usd", 100.0),
         ("missing-exit", "exit_price_usd", None),
         ("text-exit", "exit_price_usd", "100.1"),

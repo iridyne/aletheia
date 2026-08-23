@@ -216,6 +216,7 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
     for i in range(30):
         repo.insert_forward_outcome(UniverseForwardOutcome(
             member_id=f"m{i}", snapshot_id="snap1", symbol="BTC/USDT",
+            venue="bitget",
             scanner_family="momentum", direction="long", horizon="24h",
             entry_price_usd=100.0, due_at=now, settled_at=now,
             exit_price_usd=105.0, forward_return_pct=5.0,

@@ -134,12 +134,12 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
         ret = 2.0 if i < 3 else -2.0
         db.execute(
             "INSERT INTO universe_forward_outcomes "
-                "(id, outcome_candidate_key, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
+                "(id, outcome_candidate_key, member_id, snapshot_id, symbol, venue, scanner_family, direction, horizon, "
                 " market_type, entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, forward_return_pct, "
                 " gross_return_pct, directional_return_pct, net_return_pct, "
                 " estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
                 " min_tradable_edge_pct, cost_model_version, status) "
-                "VALUES (?, ?, 'm1', 's1', 'BTC/USDT', 'momentum', 'long', '24h', "
+                "VALUES (?, ?, 'm1', 's1', 'BTC/USDT', 'bitget', 'momentum', 'long', '24h', "
                 " 'spot', 100.0, ?, datetime('now','-2 days'), datetime('now','-1 day'), datetime('now','-1 day'), "
                 " ?, ?, ?, ?, 0.1, 0.1, 0, 0.05, 'v1', 'settled')",
                 (f"fo-{i}", f"candidate-fo-{i}", 100.0 * (1.0 + ret / 100.0),
