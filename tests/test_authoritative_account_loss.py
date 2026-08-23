@@ -386,6 +386,7 @@ def test_funding_settler_repairs_orphan_when_no_unsettled_rows_exist():
         "still_pending": 0,
         "gave_up": 0,
         "errors": [],
+        "audit_pending": 0,
     }
 
 

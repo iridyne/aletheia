@@ -184,6 +184,7 @@ def test_invalid_exit_price_is_terminal_not_unsettled_funding(tmp_path, monkeypa
         "still_pending": 0,
         "gave_up": 0,
         "errors": [],
+        "audit_pending": 0,
     }
     assert repo._select_one(
         "positions", invalid_position.id,
