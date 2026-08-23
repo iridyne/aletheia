@@ -352,11 +352,17 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
         return rows
 
     def evaluate_one(experiment: LearningExperiment, expected_count: int):
-        cohorts = build_experiment_cohorts(experiment.experiment_id)
+        cohorts = build_experiment_cohorts(
+            experiment.experiment_id,
+            as_of_at=clock[0],
+        )
         assert len(cohorts) == 1
         assert not cohorts[0].invalid_reasons
         assert not cohorts[0].exclusion_reasons
-        verdicts = evaluate_experiment(experiment.experiment_id)
+        verdicts = evaluate_experiment(
+            experiment.experiment_id,
+            as_of_at=clock[0],
+        )
         monitoring = [row for row in verdicts if row.inference_role == "monitoring"]
         assert len(monitoring) == 1
         verdict = monitoring[0]

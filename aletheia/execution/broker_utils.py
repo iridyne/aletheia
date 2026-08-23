@@ -6,6 +6,34 @@ Functions here are exchange-agnostic — they must work for any venue.
 import json
 
 
+def entry_acknowledgement_result(acknowledgement: dict) -> dict:
+    return {
+        key: acknowledgement[key]
+        for key in (
+            "order_id",
+            "exchange_order_id",
+            "order_status",
+            "fill_id",
+            "position_id",
+            "fill_price",
+            "fill_quantity",
+        )
+    }
+
+
+def close_acknowledgement_result(acknowledgement: dict) -> dict:
+    return {
+        "order_id": acknowledgement["order_id"],
+        "exchange_order_id": acknowledgement["exchange_order_id"],
+        "close_order_id": acknowledgement["order_id"],
+        "status": acknowledgement["order_status"],
+        "closed": acknowledgement["position_status"] == "closed",
+        "position_id": acknowledgement["position_id"],
+        "fill_price": acknowledgement["fill_price"],
+        "fill_quantity": acknowledgement["fill_quantity"],
+    }
+
+
 def clean_error_message(raw: str) -> str:
     """Extract a human-readable message from a raw CCXT/exchange error string.
 

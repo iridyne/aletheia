@@ -4,15 +4,15 @@ Issues: #1722 (non-finite fill economics), #1752 (BGB/BNB fees), #1502 (explicit
 venue rejection), #1553 (late broker ack regression).
 """
 from __future__ import annotations
-import math
+
 import pytest
-from unittest.mock import MagicMock, patch
 
 from aletheia.execution.exchange_materialization import (
     MaterializationIntegrityError,
     _fee_in_quote,
+    _fill_totals,
     _positive_float,
-    parse_bitget_private_fills,
+    evidence_for_order,
 )
 
 
@@ -21,12 +21,12 @@ from aletheia.execution.exchange_materialization import (
 # ──────────────────────────────────────────────────────────────────────────────
 
 def test_positive_float_nan_returns_none():
-    """NaN must not enter fill economics — returns None so the row is skipped."""
+    """NaN must not enter fill economics."""
     assert _positive_float(float("nan")) is None
 
 
 def test_positive_float_inf_returns_none():
-    """Infinity must not enter fill economics — returns None so the row is skipped."""
+    """Infinity must not enter fill economics."""
     assert _positive_float(float("inf")) is None
 
 
@@ -36,29 +36,69 @@ def test_positive_float_finite_ok():
     assert _positive_float(0) is None  # zero is not positive
 
 
-def test_parse_bitget_nan_price_row_is_skipped():
-    """A fill row with NaN price is silently skipped (not exception), valid rows still parsed."""
-    nan_row = {
+@pytest.mark.parametrize("field", ["fillPrice", "fillQuantity", "fee"])
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity"])
+def test_order_matched_nonfinite_private_evidence_is_rejected(field, value):
+    """Every non-finite candidate-order economic field invalidates its batch."""
+    row = {
         "tradeId": "t_bad",
         "orderId": "o1",
-        "fillPrice": float("nan"),
-        "fillQuantity": 1.0,
+        "fillPrice": "2000.0",
+        "fillQuantity": "0.5",
         "fee": "0.1",
         "feeCoin": "USDT",
-        "cTime": 1700000000000,
+        "cTime": "1700000000000",
     }
-    good_row = {
-        "tradeId": "t_good",
+    row[field] = value
+
+    with pytest.raises(MaterializationIntegrityError, match="private fill row"):
+        evidence_for_order({"exchange_order_id": "o1"}, [row])
+
+
+def test_unrelated_nonfinite_private_evidence_does_not_block_exact_order():
+    """A malformed row for another order is outside the candidate evidence batch."""
+    unrelated = {
+        "tradeId": "t_bad",
         "orderId": "o2",
-        "fillPrice": 2000.0,
-        "fillQuantity": 0.5,
+        "fillPrice": "NaN",
+        "fillQuantity": "0.5",
         "fee": "0.1",
         "feeCoin": "USDT",
-        "cTime": 1700000001000,
+        "cTime": "1700000000000",
     }
-    result = parse_bitget_private_fills([nan_row, good_row])
-    assert len(result) == 1
-    assert result[0].fill_id == "t_good"
+    matched = {
+        "tradeId": "t_good",
+        "orderId": "o1",
+        "fillPrice": "2000.0",
+        "fillQuantity": "0.5",
+        "fee": "0.1",
+        "feeCoin": "USDT",
+        "cTime": "1700000001000",
+    }
+
+    exchange_order_id, evidence = evidence_for_order(
+        {"exchange_order_id": "o1"},
+        [unrelated, matched],
+    )
+
+    assert exchange_order_id == "o1"
+    assert [item.fill_id for item in evidence] == ["t_good"]
+
+
+@pytest.mark.parametrize("field", ["fill_price", "fill_quantity", "fee"])
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity"])
+def test_nonfinite_durable_private_fill_is_rejected_on_replay(field, value):
+    """A persisted bad Fill cannot re-enter Position economics during replay."""
+    row = {
+        "fill_price": "2000.0",
+        "fill_quantity": "0.5",
+        "fee": "0.1",
+        "fee_currency": "USDT",
+    }
+    row[field] = value
+
+    with pytest.raises(MaterializationIntegrityError, match="durable private Fill"):
+        _fill_totals([row], symbol="BTC/USDT")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -122,31 +162,4 @@ def test_explicit_cancellation_branch_in_binance_broker():
     src = inspect.getsource(mod.execute_live_order)
     assert "explicit_venue_rejection" in src, (
         "binance_broker.execute_live_order must handle explicit venue cancellation (#1502)"
-    )
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# #1553 — source-level contract: late ack guard present
-# ──────────────────────────────────────────────────────────────────────────────
-
-def test_late_ack_guard_in_okx_broker():
-    """#1553: okx_broker checks current Order state before applying ack."""
-    import inspect
-    import aletheia.execution.okx_broker as mod
-    src = inspect.getsource(mod.execute_live_order)
-    assert "discarding late ack" in src, (
-        "okx_broker must discard late ack for already-reconciled Orders (#1553)"
-    )
-    assert "submission_unknown" in src and "_UNRESOLVED" in src, (
-        "okx_broker must define _UNRESOLVED guard before updating Order state"
-    )
-
-
-def test_late_ack_guard_in_binance_broker():
-    """#1553: binance_broker checks current Order state before applying ack."""
-    import inspect
-    import aletheia.execution.binance_broker as mod
-    src = inspect.getsource(mod.execute_live_order)
-    assert "discarding late ack" in src, (
-        "binance_broker must discard late ack for already-reconciled Orders (#1553)"
     )

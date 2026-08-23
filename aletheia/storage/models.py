@@ -406,6 +406,9 @@ class Order(_Provenanced):
     # Close Orders persist the lifecycle reason before exchange submission so a
     # delayed private fill can close the Position with the original explanation.
     close_reason: str | None = None
+    # Optional trade_decision_rationale.v1 JSON captured with a pending exchange
+    # close claim. The Position publishes it only after verified settlement.
+    close_reasoning: str | None = None
     status: str = "pending"
     source: str = "native"  # "native" | "adopted" — see TradeProposal.source
     created_at: str = Field(default_factory=_utcnow)

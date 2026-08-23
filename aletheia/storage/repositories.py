@@ -2598,6 +2598,90 @@ def update_order(oid: str, **kwargs) -> None:
     _update("orders", oid, kwargs)
 
 
+def finalize_exchange_acknowledgement(
+    order_id: str,
+    *,
+    exchange_order_id: str | None,
+    status: str,
+    error_reason: str | None,
+    close_position_id: str | None = None,
+    pending_close_status: str | None = None,
+) -> dict:
+    """Apply one aggregate venue acknowledgement without overriding private fills."""
+    incoming_exchange_id = str(exchange_order_id or "").strip() or None
+    with transaction(immediate=True):
+        order = get_order(order_id)
+        if order is None:
+            raise ValueError(f"order not found: {order_id}")
+        current_exchange_id = str(order.get("exchange_order_id") or "").strip() or None
+        if (
+            current_exchange_id
+            and incoming_exchange_id
+            and current_exchange_id != incoming_exchange_id
+        ):
+            raise ValueError("exchange acknowledgement identity conflicts with durable Order")
+
+        position = get_position(close_position_id) if close_position_id else None
+        owns_close_claim = close_position_id is None or bool(
+            position
+            and order.get("position_id") == close_position_id
+            and position.get("status") == "open"
+            and position.get("pending_close_order_id") == order_id
+        )
+        applied = False
+        if order.get("status") in {"pending", "submission_unknown"} and owns_close_claim:
+            cursor = execute_write(
+                """
+                UPDATE orders
+                SET exchange_order_id=?, status=?, error_reason=?, filled_at=NULL
+                WHERE id=? AND status IN ('pending', 'submission_unknown')
+                """,
+                (
+                    current_exchange_id or incoming_exchange_id,
+                    status,
+                    error_reason,
+                    order_id,
+                ),
+            )
+            applied = cursor.rowcount == 1
+            if applied and close_position_id:
+                position_cursor = execute_write(
+                    """
+                    UPDATE positions
+                    SET pending_close_status=?
+                    WHERE id=? AND status='open' AND pending_close_order_id=?
+                    """,
+                    (pending_close_status, close_position_id, order_id),
+                )
+                if position_cursor.rowcount != 1:
+                    raise RuntimeError("close acknowledgement lost its Position claim")
+
+        order = get_order(order_id)
+        position_id = order.get("position_id") if order else close_position_id
+        position = get_position(position_id) if position_id else None
+        fills = [
+            dict(row)
+            for row in get_db().execute(
+                "SELECT id, fill_price, fill_quantity FROM fills "
+                "WHERE order_id=? ORDER BY filled_at, rowid LIMIT 2",
+                (order_id,),
+            ).fetchall()
+        ]
+        fill = fills[0] if len(fills) == 1 else None
+
+    return {
+        "applied": applied,
+        "order_id": order_id,
+        "exchange_order_id": order.get("exchange_order_id") if order else None,
+        "order_status": order.get("status") if order else None,
+        "fill_id": fill.get("id") if fill else None,
+        "position_id": position_id,
+        "fill_price": fill.get("fill_price") if fill else None,
+        "fill_quantity": fill.get("fill_quantity") if fill else 0,
+        "position_status": position.get("status") if position else None,
+    }
+
+
 def list_orders(limit: int = 100) -> list[dict]:
     return _select_all("orders", limit=limit)
 
@@ -8311,76 +8395,157 @@ def _calibration_source_lineage(db, cutoff: str) -> dict[tuple, dict]:
     return result
 
 
-def filter_pressure_stats() -> list[dict]:
+def _eligible_filter_advisor_rows(
+    source: str,
+    *,
+    require_entry_spread: bool = False,
+    as_of_at: datetime | None = None,
+) -> list[dict]:
+    """Return candidate rows admitted by the shared outcome contract."""
+    from aletheia.analytics.learning_window import clean_window_cutoff
+    from aletheia.learning.outcomes import assess_candidate_outcome
+
+    if source == "filter_candidate_outcomes":
+        table = "filter_candidate_outcomes"
+    elif source == "universe_forward_outcomes":
+        table = "universe_forward_outcomes"
+    else:
+        raise ValueError(f"unsupported candidate outcome source: {source}")
+
+    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
+    spread_column = ", entry_spread_bps" if require_entry_spread else ""
+    spread_filter = "AND entry_spread_bps IS NOT NULL " if require_entry_spread else ""
+    evaluation_as_of = (
+        datetime.now(timezone.utc) if as_of_at is None else as_of_at
+    )
+    rows = get_db().execute(
+        "SELECT outcome_candidate_key, scanner_family, direction, market_type, horizon, "
+        "entry_ts, due_at, settled_at, status, net_return_pct, "
+        f"min_tradable_edge_pct, cost_model_version{spread_column} "
+        f"FROM {table} "
+        "WHERE status = 'settled' "
+        "AND scanner_family IS NOT NULL "
+        f"{spread_filter}"
+        "AND cost_model_version IS NOT NULL "
+        "AND net_return_pct IS NOT NULL "
+        "AND ABS(net_return_pct) <= 100 "
+        "AND direction IN ('long', 'short') "
+        "AND entry_ts >= ?",
+        (cutoff,),
+    ).fetchall()
+    eligible = []
+    for raw in rows:
+        row = dict(raw)
+        assessment = assess_candidate_outcome(row, as_of_at=evaluation_as_of)
+        if assessment.eligible:
+            row["net_return_pct"] = assessment.net_return_pct
+            eligible.append(row)
+    return eligible
+
+
+def _filter_advisor_group(row: Mapping) -> tuple:
+    market_type = row.get("market_type")
+    if market_type in {"perp", "futures", "swap", "usdt_futures"}:
+        market_type = "perp"
+    elif market_type is None:
+        market_type = "spot"
+    return (
+        row.get("scanner_family"),
+        row.get("direction"),
+        market_type,
+        row.get("horizon"),
+    )
+
+
+def filter_pressure_stats(*, as_of_at: datetime | None = None) -> list[dict]:
     """Aggregate cost-aware returns for filter-rejected candidates where scanner_family is known.
 
     These rows come from risk/PI filter stages that run after scanner assignment, so
     scanner_family is populated. Returns per-family miss rates: how often do this
     family's rejected candidates produce positive net returns?
     """
-    from aletheia.analytics.learning_window import clean_window_cutoff
+    groups: dict[tuple, dict[str, list[float]]] = {}
+    for row in _eligible_filter_advisor_rows(
+        "filter_candidate_outcomes",
+        as_of_at=as_of_at,
+    ):
+        group = groups.setdefault(_filter_advisor_group(row), {"net": [], "miss": []})
+        net = float(row["net_return_pct"])
+        try:
+            edge_value = row["min_tradable_edge_pct"]
+            edge = 0.0 if edge_value is None else float(edge_value)
+        except (TypeError, ValueError, OverflowError):
+            edge = math.inf
+        group["net"].append(net)
+        group["miss"].append(1.0 if net > edge else 0.0)
 
-    db = get_db()
-    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
-    rows = db.execute(
-        "SELECT scanner_family, direction, "
-        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
-        "COUNT(*) AS n, "
-        "AVG(net_return_pct) AS avg_net, "
-        "MIN(net_return_pct) AS min_net, "
-        "MAX(net_return_pct) AS max_net, "
-        "AVG(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0) "
-        "  THEN 1.0 ELSE 0.0 END) AS miss_rate "
-        "FROM filter_candidate_outcomes "
-        "WHERE status = 'settled' "
-        "AND scanner_family IS NOT NULL "
-        "AND cost_model_version IS NOT NULL "
-        "AND net_return_pct IS NOT NULL "
-        "AND ABS(net_return_pct) <= 100 "
-        "AND direction IN ('long', 'short') "
-        "AND entry_ts >= ? "
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon "
-        "ORDER BY scanner_family, direction, market_type, horizon",
-        (cutoff,),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    result = []
+    for (family, direction, market_type, horizon), values in sorted(groups.items()):
+        net = values["net"]
+        result.append({
+            "scanner_family": family,
+            "direction": direction,
+            "market_type": market_type,
+            "horizon": horizon,
+            "n": len(net),
+            "avg_net": sum(net) / len(net),
+            "min_net": min(net),
+            "max_net": max(net),
+            "miss_rate": sum(values["miss"]) / len(net),
+        })
+    return result
 
 
-def family_spread_tolerance_stats() -> list[dict]:
+def family_spread_tolerance_stats(
+    *,
+    as_of_at: datetime | None = None,
+) -> list[dict]:
     """Per-family spread sensitivity from settled universe forward outcomes.
 
     Splits outcomes into low-spread (<=15 bps) and high-spread (>15 bps) buckets to
     measure whether a family retains positive net expectancy at higher spreads. Used
     by filter_advisor to compute per-family spread tolerance multipliers.
     """
-    from aletheia.analytics.learning_window import clean_window_cutoff
+    groups: dict[tuple, dict[str, list[float]]] = {}
+    for row in _eligible_filter_advisor_rows(
+        "universe_forward_outcomes",
+        require_entry_spread=True,
+        as_of_at=as_of_at,
+    ):
+        group = groups.setdefault(
+            _filter_advisor_group(row),
+            {"net": [], "low": [], "high": []},
+        )
+        net = float(row["net_return_pct"])
+        group["net"].append(net)
+        try:
+            spread = float(row["entry_spread_bps"])
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if spread <= 15:
+            group["low"].append(net)
+        elif spread > 15:
+            group["high"].append(net)
 
-    db = get_db()
-    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
-    rows = db.execute(
-        "SELECT scanner_family, direction, "
-        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
-        "COUNT(*) AS n, "
-        "AVG(net_return_pct) AS avg_net, "
-        "MIN(net_return_pct) AS min_net, "
-        "COUNT(CASE WHEN entry_spread_bps <= 15 THEN 1 END) AS n_low_spread, "
-        "AVG(CASE WHEN entry_spread_bps <= 15 THEN net_return_pct END) AS avg_net_low_spread, "
-        "COUNT(CASE WHEN entry_spread_bps > 15 THEN 1 END) AS n_high_spread, "
-        "AVG(CASE WHEN entry_spread_bps > 15 THEN net_return_pct END) AS avg_net_high_spread "
-        "FROM universe_forward_outcomes "
-        "WHERE status = 'settled' "
-        "AND scanner_family IS NOT NULL "
-        "AND entry_spread_bps IS NOT NULL "
-        "AND cost_model_version IS NOT NULL "
-        "AND net_return_pct IS NOT NULL "
-        "AND ABS(net_return_pct) <= 100 "
-        "AND direction IN ('long', 'short') "
-        "AND entry_ts >= ? "
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon "
-        "ORDER BY scanner_family, direction, market_type, horizon",
-        (cutoff,),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    result = []
+    for (family, direction, market_type, horizon), values in sorted(groups.items()):
+        net = values["net"]
+        low = values["low"]
+        high = values["high"]
+        result.append({
+            "scanner_family": family,
+            "direction": direction,
+            "market_type": market_type,
+            "horizon": horizon,
+            "n": len(net),
+            "avg_net": sum(net) / len(net),
+            "min_net": min(net),
+            "n_low_spread": len(low),
+            "avg_net_low_spread": sum(low) / len(low) if low else None,
+            "n_high_spread": len(high),
+            "avg_net_high_spread": sum(high) / len(high) if high else None,
+        })
+    return result
 
 
 def family_direction_edge(horizon: str = "24h", within_days: int = 7) -> list[dict]:

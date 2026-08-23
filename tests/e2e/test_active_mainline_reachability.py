@@ -100,6 +100,8 @@ def test_registered_learning_consumer_persists_and_links_exact_exposure(
 ):
     """A real allocator consumer reaches the ledger and its exact outcome reader."""
     from aletheia.config.loader import load_config, save_config
+    import aletheia.learning.models as learning_models
+    import aletheia.learning.policy_epochs as policy_epochs
     from aletheia.learning.ledger import linked_settled_exposure_counts
     from aletheia.learning.registry import get_learning_path
     from aletheia.storage import repositories as repo
@@ -114,6 +116,19 @@ def test_registered_learning_consumer_persists_and_links_exact_exposure(
     path = get_learning_path("universe_family_calibration")
     assert path.consumer == "universe allocator"
     assert path.fallback == "neutral multiplier 1.0"
+
+    settled_at = datetime.now(timezone.utc)
+    exposure_at = settled_at - timedelta(hours=6)
+
+    class ClockDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return exposure_at.replace(tzinfo=None)
+            return exposure_at.astimezone(tz)
+
+    monkeypatch.setattr(learning_models, "datetime", ClockDateTime)
+    monkeypatch.setattr(policy_epochs, "datetime", ClockDateTime)
 
     feature = {
         "feature_snapshot_id": "reachability-feature",
@@ -155,7 +170,7 @@ def test_registered_learning_consumer_persists_and_links_exact_exposure(
     assert exposure["consumer"] == "universe_allocator"
     assert exposure["after_json"] == exposure["before_json"]
 
-    now = datetime.now(timezone.utc)
+    now = settled_at
     repo.insert_forward_outcomes_batch([UniverseForwardOutcome(
         id="reachability-linked-outcome",
         outcome_candidate_key=expected_outcome_key,

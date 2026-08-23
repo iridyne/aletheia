@@ -208,12 +208,13 @@ Learning Contribution Observability adds no job, trigger, timeout or executor. I
 
 1. APScheduler registration and next-run state;
 2. durable `learning_job_health` current/recovery history;
-3. evaluator watermark versus the current measurement window.
+3. evaluator success watermark and durable `next_due_at`, with the current display window separate.
 
 The projection must preserve `null` for unrecorded `last_expected_at` and output counts. It derives
-catch-up due/current from the evaluator watermark; it does not invent a durable health row for the
-one-shot catch-up job. A recovered current `healthy` state does not erase the durable most recent
-failure. Historical `learning_verdict_runner` rows remain explicitly unregistered history.
+catch-up due/current from the success watermark and persisted cadence deadline; it does not invent a
+durable health row for the one-shot catch-up job. A recovered current `healthy` state does not erase
+the durable most recent failure. Historical `learning_verdict_runner` rows remain explicitly
+unregistered history.
 
 The full proposed response and bounded/cache rules are in
 [`learning_observability.md`](../proposals/learning_observability.md) §6.6-7 (`LCO-B04`,

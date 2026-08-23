@@ -118,8 +118,22 @@ def test_shared_outcome_adapter_fails_closed_on_ineligible_rows():
     from aletheia.learning.outcomes import assess_candidate_outcome, assess_realized_position
 
     now = datetime.now(timezone.utc)
-    clean = now.isoformat()
+    entry = now - timedelta(hours=2)
+    due = now - timedelta(hours=1)
+    settled = now - timedelta(minutes=30)
+    clean = entry.isoformat()
     dirty = "2026-06-24T00:00:00+00:00"
+    candidate = {
+        "outcome_candidate_key": "c-net",
+        "horizon": "4h",
+        "status": "settled",
+        "entry_ts": clean,
+        "due_at": due.isoformat(),
+        "settled_at": settled.isoformat(),
+        "direction": "long",
+        "net_return_pct": 0.5,
+        "cost_model_version": "v1",
+    }
 
     assert not assess_realized_position({
         "id": "p-synthetic", "closed_at": clean, "close_reason": "reconciled_gone",
@@ -135,21 +149,51 @@ def test_shared_outcome_adapter_fails_closed_on_ineligible_rows():
     }).eligible
     assert not assess_candidate_outcome({
         "outcome_candidate_key": "c-gross", "horizon": "4h", "status": "settled",
-        "entry_ts": clean, "direction": "long", "gross_return_pct": 2.0,
+        "entry_ts": clean, "due_at": due.isoformat(),
+        "settled_at": settled.isoformat(), "direction": "long", "gross_return_pct": 2.0,
         "net_return_pct": None,
-    }).eligible
+    }, as_of_at=now).eligible
     assert not assess_candidate_outcome({
         "outcome_candidate_key": "c-nan", "horizon": "4h", "status": "settled",
-        "entry_ts": clean, "direction": "long", "net_return_pct": float("nan"),
+        "entry_ts": clean, "due_at": due.isoformat(),
+        "settled_at": settled.isoformat(), "direction": "long", "net_return_pct": float("nan"),
         "cost_model_version": "v1",
-    }).eligible
-    eligible = assess_candidate_outcome({
-        "outcome_candidate_key": "c-net", "horizon": "4h", "status": "settled",
-        "entry_ts": clean, "direction": "long", "net_return_pct": 0.5,
-        "cost_model_version": "v1",
-    })
+    }, as_of_at=now).eligible
+    eligible = assess_candidate_outcome(candidate, as_of_at=now)
     assert eligible.eligible
     assert eligible.net_return_pct == 0.5
+
+    temporal_cases = [
+        ({"due_at": None}, "missing_due_at"),
+        ({"due_at": "not-a-time"}, "malformed_due_at"),
+        ({"settled_at": None}, "missing_settled_at"),
+        ({"settled_at": "not-a-time"}, "malformed_settled_at"),
+        ({"due_at": (entry - timedelta(seconds=1)).isoformat()}, "due_before_entry"),
+        ({"settled_at": (entry - timedelta(seconds=1)).isoformat()}, "settled_before_entry"),
+        ({"settled_at": (due - timedelta(seconds=1)).isoformat()}, "settled_before_due"),
+        ({"settled_at": (now + timedelta(seconds=1)).isoformat()}, "settlement_after_as_of"),
+    ]
+    for changes, reason in temporal_cases:
+        assert assess_candidate_outcome(
+            candidate | changes, as_of_at=now,
+        ).reason == reason
+
+    equality = candidate | {
+        "entry_ts": now.isoformat(),
+        "due_at": now.isoformat(),
+        "settled_at": now.isoformat(),
+    }
+    assert assess_candidate_outcome(equality, as_of_at=now).eligible
+
+    future = candidate | {"settled_at": (now + timedelta(seconds=1)).isoformat()}
+    assert assess_candidate_outcome(future, as_of_at=now).reason == "settlement_after_as_of"
+    assert assess_candidate_outcome(
+        future, as_of_at=now + timedelta(seconds=1),
+    ).eligible
+    with pytest.raises(ValueError, match="as_of_at"):
+        assess_candidate_outcome(candidate, as_of_at="")
+    with pytest.raises(ValueError, match="as_of_at"):
+        assess_candidate_outcome(candidate | {"status": "pending"}, as_of_at="")
 
 
 @spec_claim(
@@ -420,6 +464,7 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
     import aletheia.agents.paper_trader_ranker as ranker
     from aletheia.learning import experiments
     from aletheia.learning.cohorts import build_experiment_cohorts
+    from aletheia.learning.contribution_runner import evaluate_experiment
     from aletheia.learning.experiments import stable_assignment
     from aletheia.learning.models import LearningExperiment
     from aletheia.learning.verdicts import evaluate_cohort
@@ -474,7 +519,8 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
     )
     expose(opposite)
 
-    outcome_time = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+    evaluation_before = datetime.now(timezone.utc)
+    outcome_time = (evaluation_before + timedelta(seconds=1)).isoformat()
     for candidate_key, outcome in (("member-1", 0.4), (opposite, -0.2)):
         outcome_key = ranker_key(candidate_key)
         db.execute(
@@ -494,7 +540,22 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
         assert db.execute("SELECT changes()").fetchone()[0] == 1
     db.commit()
 
-    cohorts = build_experiment_cohorts(experiment.experiment_id)
+    developing = build_experiment_cohorts(
+        experiment.experiment_id,
+        as_of_at=evaluation_before,
+    )
+    assert len(developing) == 1
+    assert developing[0].samples == []
+    assert developing[0].exclusion_reasons["settlement_after_as_of"] == 2
+    assert evaluate_experiment(
+        experiment.experiment_id,
+        as_of_at=evaluation_before,
+    ) == []
+
+    cohorts = build_experiment_cohorts(
+        experiment.experiment_id,
+        as_of_at=outcome_time,
+    )
     assert len(cohorts) == 1
     cohort = cohorts[0]
     assert {sample.assignment_unit_key for sample in cohort.samples} == {
@@ -578,7 +639,7 @@ def test_ranker_case_excludes_wrong_horizon_and_incomplete_cost(monkeypatch):
         "WHERE path_id='ranker_case_score' LIMIT 1",
     ).fetchone()["experiment_id"]
 
-    cohort = build_experiment_cohorts(experiment_id)[0]
+    cohort = build_experiment_cohorts(experiment_id, as_of_at=now)[0]
     assert cohort.samples == []
     assert cohort.exclusion_reasons["wrong_horizon"] == 1
     assert cohort.invalid_reasons["incomplete_cost_model"] == 1

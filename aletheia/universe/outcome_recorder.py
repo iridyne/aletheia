@@ -175,7 +175,7 @@ def build_pending(members: list[dict], entry_ts: str) -> list[UniverseForwardOut
                 snapshot_id=m["snapshot_id"],
                 symbol=m["symbol"],
                 venue=m.get("venue"),
-                market_type=m.get("market_type", "spot"),
+                market_type=str(m.get("market_type") or "").strip().lower(),
                 scanner_family=m.get("scanner_family"),
                 direction=m.get("direction"),
                 horizon=horizon_key,
@@ -397,7 +397,7 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
                 entry_price=entry,
                 exit_price=price,
                 direction=row.get("direction"),
-                market_type=row.get("market_type") or "spot",
+                market_type=row.get("market_type"),
                 hold_seconds=hold_seconds,
                 entry_spread_bps=row.get("entry_spread_bps"),
                 fallback_spread_bps=cfg.universe.max_spread_bps,
@@ -799,7 +799,7 @@ def _build_plan(
     due_dt = _parse_dt(row.get("due_at"))
     if entry_dt is None or due_dt is None:
         return None
-    raw_market_type = str(row.get("market_type") or "spot").lower()
+    raw_market_type = str(row.get("market_type") or "").strip().lower()
     market_type = (
         "perp"
         if raw_market_type in {"perp", "swap", "usdt_futures"}
@@ -1014,12 +1014,13 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
     for row in candidates:
         net = row["net_return_pct"]
         direction = row.get("direction") or "long"
-        raw_market_type = str(row.get("market_type") or "spot").lower()
-        market_type = (
-            "perp"
-            if raw_market_type in {"perp", "futures", "swap", "usdt_futures"}
-            else "spot"
-        )
+        raw_market_type = str(row.get("market_type") or "").strip().lower()
+        if raw_market_type in {"perp", "futures", "swap", "usdt_futures"}:
+            market_type = "perp"
+        elif raw_market_type == "spot":
+            market_type = "spot"
+        else:
+            continue
         symbol = row["symbol"]
         family = row["scanner_family"]
 
@@ -1046,7 +1047,9 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
             continue
 
         title = f"Auto guard candidate: {symbol} {family} {direction} {market_type} 4h net loss"
-        content = _build_guard_candidate_content(row, net, direction)
+        content = _build_guard_candidate_content(
+            {**row, "market_type": market_type}, net, direction,
+        )
 
         # Stable guard_id per (family, direction, symbol) loss pattern so the
         # promoter (run_promotion_check) can match + promote/move it, and so the

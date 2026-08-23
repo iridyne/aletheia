@@ -256,6 +256,14 @@ def semantic_truth_failures() -> list[str]:
         "the two supported paths",
         "GitHub issue #489",
         "[VISION.md](VISION.md)",
+        "The current surface does **not** expose the measured A1 cluster",
+        "Its `LCO-*` claims remain `missing`",
+        "(`LCO-*`, target/missing)",
+        "the missing `LCO-*` owner projection",
+        "owner summary, default Contribution tab",
+        "| Learning UI | Contribution is the default tab",
+        "suitable for the default\nContribution tab",
+        "The Contribution tab exposes every measurement-supported path",
     }
     truth_files = [
         ROOT / "docs/product/SCOPE.md",
@@ -264,6 +272,7 @@ def semantic_truth_failures() -> list[str]:
         ROOT / "docs/product/gates/PHASE_GATES.md",
         ROOT / "docs/product/experiments/EXPERIMENT_PROTOCOL.md",
         ROOT / "docs/design/contracts/learning_contract.md",
+        ROOT / "docs/design/proposals/learning_observability.md",
         ROOT / "docs/design/process/DOC_ATLAS_BY_DOMAIN.md",
         ROOT / "docs/design/data/data_utilization.md",
     ]

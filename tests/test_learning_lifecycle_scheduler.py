@@ -308,7 +308,7 @@ def test_audit_reconciler_outer_failure_is_durable(monkeypatch):
     assert health.last_failure_reason == "audit_reconciler_internal_failure"
 
 
-def test_measurement_startup_catchup_only_claims_one_current_window(monkeypatch):
+def test_measurement_startup_catchup_waits_until_next_due_after_success(monkeypatch):
     from aletheia.learning import control
 
     cfg = _cfg()
@@ -319,7 +319,65 @@ def test_measurement_startup_catchup_only_claims_one_current_window(monkeypatch)
     assert control.measurement_catchup_due("learning_contribution_evaluator")
     control.record_measurement_job_success("learning_contribution_evaluator")
     assert not control.measurement_catchup_due("learning_contribution_evaluator")
+    health = control.get_learning_job_health("learning_contribution_evaluator")
+    assert health.input_watermark == "learning_contribution_evaluator:2026-07-15T12"
+    assert health.next_due_at == "2026-07-15T13:00:00+00:00"
     assert calls == []
+
+
+def test_measurement_catchup_uses_persisted_cadence_deadline(monkeypatch):
+    from aletheia.learning import control
+
+    cfg = _cfg()
+    monkeypatch.setattr(control, "load_config", lambda: cfg)
+    now = datetime(2026, 7, 15, 10, 10, tzinfo=timezone.utc)
+
+    for minutes in (15, 60, 90, 180, 1440):
+        cfg.learning.evaluation_interval_minutes = minutes
+        due = now + timedelta(minutes=minutes)
+        monkeypatch.setattr(control, "utc_now", lambda: now)
+        control.record_measurement_job_success("learning_contribution_evaluator")
+        health = control.get_learning_job_health("learning_contribution_evaluator")
+        assert health.input_watermark == "learning_contribution_evaluator:2026-07-15T10"
+        assert health.next_due_at == due.isoformat()
+
+        assert not control.measurement_catchup_due(
+            "learning_contribution_evaluator", now=due - timedelta(microseconds=1),
+        )
+        assert control.measurement_catchup_due(
+            "learning_contribution_evaluator", now=due,
+        )
+        assert control.measurement_catchup_due(
+            "learning_contribution_evaluator", now=due + timedelta(minutes=1),
+        )
+
+
+def test_measurement_catchup_fails_closed_without_complete_schedule(monkeypatch):
+    from aletheia.learning import control
+
+    cfg = _cfg()
+    monkeypatch.setattr(control, "load_config", lambda: cfg)
+    now = datetime(2026, 7, 15, 10, 10, tzinfo=timezone.utc)
+
+    for health in (
+        _health(input_watermark=None, next_due_at=(now + timedelta(hours=1)).isoformat()),
+        _health(input_watermark="window", next_due_at=None),
+        _health(input_watermark="window", next_due_at="not-a-timestamp"),
+    ):
+        monkeypatch.setattr(control, "get_learning_job_health", lambda _job: health)
+        assert control.measurement_catchup_due(
+            "learning_contribution_evaluator", now=now,
+        )
+
+    cfg.learning.contribution_evaluation_enabled = False
+    monkeypatch.setattr(
+        control,
+        "get_learning_job_health",
+        lambda _job: _health(input_watermark=None, next_due_at=None),
+    )
+    assert not control.measurement_catchup_due(
+        "learning_contribution_evaluator", now=now,
+    )
 
 
 def test_measurement_jobs_share_a_dedicated_serial_executor():

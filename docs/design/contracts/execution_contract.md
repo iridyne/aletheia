@@ -28,7 +28,7 @@ trade_proposals.id
 
 ```
 open positions.id
-  → orders.position_id + orders.close_reason（risk_decision_id=NULL）
+  → orders.position_id + orders.close_reason（若有 Operator 原话，另存 orders.close_reasoning；risk_decision_id=NULL）
   → fills.order_id
   → 同一 positions.id 收敛为 closed
 ```
@@ -47,7 +47,7 @@ durable close client identity。入场 RiskDecision 不能被复制到平仓单�
 |----|------|--------|------|
 | Proposal | `TradeProposal(symbol, direction, quantity, price, execution_mode...)`; `agent_rationale.entry_parameters` carries the immutable final-value/source/reason snapshot for AI-originated entries | `pending/approved→executing→executed` / `→rejected` / `→error`; uncertain exchange submission uses `submission_unknown`, incomplete local paper materialization uses `materialization_missing` | `models.py:102` |
 | RiskDecision | 见 [risk_engine_contract §3](risk_engine_contract.md) | 不可变(一次写) | `models.py:125` |
-| Order | 入场：`Order(proposal_id, risk_decision_id, ...)`；平仓：`Order(proposal_id, position_id, close_reason, risk_decision_id=NULL, ...)`；新 Paper Order 另存 immutable `reference_price/source` 供只读成本配对 | `pending→submitted→filled` / `→error` | `models.py:136` |
+| Order | 入场：`Order(proposal_id, risk_decision_id, ...)`；平仓：`Order(proposal_id, position_id, close_reason, close_reasoning?, risk_decision_id=NULL, ...)`；`close_reasoning` 只承载 pending Operator rationale，不代表已关闭；新 Paper Order 另存 immutable `reference_price/source` 供只读成本配对 | `pending→submitted→filled` / `→error` | `models.py:136` |
 | Fill | `Fill(order_id, fill_price, fill_quantity, fee)` | 不可变 | `models.py:155` |
 | Position | `Position(symbol, direction, qty, entry_price, stop_price, take_profit_price, mode...)` + 入场环境(btc_entry_price/regime_tag) + `exit_reasoning` (actual close actor/source/trigger) | `open→closed` | `models.py:165` |
 
@@ -363,6 +363,12 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   RiskDecision。`risk_decision_id` 必须为 `NULL`；`position_id + close_reason +
   close-{position_id}` 以及与 Position 完全一致的 proposal/instrument/mode/quantity
   构成持久授权链。完整性扫描必须按 entry/close 分型，不能把合法平仓误报为缺失风控。
+- **未决 Operator 理由必须随 claim 收敛**：当同一 routed close 带有真实
+  `decision_reasoning` 时，三家 exchange broker 必须在首次 exchange side effect 前把
+  `trade_decision_rationale.v1` 保存到唯一 Close Order 的 `close_reasoning`；重复 close
+  只返回原 claim，不得覆盖。Position 保持 open 且 `exit_reasoning` 为空，直到完整 private Fill
+  在共享 materializer 中验证通过。非空 carrier 损坏或与 `close_reason` 不一致时必须
+  `materialization_missing`，不得降级成 generic actor/source；历史 `NULL` carrier 保持兼容。
 - 按 `execution_mode` 分派:`bitget_demo→close_demo_position` / `okx_demo→close_okx_position` / `binance_testnet→close_testnet_position` / `paper_internal→本地 close`。
 - **live 守卫(不变式)**:`live_limited` 模式且 `allow_live=False` → `RaiseError`,阻止自动循环误平**真实资金**持仓(`position_manager.py:59`)。守卫在中枢层,不分散到各调用方。
 - 交易所腿不可跳过:demo 模式仍走真实交易所 close;`paper_internal` 本地撮合。

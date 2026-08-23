@@ -224,6 +224,11 @@ def test_event_price_lookup_rejects_snapshot_older_than_freshness_window(
         market_type="usdt_futures",
         at_or_before="2026-07-13T10:01:00+00:00",
     ) is None
+    assert _current_price(
+        "ETH/USDT",
+        market_type="crypto",
+        at_or_before="2026-07-13T10:01:00+00:00",
+    ) is None
 
 
 def test_fixed_horizon_resolver_does_not_overwrite_outbox_price_anchor(

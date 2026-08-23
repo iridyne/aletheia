@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v39"
+SCHEMA_VERSION = "aletheia-sqlite-v40"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -4855,6 +4855,11 @@ _GAMMA_FLIP_RESET_CHECKSUM = hashlib.sha256(
     (_GAMMA_FLIP_RESET_SQL + "\ngamma_flip_reset_v1").encode("utf-8")
 ).hexdigest()
 
+_PENDING_CLOSE_REASONING_SQL = "ALTER TABLE orders ADD COLUMN close_reasoning TEXT"
+_PENDING_CLOSE_REASONING_CHECKSUM = hashlib.sha256(
+    (_PENDING_CLOSE_REASONING_SQL + "\npending_close_reasoning_v1").encode("utf-8")
+).hexdigest()
+
 _FUNDING_AUDIT_OUTBOX_COLUMNS = (
     ("jsonl_mirror_status", "audit_events", "TEXT"),
     ("jsonl_attempt_count", "audit_events", "INTEGER"),
@@ -4995,10 +5000,13 @@ _MIGRATION_DESCRIPTIONS = {
     "20260820_0036_gamma_flip_reset_v37": (
         "Null historical gamma_flip_estimate values computed with incorrect cumulative-strike algorithm"
     ),
-    "20260823_0037_funding_audit_outbox_v38": (
+    "20260823_0037_pending_close_reasoning_v38": (
+        "durable Operator rationale handoff for pending exchange closes"
+    ),
+    "20260823_0038_funding_audit_outbox_v39": (
         "durable JSONL mirror state for opt-in funding settlement audits"
     ),
-    "20260823_0038_broker_funding_cursor_v39": (
+    "20260823_0039_broker_funding_cursor_v40": (
         "durable fair cursor for exchange funding settlement recovery"
     ),
 }
@@ -5306,6 +5314,17 @@ def _apply_options_market_structure_v36(db: sqlite3.Connection) -> None:
 def _apply_gamma_flip_reset_v37(db: sqlite3.Connection) -> None:
     """Null historical gamma_flip_estimate rows computed with incorrect cumulative-strike algorithm."""
     db.executescript(_GAMMA_FLIP_RESET_SQL)
+
+
+def _apply_pending_close_reasoning_v38(db: sqlite3.Connection) -> None:
+    """Add the nullable pending-close rationale carrier without rewriting history."""
+
+    existing = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(orders)").fetchall()
+    }
+    if "close_reasoning" not in existing:
+        db.execute(_PENDING_CLOSE_REASONING_SQL)
+    db.execute("PRAGMA optimize")
 
 
 def _apply_funding_audit_outbox_v38(db: sqlite3.Connection) -> None:
@@ -5886,15 +5905,21 @@ _MIGRATIONS = (
         apply=_apply_gamma_flip_reset_v37,
     ),
     MigrationStep(
-        migration_id="20260823_0037_funding_audit_outbox_v38",
-        checksum=_FUNDING_AUDIT_OUTBOX_CHECKSUM,
+        migration_id="20260823_0037_pending_close_reasoning_v38",
+        checksum=_PENDING_CLOSE_REASONING_CHECKSUM,
         schema_version="aletheia-sqlite-v38",
+        apply=_apply_pending_close_reasoning_v38,
+    ),
+    MigrationStep(
+        migration_id="20260823_0038_funding_audit_outbox_v39",
+        checksum=_FUNDING_AUDIT_OUTBOX_CHECKSUM,
+        schema_version="aletheia-sqlite-v39",
         apply=_apply_funding_audit_outbox_v38,
     ),
     MigrationStep(
-        migration_id="20260823_0038_broker_funding_cursor_v39",
+        migration_id="20260823_0039_broker_funding_cursor_v40",
         checksum=_BROKER_FUNDING_CURSOR_CHECKSUM,
-        schema_version="aletheia-sqlite-v39",
+        schema_version="aletheia-sqlite-v40",
         apply=_apply_broker_funding_cursor_v39,
     ),
 )

@@ -1020,16 +1020,16 @@ function ClosePositionPanel({
 				<Button
 					variant="danger"
 					onClick={() => close(position)}
-					disabled={isPending}
+					disabled={isPending || limitMutation.isPending}
 				>
 					{isPending ? "Closing…" : "Close at market price"}
 				</Button>
 				<Button
 					variant="secondary"
 					onClick={() => setShowLimit((v) => !v)}
-					disabled={isPending}
+					disabled={isPending || limitMutation.isPending}
 				>
-					{showLimit ? "Cancel limit" : "Set limit exit"}
+					{limitMutation.isPending ? "Setting…" : showLimit ? "Cancel limit" : "Set limit exit"}
 				</Button>
 			</ActionRow>
 			{showLimit && (
@@ -1044,7 +1044,7 @@ function ClosePositionPanel({
 					<Button
 						variant="primary"
 						onClick={submitLimit}
-						disabled={!limitPrice}
+						disabled={!limitPrice || isPending || limitMutation.isPending}
 					>
 						Confirm limit
 					</Button>

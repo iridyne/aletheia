@@ -21,6 +21,10 @@ from aletheia.exchanges.submission_errors import (
     is_ambiguous_submission_error as _is_ambiguous_submission_error,
 )
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
+from aletheia.execution.broker_utils import (
+    close_acknowledgement_result,
+    entry_acknowledgement_result,
+)
 from aletheia.execution.close_convergence import (
     CLOSE_CLAIM_STATES,
     has_unresolved_close_claim,
@@ -30,8 +34,8 @@ from aletheia.execution.position_enrichment import build_entry_enrichment, liqui
 from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
+    finalize_exchange_acknowledgement,
     find_compatible_open_position,
-    get_order,
     insert_order, insert_fill, insert_position, update_position,
     update_order, transaction,
 )
@@ -351,11 +355,14 @@ def execute_live_order(
         )))
     except Exception as e:
         if _is_ambiguous_submission_error(e):
-            update_order(
+            acknowledgement = finalize_exchange_acknowledgement(
                 order.id,
+                exchange_order_id=None,
                 status="submission_unknown",
                 error_reason="order_submission_transport_acknowledgement_unknown",
             )
+            if not acknowledgement["applied"]:
+                return entry_acknowledgement_result(acknowledgement)
             write_post_commit_audit({
                 "actor": "system", "source": "binance_broker",
                 "event_type": "order_submission_unknown", "entity_type": "order",
@@ -366,7 +373,14 @@ def execute_live_order(
                 "message": "Order transport failed after submission began; automatic retry suppressed",
             })
             raise SubmissionUnknownError(client_oid=proposal_id) from e
-        update_order(order.id, status="error", error_reason="order_submission_rejected")
+        acknowledgement = finalize_exchange_acknowledgement(
+            order.id,
+            exchange_order_id=None,
+            status="error",
+            error_reason="order_submission_rejected",
+        )
+        if not acknowledgement["applied"]:
+            return entry_acknowledgement_result(acknowledgement)
         raise
     finally:
         try:
@@ -376,14 +390,14 @@ def execute_live_order(
 
     exchange_order_id = order_resp.order_id or ""
     if not exchange_order_id:
-        try:
-            update_order(
-                order.id,
-                status="submission_unknown",
-                error_reason="order_submission_missing_exchange_id",
-            )
-        except Exception:
-            pass
+        acknowledgement = finalize_exchange_acknowledgement(
+            order.id,
+            exchange_order_id=None,
+            status="submission_unknown",
+            error_reason="order_submission_missing_exchange_id",
+        )
+        if not acknowledgement["applied"]:
+            return entry_acknowledgement_result(acknowledgement)
         write_post_commit_audit({
             "actor": "system", "source": "binance_broker",
             "event_type": "order_submission_unknown", "entity_type": "order",
@@ -397,46 +411,29 @@ def execute_live_order(
     # #1502: explicit terminal rejection from the venue is NOT submission_unknown.
     if order_resp.status in ("cancelled", "rejected", "expired") and exchange_order_id:
         try:
-            update_order(order.id, exchange_order_id=exchange_order_id, status="cancelled",
-                         error_reason="explicit_venue_rejection")
-        except Exception:
-            pass
-        write_post_commit_audit({
-            "actor": "system", "source": "binance_broker",
-            "event_type": "order_explicitly_rejected", "entity_type": "order",
-            "entity_id": order.id,
-            "reason": f"venue_status:{order_resp.status}",
-            "after": {"status": "cancelled"},
-        })
-        return {
-            "order_id": order.id,
-            "exchange_order_id": exchange_order_id,
-            "order_status": "cancelled",
-            "fill_id": None, "position_id": None,
-            "fill_price": None, "fill_quantity": 0,
-        }
+            acknowledgement = finalize_exchange_acknowledgement(
+                order.id,
+                exchange_order_id=exchange_order_id,
+                status="cancelled",
+                error_reason="explicit_venue_rejection",
+            )
+        except Exception as e:
+            raise PostSubmitDBError(
+                "exchange acknowledgement could not be persisted", exchange_order_id,
+            ) from e
+        if acknowledgement["applied"]:
+            write_post_commit_audit({
+                "actor": "system", "source": "binance_broker",
+                "event_type": "order_explicitly_rejected", "entity_type": "order",
+                "entity_id": order.id,
+                "reason": f"venue_status:{order_resp.status}",
+                "after": {"status": "cancelled"},
+            })
+        return entry_acknowledgement_result(acknowledgement)
     exchange_reported_fill = order_resp.status in ("filled", "partially_filled")
     stored_status = "materialization_missing" if exchange_reported_fill else "submitted"
-    # #1553: late ack must not regress an Order that reconciliation already resolved.
-    _UNRESOLVED = {"pending", "submission_unknown"}
     try:
-        current = get_order(order.id)
-        if current is not None and current.get("status") not in _UNRESOLVED:
-            logger.debug(
-                "binance_broker: discarding late ack for order %s (current status: %s)",
-                order.id, current.get("status"),
-            )
-            return {
-                "order_id": order.id,
-                "exchange_order_id": exchange_order_id,
-                "order_status": current.get("status"),
-                "fill_id": None, "position_id": None,
-                "fill_price": None, "fill_quantity": 0,
-            }
-    except Exception:
-        pass
-    try:
-        update_order(
+        acknowledgement = finalize_exchange_acknowledgement(
             order.id,
             exchange_order_id=exchange_order_id,
             status=stored_status,
@@ -448,7 +445,7 @@ def execute_live_order(
         raise PostSubmitDBError(
             "exchange acknowledgement could not be persisted", exchange_order_id,
         ) from e
-    if exchange_reported_fill:
+    if exchange_reported_fill and acknowledgement["applied"]:
         write_post_commit_audit({
             "actor": "system", "source": "binance_broker",
             "event_type": "order_materialization_pending", "entity_type": "order",
@@ -462,15 +459,7 @@ def execute_live_order(
             ),
         })
 
-    return {
-        "order_id": order.id,
-        "exchange_order_id": exchange_order_id,
-        "order_status": stored_status,
-        "fill_id": None,
-        "position_id": None,
-        "fill_price": None,
-        "fill_quantity": 0,
-    }
+    return entry_acknowledgement_result(acknowledgement)
 
 
 def _find_open_position(
@@ -486,7 +475,10 @@ def _find_open_position(
 
 
 def _claim_close_order(
-    position_id: str, reason: str,
+    position_id: str,
+    reason: str,
+    *,
+    close_reasoning: str | None = None,
 ) -> tuple[dict, Order | None, str | None]:
     """Atomically claim one Binance close before any exchange side effect."""
     from aletheia.storage import repositories as repo
@@ -515,6 +507,7 @@ def _claim_close_order(
             client_order_id=f"close-{position_id}",
             position_id=position_id,
             close_reason=reason,
+            close_reasoning=close_reasoning,
             symbol=row["symbol"],
             market_type=row["market_type"],
             direction=row["direction"],
@@ -534,7 +527,12 @@ def _claim_close_order(
         return row, close_order, requested_at
 
 
-def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
+def close_testnet_position(
+    position_id: str,
+    reason: str = "exit_rule",
+    *,
+    close_reasoning: str | None = None,
+) -> dict:
     """Close a Binance position (testnet OR live-limited) with a reduceOnly order.
 
     Unlike Bitget's hedge-mode close, Binance uses reduceOnly=True with the opposite
@@ -545,7 +543,11 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
     from aletheia.storage import repositories as repo
     from aletheia.portfolio.pnl import close_position
 
-    row, close_order, close_requested_at = _claim_close_order(position_id, reason)
+    row, close_order, close_requested_at = _claim_close_order(
+        position_id,
+        reason,
+        close_reasoning=close_reasoning,
+    )
     if close_order is None:
         existing_order = repo.get_order(row["pending_close_order_id"])
         return {
@@ -590,16 +592,16 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
         )))
     except Exception as e:
         if isinstance(e, ClosePositionAbsentError):
-            with transaction():
-                update_order(
-                    close_order.id,
-                    status="error",
-                    error_reason="close_position_absence_unverified",
-                )
-                update_position(
-                    position_id,
-                    pending_close_status="position_absence_unverified",
-                )
+            acknowledgement = finalize_exchange_acknowledgement(
+                close_order.id,
+                exchange_order_id=None,
+                status="error",
+                error_reason="close_position_absence_unverified",
+                close_position_id=position_id,
+                pending_close_status="position_absence_unverified",
+            )
+            if not acknowledgement["applied"]:
+                return close_acknowledgement_result(acknowledgement)
             write_post_commit_audit({
                 "actor": "system", "source": "binance_broker",
                 "event_type": "close_position_absence_unverified",
@@ -616,12 +618,16 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
                 ),
             })
         elif _is_ambiguous_submission_error(e):
-            update_order(
+            acknowledgement = finalize_exchange_acknowledgement(
                 close_order.id,
+                exchange_order_id=None,
                 status="submission_unknown",
                 error_reason="close_submission_transport_acknowledgement_unknown",
+                close_position_id=position_id,
+                pending_close_status="submission_unknown",
             )
-            update_position(position_id, pending_close_status="submission_unknown")
+            if not acknowledgement["applied"]:
+                return close_acknowledgement_result(acknowledgement)
             write_post_commit_audit({
                 "actor": "system", "source": "binance_broker",
                 "event_type": "close_submission_unknown", "entity_type": "order",
@@ -632,8 +638,16 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
                 "message": "Close transport failed after submission began; automatic retry suppressed",
             })
         else:
-            update_order(close_order.id, status="error", error_reason="close_submission_rejected")
-            update_position(position_id, pending_close_status="submission_rejected")
+            acknowledgement = finalize_exchange_acknowledgement(
+                close_order.id,
+                exchange_order_id=None,
+                status="error",
+                error_reason="close_submission_rejected",
+                close_position_id=position_id,
+                pending_close_status="submission_rejected",
+            )
+            if not acknowledgement["applied"]:
+                return close_acknowledgement_result(acknowledgement)
         raise
     finally:
         try:
@@ -643,15 +657,16 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
 
     exchange_order_id = order_resp.order_id or ""
     if not exchange_order_id:
-        try:
-            update_order(
-                close_order.id,
-                status="submission_unknown",
-                error_reason="close_submission_missing_exchange_id",
-            )
-            update_position(position_id, pending_close_status="submission_unknown")
-        except Exception:
-            pass
+        acknowledgement = finalize_exchange_acknowledgement(
+            close_order.id,
+            exchange_order_id=None,
+            status="submission_unknown",
+            error_reason="close_submission_missing_exchange_id",
+            close_position_id=position_id,
+            pending_close_status="submission_unknown",
+        )
+        if not acknowledgement["applied"]:
+            return close_acknowledgement_result(acknowledgement)
         write_post_commit_audit({
             "actor": "system", "source": "binance_broker",
             "event_type": "close_submission_unknown", "entity_type": "order",
@@ -671,30 +686,21 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
         else "submitted"
     )
     try:
-        update_order(
+        acknowledgement = finalize_exchange_acknowledgement(
             close_order.id,
             exchange_order_id=exchange_order_id,
             status=close_status,
             error_reason=(
                 "private_fill_evidence_pending" if exchange_reported_fill else None
             ),
-            filled_at=None,
+            close_position_id=position_id,
+            pending_close_status=close_status,
         )
     except Exception as e:
-        try:
-            update_position(position_id, pending_close_status="materialization_missing")
-        except Exception:
-            pass
         raise PostSubmitDBError(
             "exchange close acknowledgement could not be persisted", exchange_order_id,
         ) from e
-    update_position(
-        position_id,
-        pending_close_order_id=close_order.id,
-        pending_close_status=close_status,
-        pending_close_requested_at=close_requested_at,
-    )
-    if exchange_reported_fill:
+    if exchange_reported_fill and acknowledgement["applied"]:
         write_post_commit_audit({
             "actor": "system", "source": "binance_broker",
             "event_type": "close_materialization_pending", "entity_type": "order",
@@ -708,11 +714,4 @@ def close_testnet_position(position_id: str, reason: str = "exit_rule") -> dict:
             ),
         })
 
-    return {
-        "order_id": close_order.id,
-        "exchange_order_id": exchange_order_id,
-        "status": close_status,
-        "closed": False,
-        "fill_price": None,
-        "fill_quantity": 0,
-    }
+    return close_acknowledgement_result(acknowledgement)
