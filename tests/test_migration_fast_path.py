@@ -692,8 +692,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
             # includes v31 (persona rollout), v32 (uPnL identity), v33
             # (Observation Lab frozen units), v34 (EX-04 live authorization
             # ref), v35 (momentum-short exhaustion shadow), v36 (options
-            # market structure), v37 (gamma-flip reset), and v38 (funding
-            # audit outbox), and v39 (broker funding recovery cursor). Anchor to the semantic migration instead of a
+            # market structure), v37 (gamma-flip reset), v38 (funding
+            # audit outbox), and v40 (broker funding recovery cursor). Anchor to the semantic migration instead of a
             # tail length so a future additive migration cannot fake v24 as
             # already applied without its columns.
             for step in migrations._MIGRATIONS
@@ -715,8 +715,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260823_0038_broker_funding_cursor_v39",
-        "aletheia-sqlite-v39",
+        "20260823_0039_broker_funding_cursor_v40",
+        "aletheia-sqlite-v40",
     )
     audit_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(audit_events)")
