@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -50,6 +51,32 @@ def _extract_section(body: str, header: str) -> str:
     )
     match = pattern.search(body)
     return match.group(0) if match else ""
+
+
+def _changed_files_from_checkout() -> list[str]:
+    """Return files changed by the PR using GitHub's synthetic merge checkout.
+
+    ``actions/checkout`` checks out the pull-request merge commit in CI. Parent 1
+    is the exact current base snapshot for that synthetic merge, so resolving
+    ``HEAD^1...HEAD`` avoids the stale ``pull_request.base.sha`` problem on
+    long-lived PRs and requires no GitHub API call or second metadata source.
+    """
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD^1"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if not base:
+        raise RuntimeError("unable to resolve synthetic PR merge base")
+
+    output = subprocess.run(
+        ["git", "diff", "--name-only", f"{base}...HEAD", "--"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return [line.strip() for line in output.splitlines() if line.strip()]
 
 
 def check_pr_description(pr_body: str, changed_files: list[str]) -> list[str]:
@@ -99,17 +126,20 @@ def main() -> int:
         return 1
 
     payload = json.loads(Path(event_path).read_text(encoding="utf-8"))
-    pr_body = payload.get("pull_request", {}).get("body", "")
+    pr_body = payload.get("pull_request", {}).get("body", "") or ""
 
-    # Changed files from GitHub API (available in PR event)
-    changed_files: list[str] = []
-    pr_number = payload.get("pull_request", {}).get("number")
-    if pr_number:
-        # In real CI, this would query the GitHub API for the file list.
-        # For now, check_docs.py pattern: if the check runs in CI, the
-        # git diff is already in the checkout.
-        # Simplified: assume all non-exempt PRs require the structure.
-        pass
+    # Release automation is exempt by identity and does not need a diff read.
+    if "release-please" in pr_body.lower():
+        changed_files: list[str] = []
+    else:
+        try:
+            changed_files = _changed_files_from_checkout()
+        except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
+            print(
+                f"Unable to resolve pull-request changed files: {exc}",
+                file=sys.stderr,
+            )
+            return 1
 
     failures = check_pr_description(pr_body, changed_files)
     if failures:
