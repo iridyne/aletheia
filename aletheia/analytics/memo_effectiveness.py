@@ -195,3 +195,144 @@ def evaluate_prior_memo(*, for_rotation: bool = False) -> dict | None:
     except Exception as e:  # noqa: BLE001 — evaluation must never break synthesis
         logger.warning("evaluate_prior_memo failed: %s", e)
         return None
+
+
+def evaluate_pending_memos() -> list[dict]:
+    """Evaluate ALL pending memos (up to 10) without age-gate.
+
+    Each memo's effective window is bounded by min(valid_until, next_memo.generated_at).
+    Skips memos with terminal accuracy_score in tags. Writes overturned_rules back into content.
+
+    Returns list of verdict dicts: {memo_id, accuracy_score, overturned_rules, n_trades, evaluated_at}.
+    """
+    try:
+        from aletheia.storage.repositories import list_knowledge_items, update_knowledge_item
+        from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+
+        items = list_knowledge_items(item_type="trading_memo", limit=10)
+        if not items:
+            return []
+
+        all_outcomes = list(eligible_strategy_outcomes())
+        now_iso = datetime.now(timezone.utc).isoformat()
+        verdicts = []
+
+        for i, item in enumerate(items):
+            memo_id = item.get("id")
+            try:
+                tags = json.loads(item.get("tags") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                tags = {}
+            if tags.get("accuracy_score") is not None:
+                continue  # skip terminal memos
+
+            try:
+                memo = json.loads(item.get("content") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            generated_at = memo.get("generated_at")
+            valid_until = memo.get("valid_until")
+            if not memo_id or not generated_at:
+                continue
+
+            # Bound the memo's window by next memo's generated_at
+            next_memo = items[i + 1] if i + 1 < len(items) else None
+            window_end = valid_until
+            if next_memo:
+                try:
+                    next_content = json.loads(next_memo.get("content") or "{}")
+                    next_gen = next_content.get("generated_at")
+                    if next_gen and window_end:
+                        window_end = min(window_end, next_gen)
+                    elif next_gen:
+                        window_end = next_gen
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # Filter outcomes to memo's effective window
+            rows = []
+            for row in all_outcomes:
+                opened_at = str(row.get("opened_at") or "")
+                if opened_at < str(generated_at):
+                    continue
+                if window_end and opened_at >= str(window_end):
+                    continue
+                if row.get("execution_mode") and row.get("execution_mode") != "paper_internal":
+                    continue
+                rows.append(row)
+
+            verdict = {
+                "memo_id": memo_id,
+                "accuracy_score": None,
+                "overturned_rules": [],
+                "n_trades": len(rows),
+                "evaluated_at": now_iso,
+            }
+
+            if rows:
+                from collections import defaultdict
+                grouped: dict[tuple, list[bool]] = defaultdict(list)
+                for r in rows:
+                    key = (_norm_regime(r.get("regime_tag")), r.get("direction"))
+                    grouped[key].append((r.get("realized_pnl") or 0) > 0)
+
+                correct = 0
+                judged = 0
+                overturned: list[dict] = []
+                for rule in memo.get("regime_playbook", []):
+                    regime = _norm_regime(rule.get("regime"))
+                    direction = rule.get("direction")
+                    edge = rule.get("edge")
+                    wins = grouped.get((regime, direction), [])
+                    if len(wins) < MIN_EVAL_SAMPLE_PER_RULE:
+                        continue
+                    actual_wr = sum(wins) / len(wins)
+
+                    if edge == "strong":
+                        judged += 1
+                        if actual_wr >= 0.5:
+                            correct += 1
+                        elif actual_wr < 0.4:
+                            overturned.append({
+                                "regime": regime,
+                                "direction": direction,
+                                "claimed_edge": "strong",
+                                "actual_win_rate": round(actual_wr * 100, 1),
+                                "sample": len(wins),
+                                "reason": "claimed strong edge, subsequent trades show weak",
+                            })
+                    elif edge == "contra":
+                        judged += 1
+                        if actual_wr <= 0.45:
+                            correct += 1
+                        elif actual_wr > 0.55:
+                            overturned.append({
+                                "regime": regime,
+                                "direction": direction,
+                                "claimed_edge": "contra",
+                                "actual_win_rate": round(actual_wr * 100, 1),
+                                "sample": len(wins),
+                                "reason": "claimed contra, subsequent trades were favorable",
+                            })
+
+                verdict["overturned_rules"] = overturned
+                verdict["accuracy_score"] = round(correct / judged, 3) if judged else None
+
+            # Write evaluation results back into content (always, for synthesis pickup)
+            memo["overturned_rules"] = verdict["overturned_rules"]
+            try:
+                update_knowledge_item(memo_id, content=json.dumps(memo, ensure_ascii=False))
+            except Exception as e:  # noqa: BLE001
+                logger.warning("evaluate_pending_memos content write-back failed for %s: %s", memo_id, e)
+
+            verdicts.append(verdict)
+            logger.info(
+                "Evaluated memo %s: accuracy=%s, %d overturned rule(s), %d in-window trades",
+                memo_id, verdict["accuracy_score"], len(verdict["overturned_rules"]), verdict["n_trades"],
+            )
+
+        return verdicts
+    except Exception as e:  # noqa: BLE001
+        logger.warning("evaluate_pending_memos failed: %s", e)
+        return []
