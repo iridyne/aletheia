@@ -8,7 +8,6 @@ import yaml
 WORKFLOW_DIR = Path(__file__).resolve().parents[1] / ".github" / "workflows"
 WORKFLOW_PATH = WORKFLOW_DIR / "ci.yml"
 AUTO_MERGE_WORKFLOW_PATH = WORKFLOW_DIR / "auto-merge.yml"
-DELETE_MERGED_WORKFLOW_PATH = WORKFLOW_DIR / "delete-merged-branch.yml"
 RELEASE_WORKFLOW_PATH = WORKFLOW_DIR / "release-please.yml"
 REFRESH_RELEASE_WORKFLOW_PATH = WORKFLOW_DIR / "refresh-release-candidate.yml"
 PINNED_ACTION_SHA_LENGTH = 40
@@ -27,14 +26,6 @@ def _auto_merge_workflow() -> dict:
         AUTO_MERGE_WORKFLOW_PATH.read_text(encoding="utf-8"),
         Loader=yaml.BaseLoader,
     )
-
-
-def _delete_merged_workflow() -> dict:
-    return yaml.load(
-        DELETE_MERGED_WORKFLOW_PATH.read_text(encoding="utf-8"),
-        Loader=yaml.BaseLoader,
-    )
-
 
 def _release_workflow() -> dict:
     return yaml.load(
@@ -56,7 +47,6 @@ def test_only_expected_workflows_are_active() -> None:
         "auto-merge.yml",
         "ci.yml",
         "codex-shepherd.yml",
-        "delete-merged-branch.yml",
         "refresh-release-candidate.yml",
         "release-please.yml",
     ]
@@ -793,28 +783,6 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     assert "auto-merge is enabled; GitHub will merge when required checks pass" in update_script
     assert "auto-merge did not complete" not in update_script
     assert "const autoMergeStates = new Set(['BEHIND', 'BLOCKED', 'HAS_HOOKS'])" in update_script
-    assert "enablePullRequestAutoMerge" in update_script
-    assert "mergeMethod: SQUASH" in update_script
-    assert "mergeMethod: MERGE" not in update_script
-    assert "String(error).includes('clean status')" in update_script
-    assert "admin" not in update_script.lower()
-    assert "bypass" not in update_script.lower()
-
-
-def test_delete_merged_branch_only_touches_merged_same_repo_head_refs() -> None:
-    workflow = _delete_merged_workflow()
-    triggers = workflow["on"]
-
-    assert set(triggers) == {"pull_request_target"}
-    assert triggers["pull_request_target"]["types"] == ["closed"]
-    assert workflow["permissions"] == {"contents": "write"}
-
-    assert set(workflow["jobs"]) == {"delete"}
-    job = workflow["jobs"]["delete"]
-    assert job["runs-on"] == "ubuntu-24.04"
-
-    guard = job["if"]
-    assert "merged == true" in guard
     assert "head.repo.full_name == github.repository" in guard
     assert "head.ref != github.event.repository.default_branch" in guard
 
