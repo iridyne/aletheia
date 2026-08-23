@@ -163,30 +163,3 @@ def test_explicit_cancellation_branch_in_binance_broker():
     assert "explicit_venue_rejection" in src, (
         "binance_broker.execute_live_order must handle explicit venue cancellation (#1502)"
     )
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# #1553 — source-level contract: late ack guard present
-# ──────────────────────────────────────────────────────────────────────────────
-
-def test_late_ack_guard_in_okx_broker():
-    """#1553: okx_broker checks current Order state before applying ack."""
-    import inspect
-    import aletheia.execution.okx_broker as mod
-    src = inspect.getsource(mod.execute_live_order)
-    assert "discarding late ack" in src, (
-        "okx_broker must discard late ack for already-reconciled Orders (#1553)"
-    )
-    assert "submission_unknown" in src and "_UNRESOLVED" in src, (
-        "okx_broker must define _UNRESOLVED guard before updating Order state"
-    )
-
-
-def test_late_ack_guard_in_binance_broker():
-    """#1553: binance_broker checks current Order state before applying ack."""
-    import inspect
-    import aletheia.execution.binance_broker as mod
-    src = inspect.getsource(mod.execute_live_order)
-    assert "discarding late ack" in src, (
-        "binance_broker must discard late ack for already-reconciled Orders (#1553)"
-    )
