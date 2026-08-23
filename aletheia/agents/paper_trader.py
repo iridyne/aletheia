@@ -42,6 +42,9 @@ from aletheia.storage.repositories import (
 
 logger = logging.getLogger("aletheia.agents.paper_trader")
 
+class SignalQueueOwnershipUnavailable(RuntimeError):
+    """Raised when a queue ownership predicate cannot be evaluated; admission must fail closed. (#1245)"""
+
 _BASE_NOTIONAL_USDT = 25.0  # legacy fallback; prefer cfg.trading.default_notional_usdt
 _ATR_TARGET_PCT = 1.5  # legacy fallback; prefer cfg.trading.vol_target_pct
 _RECENT_SIGNAL_COOLDOWN_MINUTES = 30
@@ -183,8 +186,8 @@ def _recent_signal_pairs(
             (r["symbol"], r["direction"], _market_identity(r["market_type"]))
             for r in rows
         }
-    except Exception:
-        return set()
+    except Exception as e:
+        raise SignalQueueOwnershipUnavailable(f"recent_signal_pairs read failed: {e}") from e
 
 
 def _active_signal_setups() -> set[tuple[str, str, str, str]]:
@@ -231,8 +234,8 @@ def _active_signal_setups() -> set[tuple[str, str, str, str]]:
             for row in rows
             if row[0] and row[1]
         }
-    except Exception:
-        return set()
+    except Exception as e:
+        raise SignalQueueOwnershipUnavailable(f"active_signal_setups read failed: {e}") from e
 
 
 def _operator_evaluated_opportunity_ids(
@@ -450,8 +453,12 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         for p in list_all_open_positions()
         if p.get("symbol")
     }
-    recent_signal_pairs = _recent_signal_pairs()
-    active_signal_setups = _active_signal_setups()
+    try:
+        recent_signal_pairs = _recent_signal_pairs()
+        active_signal_setups = _active_signal_setups()
+    except SignalQueueOwnershipUnavailable as e:
+        logger.warning("Signal queue ownership unavailable, deferring pass: %s", e)
+        return _result()
     # Position C (2026-07-02): Path A (RuleSet-driven signals) was removed with the
     # strategy rules engine. The paper trader is now purely opportunity-driven: it
     # ranks open opportunities and writes the top ones as signal_pending
@@ -579,12 +586,18 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         errors.append("signal_queue_capacity_unavailable")
         logger.warning("pending queue capacity unavailable: %s", type(exc).__name__)
 
+    try:
+        _op_eval_ids = _operator_evaluated_opportunity_ids()
+    except SignalQueueOwnershipUnavailable as e:
+        logger.warning("operator_evaluated_opportunity_ids unavailable, deferring pass: %s", e)
+        return _result()
+
     plan = _plan_signal_batch(
         eligible,
         open_symbols=open_symbols,
         recent_signal_pairs=recent_signal_pairs,
         active_signal_setups=active_signal_setups,
-        operator_evaluated_opportunity_ids=_operator_evaluated_opportunity_ids(),
+        operator_evaluated_opportunity_ids=_op_eval_ids,
         limit=_PENDING_SIGNAL_QUEUE_CAPACITY,
         available_queue_slots=available_queue_slots,
         current_queue=current_queue,

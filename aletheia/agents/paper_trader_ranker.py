@@ -29,7 +29,7 @@ from aletheia.storage.repositories import (
     list_all_open_positions,
     list_open_trade_opportunities,
 )
-from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation
+from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation, ActiveGuardLoadError
 from aletheia.regime.detector import get_current_regime, MarketRegime
 from aletheia.trading.instruments import tradable_symbols_from_config
 # Position C (2026-07-02): strategy rules-engine deleted. The ranker no longer
@@ -572,13 +572,24 @@ def _evaluate_candidate(
     guard_state, guard_reason = _guard_evaluation_applicability()
     guard_eval = None
     if guard_state == "enabled":
-        guard_eval = _evaluate_guards_safe(
-            opp, universe_member, factor_signal, direction, confidence,
-            strategy_has_ruleset, ruleset_entry_result, strategy_evidence,
-        )
-        if guard_eval is None:
-            guard_state = "error"
-            guard_reason = "guard_evaluation_failed"
+        try:
+            guard_eval = _evaluate_guards_safe(
+                opp, universe_member, factor_signal, direction, confidence,
+                strategy_has_ruleset, ruleset_entry_result, strategy_evidence,
+            )
+            if guard_eval is None:
+                guard_state = "error"
+                guard_reason = "guard_evaluation_failed"
+        except ActiveGuardLoadError as e:
+            # #1244: active guard set incomplete — reject candidate, never zero-penalty pass.
+            logger.warning("Active guard load failed, rejecting candidate: %s", e)
+            _filter_step(filter_trace, "guard_candidate_block", "rejected",
+                         "guard_evaluation_unavailable", inputs={}, parameters={"scope": "paper_entry"})
+            return _make_candidate(opp, skip_reason="guard_evaluation_unavailable",
+                direction=direction, strategy_id=strategy_id,
+                strategy_has_ruleset=strategy_has_ruleset, universe_member=universe_member,
+                factor_signal=factor_signal, strategy_evidence=strategy_evidence,
+                guard_eval=None, filter_trace=filter_trace)
     if guard_eval and guard_eval.blocked:
         blocked_ids = ",".join(h.guard_id for h in guard_eval.hits if h.block_candidate)
         _filter_step(
@@ -1263,13 +1274,16 @@ def _evaluate_guards_safe(
             "_opportunity_id": opportunity_id,
         })
 
-        max_penalty = guard_cfg.max_score_penalty if guard_cfg else 40.0
+        max_penalty = max(0.0, float(guard_cfg.max_score_penalty if guard_cfg else 40.0))
         result = evaluate_guards(ctx, scope="paper_entry")
 
         if result.total_penalty > max_penalty:
             result.total_penalty = max_penalty
 
         return result
+    except ActiveGuardLoadError:
+        # #1244: active guard set incomplete — must fail closed, not zero-penalty pass.
+        raise
     except Exception as e:
         logger.warning("Guard evaluation failed (non-fatal): %s", e)
         return None

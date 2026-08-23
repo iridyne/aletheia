@@ -306,7 +306,10 @@ def _record_guard_promotion_event(
             }, sort_keys=True),
         ))
     except Exception:
-        logger.debug("Failed to record guard promotion event", exc_info=True)
+        # #1239: propagate event-store failures — a file change without a durable event
+        # leaves authority without reconstructable provenance. Log at WARNING and re-raise.
+        logger.warning("Failed to record guard promotion event", exc_info=True)
+        raise
 
 
 def _update_guard_status(guard_id: str, new_status: str) -> bool:
@@ -385,7 +388,8 @@ def _record_guard_downgrade_event(guard_id: str, before: dict) -> None:
             payload_json=json.dumps({"guard_id": guard_id, "before": before}, sort_keys=True),
         ))
     except Exception:
-        logger.debug("Failed to record guard downgrade event", exc_info=True)
+        logger.warning("Failed to record guard downgrade event", exc_info=True)
+        raise
 
 
 def downgrade_learned_guards_to_shadow(*, dry_run: bool = True) -> dict:
@@ -477,7 +481,8 @@ def _record_guard_candidate_deprecated_event(guard_id: str, path: str) -> None:
             ),
         ))
     except Exception:
-        logger.debug("Failed to record guard candidate deprecation event", exc_info=True)
+        logger.warning("Failed to record guard candidate deprecation event", exc_info=True)
+        raise
 
 
 def prune_learned_guard_candidates(*, dry_run: bool = True) -> dict:

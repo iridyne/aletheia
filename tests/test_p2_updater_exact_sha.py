@@ -80,6 +80,7 @@ def test_apply_update_uses_pull_sha_not_second_current_commit():
         patch("aletheia.update.applier.run_smoke_check", return_value={"ok": True}),
         patch("aletheia.update.applier.write_audit"),
         patch("aletheia.update.applier._is_packaged", return_value=False),
+        patch("aletheia.update.applier._is_managed_venv", return_value=True),
     ):
         result = applier.apply_update(restart=False)
 
@@ -141,6 +142,7 @@ def test_rollback_failure_records_actual_head_in_config():
         ),
         patch("aletheia.update.applier.write_audit"),
         patch("aletheia.update.applier._is_packaged", return_value=False),
+        patch("aletheia.update.applier._is_managed_venv", return_value=True),
     ):
         result = applier.apply_update(restart=False)
 
@@ -204,6 +206,7 @@ def test_gateway_restart_failure_records_rolled_back_sha_in_config():
         ),
         patch("aletheia.update.applier.write_audit"),
         patch("aletheia.update.applier._is_packaged", return_value=False),
+        patch("aletheia.update.applier._is_managed_venv", return_value=True),
     ):
         result = applier.apply_update(restart=True)
 

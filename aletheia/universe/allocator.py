@@ -510,11 +510,19 @@ def resolve_family_quota(cfg: UniverseConfig, regime_state: str | None) -> dict[
     it REPLACES the static cfg.family_quota for this allocation. Otherwise the
     static quota is used (empty override map → fully backward compatible).
     """
+    import math as _math
     if regime_state:
         override = (cfg.family_quota_by_regime or {}).get(regime_state)
         if override:
-            return override
-    return cfg.family_quota
+            quota = override
+        else:
+            quota = cfg.family_quota
+    else:
+        quota = cfg.family_quota
+    for k, val in (quota or {}).items():
+        if not isinstance(val, (int, float)) or not _math.isfinite(float(val)):
+            raise ValueError(f"not finite: family_quota['{k}'] = {val!r}")
+    return quota
 
 
 def allocate_universe(

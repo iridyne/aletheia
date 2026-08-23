@@ -15,6 +15,11 @@ from pydantic import BaseModel, Field
 from aletheia.config.loader import get_data_dir, load_config
 from aletheia.knowledge.frontmatter import parse_frontmatter
 
+
+class ActiveGuardLoadError(RuntimeError):
+    """Raised when an active guard file cannot be parsed; callers must fail closed. (#1244)"""
+
+
 logger = logging.getLogger("aletheia.knowledge.guards")
 
 # Default TTL for automatically learned guards (days). Owner-authored seed/manual
@@ -260,6 +265,10 @@ def load_trading_guards(
                 )
                 guards.append(guard)
             except Exception as e:
+                if status == "active":
+                    raise ActiveGuardLoadError(
+                        f"active guard load failed: {path}: {e}"
+                    ) from e
                 logger.warning("Failed to load guard from %s: %s", path, e)
                 continue
 

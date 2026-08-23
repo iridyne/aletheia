@@ -666,17 +666,19 @@ def compare_update_continuity(
             proof_gaps.append("main_disk_identity_unavailable")
 
         if restart:
-            if not gateway.get("available"):
-                failures.append("main_gateway_identity_unavailable")
-            else:
-                boot = gateway.get("boot_commit")
-                current = gateway.get("current_commit")
-                if boot and boot != expected_target:
-                    failures.append("main_gateway_boot_target_mismatch")
-                if current and current != expected_target:
-                    failures.append("main_gateway_disk_target_mismatch")
-                if not boot and not current:
-                    proof_gaps.append("main_gateway_identity_unavailable")
+            # #1208: strict dual-commit identity — both must be present AND equal target
+            boot = gateway.get("boot_commit")
+            current = gateway.get("current_commit")
+            if not boot:
+                proof_gaps.append("boot_commit_missing")
+            elif boot != expected_target:
+                failures.append("boot_commit_mismatch")
+            if not current:
+                proof_gaps.append("current_commit_missing")
+            elif current != expected_target:
+                failures.append("current_commit_mismatch")
+            if not boot and not current:
+                proof_gaps.append("identity_unproven")
         else:
             proof_gaps.append("main_restart_required_for_full_verification")
     else:
@@ -697,9 +699,18 @@ def compare_update_continuity(
             elif health_status != "healthy":
                 proof_gaps.append("main_health_not_verified")
 
+    # #1208: continuity_verified when both identities are strictly confirmed
+    _boot = gateway.get("boot_commit")
+    _current = gateway.get("current_commit")
+    continuity_verified = bool(
+        expected_target and restart
+        and _boot == expected_target
+        and _current == expected_target
+    )
     return {
         "ok": not failures and not proof_gaps,
         "structural_ok": not failures,
+        "continuity_verified": continuity_verified,
         "failures": sorted(set(failures)),
         "proof_gaps": sorted(set(proof_gaps)),
         "warnings": sorted(set(warnings)),
