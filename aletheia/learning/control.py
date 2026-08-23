@@ -240,7 +240,7 @@ def current_daily_window(job_id: str, *, now: datetime | None = None) -> str | N
 
 
 def current_measurement_window(job_id: str, *, now: datetime | None = None) -> str:
-    """One bounded UTC-hour window for restart recovery of measurement jobs."""
+    """Return a bounded UTC-hour identity for a successful measurement."""
     current = (now or utc_now()).astimezone(timezone.utc)
     return f"{job_id}:{current.strftime('%Y-%m-%dT%H')}"
 
@@ -251,7 +251,7 @@ def measurement_catchup_due(
     now: datetime | None = None,
     persist_config_migrations: bool = True,
 ) -> bool:
-    """Measurement ignores behavior gates but respects its explicit enable flag."""
+    """Use the durable cadence deadline for restart recovery when enabled."""
     try:
         cfg = (
             load_config()
@@ -262,7 +262,13 @@ def measurement_catchup_due(
             return False
     except Exception:
         return False
-    return get_learning_job_health(job_id).input_watermark != current_measurement_window(job_id, now=now)
+    health = get_learning_job_health(job_id)
+    if not health.input_watermark:
+        return True
+    next_due = _parse_timestamp(health.next_due_at)
+    if next_due is None:
+        return True
+    return (now or utc_now()).astimezone(timezone.utc) >= next_due
 
 
 def daily_catchup_due(job_id: str, *, now: datetime | None = None) -> bool:
@@ -304,7 +310,15 @@ def promotion_refreeze_reason(*, now: datetime | None = None) -> str | None:
     last_success = _parse_timestamp(reviewer.last_succeeded_at)
     if last_success is None or current - last_success > _REVIEWER_STALE_AFTER:
         return "reviewer_stale"
+    # #1826: reject future timestamps with a small skew allowance (5 minutes).
+    # A future last_succeeded_at (e.g. from clock rollback or corrupt write)
+    # would incorrectly make the reviewer appear fresh, unfreezing guard mutations.
+    _CLOCK_SKEW_ALLOWANCE = timedelta(minutes=5)
+    if last_success > current + _CLOCK_SKEW_ALLOWANCE:
+        return "reviewer_timestamp_future"
     oldest = _parse_timestamp(reviewer.oldest_backlog_at)
+    if oldest is not None and oldest > current + _CLOCK_SKEW_ALLOWANCE:
+        return "reviewer_backlog_timestamp_future"
     if oldest is not None and current - oldest > _REVIEWER_STALE_AFTER:
         return "reviewer_backlog_stale"
     if reviewer.backlog_count > _REVIEWER_BACKLOG_LIMIT:

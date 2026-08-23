@@ -1,8 +1,76 @@
 """Secrets handling: OS keyring first, encrypted file fallback. Never logs secrets."""
 
+import os
+import threading
+import time
 from pathlib import Path
 
+try:
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - Windows
+    _fcntl = None
+
+try:
+    import msvcrt as _msvcrt
+except ImportError:  # pragma: no cover - POSIX
+    _msvcrt = None
+
 from aletheia.config.loader import get_data_dir, is_preview_mode
+
+# ─── Cross-process secret write lock ─────────────────────────────────────────
+# secrets.enc is shared by multiple Aletheia processes. An in-process
+# threading.Lock only serialises writers within one process. This file-permit
+# (same pattern as config/loader.py and storage/sqlite.py) serialises writers
+# across processes by holding an exclusive flock/msvcrt lock on
+# secrets.enc.write.lock before each read-modify-write transaction.
+_WRITE_LOCK_TIMEOUT_S = 10.0
+_write_lock = threading.Lock()
+
+
+def _acquire_file_lock() -> "int | None":
+    """Exclusively lock secrets.enc.write.lock. Returns fd, or None if OS locking unavailable."""
+    if _fcntl is None and _msvcrt is None:
+        return None
+    lock_path = get_data_dir() / "secrets.enc.write.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError as exc:
+        raise OSError(f"cannot open secret writer lock: {exc}") from exc
+    started = time.monotonic()
+    try:
+        if _msvcrt is not None and os.fstat(fd).st_size == 0:
+            os.write(fd, b"\0")
+        while True:
+            try:
+                os.lseek(fd, 0, os.SEEK_SET)
+                if _fcntl is not None:
+                    _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                else:
+                    _msvcrt.locking(fd, _msvcrt.LK_NBLCK, 1)
+                return fd
+            except (BlockingIOError, OSError):
+                if time.monotonic() - started >= _WRITE_LOCK_TIMEOUT_S:
+                    raise TimeoutError(
+                        "secrets_write_lock_timeout: another process held the secret writer permit"
+                    )
+                time.sleep(0.01)
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _release_file_lock(fd: "int | None") -> None:
+    if fd is None:
+        return
+    try:
+        if _fcntl is not None:
+            _fcntl.flock(fd, _fcntl.LOCK_UN)
+        elif _msvcrt is not None:
+            os.lseek(fd, 0, os.SEEK_SET)
+            _msvcrt.locking(fd, _msvcrt.LK_UNLCK, 1)
+    finally:
+        os.close(fd)
 
 _SERVICE_NAME = "aletheia-trading-os"
 
@@ -115,22 +183,37 @@ def _get_fernet():
     key_path = get_data_dir() / ".secret.key"
     if not key_path.exists():
         key_path.parent.mkdir(parents=True, exist_ok=True)
-        key_path.write_bytes(Fernet.generate_key())
+        try:
+            # Exclusive creation so only one concurrent first-start process wins.
+            with open(key_path, "xb") as f:
+                f.write(Fernet.generate_key())
+        except FileExistsError:
+            pass  # Another process created the key first; read it below.
     return Fernet(key_path.read_bytes())
 
 
 def _file_set(key: str, value: str) -> None:
     import json
-    fernet = _get_fernet()
-    path = _fallback_path()
-    data: dict = {}
-    if path.exists():
+    with _write_lock:
+        fd = _acquire_file_lock()
         try:
-            data = json.loads(fernet.decrypt(path.read_bytes()).decode())
-        except Exception:
-            data = {}
-    data[key] = value
-    path.write_bytes(fernet.encrypt(json.dumps(data).encode()))
+            fernet = _get_fernet()
+            path = _fallback_path()
+            data: dict = {}
+            if path.exists():
+                try:
+                    data = json.loads(fernet.decrypt(path.read_bytes()).decode())
+                except Exception as exc:
+                    raise RuntimeError("failed to read encrypted secret store") from exc
+            data[key] = value
+            tmp = path.with_name(path.name + ".tmp")
+            try:
+                tmp.write_bytes(fernet.encrypt(json.dumps(data).encode()))
+                tmp.replace(path)
+            finally:
+                tmp.unlink(missing_ok=True)
+        finally:
+            _release_file_lock(fd)
 
 
 def _file_get(key: str) -> str | None:
@@ -151,20 +234,27 @@ def _file_delete(key: str) -> None:
     path = _fallback_path()
     if not path.exists():
         return
-    fernet = _get_fernet()
-    try:
-        data = json.loads(fernet.decrypt(path.read_bytes()).decode())
-    except Exception as exc:
-        raise RuntimeError("failed to read encrypted secret store") from exc
-    if key not in data:
-        return
-    del data[key]
-    replacement = path.with_name(path.name + ".tmp")
-    try:
-        replacement.write_bytes(fernet.encrypt(json.dumps(data).encode()))
-        replacement.replace(path)
-    finally:
-        replacement.unlink(missing_ok=True)
+    with _write_lock:
+        fd = _acquire_file_lock()
+        try:
+            fernet = _get_fernet()
+            if not path.exists():
+                return  # re-check under lock
+            try:
+                data = json.loads(fernet.decrypt(path.read_bytes()).decode())
+            except Exception as exc:
+                raise RuntimeError("failed to read encrypted secret store") from exc
+            if key not in data:
+                return
+            del data[key]
+            tmp = path.with_name(path.name + ".tmp")
+            try:
+                tmp.write_bytes(fernet.encrypt(json.dumps(data).encode()))
+                tmp.replace(path)
+            finally:
+                tmp.unlink(missing_ok=True)
+        finally:
+            _release_file_lock(fd)
 
 
 def migrate_keyring_to_file() -> int:

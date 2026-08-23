@@ -326,6 +326,36 @@ def test_sync_urllib_uses_net_opener():
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# NET-S12 — L2b Behavioral: config-read failure → fail closed (policy unavailable)
+# ---------------------------------------------------------------------------
+
+
+@spec_claim(
+    SpecClaim("NET-S12", _CONTRACT, "§3 policy-read failure → fail closed", "L2b",
+              "when load_config() raises, _effective_proxy() raises NetworkPolicyUnavailable "
+              "and the httpx/urllib client constructors propagate it without creating a "
+              "direct transport — fail-closed on unknown policy state"),
+)
+def test_config_read_failure_raises_policy_unavailable(monkeypatch):
+    import pytest
+    from aletheia import net
+
+    def _raise():
+        raise RuntimeError("YAML parse error — simulated config failure")
+
+    monkeypatch.setattr("aletheia.config.loader.load_config", _raise)
+
+    with pytest.raises(net.NetworkPolicyUnavailable):
+        net._effective_proxy()
+
+    with pytest.raises(net.NetworkPolicyUnavailable):
+        net.httpx_client()
+
+    with pytest.raises(net.NetworkPolicyUnavailable):
+        net.build_urllib_opener()
+
+
 @spec_claim(
     SpecClaim("NET-S11", _CONTRACT, "§5 CLI network surface", "L2b",
               "the `aletheia network` command group exists; `set` and `status` "

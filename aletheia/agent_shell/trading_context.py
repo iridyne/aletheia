@@ -2108,7 +2108,9 @@ def _build_layer2_short_term() -> dict[str, Any]:
     except Exception:
         layer["trade_analytics"] = None
 
-    # Trading Memo — structured insights from historical performance analysis
+    # Trading Memo — structured insights from historical performance analysis.
+    # Fulfills learning_contract.md §6 promise: "market-observer context" receives
+    # advisory memo with time decay and contradiction handling.
     try:
         from aletheia.analytics.insight_synthesizer import get_latest_memo, render_memo_for_observer
         memo = get_latest_memo()

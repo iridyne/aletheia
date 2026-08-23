@@ -311,7 +311,12 @@ def _build_context(db, market_roots: list[dict], serenity_roots: list[dict], cut
     if not root_ids:
         return ctx
     if _table_exists(db, "pi_decisions"):
-        for rows in _select_in(db, "SELECT * FROM pi_decisions WHERE opportunity_id IN ({})", root_ids):
+        for rows in _select_in(
+            db,
+            "SELECT * FROM pi_decisions WHERE opportunity_id IN ({}) AND datetime(created_at) >= datetime(?)",
+            root_ids,
+            extra_params=(cutoff,),
+        ):
             for row in rows:
                 d = dict(row)
                 source = d.get("signal_source") or "market_observer"
@@ -335,7 +340,12 @@ def _build_context(db, market_roots: list[dict], serenity_roots: list[dict], cut
                 proposal_ids.add(p["id"])
                 ctx["proposals_by_id"][p["id"]] = p
         if proposal_ids and _table_exists(db, "pi_decisions"):
-            for rows in _select_in(db, "SELECT * FROM pi_decisions WHERE proposal_id IN ({})", list(proposal_ids)):
+            for rows in _select_in(
+                db,
+                "SELECT * FROM pi_decisions WHERE proposal_id IN ({}) AND datetime(created_at) >= datetime(?)",
+                list(proposal_ids),
+                extra_params=(cutoff,),
+            ):
                 for row in rows:
                     d = dict(row)
                     proposal = ctx["proposals_by_id"].get(d.get("proposal_id"))
@@ -388,7 +398,12 @@ def _build_context(db, market_roots: list[dict], serenity_roots: list[dict], cut
                     ctx["positions_by_root"][p.get("opportunity_id")] = p
     if _table_exists(db, "shadow_trades"):
         batch_values: dict[str, list[float]] = defaultdict(list)
-        for rows in _select_in(db, "SELECT * FROM shadow_trades WHERE opportunity_id IN ({})", root_ids):
+        for rows in _select_in(
+            db,
+            "SELECT * FROM shadow_trades WHERE opportunity_id IN ({}) AND datetime(created_at) >= datetime(?)",
+            root_ids,
+            extra_params=(cutoff,),
+        ):
             for row in rows:
                 s = dict(row)
                 if s.get("pnl_pct") is not None and s.get("batch_id"):
@@ -1102,14 +1117,26 @@ def _select_rows(db, table: str, cutoff: str, extra: str | None = None, *, colum
     return db.execute(f"SELECT {columns} FROM {table}{where}", params).fetchall()
 
 
-def _select_in(db, sql_template: str, values: list[Any], *, chunk_size: int = 800):
+def _select_in(
+    db, sql_template: str, values: list[Any], *, chunk_size: int = 800,
+    extra_params: tuple = (),
+):
+    """Yield fetchall() results for each chunk of values slotted into sql_template.
+
+    sql_template must contain exactly one `{}` placeholder for the IN list.
+    Any extra `?` placeholders (e.g. AND datetime(col) >= datetime(?)) should
+    be supplied via extra_params; they are appended after each chunk.
+    """
     unique = list(dict.fromkeys(str(v) for v in values if v is not None))
     for idx in range(0, len(unique), chunk_size):
         chunk = unique[idx:idx + chunk_size]
         if not chunk:
             continue
         placeholders = ",".join("?" for _ in chunk)
-        yield db.execute(sql_template.format(placeholders), tuple(chunk)).fetchall()
+        yield db.execute(
+            sql_template.format(placeholders),
+            tuple(chunk) + extra_params,
+        ).fetchall()
 
 
 def _is_newer(row: dict, current: dict | None, key: str) -> bool:

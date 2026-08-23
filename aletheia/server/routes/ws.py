@@ -26,11 +26,57 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
+import time
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 router = APIRouter()
 log = logging.getLogger(__name__)
+
+# ── WebSocket admission ticket store ─────────────────────────────────────────
+# Short-lived single-use tokens issued over authenticated HTTP so the browser
+# WebSocket API (which cannot attach custom headers) can authenticate the upgrade.
+
+_WS_TICKET_TTL = 30  # seconds
+_ws_tickets: dict[str, float] = {}  # token -> expires_at (monotonic)
+
+
+def _issue_ws_ticket() -> str:
+    _cleanup_expired_tickets()
+    token = secrets.token_urlsafe(32)
+    _ws_tickets[token] = time.monotonic() + _WS_TICKET_TTL
+    return token
+
+
+def _consume_ws_ticket(token: str) -> bool:
+    """Returns True and removes the ticket if valid and unexpired (single-use)."""
+    expires = _ws_tickets.pop(token, None)
+    return expires is not None and time.monotonic() <= expires
+
+
+def _cleanup_expired_tickets() -> None:
+    now = time.monotonic()
+    for t in [t for t, exp in _ws_tickets.items() if exp <= now]:
+        del _ws_tickets[t]
+
+
+def _ws_remote_auth_required() -> bool:
+    """True when tunnel or token-required Remote Control is active."""
+    from aletheia.config.loader import load_config
+    try:
+        cfg = load_config(persist_migrations=False)
+    except Exception:
+        return False
+    tunnel_enabled = bool(getattr(getattr(cfg, "tunnel", None), "enabled", False))
+    remote_control = getattr(cfg, "remote_control", None)
+    return tunnel_enabled or bool(
+        getattr(remote_control, "enabled", False)
+        and getattr(remote_control, "require_token", False)
+    )
+
+
+_MAX_WS_CLIENTS = 50  # ponytail: global cap; raise if many simultaneous dashboard tabs needed
 
 # ── Regular-tier fingerprint queries (500 ms) ────────────────────────────────
 # Each returns a single scalar that changes when the underlying data changes.
@@ -206,12 +252,33 @@ async def _regular_loop(hub: _RealtimeHub, loop: asyncio.AbstractEventLoop) -> N
             last = dict(current)
 
 
+@router.get("/ws/ticket")
+async def issue_ws_ticket() -> dict:
+    """Issue a short-lived single-use WebSocket connection ticket.
+
+    Protected by the HTTP owner-auth middleware. Callers pass the returned
+    ticket as ?ticket= on the /api/ws upgrade request, since the browser
+    WebSocket API cannot attach X-Aletheia-Token headers.
+    """
+    return {"ticket": _issue_ws_ticket(), "ttl_seconds": _WS_TICKET_TTL}
+
+
 @router.websocket("/ws")
-async def ws_realtime(ws: WebSocket) -> None:
+async def ws_realtime(
+    ws: WebSocket,
+    ticket: str | None = Query(default=None),
+) -> None:
     """
-    Push-notification WebSocket.  Accepts any connection; pushes category
-    names only (no data payloads).  The frontend fetches actual data via REST.
+    Push-notification WebSocket.  Pushes category names only (no data payloads).
+    Requires a valid ?ticket= when Remote Control owner auth is active.
     """
+    if _ws_remote_auth_required():
+        if not ticket or not _consume_ws_ticket(ticket):
+            await ws.close(code=4403)
+            return
+    if len(_hub.clients) >= _MAX_WS_CLIENTS:
+        await ws.close(code=1013)
+        return
     await ws.accept()
     loop = asyncio.get_event_loop()
 

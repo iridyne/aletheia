@@ -764,7 +764,7 @@ async def operator_status():
 
 
 @router.post("/branches")
-async def operator_create_branch(payload: OperatorBranchCreateRequest):
+def operator_create_branch(payload: OperatorBranchCreateRequest):
     kind = _normalize_session_kind(payload.kind)
     title = (payload.title or payload.user_input or "").strip()
     if not title:
@@ -822,7 +822,7 @@ async def operator_create_branch(payload: OperatorBranchCreateRequest):
 
 
 @router.post("/active-branch")
-async def operator_select_active_branch(payload: OperatorActiveBranchSelectRequest):
+def operator_select_active_branch(payload: OperatorActiveBranchSelectRequest):
     requested_session_id = payload.session_id.strip()
     if not requested_session_id:
         raise HTTPException(400, "Session id is required")
@@ -847,12 +847,12 @@ async def operator_select_active_branch(payload: OperatorActiveBranchSelectReque
 
 
 @router.get("/sessions")
-async def operator_sessions(limit: int = 50):
+def operator_sessions(limit: int = 50):
     return list_sessions(limit=limit)
 
 
 @router.get("/sessions/{session_id}")
-async def operator_session_detail(session_id: str):
+def operator_session_detail(session_id: str):
     session = get_session(session_id)
     if session is None:
         raise HTTPException(404, "Session not found")
@@ -865,7 +865,7 @@ async def operator_session_detail(session_id: str):
 
 
 @router.get("/sessions/{session_id}/messages")
-async def operator_session_messages(session_id: str, limit: int = 200):
+def operator_session_messages(session_id: str, limit: int = 200):
     session = get_session(session_id)
     if session is None:
         raise HTTPException(404, "Session not found")
@@ -873,12 +873,12 @@ async def operator_session_messages(session_id: str, limit: int = 200):
 
 
 @router.get("/tasks")
-async def operator_tasks(limit: int = 50, status: str | None = None):
+def operator_tasks(limit: int = 50, status: str | None = None):
     return list_tasks(limit=max(1, min(limit, 500)), status=status)
 
 
 @router.get("/tasks/{task_id}")
-async def operator_task_detail(task_id: str):
+def operator_task_detail(task_id: str):
     task = get_task(task_id)
     if task is None:
         raise HTTPException(404, "Task not found")
@@ -886,17 +886,17 @@ async def operator_task_detail(task_id: str):
 
 
 @router.get("/commands")
-async def operator_commands(limit: int = 100, session_id: str | None = None, query: str | None = None):
+def operator_commands(limit: int = 100, session_id: str | None = None, query: str | None = None):
     return list_commands(session_id=session_id, limit=limit, query=query)
 
 
 @router.get("/extensions")
-async def operator_extensions(limit: int = 100, status: str | None = None):
+def operator_extensions(limit: int = 100, status: str | None = None):
     return list_extensions(status=status, limit=limit)
 
 
 @router.get("/extensions/{extension_id}")
-async def operator_extension_detail(extension_id: str):
+def operator_extension_detail(extension_id: str):
     extension = get_extension(extension_id)
     if extension is None:
         raise HTTPException(404, "Extension not found")
@@ -907,7 +907,7 @@ async def operator_extension_detail(extension_id: str):
 
 
 @router.post("/extensions/{extension_id}/enable")
-async def operator_enable_extension(extension_id: str, payload: OperatorExtensionEnableRequest):
+def operator_enable_extension(extension_id: str, payload: OperatorExtensionEnableRequest):
     extension = get_extension(extension_id)
     if extension is None:
         raise HTTPException(404, "Extension not found")
@@ -954,7 +954,7 @@ async def operator_enable_extension(extension_id: str, payload: OperatorExtensio
 
 
 @router.get("/recommendations")
-async def operator_recommendations(limit: int = 10):
+def operator_recommendations(limit: int = 10):
     limit = max(1, min(limit, 50))
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return build_recommendations(limit=limit)
@@ -974,7 +974,7 @@ async def operator_recommendations(limit: int = 10):
 
 
 @router.get("/loop/latest")
-async def operator_loop_latest(limit: int = 5):
+def operator_loop_latest(limit: int = 5):
     """Get the most recent operator loop assessments."""
     from aletheia.storage.repositories import list_knowledge_items
     items = list_knowledge_items(item_type="operator_assessment", limit=limit)
@@ -1228,7 +1228,7 @@ async def _execute_internal_command(command_name: str, payload: OperatorInternal
 
 
 @router.post("/internal/decisions")
-async def operator_create_decision(payload: OperatorDecisionCreate):
+def operator_create_decision(payload: OperatorDecisionCreate):
     return _create_typed_artifact(
         artifact_type="operator_decision",
         title=payload.title,
@@ -1239,7 +1239,7 @@ async def operator_create_decision(payload: OperatorDecisionCreate):
 
 
 @router.post("/internal/repair-decisions")
-async def operator_create_repair_decision(payload: OperatorDecisionCreate):
+def operator_create_repair_decision(payload: OperatorDecisionCreate):
     return _create_typed_artifact(
         artifact_type="repair_decision",
         title=payload.title,
@@ -1250,7 +1250,7 @@ async def operator_create_repair_decision(payload: OperatorDecisionCreate):
 
 
 @router.post("/internal/command-intents")
-async def operator_create_command_intent(payload: OperatorCommandIntentCreate):
+def operator_create_command_intent(payload: OperatorCommandIntentCreate):
     return _create_typed_artifact(
         artifact_type="command_intent",
         title=payload.summary or f"Command intent: {payload.command_name}",
@@ -1284,7 +1284,7 @@ async def operator_internal_command(command_name: str, payload: OperatorInternal
 
 
 @router.post("/internal/context/query")
-async def operator_context_query(payload: OperatorContextQueryRequest):
+def operator_context_query(payload: OperatorContextQueryRequest):
     return _resolve_context_query(
         session_id=payload.session_id,
         profile=payload.profile,
@@ -1302,7 +1302,7 @@ def operator_heartbeat(payload: OperatorHeartbeatIn):
 
 
 @router.post("/internal/tasks")
-async def operator_create_task(payload: OperatorTaskCreate):
+def operator_create_task(payload: OperatorTaskCreate):
     task_id = create_task(**payload.model_dump())
     task = get_task(task_id)
     if task is None:
@@ -1321,7 +1321,7 @@ async def operator_create_task(payload: OperatorTaskCreate):
 
 
 @router.patch("/internal/tasks/{task_id}")
-async def operator_update_task(task_id: str, payload: OperatorTaskUpdate):
+def operator_update_task(task_id: str, payload: OperatorTaskUpdate):
     if get_task(task_id) is None:
         # Idempotent: client marking a terminal state on an already-evicted task
         # (e.g. after gateway restart) gets a 200 no-op instead of 404, so the
@@ -1348,7 +1348,7 @@ async def operator_update_task(task_id: str, payload: OperatorTaskUpdate):
 
 
 @router.post("/internal/messages")
-async def operator_create_message(payload: OperatorMessageCreate):
+def operator_create_message(payload: OperatorMessageCreate):
     message_id = append_message(**payload.model_dump())
     messages = list_messages(payload.session_id, limit=200)
     message = next((item for item in reversed(messages) if item["id"] == message_id), None)
@@ -1358,7 +1358,7 @@ async def operator_create_message(payload: OperatorMessageCreate):
 
 
 @router.post("/internal/sessions")
-async def operator_create_session(payload: OperatorSessionCreate):
+def operator_create_session(payload: OperatorSessionCreate):
     create_session_record(
         session_id=payload.id,
         user_input=payload.user_input,
@@ -1373,7 +1373,7 @@ async def operator_create_session(payload: OperatorSessionCreate):
 
 
 @router.post("/internal/events")
-async def operator_create_event(payload: OperatorEventCreate):
+def operator_create_event(payload: OperatorEventCreate):
     event_id = create_event(**payload.model_dump())
     events = list_events(limit=200)
     event = next((item for item in events if item["id"] == event_id), None)
@@ -1383,7 +1383,7 @@ async def operator_create_event(payload: OperatorEventCreate):
 
 
 @router.post("/internal/artifacts")
-async def operator_create_artifact(payload: OperatorArtifactCreate):
+def operator_create_artifact(payload: OperatorArtifactCreate):
     # Retention guardrail: reject the well-known stub strategy_evaluation
     # artifact whose summary is literally "Unknown command: ..." — that
     # payload originates from an intent-classification bug upstream and is
@@ -1422,7 +1422,7 @@ async def operator_create_artifact(payload: OperatorArtifactCreate):
 
 
 @router.post("/internal/compact")
-async def operator_compact(date: str | None = None):
+def operator_compact(date: str | None = None):
     from aletheia.agent_shell.compaction import build_operator_daily_summary
 
     cfg = load_config()

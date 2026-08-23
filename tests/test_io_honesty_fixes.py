@@ -726,6 +726,79 @@ def test_import_valid_bundle_commits_all_rows(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# #1171 — import binds later rows by column name, not object order
+# ---------------------------------------------------------------------------
+
+
+def test_import_row_values_bound_by_column_name_not_order(tmp_path, monkeypatch):
+    """#1171: two rows with the same keys in opposite orders must store each
+    value under the correct column, not under the column that shares its
+    position with the first row's key order."""
+    from aletheia.storage.hashing import sha256_file
+
+    _setup_env(tmp_path, monkeypatch)
+
+    row_a = {
+        "lesson_id": "bind-order-A",
+        "source_type": "test",
+        "source_id": "s1",
+        "category": "risk",
+        "severity": "medium",
+        "status": "accepted",
+        "summary": "row A summary",
+        "evidence_json": "{}",
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    # Same keys, reversed order — values must still land in the right columns.
+    row_b_keys = list(row_a.keys())[::-1]
+    row_b = {k: row_a[k] if k != "lesson_id" and k != "summary" else
+             ("bind-order-B" if k == "lesson_id" else "row B summary")
+             for k in row_b_keys}
+
+    staging = tmp_path / "staging_bind_order"
+    staging.mkdir()
+    db_dir = staging / "db"
+    db_dir.mkdir()
+    jsonl_path = db_dir / "ps_lessons.jsonl"
+    jsonl_path.write_text(
+        json.dumps(row_a) + "\n" + json.dumps(row_b) + "\n",
+        encoding="utf-8",
+    )
+    (staging / "checksums.txt").write_text(
+        f"{sha256_file(jsonl_path)}  db/ps_lessons.jsonl\n", encoding="utf-8"
+    )
+    archive = tmp_path / "bind_order.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging, arcname="bind_order")
+
+    from aletheia.sync.importer import ImportService
+    result = ImportService(data_dir=tmp_path).merge(archive)
+
+    assert not result.errors, f"unexpected errors: {result.errors}"
+    assert result.new_rows.get("ps_lessons") == 2
+
+    conn = sqlite3.connect(str(tmp_path / "test.db"))
+    conn.row_factory = sqlite3.Row
+    stored = {
+        r["lesson_id"]: dict(r)
+        for r in conn.execute(
+            "SELECT * FROM ps_lessons WHERE lesson_id IN ('bind-order-A','bind-order-B')"
+        ).fetchall()
+    }
+    conn.close()
+
+    assert stored["bind-order-A"]["summary"] == "row A summary", (
+        f"row A summary corrupted: {stored['bind-order-A']['summary']!r}"
+    )
+    assert stored["bind-order-B"]["summary"] == "row B summary", (
+        f"row B summary corrupted (column-order mismatch): {stored['bind-order-B']['summary']!r}"
+    )
+    assert stored["bind-order-B"]["source_type"] == "test", (
+        f"row B source_type corrupted: {stored['bind-order-B']['source_type']!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # #277 — concurrent imports use distinct staging directories
 # ---------------------------------------------------------------------------
 

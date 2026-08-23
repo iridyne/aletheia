@@ -58,7 +58,7 @@ def _make_config_yaml(tmp_path, **overrides):
             "default_stop_loss_pct": 2.0,
             "default_notional_usdt": 25.0,
         },
-        "risk": {"max_demo_position_notional_usdt": 200.0},
+        "risk": {"max_demo_position_margin_usdt": 200.0},
         "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
     }
     # Deep-merge overrides into defaults (shallow: top-level section keys)
@@ -99,7 +99,7 @@ def _make_healthy_assessment():
         default_stop_loss_pct=2.0,
         max_demo_notional=200.0,
         param_drift={"min_confidence_to_trade": "neutral",
-                     "max_demo_position_notional_usdt": "neutral",
+                     "max_demo_position_margin_usdt": "neutral",
                      "default_stop_loss_pct": "neutral"},
     )
 

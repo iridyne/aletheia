@@ -231,6 +231,44 @@ def test_universe_db_fallback_uses_only_fresh_exact_venue_rows(monkeypatch):
     assert calls == [("funding", "okx"), ("oi", "okx")]
 
 
+def test_options_structure_freshness_domain_registered():
+    from aletheia.data.freshness import DOMAIN_MAX_AGE
+
+    assert "options_structure" in DOMAIN_MAX_AGE
+
+
+def test_options_structure_fresh_row_gates():
+    from aletheia.data.freshness import fresh_row
+
+    assert fresh_row(_row(timedelta(minutes=25)), "options_structure", now=NOW) is not None
+    assert fresh_row(_row(timedelta(minutes=31)), "options_structure", now=NOW) is None
+    assert fresh_row({}, "options_structure", now=NOW) is None
+    assert fresh_row({"observed_at": "not-a-date"}, "options_structure", now=NOW) is None
+
+
+def test_options_structure_future_timestamp_blocked():
+    from aletheia.data.freshness import assess_freshness
+
+    verdict = assess_freshness(
+        {"observed_at": (NOW + timedelta(minutes=6)).isoformat()},
+        "options_structure",
+        now=NOW,
+    )
+    assert verdict.state == "future"
+    assert verdict.usable is False
+
+
+def test_render_enriched_context_md_shows_options_observed_at():
+    from aletheia.data.context_builder import render_enriched_context_md
+
+    fresh_opts = {
+        "BTC": _row(timedelta(minutes=5), gamma_regime="negative", net_gex_estimate=-1_000_000_000),
+    }
+    out = render_enriched_context_md(["BTC/USDT"], {}, {}, None, options_structure=fresh_opts)
+    assert "gamma regime" in out
+    assert "as-of" in out
+
+
 def test_aggregated_derivatives_are_not_primary_venue_rows():
     from aletheia.storage.repositories import _latest_deriv_where
 

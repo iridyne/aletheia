@@ -165,6 +165,52 @@ export interface components {
             prompt_guardrail_detection_enabled: boolean;
         };
         /**
+         * EmitDedupConfig
+         * @description Cross-lifecycle dedup guards for universe signal emission (#1325).
+         */
+        EmitDedupConfig: {
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Fingerprint Memory Enabled
+             * @default false
+             */
+            fingerprint_memory_enabled: boolean;
+            /**
+             * Fingerprint Memory Window Hours
+             * @default 6
+             */
+            fingerprint_memory_window_hours: number;
+            /**
+             * Repeat Decay Enabled
+             * @default false
+             */
+            repeat_decay_enabled: boolean;
+            /**
+             * Repeat Decay Factor
+             * @default 0.85
+             */
+            repeat_decay_factor: number;
+            /**
+             * Repeat Decay Window Hours
+             * @default 6
+             */
+            repeat_decay_window_hours: number;
+            /**
+             * Terminal Cooldown Enabled
+             * @default false
+             */
+            terminal_cooldown_enabled: boolean;
+            /**
+             * Terminal Cooldown Minutes
+             * @default 60
+             */
+            terminal_cooldown_minutes: number;
+        };
+        /**
          * EventTriggerConfig
          * @description Real-time-ish event detection on price_feed ticks.
          */
@@ -1267,10 +1313,10 @@ export interface components {
              */
             max_per_symbol_entries: number;
             /**
-             * Max Position Notional Usdt
+             * Max Position Margin Usdt
              * @default 50
              */
-            max_position_notional_usdt: number;
+            max_position_margin_usdt: number;
             /**
              * Max Total Exposure Pct
              * @default 5
@@ -1316,6 +1362,26 @@ export interface components {
             correlation_guard_enabled: boolean;
             demo: components["schemas"]["ModeRiskPolicy"];
             /**
+             * Demo Family Min Expectancy
+             * @default 0
+             */
+            demo_family_min_expectancy: number | null;
+            /**
+             * Demo Family Min Samples
+             * @default 0
+             */
+            demo_family_min_samples: number;
+            /**
+             * Demo Min Regime Confidence To Enter
+             * @default 0.6
+             */
+            demo_min_regime_confidence_to_enter: number;
+            /**
+             * Demo Sideways Standdown
+             * @default true
+             */
+            demo_sideways_standdown: boolean;
+            /**
              * Futures Margin Force Close Ratio
              * @default 0.85
              */
@@ -1325,6 +1391,11 @@ export interface components {
              * @default 0.7
              */
             futures_margin_warning_ratio: number;
+            /**
+             * Horizon Due Allow Hold
+             * @default true
+             */
+            horizon_due_allow_hold: boolean;
             /**
              * Horizon Hard Backstop Mult
              * @default 3
@@ -1367,10 +1438,10 @@ export interface components {
              */
             max_daily_loss_pct: number;
             /**
-             * Max Demo Position Notional Usdt
+             * Max Demo Position Margin Usdt
              * @default 100000
              */
-            max_demo_position_notional_usdt: number;
+            max_demo_position_margin_usdt: number;
             /**
              * Max Demo Single Trade Risk Pct
              * @default 20
@@ -1422,10 +1493,10 @@ export interface components {
              */
             max_live_limited_cap_usdt: number;
             /**
-             * Max Live Position Notional Usdt
+             * Max Live Position Margin Usdt
              * @default 50
              */
-            max_live_position_notional_usdt: number;
+            max_live_position_margin_usdt: number;
             /**
              * Max Open Positions Demo
              * @default 200
@@ -1483,7 +1554,7 @@ export interface components {
             runtime_liquidation_monitor_enabled: boolean;
             /**
              * Schema Version
-             * @default 3
+             * @default 4
              */
             schema_version: number;
             /**
@@ -1524,6 +1595,8 @@ export interface components {
         };
         /** RiskEligibilityPolicy */
         RiskEligibilityPolicy: {
+            /** Family Min Expectancy */
+            family_min_expectancy?: number | null;
             /**
              * Family Min Samples
              * @default 30
@@ -1534,6 +1607,16 @@ export interface components {
              * @default 50
              */
             family_min_win_rate_pct: number;
+            /**
+             * Min Regime Confidence To Enter
+             * @default 0
+             */
+            min_regime_confidence_to_enter: number;
+            /**
+             * Sideways Standdown
+             * @default false
+             */
+            sideways_standdown: boolean;
         };
         /** RiskExitPolicy */
         RiskExitPolicy: {
@@ -1552,6 +1635,11 @@ export interface components {
              * @default 15
              */
             catastrophic_stop_pct_serenity: number;
+            /**
+             * Horizon Due Allow Hold
+             * @default true
+             */
+            horizon_due_allow_hold: boolean;
             /**
              * Horizon Hard Backstop Mult
              * @default 3
@@ -2212,11 +2300,17 @@ export interface components {
              * @default 10
              */
             core_pool_size: number;
+            emit_dedup?: components["schemas"]["EmitDedupConfig"];
             /**
              * Enabled
              * @default true
              */
             enabled: boolean;
+            /**
+             * Entry Ttl Sec
+             * @default 900
+             */
+            entry_ttl_sec: number;
             /**
              * Explore Ratio
              * @default 0.2

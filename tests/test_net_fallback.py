@@ -120,6 +120,63 @@ class TestProxyFallbackTransport:
             with pytest.raises(httpx.ReadTimeout):
                 await transport.handle_async_request(request)
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_code", [502, 503, 407])
+    async def test_proxy_error_response_closed_before_direct(self, status_code):
+        """Discarded proxy response is closed before the direct fallback request."""
+        transport = _ProxyFallbackTransport("http://127.0.0.1:7897")
+        call_order = []
+
+        proxy_response = MagicMock()
+        proxy_response.status_code = status_code
+        proxy_response.aread = AsyncMock(side_effect=lambda: call_order.append("aread"))
+        proxy_response.aclose = AsyncMock(side_effect=lambda: call_order.append("aclose"))
+
+        direct_response = httpx.Response(200)
+
+        async def _record_direct(req):
+            call_order.append("direct")
+            return direct_response
+
+        with patch.object(
+            transport._proxy_transport, "handle_async_request",
+            new_callable=AsyncMock, return_value=proxy_response,
+        ), patch.object(
+            transport._direct_transport, "handle_async_request",
+            new_callable=AsyncMock, side_effect=_record_direct,
+        ):
+            request = httpx.Request("GET", "https://example.com")
+            resp = await transport.handle_async_request(request)
+
+        assert resp.status_code == 200
+        assert call_order.count("aclose") == 1
+        assert call_order.index("aclose") < call_order.index("direct")
+
+    @pytest.mark.asyncio
+    async def test_proxy_error_response_closed_if_aread_raises(self):
+        """aclose is still called even when draining the error body raises."""
+        transport = _ProxyFallbackTransport("http://127.0.0.1:7897")
+
+        proxy_response = MagicMock()
+        proxy_response.status_code = 502
+        proxy_response.aread = AsyncMock(side_effect=Exception("stream broken"))
+        proxy_response.aclose = AsyncMock()
+
+        direct_response = httpx.Response(200)
+
+        with patch.object(
+            transport._proxy_transport, "handle_async_request",
+            new_callable=AsyncMock, return_value=proxy_response,
+        ), patch.object(
+            transport._direct_transport, "handle_async_request",
+            new_callable=AsyncMock, return_value=direct_response,
+        ):
+            request = httpx.Request("GET", "https://example.com")
+            resp = await transport.handle_async_request(request)
+
+        assert resp.status_code == 200
+        proxy_response.aclose.assert_called_once()
+
 
 class TestHttpxClientWithFallback:
     def test_returns_client_with_transport_when_proxy_available(self):

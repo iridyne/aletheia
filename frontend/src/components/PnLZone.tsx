@@ -260,7 +260,13 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
 
   const breakdown: AssetItem[] = p?.exchange_asset_breakdown ?? []
 
-  const todayRaw = p?.today_pnl
+  // #56: the backend's `today_pnl` is a legacy misnomer — lifetime uPnL of all
+  // currently-open positions plus today's realized. Prefer the pure-today
+  // realized figure (parity with AccountSnapshot); legacy only as a fallback
+  // when the realized value is absent, surfaced via the tile context.
+  const todayRealizedRaw = p?.today_realized_pnl
+  const usingLegacyToday = todayRealizedRaw == null && p?.today_pnl != null
+  const todayRaw = todayRealizedRaw ?? p?.today_pnl
   const todayComplete = p?.today_realized_pnl_complete !== false
   const todayNum = todayRaw == null ? null : Number(todayRaw)
   const dayPct = todayNum != null && totalRaw ? (todayNum / Number(totalRaw)) * 100 : null
@@ -343,9 +349,11 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
             tone={toneOf(todayNum)}
             context={todayNum == null
               ? todayComplete ? 'no data' : 'funding or close economics unavailable'
-              : !todayComplete
-                ? dayPct != null ? `${fmtCompactSigned(dayPct)}% · some closes unverified` : 'some closes unverified'
-                : dayPct != null ? `${fmtCompactSigned(dayPct)}% of managed` : undefined}
+              : usingLegacyToday
+                ? 'includes open-position uPnL (legacy today_pnl)'
+                : !todayComplete
+                  ? dayPct != null ? `${fmtCompactSigned(dayPct)}% · some closes unverified` : 'some closes unverified'
+                  : dayPct != null ? `${fmtCompactSigned(dayPct)}% of managed` : undefined}
             onClick={() => navigate('/trades?tab=blotter')}
             tooltip={todayPnlBySymbol}
           />

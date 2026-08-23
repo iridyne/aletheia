@@ -104,6 +104,86 @@ def test_b2_evidence_excludes_other_epochs_and_score_buckets(tmp_path, monkeypat
     assert summary["avg_net_pct"] == 1.0
 
 
+def test_b2_evidence_excludes_future_and_impossible_settlements(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    from aletheia.analytics.pi_evidence import build_b2_evidence_summary
+    from aletheia.storage.sqlite import get_db
+
+    for index in range(20):
+        _insert_b2_candidate(index=index, epoch="b2-current", bucket="high_score", net=1.0)
+    _insert_b2_candidate(index=100, epoch="b2-current", bucket="high_score", net=-100.0)
+    _insert_b2_candidate(index=101, epoch="b2-current", bucket="high_score", net=-100.0)
+
+    now = datetime.now(timezone.utc)
+    db = get_db()
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET settled_at=?, cost_model_version=? "
+        "WHERE id='outcome-100'",
+        ((now + timedelta(hours=1)).isoformat(), "invalid-future-cost-model"),
+    )
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET due_at=?, settled_at=? WHERE id='outcome-101'",
+        ((now - timedelta(hours=1)).isoformat(), (now - timedelta(hours=2)).isoformat()),
+    )
+    db.commit()
+
+    summary = build_b2_evidence_summary({
+        "opportunity_id": "current", "scanner_family": "momentum",
+        "direction": "long", "market_type": "usdt_futures", "trade_score": 51.0,
+    }, policy_epoch_id="b2-current")
+
+    assert summary["n_total"] == 22
+    assert summary["n_net"] == 20
+    assert summary["outcome_coverage"] == 0.9091
+    assert summary["avg_net_pct"] == 1.0
+    assert summary["shrunk_avg_net_pct"] == 0.5
+    assert summary["status"] == "qualified_positive"
+    assert summary["directional_verdict"] == "positive"
+
+
+def test_b2_evidence_does_not_count_null_opportunity_identity(monkeypatch):
+    from aletheia.analytics.pi_evidence import build_b2_evidence_summary
+    from aletheia.storage import sqlite as sqlite_storage
+
+    now = datetime.now(timezone.utc)
+    rows = [{
+        "opportunity_id": None,
+        "status": "settled",
+        "entry_ts": (now - timedelta(hours=25)).isoformat(),
+        "due_at": (now - timedelta(hours=1)).isoformat(),
+        "settled_at": now.isoformat(),
+        "direction": "long",
+        "horizon": "24h",
+        "outcome_candidate_key": "pi_decision:null-opportunity",
+        "net_return_pct": 1.0,
+        "cost_model_version": "cost-v1",
+    }]
+
+    class _Result:
+        def fetchall(self):
+            return rows
+
+    class _DB:
+        def execute(self, *_args, **_kwargs):
+            return _Result()
+
+    monkeypatch.setattr(sqlite_storage, "get_db", lambda: _DB())
+
+    summary = build_b2_evidence_summary({
+        "scanner_family": "momentum",
+        "direction": "long",
+        "market_type": "perp",
+        "trade_score": 51.0,
+    }, policy_epoch_id="b2-current")
+
+    assert summary["n_total"] == 0
+    assert summary["n_net"] == 0
+    assert summary["outcome_coverage"] == 0.0
+    assert summary["avg_net_pct"] is None
+    assert summary["shrunk_avg_net_pct"] is None
+    assert summary["cost_model_version"] is None
+
+
 def test_b2_summary_is_identical_for_assessment_bull_and_bear(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     from aletheia.agent_shell.trading_decision import (

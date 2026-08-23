@@ -1549,14 +1549,14 @@ test('recommendation engine surfaces risk boundary change proposals from backend
         {
           id: 'risk-1',
           proposal_id: 'proposal-1',
-          violations: ['exceeds_demo_position_notional:300.0>200.0'],
+          violations: ['exceeds_demo_position_margin:300.0>200.0'],
         },
       ],
       recent_risk_boundary_proposals: [],
       needs_operator_risk_boundary_proposals: [
         {
           boundary_key: 'max_demo_position_notional_usdt',
-          violation_kind: 'exceeds_demo_position_notional',
+          violation_kind: 'exceeds_demo_position_margin',
           risk_mode: 'demo',
           policy_id: 'demo-policy',
           policy_revision: 2,
@@ -1568,8 +1568,8 @@ test('recommendation engine surfaces risk boundary change proposals from backend
             max_demo_position_notional_usdt: 300,
           },
           summary:
-            'Recent risk rejections repeatedly hit the demo position-notional cap and should be proposed for human review.',
-          sample_violations: ['exceeds_demo_position_notional:300.0>200.0'],
+            'Recent risk rejections repeatedly hit the demo position-margin cap and should be proposed for human review.',
+          sample_violations: ['exceeds_demo_position_margin:300.0>200.0'],
           decision_ids: ['risk-1', 'risk-2'],
         },
       ],
@@ -4349,15 +4349,39 @@ test('operator loop refreshes stale market observer activity through typed run_m
   const snapshot = makeSnapshot()
   const { backend, calls } = makeFakeBackend(snapshot)
   const fiftyMinutesAgo = new Date(Date.now() - 50 * 60 * 1000).toISOString()
-  backend.getAgentRuns = async () =>
-    [
+  const freshTimestamp = new Date().toISOString()
+  // First getAgentRuns call (pre-command, from loadSubsystemReviewData): stale — triggers recommendation.
+  // Second getAgentRuns call (post-command verification): fresh — proves condition resolved.
+  let agentRunCallCount = 0
+  backend.getAgentRuns = async () => {
+    agentRunCallCount += 1
+    if (agentRunCallCount === 1) {
+      return [
+        {
+          id: 'run-market-observer-stale',
+          agent_name: 'market_observer',
+          trigger_type: 'scheduled',
+          permission_mode: 'Observe',
+          started_at: fiftyMinutesAgo,
+          ended_at: fiftyMinutesAgo,
+          status: 'completed',
+          model_provider: null,
+          model_name: null,
+          tools_called: '[]',
+          outputs_created: '[]',
+          errors: '[]',
+          cost_estimate: null,
+        },
+      ] satisfies AgentRunSummary[]
+    }
+    return [
       {
-        id: 'run-market-observer-stale',
+        id: 'run-market-observer-after-refresh',
         agent_name: 'market_observer',
-        trigger_type: 'scheduled',
+        trigger_type: 'manual',
         permission_mode: 'Observe',
-        started_at: fiftyMinutesAgo,
-        ended_at: fiftyMinutesAgo,
+        started_at: freshTimestamp,
+        ended_at: freshTimestamp,
         status: 'completed',
         model_provider: null,
         model_name: null,
@@ -4367,6 +4391,7 @@ test('operator loop refreshes stale market observer activity through typed run_m
         cost_estimate: null,
       },
     ] satisfies AgentRunSummary[]
+  }
   backend.executeOperatorCommand = async (commandName, payload) => {
     calls.executedCommands.push({ commandName, payload })
     return {
@@ -4425,6 +4450,257 @@ test('operator loop refreshes stale market observer activity through typed run_m
     String(calls.updatedTasks[0].payload.output_data?.summary || ''),
     /Triggered manual market scan/i,
   )
+  assert.equal(calls.updatedTasks[0].payload.output_data?.verification, 'resolved')
+  assert.equal(calls.updatedTasks[0].payload.output_data?.verified_run_id, 'run-market-observer-after-refresh')
+  // Verification used a fresh read — exactly two getAgentRuns calls total.
+  assert.equal(agentRunCallCount, 2)
+  const refreshedEvent = calls.createdEvents.find(e => e.event_type === 'market_scan_refreshed')
+  assert.ok(refreshedEvent, 'market_scan_refreshed event must be emitted on resolved path')
+  assert.equal((refreshedEvent?.payload as Record<string, unknown>)?.verification, 'resolved')
+})
+
+test('operator loop marks market scan task as failed when command succeeds but Market Observer state remains stale after verification', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  const fiftyMinutesAgo = new Date(Date.now() - 50 * 60 * 1000).toISOString()
+  // Both pre-command and post-command getAgentRuns calls return the same stale run.
+  backend.getAgentRuns = async () =>
+    [
+      {
+        id: 'run-market-observer-stale-forever',
+        agent_name: 'market_observer',
+        trigger_type: 'scheduled',
+        permission_mode: 'Observe',
+        started_at: fiftyMinutesAgo,
+        ended_at: fiftyMinutesAgo,
+        status: 'completed',
+        model_provider: null,
+        model_name: null,
+        tools_called: '[]',
+        outputs_created: '[]',
+        errors: '[]',
+        cost_estimate: null,
+      },
+    ] satisfies AgentRunSummary[]
+  backend.executeOperatorCommand = async (commandName, payload) => {
+    calls.executedCommands.push({ commandName, payload })
+    return {
+      command: commandName,
+      permitted: true,
+      response: 'Market scan triggered.',
+      result: { run: { run_id: 'run-stale-check-1', status: 'completed' } },
+      action: null,
+      risk_level: 'operational',
+      needs_confirmation: false,
+      session_id: payload.session_id || 'operator-main',
+    }
+  }
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'PaperAuto',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, true)
+  assert.equal(calls.executedCommands.length, 1)
+  assert.equal(calls.executedCommands[0].commandName, 'run_market_scan')
+  // Task must be failed, not completed — command success does not equal condition resolved.
+  assert.equal(calls.updatedTasks.length, 1)
+  assert.equal(calls.updatedTasks[0].payload.status, 'failed')
+  assert.equal(calls.updatedTasks[0].payload.output_data?.verification, 'unresolved')
+  assert.match(String(calls.updatedTasks[0].payload.error || ''), /stale after verification/i)
+  const failedEvent = calls.createdEvents.find(e => e.event_type === 'market_scan_refresh_failed')
+  assert.ok(failedEvent, 'market_scan_refresh_failed event must be emitted on unresolved path')
+  assert.equal((failedEvent?.payload as Record<string, unknown>)?.verification, 'unresolved')
+  // market_scan_refreshed must NOT be emitted — condition was not verified.
+  assert.equal(calls.createdEvents.some(e => e.event_type === 'market_scan_refreshed'), false)
+})
+
+test('operator loop marks market scan task as failed when post-command authoritative read is unavailable', async () => {
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  const fiftyMinutesAgo = new Date(Date.now() - 50 * 60 * 1000).toISOString()
+  let agentRunCallCount = 0
+  backend.getAgentRuns = async () => {
+    agentRunCallCount += 1
+    if (agentRunCallCount === 1) {
+      return [
+        {
+          id: 'run-market-observer-stale-unavail',
+          agent_name: 'market_observer',
+          trigger_type: 'scheduled',
+          permission_mode: 'Observe',
+          started_at: fiftyMinutesAgo,
+          ended_at: fiftyMinutesAgo,
+          status: 'completed',
+          model_provider: null,
+          model_name: null,
+          tools_called: '[]',
+          outputs_created: '[]',
+          errors: '[]',
+          cost_estimate: null,
+        },
+      ] satisfies AgentRunSummary[]
+    }
+    // Second call (post-command verification) fails — authoritative state unavailable.
+    throw new Error('gateway_timeout: agent-runs endpoint unreachable')
+  }
+  backend.executeOperatorCommand = async (commandName, payload) => {
+    calls.executedCommands.push({ commandName, payload })
+    return {
+      command: commandName,
+      permitted: true,
+      response: 'Market scan triggered.',
+      result: { run: { run_id: 'run-unavail-check-1', status: 'completed' } },
+      action: null,
+      risk_level: 'operational',
+      needs_confirmation: false,
+      session_id: payload.session_id || 'operator-main',
+    }
+  }
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'PaperAuto',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  const ok = await loop.runOnce()
+
+  assert.equal(ok, true)
+  assert.equal(calls.executedCommands.length, 1)
+  assert.equal(calls.executedCommands[0].commandName, 'run_market_scan')
+  // Task must be failed — verification read was unavailable.
+  assert.equal(calls.updatedTasks.length, 1)
+  assert.equal(calls.updatedTasks[0].payload.status, 'failed')
+  assert.equal(calls.updatedTasks[0].payload.output_data?.verification, 'unavailable')
+  assert.match(String(calls.updatedTasks[0].payload.error || ''), /could not be read for verification/i)
+  const failedEvent = calls.createdEvents.find(e => e.event_type === 'market_scan_refresh_failed')
+  assert.ok(failedEvent)
+  assert.equal((failedEvent?.payload as Record<string, unknown>)?.verification, 'unavailable')
+  // market_scan_refreshed must NOT be emitted — verification was not obtained.
+  assert.equal(calls.createdEvents.some(e => e.event_type === 'market_scan_refreshed'), false)
+})
+
+test('market scan post-action verification performs a fresh getAgentRuns read not the pre-command snapshot', async () => {
+  // The pre-command cached data is stale — it triggered the recommendation.
+  // After the command, the verification must call getAgentRuns() directly, not reuse
+  // the cached subsystem data. This test proves two separate reads happen.
+  const snapshot = makeSnapshot()
+  const { backend, calls } = makeFakeBackend(snapshot)
+  const fiftyMinutesAgo = new Date(Date.now() - 50 * 60 * 1000).toISOString()
+  const freshTimestamp = new Date().toISOString()
+  let agentRunCallCount = 0
+  backend.getAgentRuns = async () => {
+    agentRunCallCount += 1
+    // Pre-command read: stale
+    if (agentRunCallCount === 1) {
+      return [
+        {
+          id: 'pre-command-stale-run',
+          agent_name: 'market_observer',
+          trigger_type: 'scheduled',
+          permission_mode: 'Observe',
+          started_at: fiftyMinutesAgo,
+          ended_at: fiftyMinutesAgo,
+          status: 'completed',
+          model_provider: null,
+          model_name: null,
+          tools_called: '[]',
+          outputs_created: '[]',
+          errors: '[]',
+          cost_estimate: null,
+        },
+      ] satisfies AgentRunSummary[]
+    }
+    // Post-command verification read: fresh
+    return [
+      {
+        id: 'post-command-fresh-run',
+        agent_name: 'market_observer',
+        trigger_type: 'manual',
+        permission_mode: 'Observe',
+        started_at: freshTimestamp,
+        ended_at: freshTimestamp,
+        status: 'completed',
+        model_provider: null,
+        model_name: null,
+        tools_called: '[]',
+        outputs_created: '[]',
+        errors: '[]',
+        cost_estimate: null,
+      },
+    ] satisfies AgentRunSummary[]
+  }
+  backend.executeOperatorCommand = async (commandName, payload) => {
+    calls.executedCommands.push({ commandName, payload })
+    return {
+      command: commandName,
+      permitted: true,
+      response: 'Market scan triggered.',
+      result: null,
+      action: null,
+      risk_level: 'operational',
+      needs_confirmation: false,
+      session_id: payload.session_id || 'operator-main',
+    }
+  }
+
+  const loop = new OperatorLoop(
+    {
+      gatewayBaseUrl: 'http://127.0.0.1:8787',
+      heartbeatIntervalSec: 10,
+      permissionMode: 'PaperAuto',
+      mainSessionId: 'operator-main',
+      modelProvider: 'pi-shell',
+      once: true,
+    },
+    {
+      backendClient: backend,
+      sessionRuntime: new SessionRuntime('operator-main'),
+      taskRuntime: new TaskRuntime(backend),
+      eventRouter: new EventRouter(backend),
+      repairEngine: new RepairEngine(),
+      recommendationEngine: new RecommendationEngine(),
+    },
+  )
+
+  await loop.runOnce()
+
+  // Two separate getAgentRuns reads must have occurred: one pre-command and one post-command.
+  assert.equal(agentRunCallCount, 2, 'exactly two getAgentRuns reads: pre-command + post-command verification')
+  // The post-command verification used the fresh run, not the stale pre-command snapshot.
+  assert.equal(calls.updatedTasks[0].payload.status, 'completed')
+  assert.equal(calls.updatedTasks[0].payload.output_data?.verified_run_id, 'post-command-fresh-run')
 })
 
 test('operator loop parents market-scan task sessions under the persisted active branch', async () => {
@@ -5992,20 +6268,20 @@ test('operator loop materializes proposal-only risk boundary decisions through t
         id: 'risk-1',
         proposal_id: 'proposal-1',
         approved: false,
-        violations: ['exceeds_demo_position_notional:300.0>200.0'],
+        violations: ['exceeds_demo_position_margin:300.0>200.0'],
       },
       {
         id: 'risk-2',
         proposal_id: 'proposal-2',
         approved: false,
-        violations: ['exceeds_demo_position_notional:300.0>200.0'],
+        violations: ['exceeds_demo_position_margin:300.0>200.0'],
       },
     ],
     recent_risk_boundary_proposals: [],
     needs_operator_risk_boundary_proposals: [
       {
         boundary_key: 'max_demo_position_notional_usdt',
-        violation_kind: 'exceeds_demo_position_notional',
+        violation_kind: 'exceeds_demo_position_margin',
         risk_mode: 'demo',
         policy_id: 'demo-policy',
         policy_revision: 2,
@@ -6017,8 +6293,8 @@ test('operator loop materializes proposal-only risk boundary decisions through t
           max_demo_position_notional_usdt: 300,
         },
         summary:
-          'Recent risk rejections repeatedly hit the demo position-notional cap and should be proposed for human review.',
-        sample_violations: ['exceeds_demo_position_notional:300.0>200.0'],
+          'Recent risk rejections repeatedly hit the demo position-margin cap and should be proposed for human review.',
+        sample_violations: ['exceeds_demo_position_margin:300.0>200.0'],
         decision_ids: ['risk-1', 'risk-2'],
       },
     ],
@@ -6318,4 +6594,93 @@ test('pi runtime adapter handles fetch errors gracefully', async () => {
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+test('recommendation engine surfaces scheduler failure cluster when two or more distinct agents fail in recent window', () => {
+  const engine = new RecommendationEngine()
+  const now = new Date().toISOString()
+  const recentAgentRuns: AgentRunSummary[] = [
+    { id: 'r1', agent_name: 'market_observer', trigger_type: 'scheduled', started_at: now, ended_at: now, status: 'failed' },
+    { id: 'r2', agent_name: 'paper_trader', trigger_type: 'scheduled', started_at: now, ended_at: now, status: 'error' },
+  ]
+  const recommendations = engine.list(
+    makeSnapshot(),
+    undefined, undefined, undefined,
+    recentAgentRuns,
+  )
+  const cluster = recommendations.find(item => item.kind === 'scheduler_failure_cluster')
+  assert.ok(cluster, 'scheduler_failure_cluster recommendation should be produced')
+  assert.equal(cluster?.severity, 'high')
+  assert.equal(cluster?.taskType, 'pi_reasoning_session')
+  assert.equal(cluster?.metadata?.failing_agent_count, 2)
+  assert.deepEqual(cluster?.metadata?.failing_agents, ['market_observer', 'paper_trader'])
+})
+
+test('recommendation engine does not surface scheduler failure cluster when only one agent fails', () => {
+  const engine = new RecommendationEngine()
+  const now = new Date().toISOString()
+  const recentAgentRuns: AgentRunSummary[] = [
+    { id: 'r1', agent_name: 'market_observer', trigger_type: 'scheduled', started_at: now, ended_at: now, status: 'failed' },
+    { id: 'r2', agent_name: 'market_observer', trigger_type: 'scheduled', started_at: now, ended_at: now, status: 'failed' },
+  ]
+  const recommendations = engine.list(
+    makeSnapshot(),
+    undefined, undefined, undefined,
+    recentAgentRuns,
+  )
+  assert.equal(
+    recommendations.some(item => item.kind === 'scheduler_failure_cluster'),
+    false,
+    'should not fire when only one distinct agent fails',
+  )
+})
+
+test('recommendation engine surfaces open position rate spike when current count exceeds 2x baseline average', () => {
+  const engine = new RecommendationEngine()
+  const base = new Date(Date.now() - 60 * 60 * 1000)
+  const makeSnapshot_ = (minsAgo: number, count: number): PortfolioSnapshotRecord => ({
+    id: `snap-${minsAgo}`,
+    total_value_usdt: 1000,
+    unrealized_pnl: 0,
+    realized_pnl: 0,
+    positions_count: count,
+    execution_mode: 'paper',
+    snapshot_at: new Date(base.getTime() - minsAgo * 60 * 1000).toISOString(),
+  })
+  // current = 10 positions; baseline avg = 3 (snapshots at 10/20/30 mins ago)
+  const portfolioHistory = [
+    makeSnapshot_(0, 10),  // most recent
+    makeSnapshot_(10, 3),
+    makeSnapshot_(20, 3),
+    makeSnapshot_(30, 3),
+  ]
+  const recommendations = engine.list(
+    makeSnapshot(),
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    undefined, portfolioHistory,
+  )
+  const spike = recommendations.find(item => item.kind === 'open_position_rate_spike')
+  assert.ok(spike, 'open_position_rate_spike recommendation should be produced')
+  assert.equal(spike?.metadata?.current_count, 10)
+  assert.equal(spike?.metadata?.baseline_avg, 3)
+  assert.equal(spike?.taskType, 'pi_reasoning_session')
+})
+
+test('recommendation engine does not surface open position spike with insufficient portfolio history', () => {
+  const engine = new RecommendationEngine()
+  const now = new Date().toISOString()
+  const portfolioHistory: PortfolioSnapshotRecord[] = [
+    { id: 'snap-1', total_value_usdt: 1000, unrealized_pnl: 0, realized_pnl: 0, positions_count: 10, execution_mode: 'paper', snapshot_at: now },
+    { id: 'snap-2', total_value_usdt: 1000, unrealized_pnl: 0, realized_pnl: 0, positions_count: 2, execution_mode: 'paper', snapshot_at: now },
+  ]
+  const recommendations = engine.list(
+    makeSnapshot(),
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    undefined, portfolioHistory,
+  )
+  assert.equal(
+    recommendations.some(item => item.kind === 'open_position_rate_spike'),
+    false,
+    'should not fire with fewer than 4 snapshots (1 current + 3 baseline)',
+  )
 })

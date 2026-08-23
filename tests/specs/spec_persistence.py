@@ -132,7 +132,7 @@ def test_recovery_fsm_not_yet_wired_into_lifecycle():
 def test_gateway_status_does_not_invent_dormant_recovery_state():
     from aletheia.server.routes.persistence import get_gateway_status
 
-    assert asyncio.run(get_gateway_status()) == {
+    assert get_gateway_status() == {
         "status": "not_available",
         "freeze_reason": None,
     }

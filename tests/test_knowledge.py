@@ -253,7 +253,7 @@ async def test_post_trade_reviewer_scans_prefix_while_forward_page_stays_nonempt
 
     monkeypatch.setattr(post_trade_reviewer, "is_tool_permitted", lambda *args, **kwargs: True)
     monkeypatch.setattr(post_trade_reviewer, "eligible_strategy_outcomes", no_outcomes)
-    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda run_id: ([], []))
+    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], [], []))
 
     result = await post_trade_reviewer.run_post_trade_reviewer(permission_mode="Observe")
     assert result["errors"] == []

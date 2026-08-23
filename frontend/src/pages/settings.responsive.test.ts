@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import CSS from '../index.css?raw'
 import SETTINGS from './Settings.tsx?raw'
 
-function mediaBlock(source: string, query: string): string {
-  const start = source.indexOf(`@media ${query}`)
+function mediaBlock(source: string, query: string, from = 0): string {
+  const start = source.indexOf(`@media ${query}`, from)
   expect(start, `${query} media query is missing`).toBeGreaterThan(-1)
   const open = source.indexOf('{', start)
   let depth = 0
@@ -23,11 +23,12 @@ function stripComments(source: string): string {
 
 describe('Settings responsive shell', () => {
   const css = stripComments(CSS)
-  const tablet = mediaBlock(css, '(max-width: 1023px)')
-  const mobile = mediaBlock(css, '(max-width: 767px)')
+  const settingsStart = css.indexOf('.settings-nav {')
+  const tablet = mediaBlock(css, '(max-width: 1023px)', settingsStart)
+  const mobile = mediaBlock(css, '(max-width: 767px)', settingsStart)
 
   it('keeps the persisted nav width on desktop and caps only expanded tablet nav', () => {
-    const navBase = css.slice(css.indexOf('.settings-nav {'), css.indexOf('@media (max-width: 1023px)'))
+    const navBase = css.slice(settingsStart, css.indexOf('@media (max-width: 1023px)', settingsStart))
     expect(navBase).toContain('width: var(--settings-nav-width)')
     expect(navBase).toContain('flex: 0 0 var(--settings-nav-width)')
     expect(tablet).toMatch(/\.settings-nav:not\(\.is-collapsed\)\s*\{[\s\S]*?width:\s*220px !important/)

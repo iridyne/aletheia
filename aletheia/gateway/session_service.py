@@ -264,17 +264,35 @@ def _start_windows() -> dict:
         changed = _change_windows(True)
         if not changed.get("ok"):
             return changed
+    # #1209: try/finally guarantees DISABLE is always attempted
+    started = None
+    disable_ok = True
     try:
         started = _managed._run_schtasks(["schtasks", "/Run", "/TN", WINDOWS_TASK_NAME])
-        restored = _change_windows(False) if restore_disabled else {"ok": True}
     except Exception as exc:
         return {**current, "ok": False, "reason": "schtasks_error", "detail": type(exc).__name__}
-    if started.returncode != 0:
+    finally:
+        if restore_disabled:
+            try:
+                restored = _change_windows(False)
+                disable_ok = bool(restored.get("ok"))
+            except Exception:
+                disable_ok = False
+    if started is not None and started.returncode != 0:
         reason = "access_denied" if _managed._is_access_denied(started.stderr) else "schtasks_error"
         return {**current, "ok": False, "reason": reason, "detail": (started.stderr or "").strip()[:200]}
-    if not restored.get("ok"):
-        return {**current, "ok": False, "reason": "partial_transition", "detail": "started but enablement could not be restored"}
-    return {**current, "ok": True, "running": True}
+    # Re-read actual state after all operations
+    after = _status_windows()
+    if not disable_ok:
+        # DISABLE failed: task is running but still enabled — partial_transition
+        return {
+            **after,
+            "ok": False,
+            "reason": "partial_transition",
+            "enabled": True,
+            "detail": "started but enable-state could not be restored",
+        }
+    return {**after, "ok": True, "running": True}
 
 
 def _stop_windows() -> dict:
@@ -493,13 +511,43 @@ def _systemd_unit_path() -> Path:
     return Path.home() / ".config" / "systemd" / "user" / SYSTEMD_UNIT
 
 
+def _gateway_memory_limits() -> tuple[str, str]:
+    """Return (MemoryMax, MemoryHigh) systemd values scaled to machine RAM.
+
+    Ratios:
+      ≤2 GB → 60% / 50%   (tiny host, gateway needs headroom)
+      2-4 GB → 50% / 40%  (paper runtime baseline)
+      >4 GB  → 40% / 33%  (workstation, leave room for other services)
+
+    Falls back to conservative fixed values if psutil is unavailable.
+    """
+    try:
+        import psutil
+        total = psutil.virtual_memory().total  # bytes
+        total_mb = total // (1024 * 1024)
+        if total_mb <= 2048:
+            max_mb = int(total_mb * 0.60)
+            high_mb = int(total_mb * 0.50)
+        elif total_mb <= 4096:
+            max_mb = int(total_mb * 0.50)
+            high_mb = int(total_mb * 0.40)
+        else:
+            max_mb = int(total_mb * 0.40)
+            high_mb = int(total_mb * 0.33)
+        return f"{max_mb}M", f"{high_mb}M"
+    except Exception:
+        return "1500M", "1200M"
+
+
 def _build_systemd_unit() -> str:
     command = shlex.join(_managed._runner_command(no_browser=True))
+    mem_max, mem_high = _gateway_memory_limits()
     return (
         "[Unit]\nDescription=Aletheia Gateway user service\nAfter=network-online.target\n\n"
         "[Service]\nType=notify\n"
         f"WorkingDirectory={_PROJECT_ROOT}\nExecStart={command}\n"
         "Restart=on-failure\nRestartSec=60\nTimeoutStartSec=120\n"
+        f"MemoryMax={mem_max}\nMemoryHigh={mem_high}\n"
         "StandardOutput=journal\nStandardError=journal\n\n"
         "[Install]\nWantedBy=default.target\n"
     )
@@ -513,9 +561,15 @@ def _systemd_unit_valid(actual: str, expected: str) -> bool:
     expected_exec = [line for line in expected.splitlines() if line.startswith(prefix)]
     if len(actual_exec) != 1 or len(expected_exec) != 1:
         return False
-    if actual.replace(actual_exec[0], f"{prefix}<runner>", 1) != expected.replace(
-        expected_exec[0], f"{prefix}<runner>", 1
-    ):
+    # Normalize MemoryMax/MemoryHigh too — these vary by machine RAM
+    def _normalize(text: str, exec_line: str) -> str:
+        normalized = text.replace(exec_line, f"{prefix}<runner>", 1)
+        for mem_prefix in ("MemoryMax=", "MemoryHigh="):
+            lines = [ln for ln in normalized.splitlines() if ln.startswith(mem_prefix)]
+            if lines:
+                normalized = normalized.replace(lines[0], f"{mem_prefix}<auto>", 1)
+        return normalized
+    if _normalize(actual, actual_exec[0]) != _normalize(expected, expected_exec[0]):
         return False
     try:
         return _runner_commands_match(

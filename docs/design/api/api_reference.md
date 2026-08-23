@@ -383,10 +383,15 @@ materialization fails, the endpoint returns HTTP `500` with
 reported as all-success.
 
 The completeness check covers the complete local close history and is not capped by a dashboard display limit.
-When `economics_complete=false`, `cash_balance_usdt` remains the visible append-only ledger balance but is not
-presented as spendable: `available_balance_usdt=0` and `equity_usdt=null`. No `position_closed` cash event is
-invented for the missing result. Capacity remains frozen until the close economics and cash settlement are
-reconciled.
+When `economics_complete=false`, `cash_balance_usdt` remains the append-only ledger balance,
+`available_balance_usdt` continues to reflect confirmed cash minus reserved margin, and `equity_usdt`
+continues to reflect confirmed cash plus unrealised P&L. Only the unresolved close-economics funding delta
+is unknown; the known ledger values remain finite and spendable. No `position_closed` cash event is
+invented for the missing result. The `economics_complete=false` flag is a monitoring signal — it must not
+be interpreted as zeroing spendable balance or equity. See also
+`docs/design/contracts/execution_contract.md` §11.6 and
+`tests/specs/spec_pipeline_paper_close_materialization.py` (regression
+`test_unknown_paper_perp_funding_closes_without_zero_equivalent_cash_settlement`).
 
 ---
 

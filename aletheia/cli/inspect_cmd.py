@@ -102,7 +102,10 @@ def position_replay(
 
     from aletheia.analytics.position_replay import build_position_replay
 
-    report = build_position_replay(position_id, as_of_at=as_of_at)
+    try:
+        report = build_position_replay(position_id, as_of_at=as_of_at)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
     _output(report, json_output)
 
 
@@ -155,7 +158,10 @@ def candidate_facts(
 
     from aletheia.analytics.candidate_facts import build_candidate_facts
 
-    report = build_candidate_facts(horizon=horizon, as_of_at=as_of_at)
+    try:
+        report = build_candidate_facts(horizon=horizon, as_of_at=as_of_at)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
     _output(report, json_output)
 
 
@@ -170,7 +176,10 @@ def position_diagnosis(
     from aletheia.analytics.position_replay import build_position_replay
     from aletheia.analytics.profit_loop_diagnosis import diagnose_position_fact
 
-    fact = build_position_replay(position_id, as_of_at=as_of_at)
+    try:
+        fact = build_position_replay(position_id, as_of_at=as_of_at)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
     _output(diagnose_position_fact(fact), json_output)
 
 
@@ -185,7 +194,10 @@ def candidate_diagnosis(
     from aletheia.analytics.candidate_facts import build_candidate_facts
     from aletheia.analytics.profit_loop_diagnosis import diagnose_candidate_report
 
-    facts = build_candidate_facts(horizon=horizon, as_of_at=as_of_at)
+    try:
+        facts = build_candidate_facts(horizon=horizon, as_of_at=as_of_at)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
     _output(diagnose_candidate_report(facts), json_output)
 
 
@@ -213,7 +225,10 @@ def profit_counterfactual(
         raise typer.BadParameter("cost model must be a JSON object")
     cost_model = CostModel(**payload)
     if as_of_at is not None:
-        fact = build_position_replay(position_id, as_of_at=as_of_at)
+        try:
+            fact = build_position_replay(position_id, as_of_at=as_of_at)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc))
     else:
         fact = None
         first_failure = None
@@ -1507,7 +1522,7 @@ _RISK_VIOLATION_HINTS: dict[str, tuple[str, str]] = {
     "symbol_blocked":                      ("warning",  "Symbol is on the blocked list."),
     "symbol_not_allowed":                  ("warning",  "Symbol is not in the allowed whitelist."),
     "permission_mode_insufficient":        ("warning",  "Permission mode is insufficient for this action."),
-    "exceeds_max_position_notional":       ("warning",  "Position size exceeds the notional cap."),
+    "exceeds_max_position_margin":         ("warning",  "Position margin exceeds the cap."),
     "max_live_positions_reached":          ("warning",  "Maximum number of open live positions reached."),
     "exceeds_max_leverage":                ("warning",  "Leverage exceeds the configured cap."),
     "max_total_live_exposure_exceeded":    ("warning",  "Total live exposure exceeds the cap."),
@@ -2084,13 +2099,17 @@ def profit_loop_qualification(
         exists=True,
         file_okay=True,
         dir_okay=False,
-        help="JSON file with pre-registered cohort identity (see profit_loop_qualification.py).",
+        help="JSON file with pre-registered cohort identity.  Must include cutoff_at.",
     ),
-    cutoff_at: str = typer.Option(
-        ...,
+    cutoff_at: Optional[str] = typer.Option(
+        None,
         "--cutoff",
         "--cutoff-at",
-        help="Frozen UTC evaluation cutoff (ISO-8601 with timezone). Must be fixed before outcome inspection.",
+        help=(
+            "Optional validation check: if provided, must exactly match "
+            "registration['cutoff_at'].  Cutoff must be preregistered in the "
+            "registration file; supplying it only here is rejected."
+        ),
     ),
     output: Optional[Path] = typer.Option(
         None, "--output", help="Write the hashed verdict artifact to this path."
@@ -2103,7 +2122,8 @@ def profit_loop_qualification(
     Issue #988: prove or reject the minimum net-profitable frozen policy cohort.
 
     The registration file must be written before the first eligible prospective
-    close and must not be changed after outcome inspection begins.
+    close and must not be changed after outcome inspection begins.  All required
+    fields including cutoff_at must appear in the registration file itself.
     """
     from aletheia.analytics.profit_loop_qualification import compile_qualification_verdict
 
@@ -2111,14 +2131,17 @@ def profit_loop_qualification(
     if not isinstance(payload, dict):
         raise typer.BadParameter("registration must be a JSON object")
 
-    try:
-        datetime.fromisoformat(cutoff_at.replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        raise typer.BadParameter(
-            "invalid cutoff timestamp; use ISO-8601 with timezone", param_hint="--cutoff"
-        )
+    if cutoff_at is not None:
+        registered_cutoff = payload.get("cutoff_at")
+        if registered_cutoff != cutoff_at:
+            raise typer.BadParameter(
+                f"--cutoff {cutoff_at!r} does not match registration cutoff_at "
+                f"{registered_cutoff!r}; cutoff must be preregistered in the "
+                "registration file, not supplied at evaluation time",
+                param_hint="--cutoff",
+            )
 
-    verdict = compile_qualification_verdict(registration=payload, cutoff_at=cutoff_at)
+    verdict = compile_qualification_verdict(registration=payload)
 
     if output is not None:
         output.write_text(

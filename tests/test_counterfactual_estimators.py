@@ -10,6 +10,7 @@ from aletheia.counterfactual.estimators import (
     dr_estimate,
     ips_estimate,
 )
+from aletheia.counterfactual.propensity import build_propensity_report
 from aletheia.counterfactual.trades import persist_shadow_batch
 
 # ---------------------------------------------------------------------------
@@ -230,3 +231,72 @@ def test_calibration_dr_numeric_values():
         if band["n"] > 0:
             assert band["avg_net_pct"] is not None  # naive still present
             # DR and IPS may be None in low-n bands but should not raise
+
+
+# ---------------------------------------------------------------------------
+# Regression: mixed-policy-epoch guard (CF-I04)
+# ---------------------------------------------------------------------------
+
+
+def _insert_row_with_epoch(opp_id: str, epoch: str | None, net_pnl_pct: float = 0.3) -> None:
+    """Insert one resolved shadow row with the given policy_epoch_id."""
+    with patch("aletheia.counterfactual.trades._current_price", return_value=50000.0):
+        with patch("aletheia.counterfactual.trades._current_policy_epoch", return_value=epoch):
+            persist_shadow_batch(
+                [{"opportunity_id": opp_id, "symbol": "BTC/USDT", "direction": "long",
+                  "scanner_family": "momentum", "trade_score": 60.0}],
+                selected={"opportunity_id": opp_id, "symbol": "BTC/USDT", "direction": "long",
+                           "scanner_family": "momentum", "trade_score": 60.0},
+                top_n=5,
+            )
+    _sq._db_conn.execute(
+        "UPDATE shadow_trades SET net_pnl_pct = ? WHERE net_pnl_pct IS NULL",
+        (net_pnl_pct,),
+    )
+    _sq._db_conn.commit()
+
+
+def test_mixed_epoch_calibration_returns_error():
+    """build_calibration without explicit epoch returns mixed_policy_epoch error when window spans multiple epochs."""
+    _insert_row_with_epoch("opp-epoch-a-1", "epoch_A")
+    _insert_row_with_epoch("opp-epoch-b-1", "epoch_B")
+    report = build_calibration(days=9999)
+    assert any("mixed_policy_epoch" in e for e in report["errors"]), (
+        f"expected mixed_policy_epoch error, got: {report['errors']}"
+    )
+    assert report["bands"] == []  # no estimate produced for mixed window
+
+
+def test_mixed_epoch_with_null_rows_calibration_returns_error():
+    """NULL-epoch rows mixed with non-null epoch rows also trigger the guard."""
+    _insert_row_with_epoch("opp-null-1", None)
+    _insert_row_with_epoch("opp-epoch-c-1", "epoch_C")
+    report = build_calibration(days=9999)
+    assert any("mixed_policy_epoch" in e for e in report["errors"])
+
+
+def test_explicit_epoch_filters_correctly():
+    """Explicit policy_epoch_id skips auto-detection and counts only matching rows."""
+    _insert_row_with_epoch("opp-a-only", "epoch_A", net_pnl_pct=1.0)
+    _insert_row_with_epoch("opp-b-only", "epoch_B", net_pnl_pct=-1.0)
+    report = build_calibration(days=9999, policy_epoch_id="epoch_A")
+    assert not report["errors"]
+    total = report.get("total_candidates", 0)
+    assert total == 1, f"expected 1 candidate for epoch_A, got {total}"
+
+
+def test_single_epoch_window_auto_resolves():
+    """When all rows share one epoch, calibration auto-resolves it without error."""
+    _insert_row_with_epoch("opp-single-1", "epoch_X")
+    _insert_row_with_epoch("opp-single-2", "epoch_X")
+    report = build_calibration(days=9999)
+    assert not report["errors"]
+    assert report.get("policy_epoch_id") == "epoch_X"
+
+
+def test_mixed_epoch_propensity_returns_error():
+    """build_propensity_report without explicit epoch returns error for mixed window."""
+    _insert_row_with_epoch("opp-prop-a", "epoch_A")
+    _insert_row_with_epoch("opp-prop-b", "epoch_B")
+    report = build_propensity_report(days=9999)
+    assert any("mixed_policy_epoch" in e for e in report["errors"])

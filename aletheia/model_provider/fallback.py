@@ -2,7 +2,10 @@
 
 This module does not mutate provider config or secrets. It only retries the
 current request with alternate models when the primary model reports a
-transient capacity/rate-limit failure (429/502/503/504, "at capacity", etc.).
+transient failure (400/404/408/429/500/502/503/504, missing chat ``choices``,
+"at capacity", etc.). Structured JSON callers may append JSON-reliable models
+(glm-5.2) later in the chain without promoting them ahead of the configured
+primary, and skip models that already returned unusable JSON for this call.
 """
 
 from __future__ import annotations
@@ -18,11 +21,15 @@ import httpx
 
 from aletheia.config.loader import load_config
 from aletheia.infra.events import emit_infra_event
-from aletheia.model_provider.base import ModelProvider, ModelRequest, ModelResponse
+from aletheia.model_provider.base import (
+    ModelProvider,
+    ModelRequest,
+    ModelResponse,
+    ProviderResponseError,
+)
 from aletheia.model_provider.broker import (
     InferenceBrokerClosed,
     InferenceBrokerError,
-    InferencePolicyReload,
     InferenceQueueFull,
     InferenceRateLimitExceeded,
     InferenceTimeout,
@@ -32,7 +39,7 @@ from aletheia.model_provider import router as provider_router
 
 logger = logging.getLogger("aletheia.model_provider.fallback")
 
-_TRANSIENT_STATUS_CODES = {429, 502, 503, 504}
+_TRANSIENT_STATUS_CODES = {400, 404, 408, 429, 500, 502, 503, 504}
 _TRANSIENT_TRANSPORT_ERRORS = (
     httpx.NetworkError,
     httpx.RemoteProtocolError,
@@ -55,7 +62,10 @@ _TRANSIENT_TEXT_MARKERS = (
     "bad gateway",
     "gateway timeout",
 )
-_MAX_MODELS_PER_REQUEST = 6
+# Primary + configured fallbacks; keep headroom for the owner's 7-step SenseNova chain.
+_MAX_MODELS_PER_REQUEST = 8
+# Evidence: glm-5.2 keeps Operator JSON but is slow; keep it as a later fallback.
+_JSON_PREFERRED_MODEL_MARKERS = ("glm-5.2",)
 _COOLDOWN_FAILURE_THRESHOLD = 2
 _COOLDOWN_SEC = 300
 _MODEL_HEALTH: dict[tuple[str, str], "ModelHealthState"] = {}
@@ -93,6 +103,8 @@ class ModelHealthState:
 
 def is_transient_model_error(exc: BaseException) -> bool:
     """True for model failures worth retrying on another model."""
+    if isinstance(exc, ProviderResponseError):
+        return True
     if isinstance(exc, _TRANSIENT_TRANSPORT_ERRORS):
         return True
     status = getattr(getattr(exc, "response", None), "status_code", None)
@@ -110,6 +122,24 @@ def _clone_provider_with_model(provider: ModelProvider, model: str) -> ModelProv
     clone = copy.copy(provider)
     setattr(clone, "model", model)
     return clone
+
+
+def _parse_fallback_entry(entry: str, default_provider: str) -> tuple[str, str | None]:
+    """Parse a fallback candidate into (provider_name, model).
+
+    Plain entries (``"author/model"``) stay on the current provider.
+    Entries prefixed with ``@`` are cross-provider: ``"@provider:model"`` routes
+    the fallback to a different provider (e.g. ``"@anthropic_compatible:LongCat-2.0"``).
+    A bare ``"@provider"`` (no ``:model``) uses that provider's configured default model.
+    """
+    entry = str(entry).strip()
+    if entry.startswith("@"):
+        spec = entry[1:]
+        if ":" in spec:
+            prov, model = spec.split(":", 1)
+            return prov.strip(), model.strip()
+        return spec.strip(), None
+    return default_provider, entry
 
 
 def _state(provider_name: str, model: str) -> ModelHealthState:
@@ -308,16 +338,24 @@ async def _candidate_models(provider_name: str, provider: ModelProvider) -> list
     candidates: list[str] = []
     if primary:
         candidates.append(primary)
+    fb_models: list[str] = []
     if pcfg is not None:
-        candidates.extend(str(m).strip() for m in getattr(pcfg, "fallback_models", []) or [])
+        fb_models = [str(m).strip() for m in getattr(pcfg, "fallback_models", []) or []]
+        candidates.extend(fb_models)
 
-    # Best effort: reuse the existing endpoint/model discovery path so the
-    # runtime learns the live catalogue instead of relying only on static config.
-    try:
-        detected = await provider_router.list_models_cached(provider_name, provider)
-        candidates.extend(str(m.get("slug") or "").strip() for m in detected if isinstance(m, dict))
-    except Exception as exc:  # noqa: BLE001 - detection is advisory only
-        logger.debug("model fallback list_models failed for %s: %s", provider_name, exc)
+    # When explicit fallback models are configured we do NOT also append the
+    # provider's full live catalogue. For OpenRouter that catalogue includes
+    # paid and sibling-free models; the user constraint is "OpenRouter only ever
+    # calls free models", so explicit config must win and discovery must be
+    # suppressed to avoid injecting non-free models as fallback candidates.
+    if not fb_models:
+        # Best effort: reuse the existing endpoint/model discovery path so the
+        # runtime learns the live catalogue instead of relying only on static config.
+        try:
+            detected = await provider_router.list_models_cached(provider_name, provider)
+            candidates.extend(str(m.get("slug") or "").strip() for m in detected if isinstance(m, dict))
+        except Exception as exc:  # noqa: BLE001 - detection is advisory only
+            logger.debug("model fallback list_models failed for %s: %s", provider_name, exc)
 
     seen: set[str] = set()
     ordered: list[str] = []
@@ -329,6 +367,74 @@ async def _candidate_models(provider_name: str, provider: ModelProvider) -> list
         if len(ordered) >= _MAX_MODELS_PER_REQUEST:
             break
     return ordered
+
+
+def _json_model_rank(model: str) -> int:
+    name = str(model or "").strip().lower()
+    for idx, marker in enumerate(_JSON_PREFERRED_MODEL_MARKERS):
+        if marker in name:
+            return idx
+    if "glm" in name:
+        return len(_JSON_PREFERRED_MODEL_MARKERS)
+    return len(_JSON_PREFERRED_MODEL_MARKERS) + 1
+
+
+def _enabled_json_preferred_models() -> list[tuple[str, str]]:
+    """Return enabled providers whose primary model is JSON-reliable.
+
+    Reads model ids only. Does not inspect secrets or mutate owner config.
+    """
+    try:
+        cfg = load_config()
+    except Exception:
+        return []
+    providers = getattr(getattr(cfg, "models", None), "providers", None) or {}
+    found: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for name, pcfg in providers.items():
+        if not getattr(pcfg, "enabled", False):
+            continue
+        model = str(getattr(pcfg, "model", "") or "").strip()
+        if not model or _json_model_rank(model) != 0:
+            continue
+        key = (str(name), model)
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append(key)
+    return found
+
+
+def _order_structured_json_candidates(
+    parsed: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    """Keep configured order; append glm-5.2 later if it is missing.
+
+    Does not promote glm ahead of the deep/flash primary. If the capped
+    candidate list already contains glm, the original order is unchanged.
+    """
+    have: set[tuple[str, str]] = set(parsed)
+    already_has_glm = any(_json_model_rank(model) == 0 for _provider, model in parsed)
+    extra: list[tuple[str, str]] = []
+    if not already_has_glm:
+        for key in _enabled_json_preferred_models():
+            if key in have or not key[0] or not key[1]:
+                continue
+            extra.append(key)
+            have.add(key)
+    combined = list(parsed) + extra
+    if len(combined) <= _MAX_MODELS_PER_REQUEST:
+        return combined or list(parsed)
+    if extra and not already_has_glm:
+        # Preserve the configured primary/flash head; keep glm reachable at the tail.
+        head = list(parsed)[: _MAX_MODELS_PER_REQUEST - 1]
+        return head + extra[:1]
+    return combined[:_MAX_MODELS_PER_REQUEST] or list(parsed)
+
+
+def _excluded_model_names(request: ModelRequest) -> set[str]:
+    raw = getattr(request, "exclude_models", ()) or ()
+    return {str(model).strip().lower() for model in raw if str(model).strip()}
 
 
 def _emit_terminal_failure(
@@ -358,12 +464,6 @@ def _emit_terminal_failure(
             "llm_broker_rate_limit_exceeded",
             "LLM inference broker rate limit denied request",
             "review_provider_rate_limit",
-        ),
-        InferencePolicyReload: (
-            "info",
-            "llm_broker_policy_reload",
-            "LLM provider configuration is reloading",
-            "retry_after_policy_reload",
         ),
         InferenceTimeout: (
             "warning",
@@ -450,7 +550,12 @@ async def complete_with_fallback(
     provider_name: str | None = None,
     provider: ModelProvider | None = None,
 ) -> ModelResponse:
-    """Complete with request-level model fallback on transient model errors."""
+    """Complete with request-level model fallback on transient model errors.
+
+    Fallback candidates may be cross-provider via the ``@provider:model`` syntax,
+    so e.g. an OpenRouter free model can fall back to a different provider (longcat)
+    instead of a paid sibling.
+    """
     cfg = load_config()
     resolved_provider_name = provider_name or cfg.models.default_provider
     provider = provider or provider_router.get_provider(resolved_provider_name)
@@ -473,14 +578,41 @@ async def complete_with_fallback(
             )
             raise
 
-    requested_model = models[0]
-    skipped_cooldown = [
-        model for model in models if _is_in_cooldown(resolved_provider_name, model)
-    ]
-    models_to_try = [
-        model for model in models if not _is_in_cooldown(resolved_provider_name, model)
-    ]
-    if not models_to_try:
+    # Resolve each candidate to (provider_name, model), honoring @provider:model.
+    parsed: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for entry in models:
+        pn, md = _parse_fallback_entry(entry, resolved_provider_name)
+        if not md:
+            # bare @provider -> use its configured default model
+            try:
+                pn_provider = provider if pn == resolved_provider_name else provider_router.get_provider(pn)
+                md = str(getattr(pn_provider, "model", "") or "")
+            except Exception:  # noqa: BLE001
+                md = ""
+        if not md:
+            continue
+        key = (pn, md)
+        if key in seen:
+            continue
+        seen.add(key)
+        parsed.append(key)
+    if not parsed:
+        return await provider.complete(request)
+
+    if getattr(request, "prefer_json_reliable_models", False):
+        parsed = _order_structured_json_candidates(parsed)
+
+    requested = parsed[0]
+    requested_model = f"{requested[0]}/{requested[1]}"
+    skipped_cooldown = [k for k in parsed if _is_in_cooldown(*k)]
+    to_try = [k for k in parsed if not _is_in_cooldown(*k)]
+    exclude = _excluded_model_names(request)
+    if exclude:
+        filtered = [k for k in to_try if k[1].strip().lower() not in exclude]
+        if filtered:
+            to_try = filtered
+    if not to_try:
         emit_infra_event(
             severity="critical",
             source="llm",
@@ -488,45 +620,46 @@ async def complete_with_fallback(
             entity_id=resolved_provider_name,
             message=f"All candidate LLM models are cooling down for provider {resolved_provider_name}",
             action="wait_for_cooldown_or_change_provider",
-            metadata={
+metadata={
                 "provider": resolved_provider_name,
-                "models": models,
+                "models": [f"{p}/{m}" for p, m in parsed],
                 "attempted_models": [],
-                "skipped_cooldown_models": skipped_cooldown,
+                "skipped_cooldown_models": [f"{p}/{m}" for p, m in skipped_cooldown],
             },
             dedupe_sec=60,
         )
         raise RuntimeError(f"all LLM candidate models are cooling down for {resolved_provider_name}")
     attempted: list[str] = []
     last_exc: BaseException | None = None
-    for idx, model in enumerate(models_to_try):
-        attempted.append(model)
-        candidate = provider if model == str(getattr(provider, "model", "") or "") else _clone_provider_with_model(provider, model)
+    for idx, (pn, md) in enumerate(to_try):
+        attempted.append(md)
+        cand_provider = provider if pn == resolved_provider_name else provider_router.get_provider(pn)
+        candidate = cand_provider if md == str(getattr(cand_provider, "model", "") or "") else _clone_provider_with_model(cand_provider, md)
         try:
             response = await brokered_complete(
                 resolved_provider_name,
                 candidate,
                 request,
             )
-            _record_model_success(resolved_provider_name, model)
+            _record_model_success(pn, md)
             if skipped_cooldown and isinstance(response.raw, dict):
                 response.raw = dict(response.raw)
-                response.raw["skipped_cooldown_models"] = skipped_cooldown
-            fallback_used = model != requested_model
+                response.raw["skipped_cooldown_models"] = [f"{p}/{m}" for p, m in skipped_cooldown]
+            fallback_used = (pn, md) != requested
             if fallback_used:
                 emit_infra_event(
                     severity="warning",
                     source="llm",
                     code="llm_model_fallback_used",
-                    entity_id=f"{resolved_provider_name}/{requested_model}",
-                    message=f"LLM request fell back from {requested_model} to {model}",
+                    entity_id=f"{pn}/{md}",
+                    message=f"LLM request fell back from {requested_model} to {pn}/{md}",
                     action="fallback_success",
                     metadata={
-                        "provider": resolved_provider_name,
+                        "provider": pn,
                         "requested_model": requested_model,
-                        "final_model": model,
+                        "final_model": md,
                         "attempted_models": attempted,
-                        "skipped_cooldown_models": skipped_cooldown,
+                        "skipped_cooldown_models": [f"{p}/{m}" for p, m in skipped_cooldown],
                     },
                     dedupe_sec=30,
                 )
@@ -550,22 +683,22 @@ async def complete_with_fallback(
                 raise
             transient = is_transient_model_error(exc)
             if transient:
-                _record_model_failure(resolved_provider_name, model, exc)
-            if not transient or idx == len(models_to_try) - 1:
+                _record_model_failure(pn, md, exc)
+            if not transient or idx == len(to_try) - 1:
                 _emit_terminal_failure(
                     exc,
                     provider_name=resolved_provider_name,
                     requested_model=requested_model,
                     attempted_models=attempted,
-                    skipped_cooldown_models=skipped_cooldown,
+                    skipped_cooldown_models=[f"{p}/{m}" for p, m in skipped_cooldown],
                 )
                 raise
             logger.warning(
                 "LLM model %s/%s transient failure on %s; trying fallback %s",
-                resolved_provider_name,
-                model,
+                pn,
+                md,
                 type(exc).__name__,
-                models_to_try[idx + 1],
+                "/".join(to_try[idx + 1]),
             )
     assert last_exc is not None
     raise last_exc

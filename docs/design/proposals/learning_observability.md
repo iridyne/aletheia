@@ -14,7 +14,8 @@ supersedes: []
 > Executable claim namespace: `LCO-*` in
 > `tests/specs/spec_learning_observability.py`.
 > Status: partially implemented. The bounded, GET-only
-> `/api/analytics/learning-contribution` owner summary, default Contribution tab,
+> `/api/analytics/learning-contribution` owner summary, Overview-led Learning page's
+> Impact/Contribution surface,
 > current-summary cache/`Server-Timing`, measured-path selector, and current-surface
 > accessibility evidence are implemented. Dedicated drill-down APIs and the full
 > Experiments/Operations/history/detail workbench remain targets.
@@ -84,7 +85,7 @@ surface look shipped.
 | Lifecycle inspection | Internal read function returns progress, recommendation and job health | Public sanitized projection |
 | Job health | Current and durable last-failure fields exist | Current, recovery and catch-up states remain separate |
 | Public Learning API | Bounded additive `lco-v1` summary at `/analytics/learning-contribution`; no dedicated LCO detail/list family. Legacy Settings experiment list/detail GETs use a different contract. | Contribution summary implemented; dedicated experiment/health/detail GET endpoints remain targets |
-| Learning UI | Contribution is the default tab, exposes every measurable path and preserves path-specific verdict/query states; legacy Dreaming, Knowledge Base and Reports remain | Experiments/Operations surfaces, detail/history and their accessibility proof remain targets |
+| Learning UI | Overview is the default tab; the Impact tab exposes every measurable path and preserves path-specific verdict/query states. Legacy Runs, Library and Operations surfaces remain. | Experiments/Operations surfaces, detail/history and their accessibility proof remain targets |
 | Trial admission | Separate Settings POST exists, remains default-closed and is tunnel-token protected | Observability remains recommendation-only; no mutation action is rendered here. The separate legacy `/settings/autonomous-learning` master toggle is also tunnel-token protected. |
 
 `/analytics/learning-funnel` remains an artifact/activity report. It must not be
@@ -254,8 +255,8 @@ endpoint moves into the current endpoint index in `api_reference.md`.
 
 ### 6.1 `GET /api/analytics/learning-contribution`
 
-Purpose: bounded summary by path/current experiment, suitable for the default
-Contribution tab.
+Purpose: bounded summary by path/current experiment, suitable for the current
+Overview and Impact/Contribution surfaces.
 
 Current minimal slice:
 
@@ -523,8 +524,11 @@ text, local paths, SQL or exception details. A recovered `current_status=healthy
 `last_failed_at` or the sanitized `last_failure_code`. Historical `learning_verdict_runner` rows are shown only
 under `historical_unregistered_jobs`; they never imply registration.
 
-Catch-up state is derived from the evaluator watermark and current window. The
-one-shot catch-up job has no fabricated durable row.
+Catch-up state is derived from the evaluator's durable success watermark and
+`next_due_at`. A missing watermark or deadline fails closed; otherwise the persisted
+cadence deadline decides when recovery is due. The current UTC-hour identity remains
+independently visible but cannot override that deadline. The one-shot catch-up job has
+no fabricated durable row.
 
 ### 6.7 `GET /api/learning/exposures/{entity_id}`
 
@@ -600,11 +604,11 @@ deployment and is not implied by that Preview measurement.
 
 ## 8. Learning Workbench Information Architecture
 
-The Contribution tab exposes every measurement-supported path through a labelled
-native selector, keeps verdict/query state path-specific, and polls no faster than
-30 seconds while mounted. Responsive 1100/700px layouts and browser accessibility
-proof cover this surface. The complete five-tab workbench, history, drawers and
-dedicated Operations surface remain targets.
+The current Impact/Contribution surface exposes every measurement-supported path
+through a labelled native selector, keeps verdict/query state path-specific, and
+polls no faster than 30 seconds while mounted. Responsive 1100/700px layouts and
+browser accessibility proof cover this surface. The complete five-tab workbench,
+history, drawers and dedicated Operations surface remain targets.
 
 ### 8.1 Page structure
 
@@ -728,7 +732,7 @@ is visible on Contribution and Operations.
 | Harm sample gate is not met | `indeterminate`; authority blocked without claiming a breach |
 | Assignment cluster incomplete | excluded with exact reason; survivors are not samples |
 | Evaluator recovered after failure | current healthy plus durable prior failure |
-| Catch-up watermark missing/old | `catchup_due` or `unavailable`, never healthy by inference |
+| Catch-up watermark missing, deadline missing/invalid, or persisted deadline reached | `catchup_due` or `unavailable`, never healthy by inference |
 | Scheduler job absent | `registered=false`; durable old health does not override |
 | `admit_trial` recommended | recommendation visible; no mutation control; readiness remains distinct from owner authentication |
 | Path consumer wired but evaluator unsupported | both booleans shown separately |
@@ -814,7 +818,7 @@ cannot make a behavioral claim GREEN.
 | Source provenance | Canonical, fallback, mirror and conflict fixtures remain distinct |
 | Metric history | Old metric/build/epoch verdict remains history, never current |
 | Scheduler recovery | Healthy current state can coexist with a visible durable last failure |
-| Catch-up | Current window, watermark and due state are independently asserted |
+| Catch-up | Current display window, success watermark and persisted cadence deadline are independently asserted |
 | Recommendation | `admit_trial` renders without a button or mutation invocation from the observability surface |
 | Path capability | Consumer/settings/measurement support booleans cannot collapse |
 | Empty/error honesty | Request failure is unavailable, not an empty cohort or zero count |

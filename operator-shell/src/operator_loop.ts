@@ -1541,6 +1541,91 @@ export class OperatorLoop {
         ? (execution.result.run as Record<string, unknown>)
         : null
 
+    // Authoritative post-action verification: command acceptance alone does not
+    // prove the Market Observer condition was resolved — only a fresh read can.
+    let freshAgentRuns: Awaited<ReturnType<BackendGatewayClient['getAgentRuns']>>
+    try {
+      freshAgentRuns = await this.backendClient.getAgentRuns()
+    } catch {
+      await this.backendClient.createEvent({
+        event_type: 'market_scan_refresh_failed',
+        severity: 'high',
+        source: 'operator_loop',
+        session_id: sessionId,
+        task_id: activeTask.taskId,
+        related_entity_type: 'command',
+        related_entity_id: 'run_market_scan',
+        payload: {
+          response: execution.response,
+          result: execution.result,
+          verification: 'unavailable',
+        },
+      })
+      await this.taskRuntime.failActiveTask(
+        'Market scan command was accepted but authoritative Market Observer state could not be read for verification.',
+        { command: 'run_market_scan', verification: 'unavailable' },
+      )
+      this.sessionRuntime.rememberBranch({
+        id: sessionId,
+        kind: 'command_session',
+        title: 'Market Scan Refresh',
+        parent_session_id: parentSessionId,
+        summary: execution.response,
+      })
+      return true
+    }
+
+    const freshObserverRun = freshAgentRuns
+      .filter(agentRun => agentRun.agent_name === 'market_observer')
+      .sort(
+        (a, b) =>
+          Date.parse(b.ended_at || b.started_at) -
+          Date.parse(a.ended_at || a.started_at),
+      )[0]
+    const freshAgeMs =
+      freshObserverRun !== undefined
+        ? Date.now() - Date.parse(freshObserverRun.ended_at || freshObserverRun.started_at)
+        : null
+    const verificationResolved =
+      freshObserverRun !== undefined &&
+      freshAgeMs !== null &&
+      !Number.isNaN(freshAgeMs) &&
+      freshAgeMs < 45 * 60_000
+
+    if (!verificationResolved) {
+      await this.backendClient.createEvent({
+        event_type: 'market_scan_refresh_failed',
+        severity: 'medium',
+        source: 'operator_loop',
+        session_id: sessionId,
+        task_id: activeTask.taskId,
+        related_entity_type: 'command',
+        related_entity_id: 'run_market_scan',
+        payload: {
+          response: execution.response,
+          result: execution.result,
+          verification: 'unresolved',
+          fresh_run_id: freshObserverRun?.id || null,
+          fresh_age_minutes:
+            freshAgeMs !== null && !Number.isNaN(freshAgeMs)
+              ? Math.floor(freshAgeMs / 60_000)
+              : null,
+        },
+      })
+      await this.taskRuntime.failActiveTask(
+        'Market scan command was accepted but Market Observer state remains stale after verification.',
+        { command: 'run_market_scan', verification: 'unresolved' },
+      )
+      this.sessionRuntime.rememberBranch({
+        id: sessionId,
+        kind: 'command_session',
+        title: 'Market Scan Refresh',
+        parent_session_id: parentSessionId,
+        summary: execution.response,
+      })
+      return true
+    }
+
     await this.backendClient.createEvent({
       event_type: 'market_scan_refreshed',
       severity: 'info',
@@ -1552,12 +1637,16 @@ export class OperatorLoop {
       payload: {
         response: execution.response,
         result: execution.result,
+        verification: 'resolved',
+        verified_run_id: freshObserverRun.id,
       },
     })
     await this.taskRuntime.completeActiveTask({
       summary: execution.response,
       run_id: typeof run?.run_id === 'string' ? run.run_id : null,
       run_status: typeof run?.status === 'string' ? run.status : null,
+      verification: 'resolved',
+      verified_run_id: freshObserverRun.id,
     })
     this.sessionRuntime.rememberBranch({
       id: sessionId,

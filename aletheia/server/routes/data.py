@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from aletheia.config.loader import is_preview_mode, load_config
+from aletheia.config.prediction import prediction_observer_blocked_reason
 from aletheia.portfolio.pnl import compute_portfolio
 from aletheia.storage.sqlite import get_db
 from aletheia.storage import repositories as repo
@@ -359,18 +360,49 @@ _MANUAL_AGENT_ALLOWLIST: dict[str, dict] = {
     "divergence_scanner": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
     # Research / analysis — uses LLM, writes knowledge/insight artifacts only
     "research_agent": {"side_effect_class": "research", "cost_class": "high", "gate_check": False},
-    "research_worker": {"side_effect_class": "research", "cost_class": "high", "gate_check": False},
     # Review / critique — uses LLM, writes review/lesson/signal artifacts
     "post_trade_reviewer": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "risk_critic": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "lesson_reviewer": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "dreaming_agent": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "portfolio_agent": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
-    # Ranking — deterministic, no LLM, no orders
-    "paper_trader_ranker": {"side_effect_class": "rank", "cost_class": "low", "gate_check": False},
     # Behavior-producing — creates paper proposals/orders; respects kill-switch and pause
     "paper_trader": {"side_effect_class": "behavior", "cost_class": "medium", "gate_check": True},
 }
+
+# Caller-specific capability guard for the Operator service identity (Issue #1100).
+# Operator service callers are restricted to this subset of _MANUAL_AGENT_ALLOWLIST.
+# New entries in _MANUAL_AGENT_ALLOWLIST do NOT automatically expand service authority —
+# explicit addition here is required.
+_OPERATOR_SERVICE_AGENT_ALLOWLIST: frozenset[str] = frozenset({
+    "market_observer",
+    "equity_observer",
+    "stock_observer",
+    "prediction_observer",
+    "divergence_scanner",
+    "research_agent",
+    "post_trade_reviewer",
+    "risk_critic",
+    "lesson_reviewer",
+    "dreaming_agent",
+    "portfolio_agent",
+})
+
+
+@router.get("/agents/catalog")
+def get_agents_catalog():
+    """Read-only catalog of agents that may be triggered manually from the Dashboard."""
+    agents = []
+    for name, meta in _MANUAL_AGENT_ALLOWLIST.items():
+        entry = {"name": name, **meta}
+        if name == "prediction_observer":
+            try:
+                reason = prediction_observer_blocked_reason(load_config())
+            except Exception:
+                reason = "prediction_observer_config_unavailable"
+            entry.update({"runnable": reason is None, "blocked_reason": reason})
+        agents.append(entry)
+    return {"agents": agents}
 
 
 class StartAgentRequest(BaseModel):
@@ -403,7 +435,43 @@ def start_agent_run(req: StartAgentRequest, request: Request):
             },
         )
 
+    # Caller-specific capability gate: the Operator service identity is restricted to
+    # non-behavior-producing specialists only. This is checked after the manual allowlist
+    # so the service caller must pass both guards.
+    if getattr(request.state, "operator_service_authenticated", False):
+        if req.agent_name not in _OPERATOR_SERVICE_AGENT_ALLOWLIST:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "agent_not_in_service_allowlist",
+                    "agent_name": req.agent_name,
+                    "allowed": sorted(_OPERATOR_SERVICE_AGENT_ALLOWLIST),
+                },
+            )
+
     meta = _MANUAL_AGENT_ALLOWLIST[req.agent_name]
+
+    if req.agent_name == "prediction_observer":
+        try:
+            blocked_reason = prediction_observer_blocked_reason(load_config())
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "prediction_observer_config_unavailable",
+                    "message": "Prediction observer configuration is unavailable; no run was queued.",
+                },
+            ) from exc
+        if blocked_reason is not None:
+            status_code = 503 if blocked_reason == "prediction_observer_config_unavailable" else 400
+            message = {
+                "prediction_observer_disabled": "Prediction observer is disabled; no run was queued.",
+                "prediction_observer_not_configured": "No prediction markets are configured; no run was queued.",
+            }.get(blocked_reason, "Prediction observer is unavailable; no run was queued.")
+            raise HTTPException(
+                status_code=status_code,
+                detail={"error": blocked_reason, "message": message},
+            )
 
     # Gate check for behavior-producing agents: honour kill-switch and pause state
     # so a manual trigger cannot bypass protections that scheduled runs respect.
@@ -426,10 +494,17 @@ def start_agent_run(req: StartAgentRequest, request: Request):
                 },
             )
 
-    # Actor attribution: authenticated tunnel callers are recorded as "owner";
-    # local dashboard calls (tunnel disabled) are recorded as "dashboard".
+    # Actor attribution: service-delegated Operator calls are recorded as
+    # "operator_service"; authenticated tunnel owner calls as "manual_owner";
+    # local dashboard calls (no auth) as "manual".
+    _is_operator_service = getattr(request.state, "operator_service_authenticated", False)
     _is_tunnel_auth = getattr(request.state, "tunnel_authenticated", False)
-    trigger_type = "manual_owner" if _is_tunnel_auth else "manual"
+    if _is_operator_service:
+        trigger_type = "operator_service"
+    elif _is_tunnel_auth:
+        trigger_type = "manual_owner"
+    else:
+        trigger_type = "manual"
 
     manager = get_agent_job_manager()
     try:
@@ -1282,6 +1357,47 @@ async def manual_close_position(position_id: str, req: ManualCloseRequest):
     return await asyncio.to_thread(_do_close)
 
 
+class ParkedCloseRecoveryRequest(BaseModel):
+    """Payload for an owner-authorized release of a Bitget 40725-parked close."""
+    reason: str
+
+
+@router.post("/positions/{position_id}/recover-parked-close")
+async def recover_parked_close_position(position_id: str, req: ParkedCloseRecoveryRequest):
+    """Owner-authorized release of a venue_trade_rate_limited pending close.
+
+    The manual close endpoint deliberately refuses to bypass the 40725 park;
+    this is the explicit owner unlock the park's audit message promises. It
+    releases the parked claim only — protective exits retry the close with a
+    fresh close-{id}-rN client order id on their next evaluation. No fill,
+    price, or PnL is fabricated here. Audit records actor='human' and the
+    required operator reason.
+    """
+    _ensure_db()
+    if not (req.reason or "").strip():
+        raise HTTPException(400, {"code": "reason_required", "message": "reason is required"})
+
+    import asyncio
+    from aletheia.execution.pending_close_recovery import release_rate_limited_close_claim
+
+    def _release() -> dict:
+        result = release_rate_limited_close_claim(
+            position_id, actor="human", reason=req.reason
+        )
+        if not result.get("released"):
+            raise HTTPException(
+                409,
+                {
+                    "code": result.get("code", "not_recoverable"),
+                    "position_id": position_id,
+                    "message": "Parked close claim is not in the recoverable 40725-parked state",
+                },
+            )
+        return result
+
+    return await asyncio.to_thread(_release)
+
+
 @router.get("/audit/events")
 def get_audit_events(limit: int = 100):
     _ensure_db()
@@ -1343,7 +1459,7 @@ def get_strategy_summary():
 @router.get("/market/snapshots")
 def get_market_snapshots(
     symbol: str | None = None,
-    limit: int = 200,
+    limit: int = Query(default=200, ge=1, le=1000),
     exchange: str = "",
 ):
     """Return market snapshots.
@@ -1351,6 +1467,8 @@ def get_market_snapshots(
     Optional filters:
     - symbol: canonical BTC/USDT format
     - exchange: source exchange name (e.g. "binance", "bybit")
+
+    ``limit`` is clamped to 1..1000; values outside this range return 422.
     """
     _ensure_db()
     return repo.list_market_snapshots(symbol=symbol, limit=limit, exchange=exchange)
@@ -2786,12 +2904,10 @@ def get_family_scorecard():
     """Per-scanner_family performance statistics (win_rate, expectancy, alpha)."""
     _ensure_db()
     from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
-    from aletheia.analytics.family_scorecard import compute_family_scorecard
+    from aletheia.analytics.family_scorecard import compute_family_scorecard_with_epoch
 
-    return {
-        "families": compute_family_scorecard(),
-        **build_outcome_cohort_summary(),
-    }
+    scorecard = compute_family_scorecard_with_epoch()
+    return {**scorecard, **build_outcome_cohort_summary()}
 
 
 @router.get("/analytics/shadow-trades")

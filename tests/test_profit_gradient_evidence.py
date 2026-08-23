@@ -79,11 +79,19 @@ def test_cost_model_source_does_not_admit_future_settlement():
     db.row_factory = sqlite3.Row
     db.execute(
         "CREATE TABLE filter_candidate_outcomes ("
-        "id TEXT, cost_model_version TEXT, entry_ts TEXT, settled_at TEXT, status TEXT)"
+        "id TEXT, cost_model_version TEXT, entry_ts TEXT, due_at TEXT, "
+        "settled_at TEXT, status TEXT)"
     )
     db.execute(
-        "INSERT INTO filter_candidate_outcomes VALUES (?, ?, ?, ?, ?)",
-        ("future", "v1", "2026-08-14T00:00:00+00:00", "2026-08-15T00:00:00+00:00", "settled"),
+        "INSERT INTO filter_candidate_outcomes VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            "future",
+            "v1",
+            "2026-08-13T00:00:00+00:00",
+            "2026-08-14T00:00:00+00:00",
+            "2026-08-15T00:00:00+00:00",
+            "settled",
+        ),
     )
 
     resolved = evidence._resolve_cost_model(
@@ -94,6 +102,46 @@ def test_cost_model_source_does_not_admit_future_settlement():
 
     assert resolved["status"] == "unavailable"
     assert resolved["reason"] == "cost_model_not_recorded"
+
+
+def test_cost_model_source_ignores_pre_floor_history_when_clean_source_exists():
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    db.execute(
+        "CREATE TABLE filter_candidate_outcomes ("
+        "id TEXT, cost_model_version TEXT, entry_ts TEXT, due_at TEXT, "
+        "settled_at TEXT, status TEXT)"
+    )
+    db.executemany(
+        "INSERT INTO filter_candidate_outcomes VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            (
+                "historical",
+                "v1",
+                "2026-06-01T00:00:00+00:00",
+                "2026-06-02T00:00:00+00:00",
+                "2026-06-02T00:00:00+00:00",
+                "settled",
+            ),
+            (
+                "clean",
+                "v1",
+                "2026-08-13T00:00:00+00:00",
+                "2026-08-14T00:00:00+00:00",
+                "2026-08-14T00:00:00+00:00",
+                "settled",
+            ),
+        ],
+    )
+
+    resolved = evidence._resolve_cost_model(
+        db,
+        "v1",
+        datetime(2026, 8, 14, tzinfo=timezone.utc),
+    )
+
+    assert resolved["status"] == "available"
+    assert resolved["source_count"] == 1
 
 
 def test_position_replay_cost_model_identity_is_explicit_and_resolvable():
@@ -140,6 +188,27 @@ def test_candidate_source_hash_includes_exclusion_identity(monkeypatch):
     second, _ = evidence._load_candidates(db, datetime(2026, 8, 14, tzinfo=timezone.utc))
 
     assert first["source_hash"] != second["source_hash"]
+
+
+def test_layer_compilation_keeps_temporal_reason_when_cost_source_is_unavailable():
+    _, stats = evidence._add_layer_samples(
+        db=sqlite3.connect(":memory:"),
+        candidate_facts=[{
+            "fact_id": "candidate-temporal",
+            "fixed_horizon_outcome": None,
+            "fixed_horizon_outcome_unavailable_reason": "missing_settled_at",
+        }],
+        position_facts=[],
+        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cost_model_id="v1",
+        epoch_id="epoch-1",
+        cost_status="unavailable",
+        registration_ok=True,
+    )
+
+    for layer in ("Selection", "Decision", "Risk"):
+        assert stats[layer]["reason_counts"] == {"missing_settled_at": 1}
 
 
 def _execution_fact(*, residual_within_tolerance: bool = True) -> dict:
@@ -585,6 +654,7 @@ def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_ho
             "horizon": "24h",
             "outcome_candidate_key": "candidate-1",
             "entry_ts": "2026-08-13T00:00:00+00:00",
+            "due_at": "2026-08-14T00:00:00+00:00",
             "settled_at": "2026-08-14T00:00:00+00:00",
             "net_return_pct": -1.0,
             "cost_model_version": "v1",
@@ -605,6 +675,40 @@ def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_ho
     assert sample["paired_net_delta_bp"] == -100.0
     assert sample["paired_net_delta_quote"] == -2.0
     assert sample["cost_applied_once"] is True
+
+    naive_settlement_fact = fact | {
+        "fixed_horizon_outcome": fact["fixed_horizon_outcome"] | {
+            "settled_at": "2026-08-14T00:00:00",
+        },
+    }
+    sample, reason = evidence._candidate_sample(
+        db,
+        naive_settlement_fact,
+        layer="Risk",
+        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cost_model_id="v1",
+        epoch_id="epoch-1",
+    )
+    assert reason is None
+    assert sample["stage_window"]["end_at"] == "2026-08-14T00:00:00+00:00"
+
+    future_fact = fact | {
+        "fixed_horizon_outcome": fact["fixed_horizon_outcome"] | {
+            "settled_at": "2026-08-15T00:00:00+00:00",
+        },
+    }
+    sample, reason = evidence._candidate_sample(
+        db,
+        future_fact,
+        layer="Risk",
+        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cost_model_id="v1",
+        epoch_id="epoch-1",
+    )
+    assert sample is None
+    assert reason == "settlement_after_as_of"
 
 
 def test_compiled_artifact_rejects_empty_provenance_even_with_rehashed_content():

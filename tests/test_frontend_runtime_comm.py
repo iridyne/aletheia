@@ -56,7 +56,9 @@ def test_chart_lifecycle_tracks_market_identity_and_container_size():
     account = _read("charts/AccountEquityChart.tsx")
     theme = _read("charts/theme.ts")
 
-    assert "}, [symbol, timeframe, marketType])" in price
+    # The chart effect also depends on the stable callback helpers required by
+    # exhaustive-deps; market identity must remain part of that dependency set.
+    assert "}, [applyLevels, applyMainIndicators, applyMarkers, applyProfile, marketType, symbol, timeframe])" in price
     assert "markerClickRef.current = onMarkerClick" in price
     assert "chart.unsubscribeClick(handleClick)" in price
     assert "resizeObserver.disconnect()" in price

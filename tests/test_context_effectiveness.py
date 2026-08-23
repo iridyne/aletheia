@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+
+async def _make_async_provider(provider):
+    """Helper for tests: wrap sync mock provider in async."""
+    return provider
+
+
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -90,7 +96,7 @@ async def test_learning_b_pair_is_blinded_linked_and_aggregate_only(tmp_path, mo
         lambda _name: ("fixture-provider", None),
     )
     with (
-        patch.object(helpers, "get_provider", lambda _name: provider),
+        patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(provider)),
         patch.object(helpers, "complete_with_fallback", _direct_complete),
     ):
         report = await effectiveness.run_learning_b_pair(
@@ -209,7 +215,7 @@ async def test_technical_context_pair_reuses_harness_and_stays_content_free(
         lambda _name: ("fixture-provider", None),
     )
     with (
-        patch.object(helpers, "get_provider", lambda _name: provider),
+        patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(provider)),
         patch.object(helpers, "complete_with_fallback", _direct_complete),
     ):
         report = await effectiveness.run_technical_context_pair(
@@ -332,7 +338,7 @@ async def test_context_ablation_omits_only_named_modality(tmp_path, monkeypatch)
         lambda _name: ("fixture-provider", None),
     )
     with (
-        patch.object(helpers, "get_provider", lambda _name: provider),
+        patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(provider)),
         patch.object(helpers, "complete_with_fallback", _direct_complete),
     ):
         report = await effectiveness.run_context_ablation_pair(

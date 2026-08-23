@@ -112,7 +112,7 @@ async def test_reviewer_skips_non_eligible_positions_without_calling_llm(
 
     monkeypatch.setattr(post_trade_reviewer, "is_tool_permitted", lambda *_: True)
     monkeypatch.setattr(post_trade_reviewer, "llm_complete", fake_llm)
-    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], []))
+    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], [], []))
 
     result = await post_trade_reviewer.run_post_trade_reviewer(
         permission_mode="Observe"
@@ -143,7 +143,7 @@ async def test_reviewer_reviews_each_eligible_position_window_once(monkeypatch):
 
     monkeypatch.setattr(post_trade_reviewer, "is_tool_permitted", lambda *_: True)
     monkeypatch.setattr(post_trade_reviewer, "llm_complete", fake_llm)
-    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], []))
+    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], [], []))
 
     first = await post_trade_reviewer.run_post_trade_reviewer(
         permission_mode="Observe"
@@ -197,7 +197,7 @@ async def test_reviewer_receives_complete_exact_proposal_decision_context(monkey
 
     monkeypatch.setattr(post_trade_reviewer, "is_tool_permitted", lambda *_: True)
     monkeypatch.setattr(post_trade_reviewer, "llm_complete", fake_llm)
-    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], []))
+    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], [], []))
 
     await post_trade_reviewer.run_post_trade_reviewer(permission_mode="Observe")
 
@@ -269,7 +269,7 @@ async def test_reviewer_budget_omits_whole_positions_without_truncating_selected
 
     monkeypatch.setattr(post_trade_reviewer, "is_tool_permitted", lambda *_: True)
     monkeypatch.setattr(post_trade_reviewer, "llm_complete", fake_llm)
-    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], []))
+    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], [], []))
 
     await post_trade_reviewer.run_post_trade_reviewer(permission_mode="Observe")
 
@@ -328,7 +328,7 @@ async def test_reviewer_gives_each_strategy_a_fair_outcome_window(monkeypatch):
     monkeypatch.setattr(post_trade_reviewer, "is_tool_permitted", lambda *_: True)
     monkeypatch.setattr(post_trade_reviewer, "llm_complete", fake_llm)
     monkeypatch.setattr(post_trade_reviewer, "create_post_trade_review", fake_create)
-    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], []))
+    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], [], []))
 
     result = await post_trade_reviewer.run_post_trade_reviewer(
         permission_mode="Observe"
@@ -369,7 +369,7 @@ async def test_reviewer_bounds_each_round_and_rotates_across_strategy_backlog(
     monkeypatch.setattr(post_trade_reviewer, "is_tool_permitted", lambda *_: True)
     monkeypatch.setattr(post_trade_reviewer, "llm_complete", fake_llm)
     monkeypatch.setattr(post_trade_reviewer, "create_post_trade_review", fake_create)
-    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], []))
+    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], [], []))
 
     for _ in range(3):
         current_round = []
@@ -421,7 +421,7 @@ async def test_reviewer_high_cardinality_pool_bounds_eligibility_queries(monkeyp
     monkeypatch.setattr(post_trade_reviewer, "is_tool_permitted", lambda *_: True)
     monkeypatch.setattr(post_trade_reviewer, "eligible_strategy_outcomes", counted_eligible)
     monkeypatch.setattr(post_trade_reviewer, "llm_complete", fake_llm)
-    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], []))
+    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], [], []))
 
     await post_trade_reviewer.run_post_trade_reviewer(permission_mode="Observe")
 
@@ -479,7 +479,7 @@ async def test_reviewer_reviewed_and_failed_items_do_not_block_later_strategies(
     monkeypatch.setattr(post_trade_reviewer, "is_tool_permitted", lambda *_: True)
     monkeypatch.setattr(post_trade_reviewer, "llm_complete", fake_llm)
     monkeypatch.setattr(post_trade_reviewer, "create_post_trade_review", fake_create)
-    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], []))
+    monkeypatch.setattr(post_trade_reviewer, "_run_case_builder_safe", lambda *_: ([], [], []))
 
     for _ in range(2):
         current_round = []

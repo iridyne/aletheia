@@ -67,3 +67,34 @@ def test_realized_losses_trip_breaker_via_close(tmp_path, monkeypatch):
     assert any("max_daily_loss" in v for v in result.violations)
     assert kill_switch.is_active("demo") is True
     assert kill_switch.is_active("global") is False
+
+
+def test_partial_close_ledger_read_failure_marks_snapshot_unavailable(tmp_path, monkeypatch):
+    """Monkeypatch list_position_close_events to raise; snapshot must be unavailable."""
+    setup_env(tmp_path, monkeypatch)
+
+    import sqlite3 as _sqlite3
+    import aletheia.storage.repositories as _repo
+    monkeypatch.setattr(_repo, "list_position_close_events",
+                        lambda **_kw: (_ for _ in ()).throw(_sqlite3.OperationalError("no such table")))
+
+    from aletheia.portfolio.account_loss import authoritative_account_realized_loss
+    snapshot = authoritative_account_realized_loss("paper_internal")
+
+    assert snapshot.available is False
+    assert snapshot.reason == "partial_close_ledger_read_failed"
+    assert snapshot.realized_pnl_usdt is None
+    assert snapshot.loss_usdt is None
+
+    # Risk engine must emit account_loss_unavailable and reject any proposal.
+    from aletheia.storage.models import TradeProposal
+    from aletheia.storage import repositories as repo
+    from aletheia.risk.engine import evaluate_proposal
+
+    p = TradeProposal(symbol="ETH/USDT", market_type="spot", direction="long",
+                      execution_mode="paper_internal", quantity=0.001, price=3000)
+    repo.insert_trade_proposal(p)
+    result = evaluate_proposal(p)
+    assert result.approved is False
+    assert any("account_loss_unavailable" in v for v in result.violations)
+    assert not any("max_daily_loss" in v for v in result.violations)

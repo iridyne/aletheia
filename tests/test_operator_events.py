@@ -937,7 +937,7 @@ async def test_operator_recommendations_include_risk_critique_due_for_recent_rej
         RiskDecision(
             proposal_id=proposal.id,
             approved=False,
-            violations='["exceeds_demo_position_notional:300.0>200.0"]',
+            violations='["exceeds_demo_position_margin:300.0>200.0"]',
             message="Rejected",
         )
     )
@@ -1041,7 +1041,7 @@ async def test_operator_recommendations_include_risk_boundary_change_proposal_du
     from aletheia.storage.repositories import insert_risk_decision, insert_trade_proposal
 
     cfg = load_config()
-    cfg.risk.demo.capital.max_position_notional_usdt = 200.0
+    cfg.risk.demo.capital.max_position_margin_usdt = 200.0
     save_config(cfg)
     demo_policy = cfg.risk.demo
     identity = {
@@ -1074,7 +1074,7 @@ async def test_operator_recommendations_include_risk_boundary_change_proposal_du
             proposal_id=first.id,
             approved=False,
             **identity,
-            violations='["exceeds_demo_position_notional:300.0>200.0"]',
+            violations='["exceeds_demo_position_margin:300.0>200.0"]',
             message="Rejected",
         )
     )
@@ -1083,7 +1083,7 @@ async def test_operator_recommendations_include_risk_boundary_change_proposal_du
             proposal_id=second.id,
             approved=False,
             **identity,
-            violations='["exceeds_demo_position_notional:300.0>200.0"]',
+            violations='["exceeds_demo_position_margin:300.0>200.0"]',
             message="Rejected",
         )
     )
@@ -1098,7 +1098,7 @@ async def test_operator_recommendations_include_risk_boundary_change_proposal_du
     assert risk_proposals[0]["metadata"]["risk_mode"] == "demo"
     assert risk_proposals[0]["metadata"]["policy_id"] == cfg.risk.demo.policy_id
     assert risk_proposals[0]["metadata"]["policy_revision"] == cfg.risk.demo.revision
-    assert risk_proposals[0]["metadata"]["changes"]["max_demo_position_notional_usdt"] == 300.0
+    assert risk_proposals[0]["metadata"]["changes"]["max_demo_position_margin_usdt"] == 300.0
 
 
 @pytest.mark.anyio
@@ -1119,7 +1119,7 @@ async def test_operator_recommendations_include_risk_review_report_refresh_due_w
         RiskDecision(
             proposal_id=proposal.id,
             approved=False,
-            violations='["exceeds_demo_position_notional:300.0>200.0"]',
+            violations='["exceeds_demo_position_margin:300.0>200.0"]',
             message="Rejected",
         )
     )

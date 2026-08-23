@@ -111,20 +111,23 @@ def _count_opportunities(db, commit: str | None, since_iso: str) -> dict[str, in
 
 def _pending_stats(db, commit: str | None) -> dict[str, Any]:
     """Current signal_pending queue depth (unbounded by window — reflects live state)."""
+    from aletheia.storage.repositories import count_unresolved_signal_pending
+    # The canonical count joins opportunities and filters on valid_until + no final action
+    count = count_unresolved_signal_pending(max_age_minutes=30)
+    # Also read oldest creation timestamp for UI lag indication
     if commit:
         rows = db.execute(
-            "SELECT COUNT(*), MIN(created_at) FROM pi_decisions "
+            "SELECT MIN(created_at) FROM pi_decisions "
             "WHERE action='signal_pending' AND producer_commit = ?",
             (commit,),
         ).fetchone()
     else:
         rows = db.execute(
-            "SELECT COUNT(*), MIN(created_at) FROM pi_decisions "
-            "WHERE action='signal_pending'"
+            "SELECT MIN(created_at) FROM pi_decisions WHERE action='signal_pending'"
         ).fetchone()
     return {
-        "count": int(rows[0] or 0),
-        "oldest_created_at": rows[1] if rows and rows[1] else None,
+        "count": count,
+        "oldest_created_at": rows[0] if rows and rows[0] else None,
     }
 
 
@@ -340,6 +343,15 @@ def summarize(
     All queries are bounded by ``since_iso = now - hours``. Callers that need
     live-queue depth (``signal_pending`` count / oldest age) read the unbounded
     fields nested under ``signal_pending``.
+
+    Each data section carries an availability envelope::
+
+        {"status": "available"|"unavailable", "reason": str|None, "data": ...}
+
+    A section is ``unavailable`` when its backing query fails (schema drift,
+    missing table, etc.).  Callers MUST check ``status`` before treating numeric
+    fields as measured zeros — a missing section is **not** the same as a
+    successfully-measured empty window.
     """
     from datetime import datetime, timedelta, timezone
     from aletheia.storage.sqlite import get_db
@@ -362,69 +374,118 @@ def summarize(
             "policy_epoch_started_at": None,
         }
 
+    # ── per-section availability tracking ────────────────────────────────────
+    # Each section is either available (query succeeded) or unavailable (query
+    # failed).  We never substitute numeric zero for a failed query.
+    section_status: dict[str, dict[str, Any]] = {}
+
     try:
         opportunities = _count_opportunities(db, producer_commit, since_iso)
+        section_status["opportunities"] = {"status": "available", "reason": None}
     except Exception as exc:
         logger.warning("opportunity_progress.opportunities failed: %s", exc)
         opportunities = {}
+        section_status["opportunities"] = {"status": "unavailable", "reason": str(exc)}
+
     try:
         signal_pending = _pending_stats(db, producer_commit)
+        section_status["signal_pending"] = {"status": "available", "reason": None}
     except Exception as exc:
         logger.warning("opportunity_progress.signal_pending failed: %s", exc)
-        signal_pending = {"count": 0, "oldest_created_at": None}
+        signal_pending = None
+        section_status["signal_pending"] = {"status": "unavailable", "reason": str(exc)}
+
+    operator_unavailable_reason: str | None = None
     try:
         operator = _operator_buckets(
             db, producer_commit, policy_epoch_id, since_iso
         )
+        section_status["operator"] = {"status": "available", "reason": None}
     except Exception as exc:
         logger.warning("opportunity_progress.operator failed: %s", exc)
         operator = {}
+        operator_unavailable_reason = str(exc)
+        section_status["operator"] = {"status": "unavailable", "reason": str(exc)}
+
+    defer_events_unavailable_reason: str | None = None
     try:
         defer_events = _defer_events(db, policy_epoch_id, since_iso)
+        section_status["defer_events"] = {"status": "available", "reason": None}
     except Exception as exc:
         logger.warning("opportunity_progress.defer_events failed: %s", exc)
         defer_events = {}
-    operator["operator_defer"] = sum(
-        v for k, v in defer_events.items() if k.startswith("operator_decision_deferred_")
-    )
+        defer_events_unavailable_reason = str(exc)
+        section_status["defer_events"] = {"status": "unavailable", "reason": str(exc)}
+
+    # operator_defer is derived from defer_events; it is unavailable if either
+    # operator or defer_events section failed.
+    if operator_unavailable_reason is None and defer_events_unavailable_reason is None:
+        operator["operator_defer"] = sum(
+            v for k, v in defer_events.items() if k.startswith("operator_decision_deferred_")
+        )
+    elif operator:
+        # operator succeeded but defer_events failed — we cannot derive operator_defer
+        operator["operator_defer"] = None
+    # else operator itself is empty (unavailable), leave it alone
+
+    active_defer_unavailable_reason: str | None = None
     try:
         active_defer = _active_defer_stats(db, policy_epoch_id, now.isoformat())
+        section_status["active_defer"] = {"status": "available", "reason": None}
     except Exception as exc:
         logger.warning("opportunity_progress.active_defer failed: %s", exc)
-        active_defer = {
-            "market_quiet": 0,
-            "candidate_specific": 0,
-            "unknown": 0,
-            "oldest_active_defer_age_seconds": None,
-        }
-    operator["operator_defer_market_quiet"] = int(active_defer["market_quiet"])
-    operator["operator_defer_candidate_specific"] = int(
-        active_defer["candidate_specific"]
-    )
-    operator["operator_defer_unknown"] = int(active_defer["unknown"])
-    # defer_rate = 12h defers / (12h defers + trade intents + all skip variants).
-    # Denominator floors at 1 so an empty window renders 0.0 rather than NaN.
-    total_skip_variants = int(operator.get("direct_model_skip") or 0) \
-        + int(operator.get("conviction_gate_skip") or 0) \
-        + int(operator.get("debate_not_confirmed") or 0) \
-        + int(operator.get("direction_brake") or 0)
-    defer_denom = max(
-        int(operator["operator_defer"])
-        + int(operator.get("operator_trade_intent") or 0)
-        + total_skip_variants,
-        1,
-    )
-    operator["defer_rate"] = round(
-        float(operator["operator_defer"]) / float(defer_denom), 4
-    )
-    operator["oldest_active_defer_age_seconds"] = (
-        active_defer["oldest_active_defer_age_seconds"]
-    )
+        active_defer = None
+        active_defer_unavailable_reason = str(exc)
+        section_status["active_defer"] = {"status": "unavailable", "reason": str(exc)}
+
+    if active_defer is not None and operator is not None:
+        operator["operator_defer_market_quiet"] = int(active_defer["market_quiet"])
+        operator["operator_defer_candidate_specific"] = int(
+            active_defer["candidate_specific"]
+        )
+        operator["operator_defer_unknown"] = int(active_defer["unknown"])
+        operator["oldest_active_defer_age_seconds"] = (
+            active_defer["oldest_active_defer_age_seconds"]
+        )
+    elif operator is not None:
+        # active_defer unavailable — these sub-fields are explicitly None
+        operator["operator_defer_market_quiet"] = None
+        operator["operator_defer_candidate_specific"] = None
+        operator["operator_defer_unknown"] = None
+        operator["oldest_active_defer_age_seconds"] = None
+
+    # defer_rate is derived from operator buckets + defer_events.  Only compute
+    # it when all inputs are available; otherwise mark explicitly unavailable.
+    if (
+        operator_unavailable_reason is None
+        and defer_events_unavailable_reason is None
+        and operator.get("operator_defer") is not None
+    ):
+        # defer_rate = 12h defers / (12h defers + trade intents + all skip variants).
+        # Denominator floors at 1 so an empty window renders 0.0 rather than NaN.
+        total_skip_variants = int(operator.get("direct_model_skip") or 0) \
+            + int(operator.get("conviction_gate_skip") or 0) \
+            + int(operator.get("debate_not_confirmed") or 0) \
+            + int(operator.get("direction_brake") or 0)
+        defer_denom = max(
+            int(operator["operator_defer"])
+            + int(operator.get("operator_trade_intent") or 0)
+            + total_skip_variants,
+            1,
+        )
+        operator["defer_rate"] = round(
+            float(operator["operator_defer"]) / float(defer_denom), 4
+        )
+    elif operator is not None:
+        operator["defer_rate"] = None
+
     try:
         proposals = _proposal_stats(db, producer_commit, since_iso)
+        section_status["proposals"] = {"status": "available", "reason": None}
     except Exception as exc:
         logger.warning("opportunity_progress.proposals failed: %s", exc)
-        proposals = {"newest_created_at": None, "count": 0}
+        proposals = None
+        section_status["proposals"] = {"status": "unavailable", "reason": str(exc)}
 
     return {
         "window_hours": hours,
@@ -434,4 +495,7 @@ def summarize(
         "operator": operator,
         "defer_events": defer_events,
         "proposals": proposals,
+        # Per-section availability.  Callers MUST check this before treating
+        # numeric zeros as measured facts.
+        "section_status": section_status,
     }

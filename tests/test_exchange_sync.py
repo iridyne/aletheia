@@ -79,8 +79,9 @@ def _patch_client(monkeypatch, *, balances=None, positions=None, orders=None,
     _mix_equity = mix_equity
 
     class _FakeClient:
-        def __init__(self, mode="demo"):
+        def __init__(self, mode="demo", profile="classic_v2"):
             self.mode = mode
+            self.profile = profile
         def _get_creds(self):
             return ("k", "s", "p")
         async def get_balances(self):
@@ -131,7 +132,9 @@ def test_sync_unconfigured_returns_none_no_raise(tmp_path, monkeypatch):
     import aletheia.exchanges.bitget.client as bg_client
 
     class _NoCreds:
-        def __init__(self, mode="demo"): self.mode = mode
+        def __init__(self, mode="demo", profile="classic_v2"):
+            self.mode = mode
+            self.profile = profile
         def _get_creds(self): raise RuntimeError("not configured")
     monkeypatch.setattr(bg_client, "BitgetClient", _NoCreds)
 

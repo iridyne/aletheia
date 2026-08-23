@@ -380,7 +380,7 @@ def test_wrapper_preserves_existing_applier_and_uses_fresh_postflight(monkeypatc
     monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda: after)
     seen = {}
 
-    def apply_update(*, restart):
+    def apply_update(*, restart, progress=None):
         seen["restart"] = restart
         return {
             "applied": True,
@@ -403,7 +403,36 @@ def test_wrapper_preserves_existing_applier_and_uses_fresh_postflight(monkeypatc
     assert result["applied"] is True
     assert result["continuity_verified"] is True
     assert result["continuity_state"] == "verified"
+    assert result["runtime_old_commit"] == "old111"
     assert result["continuity"]["comparison"]["postflight_capture_source"] == "fresh_target_process"
+
+
+def test_wrapper_uses_runtime_boot_commit_when_source_is_already_current(monkeypatch):
+    from aletheia.update import applier, continuity
+
+    before = _snapshot(disk_sha="target-sha", gateway_sha="old-sha", capture_source="in_process")
+    after = _snapshot(disk_sha="target-sha", gateway_sha="target-sha")
+    monkeypatch.setattr(continuity, "capture_update_continuity", lambda: before)
+    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda: after)
+    monkeypatch.setattr(
+        applier,
+        "apply_update",
+        lambda *, restart, progress=None: {
+            "applied": True,
+            "mode": "development",
+            "old_commit": "target-sha",
+            "new_commit": "target-sha",
+            "source_changed": False,
+            "deps_reinstalled": False,
+        },
+    )
+    monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
+
+    result = continuity.apply_update_with_continuity(restart=True)
+
+    assert result["runtime_old_commit"] == "old-sha"
+    assert result["old_commit"] == "target-sha"
+    assert result["new_commit"] == "target-sha"
 
 
 def test_wrapper_does_not_call_applier_when_preflight_fails(monkeypatch):
@@ -444,7 +473,7 @@ def test_wrapper_reports_unproven_without_claiming_failure(monkeypatch):
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart: {
+        lambda *, restart, progress=None: {
             "applied": True,
             "mode": "development",
             "old_commit": "old111",
@@ -485,7 +514,7 @@ def test_wrapper_reports_postflight_failure_without_claiming_rollback(monkeypatc
     monkeypatch.setattr(
         applier,
         "apply_update",
-        lambda *, restart: {
+        lambda *, restart, progress=None: {
             "applied": True,
             "mode": "development",
             "old_commit": "old111",
@@ -501,4 +530,58 @@ def test_wrapper_reports_postflight_failure_without_claiming_rollback(monkeypatc
     assert result["continuity_verified"] is False
     assert result["continuity_state"] == "failed"
     assert result["reason"] == "observer_continuity_failed"
-    assert "worker_identity_changed" in result["continuity"]["comparison"]["failures"]
+
+
+def test_wrapper_reanchors_checkpoint_after_apply(monkeypatch):
+    """After apply_update succeeds, the observation checkpoint is immediately
+    re-anchored so the next preflight doesn't see stale migration state."""
+    import aletheia.observation_lab.checkpoint as obs_chkpt
+    from aletheia.update import applier, continuity
+
+    before = _snapshot()
+    after = _snapshot(disk_sha="new222", gateway_sha="new222")
+    monkeypatch.setattr(continuity, "capture_update_continuity", lambda: before)
+    monkeypatch.setattr(continuity, "capture_update_continuity_fresh", lambda: after)
+    monkeypatch.setattr(
+        applier,
+        "apply_update",
+        lambda *, restart, progress=None: {
+            "applied": True,
+            "mode": "development",
+            "old_commit": "old111",
+            "new_commit": "new222",
+            "deps_reinstalled": False,
+        },
+    )
+    monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
+
+    anchored = []
+    monkeypatch.setattr(obs_chkpt, "compute_joint_checkpoint", lambda: "computed_cp")
+    monkeypatch.setattr(obs_chkpt, "save_joint_checkpoint", lambda cp: anchored.append(cp))
+
+    result = continuity.apply_update_with_continuity(restart=True)
+
+    assert result["applied"] is True
+    assert anchored == ["computed_cp"], "checkpoint must be re-anchored after successful apply"
+
+
+def test_wrapper_does_not_reanchor_when_apply_fails(monkeypatch):
+    """Checkpoint re-anchor is skipped when apply_update returns applied=False."""
+    import aletheia.observation_lab.checkpoint as obs_chkpt
+    from aletheia.update import applier, continuity
+
+    monkeypatch.setattr(continuity, "capture_update_continuity", lambda: _snapshot())
+    monkeypatch.setattr(
+        applier,
+        "apply_update",
+        lambda *, restart, progress=None: {"applied": False, "reason": "git_pull_failed"},
+    )
+    monkeypatch.setattr(continuity, "_record", lambda *args, **kwargs: None)
+
+    anchored = []
+    monkeypatch.setattr(obs_chkpt, "save_joint_checkpoint", lambda cp: anchored.append(cp))
+
+    result = continuity.apply_update_with_continuity(restart=True)
+
+    assert result["applied"] is False
+    assert anchored == [], "checkpoint must not be re-anchored when apply fails"

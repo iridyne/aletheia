@@ -36,7 +36,7 @@ from aletheia.storage.repositories import (
     list_all_open_positions,
 )
 from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exit_plan
-from aletheia.portfolio.pnl import close_position, _latest_price
+from aletheia.portfolio.pnl import build_exit_reasoning, close_position, _latest_price
 logger = logging.getLogger("aletheia.position_manager")
 
 _PAPER_MODES = {"paper_internal", "bitget_demo", "binance_testnet", "okx_demo"}
@@ -274,15 +274,50 @@ def close_position_routed(
             f"refusing to autonomously close live position {position_id} "
             f"(mode={mode}); live closes are human-only (pass allow_live=True to override)"
         )
+    close_reasoning = None
+    if isinstance(decision_reasoning, str) and decision_reasoning.strip() and row:
+        payload = build_exit_reasoning(
+            row,
+            exit_price=None,
+            reason=reason,
+            actor=decision_actor,
+            source=decision_source,
+            reasoning=decision_reasoning,
+            is_ai_judgment=decision_actor == "system_operator",
+            trigger=(
+                {"trigger_type": "operator_review"}
+                if decision_actor == "system_operator"
+                else None
+            ),
+        )
+        payload["trigger"].pop("exit_price", None)
+        close_reasoning = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
     if mode in ("bitget_demo", "bitget_live_limited"):
         from aletheia.execution.bitget_broker import close_demo_position
-        result = close_demo_position(position_id, reason=reason)
+        result = close_demo_position(
+            position_id,
+            reason=reason,
+            close_reasoning=close_reasoning,
+        )
     elif mode in ("binance_testnet", "binance_live_limited"):
         from aletheia.execution.binance_broker import close_testnet_position
-        result = close_testnet_position(position_id, reason=reason)
+        result = close_testnet_position(
+            position_id,
+            reason=reason,
+            close_reasoning=close_reasoning,
+        )
     elif mode in ("okx_demo", "okx_live_limited"):
         from aletheia.execution.okx_broker import close_okx_position
-        result = close_okx_position(position_id, reason=reason)
+        result = close_okx_position(
+            position_id,
+            reason=reason,
+            close_reasoning=close_reasoning,
+        )
     elif mode == "paper_internal":
         # paper_internal — pure local simulation; needs an observed mark. The
         # paper broker applies adverse close-side slippage and atomically writes
@@ -305,7 +340,7 @@ def close_position_routed(
     # Only overwrite the generic factual explanation after a confirmed close.
     # This deliberately sits outside the broker dispatch: no exchange adapter or
     # order semantics change, and a failed exchange close cannot look complete.
-    if decision_reasoning:
+    if decision_reasoning and result.get("closed") is True:
         from aletheia.portfolio.pnl import persist_exit_reasoning
         persist_exit_reasoning(
             position_id,

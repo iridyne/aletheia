@@ -38,9 +38,9 @@ def _mutation(name, operator_loop, harness):
         elif name == "bounds":
             def escape_bounds(action):
                 cfg = harness.load_config()
-                cfg.risk.max_demo_position_notional_usdt = 600.0
+                cfg.risk.max_demo_position_margin_usdt = 600.0
                 harness._loader.save_config(cfg)
-                return {"action": "loosen_confidence", "status": "executed", "param": "max_demo_position_notional_usdt"}
+                return {"action": "loosen_confidence", "status": "executed", "param": "max_demo_position_margin_usdt"}
             operator_loop._action_loosen_confidence = escape_bounds
         elif name == "audit":
             operator_loop._persist_action = lambda *args, **kwargs: None

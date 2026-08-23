@@ -44,7 +44,13 @@ def test_directional_decision_registers_one_shared_outcome_per_horizon():
     assert {row["direction"] for row in rows} == {"short"}
 
 
-def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
+@pytest.mark.parametrize(
+    ("market_type", "expected_net"),
+    (("spot", 1.68), ("", None)),
+)
+def test_filter_outcome_settlement_preserves_market_economics(
+    monkeypatch, market_type, expected_net,
+):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import FilterCandidateOutcome, ShadowTrade
     from aletheia.storage.sqlite import get_db
@@ -56,7 +62,7 @@ def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
         outcome_candidate_key="opportunity:settle-filter-net",
         venue="okx",
         symbol="BTC/USDT",
-        market_type="spot",
+        market_type=market_type,
         direction="long",
         scanner_family="momentum",
         horizon="24h",
@@ -71,7 +77,7 @@ def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
         batch_id="batch-net",
         symbol="BTC/USDT",
         venue="okx",
-        market_type="spot",
+        market_type=market_type,
         direction="long",
         entry_price=100.0,
         outcome_candidate_key=outcome.outcome_candidate_key,
@@ -101,14 +107,20 @@ def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
     ).fetchone()
     assert row["status"] == "settled"
     assert row["gross_return_pct"] == pytest.approx(2.0)
-    assert row["net_return_pct"] == pytest.approx(1.68)
     assert row["mfe_pct"] == pytest.approx(3.0)
     assert row["mae_pct"] == pytest.approx(-1.0)
     shadow_row = get_db().execute(
         "SELECT * FROM shadow_trades WHERE id=?", (shadow.id,)
     ).fetchone()
     assert shadow_row["pnl_pct"] == pytest.approx(2.0)
-    assert shadow_row["net_pnl_pct"] == pytest.approx(1.68)
+    if expected_net is None:
+        assert row["estimated_funding_pct"] is None
+        assert row["net_return_pct"] is None
+        assert shadow_row["net_pnl_pct"] is None
+    else:
+        assert row["estimated_funding_pct"] == 0.0
+        assert row["net_return_pct"] == pytest.approx(expected_net)
+        assert shadow_row["net_pnl_pct"] == pytest.approx(expected_net)
     assert shadow_row["resolved_at"]
 
 
@@ -712,6 +724,120 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
     assert rejected["blocked_net_sum"] == pytest.approx(0.2)
 
 
+def test_filter_advisor_stats_ignore_temporally_invalid_outcomes():
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import FilterCandidateOutcome, UniverseForwardOutcome
+
+    now = datetime.now(timezone.utc)
+    entry = now - timedelta(hours=2)
+    due = now - timedelta(hours=1)
+    settled = now - timedelta(minutes=30)
+    common = {
+        "venue": "okx",
+        "symbol": "BTC/USDT",
+        "market_type": "usdt_futures",
+        "direction": "long",
+        "scanner_family": "momentum",
+        "horizon": "1h",
+        "entry_price_usd": 100.0,
+        "entry_spread_bps": 20.0,
+        "entry_ts": entry.isoformat(),
+        "due_at": due.isoformat(),
+        "min_tradable_edge_pct": 0.1,
+        "cost_model_version": "test-v1",
+        "status": "settled",
+    }
+    repo.insert_filter_candidate_outcomes_batch([
+        FilterCandidateOutcome(
+            outcome_candidate_key="opportunity:advisor-valid",
+            settled_at=settled.isoformat(),
+            net_return_pct=0.8,
+            **common,
+        ),
+        FilterCandidateOutcome(
+            outcome_candidate_key="opportunity:advisor-future",
+            settled_at=(now + timedelta(days=1)).isoformat(),
+            net_return_pct=99.0,
+            **common,
+        ),
+    ])
+    repo.insert_forward_outcomes_batch([
+        UniverseForwardOutcome(
+            outcome_candidate_key="universe:advisor-valid:1h",
+            member_id="advisor-valid",
+            snapshot_id="advisor-snapshot",
+            settled_at=settled.isoformat(),
+            net_return_pct=0.6,
+            **common,
+        ),
+        UniverseForwardOutcome(
+            outcome_candidate_key="universe:advisor-impossible:1h",
+            member_id="advisor-impossible",
+            snapshot_id="advisor-snapshot",
+            settled_at=(due - timedelta(seconds=1)).isoformat(),
+            net_return_pct=-99.0,
+            **common,
+        ),
+    ])
+
+    assert repo.filter_pressure_stats() == [{
+        "scanner_family": "momentum",
+        "direction": "long",
+        "market_type": "perp",
+        "horizon": "1h",
+        "n": 1,
+        "avg_net": 0.8,
+        "min_net": 0.8,
+        "max_net": 0.8,
+        "miss_rate": 1.0,
+    }]
+    assert repo.family_spread_tolerance_stats() == [{
+        "scanner_family": "momentum",
+        "direction": "long",
+        "market_type": "perp",
+        "horizon": "1h",
+        "n": 1,
+        "avg_net": 0.6,
+        "min_net": 0.6,
+        "n_low_spread": 0,
+        "avg_net_low_spread": None,
+        "n_high_spread": 1,
+        "avg_net_high_spread": 0.6,
+    }]
+
+
+def test_filter_advisor_uses_one_cutoff_and_read_snapshot(monkeypatch):
+    from aletheia.storage import repositories as repo
+    from aletheia.universe.filter_advisor import get_family_spread_tolerances
+
+    statements: list[str] = []
+    cutoffs: list[datetime] = []
+
+    class _DB:
+        in_transaction = False
+
+        def execute(self, statement):
+            statements.append(statement)
+
+    monkeypatch.setattr(repo, "get_db", lambda: _DB())
+    monkeypatch.setattr(
+        repo,
+        "family_spread_tolerance_stats",
+        lambda *, as_of_at=None: cutoffs.append(as_of_at) or [],
+    )
+    monkeypatch.setattr(
+        repo,
+        "filter_pressure_stats",
+        lambda *, as_of_at=None: cutoffs.append(as_of_at) or [],
+    )
+
+    assert get_family_spread_tolerances() == {}
+    assert len(cutoffs) == 2
+    assert cutoffs[0] is cutoffs[1]
+    assert cutoffs[0].tzinfo is timezone.utc
+    assert statements == ["BEGIN DEFERRED", "ROLLBACK"]
+
+
 def test_filter_snapshot_drops_sensitive_keys_and_truncates_text():
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.storage.sqlite import get_db
@@ -1054,7 +1180,7 @@ def test_controller_only_flags_overrestriction_after_paired_gates(monkeypatch):
     }
     monkeypatch.setattr(
         "aletheia.analytics.filter_evidence.filter_feedback_stats",
-        lambda: [
+        lambda **kwargs: [
             {**common, "decision": "passed", "shrunk_avg_net": -0.10},
             {**common, "decision": "rejected", "shrunk_avg_net": 0.20},
         ],
@@ -1198,7 +1324,7 @@ def test_controller_uses_evidence_stage_instead_of_registry_stage(monkeypatch):
     }
     monkeypatch.setattr(
         "aletheia.analytics.filter_evidence.filter_feedback_stats",
-        lambda: [
+        lambda **kwargs: [
             {**common, "decision": "passed", "shrunk_avg_net": -0.10},
             {**common, "decision": "rejected", "shrunk_avg_net": 0.20},
         ],

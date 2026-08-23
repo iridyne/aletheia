@@ -56,28 +56,24 @@ CLOSE_BROKERS = (
     pytest.param(
         "aletheia.execution.okx_broker",
         "OKXClient",
-        "close_okx_position",
         "okx_demo",
         id="okx-demo-close",
     ),
     pytest.param(
         "aletheia.execution.okx_broker",
         "OKXClient",
-        "close_okx_position",
         "okx_live_limited",
         id="okx-live-close",
     ),
     pytest.param(
         "aletheia.execution.binance_broker",
         "BinanceClient",
-        "close_testnet_position",
         "binance_testnet",
         id="binance-testnet-close",
     ),
     pytest.param(
         "aletheia.execution.binance_broker",
         "BinanceClient",
-        "close_testnet_position",
         "binance_live_limited",
         id="binance-live-close",
     ),
@@ -911,7 +907,7 @@ def _seed_verified_open_position(execution_mode: str):
 
 
 @pytest.mark.parametrize(
-    "broker_module,client_name,close_function,execution_mode", CLOSE_BROKERS
+    "broker_module,client_name,execution_mode", CLOSE_BROKERS
 )
 @spec_claim(
     SpecClaim(
@@ -930,11 +926,11 @@ def test_close_waits_for_private_fill_then_materializes_once(
     monkeypatch,
     broker_module,
     client_name,
-    close_function,
     execution_mode,
 ):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
+    from aletheia.portfolio.position_manager import close_position_routed
     from aletheia.storage import repositories as repo
 
     position = _seed_verified_open_position(execution_mode)
@@ -964,8 +960,14 @@ def test_close_waits_for_private_fill_then_materializes_once(
             pass
 
     monkeypatch.setattr(broker, client_name, _FilledCloseClient)
-    close_result = getattr(broker, close_function)(
-        position.id, reason="take_profit"
+    decision_reasoning = "Momentum reversed while breadth weakened."
+    close_result = close_position_routed(
+        position.id,
+        reason="take_profit",
+        decision_reasoning=decision_reasoning,
+        decision_actor="system_operator",
+        decision_source="portfolio_review",
+        allow_live=execution_mode.endswith("_live_limited"),
     )
     close_order = repo.get_order(close_result["order_id"])
 
@@ -1000,6 +1002,11 @@ def test_close_waits_for_private_fill_then_materializes_once(
     assert stored_position["exit_fee"] == pytest.approx(0.123456)
     assert stored_position["exit_fill_verified"] == 1
     assert stored_position["exit_price_source"] == "broker_fill"
+    exit_reasoning = json.loads(stored_position["exit_reasoning"])
+    assert exit_reasoning["actor"] == "system_operator"
+    assert exit_reasoning["source"] == "portfolio_review"
+    assert exit_reasoning["reason"] == decision_reasoning
+    assert exit_reasoning["trigger"]["exit_price"] == pytest.approx(60_123.5)
     assert stored_position["closed_at"] == datetime.fromtimestamp(
         1_784_050_000, tz=timezone.utc
     ).isoformat()
@@ -1013,13 +1020,23 @@ def test_close_waits_for_private_fill_then_materializes_once(
     assert evidence["fill_ids"] == [raw_fill_id]
     assert evidence["durable_fill_ids"] == [close_fill["id"]]
     assert evidence["fills"][0]["remote_fill_id"] == raw_fill_id
+    audit = db.execute(
+        "SELECT actor, source FROM audit_events "
+        "WHERE event_type='position_closed' AND entity_id=?",
+        (position.id,),
+    ).fetchone()
+    assert tuple(audit) == ("system_operator", "portfolio_review")
     assert evidence["fills"][0]["durable_fill_id"] == close_fill["id"]
+    exit_reasoning_before_replay = stored_position["exit_reasoning"]
 
     second = reconcile()
     assert second["filled"] == 0
     assert db.execute(
         "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order["id"],)
     ).fetchone()[0] == 1
+    assert repo._select_one("positions", position.id)["exit_reasoning"] == (
+        exit_reasoning_before_replay
+    )
 
 
 @pytest.mark.parametrize("broker_module,client_name,execution_mode", BROKERS)
@@ -1184,7 +1201,7 @@ def test_binance_private_reader_normalizes_order_matched_actual_fee(
         async def load_markets(self):
             return None
 
-        async def fetch_my_trades(self, symbol, since, limit, params):
+        async def fetch_my_trades(self, symbol, since=None, limit=None, params=None):
             calls.append({
                 "symbol": symbol,
                 "since": since,

@@ -319,3 +319,49 @@ async def test_pending_events_survive_parameter_restart():
 
     # The flag must survive the restart
     assert pd._generic_wake_pending is True, "Pending generic wake must not be lost during restart"
+
+
+# ---------------------------------------------------------------------------
+# startup gate exception / import failure — fail-closed regression (#1103)
+# ---------------------------------------------------------------------------
+
+async def test_startup_gate_exception_blocks_enable():
+    """gate_allows_startup() raising must block enablement (fail-closed)."""
+    loop = asyncio.get_running_loop()
+
+    with patch("aletheia.config.loader.load_config", return_value=_paused_cfg()), \
+         patch("aletheia.agent_runtime.startup_behavior_gate.gate_allows_startup",
+               side_effect=RuntimeError("injected gate failure")):
+        result = await reconfigure_pi_daemon(
+            enabled=True,
+            debounce_sec=0.0,
+            cooldown_sec=0.0,
+            heartbeat_sec=999.0,
+            loop=loop,
+        )
+
+    assert result == {"configured": True, "running": False, "blocker": "startup_behavior_gate_error"}
+    assert not is_daemon_running()
+    assert pd._task_generation == 0
+
+
+async def test_startup_gate_import_failure_blocks_enable():
+    """Gate module import failure must block enablement (fail-closed)."""
+    import sys
+    loop = asyncio.get_running_loop()
+
+    module_name = "aletheia.agent_runtime.startup_behavior_gate"
+    with patch("aletheia.config.loader.load_config", return_value=_paused_cfg()), \
+         patch.dict(sys.modules, {module_name: None}):
+        result = await reconfigure_pi_daemon(
+            enabled=True,
+            debounce_sec=0.0,
+            cooldown_sec=0.0,
+            heartbeat_sec=999.0,
+            loop=loop,
+        )
+
+    assert result["blocker"] == "startup_behavior_gate_error"
+    assert not result["running"]
+    assert not is_daemon_running()
+    assert pd._task_generation == 0

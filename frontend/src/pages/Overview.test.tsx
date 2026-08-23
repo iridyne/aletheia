@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { operatorMutationError } from './Overview'
+import { isGoLiveScorecard, operatorMutationError } from './Overview'
+import { semanticTone } from '../lib/systemState'
 import SRC from './Overview.tsx?raw'
 import CSS from '../index.css?raw'
+import STATUS_SRC from '../components/StatusCluster.tsx?raw'
+import APP_SRC from '../App.tsx?raw'
 
 describe('Overview operator mutation truthfulness', () => {
   it('keeps the action identity and a usable rejection reason', () => {
@@ -26,10 +29,51 @@ describe('Overview operator mutation truthfulness', () => {
 })
 
 describe('Overview semantic honesty', () => {
+  it('maps semantic status fixtures to the documented tones', () => {
+    expect([
+      ['active', 'green'],
+      ['degraded', 'yellow'],
+      ['loading', 'muted'],
+      ['unknown', 'muted'],
+      ['unavailable', 'red'],
+      ['disabled', 'muted'],
+    ] as const).toEqual([
+      ['active', semanticTone('active')],
+      ['degraded', semanticTone('degraded')],
+      ['loading', semanticTone('loading')],
+      ['unknown', semanticTone('unknown')],
+      ['unavailable', semanticTone('unavailable')],
+      ['disabled', semanticTone('disabled')],
+    ])
+  })
+
+  it('keeps loading and disabled states muted instead of implying degradation', () => {
+    expect(STATUS_SRC).toContain("semanticTone(liveOn ? 'active' : 'disabled')")
+    expect(SRC).toContain('const collectorState: SemanticState')
+    expect(SRC).toContain("collectorHealthQuery.isPending ? 'loading' : 'unknown'")
+    expect(SRC).not.toContain("collectorHealthQuery.isError ? 'muted' : 'yellow'")
+  })
+
+  it('uses full disclosure chevrons with an accessible relationship', () => {
+    expect(APP_SRC).toContain('aria-expanded={!collapsed[group]}')
+    expect(APP_SRC).toContain('aria-controls={itemsId}')
+    expect(APP_SRC).toContain("collapsed[group] ? '▶' : '▼'")
+    expect(APP_SRC).not.toContain('▾')
+  })
+
+  it('loads persisted data coverage independently from the lightweight bootstrap', () => {
+    expect(SRC).toContain("queryKey: ['market-data-coverage']")
+    expect(SRC).toContain('queryFn: api.getDataCoverage')
+    expect(SRC).toContain('coverage={coverage.data} coverageError={coverage.isError}')
+    expect(SRC).toContain("coverage?.status === 'healthy'")
+    expect(SRC).not.toContain('deferred_until_diagnostics')
+  })
+
   it('RiskCard shows muted tone when shell data has not loaded', () => {
     // Unknown state (no data) must not show yellow (degraded) — it is unknown.
     // The tone expression must check !shell before assigning yellow.
-    expect(SRC).toContain('!shell ? \'muted\'')
+    expect(SRC).toContain('const unavailable = shellError || !shell || !risk')
+    expect(SRC).toContain("semanticTone('unknown')")
   })
 
   it('GoLiveScoreCard derives tone from backend traffic_light, not hardcoded yellow', () => {
@@ -52,5 +96,54 @@ describe('Overview semantic honesty', () => {
     expect(CSS).toContain('--bp-md: 768px')
     expect(CSS).toContain('--bp-lg: 1024px')
     expect(CSS).toContain('--bp-xl: 1280px')
+  })
+})
+
+describe('Overview issue repairs', () => {
+  it('validates the scorecard response before treating it as qualification evidence', () => {
+    const valid = {
+      composite_score: 82,
+      traffic_light: 'green' as const,
+      criteria: [{ key: 'risk', label: 'Risk', score: 100, weight: 1, weighted_contribution: 100, detail: 'ok', status: 'pass' as const }],
+      blockers: [],
+      computed_at: '2026-08-22T10:00:00Z',
+    }
+    expect(isGoLiveScorecard(valid)).toBe(true)
+    expect(isGoLiveScorecard({ ...valid, traffic_light: 'ready' })).toBe(false)
+    expect(isGoLiveScorecard({ ...valid, criteria: [{ ...valid.criteria[0], score: Number.NaN }] })).toBe(false)
+  })
+
+  it('keeps collector, coverage, mode, and navigation paths mounted on System', () => {
+    expect(SRC).toContain("queryKey: ['collector-health']")
+    expect(SRC).toContain('CollectorHealthDetails health={collectorHealth} mode="compact"')
+    expect(SRC).toContain('CollectorHealthDetails health={collectorHealth} mode="full"')
+    expect(SRC).toContain('DataCoverageDetail')
+    expect(SRC).toContain('ModeDetail shell={shell}')
+    expect(SRC).toContain("navigate('/settings?tab=execution')")
+    expect(SRC).toContain("navigate('/settings?tab=agent')")
+    expect(SRC).toContain("navigate('/settings?tab=runtime')")
+    expect(STATUS_SRC).toContain('parseHealthIssue(issue)')
+    expect(STATUS_SRC).not.toContain('function parseIssue')
+  })
+
+  it('feeds shell health into the persistent master status derivation', () => {
+    expect(STATUS_SRC).toContain("const healthState = String(healthQuery.data?.status || data?.health?.status || '')")
+    expect(STATUS_SRC).toContain('riskState,')
+    expect(STATUS_SRC).toContain('healthState,')
+  })
+
+  it('separates pending, unavailable, and stale scorecard states', () => {
+    expect(SRC).toContain('scorecardQuery.isPending && !data')
+    expect(SRC).toContain('scorecardQuery.isError && !data')
+    expect(SRC).toContain('scorecardQuery.isRefetchError')
+    expect(SRC).toContain('Qualification details are unavailable.')
+    expect(SRC).toContain('Refresh failed; showing the last computed scorecard.')
+    expect(SRC).toContain('Last computed {fmtTimestamp(data.computed_at)}')
+  })
+
+  it('does not clip the restored status popover at the mobile topbar', () => {
+    expect(CSS).toContain('gap: var(--space-2); overflow: visible;')
+    expect(CSS).toContain('.status-popover {')
+    expect(CSS).toContain('position: absolute; top: 100%; right: 0;')
   })
 })

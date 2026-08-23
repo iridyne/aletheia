@@ -29,8 +29,8 @@ def test_long_position_pnl(tmp_path, monkeypatch):
         symbol="BTCUSDT", market_type="spot", direction="long",
         quantity=2.0, entry_price=100.0, execution_mode="paper_internal",
     ))
-    # latest market price 110 → unrealized = (110-100)*2 = 20
-    repo.insert_market_snapshot(MarketSnapshot(symbol="BTCUSDT", market_type="spot", price=110.0))
+    # Simulate a fresh exact instrument mark at 110.
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     summary = compute_portfolio()
     assert summary["unrealized_pnl"] == 20.0
     assert summary["positions_count"] == 1
@@ -44,8 +44,8 @@ def test_short_position_pnl(tmp_path, monkeypatch):
         symbol="ETHUSDT", market_type="usdt_futures", direction="short",
         quantity=3.0, entry_price=200.0, execution_mode="paper_internal",
     ))
-    # price drops to 180 → short profit = (200-180)*3 = 60
-    repo.insert_market_snapshot(MarketSnapshot(symbol="ETHUSDT", market_type="spot", price=180.0))
+    # Simulate a fresh exact instrument mark at 180; short profit = (200-180)*3 = 60.
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 180.0)
     summary = compute_portfolio()
     assert summary["unrealized_pnl"] == 60.0
     reset_db()
@@ -67,7 +67,7 @@ def test_mark_to_market_updates_every_open_position_beyond_display_limit(
             entry_price=100.0,
             execution_mode="paper_internal",
         ))
-    monkeypatch.setattr(pnl, "_latest_price", lambda _symbol: 110.0)
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: {})
 
     marked = pnl.mark_positions_to_market(persist=True)
@@ -145,7 +145,7 @@ def test_today_pnl_includes_closed_pnl_only(tmp_path, monkeypatch):
         status="open",
     ))
     # open ETH position at 60 => unrealized +10
-    repo.insert_market_snapshot(MarketSnapshot(symbol="ETHUSDT", market_type="spot", price=60.0))
+    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 60.0)
     # closed BTC position closed today should contribute to realized today, closed_at is today by default from model
     summary = compute_portfolio()
     assert summary["today_realized_pnl"] == 15.0

@@ -853,12 +853,12 @@ Implement Claude Code-like permission levels.
 
 ### 13.1 Modes
 
+The CLI and config accept these three values (consolidated from the original five-mode design):
+
 ```text
-Read Only
-Research
-Paper Auto
-Allow Editing
-Auto
+Observe
+Paper
+Full
 ```
 
 ### 13.2 Default
@@ -866,12 +866,12 @@ Auto
 Default MVP mode:
 
 ```text
-Research
+Paper
 ```
 
 ### 13.3 Semantics
 
-#### Read Only
+#### Observe
 
 Agent can:
 
@@ -879,17 +879,6 @@ Agent can:
 - Read positions.
 - Read reports.
 - Summarize state.
-
-Agent cannot:
-
-- Create proposals.
-- Create paper orders.
-- Edit files.
-
-#### Research
-
-Agent can:
-
 - Create research notes.
 - Create opportunities.
 - Create strategy hypotheses.
@@ -899,39 +888,25 @@ Agent cannot:
 
 - Place paper/demo/live orders automatically.
 
-#### Paper Auto
+#### Paper
 
 Agent can:
 
+- Everything in `Observe`.
 - Create paper strategy candidates.
 - Create paper/demo proposals.
-- Execute paper/demo trades through paper/demo execution gateway.
+- Execute paper/demo trades through the paper/demo execution gateway.
 
 Agent cannot:
 
 - Trade live.
 - Promote to live.
-- Edit code.
 
-#### Allow Editing
-
-Agent can:
-
-- Modify prompt drafts.
-- Modify playbook drafts.
-- Modify paper strategy configs.
-- Generate code change proposals.
-
-Agent cannot:
-
-- Directly edit live execution logic.
-- Directly change hard risk limits.
-- Directly change credentials.
-
-#### Auto
+#### Full
 
 Agent can:
 
+- Everything in `Paper`.
 - Run paper/demo lifecycle autonomously.
 - Propose live-limited promotion.
 - If first live confirmation is already done and hard gates pass, operate within `live_limited`.
@@ -952,9 +927,9 @@ CLI:
 
 ```bash
 aletheia permission status
-aletheia permission set Research
-aletheia permission set PaperAuto
-aletheia permission set Auto
+aletheia permission set Observe
+aletheia permission set Paper
+aletheia permission set Full
 ```
 
 ---

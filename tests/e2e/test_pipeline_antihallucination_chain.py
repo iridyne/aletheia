@@ -135,8 +135,8 @@ class TestAntiHallucinationChain:
 
         # ── Build case studies from the real closed positions ──
         from aletheia.analytics.trade_case_builder import build_case_studies
-        created = build_case_studies()
-        by_pos = {c["position_id"]: c["case_study_id"] for c in created}
+        result = build_case_studies()
+        by_pos = {c["position_id"]: c["case_study_id"] for c in result["created"]}
         assert btc_pos in by_pos, "full-chain closed trade must produce a case study"
         assert eth_pos not in by_pos, "broken-chain trade must not enter the learning corpus"
 

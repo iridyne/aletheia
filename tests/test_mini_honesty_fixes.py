@@ -192,6 +192,6 @@ def test_risk_controls_does_not_render_unknown_daily_loss_as_zero():
     ).read_text(encoding="utf-8")
 
     assert "Number((portfolio as any)?.today_pnl) || 0" not in source
-    assert "const todayPnlRaw = (portfolio as any)?.today_pnl" in source
+    assert "const todayPnlRaw = portfolioObj?.today_pnl" in source
     assert "todayPnlRaw == null ? null" in source
     assert "row.used == null ? 'Unavailable'" in source

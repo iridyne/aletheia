@@ -1068,6 +1068,74 @@ export class RecommendationEngine {
       })
     }
 
+    // --- Scheduler failure cluster ---
+    // When multiple distinct agents fail in the recent window, the cause is likely
+    // systemic (infrastructure, model, scheduler) rather than isolated worker behaviour.
+    // The existing failed_agent_rerun_due signal covers single-agent failures; this
+    // signal fires only when two or more distinct agents fail together.
+    const failedAgentNamesRecent = new Set<string>()
+    for (const run of recentAgentRuns || []) {
+      const ageMinutes = this.runAgeMinutes(run)
+      if (
+        ageMinutes !== null &&
+        ageMinutes <= 12 * 60 &&
+        ['failed', 'error', 'completed_with_errors'].includes(String(run.status || ''))
+      ) {
+        failedAgentNamesRecent.add(String(run.agent_name || '').trim())
+      }
+    }
+    failedAgentNamesRecent.delete('')
+    if (!snapshot.status.paused && failedAgentNamesRecent.size >= 2) {
+      const failingAgents = [...failedAgentNamesRecent].sort()
+      recommendations.push({
+        id: 'scheduler-failure-cluster',
+        kind: 'scheduler_failure_cluster',
+        severity: 'high',
+        summary: `${failedAgentNamesRecent.size} distinct agents have recent failures (${failingAgents.join(', ')}), suggesting a systemic scheduler or infrastructure issue rather than an isolated worker problem.`,
+        taskType: 'pi_reasoning_session',
+        metadata: {
+          reason: 'scheduler_failure_cluster',
+          failing_agent_count: failedAgentNamesRecent.size,
+          failing_agents: failingAgents,
+          goal: `Multiple agents (${failingAgents.join(', ')}) failed in the last 12 hours. Investigate whether this is caused by a shared infrastructure fault, model provider outage, or scheduler misconfiguration rather than treating each failure in isolation.`,
+        },
+      })
+    }
+
+    // --- Open position rate spike ---
+    // Compare the most recent portfolioHistory snapshot against a rolling baseline of
+    // earlier snapshots. A spike (current > 2x baseline average) with sufficient history
+    // warrants investigation: it may reflect a legitimate market expansion, a scanner
+    // parameter change, or an anomalous acceptance rate.
+    // Requires at least 4 snapshots (1 current + 3 baseline) to avoid false positives
+    // when the system is just starting up.
+    const sortedSnapshots = (portfolioHistory || [])
+      .slice()
+      .sort((a, b) => Date.parse(b.snapshot_at) - Date.parse(a.snapshot_at))
+    const latestSnapshot = sortedSnapshots[0]
+    const baselineSnapshots = sortedSnapshots.slice(1, 10) // up to 9 earlier snapshots
+    if (!snapshot.status.paused && latestSnapshot && baselineSnapshots.length >= 3) {
+      const baselineCounts = baselineSnapshots.map(s => s.positions_count)
+      const baselineAvg = baselineCounts.reduce((sum, n) => sum + n, 0) / baselineCounts.length
+      const currentCount = latestSnapshot.positions_count
+      if (baselineAvg > 0 && currentCount > baselineAvg * 2 && currentCount >= 3) {
+        recommendations.push({
+          id: 'open-position-rate-spike',
+          kind: 'open_position_rate_spike',
+          severity: 'medium',
+          summary: `Open positions spiked to ${currentCount} vs recent baseline of about ${Math.round(baselineAvg)}. Investigate whether this reflects a market opportunity expansion, scanner behaviour change, or an anomalous acceptance rate.`,
+          taskType: 'pi_reasoning_session',
+          metadata: {
+            reason: 'open_position_rate_spike',
+            current_count: currentCount,
+            baseline_avg: Math.round(baselineAvg * 10) / 10,
+            baseline_snapshot_count: baselineCounts.length,
+            goal: `Open positions count spiked to ${currentCount} vs rolling baseline average of ${Math.round(baselineAvg)} (from ${baselineCounts.length} recent snapshots). Determine if this is caused by a market opportunity expansion, a scanner or ranking drift, or an abnormal acceptance rate change.`,
+          },
+        })
+      }
+    }
+
     return recommendations
   }
 }

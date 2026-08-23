@@ -215,32 +215,34 @@ def _check_risk_caps_admit_sizing(cfg: "AletheiaConfig") -> ConfigInconsistency 
         risk_pct = float(risk_policy.loss.max_single_trade_risk_pct)
         leverage = float(risk_policy.leverage.major_cap)
 
-        single_entry = available * (risk_pct / 100.0) * leverage
-        if single_entry <= 0:
+        # Notional = available × risk_pct × leverage; margin = notional / leverage = available × risk_pct
+        notional_entry = available * (risk_pct / 100.0) * leverage
+        margin_entry = available * (risk_pct / 100.0)
+        if margin_entry <= 0:
             return None
 
         ceiling = per_symbol_notional_ceiling(mode, leverage=leverage, cfg=cfg)
-        if ceiling > 0 and single_entry > ceiling:
+        if ceiling > 0 and notional_entry > ceiling:
             return ConfigInconsistency(
                 field_path="risk.capital.max_per_symbol_entries",
                 severity="blocker",
                 message=(
-                    f"Sizing output ({single_entry:.0f}) exceeds per-symbol ceiling "
+                    f"Sizing output ({notional_entry:.0f}) exceeds per-symbol ceiling "
                     f"({ceiling:.0f}) — check #19 will reject every first entry"
                 ),
                 fix_hint="Increase max_per_symbol_entries, or reduce max_single_trade_risk_pct / major leverage",
             )
 
-        pos_cap = float(risk_policy.capital.max_position_notional_usdt)
-        if pos_cap > 0 and single_entry > pos_cap:
+        pos_cap = float(risk_policy.capital.max_position_margin_usdt)
+        if pos_cap > 0 and margin_entry > pos_cap:
             return ConfigInconsistency(
-                field_path="risk.capital.max_position_notional_usdt",
+                field_path="risk.capital.max_position_margin_usdt",
                 severity="blocker",
                 message=(
-                    f"Sizing output ({single_entry:.0f}) exceeds position notional cap "
+                    f"Margin required ({margin_entry:.0f}) exceeds position margin cap "
                     f"({pos_cap:.0f}) — check #5 will reject every entry"
                 ),
-                fix_hint=f"Raise max_position_notional_usdt above {single_entry:.0f}",
+                fix_hint=f"Raise max_position_margin_usdt above {margin_entry:.0f}",
             )
     except Exception:
         pass

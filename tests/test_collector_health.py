@@ -258,6 +258,58 @@ def test_report_does_not_attribute_failures_that_predate_current_outage(collecto
     assert report["infrastructure_incident"]["affected_domains"] == []
 
 
+def test_options_structure_success_appears_in_health_report(collector_db):
+    from aletheia.data.collector_health import get_collector_health_report, record_collector_status
+
+    record_collector_status("options_structure", "success", tick=1, duration_ms=1500)
+    row = next(r for r in get_collector_health_report()["domains"] if r["domain"] == "options_structure")
+    assert row["last_status"] == "success"
+    assert row["successes"] == 1
+    assert row["display_severity"] == "ok"
+
+
+def test_options_structure_empty_appears_in_health_report(collector_db):
+    from aletheia.data.collector_health import get_collector_health_report, record_collector_status
+
+    record_collector_status("options_structure", "empty", tick=1)
+    row = next(r for r in get_collector_health_report()["domains"] if r["domain"] == "options_structure")
+    assert row["last_status"] == "empty"
+    assert row["empty_results"] == 1
+
+
+def test_options_structure_timeout_appears_in_health_report(collector_db):
+    from aletheia.data.collector_health import get_collector_health_report, record_collector_status
+
+    record_collector_status("options_structure", "timed_out", tick=1, error_code="asyncio_timeout")
+    row = next(r for r in get_collector_health_report()["domains"] if r["domain"] == "options_structure")
+    assert row["last_status"] == "timed_out"
+    assert row["timeouts"] == 1
+    assert row["display_severity"] == "warning"
+
+
+def test_options_structure_disabled_appears_in_health_report(collector_db):
+    from aletheia.data.collector_health import get_collector_health_report, record_collector_status
+
+    record_collector_status("options_structure", "disabled", tick=1)
+    row = next(r for r in get_collector_health_report()["domains"] if r["domain"] == "options_structure")
+    assert row["last_status"] == "disabled"
+    assert row["display_severity"] == "muted"
+
+
+def test_options_structure_persist_failure_appears_in_health_report(collector_db):
+    from aletheia.data.collector_health import get_collector_health_report, record_collector_status
+
+    record_collector_status(
+        "options_structure", "failed", tick=1,
+        error_code="options_structure_persist_failed",
+    )
+    row = next(r for r in get_collector_health_report()["domains"] if r["domain"] == "options_structure")
+    assert row["last_status"] == "failed"
+    assert row["failures"] == 1
+    assert row["last_error_code"] == "options_structure_persist_failed"
+    assert row["display_severity"] == "warning"
+
+
 def test_report_keeps_pre_recovery_failures_under_one_recovery_notice(collector_db):
     from aletheia.data.collector_health import (
         get_collector_health_report,

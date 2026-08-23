@@ -204,7 +204,7 @@ def check_config() -> PreflightCheck:
         return PreflightCheck(
             "config",
             "fail",
-            f"Configuration load failed: {e}",
+            f"Configuration blocker: configuration load failed: {e}",
             remedy=f"Check {get_data_dir() / 'config.yaml'} syntax. Run: uv run aletheia doctor",
         )
 

@@ -43,6 +43,7 @@ def _init_agent_shell_db(tmp_path, monkeypatch):
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
 
     reset_db()
@@ -848,7 +849,7 @@ async def test_wake_driven_portfolio_review_persists_unavailable_result(
 
 
 @pytest.mark.asyncio
-async def test_horizon_hold_remains_incomplete_and_does_not_acknowledge_wake(
+async def test_horizon_hold_rolls_horizon_and_acknowledges_wake(
     tmp_path, monkeypatch
 ):
     conn = _init_agent_shell_db(tmp_path, monkeypatch)
@@ -884,10 +885,9 @@ async def test_horizon_hold_remains_incomplete_and_does_not_acknowledge_wake(
     )
     insert_position(target)
     insert_position(sibling)
-    # Exit-plan fields were added to the durable table after the base Position
-    # model; the production open path writes them as a separate update too.
-    update_position(target.id, expected_horizon_hours=10.0)
-    update_position(sibling.id, expected_horizon_hours=10.0)
+    opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
+    update_position(target.id, expected_horizon_hours=10.0, opened_at=opened)
+    update_position(sibling.id, expected_horizon_hours=10.0, opened_at=opened)
     monkeypatch.setattr(
         "aletheia.agent_shell.context.build_app_context",
         lambda sections=None: {
@@ -897,18 +897,8 @@ async def test_horizon_hold_remains_incomplete_and_does_not_acknowledge_wake(
 
     async def choose_hold(_system, user, *, schema, **_kwargs):
         assert "entry=100.0" in user
-        assert "persisted_current=102.0" in user
-        assert "persisted_upnl=2.0" in user
-        assert "stop=95.0" in user
-        assert "target=110.0" in user
-        assert "expected_horizon_hours=10.0" in user
-        assert '"hold" is not a valid terminal answer' in user
-        assert schema.model_json_schema()["properties"]["action"]["enum"] == [
-            "adjust_position",
-            "close_one",
-        ]
-        assert "new_horizon_hours" in user
-        assert "absolute age from" in user
+        assert "hold" in schema.model_json_schema()["properties"]["action"]["enum"]
+        assert "no clear close thesis" in user
         return ({"action": "hold", "reasoning": "thesis remains valid"}, None)
 
     monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_hold)
@@ -929,11 +919,68 @@ async def test_horizon_hold_remains_incomplete_and_does_not_acknowledge_wake(
     })
 
     assert result["action"] == "hold"
+    assert result["review_completed"] is True
+    assert "horizon_review_error" not in result
+    assert set(result["horizon_hold_extended_ids"]) == {target.id, sibling.id}
+    assert set(result["horizon_reviews_acknowledged"]) == {target.id, sibling.id}
+    assert _select_one("positions", target.id)["horizon_wake_sent_at"] is not None
+    assert _select_one("positions", sibling.id)["horizon_wake_sent_at"] is not None
+    assert float(_select_one("positions", target.id)["expected_horizon_hours"]) > 10.0
+
+
+@pytest.mark.asyncio
+async def test_horizon_hold_disabled_stays_incomplete(tmp_path, monkeypatch):
+    conn = _init_agent_shell_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell import commands as shell_commands
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import (
+        _select_one,
+        insert_position,
+        update_position,
+    )
+
+    monkeypatch.setattr(shell_commands, "_horizon_due_allow_hold", lambda _mode: False)
+    target = Position(
+        id="horizon-hold-disabled-target",
+        symbol="SOL/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="paper_internal",
+    )
+    insert_position(target)
+    update_position(target.id, expected_horizon_hours=10.0)
+    monkeypatch.setattr(
+        "aletheia.agent_shell.context.build_app_context",
+        lambda sections=None: {
+            "risk": {"max_open_positions_demo": 3, "kill_switch": False},
+        },
+    )
+
+    async def choose_hold(_system, user, *, schema, **_kwargs):
+        assert schema.model_json_schema()["properties"]["action"]["enum"] == [
+            "adjust_position",
+            "close_one",
+        ]
+        assert '"hold" is not a valid terminal answer' in user
+        return ({"action": "hold", "reasoning": "thesis remains valid"}, None)
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_hold)
+    result = await shell_commands.review_portfolio_state({
+        "trigger": "horizon_due",
+        "wake_batches": [{
+            "position_id": target.id,
+            "max_priority": 1,
+            "events": [{"kind": "horizon_due", "priority": 1, "payload": {}}],
+        }],
+    })
+
+    assert result["action"] == "hold"
     assert result["review_completed"] is False
     assert result["horizon_review_error"] == "explicit_extension_or_close_required"
     assert "horizon_reviews_acknowledged" not in result
     assert _select_one("positions", target.id)["horizon_wake_sent_at"] is None
-    assert _select_one("positions", sibling.id)["horizon_wake_sent_at"] is None
     row = conn.execute(
         "SELECT evidence_manifest_json FROM pi_decisions WHERE id=?",
         (result["position_review_decision_id"],),
@@ -1983,7 +2030,7 @@ async def test_runtime_handle_status_query():
     cfg.runtime.scheduler_enabled = True
     cfg.exchange.mode = "demo"
     cfg.risk.max_daily_loss_pct = 1.0
-    cfg.risk.max_demo_position_notional_usdt = 200.0
+    cfg.risk.max_demo_position_margin_usdt = 200.0
     cfg.risk.max_open_positions_demo = 6
 
     with patch("aletheia.agent_shell.sessions.get_db", return_value=db), \
@@ -2978,7 +3025,7 @@ async def test_propose_risk_boundary_change_creates_artifact(tmp_path, monkeypat
             "policy_id": demo_policy.policy_id,
             "policy_revision": demo_policy.revision,
             "policy_hash": risk_policy_hash(demo_policy),
-            "changes": {"max_demo_position_notional_usdt": 300.0},
+            "changes": {"max_demo_position_margin_usdt": 300.0},
             "rationale": "Paper sizing is too restrictive for current symbol set.",
         }
     )
@@ -2990,7 +3037,7 @@ async def test_propose_risk_boundary_change_creates_artifact(tmp_path, monkeypat
     assert artifacts[0]["content"]["policy_id"] == demo_policy.policy_id
     assert artifacts[0]["content"]["policy_revision"] == demo_policy.revision
     assert artifacts[0]["content"]["policy_hash"] == risk_policy_hash(demo_policy)
-    assert artifacts[0]["content"]["changes"]["max_demo_position_notional_usdt"] == 300.0
+    assert artifacts[0]["content"]["changes"]["max_demo_position_margin_usdt"] == 300.0
 
 
 @pytest.mark.asyncio

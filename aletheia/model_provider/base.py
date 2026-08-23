@@ -121,6 +121,10 @@ class ModelRequest:
     inference: Any | None = None
     allow_model_fallback: bool = True
     reasoning_effort: Literal["none", "low", "medium", "high"] | None = None
+    response_format: Literal["json_object"] | None = None
+    # Trade JSON: keep glm-5.2 in the later fallback pool; do not promote it first.
+    prefer_json_reliable_models: bool = False
+    exclude_models: tuple[str, ...] = ()
 
 
 @dataclass
@@ -138,6 +142,15 @@ class ModelResponse:
     model: str = ""
     usage: dict[str, int] = field(default_factory=dict)
     raw: Any = None
+
+
+class ProviderResponseError(RuntimeError):
+    """HTTP 200 body that is not a usable chat completion.
+
+    SenseNova GLM-5.2 has returned 200 JSON without `choices`, which previously
+    became an uncaught KeyError and aborted the fallback chain. This error is
+    transient: the request should try the next configured model.
+    """
 
 
 @dataclass

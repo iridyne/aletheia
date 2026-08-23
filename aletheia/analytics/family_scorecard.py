@@ -24,6 +24,21 @@ def compute_family_scorecard() -> list[dict]:
         {family, trade_count, win_rate, expectancy_pct, avg_hold_hours,
          shadow_count, alpha_vs_btc_pct}
     """
+    return compute_family_scorecard_with_epoch()["families"]
+
+
+def compute_family_scorecard_with_epoch() -> dict:
+    """Same as compute_family_scorecard() but also returns shadow epoch metadata.
+
+    Returns:
+        {
+            "families": list[dict],      # per-family stats
+            "shadow_epoch_id": str|None, # epoch used for shadow counts
+            "shadow_epoch_status": str,  # "single"|"mixed"|"all_null"
+        }
+    Shadow counts are set to None for each family when epoch_status=="mixed" to
+    avoid presenting pooled non-exchangeable cohorts as one valid measurement.
+    """
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -78,20 +93,27 @@ def compute_family_scorecard() -> list[dict]:
             hours = (closed - opened).total_seconds() / 3600.0
             f["total_hold_hours"] += hours
 
-    # Count shadow candidates per family, deduped by outcome_candidate_key so
-    # long-lived candidates (many re-scans, same identity) are not over-counted.
-    # The window matches the shadow_trades retention (90 days).
-    from aletheia.counterfactual.trades import list_deduped_shadows
+    # Count shadow candidates per family, deduped by outcome_candidate_key.
+    # Epoch guard: only count shadows within a single policy epoch to avoid
+    # pooling non-exchangeable cohorts (CF-I04).
+    from aletheia.counterfactual.trades import _detect_window_epochs, list_deduped_shadows
 
-    shadow_rows = list_deduped_shadows(
-        days=90,
-        columns=("scanner_family",),
-    )
-    for sr in shadow_rows:
-        family = sr.get("scanner_family") or "unknown"
-        if family not in families:
-            families[family] = _empty_family(family)
-        families[family]["shadow_count"] += 1
+    try:
+        shadow_epoch_id, shadow_epoch_status = _detect_window_epochs(days=90)
+    except Exception:
+        shadow_epoch_id, shadow_epoch_status = None, "all_null"
+
+    if shadow_epoch_status != "mixed":
+        shadow_rows = list_deduped_shadows(
+            days=90,
+            columns=("scanner_family",),
+            policy_epoch_id=shadow_epoch_id,
+        )
+        for sr in shadow_rows:
+            family = sr.get("scanner_family") or "unknown"
+            if family not in families:
+                families[family] = _empty_family(family)
+            families[family]["shadow_count"] += 1
 
     # Compute final metrics
     result = []
@@ -103,12 +125,16 @@ def compute_family_scorecard() -> list[dict]:
             "win_rate": round(f["wins"] / tc * 100.0, 1) if tc > 0 else None,
             "expectancy_pct": round(f["total_pnl_pct"] / tc, 2) if tc > 0 else None,
             "avg_hold_hours": round(f["total_hold_hours"] / tc, 1) if tc > 0 else None,
-            "shadow_count": f["shadow_count"],
+            "shadow_count": f["shadow_count"] if shadow_epoch_status != "mixed" else None,
             "alpha_vs_btc_pct": round(f["total_alpha_pct"] / f["alpha_count"], 2) if f["alpha_count"] > 0 else None,
             "outcome_status": "available" if tc else "insufficient",
             **outcome_window_metadata(),
         })
-    return result
+    return {
+        "families": result,
+        "shadow_epoch_id": shadow_epoch_id,
+        "shadow_epoch_status": shadow_epoch_status,
+    }
 
 
 def _empty_family(name: str) -> dict:

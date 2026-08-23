@@ -38,11 +38,15 @@ def _enable_legacy_paper_authority(monkeypatch, path_id: str) -> None:
     monkeypatch.setattr(behavior_contracts, "get_learning_path", measured_path)
 
 
-def _insert_settled_outcome(candidate_key: str) -> str:
+def _insert_settled_outcome(
+    candidate_key: str,
+    *,
+    at: datetime | None = None,
+) -> str:
     """Insert one clean cost-aware outcome and return its exposure link key."""
     from aletheia.storage.sqlite import get_db
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = (at or datetime.now(timezone.utc)).isoformat()
     base = candidate_key.replace(":", "_")
     db = get_db()
     was_in_tx = db.in_transaction
@@ -188,8 +192,13 @@ def test_measurement_unsupported_path_keeps_static_baseline_without_ledger_write
     ),
 )
 def test_authorized_numeric_treatment_records_before_after(monkeypatch):
+    from aletheia.learning.authority import resolve_learning_authority
     from aletheia.learning.experiments import apply_numeric_treatment, stable_assignment
-    from aletheia.learning.ledger import get_record, insert_record
+    from aletheia.learning.ledger import (
+        get_record,
+        insert_record,
+        linked_settled_exposure_counts,
+    )
     from aletheia.learning.models import LearningContributionVerdict
     from aletheia.storage.sqlite import get_db
 
@@ -215,22 +224,48 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
     experiment_row = get_record("learning_experiments", shadow.experiment_id)
     from aletheia.learning.models import LearningExperiment
     experiment = LearningExperiment(**experiment_row)
-    candidate = next(
-        f"candidate:{i}" for i in range(1000)
-        if stable_assignment(experiment, f"candidate:{i}") == "treatment"
+    prospective_exposure = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    prospective_outcome = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    retrospective_entry = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    retrospective_exposure = datetime(2026, 8, 2, tzinfo=timezone.utc)
+    invalid_candidate = next(
+        f"future:{i}" for i in range(1000)
+        if stable_assignment(experiment, f"future:{i}") == "treatment"
     )
-    control_candidate = next(
-        f"control:{i}" for i in range(1000)
-        if stable_assignment(experiment, f"control:{i}") == "control"
+    invalid_control_candidate = next(
+        f"future-control:{i}" for i in range(1000)
+        if stable_assignment(experiment, f"future-control:{i}") == "control"
+    )
+    invalid_links = [
+        f"{invalid_candidate.replace(':', '_')}:4h",
+        f"{invalid_control_candidate.replace(':', '_')}:4h",
+    ]
+    apply_numeric_treatment(
+        candidate_key=invalid_candidate,
+        outcome_candidate_key=invalid_links[0],
+        exposed_at=prospective_exposure.isoformat(),
+        **common,
     )
     apply_numeric_treatment(
-        candidate_key=candidate,
-        outcome_candidate_key=_insert_settled_outcome(candidate), **common,
+        candidate_key=invalid_control_candidate,
+        outcome_candidate_key=invalid_links[1],
+        exposed_at=prospective_exposure.isoformat(),
+        **common,
     )
-    apply_numeric_treatment(
-        candidate_key=control_candidate,
-        outcome_candidate_key=_insert_settled_outcome(control_candidate), **common,
+    assert _insert_settled_outcome(
+        invalid_candidate, at=prospective_outcome,
+    ) == invalid_links[0]
+    assert _insert_settled_outcome(
+        invalid_control_candidate, at=prospective_outcome,
+    ) == invalid_links[1]
+    was_in_tx = db.in_transaction
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET settled_at='2999-01-01T00:00:00+00:00' "
+        "WHERE outcome_candidate_key IN (?, ?)",
+        tuple(link.rsplit(":", 1)[0] for link in invalid_links),
     )
+    if not was_in_tx:
+        db.commit()
     now = datetime.now(timezone.utc)
     # P0-4: the verdict must carry the current cohort identity (epoch + stage) or it
     # cannot authorize. Read the epoch the exposures were stamped with.
@@ -242,6 +277,79 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
         delta=0.2, verdict="promote", reason="prospective net improvement",
         policy_epoch=epoch, stage="paper_10",
     ))
+
+    assert linked_settled_exposure_counts(
+        shadow.experiment_id, policy_epoch=epoch,
+    ) == {"control": 0, "treatment": 0}
+    blocked = resolve_learning_authority(common["path_id"], experiment, epoch)
+    assert not blocked.authorized
+    assert blocked.reason == "legacy_outcomes_insufficient"
+
+    retrospective_candidate = next(
+        f"retrospective:{i}" for i in range(1000)
+        if stable_assignment(experiment, f"retrospective:{i}") == "treatment"
+    )
+    retrospective_control = next(
+        f"retrospective-control:{i}" for i in range(1000)
+        if stable_assignment(experiment, f"retrospective-control:{i}") == "control"
+    )
+    retrospective_links = [
+        _insert_settled_outcome(
+            retrospective_candidate,
+            at=retrospective_entry,
+        ),
+        _insert_settled_outcome(
+            retrospective_control,
+            at=retrospective_entry,
+        ),
+    ]
+    apply_numeric_treatment(
+        candidate_key=retrospective_candidate,
+        outcome_candidate_key=retrospective_links[0],
+        exposed_at=retrospective_exposure.isoformat(),
+        **common,
+    )
+    apply_numeric_treatment(
+        candidate_key=retrospective_control,
+        outcome_candidate_key=retrospective_links[1],
+        exposed_at=retrospective_exposure.isoformat(),
+        **common,
+    )
+    assert linked_settled_exposure_counts(
+        shadow.experiment_id, policy_epoch=epoch,
+    ) == {"control": 0, "treatment": 0}
+
+    candidate = next(
+        f"candidate:{i}" for i in range(1000)
+        if stable_assignment(experiment, f"candidate:{i}") == "treatment"
+    )
+    control_candidate = next(
+        f"control:{i}" for i in range(1000)
+        if stable_assignment(experiment, f"control:{i}") == "control"
+    )
+    candidate_link = f"{candidate.replace(':', '_')}:4h"
+    control_link = f"{control_candidate.replace(':', '_')}:4h"
+    apply_numeric_treatment(
+        candidate_key=candidate,
+        outcome_candidate_key=candidate_link,
+        exposed_at=prospective_exposure.isoformat(),
+        **common,
+    )
+    apply_numeric_treatment(
+        candidate_key=control_candidate,
+        outcome_candidate_key=control_link,
+        exposed_at=prospective_exposure.isoformat(),
+        **common,
+    )
+    assert _insert_settled_outcome(
+        candidate, at=prospective_outcome,
+    ) == candidate_link
+    assert _insert_settled_outcome(
+        control_candidate, at=prospective_outcome,
+    ) == control_link
+    assert linked_settled_exposure_counts(
+        shadow.experiment_id, policy_epoch=epoch,
+    ) == {"control": 1, "treatment": 1}
     applied_candidate = next(
         f"applied:{i}" for i in range(1000)
         if stable_assignment(experiment, f"applied:{i}") == "treatment"
@@ -822,7 +930,7 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
     )
     db = get_db()
     registered = db.execute(
-        "SELECT outcome_candidate_key, horizon, allocation_selected "
+        "SELECT outcome_candidate_key, horizon, allocation_selected, due_at "
         "FROM filter_candidate_outcomes "
         "ORDER BY outcome_candidate_key, horizon"
     ).fetchall()
@@ -832,6 +940,8 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
     assert {
         row[0]: bool(row[2]) for row in registered if row[1] == "4h"
     } == {ck_t: True, ck_c: False}
+    assert len({row["due_at"] for row in registered}) == 1
+    settlement_at = datetime.fromisoformat(str(registered[0]["due_at"]))
 
     was = db.in_transaction
     db.execute(
@@ -839,12 +949,12 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
         "estimated_fee_pct=0.1, estimated_spread_slippage_pct=0.1, "
         "estimated_funding_pct=0.0, mae_pct=-0.1, cost_model_version='test-v1', settled_at=? "
         "WHERE outcome_candidate_key IN (?, ?) AND horizon='4h'",
-        (now, ck_t, ck_c),
+        (settlement_at.isoformat(), ck_t, ck_c),
     )
     if not was:
         db.commit()
 
-    verdict = evaluate_experiment(exp)[0]
+    verdict = evaluate_experiment(exp, as_of_at=settlement_at)[0]
     assert verdict.unique_treatment_n == 1
     assert verdict.unique_control_n == 1
     assert verdict.observed == 0.3
@@ -916,8 +1026,14 @@ def test_policy_epoch_ignores_code_only_rebuild_and_rotates_on_config_change(mon
     import aletheia.agent_runtime.build_info as build_info
     from aletheia.config.loader import load_config
     from aletheia.learning.ledger import get_record
+    from aletheia.storage.sqlite import get_db
 
-    base_cfg = load_config()
+    loaded_cfg = load_config()
+    base_cfg = loaded_cfg.model_copy(update={
+        "universe": loaded_cfg.universe.model_copy(
+            update={"blacklist": ["BTC/USDT"]}
+        )
+    })
     _enable_legacy_paper_authority(monkeypatch, "ranker_factor_filter")
     monkeypatch.setattr(exp, "load_config", lambda: base_cfg)
 
@@ -936,6 +1052,41 @@ def test_policy_epoch_ignores_code_only_rebuild_and_rotates_on_config_change(mon
     e_base = exp._policy_epoch("universe_family_calibration")
     monkeypatch.setattr(exp, "load_config", lambda: changed)
     assert exp._policy_epoch("universe_family_calibration") != e_base  # config change rotates it
+
+    blacklist_changed = base_cfg.model_copy(update={
+        "universe": base_cfg.universe.model_copy(
+            update={"blacklist": ["ETH/USDT", "BTC/USDT", "ETH/USDT"]}
+        )
+    })
+    monkeypatch.setattr(exp, "load_config", lambda: blacklist_changed)
+    blacklist_epoch = exp._policy_epoch("universe_family_calibration")
+    assert blacklist_epoch != e_base
+    persisted = get_record("learning_policy_epochs", blacklist_epoch)
+    effective_values = json.loads(persisted["effective_values_json"])
+    assert effective_values["universe_behavior"]["blacklist"] == [
+        "BTC/USDT", "ETH/USDT",
+    ]
+
+    reordered = base_cfg.model_copy(update={
+        "universe": base_cfg.universe.model_copy(
+            update={"blacklist": ["BTC/USDT", "ETH/USDT"]}
+        )
+    })
+    monkeypatch.setattr(exp, "load_config", lambda: reordered)
+    assert exp._policy_epoch("universe_family_calibration") == blacklist_epoch
+
+    rows = get_db().execute(
+        "SELECT epoch_id, ended_at FROM learning_policy_epochs "
+        "WHERE epoch_kind='decision_policy:universe_family_calibration'"
+    ).fetchall()
+    assert [row["epoch_id"] for row in rows if row["ended_at"] is None] == [
+        blacklist_epoch,
+    ]
+    assert all(
+        row["ended_at"] is not None
+        for row in rows
+        if row["epoch_id"] != blacklist_epoch
+    )
 
     # Each exposure is stamped with the running build.
     monkeypatch.setattr(build_info, "get_boot_commit", lambda: "commit-XYZ")

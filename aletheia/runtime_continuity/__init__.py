@@ -1,4 +1,4 @@
-"""Runtime continuity service for PI operator lifecycle upgrades."""
+"""Runtime continuity service for System Operator lifecycle upgrades."""
 
 from aletheia.runtime_continuity.models import (
     RuntimeCheckpoint,

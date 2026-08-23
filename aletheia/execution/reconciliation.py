@@ -233,9 +233,8 @@ def _complete_exact_gap_evidence(order: dict, rows) -> bool:
     if any(str(row.get("orderId") or "") != exchange_order_id for row in raw_rows):
         return False
     matched_id, evidence = evidence_for_order(order, raw_rows)
-    # The parser drops rows with missing fill id, price, quantity, fee, or
-    # exchange time.  Requiring a one-to-one result makes any such omission
-    # inconclusive instead of silently materializing only the usable subset.
+    # The strict order-scoped parser rejects rows with missing fill identity or
+    # economics. A one-to-one result also guards against future parser changes.
     if matched_id != exchange_order_id or len(evidence) != len(raw_rows):
         return False
     requested = _finite_float(order.get("quantity"), positive=True)
@@ -1108,7 +1107,8 @@ def reconcile() -> dict:
             continue
         try:
             if filled_gap_client is None:
-                filled_gap_client = BitgetClient(mode="demo", profile=bitget_profile)
+                from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+                filled_gap_client = BitgetClient(mode="demo", profile=configured_bitget_profile())
             rows = _response_rows(
                 _run_coro(
                     filled_gap_client.get_order_fills(
@@ -1207,7 +1207,8 @@ def reconcile() -> dict:
         ]
         if not mode_orders:
             continue
-        client = BitgetClient(mode=account_mode, profile=bitget_profile)
+        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+        client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
         markets = sorted({str(order.get("market_type") or "spot") for order in mode_orders})
         open_rows: dict[str, list[dict] | None] = {}
         fill_rows: dict[str, list[dict]] = {}
@@ -1274,6 +1275,29 @@ def reconcile() -> dict:
                         reason="client_order_identity_ambiguous",
                     )
                     continue
+                elif market_type == "usdt_futures":
+                    # Order may have already filled and left the open-order list.
+                    # Fall back to a direct detail lookup by clientOid (#1779).
+                    try:
+                        from aletheia.data.symbols import to_bitget as _to_bitget
+                        detail = _run_coro(
+                            client.get_order_detail_by_client_oid(
+                                str(order["client_order_id"]),
+                                _to_bitget(str(order["symbol"])),
+                            )
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "reconcile: clientOid detail lookup failed for order %s (%s)",
+                            order["id"],
+                            type(exc).__name__,
+                        )
+                        detail = None
+                    if detail and str(detail.get("clientOid") or "") == str(order["client_order_id"]):
+                        recovered_id = str(detail.get("orderId") or "").strip()
+                        if recovered_id:
+                            update_order(order["id"], exchange_order_id=recovered_id)
+                            order["exchange_order_id"] = recovered_id
 
             is_close_order = _is_close_order(order)
             use_exact_order_history = (

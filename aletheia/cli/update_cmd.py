@@ -3,8 +3,112 @@
 from __future__ import annotations
 
 import json
+import sys
+import threading
 
 import typer
+
+from aletheia.update.continuity import describe_failure_code as _desc
+
+_BRA  = "⣾⣽⣻⢿⡿⣟⣯⣷"
+_R    = "\033[0m"
+_BOLD = "\033[1m"
+_DIM  = "\033[2m"
+_RED  = "\033[31m"
+_GRN  = "\033[32m"
+_CYN  = "\033[36m"
+_WH   = "\033[97m"
+
+
+class _Spinner:
+    """2-line Braille spinner for the source-checkout update path."""
+
+    def __init__(self):
+        self._phase  = ""
+        self._detail = ""
+        self._drawn  = False
+        self._i      = 0
+        self._lock   = threading.Lock()
+        self._stop   = threading.Event()
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_):
+        self._stop.set()
+        self._thread.join()
+        with self._lock:
+            self._erase()
+
+    @property
+    def last_phase(self) -> str:
+        return self._phase
+
+    def step(self, message: str) -> None:
+        with self._lock:
+            if self._phase:
+                self._mark_done()
+            self._phase  = message
+            self._detail = ""
+            self._drawn  = False
+
+    def _erase(self) -> None:
+        if not self._drawn:
+            sys.stdout.write("\r\033[K")
+        else:
+            sys.stdout.write("\033[A\r\033[K\r\n\033[K\033[A\r\033[K")
+        sys.stdout.flush()
+        self._drawn = False
+
+    def _mark_done(self) -> None:
+        self._erase()
+        sys.stdout.write(f"  {_GRN}{_BOLD}✓{_R}  {_DIM}{self._phase}{_R}\n")
+        sys.stdout.flush()
+        self._phase  = ""
+        self._detail = ""
+
+    def _draw(self) -> None:
+        frame = _BRA[self._i % len(_BRA)]
+        l1 = f"  {_CYN}↓{_R}  {_BOLD}{_WH}{self._phase}{_R}  {_DIM}{frame}{_R}"
+        l2 = f"      {_DIM}{_CYN}{self._detail}{_R}" if self._detail else "      "
+        if self._drawn:
+            sys.stdout.write(f"\033[A\r\033[K{l1}\r\n\033[K{l2}")
+        else:
+            sys.stdout.write(f"\r\033[K{l1}\r\n\033[K{l2}")
+            self._drawn = True
+        sys.stdout.flush()
+
+    def _spin(self) -> None:
+        while not self._stop.wait(0.08):
+            with self._lock:
+                if self._phase:
+                    self._draw()
+                    self._i += 1
+
+
+def _tty_phase_done(phase: str) -> None:
+    sys.stdout.write(f"  {_GRN}{_BOLD}✓{_R}  {_DIM}{phase}{_R}\n")
+    sys.stdout.flush()
+
+
+def _tty_phase_fail(phase: str) -> None:
+    sys.stdout.write(f"  {_RED}{_BOLD}✗{_R}  {_RED}{_BOLD}{phase}{_R}\n")
+    sys.stdout.flush()
+
+
+def _tty_error(code: str, phase: str, detail: str, fix: str = "") -> None:
+    sys.stdout.write(f"\n  {_RED}{_BOLD}✗  Update failed:{_R}  {_BOLD}{code}{_R}\n\n")
+    sys.stdout.write(f"    {_DIM}code    {_R}{code}\n")
+    if phase:
+        sys.stdout.write(f"    {_DIM}phase   {_R}{phase}\n")
+    if detail:
+        sys.stdout.write(f"    {_DIM}detail  {_R}{detail}\n")
+    if fix:
+        sys.stdout.write(f"    {_DIM}fix     {_R}{fix}\n")
+    sys.stdout.write("\n")
+    sys.stdout.flush()
 
 update_app = typer.Typer(
     no_args_is_help=False,
@@ -70,41 +174,90 @@ def _run_update(*, restart: bool) -> None:
 
     from aletheia.update.continuity import apply_update_with_continuity
 
-    result = apply_update_with_continuity(restart=restart)
+    if sys.stdout.isatty():
+        spinner = _Spinner()
+        with spinner:
+            result = apply_update_with_continuity(restart=restart, progress=spinner.step)
+        last_phase = spinner.last_phase
+    else:
+        spinner = None
+        last_phase = ""
+        result = apply_update_with_continuity(restart=restart)
+
     if not result.get("applied"):
-        typer.echo(f"Update not applied: {result.get('reason')}")
-        if result.get("message"):
-            typer.echo(f"  {result['message']}")
+        if spinner:
+            if last_phase:
+                _tty_phase_fail(last_phase)
+            _tty_error(
+                result.get("reason", "unknown"),
+                last_phase,
+                result.get("message") or "",
+                fix=result.get("fix_hint") or "",
+            )
+        else:
+            typer.echo(f"Update not applied: {result.get('reason')}")
+            if result.get("message"):
+                typer.echo(f"  {result['message']}")
         raise typer.Exit(1)
 
     continuity_state = result.get("continuity_state")
     comparison = (result.get("continuity") or {}).get("comparison") or {}
+    old_commit = str(result.get("old_commit") or "")
+    new_commit = str(result.get("new_commit") or "")
+    source_changed = result.get("source_changed")
+    if source_changed is None:
+        source_changed = old_commit != new_commit
+    runtime_old_commit = str(result.get("runtime_old_commit") or "")
+    display_old_commit = runtime_old_commit if restart and runtime_old_commit else old_commit
+    display_changed = bool(
+        new_commit and display_old_commit and display_old_commit != new_commit
+    )
+    source_label = (new_commit or display_old_commit or "unknown")[:8]
 
     # Only directly observed structural breakage is a failed deployment. Missing
     # evidence is surfaced as UNPROVEN without rewriting an already-applied
     # source update into a false hard failure.
     if continuity_state == "failed":
         failures = comparison.get("failures") or []
+        update_label = (
+            f"Updated {display_old_commit[:8]} -> {new_commit[:8]}"
+            if display_changed
+            else f"Source unchanged at {source_label}"
+        )
+        if spinner and last_phase:
+            _tty_phase_fail(last_phase)
         typer.echo(
-            f"Updated {result['old_commit'][:8]} -> {result['new_commit'][:8]}, "
-            "but Observer continuity verification FAILED.",
+            f"{update_label}, but Observer continuity verification FAILED.",
             err=True,
         )
         if failures:
-            typer.echo(f"  failures: {', '.join(str(item) for item in failures)}", err=True)
-        if result.get("message"):
-            typer.echo(f"  {result['message']}", err=True)
+            for item in failures:
+                typer.echo(f"  ✗ {_desc(str(item))}", err=True)
         typer.echo(
-            "  Source update remains applied; inspect `aletheia control status --json` "
+            (
+                "  Source update remains applied;"
+                if source_changed
+                else "  Source checkout is unchanged;"
+            )
+            + " inspect `aletheia control status --json` "
             "and `aletheia observe overview --json` before further mutation.",
             err=True,
         )
         raise typer.Exit(1)
 
-    typer.echo(
-        f"Updated {result['old_commit'][:8]} -> {result['new_commit'][:8]} "
-        f"(deps reinstalled: {result['deps_reinstalled']})."
-    )
+    if spinner and last_phase:
+        _tty_phase_done(last_phase)
+
+    if display_changed:
+        typer.echo(
+            f"Updated {display_old_commit[:8]} -> {new_commit[:8]} "
+            f"(deps reinstalled: {result['deps_reinstalled']})."
+        )
+    else:
+        typer.echo(
+            f"Already up to date at {source_label} "
+            f"(deps reinstalled: {result['deps_reinstalled']})."
+        )
     if restart:
         typer.echo("Gateway restarted and readiness verified.")
     else:
@@ -117,12 +270,8 @@ def _run_update(*, restart: bool) -> None:
             err=True,
         )
         if proof_gaps:
-            typer.echo(
-                f"  proof gaps: {', '.join(str(item) for item in proof_gaps)}",
-                err=True,
-            )
-        if result.get("message"):
-            typer.echo(f"  {result['message']}", err=True)
+            for item in proof_gaps:
+                typer.echo(f"  · {_desc(str(item))}", err=True)
         return
 
     if result.get("continuity_verified") is True:

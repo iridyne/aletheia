@@ -194,7 +194,10 @@ def check_domain_4() -> list[tuple[str, bool, str]]:
     try:
         from aletheia.portfolio.pnl import today_realized_pnl
         pnl = today_realized_pnl()
-        results.append(("4.2 Daily loss 未触发", pnl > -10, f"today_pnl={pnl:.2f}"))
+        if pnl is None:
+            results.append(("4.2 Daily loss", False, "daily economics unavailable"))
+        else:
+            results.append(("4.2 Daily loss 未触发", pnl > -10, f"today_pnl={pnl:.2f}"))
     except Exception as e:
         results.append(("4.2 Daily loss", False, str(e)))
 

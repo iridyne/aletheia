@@ -517,11 +517,12 @@ def build_current_entry_status(
     # age, defer_rate, and the (currently static) queue capacity from the shared
     # pipeline_progress aggregator so the counts block, the Blotter tooltip,
     # and doctor attribution all agree on one taxonomy. Best-effort — the
-    # counts block still renders if the aggregator raises.
+    # counts block still renders if the aggregator raises; unavailable sections
+    # propagate as None so consumers can distinguish from a measured zero.
     _defer_breakdown: dict[str, Any] = {
-        "market_quiet_defers": 0,
-        "candidate_specific_defers": 0,
-        "defer_rate": 0.0,
+        "market_quiet_defers": None,
+        "candidate_specific_defers": None,
+        "defer_rate": None,
         "oldest_defer_age_seconds": None,
         "queue_capacity": None,
     }
@@ -533,16 +534,21 @@ def build_current_entry_status(
 
         _snap = _pp_summarize(hours=12)
         _op = _snap.get("operator") or {}
-        _defer_breakdown["market_quiet_defers"] = int(
-            _op.get("operator_defer_market_quiet") or 0
-        )
-        _defer_breakdown["candidate_specific_defers"] = int(
-            _op.get("operator_defer_candidate_specific") or 0
-        )
-        _defer_breakdown["defer_rate"] = float(_op.get("defer_rate") or 0.0)
-        _defer_breakdown["oldest_defer_age_seconds"] = _op.get(
-            "oldest_active_defer_age_seconds"
-        )
+        _ss = _snap.get("section_status") or {}
+        _op_ok = (_ss.get("operator") or {}).get("status") == "available"
+        _ad_ok = (_ss.get("active_defer") or {}).get("status") == "available"
+        _de_ok = (_ss.get("defer_events") or {}).get("status") == "available"
+        if _op_ok and _ad_ok:
+            mq = _op.get("operator_defer_market_quiet")
+            cs = _op.get("operator_defer_candidate_specific")
+            _defer_breakdown["market_quiet_defers"] = int(mq) if mq is not None else None
+            _defer_breakdown["candidate_specific_defers"] = int(cs) if cs is not None else None
+            _defer_breakdown["oldest_defer_age_seconds"] = _op.get(
+                "oldest_active_defer_age_seconds"
+            )
+        if _op_ok and _de_ok:
+            dr = _op.get("defer_rate")
+            _defer_breakdown["defer_rate"] = float(dr) if dr is not None else None
         _defer_breakdown["queue_capacity"] = int(_QUEUE_CAP)
     except Exception:
         pass

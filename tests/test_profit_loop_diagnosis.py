@@ -92,6 +92,43 @@ def test_low_path_coverage_fails_closed_before_root_cause():
     assert "ordered_path_unavailable" in result["limitations"]
 
 
+def _make_candidate_fact(
+    *,
+    candidate_kind: str,
+    terminal_state: str,
+    net_return_pct: float,
+    fact_id: str = "f",
+    outcome_candidate_key: str = "key-1",
+    direction: str = "long",
+    cost_model_version: str = "v1",
+    entry_ts: str = "2026-08-01T00:00:00+00:00",
+    due_at: str = "2026-08-02T00:00:00+00:00",
+    settled_at: str = "2026-08-02T00:00:00+00:00",
+    fixed_horizon: str = "24h",
+) -> dict:
+    return {
+        "fact_id": fact_id,
+        "first_exposure": {
+            "candidate_kind": candidate_kind,
+            "direction": direction,
+            "entry_ts": entry_ts,
+        },
+        "terminal_state": terminal_state,
+        "fixed_horizon": fixed_horizon,
+        "fixed_horizon_outcome": {
+            "outcome_candidate_key": outcome_candidate_key,
+            "horizon": fixed_horizon,
+            "status": "settled",
+            "entry_ts": entry_ts,
+            "due_at": due_at,
+            "settled_at": settled_at,
+            "direction": direction,
+            "net_return_pct": net_return_pct,
+            "cost_model_version": cost_model_version,
+        },
+    }
+
+
 def test_candidate_diagnosis_uses_only_fixed_horizon_candidate_units():
     report = {
         "as_of_at": "2026-08-13T00:00:00+00:00",
@@ -99,26 +136,20 @@ def test_candidate_diagnosis_uses_only_fixed_horizon_candidate_units():
         "settled_outcome_count": 2,
         "outcome_coverage": 1.0,
         "facts": [
-            {
-                "fact_id": "filtered",
-                "first_exposure": {"candidate_kind": "opportunity"},
-                "terminal_state": "filtered",
-                "fixed_horizon_outcome": {
-                    "status": "settled",
-                    "net_return_pct": -1.0,
-                },
-                "variable_horizon_position_outcome": {"net_return_pct": 99.0},
-            },
-            {
-                "fact_id": "traded",
-                "first_exposure": {"candidate_kind": "opportunity"},
-                "terminal_state": "traded",
-                "fixed_horizon_outcome": {
-                    "status": "settled",
-                    "net_return_pct": 2.0,
-                },
-                "variable_horizon_position_outcome": {"net_return_pct": -99.0},
-            },
+            _make_candidate_fact(
+                candidate_kind="opportunity",
+                terminal_state="filtered",
+                net_return_pct=-1.0,
+                fact_id="filtered",
+                outcome_candidate_key="key-filtered",
+            ),
+            _make_candidate_fact(
+                candidate_kind="opportunity",
+                terminal_state="traded",
+                net_return_pct=2.0,
+                fact_id="traded",
+                outcome_candidate_key="key-traded",
+            ),
         ],
     }
     frozen = deepcopy(report)
@@ -133,6 +164,7 @@ def test_candidate_diagnosis_uses_only_fixed_horizon_candidate_units():
 
 def test_candidate_layers_compare_only_their_matching_populations():
     facts = []
+    idx = 0
     for candidate_kind, rejected, accepted in (
         ("opportunity", "filtered", "traded"),
         ("pi_decision", "pi_skip", "traded"),
@@ -140,24 +172,23 @@ def test_candidate_layers_compare_only_their_matching_populations():
     ):
         facts.extend(
             [
-                {
-                    "first_exposure": {"candidate_kind": candidate_kind},
-                    "terminal_state": rejected,
-                    "fixed_horizon_outcome": {
-                        "status": "settled",
-                        "net_return_pct": -1.0,
-                    },
-                },
-                {
-                    "first_exposure": {"candidate_kind": candidate_kind},
-                    "terminal_state": accepted,
-                    "fixed_horizon_outcome": {
-                        "status": "settled",
-                        "net_return_pct": 2.0,
-                    },
-                },
+                _make_candidate_fact(
+                    candidate_kind=candidate_kind,
+                    terminal_state=rejected,
+                    net_return_pct=-1.0,
+                    fact_id=f"{candidate_kind}-{rejected}",
+                    outcome_candidate_key=f"key-{idx}",
+                ),
+                _make_candidate_fact(
+                    candidate_kind=candidate_kind,
+                    terminal_state=accepted,
+                    net_return_pct=2.0,
+                    fact_id=f"{candidate_kind}-{accepted}",
+                    outcome_candidate_key=f"key-{idx+1}",
+                ),
             ]
         )
+        idx += 2
     report = {
         "as_of_at": "2026-08-13T00:00:00+00:00",
         "fixed_horizon": "24h",
@@ -173,3 +204,124 @@ def test_candidate_layers_compare_only_their_matching_populations():
         "Decision": 3.0,
         "Risk": 3.0,
     }
+
+
+def test_candidate_missing_direction_and_cost_model_excluded_from_eligible():
+    """#1269: Rows missing direction or cost_model_version are excluded from eligible count."""
+    report = {
+        "as_of_at": "2026-08-13T00:00:00+00:00",
+        "fixed_horizon": "24h",
+        "settled_outcome_count": 3,
+        "outcome_coverage": 1.0,
+        "facts": [
+            _make_candidate_fact(
+                candidate_kind="opportunity",
+                terminal_state="traded",
+                net_return_pct=2.0,
+                fact_id="valid",
+                outcome_candidate_key="key-valid",
+            ),
+            # Missing direction
+            _make_candidate_fact(
+                candidate_kind="opportunity",
+                terminal_state="traded",
+                net_return_pct=3.0,
+                fact_id="no_direction",
+                outcome_candidate_key="key-no-direction",
+                direction="",
+            ),
+            # Missing cost_model_version
+            _make_candidate_fact(
+                candidate_kind="opportunity",
+                terminal_state="traded",
+                net_return_pct=4.0,
+                fact_id="no_cost_model",
+                outcome_candidate_key="key-no-cost",
+                cost_model_version="",
+            ),
+        ],
+    }
+
+    result = diagnosis.diagnose_candidate_report(report)
+
+    assert result["raw_count"] == 3
+    assert result["eligible_count"] == 1  # Only the first valid fact
+    assert result["excluded_count"] == 2
+    # Check specific layer
+    assert result["layers"]["Selection"]["eligible_count"] == 1
+    assert result["layers"]["Selection"]["excluded_count"] == 2
+    assert "missing_direction" in result["layers"]["Selection"]["exclusion_reasons"]
+    assert "missing_cost_model_version" in result["layers"]["Selection"]["exclusion_reasons"]
+
+
+def test_candidate_all_ineligible_yields_insufficient_data_not_directional():
+    """#1269: All-ineligible groups → insufficient_data not directional."""
+    report = {
+        "as_of_at": "2026-08-13T00:00:00+00:00",
+        "fixed_horizon": "24h",
+        "settled_outcome_count": 2,
+        "outcome_coverage": 1.0,
+        "facts": [
+            # Both facts missing cost_model_version
+            _make_candidate_fact(
+                candidate_kind="opportunity",
+                terminal_state="filtered",
+                net_return_pct=-1.0,
+                fact_id="filtered",
+                outcome_candidate_key="key-1",
+                cost_model_version="",
+            ),
+            _make_candidate_fact(
+                candidate_kind="opportunity",
+                terminal_state="traded",
+                net_return_pct=2.0,
+                fact_id="traded",
+                outcome_candidate_key="key-2",
+                cost_model_version="",
+            ),
+        ],
+    }
+
+    result = diagnosis.diagnose_candidate_report(report)
+
+    assert result["layers"]["Selection"]["status"] == "insufficient_data"
+    assert result["layers"]["Selection"]["eligible_count"] == 0
+    assert result["layers"]["Selection"]["excluded_count"] == 2
+    assert result["layers"]["Selection"]["baseline"] is None
+    assert result["layers"]["Selection"]["observed"] is None
+    assert result["layers"]["Selection"]["delta_pct"] is None
+
+
+def test_candidate_diagnosis_uses_nested_outcome_and_report_cutoff():
+    report = {
+        "as_of_at": "2026-08-13T00:00:00+00:00",
+        "fixed_horizon": "24h",
+        "settled_outcome_count": 2,
+        "outcome_coverage": 1.0,
+        "facts": [
+            _make_candidate_fact(
+                candidate_kind="opportunity",
+                terminal_state="filtered",
+                net_return_pct=-1.0,
+                fact_id="visible",
+                outcome_candidate_key="key-visible",
+                settled_at="2026-08-12T00:00:00+00:00",
+            ),
+            _make_candidate_fact(
+                candidate_kind="opportunity",
+                terminal_state="traded",
+                net_return_pct=2.0,
+                fact_id="future",
+                outcome_candidate_key="key-future",
+                settled_at="2026-08-14T00:00:00+00:00",
+            ),
+        ],
+    }
+
+    result = diagnosis.diagnose_candidate_report(report)
+
+    selection = result["layers"]["Selection"]
+    assert selection["eligible_count"] == 1
+    assert selection["excluded_count"] == 1
+    assert selection["exclusion_reasons"] == {"settlement_after_as_of": 1}
+    assert selection["status"] == "insufficient_data"

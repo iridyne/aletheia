@@ -317,6 +317,193 @@ def _checkpoint_preflight_verdict(checkpoint: dict[str, Any]) -> tuple[str | Non
     return ("warning", "observation_checkpoint_changed")
 
 
+# (description, fix_hint) — fix_hint is "" when there is no specific user action.
+_CODE_HINTS: dict[str, tuple[str, str]] = {
+    # ── checkpoint verdict ────────────────────────────────────────────────────
+    "observation_checkpoint_app_migration_drift": (
+        "DB migrations ran since the last observation checkpoint was recorded",
+        "aletheia observe checkpoint",
+    ),
+    "observation_checkpoint_drift": (
+        "Observation checkpoint fingerprint has an unrecognised mismatch shape",
+        "aletheia observe overview --json",
+    ),
+    "observation_checkpoint_changed": (
+        "Observation checkpoint fingerprint changed (normal lifecycle, not blocking)",
+        "",
+    ),
+    # ── owner / runtime proof ─────────────────────────────────────────────────
+    "observation_owner_invalid": (
+        "Observation owner field is missing or unrecognised",
+        "aletheia observe overview --json",
+    ),
+    "observation_owner_changed": (
+        "Observation owner changed during the update",
+        "aletheia observe overview --json",
+    ),
+    "observation_runtime_owner_mismatch": (
+        "Runtime observation owner does not match the stored owner",
+        "aletheia observe overview --json",
+    ),
+    "duplicate_observation_cycle_owner": (
+        "More than one observation cycle owner is active simultaneously",
+        "aletheia observe overview --json",
+    ),
+    "observation_runtime_owner_proof_unavailable": (
+        "Runtime owner proof unavailable; ownership claim cannot be verified",
+        "",
+    ),
+    # ── postflight projection ─────────────────────────────────────────────────
+    "target_postflight_projection_unavailable": (
+        "Could not capture post-update Observer state for comparison",
+        "aletheia doctor",
+    ),
+    # ── data root ─────────────────────────────────────────────────────────────
+    "data_root_identity_lost": (
+        "Data root hash was known before the update but is missing after",
+        "aletheia doctor",
+    ),
+    "data_root_changed": (
+        "Data root hash changed during the update (unexpected DB mutation)",
+        "aletheia control status --json",
+    ),
+    "data_root_baseline_unavailable": (
+        "Data root baseline was not captured before the update",
+        "",
+    ),
+    "data_root_comparison_unavailable": (
+        "Data root comparison unavailable (missing before or after snapshot)",
+        "",
+    ),
+    # ── worker identity ───────────────────────────────────────────────────────
+    "worker_identity_lost": (
+        "Worker commit identity was known before the update but is missing after",
+        "aletheia doctor",
+    ),
+    "worker_identity_changed": (
+        "Worker commit changed unexpectedly during the update",
+        "aletheia observe overview --json",
+    ),
+    "worker_identity_baseline_unavailable": (
+        "Worker identity baseline was not captured before the update",
+        "",
+    ),
+    "worker_identity_comparison_unavailable": (
+        "Worker identity comparison unavailable (missing before or after snapshot)",
+        "",
+    ),
+    # ── observation overview / history ────────────────────────────────────────
+    "observation_state_unreadable": (
+        "Observation overview was readable before the update but unreadable after",
+        "aletheia observe overview --json",
+    ),
+    "observation_history_missing": (
+        "One or more Observation IDs present before the update are missing after",
+        "aletheia observe list",
+    ),
+    "observation_identity_read_lost": (
+        "Observation identities were readable before the update but cannot be read after",
+        "aletheia observe overview --json",
+    ),
+    "observation_overview_baseline_unavailable": (
+        "Observation overview baseline was not captured before the update",
+        "",
+    ),
+    "observation_identity_baseline_unavailable": (
+        "Observation identity baseline was not captured before the update",
+        "",
+    ),
+    "observation_overview_comparison_unavailable": (
+        "Observation overview not available for before/after comparison",
+        "",
+    ),
+    "observation_identity_comparison_unavailable": (
+        "Observation identities not available for before/after comparison",
+        "",
+    ),
+    # ── gateway / main process ────────────────────────────────────────────────
+    "main_disk_target_mismatch": (
+        "On-disk source commit does not match the expected update target",
+        "aletheia control status --json",
+    ),
+    "main_disk_identity_unavailable": (
+        "On-disk commit identity could not be read after update",
+        "",
+    ),
+    "main_gateway_identity_unavailable": (
+        "Gateway identity unavailable; could not verify post-restart commit",
+        "aletheia doctor",
+    ),
+    "main_gateway_boot_target_mismatch": (
+        "Gateway booted from an unexpected commit (≠ update target)",
+        "aletheia gateway restart",
+    ),
+    "main_gateway_disk_target_mismatch": (
+        "Gateway reports an unexpected current commit (≠ update target)",
+        "aletheia gateway restart",
+    ),
+    "main_health_degraded": (
+        "Gateway health is degraded after the update (not pre-existing)",
+        "aletheia doctor",
+    ),
+    "main_health_unavailable": (
+        "Gateway health status unavailable after restart",
+        "aletheia doctor",
+    ),
+    "main_health_not_verified": (
+        "Gateway health not yet verified (may still be initialising)",
+        "",
+    ),
+    "main_restart_required_for_full_verification": (
+        "Full continuity verification requires a gateway restart",
+        "aletheia gateway restart",
+    ),
+    "main_target_identity_unavailable": (
+        "Cannot determine the expected update target commit",
+        "",
+    ),
+    # ── control / metadata ────────────────────────────────────────────────────
+    "control_status_unavailable": (
+        "Control-plane status unavailable; continuity partially unverifiable",
+        "",
+    ),
+    "gateway_status_unavailable": (
+        "Gateway status unavailable; health check skipped",
+        "",
+    ),
+    "update_metadata_persist_unverified": (
+        "Update metadata persistence could not be verified",
+        "",
+    ),
+}
+
+
+def describe_failure_code(code: str) -> str:
+    """Return a human-readable description for a failure/proof-gap/warning code.
+
+    Falls back to the raw code if no description is registered.
+    Dynamic codes (e.g. manifest_generation_regressed:obs-id) are matched by
+    prefix so the human-readable part is prepended to the dynamic suffix.
+    """
+    if code in _CODE_HINTS:
+        return _CODE_HINTS[code][0]
+    for prefix, (desc, _) in _CODE_HINTS.items():
+        if ":" in prefix and code.startswith(prefix.split(":")[0] + ":"):
+            suffix = code[len(prefix.split(":")[0]) + 1:]
+            return f"{desc}: {suffix}"
+    return code
+
+
+def _preflight_failure_message(failures: list[str]) -> tuple[str, str]:
+    """Return (human-readable detail, fix hint) for a preflight failure list."""
+    if len(failures) == 1:
+        desc, fix = _CODE_HINTS.get(failures[0], (failures[0], ""))
+        return desc, fix
+    # Multiple failures: list descriptions, no single fix hint
+    descs = [describe_failure_code(f) for f in failures]
+    return "; ".join(descs), ""
+
+
 def evaluate_preflight(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Fail only on directly observed structural pre-existing integrity faults."""
     failures: list[str] = []
@@ -479,17 +666,19 @@ def compare_update_continuity(
             proof_gaps.append("main_disk_identity_unavailable")
 
         if restart:
-            if not gateway.get("available"):
-                failures.append("main_gateway_identity_unavailable")
-            else:
-                boot = gateway.get("boot_commit")
-                current = gateway.get("current_commit")
-                if boot and boot != expected_target:
-                    failures.append("main_gateway_boot_target_mismatch")
-                if current and current != expected_target:
-                    failures.append("main_gateway_disk_target_mismatch")
-                if not boot and not current:
-                    proof_gaps.append("main_gateway_identity_unavailable")
+            # #1208: strict dual-commit identity — both must be present AND equal target
+            boot = gateway.get("boot_commit")
+            current = gateway.get("current_commit")
+            if not boot:
+                proof_gaps.append("boot_commit_missing")
+            elif boot != expected_target:
+                failures.append("boot_commit_mismatch")
+            if not current:
+                proof_gaps.append("current_commit_missing")
+            elif current != expected_target:
+                failures.append("current_commit_mismatch")
+            if not boot and not current:
+                proof_gaps.append("identity_unproven")
         else:
             proof_gaps.append("main_restart_required_for_full_verification")
     else:
@@ -501,13 +690,27 @@ def compare_update_continuity(
         else:
             health_status = gateway.get("health_status")
             if health_status == "degraded":
-                failures.append("main_health_degraded")
+                before_health = (before.get("gateway") or {}).get("health_status")
+                if before_health == "degraded":
+                    # Pre-existing degradation: the update did not cause it.
+                    warnings.append("main_health_degraded")
+                else:
+                    failures.append("main_health_degraded")
             elif health_status != "healthy":
                 proof_gaps.append("main_health_not_verified")
 
+    # #1208: continuity_verified when both identities are strictly confirmed
+    _boot = gateway.get("boot_commit")
+    _current = gateway.get("current_commit")
+    continuity_verified = bool(
+        expected_target and restart
+        and _boot == expected_target
+        and _current == expected_target
+    )
     return {
         "ok": not failures and not proof_gaps,
         "structural_ok": not failures,
+        "continuity_verified": continuity_verified,
         "failures": sorted(set(failures)),
         "proof_gaps": sorted(set(proof_gaps)),
         "warnings": sorted(set(warnings)),
@@ -573,8 +776,10 @@ def capture_update_continuity_until_settled(
     return after
 
 
-def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
+def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dict[str, Any]:
     """Run the existing source updater with Observer pre/postflight verification."""
+    if progress:
+        progress("Running preflight checks")
     before = capture_update_continuity()
     preflight = evaluate_preflight(before)
     if not preflight["ok"]:
@@ -585,11 +790,14 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
             "Source update blocked by Observer structural preflight",
             continuity={"preflight": preflight, "before": before},
         )
+        failures = preflight["failures"]
+        message, fix_hint = _preflight_failure_message(failures)
         return {
             "applied": False,
             "mode": "development",
             "reason": "observer_preflight_failed",
-            "message": ", ".join(preflight["failures"]),
+            "message": message,
+            "fix_hint": fix_hint,
             "continuity_verified": False,
             "continuity_state": "failed",
             "continuity": {"preflight": preflight, "before": before},
@@ -597,7 +805,7 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
 
     from aletheia.update.applier import apply_update
 
-    result = apply_update(restart=restart)
+    result = apply_update(restart=restart, progress=progress)
     if not result.get("applied"):
         return {
             **result,
@@ -606,11 +814,36 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
             "continuity": {"preflight": preflight, "before": before},
         }
 
+    # Re-anchor the observation checkpoint immediately after migrations run so
+    # the next preflight sees the current migration state instead of the
+    # pre-update one (which would trigger observation_checkpoint_app_migration_drift).
+    try:
+        from aletheia.observation_lab.checkpoint import (
+            compute_joint_checkpoint,
+            save_joint_checkpoint,
+        )
+        save_joint_checkpoint(compute_joint_checkpoint())
+    except Exception:
+        pass  # non-fatal: postflight captures current state regardless
+
+    before_gateway = before.get("gateway") or {}
+    before_control = before.get("control") or {}
+    # `current_commit` can already reflect a newer disk checkout while the
+    # running process is still on its older boot commit.
+    runtime_old_commit = (
+        before_gateway.get("boot_commit")
+        or before_control.get("running_sha")
+        or before_gateway.get("current_commit")
+    )
+    result = {**result, "runtime_old_commit": runtime_old_commit}
+
     target = result.get("new_commit")
     expected_target = (
         str(target) if result.get("mode") == "development" and target else None
     )
 
+    if progress:
+        progress("Verifying continuity")
     if expected_target and restart:
         after = capture_update_continuity_until_settled(expected_target)
     elif expected_target:
@@ -625,10 +858,19 @@ def apply_update_with_continuity(*, restart: bool = False) -> dict[str, Any]:
         restart=restart,
     )
 
+    metadata_proof_gaps = (
+        ["update_metadata_persist_unverified"]
+        if result.get("metadata_persisted") is False
+        else []
+    )
     # A verified postflight cannot erase evidence that was already missing
-    # before mutation. Carry preflight proof gaps into the final verdict.
+    # before mutation, nor can it ignore target-side metadata persistence loss.
     combined_proof_gaps = sorted(
-        set((preflight.get("proof_gaps") or []) + (comparison.get("proof_gaps") or []))
+        set(
+            (preflight.get("proof_gaps") or [])
+            + (comparison.get("proof_gaps") or [])
+            + metadata_proof_gaps
+        )
     )
     comparison["proof_gaps"] = combined_proof_gaps
     comparison["ok"] = not comparison["failures"] and not combined_proof_gaps

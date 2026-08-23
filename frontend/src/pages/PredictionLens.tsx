@@ -7,11 +7,45 @@ import Tabs from '../components/Tabs'
 import type { TabDef } from '../components/Tabs'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import { StatusBadge } from '../components/DataTable'
-import { Badge, Button, Card, StatusText, TableWrap, useToast, type StatusTone } from '../components/ui'
+import { DataStateMessage } from '../components/DataState'
+import { Badge, Button, Card, ListRowButton, StatusText, TableWrap, useToast, type StatusTone } from '../components/ui'
 import ProbabilityChart from '../charts/ProbabilityChart'
 import { fmtScore100, fmtTimestamp } from '../lib/format'
 
 type Tab = 'radar' | 'movers' | 'runs' | 'preferences'
+
+export type PredictionStatusState = 'loading' | 'enabled' | 'disabled' | 'unavailable' | 'stale'
+
+export function resolvePredictionStatusState(
+  status: PredictionStatus | undefined,
+  isPending: boolean,
+  isError: boolean,
+  cachedEnabled: boolean | undefined,
+): { state: PredictionStatusState; enabled: boolean | undefined } {
+  if (status) {
+    return isError
+      ? { state: 'stale', enabled: status.enabled }
+      : { state: status.enabled ? 'enabled' : 'disabled', enabled: status.enabled }
+  }
+  if (isError) return cachedEnabled == null ? { state: 'unavailable', enabled: undefined } : { state: 'stale', enabled: cachedEnabled }
+  if (isPending) return cachedEnabled == null ? { state: 'loading', enabled: undefined } : { state: 'stale', enabled: cachedEnabled }
+  return cachedEnabled == null ? { state: 'unavailable', enabled: undefined } : { state: 'stale', enabled: cachedEnabled }
+}
+
+export function resolvePredictionDataState<T>(data: T[] | undefined, isPending: boolean, isError: boolean): PredictionDataState {
+  if (isError && data != null) return 'stale'
+  if (isError) return 'unavailable'
+  if (isPending && data == null) return 'loading'
+  if (data == null) return 'loading'
+  return data.length > 0 ? 'available' : 'empty'
+}
+
+type PredictionDataState = 'loading' | 'available' | 'empty' | 'stale' | 'unavailable' | 'not-configured'
+
+function PredictionDataNotice({ state, message }: { state: PredictionDataState; message?: string }) {
+  if (state === 'available') return null
+  return <DataStateMessage state={state} message={message} />
+}
 
 function shortDate(s: string | null | undefined) {
   return fmtTimestamp(s)
@@ -64,12 +98,17 @@ function ClaimBadge({ type }: { type: string }) {
 }
 
 // --- Observer Status Card ---
-function ObserverStatusCard({ status }: { status: PredictionStatus | undefined }) {
-  if (!status) return <Card className="pred-status-card">Loading status…</Card>
+function ObserverStatusCard({ status, state }: { status: PredictionStatus | undefined; state: PredictionStatusState }) {
+  if (!status) return null
   const freshness = freshnessLabel(status.last_run?.completed_at)
 
   return (
     <Card className="pred-status-card">
+      <div className="pred-status-mode">
+        <span className="pred-status-label">Observer mode</span>
+        <StatusText tone={status.enabled ? 'green' : 'muted'}>{status.enabled ? 'enabled' : 'disabled'}</StatusText>
+        {state === 'stale' && <StatusText tone="yellow">stale status</StatusText>}
+      </div>
       <div className="pred-status-grid">
         <div className="pred-status-item">
           <span className="pred-status-label">Last Run</span>
@@ -105,7 +144,12 @@ function ObserverStatusCard({ status }: { status: PredictionStatus | undefined }
 // --- Market Card ---
 function MarketCard({ market, onClick }: { market: PredictionMarket; onClick: () => void }) {
   return (
-    <Card className="pred-market-card" onClick={onClick}>
+    <ListRowButton
+      type="button"
+      className="pred-market-card"
+      aria-label={`Open details for ${market.event_title}`}
+      onClick={onClick}
+    >
       <div className="pred-card-header">
         <h4 className="pred-card-title">{market.event_title}</h4>
         {market.category && <Badge tone="blue">{market.category}</Badge>}
@@ -137,13 +181,17 @@ function MarketCard({ market, onClick }: { market: PredictionMarket; onClick: ()
         )}
         <span className="text-muted text-sm">{shortDate(market.created_at)}</span>
       </div>
-    </Card>
+    </ListRowButton>
   )
 }
 
 // --- Market Radar Tab ---
-function MarketRadarTab({ markets, onSelect }: { markets: PredictionMarket[]; onSelect: (m: PredictionMarket) => void }) {
+function MarketRadarTab({ markets, state, onSelect }: { markets: PredictionMarket[]; state: PredictionDataState; onSelect: (m: PredictionMarket) => void }) {
   const [sort, setSort] = useState<'recent' | 'movers' | 'volume'>('recent')
+
+  if (state === 'loading' || state === 'unavailable' || state === 'not-configured') {
+    return <PredictionDataNotice state={state} message={state === 'unavailable' ? 'Prediction markets unavailable. The read failed; this is not an empty result.' : undefined} />
+  }
 
   const sorted = [...markets].sort((a, b) => {
     if (sort === 'movers') return Math.abs(b.probability_change_24h ?? 0) - Math.abs(a.probability_change_24h ?? 0)
@@ -153,39 +201,45 @@ function MarketRadarTab({ markets, onSelect }: { markets: PredictionMarket[]; on
 
   return (
     <div>
+      <PredictionDataNotice state={state} message="Prediction market data is stale. Retained cards may not reflect the latest read." />
       <div className="pred-sort-bar">
         <Button variant="secondary" className={sort === 'recent' ? 'active' : ''} onClick={() => setSort('recent')}>Recent</Button>
         <Button variant="secondary" className={sort === 'movers' ? 'active' : ''} onClick={() => setSort('movers')}>Biggest Movers</Button>
         <Button variant="secondary" className={sort === 'volume' ? 'active' : ''} onClick={() => setSort('volume')}>Highest Volume</Button>
       </div>
-      {sorted.length === 0 ? (
+      {sorted.length === 0 && state === 'empty' ? (
         <div className="pred-empty">
           <p>No prediction market observations yet.</p>
           <p className="text-muted">The prediction observer runs every 30 minutes when configured.</p>
         </div>
-      ) : (
+      ) : sorted.length > 0 ? (
         <div className="pred-grid">
           {sorted.map(m => <MarketCard key={m.id} market={m} onClick={() => onSelect(m)} />)}
         </div>
-      )}
+      ) : null}
     </div>
   )
 }
 
 // --- Probability Movers Tab ---
-function ProbabilityMoversTab({ markets, onSelect }: { markets: PredictionMarket[]; onSelect: (m: PredictionMarket) => void }) {
+function ProbabilityMoversTab({ markets, state, onSelect }: { markets: PredictionMarket[]; state: PredictionDataState; onSelect: (m: PredictionMarket) => void }) {
+  if (state === 'loading' || state === 'unavailable' || state === 'not-configured') {
+    return <PredictionDataNotice state={state} message={state === 'unavailable' ? 'Probability movements unavailable. The read failed; this is not an empty result.' : undefined} />
+  }
   const movers = [...markets]
     .filter(m => m.probability_change_24h != null)
     .sort((a, b) => Math.abs(b.probability_change_24h!) - Math.abs(a.probability_change_24h!))
 
-  if (movers.length === 0) {
-    return <p className="text-muted">No probability movements recorded yet.</p>
+  if (movers.length === 0 && state === 'empty') {
+    return <PredictionDataNotice state="empty" message="No probability movements recorded yet." />
   }
 
   return (
-    <Card>
-      <TableWrap>
-        <table>
+    <>
+      <PredictionDataNotice state={state} message="Probability movement data is stale. Retained rows may not reflect the latest read." />
+      {movers.length > 0 && <Card>
+        <TableWrap>
+          <table>
           <thead>
             <tr>
               <th>Event</th>
@@ -198,7 +252,20 @@ function ProbabilityMoversTab({ markets, onSelect }: { markets: PredictionMarket
           </thead>
           <tbody>
             {movers.map(m => (
-              <tr key={m.id} className="clickable" onClick={() => onSelect(m)}>
+              <tr
+                key={m.id}
+                className="clickable"
+                role="button"
+                tabIndex={0}
+                aria-label={`Open details for ${m.event_title}`}
+                onClick={() => onSelect(m)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    onSelect(m)
+                  }
+                }}
+              >
                 <td className="pred-event-cell td-ellipsis">{m.event_title}</td>
                 <td className="mono">{pctFmt(m.yes_probability)}</td>
                 <td className={`mono ${(m.probability_change_24h ?? 0) > 0 ? 'pnl-positive' : (m.probability_change_24h ?? 0) < 0 ? 'pnl-negative' : ''}`}>
@@ -210,22 +277,28 @@ function ProbabilityMoversTab({ markets, onSelect }: { markets: PredictionMarket
               </tr>
             ))}
           </tbody>
-        </table>
-      </TableWrap>
-    </Card>
+          </table>
+        </TableWrap>
+      </Card>}
+    </>
   )
 }
 
 // --- Observer Runs Tab ---
-function ObserverRunsTab({ runs }: { runs: PredictionObserverRun[] }) {
-  if (runs.length === 0) {
-    return <p className="text-muted">No observer runs recorded yet.</p>
+function ObserverRunsTab({ runs, state }: { runs: PredictionObserverRun[]; state: PredictionDataState }) {
+  if (state === 'loading' || state === 'unavailable' || state === 'not-configured') {
+    return <PredictionDataNotice state={state} message={state === 'unavailable' ? 'Observer runs unavailable. The read failed; this is not an empty result.' : undefined} />
+  }
+  if (runs.length === 0 && state === 'empty') {
+    return <PredictionDataNotice state="empty" message="No observer runs recorded yet." />
   }
 
   return (
-    <Card>
-      <TableWrap>
-        <table>
+    <>
+      <PredictionDataNotice state={state} message="Observer run data is stale. Retained rows may not reflect the latest read." />
+      {runs.length > 0 && <Card>
+        <TableWrap>
+          <table>
           <thead>
             <tr>
               <th>Started</th>
@@ -248,9 +321,10 @@ function ObserverRunsTab({ runs }: { runs: PredictionObserverRun[] }) {
               </tr>
             ))}
           </tbody>
-        </table>
-      </TableWrap>
-    </Card>
+          </table>
+        </TableWrap>
+      </Card>}
+    </>
   )
 }
 
@@ -337,16 +411,21 @@ function PreferencesTab() {
 
 // --- Serenity Cross-Links ---
 function SerenityLinksSection({ marketId }: { marketId: string }) {
-  const { data: allEvidence = [] } = useQuery({
+  const evidenceQuery = useQuery({
     queryKey: ['serenity-evidence-all'],
     queryFn: () => api.getSerenityEvidence(),
     staleTime: 60000,
   })
+  const evidenceState = resolvePredictionDataState(evidenceQuery.data, evidenceQuery.isPending, evidenceQuery.isError)
+  const allEvidence = evidenceQuery.data ?? []
   const linked = allEvidence.filter((e: any) => e.source === 'prediction_market' && e.source_ref === marketId)
-  if (!linked.length) return null
+  if (evidenceState === 'available' && !linked.length) return null
 
   return (
     <DrawerSection label="Linked Serenity Themes">
+      {evidenceState === 'loading' && <PredictionDataNotice state="loading" message="Linked Serenity evidence is loading…" />}
+      {evidenceState === 'unavailable' && <PredictionDataNotice state="unavailable" message="Linked Serenity evidence unavailable. The read failed; no conclusion is implied." />}
+      {evidenceState === 'stale' && <PredictionDataNotice state="stale" message="Linked Serenity evidence is stale. Retained links may not reflect the latest read." />}
       {linked.map((e: any) => (
         <div key={e.id} className="pred-serenity-link">
           <Badge tone="green">evidence</Badge>
@@ -360,16 +439,20 @@ function SerenityLinksSection({ marketId }: { marketId: string }) {
 
 // --- Market Detail Drawer Content ---
 function MarketDetailContent({ market }: { market: PredictionMarket }) {
-  const { data: historyData } = useQuery({
+  const historyQuery = useQuery({
     queryKey: ['prediction-history', market.market_id],
     queryFn: () => api.getPredictionMarketHistory(market.market_id),
     enabled: !!market.market_id,
   })
-  const { data: claims = [] } = useQuery({
+  const claimsQuery = useQuery({
     queryKey: ['prediction-claims', market.market_id],
     queryFn: () => api.getPredictionMarketClaims(market.market_id),
     enabled: !!market.market_id,
   })
+  const historyState = resolvePredictionDataState(historyQuery.data?.points, historyQuery.isPending, historyQuery.isError)
+  const claimsState = resolvePredictionDataState(claimsQuery.data, claimsQuery.isPending, claimsQuery.isError)
+  const historyData = historyQuery.data
+  const claims = claimsQuery.data ?? []
 
   return (
     <>
@@ -381,7 +464,12 @@ function MarketDetailContent({ market }: { market: PredictionMarket }) {
       </DrawerSection>
 
       <DrawerSection label="Probability History">
-        <ProbabilityChart data={historyData?.points ?? []} height={180} />
+        {historyState === 'loading' && <PredictionDataNotice state="loading" message="Probability history is loading…" />}
+        {historyState === 'unavailable' && <PredictionDataNotice state="unavailable" message="Probability history unavailable. The read failed; no empty history is implied." />}
+        {historyState === 'stale' && <PredictionDataNotice state="stale" message="Probability history is stale. Retained points may not reflect the latest read." />}
+        {historyState !== 'loading' && historyState !== 'unavailable' && (
+          <ProbabilityChart data={historyData?.points ?? []} height={180} />
+        )}
       </DrawerSection>
 
       <DrawerSection label="Probability">
@@ -398,9 +486,12 @@ function MarketDetailContent({ market }: { market: PredictionMarket }) {
         <DrawerField label="Resolution" value={fmtTimestamp(market.resolution_at, { dateOnly: true })} />
       </DrawerSection>
 
-      {claims.length > 0 && (
-        <DrawerSection label={`Move Explanations (${claims.length})`}>
-          <div className="pred-claims-list">
+      {(claimsState !== 'available' || claims.length > 0) && (
+        <DrawerSection label={claims.length > 0 ? `Move Explanations (${claims.length})` : 'Move Explanations'}>
+          {claimsState === 'loading' && <PredictionDataNotice state="loading" message="Move explanations are loading…" />}
+          {claimsState === 'unavailable' && <PredictionDataNotice state="unavailable" message="Move explanations unavailable. The read failed; no claims are implied." />}
+          {claimsState === 'stale' && <PredictionDataNotice state="stale" message="Move explanations are stale. Retained claims may not reflect the latest read." />}
+          {claims.length > 0 && <div className="pred-claims-list">
             {claims.map((c: PredictionClaim) => (
               <div key={c.id} className="pred-claim-item">
                 <ClaimBadge type={c.claim_type} />
@@ -408,7 +499,7 @@ function MarketDetailContent({ market }: { market: PredictionMarket }) {
                 {c.direction && <DirectionBadge direction={c.direction} />}
               </div>
             ))}
-          </div>
+          </div>}
         </DrawerSection>
       )}
 
@@ -423,20 +514,31 @@ function MarketDetailContent({ market }: { market: PredictionMarket }) {
   )
 }
 
-// --- Disabled Overlay ---
-function DisabledOverlay() {
-  return (
-    <div className="pred-disabled-overlay">
-      <div className="pred-disabled-content">
-        <h3>Prediction Market 已关闭</h3>
-        <p>此功能当前未启用。前往 Settings → Market Data 开启 Prediction Market 观测。</p>
+export function PredictionStatusNotice({ state, enabled }: { state: PredictionStatusState; enabled: boolean | undefined }) {
+  if (state === 'enabled') return null
+  if (state === 'disabled') {
+    return (
+      <div className="pred-state-notice pred-state-disabled" role="status">
+        <strong>Prediction Markets disabled</strong>
+        <span>The observer is not running. Preferences below are configuration-only; no observation action is available.</span>
       </div>
-    </div>
-  )
+    )
+  }
+  if (state === 'stale') {
+    return (
+      <DataStateMessage
+        state="stale"
+        message={enabled === true
+          ? 'Prediction status is stale. Retained observations are shown for context; refresh is disabled until live status is confirmed.'
+          : 'Prediction status is stale and the last known mode was disabled. Live availability is not confirmed.'}
+      />
+    )
+  }
+  return <DataStateMessage state={state === 'loading' ? 'loading' : 'unavailable'} message={state === 'loading' ? 'Loading Prediction Markets status…' : 'Prediction Markets unavailable. The status read failed; availability is not known.'} />
 }
 
-// Last-known enabled flag, persisted so the disabled mask shows instantly on
-// reload instead of flashing the full page until the status query resolves.
+// Last-known enabled flag is only a stale-status hint; it never authorizes a
+// refresh or treats an unreadable live status as current.
 const PRED_ENABLED_CACHE = 'aletheia.prediction.enabled'
 function readCachedEnabled(): boolean | undefined {
   try {
@@ -453,37 +555,50 @@ export default function PredictionLens() {
   const [tab, setTab] = useState<Tab>('radar')
   const [selected, setSelected] = useState<PredictionMarket | null>(null)
 
-  const { data: status } = useQuery({
+  const statusQuery = useQuery({
     queryKey: ['prediction-status'],
     queryFn: api.getPredictionStatus,
     refetchInterval: 30000,
   })
 
-  // Resolve "is this feature off?" from the freshest source available: the live
-  // status query if loaded, otherwise the last-known value persisted on the
-  // previous visit. Only `undefined` (never observed) falls through to enabled.
   const cachedEnabled = readCachedEnabled()
-  const effectiveEnabled = status?.enabled ?? cachedEnabled
-  const isDisabled = effectiveEnabled === false
+  const statusView = resolvePredictionStatusState(statusQuery.data, statusQuery.isPending, statusQuery.isError, cachedEnabled)
+  const isDisabled = statusView.state === 'disabled'
+  const showOperationalTabs = !isDisabled && !(statusView.state === 'stale' && statusView.enabled === false)
 
-  // Persist the authoritative flag whenever the live query reports it.
   useEffect(() => {
-    if (status?.enabled != null) {
-      try { localStorage.setItem(PRED_ENABLED_CACHE, String(status.enabled)) } catch { /* ignore */ }
+    if (statusQuery.data?.enabled != null) {
+      try { localStorage.setItem(PRED_ENABLED_CACHE, String(statusQuery.data.enabled)) } catch { /* ignore */ }
     }
-  }, [status?.enabled])
+  }, [statusQuery.data?.enabled])
 
-  const { data: markets = [] } = useQuery({
+  const marketsQuery = useQuery({
     queryKey: ['prediction-markets'],
     queryFn: api.getPredictionMarkets,
     refetchInterval: 60000,
-    enabled: !isDisabled,
+    enabled: statusView.enabled === true,
   })
-  const { data: runs = [] } = useQuery({
+  const runsQuery = useQuery({
     queryKey: ['prediction-runs'],
     queryFn: api.getPredictionRuns,
-    enabled: !isDisabled,
+    enabled: statusView.enabled === true,
   })
+  const markets = marketsQuery.data ?? []
+  const runs = runsQuery.data ?? []
+  const marketsState = statusView.state === 'unavailable'
+    ? 'unavailable'
+    : statusView.state === 'loading'
+      ? 'loading'
+    : resolvePredictionDataState(marketsQuery.data, marketsQuery.isPending, marketsQuery.isError)
+  const runsState = statusView.state === 'unavailable'
+    ? 'unavailable'
+    : statusView.state === 'loading'
+      ? 'loading'
+    : resolvePredictionDataState(runsQuery.data, runsQuery.isPending, runsQuery.isError)
+  const activeTab = showOperationalTabs ? tab : 'preferences'
+  const preferenceLabel = isDisabled || (statusView.state === 'stale' && statusView.enabled === false)
+    ? 'Preferences (configuration only)'
+    : 'Preferences'
 
   const { toast } = useToast()
   const refresh = useMutation({
@@ -503,35 +618,34 @@ export default function PredictionLens() {
         title="Prediction Markets"
         role="Observe · prediction market probability trends from Polymarket. Observation-only — not routed to Paper Trader or Live Execution."
         actions={
-          <Button variant="secondary" onClick={() => refresh.mutate(undefined as any)} disabled={refresh.isPending || isDisabled}>
+          <Button variant="secondary" onClick={() => refresh.mutate(undefined as any)} disabled={refresh.isPending || statusView.state !== 'enabled'}>
             {refresh.isPending ? 'Refreshing…' : 'Refresh Now'}
           </Button>
         }
       />
 
-      {isDisabled && <DisabledOverlay />}
-
-      <div className={isDisabled ? 'pred-content-disabled' : ''}>
-        <div className="pred-obs-banner">
-          Prediction markets are observation-only. They are not eligible for Paper Trader or Live Execution.
-        </div>
-
-        <ObserverStatusCard status={status} />
-
-        <Tabs
-          value={tab}
-          onChange={(id) => setTab(id as Tab)}
-          tabs={([
-            { id: 'radar', label: 'Market Radar', badge: markets.length > 0 ? markets.length : undefined,
-              render: () => <MarketRadarTab markets={markets} onSelect={setSelected} /> },
-            { id: 'movers', label: 'Probability Movers',
-              render: () => <ProbabilityMoversTab markets={markets} onSelect={setSelected} /> },
-            { id: 'runs', label: 'Observer Runs', badge: runs.length > 0 ? runs.length : undefined,
-              render: () => <ObserverRunsTab runs={runs} /> },
-            { id: 'preferences', label: 'Preferences', render: () => <PreferencesTab /> },
-          ]) as TabDef[]}
-        />
+      <PredictionStatusNotice state={statusView.state} enabled={statusView.enabled} />
+      <div className="pred-obs-banner">
+        Prediction markets are observation-only. They are not eligible for Paper Trader or Live Execution.
       </div>
+
+      <ObserverStatusCard status={statusQuery.data} state={statusView.state} />
+
+      <Tabs
+        value={activeTab}
+        onChange={(id) => setTab(id as Tab)}
+        tabs={([
+          ...(showOperationalTabs ? [
+            { id: 'radar', label: 'Market Radar', badge: markets.length > 0 ? markets.length : undefined,
+              render: () => <MarketRadarTab markets={markets} state={marketsState} onSelect={setSelected} /> },
+            { id: 'movers', label: 'Probability Movers',
+              render: () => <ProbabilityMoversTab markets={markets} state={marketsState} onSelect={setSelected} /> },
+            { id: 'runs', label: 'Observer Runs', badge: runs.length > 0 ? runs.length : undefined,
+              render: () => <ObserverRunsTab runs={runs} state={runsState} /> },
+          ] : []),
+          { id: 'preferences', label: preferenceLabel, render: () => <PreferencesTab /> },
+        ]) as TabDef[]}
+      />
 
       <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="Prediction Market Detail">
         {selected && <MarketDetailContent market={selected} />}

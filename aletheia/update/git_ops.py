@@ -6,6 +6,7 @@ Operates on the repository that contains the installed source, NOT the data dir.
 """
 
 import logging
+import os
 import shutil
 import subprocess
 
@@ -51,10 +52,44 @@ def remote_commit(branch: str = "master") -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
+def _fetch_with_https_fallback(*args: str) -> subprocess.CompletedProcess:
+    """git fetch, retrying via HTTPS URL-rewrite when the SSH remote fails.
+
+    Uses GIT_CONFIG_* env vars so the rewrite applies transparently to the
+    named remote without modifying any on-disk git config, and sets
+    GIT_TERMINAL_PROMPT=0 to prevent the fallback from hanging on auth prompts.
+    """
+    r = _git("fetch", *args)
+    if r.returncode == 0:
+        return r
+    url_r = _git("remote", "get-url", "origin")
+    if url_r.returncode != 0 or not url_r.stdout.strip().startswith("git@"):
+        return r
+    try:
+        host, _ = url_r.stdout.strip()[4:].split(":", 1)
+    except ValueError:
+        return r
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_CONFIG_COUNT"] = "1"
+    env["GIT_CONFIG_KEY_0"] = f"url.https://{host}/.insteadOf"
+    env["GIT_CONFIG_VALUE_0"] = f"git@{host}:"
+    r2 = subprocess.run(
+        ["git", "fetch", *args],
+        cwd=str(REPO_ROOT), capture_output=True, text=True,
+        env=env,
+        **_no_window_kwargs(),
+    )
+    if r2.returncode == 0:
+        return r2
+    combined = "; ".join(filter(None, [r.stderr.strip(), r2.stderr.strip()]))
+    return subprocess.CompletedProcess(r2.args, r2.returncode, r2.stdout, combined)
+
+
 def fetch(branch: str = "master") -> dict:
     if not git_available():
         return {"ok": False, "reason": "git_unavailable"}
-    r = _git("fetch", "origin", branch)
+    r = _fetch_with_https_fallback("origin", branch)
     if r.returncode != 0:
         return {"ok": False, "reason": "fetch_failed", "stderr": r.stderr.strip()}
     return {"ok": True}
@@ -64,7 +99,7 @@ def fetch_release_tags() -> dict:
     """Fetch the master history and tags used by the source-runtime updater."""
     if not git_available():
         return {"ok": False, "reason": "git_unavailable"}
-    r = _git("fetch", "origin", "master", "--tags")
+    r = _fetch_with_https_fallback("origin", "master", "--tags")
     if r.returncode != 0:
         return {"ok": False, "reason": "fetch_failed", "stderr": r.stderr.strip()}
     return {"ok": True}
@@ -171,7 +206,7 @@ def pull(branch: str = "master") -> dict:
     # repository-wide mutable state and can be overwritten by another fetch
     # between subprocess calls.
     target_ref = f"refs/aletheia/update/{branch}"
-    r = _git("fetch", "--no-write-fetch-head", "origin", f"{branch}:{target_ref}")
+    r = _fetch_with_https_fallback("--no-write-fetch-head", "origin", f"{branch}:{target_ref}")
     if r.returncode != 0:
         return {"ok": False, "reason": "fetch_failed", "stderr": r.stderr.strip()}
     r = _git("rev-parse", "--verify", target_ref)

@@ -20,6 +20,7 @@ DOMAIN_MAX_AGE: dict[str, timedelta] = {
     "cross_venue_funding": timedelta(minutes=30),
     "cross_venue_open_interest": timedelta(minutes=30),
     "perp_structure": timedelta(minutes=60),
+    "options_structure": timedelta(minutes=30),
 }
 MAX_FUTURE_SKEW = timedelta(minutes=5)
 

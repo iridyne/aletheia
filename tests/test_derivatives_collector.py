@@ -495,3 +495,111 @@ def test_collect_per_symbol_path_converts_amount_to_usd(tmp_path, monkeypatch):
     assert result["open_interest"][0].open_interest_usd == 100.0 * 65000.0
     from aletheia.storage import sqlite as sq
     sq.close_db()
+
+
+# ---------------------------------------------------------------------------
+# Cross-venue isolation — foreign rows must NOT suppress primary-venue backfill
+# ---------------------------------------------------------------------------
+
+
+def test_funding_backfill_not_suppressed_by_foreign_venue_rows(tmp_path, monkeypatch):
+    """Seed 3 Bybit funding rows; assert a Binance backfill still fetches and inserts.
+
+    Regression for issue #1172: sparse check previously used only (symbol, time),
+    so Bybit rows could satisfy the ≥3 guard and silently skip the Binance fetch.
+    """
+    from aletheia.config import loader as cfg_loader
+    monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
+    from aletheia.storage import sqlite as sq
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import migrations as mig
+    sq.close_db()
+    mig.run_migrations()
+
+    now = datetime.now(timezone.utc)
+    sym = "BTC/USDT"
+    for offset in (1, 2, 3):
+        repo.insert_funding_rate_snapshot({
+            "symbol": sym,
+            "exchange": "bybit",
+            "funding_rate": 0.0001,
+            "funding_rate_annualized": 0.1095,
+            "observed_at": (now - timedelta(minutes=offset)).isoformat(),
+        })
+
+    fetch_called = {"n": 0}
+
+    class _FakeBinance:
+        async def fetch_funding_rate_history(self, perp_sym, limit=24):
+            fetch_called["n"] += 1
+            ts_ms = int((now - timedelta(hours=1)).timestamp() * 1000)
+            return [{"timestamp": ts_ms, "fundingRate": 0.0002}]
+
+    from aletheia.data.collectors.derivatives import _maybe_backfill_funding_history
+    result = asyncio.run(_maybe_backfill_funding_history(
+        _FakeBinance(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
+    ))
+    assert fetch_called["n"] == 1, "Binance fetch must occur when only Bybit rows exist"
+    assert result > 0, f"expected ≥1 Binance insert; got {result}"
+    sq.close_db()
+
+
+def test_oi_backfill_not_suppressed_by_foreign_venue_rows(tmp_path, monkeypatch):
+    """Seed 3 Bybit OI rows and one same-timestamp Bybit row; assert Binance
+    backfill fetches, inserts, and handles an identical timestamp independently.
+
+    Regression for issue #1172: both the sparse check and the per-row dedup
+    previously used only (symbol, time), suppressing Binance inserts entirely.
+    """
+    from aletheia.config import loader as cfg_loader
+    monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
+    from aletheia.storage import sqlite as sq
+    from aletheia.storage import repositories as repo
+    from aletheia.storage import migrations as mig
+    sq.close_db()
+    mig.run_migrations()
+
+    now = datetime.now(timezone.utc)
+    sym = "BTC/USDT"
+    shared_ts = now - timedelta(hours=1)
+    for offset in (1, 2, 3):
+        repo.insert_open_interest_snapshot({
+            "symbol": sym,
+            "exchange": "bybit",
+            "open_interest_usd": 1.0e9,
+            "open_interest_coin": None,
+            "oi_change_1h_pct": None,
+            "long_short_ratio": None,
+            "top_trader_position_ratio": None,
+            "observed_at": (shared_ts - timedelta(minutes=offset)).isoformat(),
+        })
+    # seed a Bybit row at the exact same timestamp Binance history will return
+    repo.insert_open_interest_snapshot({
+        "symbol": sym,
+        "exchange": "bybit",
+        "open_interest_usd": 1.0e9,
+        "open_interest_coin": None,
+        "oi_change_1h_pct": None,
+        "long_short_ratio": None,
+        "top_trader_position_ratio": None,
+        "observed_at": shared_ts.isoformat(),
+    })
+
+    shared_ts_ms = int(shared_ts.timestamp() * 1000)
+
+    class _FakeBinance:
+        async def fetch_open_interest_history(self, perp_sym, timeframe, limit=24):
+            return [{"timestamp": shared_ts_ms, "openInterestValue": 2.0e9, "openInterestAmount": 30000.0}]
+
+    from aletheia.data.collectors.derivatives import _maybe_backfill_oi_history
+    result = asyncio.run(_maybe_backfill_oi_history(
+        _FakeBinance(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
+    ))
+    assert result == 1, f"expected 1 Binance OI insert at shared timestamp; got {result}"
+
+    # same-venue rerun must be idempotent
+    result2 = asyncio.run(_maybe_backfill_oi_history(
+        _FakeBinance(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
+    ))
+    assert result2 == 0, f"same-venue rerun must be a no-op; got {result2}"
+    sq.close_db()

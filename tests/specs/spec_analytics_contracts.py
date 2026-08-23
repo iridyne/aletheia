@@ -289,18 +289,18 @@ def test_scorecard_excludes_synthetic_closes():
                 direction=direction,
                 quantity=1.0,
                 price=100.0,
-                execution_mode="okx_demo",
+                execution_mode="paper_internal",
             )
         opportunity_id, proposal_id, order_id = causal_ids
         repo.insert_position(Position(
             id=position_id,
             symbol=symbol, market_type="usdt_futures", direction=direction,
-            quantity=1.0, entry_price=100.0, execution_mode="okx_demo",
+            quantity=1.0, entry_price=100.0, execution_mode="paper_internal",
             status="closed", realized_pnl=pnl, close_reason=reason,
             closed_at="2026-07-12T08:00:00+00:00",
             current_price=(100.0 + pnl if direction == "long" else 100.0 - pnl),
             entry_fee=0.0, exit_fee=0.0,
-            funding_cost=0.0, funding_source="broker_ledger",
+            funding_cost=0.0, funding_source="local_simulation",
             entry_price_source="unavailable" if synthetic else "broker_fill",
             entry_fill_verified=not synthetic,
             close_category="administrative" if synthetic else "strategy",

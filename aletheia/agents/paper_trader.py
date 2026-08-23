@@ -31,16 +31,19 @@ from aletheia.agents.paper_trader_ranker import build_paper_candidate_workset
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.config.loader import load_config
 from aletheia.storage.repositories import (
+    atomic_replace_queued_carrier,
     count_unresolved_signal_pending,
     expire_stale_queued_opportunities,
     list_all_open_positions,
     list_pending_signal_queue,
     prune_signal_pending_stale,
     transition_open_opportunity_to_queued,
-    transition_queued_opportunity_to_open,
 )
 
 logger = logging.getLogger("aletheia.agents.paper_trader")
+
+class SignalQueueOwnershipUnavailable(RuntimeError):
+    """Raised when a queue ownership predicate cannot be evaluated; admission must fail closed. (#1245)"""
 
 _BASE_NOTIONAL_USDT = 25.0  # legacy fallback; prefer cfg.trading.default_notional_usdt
 _ATR_TARGET_PCT = 1.5  # legacy fallback; prefer cfg.trading.vol_target_pct
@@ -62,6 +65,11 @@ class SignalBatchPlan:
     selected: list[dict]
     decisions: dict[str, tuple[str, str]]
     evictions: list[str] = dataclasses.field(default_factory=list)
+    # Each replacement candidate (those whose admission evicted an incumbent) is
+    # paired with the evicted opportunity_id.  Keys are replacement opportunity_id,
+    # values are the evicted incumbent id.  Normal (non-replacement) admission
+    # candidates do not appear here.
+    replacement_pairs: dict[str, str] = dataclasses.field(default_factory=dict)
 
 
 _EXCHANGE_CRED_KEYS: dict[str, str] = {
@@ -178,8 +186,8 @@ def _recent_signal_pairs(
             (r["symbol"], r["direction"], _market_identity(r["market_type"]))
             for r in rows
         }
-    except Exception:
-        return set()
+    except Exception as e:
+        raise SignalQueueOwnershipUnavailable(f"recent_signal_pairs read failed: {e}") from e
 
 
 def _active_signal_setups() -> set[tuple[str, str, str, str]]:
@@ -226,8 +234,8 @@ def _active_signal_setups() -> set[tuple[str, str, str, str]]:
             for row in rows
             if row[0] and row[1]
         }
-    except Exception:
-        return set()
+    except Exception as e:
+        raise SignalQueueOwnershipUnavailable(f"active_signal_setups read failed: {e}") from e
 
 
 def _operator_evaluated_opportunity_ids(
@@ -307,6 +315,7 @@ def _plan_signal_batch(
     selected: list[dict] = []
     decisions: dict[str, tuple[str, str]] = {}
     evictions: list[str] = []
+    replacement_pairs: dict[str, str] = {}
     seen_instruments: set[tuple[str, str]] = set()
     evaluated_ids = operator_evaluated_opportunity_ids or set()
     active_setups = active_signal_setups or set()
@@ -372,10 +381,12 @@ def _plan_signal_batch(
             candidate_conviction = min(int(candidate.get("trade_score") or 0), 95)
             if queue_occupants and candidate_conviction > queue_occupants[0]["conviction"]:
                 evicted = queue_occupants.pop(0)
-                evictions.append(evicted["opportunity_id"])
-                decisions[evicted["opportunity_id"]] = ("signal_queue_evicted", "evicted")
+                evicted_id = evicted["opportunity_id"]
+                evictions.append(evicted_id)
+                decisions[evicted_id] = ("signal_queue_evicted", "evicted")
                 selected.append(candidate)
                 decisions[opp_id] = ("signal_batch_limit", "passed")
+                replacement_pairs[opp_id] = evicted_id
             else:
                 decisions[opp_id] = ("signal_queue_capacity", "rejected")
             continue
@@ -384,7 +395,12 @@ def _plan_signal_batch(
             continue
         selected.append(candidate)
         decisions[opp_id] = ("signal_batch_limit", "passed")
-    return SignalBatchPlan(selected=selected, decisions=decisions, evictions=evictions)
+    return SignalBatchPlan(
+        selected=selected,
+        decisions=decisions,
+        evictions=evictions,
+        replacement_pairs=replacement_pairs,
+    )
 
 
 @register_agent("paper_trader")
@@ -437,8 +453,12 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         for p in list_all_open_positions()
         if p.get("symbol")
     }
-    recent_signal_pairs = _recent_signal_pairs()
-    active_signal_setups = _active_signal_setups()
+    try:
+        recent_signal_pairs = _recent_signal_pairs()
+        active_signal_setups = _active_signal_setups()
+    except SignalQueueOwnershipUnavailable as e:
+        logger.warning("Signal queue ownership unavailable, deferring pass: %s", e)
+        return _result()
     # Position C (2026-07-02): Path A (RuleSet-driven signals) was removed with the
     # strategy rules engine. The paper trader is now purely opportunity-driven: it
     # ranks open opportunities and writes the top ones as signal_pending
@@ -451,11 +471,40 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     # ranks are temporarily occupied/cooling down. Keep the complete working set.
     candidates = list(workset.scanned_candidates)
 
+    # ── AI Investment Committee enrichment (LLM-powered) ───────────────────
+    try:
+        from aletheia.agents.committee.integration import (
+            committee_direction_conflict_reason,
+            enrich_candidates_parallel,
+        )
+
+        _candidates_to_enrich = [c for c in candidates if not c.get("skip_reason")]
+        if _candidates_to_enrich:
+            _enriched_llm = await enrich_candidates_parallel(
+                _candidates_to_enrich, max_concurrency=8, total_timeout=240.0,
+            )
+            enriched_map = {c.get("opportunity_id"): c for c in _enriched_llm}
+            candidates = [
+                enriched_map.get(c.get("opportunity_id"), c) for c in candidates
+            ]
+            for candidate in candidates:
+                if candidate.get("skip_reason"):
+                    continue
+                conflict = committee_direction_conflict_reason(candidate)
+                if conflict:
+                    candidate["skip_reason"] = conflict
+    except Exception as exc:
+        logger.warning("LLM Committee enrichment skipped: %s", exc)
+
+
     _PERMANENT_SKIP_PREFIXES = (
         "neutral_bias", "confidence_below_", "paused_strategy:", "blocked_factor:",
         "equity_shadow_track", "execution_eligible=False", "universe_not_eligible",
         "ttl_expired", "ttl_invalid", "factor_hard_blocked", "okx_demo_symbol_not_supported",
         "symbol_not_allowed:", "producer_not_authorized", "producer_eligibility_",
+        "regime_confidence_standdown", "regime_sideways_standdown",
+        "family_not_demo_eligible", "reverse_after_stop",
+        "committee_direction_conflict",
     )
     def _is_permanent_skip(candidate: dict) -> bool:
         return bool(
@@ -537,12 +586,18 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
         errors.append("signal_queue_capacity_unavailable")
         logger.warning("pending queue capacity unavailable: %s", type(exc).__name__)
 
+    try:
+        _op_eval_ids = _operator_evaluated_opportunity_ids()
+    except SignalQueueOwnershipUnavailable as e:
+        logger.warning("operator_evaluated_opportunity_ids unavailable, deferring pass: %s", e)
+        return _result()
+
     plan = _plan_signal_batch(
         eligible,
         open_symbols=open_symbols,
         recent_signal_pairs=recent_signal_pairs,
         active_signal_setups=active_signal_setups,
-        operator_evaluated_opportunity_ids=_operator_evaluated_opportunity_ids(),
+        operator_evaluated_opportunity_ids=_op_eval_ids,
         limit=_PENDING_SIGNAL_QUEUE_CAPACITY,
         available_queue_slots=available_queue_slots,
         current_queue=current_queue,
@@ -602,72 +657,112 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                 f"{_PENDING_SIGNAL_QUEUE_CAPACITY}"
             )
 
-    # Execute priority-replacement evictions before writing the new signals.
-    # Each evicted opportunity is released back to open so the next run can
-    # re-score it; the signal_pending pi_decision is superseded by the eviction row.
-    for evicted_opp_id in plan.evictions:
-        try:
-            from aletheia.storage.models import PiDecision
-            from aletheia.storage.repositories import insert_pi_decision, transaction
+    # Write selected candidates.  Replacement candidates (those that displaced a
+    # lower-scored incumbent) are committed atomically so the eviction and the new
+    # enqueue either both land or both stay absent.  Normal admissions (free slot)
+    # are committed in their own transaction as before.
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision, transaction
 
+    signals_written = 0
+    emitted_candidates: list[dict] = []
+    for candidate in plan.selected:
+        opp_id = str(candidate.get("opportunity_id") or "")
+        sym = candidate["symbol"]
+        direction = candidate.get("direction")
+        _sig_conviction = min(int(candidate.get("trade_score", 0)), 95)
+        pi_dec = PiDecision(
+            symbol=sym,
+            direction=direction,
+            market_type=candidate.get("market_type") or candidate.get("market"),
+            action="signal_pending",
+            conviction=_sig_conviction,
+            reasoning=(
+                f"Ranker candidate: score={candidate.get('trade_score')} "
+                f"scanner={candidate.get('scanner_family')} "
+                f"factor={candidate.get('factor_status')}"
+            ),
+            proposal_id=None,
+            opportunity_id=opp_id or None,
+            debate_ran=False,
+        )
+
+        incumbent_id = plan.replacement_pairs.get(opp_id)
+        if incumbent_id:
+            # --- atomic priority replacement ---
             eviction_dec = PiDecision(
-                opportunity_id=evicted_opp_id,
+                opportunity_id=incumbent_id,
                 action="signal_queue_evicted",
                 conviction=0,
                 reasoning="evicted: lower-priority occupant replaced by higher-score candidate",
             )
-            with transaction():
-                transition_queued_opportunity_to_open(evicted_opp_id)
-                insert_pi_decision(eviction_dec)
-            outputs.append(f"evicted_low_priority:{evicted_opp_id}")
-            artifact_refs.append({"artifact_type": "pi_decision", "artifact_id": eviction_dec.id})
-        except Exception as exc:
-            errors.append(f"eviction_failed:{evicted_opp_id}")
-            logger.warning("signal_pending eviction failed for %s: %s", evicted_opp_id, type(exc).__name__)
 
-    # Write up to 3 candidates after occupancy/cooldown rejects have been removed.
-    signals_written = 0
-    emitted_candidates: list[dict] = []
-    for candidate in plan.selected:
-        try:
-            sym = candidate["symbol"]
-            direction = candidate.get("direction")
-            from aletheia.storage.models import PiDecision
-            from aletheia.storage.repositories import insert_pi_decision, transaction
-            _sig_conviction = min(int(candidate.get("trade_score", 0)), 95)
-            pi_dec = PiDecision(
-                symbol=candidate["symbol"],
-                direction=direction,
-                market_type=candidate.get("market_type") or candidate.get("market"),
-                action="signal_pending",
-                conviction=_sig_conviction,
-                reasoning=(
-                    f"Ranker candidate: score={candidate.get('trade_score')} "
-                    f"scanner={candidate.get('scanner_family')} "
-                    f"factor={candidate.get('factor_status')}"
-                ),
-                proposal_id=None,
-                opportunity_id=candidate.get("opportunity_id"),
-                debate_ran=False,
+            def _enqueue_evidence(
+                _c=candidate,
+                _run_id=evaluation_run_id,
+            ) -> None:
+                _persist_signal_enqueue_evidence(
+                    _c,
+                    run_id=_run_id,
+                    decision="passed",
+                    reason_code="signal_enqueued",
+                    raise_on_error=True,
+                )
+
+            result = atomic_replace_queued_carrier(
+                incumbent_id=incumbent_id,
+                replacement_id=opp_id,
+                eviction_decision=eviction_dec,
+                replacement_decision=pi_dec,
+                persist_enqueue_evidence_fn=_enqueue_evidence,
             )
+            if not result.committed:
+                logger.warning(
+                    "atomic replacement skipped incumbent=%s replacement=%s reason=%s",
+                    incumbent_id,
+                    opp_id,
+                    result.reason,
+                )
+                errors.append(f"replacement_skipped:{opp_id}:{result.reason}")
+                _persist_signal_enqueue_evidence(
+                    candidate,
+                    run_id=evaluation_run_id,
+                    decision="rejected",
+                    reason_code=result.reason,
+                )
+                continue
+            outputs.append(f"evicted_low_priority:{incumbent_id}")
+            artifact_refs.append({"artifact_type": "pi_decision", "artifact_id": eviction_dec.id})
+        else:
+            # --- normal free-slot admission ---
             claimed = True
-            with transaction():
-                # Claim the source before writing its carrier. A plan may be stale by
-                # the time this loop executes; only open→queued is legal, so a final
-                # reviewed/expired row can never be moved backwards to queued.
-                if candidate.get("opportunity_id"):
-                    claimed = transition_open_opportunity_to_queued(
-                        candidate["opportunity_id"]
-                    )
-                if claimed:
-                    insert_pi_decision(pi_dec)
-                    _persist_signal_enqueue_evidence(
-                        candidate,
-                        run_id=evaluation_run_id,
-                        decision="passed",
-                        reason_code="signal_enqueued",
-                        raise_on_error=True,
-                    )
+            try:
+                with transaction():
+                    # Claim the source before writing its carrier. A plan may be stale by
+                    # the time this loop executes; only open→queued is legal, so a final
+                    # reviewed/expired row can never be moved backwards to queued.
+                    if opp_id:
+                        claimed = transition_open_opportunity_to_queued(opp_id)
+                    if claimed:
+                        insert_pi_decision(pi_dec)
+                        _persist_signal_enqueue_evidence(
+                            candidate,
+                            run_id=evaluation_run_id,
+                            decision="passed",
+                            reason_code="signal_enqueued",
+                            raise_on_error=True,
+                        )
+            except Exception as e:
+                errors.append(f"signal_enqueue_failed:{opp_id or 'unknown'}")
+                _persist_signal_enqueue_evidence(
+                    candidate,
+                    run_id=evaluation_run_id,
+                    decision="error",
+                    reason_code="signal_enqueue_error",
+                    reason_detail=type(e).__name__,
+                )
+                logger.warning("signal_pending write failed for %s: %s", sym, e)
+                continue
             if not claimed:
                 _persist_signal_enqueue_evidence(
                     candidate,
@@ -675,37 +770,27 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
                     decision="rejected",
                     reason_code="opportunity_not_open",
                 )
-                outputs.append(f"skip_stale_plan:{candidate.get('symbol')}")
+                outputs.append(f"skip_stale_plan:{sym}")
                 continue
-            if direction:
-                recent_signal_pairs.add(
-                    (
-                        sym,
-                        direction,
-                        _market_identity(
-                            candidate.get("market_type") or candidate.get("market")
-                        ),
-                    )
+
+        if direction:
+            recent_signal_pairs.add(
+                (
+                    sym,
+                    direction,
+                    _market_identity(
+                        candidate.get("market_type") or candidate.get("market")
+                    ),
                 )
-            artifact_refs.append({"artifact_type": "pi_decision", "artifact_id": pi_dec.id})
-            signals_written += 1
-            emitted_candidates.append(candidate)
-            try:
-                from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
-                notify_pi_daemon(source="paper_trader_path_b")
-            except Exception:
-                pass
-        except Exception as e:
-            opportunity_id = str(candidate.get("opportunity_id") or "unknown")
-            errors.append(f"signal_enqueue_failed:{opportunity_id}")
-            _persist_signal_enqueue_evidence(
-                candidate,
-                run_id=evaluation_run_id,
-                decision="error",
-                reason_code="signal_enqueue_error",
-                reason_detail=type(e).__name__,
             )
-            logger.warning("signal_pending write failed for %s: %s", candidate.get("symbol"), e)
+        artifact_refs.append({"artifact_type": "pi_decision", "artifact_id": pi_dec.id})
+        signals_written += 1
+        emitted_candidates.append(candidate)
+        try:
+            from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
+            notify_pi_daemon(source="paper_trader_path_b")
+        except Exception:
+            pass
 
     # Counterfactual selection must reflect candidates actually emitted after all
     # occupancy/cooldown checks, not the theoretical rank-1 before those checks.

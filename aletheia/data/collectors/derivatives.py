@@ -427,7 +427,7 @@ async def _maybe_backfill_funding_history(
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=since_hours)).isoformat()
     existing = _select_all(
         "funding_rate_snapshots",
-        where="symbol=? AND observed_at>?", params=(sym, cutoff), limit=3,
+        where="symbol=? AND exchange=? AND observed_at>?", params=(sym, exchange_name, cutoff), limit=3,
     )
     if len(existing) >= 3:
         return 0
@@ -460,7 +460,7 @@ async def _maybe_backfill_oi_history(
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=since_hours)).isoformat()
     existing = _select_all(
         "open_interest_snapshots",
-        where="symbol=? AND observed_at>?", params=(sym, cutoff), limit=3,
+        where="symbol=? AND exchange=? AND observed_at>?", params=(sym, exchange_name, cutoff), limit=3,
     )
     if len(existing) >= 3:
         return 0
@@ -491,7 +491,7 @@ async def _maybe_backfill_oi_history(
         observed = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
         prior = _select_all(
             "open_interest_snapshots",
-            where="symbol=? AND observed_at=?", params=(sym, observed), limit=1,
+            where="symbol=? AND exchange=? AND observed_at=?", params=(sym, exchange_name, observed), limit=1,
         )
         if prior:
             continue

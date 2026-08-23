@@ -190,6 +190,15 @@ export default function TradeAnalyticsPanel() {
     return <Card><p className="text-muted text-sm">Analytics unavailable.</p></Card>
   }
 
+  // Runtime array guard: validate array fields to prevent .map() crashes if backend
+  // returns an object instead of array (same pattern as TradeInsightsPanel).
+  const arrayFields = ['by_source', 'by_family', 'hold_distribution'] as const
+  const invalidField = arrayFields.find(field => !Array.isArray(data[field]))
+  if (invalidField) {
+    console.error(`TradeStats.${invalidField} is not an array:`, typeof data[invalidField], data[invalidField])
+    return <Card><p className="text-muted text-sm">Analytics data shape invalid — {invalidField} is not an array.</p></Card>
+  }
+
   const t = data.totals
   const pnlTone = t.total_pnl === null ? 'neutral' : t.total_pnl >= 0 ? 'pos' : 'neg'
   const reasons = Object.entries(data.outcome_exclusion_reasons)

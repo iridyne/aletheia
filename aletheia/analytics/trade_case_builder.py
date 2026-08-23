@@ -46,14 +46,14 @@ def _is_synthetic_closure(row: dict) -> bool:
 def build_case_studies(
     since_hours: int = 168,
     skip_existing: bool = True,
-) -> list[dict]:
+) -> dict:
     """Build structured case studies from recently closed positions.
 
-    Returns list of created case study summaries (not full KnowledgeItems).
+    Returns {"created": [...], "failed": [{"position_id": ..., "error": ...}]}.
     """
     rows = build_trade_attribution_rows(limit=500)
     if not rows:
-        return []
+        return {"created": [], "failed": []}
 
     cutoff = datetime.now(timezone.utc).timestamp() - since_hours * 3600
     # #16: window on CLOSE time, not open time — case studies are built from recently
@@ -61,10 +61,11 @@ def build_case_studies(
     # closed within it must still be captured; otherwise long-held trades never get one.
     recent_rows = [r for r in rows if _closed_after(r, cutoff)]
     if not recent_rows:
-        return []
+        return {"created": [], "failed": []}
 
     existing_ids = _get_existing_case_position_ids() if skip_existing else set()
     created = []
+    failed = []
     skipped_synthetic = 0
 
     for row in recent_rows:
@@ -122,6 +123,7 @@ def build_case_studies(
             })
         except Exception as e:
             logger.warning("Failed to create case study for position %s: %s", pos_id, e, exc_info=True)
+            failed.append({"position_id": pos_id, "error": f"{type(e).__name__}"})
 
     if skipped_synthetic:
         logger.info(
@@ -130,7 +132,7 @@ def build_case_studies(
             skipped_synthetic,
         )
 
-    return created
+    return {"created": created, "failed": failed}
 
 
 def detect_guard_candidates(min_losses: int | None = None) -> list[dict]:

@@ -528,8 +528,8 @@ def test_trade_funnel_groups_machine_risk_tokens_with_dynamic_numbers():
     from aletheia.analytics.trade_funnel import _risk_reason_bucket
 
     assert _risk_reason_bucket(
-        "exceeds_demo_position_notional:68.79983666>0.0"
-    ) == "exceeds_demo_position_notional:N>N"
+        "exceeds_demo_position_margin:68.79983666>0.0"
+    ) == "exceeds_demo_position_margin:N>N"
 
 
 def test_trade_funnel_identifies_execution_gap_after_risk_approval():

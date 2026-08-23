@@ -8,7 +8,10 @@ the operator's LLM debate.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
+
+from aletheia.learning.outcomes import assess_candidate_outcome
 
 
 _MIN_NET_SAMPLES = 20
@@ -63,6 +66,7 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
     partially settled cohort is explicit neutral evidence, never a negative
     directional claim.
     """
+    as_of_at = datetime.now(timezone.utc)
     from aletheia.storage.sqlite import get_db
 
     family = str(candidate.get("scanner_family") or "unknown")
@@ -90,7 +94,7 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
             "directional_verdict": None,
         }
 
-    row = get_db().execute(
+    rows = get_db().execute(
         "WITH cohort AS ("
         " SELECT fd.opportunity_id, fd.outcome_candidate_key, fd.input_snapshot "
         " FROM filter_decisions fd "
@@ -108,24 +112,38 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
         "       WHERE en.filter_name='signal_enqueue' AND en.decision='passed' "
         "         AND en.opportunity_id=fd.opportunity_id)"
         "), outcomes AS ("
-        " SELECT c.opportunity_id, fo.net_return_pct, fo.cost_model_version, fo.status "
+        " SELECT c.opportunity_id, fo.status, fo.entry_ts, fo.due_at, fo.settled_at, "
+        "        fo.direction, fo.horizon, fo.outcome_candidate_key, "
+        "        fo.net_return_pct, fo.cost_model_version "
         " FROM cohort c LEFT JOIN filter_candidate_outcomes fo "
         "   ON fo.outcome_candidate_key=c.outcome_candidate_key AND fo.horizon=?"
         ") "
-        "SELECT COUNT(DISTINCT opportunity_id) AS n_total, "
-        " COUNT(DISTINCT CASE WHEN status='settled' AND net_return_pct IS NOT NULL "
-        "  THEN opportunity_id END) AS n_net, "
-        " AVG(CASE WHEN status='settled' THEN net_return_pct END) AS avg_net, "
-        " COUNT(DISTINCT CASE WHEN status='settled' THEN cost_model_version END) AS cost_versions, "
-        " MIN(CASE WHEN status='settled' THEN cost_model_version END) AS cost_model_version "
-        "FROM outcomes",
+        "SELECT * FROM outcomes",
         (family, direction, market, _B2_VERSION, policy_epoch_id, bucket, _EVIDENCE_HORIZON),
-    ).fetchone()
-    n_total = int(row["n_total"] or 0)
-    n_net = int(row["n_net"] or 0)
+    ).fetchall()
+    opportunity_ids = {
+        row["opportunity_id"]
+        for row in rows
+        if row["opportunity_id"] is not None
+    }
+    eligible_opportunity_ids: set[str] = set()
+    eligible_net: list[float] = []
+    settled_cost_versions: set[str] = set()
+    for row in rows:
+        if row["opportunity_id"] is None:
+            continue
+        assessment = assess_candidate_outcome(dict(row), as_of_at=as_of_at)
+        if assessment.eligible:
+            eligible_opportunity_ids.add(row["opportunity_id"])
+            eligible_net.append(float(assessment.net_return_pct))
+            if row["cost_model_version"] is not None:
+                settled_cost_versions.add(str(row["cost_model_version"]))
+
+    n_total = len(opportunity_ids)
+    n_net = len(eligible_opportunity_ids)
     coverage = round(n_net / n_total, 4) if n_total else 0.0
-    avg = float(row["avg_net"]) if row["avg_net"] is not None else None
-    cost_incident = n_net > 0 and int(row["cost_versions"] or 0) > 1
+    avg = sum(eligible_net) / len(eligible_net) if eligible_net else None
+    cost_incident = n_net > 0 and len(settled_cost_versions) > 1
     qualified = n_net >= _MIN_NET_SAMPLES and coverage >= _MIN_OUTCOME_COVERAGE and not cost_incident
     shrunk = round((n_net * avg) / (n_net + _SHRINKAGE_K), 6) if avg is not None else None
     verdict = ("positive" if shrunk and shrunk > 0 else "negative") if qualified else None
@@ -135,7 +153,8 @@ def build_b2_evidence_summary(candidate: dict[str, Any], *, policy_epoch_id: str
     return {
         **base, "n_total": n_total, "n_net": n_net, "outcome_coverage": coverage,
         "avg_net_pct": round(avg, 6) if avg is not None else None,
-        "shrunk_avg_net_pct": shrunk, "cost_model_version": row["cost_model_version"],
+        "shrunk_avg_net_pct": shrunk,
+        "cost_model_version": min(settled_cost_versions, default=None),
         "status": status, "directional_verdict": verdict,
     }
 

@@ -921,6 +921,16 @@ def test_symbol_check_okx_demo_absent_and_present(monkeypatch):
     # BTC is in swap → perp order passes
     assert gw._check_symbol_availability("BTCUSDT", "okx_demo", "usdt_futures") is None
 
+    # Loaded cache contains only "swap" key — spot requests must be rejected (issue #1222)
+    # _get_demo_symbols now returns frozenset() (not None) for a missing key in a loaded dict.
+    monkeypatch.setattr(okx_broker, "_okx_demo_symbols", {
+        "swap": frozenset({"BTC/USDT", "ETH/USDT"}),
+    })
+    reason_no_spot = gw._check_symbol_availability("BTCUSDT", "okx_demo", "spot")
+    assert reason_no_spot is not None, (
+        "Loaded OKX demo cache with no spot key must reject spot orders (issue #1222)"
+    )
+
 
 # ---------------------------------------------------------------------------
 # EX-B12 — Registry-based modes: absent symbol rejected; empty registry fail-open
@@ -969,6 +979,28 @@ def test_symbol_check_registry_modes(monkeypatch):
     monkeypatch.setattr(repo, "list_universe_assets", lambda *a, **kw: [])
     reason_empty = gw._check_symbol_availability("WLDUSDT", "binance_testnet")
     assert reason_empty is None, "Empty registry must fail-open, not block orders"
+
+    # ── case D: futures-only registry rejects spot request ──
+    # Deterministic trigger from issue #1222: loaded registry with no key for the
+    # requested market_type must reject, not fall through to success.
+    gw._registry_symbol_cache.clear()
+    monkeypatch.setattr(
+        repo, "list_universe_assets",
+        lambda *a, **kw: [
+            {"symbol": "WLD/USDT", "market_type": "usdt_futures"},
+            {"symbol": "BTC/USDT", "market_type": "usdt_futures"},
+        ],
+    )
+    reason_no_spot_key = gw._check_symbol_availability("WLDUSDT", "bitget_demo", "spot")
+    assert reason_no_spot_key is not None, (
+        "Loaded registry with no spot partition must reject a spot order (issue #1222)"
+    )
+
+    # ── case E: symbol present in the exact requested partition passes ──
+    gw._registry_symbol_cache.clear()
+    assert gw._check_symbol_availability("WLDUSDT", "bitget_demo", "usdt_futures") is None, (
+        "Symbol present in the loaded futures partition must pass"
+    )
 
 
 @spec_claim(

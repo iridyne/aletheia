@@ -45,7 +45,7 @@ def _save_paused_cfg(auto_resume_enabled=True, require_llm=True):
         acquired_at="2026-08-08T00:00:00+00:00",
     )
     cfg.health.auto_resume_enabled = auto_resume_enabled
-    cfg.health.auto_resume_interval_sec = 1
+    cfg.health.auto_resume_interval_sec = 30
     cfg.health.require_llm_at_startup = require_llm
     cfg.models.providers = {"anthropic_compatible": ProviderConfig(type="anthropic_compatible", enabled=True)}
     cfg.models.default_provider = "anthropic_compatible"

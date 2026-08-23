@@ -377,10 +377,24 @@ async def test_approve_paper_sanitizes_unexpected_execution_exception(client, mo
 
 
 @pytest.mark.anyio
-async def test_portfolio_endpoint(client):
+async def test_portfolio_endpoint(client, monkeypatch):
+    from datetime import datetime, timezone
+    from aletheia.data import price_feed
+
+    # #1174: mark_positions_to_market now reads _instrument_price_cache (exact
+    # venue/symbol/market_type) instead of the DB snapshot table.
+    # bitget_demo → venue "bitget"; seed the exact key so the PnL is computed.
+    fake_cache = {
+        ("bitget", "SOL/USDT", "spot"): {
+            "price": 160.0, "ts": datetime.now(timezone.utc),
+            "market_type": "spot", "exchange": "bitget",
+        },
+    }
+    monkeypatch.setattr(price_feed, "_instrument_price_cache", fake_cache)
+
     repo.insert_position(Position(symbol="SOLUSDT", market_type="spot", direction="long",
                                   quantity=10.0, entry_price=150.0, execution_mode="bitget_demo"))
-    repo.insert_market_snapshot(MarketSnapshot(symbol="SOLUSDT", market_type="spot", price=160.0))
+    repo.insert_market_snapshot(MarketSnapshot(symbol="SOLUSDT", market_type="spot", price=160.0, exchange="bitget"))
     resp = await client.get("/api/portfolio")
     assert resp.status_code == 200
     data = resp.json()

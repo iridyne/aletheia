@@ -1035,6 +1035,9 @@ def test_ready_candidate_uses_protocol_and_resolves_after_admin_close(monkeypatc
                 account_scope=request.account_scope,
             )
 
+        async def get_positions(self):
+            return []
+
     monkeypatch.setattr(
         disappearance_settlement, "_client_for_mode", lambda mode: FakeClient(),
     )
@@ -1045,6 +1048,96 @@ def test_ready_candidate_uses_protocol_and_resolves_after_admin_close(monkeypatc
     assert repo._select_one("positions", position.id)["status"] == "closed"
     stored_candidate = repo.list_position_disappearance_candidates(limit=10)[0]
     assert stored_candidate["status"] == "settled_administrative"
+    assert stored_candidate["direct_query_state"] == "confirmed_absent"
+
+
+def test_ready_candidate_direct_query_present_blocks_admin_close(monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from aletheia.portfolio import disappearance_settlement
+    from aletheia.storage.models import PositionDisappearanceCandidate
+
+    position = _position(execution_mode="bitget_demo")
+    repo.insert_position(position)
+    candidate = PositionDisappearanceCandidate(
+        id="candidate-present", position_id=position.id,
+        identity_key="identity-present", broker_id="bitget_demo",
+        account_environment="demo", account_fingerprint="account-scope-1",
+        execution_mode="bitget_demo", symbol=position.symbol,
+        market_type=position.market_type, direction=position.direction,
+        first_observed_at=position.opened_at, last_observed_at=position.opened_at,
+        confirmation_count=2, semantics_version="oi-v1",
+    )
+    repo.insert_position_disappearance_candidate(candidate)
+    absent = replace(
+        _verified_result(position), state="confirmed_absent_without_fill",
+        reason="position_absent_complete_history_no_fill", fills=(),
+    )
+
+    class FakeClient:
+        async def get_verified_position_exit(self, request):
+            return absent
+
+        async def get_positions(self):
+            # Fresh venue query still reports the position (cached view /
+            # fills protocol were blind — the 2026-08-19 XRP failure mode).
+            return [SimpleNamespace(
+                symbol="BTCUSDT", side="long", quantity=2.0,
+            )]
+
+    monkeypatch.setattr(
+        disappearance_settlement, "_client_for_mode", lambda mode: FakeClient(),
+    )
+    result = disappearance_settlement.settle_ready_disappearance_candidate(
+        candidate.id
+    )
+    assert result["closed"] is False
+    assert result["reason"] == "direct_query_position_present"
+    assert repo._select_one("positions", position.id)["status"] == "open"
+    stored_candidate = repo.list_position_disappearance_candidates(limit=10)[0]
+    assert stored_candidate["status"] == "pending"
+
+
+def test_ready_candidate_direct_query_unavailable_defers_close(monkeypatch):
+    from dataclasses import replace
+    from aletheia.portfolio import disappearance_settlement
+    from aletheia.storage.models import PositionDisappearanceCandidate
+
+    position = _position(execution_mode="bitget_demo")
+    repo.insert_position(position)
+    candidate = PositionDisappearanceCandidate(
+        id="candidate-unavailable", position_id=position.id,
+        identity_key="identity-unavailable", broker_id="bitget_demo",
+        account_environment="demo", account_fingerprint="account-scope-1",
+        execution_mode="bitget_demo", symbol=position.symbol,
+        market_type=position.market_type, direction=position.direction,
+        first_observed_at=position.opened_at, last_observed_at=position.opened_at,
+        confirmation_count=2, semantics_version="oi-v1",
+    )
+    repo.insert_position_disappearance_candidate(candidate)
+    absent = replace(
+        _verified_result(position), state="confirmed_absent_without_fill",
+        reason="position_absent_complete_history_no_fill", fills=(),
+    )
+
+    class FakeClient:
+        async def get_verified_position_exit(self, request):
+            return absent
+
+        async def get_positions(self):
+            raise RuntimeError("positions endpoint unavailable")
+
+    monkeypatch.setattr(
+        disappearance_settlement, "_client_for_mode", lambda mode: FakeClient(),
+    )
+    result = disappearance_settlement.settle_ready_disappearance_candidate(
+        candidate.id
+    )
+    assert result["closed"] is False
+    assert result["reason"] == "direct_query_unavailable"
+    assert repo._select_one("positions", position.id)["status"] == "open"
+    stored_candidate = repo.list_position_disappearance_candidates(limit=10)[0]
+    assert stored_candidate["status"] == "pending"
 
 
 def test_live_ready_candidate_queries_read_only_and_inconclusive_stays_open(monkeypatch):

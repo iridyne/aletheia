@@ -1847,3 +1847,125 @@ def test_projector_rejects_fill_with_mismatched_execution_mode():
 
     assert state["quantity"] is None
     assert state["_historical_state_reason"] == "historical_lifecycle_identity_mismatch"
+
+
+def test_oldest_deferred_bucket_prefers_open_positions_over_closed_history():
+    """Live book must not wait for pre-observer closed-path recovery."""
+
+    from aletheia.storage import repositories as repo
+
+    historical_bucket = 1_786_579_200_000 - 300_000 * 8_640
+    live_bucket = 1_786_579_200_000
+    closed = _seed_position(
+        position_id="position-path-starved-history",
+        opened_at="2026-07-12T00:00:00+00:00",
+        symbol="ETH/USDT",
+        identity_suffix="hist",
+    )
+    repo.update_position(
+        closed.id,
+        status="closed",
+        closed_at="2026-07-13T00:00:00+00:00",
+    )
+    live = _seed_position(
+        position_id="position-path-starved-live",
+        opened_at="2026-08-13T00:00:00+00:00",
+        identity_suffix="live",
+    )
+    repo.defer_position_path_observation_bucket(
+        closed.id,
+        bucket_open_ms=historical_bucket,
+        attempted_at="2026-08-16T00:00:00+00:00",
+        reason="scheduled",
+    )
+    repo.defer_position_path_observation_bucket(
+        live.id,
+        bucket_open_ms=live_bucket,
+        attempted_at="2026-08-16T00:00:00+00:00",
+        reason="scheduled",
+    )
+
+    due = repo.list_oldest_deferred_position_path_bucket()
+    assert [(row["position_id"], row["bucket_open_ms"]) for row in due] == [
+        (live.id, live_bucket)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_observer_processes_open_position_before_closed_history(
+    monkeypatch,
+):
+    from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Candle, OHLCVResult
+    from aletheia.portfolio import position_path_observer as observer
+    from aletheia.storage import repositories as repo
+
+    historical_bucket = 1_786_579_200_000 - 300_000 * 8_640
+    live_bucket = 1_786_579_200_000
+    closed = _seed_position(
+        position_id="position-path-open-first-history",
+        opened_at="2026-07-12T00:00:00+00:00",
+        symbol="ETH/USDT",
+        identity_suffix="hist-obs",
+    )
+    repo.update_position(
+        closed.id,
+        status="closed",
+        closed_at="2026-07-13T00:00:00+00:00",
+    )
+    live = _seed_position(
+        position_id="position-path-open-first-live",
+        opened_at="2026-08-13T00:00:00+00:00",
+        identity_suffix="live-obs",
+    )
+    repo.defer_position_path_observation_bucket(
+        closed.id,
+        bucket_open_ms=historical_bucket,
+        attempted_at="2026-08-16T00:00:00+00:00",
+        reason="scheduled",
+    )
+    repo.defer_position_path_observation_bucket(
+        live.id,
+        bucket_open_ms=live_bucket,
+        attempted_at="2026-08-16T00:00:00+00:00",
+        reason="scheduled",
+    )
+    requested: list[int] = []
+
+    class Provider:
+        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+            requested.append(since)
+            return OHLCVResult(
+                [
+                    Candle(
+                        since,
+                        100.0,
+                        104.0,
+                        99.0,
+                        103.0,
+                        12.0,
+                        True,
+                        "ccxt",
+                        "bitget",
+                    )
+                ],
+                requested=2,
+            )
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+    )
+    now = datetime.fromtimestamp((live_bucket + 600_000) / 1000, tz=timezone.utc)
+
+    result = await observer.observe_open_position_paths(now=now)
+
+    assert result["inserted"] >= 1
+    live_rows = repo.list_position_path_observations(live.id)
+    closed_rows = repo.list_position_path_observations(closed.id)
+    assert live_bucket in {row["bucket_open_ms"] for row in live_rows}
+    assert historical_bucket not in {row["bucket_open_ms"] for row in closed_rows}
+    assert live_bucket in requested
+    assert historical_bucket not in requested

@@ -400,7 +400,7 @@ def _risk_cap_hit(db, proposal_id: str, proposal_notional: float | None, cfg) ->
         " ".join(str(x) for x in _json_list(row["violations"])) + " " + str(row["message"] or "")
         for row in rows
     ).lower()
-    if any(token in text for token in ("max_demo_position_notional", "max_live_position_notional", "single_trade_risk", "max_leverage", "account_leverage")):
+    if any(token in text for token in ("max_demo_position_notional", "max_live_position_notional", "max_demo_position_margin", "max_live_position_margin", "single_trade_risk", "max_leverage", "account_leverage")):
         return True
     cap = _float_or_none(getattr(cfg.risk, "max_demo_position_notional_usdt", None))
     if cap is not None and proposal_notional is not None and proposal_notional >= cap:

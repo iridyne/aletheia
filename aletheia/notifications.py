@@ -2,7 +2,7 @@
 
 Notifications are deliberately advisory only: they must never block the gateway,
 and they must never mutate trading state. The sink fan-outs to local audit/error
-streams, Windows toast, and Telegram when configured.
+streams, Windows toast, Telegram, and Webhook when configured.
 """
 
 import asyncio
@@ -264,15 +264,20 @@ def notify_trade_fill(
     stop_price: float | None = None,
     take_profit_price: float | None = None,
 ) -> None:
-    """Push trade fill notification to Telegram. No-op if disabled or DND.
+    """Push trade fill notification to Telegram and Webhook when configured.
 
     Best-effort only — never raises, never blocks the execution path.
     """
     try:
         from aletheia.config.loader import load_config
         cfg = load_config()
-        if not cfg.telegram.enabled or not cfg.telegram.notify_trade_fills:
-            return
+        # Issue #1226: Telegram and Webhook are independent notification channels.
+        send_telegram = cfg.telegram.enabled and cfg.telegram.notify_trade_fills
+        send_webhook = (
+            cfg.webhook.enabled
+            and bool(cfg.webhook.url)
+            and cfg.webhook.notify_trade_fills
+        )
     except Exception:
         return
 
@@ -288,27 +293,34 @@ def notify_trade_fill(
         lines.append(f"<code>TP: {take_profit_price:.4f}</code>")
     lines.append(f"<code>pos/{position_id[:8]}</code>")
     msg = "\n".join(lines)
-    # Issue #407: trade fills are not "alerts" — bypass the health-alert toggle.
-    _send_telegram_alert(msg, level="info", _require_alert_switch=False)
-    _send_webhook({
-        "symbol": symbol,
-        "direction": dir_label,
-        "quantity": quantity,
-        "fill_price": fill_price,
-        "position_id": position_id,
-        "execution_mode": execution_mode,
-        "stop_price": stop_price,
-        "take_profit_price": take_profit_price,
-    }, event_type="trade_fill")
+    if send_telegram:
+        # Issue #407: trade fills are not "alerts" — bypass the health-alert toggle.
+        _send_telegram_alert(msg, level="info", _require_alert_switch=False)
+    if send_webhook:
+        _send_webhook({
+            "symbol": symbol,
+            "direction": dir_label,
+            "quantity": quantity,
+            "fill_price": fill_price,
+            "position_id": position_id,
+            "execution_mode": execution_mode,
+            "stop_price": stop_price,
+            "take_profit_price": take_profit_price,
+        }, event_type="trade_fill")
 
 
 def notify_daily_summary() -> None:
-    """Push daily PnL summary to Telegram at scheduled time. Best-effort."""
+    """Push daily PnL summary to Telegram and Webhook when configured."""
     try:
         from aletheia.config.loader import load_config
         cfg = load_config()
-        if not cfg.telegram.enabled or not cfg.telegram.notify_daily_summary:
-            return
+        # Issue #1226: Telegram and Webhook are independent notification channels.
+        send_telegram = cfg.telegram.enabled and cfg.telegram.notify_daily_summary
+        send_webhook = (
+            cfg.webhook.enabled
+            and bool(cfg.webhook.url)
+            and cfg.webhook.notify_daily_summary
+        )
     except Exception:
         return
 
@@ -331,14 +343,16 @@ def notify_daily_summary() -> None:
             f"Open positions: {open_count}",
             f"Portfolio value: <code>{total:.2f} USDT</code>",
         ]
-        # Issue #407: daily summary is not an "alert" — bypass the health-alert toggle.
-        _send_telegram_alert("\n".join(lines), level="info", _require_alert_switch=False)
-        _send_webhook({
-            "realized_pnl": realized,
-            "unrealized_pnl": unrealized,
-            "open_positions": open_count,
-            "total_value_usdt": total,
-            "realized_pnl_complete": realized is not None,
-        }, event_type="daily_summary")
+        if send_telegram:
+            # Issue #407: daily summary is not an "alert" — bypass the health-alert toggle.
+            _send_telegram_alert("\n".join(lines), level="info", _require_alert_switch=False)
+        if send_webhook:
+            _send_webhook({
+                "realized_pnl": realized,
+                "unrealized_pnl": unrealized,
+                "open_positions": open_count,
+                "total_value_usdt": total,
+                "realized_pnl_complete": realized is not None,
+            }, event_type="daily_summary")
     except Exception as e:
         logger.warning("notify_daily_summary failed: %s", e)

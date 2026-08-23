@@ -21,6 +21,7 @@ def _make_row(
     snapshot_id="snap1",
     entry_price=67000.0,
     entry_ts="2026-06-17T10:00:00Z",
+    market_type="spot",
 ):
     directional = -forward_return if direction == "short" else forward_return
     return {
@@ -35,6 +36,7 @@ def _make_row(
         "entry_price_usd": entry_price,
         "entry_ts": entry_ts,
         "snapshot_id": snapshot_id,
+        "market_type": market_type,
     }
 
 
@@ -146,6 +148,18 @@ def test_skips_row_without_scanner_family():
         from aletheia.universe.outcome_recorder import _maybe_generate_guard_candidates
         _maybe_generate_guard_candidates([row])
 
+        mock_create.assert_not_called()
+
+
+def test_skips_row_without_known_market_identity():
+    row = _make_row(forward_return=-5.0, market_type="crypto")
+
+    with patch("aletheia.universe.outcome_recorder.repo") as mock_repo, \
+         patch("aletheia.knowledge.manager.create_guard_candidate") as mock_create:
+        from aletheia.universe.outcome_recorder import _maybe_generate_guard_candidates
+        _maybe_generate_guard_candidates([row])
+
+        mock_repo.guard_candidate_exists_recent.assert_not_called()
         mock_create.assert_not_called()
 
 

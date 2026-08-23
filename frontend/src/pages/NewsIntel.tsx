@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import PageHeader from '../components/PageHeader'
-import { Badge, Button, Card, useToast } from '../components/ui'
+import { Badge, Button, Card, ListRowButton, useToast } from '../components/ui'
+import { DataStateMessage } from '../components/DataState'
 import { humanize, fmtTimestamp, stripHtml } from '../lib/format'
 
 type NewsItem = {
@@ -30,12 +31,27 @@ const SENTIMENT_TONE: Record<string, 'green' | 'red' | 'blue' | 'yellow'> = {
 
 export default function NewsIntel() {
   const qc = useQueryClient()
-  const { data: news = [] } = useQuery({ queryKey: ['news'], queryFn: () => api.getNews() })
+  const { data: news, isPending: newsPending, isError: newsError } = useQuery({ queryKey: ['news'], queryFn: () => api.getNews() })
   const [selected, setSelected] = useState<NewsItem | null>(null)
   const [analysis, setAnalysis] = useState<string | null>(null)
   const [filter, setFilter] = useState<string>('all')
   const [showAdd, setShowAdd] = useState(false)
   const [addForm, setAddForm] = useState({ title: '', source: '', url: '', summary: '', symbols: '', sentiment: 'neutral' })
+  const restoreNewsId = useRef<string | null>(null)
+  const newsFilterFallback = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (selected) {
+      restoreNewsId.current = selected.id
+      return
+    }
+    const id = restoreNewsId.current
+    if (!id) return
+    const opener = Array.from(document.querySelectorAll<HTMLElement>('[data-news-id]'))
+      .find(node => node.dataset.newsId === id)
+    ;(opener || newsFilterFallback.current)?.focus()
+    restoreNewsId.current = null
+  }, [selected])
 
   const { toast } = useToast()
   const analyzeMut = useMutation({
@@ -73,8 +89,16 @@ export default function NewsIntel() {
       sentiment: addForm.sentiment,
     })
   }
+  const newsArray = (news ?? []) as NewsItem[]
+  const newsState = newsPending && newsArray.length === 0
+    ? 'loading'
+    : newsError && newsArray.length === 0
+      ? 'unavailable'
+      : newsError && newsArray.length > 0
+        ? 'stale'
+        : undefined
 
-  const items = (news as NewsItem[]).filter(item => {
+  const items = newsArray.filter(item => {
     if (filter === 'all') return true
     if (filter === 'new') return item.status === 'new'
     if (filter === 'reviewed') return item.status === 'reviewed'
@@ -95,6 +119,7 @@ export default function NewsIntel() {
         {['all', 'new', 'reviewed', 'analyzed'].map(f => (
           <Button
             key={f}
+            ref={f === 'all' ? newsFilterFallback : undefined}
             variant={f === filter ? 'primary' : 'secondary'}
             className="btn-sm"
             onClick={() => setFilter(f)}
@@ -131,16 +156,23 @@ export default function NewsIntel() {
         </Card>
       )}
 
-      {items.length === 0 ? (
+      {newsState ? (
+        <Card>
+          <DataStateMessage state={newsState} />
+        </Card>
+      ) : items.length === 0 ? (
         <Card>
           <p className="text-muted">No news items yet. News will appear here once the ingestion pipeline is configured or items are added manually via the API.</p>
         </Card>
       ) : (
         <div className="news-list">
           {items.map(item => (
-            <Card
+            <ListRowButton
+              type="button"
               key={item.id}
               className="news-card clickable"
+              data-news-id={item.id}
+              aria-label={`Open news detail: ${item.title}`}
               onClick={() => { setSelected(item); setAnalysis(null) }}
             >
               <div className="flex justify-between items-center gap-2">
@@ -166,7 +198,7 @@ export default function NewsIntel() {
               {item.summary && (
                 <p className="text-muted text-sm mt-2 news-summary">{stripHtml(item.summary)}</p>
               )}
-            </Card>
+            </ListRowButton>
           ))}
         </div>
       )}
@@ -214,6 +246,7 @@ export default function NewsIntel() {
               ) : (
                 <Button
                   className="btn-sm"
+                  aria-label="Analyze Impact"
                   onClick={() => analyzeMut.mutate(selected.id)}
                   disabled={analyzeMut.isPending}
                 >

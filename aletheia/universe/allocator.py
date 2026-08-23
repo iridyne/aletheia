@@ -37,9 +37,13 @@ _FAMILY_CALIBRATION_HORIZON = {
 }
 _DEFAULT_CALIBRATION_HORIZON = "1h"
 
-# TTL by scanner family (seconds)
+# Legacy per-family membership TTL (seconds). No longer drives entry_ttl_sec
+# (now unified via config.universe.entry_ttl_sec). Retained only for the
+# soft-penalty decay in paper_trader_ranker, which uses family-specific TTL
+# as the half-life denominator. Will be removed once ranker switches to
+# config-driven entry_ttl_sec (#1325).
 _FAMILY_TTL = {
-    "momentum": 1800,       # 30 min — fast signals
+    "momentum": 1800,       # 30 min
     "mean_reversion": 3600, # 1 hour
     "volatility": 7200,     # 2 hours
     "derivatives": 14400,   # 4 hours
@@ -422,7 +426,7 @@ def compute_total_score(
                 feat["learning_candidate_key"] = candidate_key
                 feat["learning_exposure_id"] = influence.exposure_id
                 feat["learning_target_horizon"] = horizon
-    # Operator-adjustable per-family weight. The PI Operator writes
+    # Operator-adjustable per-family weight. The System Operator writes
     # cfg.scanner_weights via _action_adjust_scanner_weight (OL-C09) and the UI
     # shows it, but scoring never consumed it — the manual bias was inert. Empty
     # dict (default) → 1.0 for every family, preserving current behavior.
@@ -506,11 +510,19 @@ def resolve_family_quota(cfg: UniverseConfig, regime_state: str | None) -> dict[
     it REPLACES the static cfg.family_quota for this allocation. Otherwise the
     static quota is used (empty override map → fully backward compatible).
     """
+    import math as _math
     if regime_state:
         override = (cfg.family_quota_by_regime or {}).get(regime_state)
         if override:
-            return override
-    return cfg.family_quota
+            quota = override
+        else:
+            quota = cfg.family_quota
+    else:
+        quota = cfg.family_quota
+    for k, val in (quota or {}).items():
+        if not isinstance(val, (int, float)) or not _math.isfinite(float(val)):
+            raise ValueError(f"not finite: family_quota['{k}'] = {val!r}")
+    return quota
 
 
 def allocate_universe(
@@ -529,7 +541,7 @@ def allocate_universe(
     2. Apply family quotas (regime-aware — see resolve_family_quota) so no single
        family exceeds its share
     3. Split into exploit (by score) and explore (random from remainder)
-    4. Assign TTL per family
+    4. Assign entry TTL from config (unified across all families, #1325)
     5. Cap at max_candidates
     """
     if not scored:
@@ -613,11 +625,11 @@ def allocate_universe(
     if decorate_selected:
         for item in final:
             family = item.get("scanner_family", "momentum")
-            item["ttl_sec"] = _FAMILY_TTL.get(family, 3600)
+            item["ttl_sec"] = cfg.entry_ttl_sec
 
             # Guard: only mark execution_eligible if there is live price data within the
             # last 2 hours. Symbols with zero snapshots (e.g. NATGAS/USDT) would otherwise
-            # reach PI Agent as tradeable but fail silently at proposal submission.
+            # reach the Trading Decision daemon as tradeable but fail silently at proposal submission.
             _sym = item.get("symbol", "")
             _has_live_price = has_fresh_market_snapshot(_sym, item.get("market_type", "spot"))
 

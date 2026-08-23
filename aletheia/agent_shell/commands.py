@@ -2938,6 +2938,52 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     return result
 
 
+def _horizon_due_allow_hold(execution_mode: str | None) -> bool:
+    """Safer default is True: expiry is not a forced flatten."""
+    from aletheia.risk.policy import UnknownRiskExecutionMode, resolve_risk_policy
+
+    mode = str(execution_mode or "paper_internal")
+    try:
+        resolved = resolve_risk_policy(config_loader.load_config(), mode)
+    except UnknownRiskExecutionMode:
+        return True
+    return bool(getattr(resolved.policy.exits, "horizon_due_allow_hold", True))
+
+
+def _horizon_hold_roll_hours(position: dict) -> float | None:
+    """One more authored horizon period from current age. None if not rollable."""
+    from aletheia.risk.policy import UnknownRiskExecutionMode, resolve_risk_policy
+
+    try:
+        opened_at = datetime.fromisoformat(
+            str(position.get("opened_at") or "").replace("Z", "+00:00")
+        )
+        if opened_at.tzinfo is None:
+            opened_at = opened_at.replace(tzinfo=timezone.utc)
+        age_hours = (
+            datetime.now(timezone.utc) - opened_at
+        ).total_seconds() / 3600.0
+        horizon = float(position.get("expected_horizon_hours"))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(age_hours) or age_hours < 0 or not math.isfinite(horizon) or horizon <= 0:
+        return None
+    try:
+        resolved = resolve_risk_policy(
+            config_loader.load_config(),
+            str(position.get("execution_mode") or "paper_internal"),
+        )
+        backstop = float(resolved.policy.exits.horizon_hard_backstop_mult or 3.0)
+    except (UnknownRiskExecutionMode, TypeError, ValueError):
+        backstop = 3.0
+    if backstop > 0 and age_hours >= horizon * backstop:
+        return None
+    rolled = round(age_hours + horizon, 4)
+    if rolled <= age_hours:
+        return None
+    return rolled
+
+
 async def review_portfolio_state(params: dict) -> dict:
     """System Operator reviews open positions and may hold, adjust, or close one."""
     import json as _json
@@ -3018,6 +3064,20 @@ async def review_portfolio_state(params: dict) -> dict:
     open_scope_ids = {str(position.get("id") or "") for position in open_positions}
     horizon_due_position_ids.intersection_update(open_scope_ids)
     horizon_due_review = bool(horizon_due_position_ids)
+    sample_horizon = next(
+        (
+            position
+            for position in open_positions
+            if str(position.get("id") or "") in horizon_due_position_ids
+        ),
+        open_positions[0] if open_positions else None,
+    )
+    allow_horizon_hold = bool(
+        horizon_due_review
+        and _horizon_due_allow_hold(
+            sample_horizon.get("execution_mode") if sample_horizon else "paper_internal"
+        )
+    )
     portfolio_context["review_scope_positions"] = len(open_positions)
     risk = ctx.get("risk", {})
 
@@ -3090,7 +3150,7 @@ async def review_portfolio_state(params: dict) -> dict:
                 "type": "string",
                 "enum": (
                     ["adjust_position", "close_one"]
-                    if horizon_due_review
+                    if horizon_due_review and not allow_horizon_hold
                     else ["hold", "adjust_position", "close_one"]
                 ),
             },
@@ -3180,6 +3240,25 @@ async def review_portfolio_state(params: dict) -> dict:
         else ""
     )
     system = "You are a portfolio risk reviewer for an autonomous paper trading system."
+    if not horizon_due_review:
+        horizon_hold_contract = ""
+    elif allow_horizon_hold:
+        horizon_hold_contract = (
+            "For horizon_due wakes, \"hold\" is allowed when there is no clear close thesis. "
+            "Hold rolls expected_horizon_hours forward by one original plan period from the "
+            "current age and does not flatten. Choose \"close_one\" only with a clear close "
+            "thesis. Prefer \"adjust_position\" with new_horizon_hours when you want an explicit "
+            "different duration. A stop/target-only or empty adjustment does not extend the "
+            "horizon and will be retried."
+        )
+    else:
+        horizon_hold_contract = (
+            "For horizon_due wakes, \"hold\" is not a valid terminal answer. Choose "
+            "\"close_one\", or choose \"adjust_position\" and set new_horizon_hours to an "
+            "absolute age from opened_at that is strictly greater than the current age "
+            "reported in the wake evidence. A stop/target-only or empty adjustment does "
+            "not extend the horizon and will be retried."
+        )
     user = f"""Global portfolio context:
   Total open positions: {len(all_open_positions)}
   Persisted global unrealized PnL: {total_unrealized_text}
@@ -3201,11 +3280,7 @@ Be conservative. Global portfolio context is read-only. For adjust_position or
 close_one, target_position_id must identify one listed review-scope position. Never
 act on a position outside the supplied wake evidence.
 
-For horizon_due wakes, "hold" is not a valid terminal answer. Choose "close_one",
-or choose "adjust_position" and set new_horizon_hours to an absolute age from
-opened_at that is strictly greater than the current age reported in the wake
-evidence. A stop/target-only or empty adjustment does not extend the horizon and
-will be retried.
+{horizon_hold_contract}
 
 Return JSON: {_json.dumps(schema)}"""
 
@@ -3279,7 +3354,7 @@ Return JSON: {_json.dumps(schema)}"""
         "reasoning": reasoning,
         "target_symbol": review.get("target_symbol"),
     }
-    if horizon_due_review and raw_action == "hold":
+    if horizon_due_review and raw_action == "hold" and not allow_horizon_hold:
         result["horizon_review_error"] = (
             "explicit_extension_or_close_required"
         )
@@ -3344,6 +3419,9 @@ Return JSON: {_json.dumps(schema)}"""
                 "close_one_error",
                 "positions_closed",
                 "horizon_review_error",
+                "horizon_hold_error",
+                "horizon_hold_extended_ids",
+                "horizon_hold_extended_hours",
             }
         }
 
@@ -3409,6 +3487,46 @@ Return JSON: {_json.dumps(schema)}"""
                 reason=reasoning,
             )
 
+    if (
+        action == "hold"
+        and horizon_due_review
+        and allow_horizon_hold
+        and not result.get("horizon_review_error")
+    ):
+        from aletheia.portfolio.position_manager import apply_operator_adjustment
+
+        hold_targets = matching if matching else [
+            position
+            for position in open_positions
+            if str(position.get("id") or "") in horizon_due_position_ids
+        ]
+        extended_ids: list[str] = []
+        rolled_hours: list[float] = []
+        for position in hold_targets:
+            rolled = _horizon_hold_roll_hours(position)
+            if rolled is None:
+                result["horizon_hold_error"] = "hold_extension_unavailable"
+                break
+            adjustment = apply_operator_adjustment(
+                position["id"],
+                new_horizon=rolled,
+                reason=reasoning or "horizon_due_hold",
+            )
+            if not (isinstance(adjustment, dict) and adjustment.get("updated") is True):
+                result["horizon_hold_error"] = (
+                    str(adjustment.get("error") or "hold_extension_unavailable")
+                    if isinstance(adjustment, dict)
+                    else "hold_extension_unavailable"
+                )
+                result["adjust"] = adjustment
+                break
+            result["adjust"] = adjustment
+            extended_ids.append(str(position["id"]))
+            rolled_hours.append(rolled)
+        if extended_ids and "horizon_hold_error" not in result:
+            result["horizon_hold_extended_ids"] = extended_ids
+            result["horizon_hold_extended_hours"] = rolled_hours
+
     closed_count = 0
     if action == "close_one" and matching:
         if not mutation_blocked:
@@ -3440,7 +3558,14 @@ Return JSON: {_json.dumps(schema)}"""
     # durable pending-close claim is subsequently owned by reconciliation; retrying
     # the review must never submit a replacement order.
     if action == "hold":
-        review_completed = supported_action and not horizon_due_review
+        if horizon_due_review and allow_horizon_hold:
+            review_completed = bool(
+                result.get("horizon_hold_extended_ids")
+                and not result.get("horizon_hold_error")
+                and not result.get("horizon_review_error")
+            )
+        else:
+            review_completed = supported_action and not horizon_due_review
     elif action == "adjust_position":
         adjustment = result.get("adjust")
         review_completed = bool(
@@ -3473,6 +3598,12 @@ Return JSON: {_json.dumps(schema)}"""
                 position_id
                 for position_id in horizon_position_ids
                 if position_id == effective_target_id
+            ]
+        elif action == "hold":
+            horizon_position_ids = [
+                position_id
+                for position_id in (result.get("horizon_hold_extended_ids") or [])
+                if position_id in horizon_due_position_ids
             ]
         if horizon_position_ids:
             result["horizon_reviews_acknowledged"] = acknowledge_horizon_review(

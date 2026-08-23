@@ -266,7 +266,7 @@ class TestBuildCaseStudies:
     def test_no_rows_empty(self, mock_rows, mock_existing):
         mock_rows.return_value = []
         mock_existing.return_value = set()
-        assert build_case_studies() == []
+        assert build_case_studies() == {"created": [], "failed": []}
 
     @patch("aletheia.analytics.trade_case_builder.create_trade_case_study")
     @patch("aletheia.analytics.trade_case_builder._get_existing_case_position_ids")
@@ -277,9 +277,9 @@ class TestBuildCaseStudies:
         mock_rows.return_value = [_make_row()]
 
         result = build_case_studies(since_hours=9999)
-        assert len(result) == 1
-        assert result[0]["case_study_id"] == "cs-1"
-        assert result[0]["outcome"] == "loss"
+        assert len(result["created"]) == 1
+        assert result["created"][0]["case_study_id"] == "cs-1"
+        assert result["created"][0]["outcome"] == "loss"
 
     @patch("aletheia.analytics.trade_case_builder._get_existing_case_position_ids")
     @patch("aletheia.analytics.trade_case_builder.build_trade_attribution_rows")
@@ -288,7 +288,7 @@ class TestBuildCaseStudies:
         mock_rows.return_value = [_make_row(position_id="pos-1")]
 
         result = build_case_studies(since_hours=9999)
-        assert result == []
+        assert result == {"created": [], "failed": []}
 
     @patch("aletheia.analytics.trade_case_builder.create_trade_case_study")
     @patch("aletheia.analytics.trade_case_builder._get_existing_case_position_ids")
@@ -304,7 +304,7 @@ class TestBuildCaseStudies:
         ]
 
         result = build_case_studies(since_hours=9999)
-        assert result == []
+        assert result == {"created": [], "failed": []}
         mock_create.assert_not_called()
 
     @patch("aletheia.analytics.trade_case_builder.create_trade_case_study")
@@ -321,8 +321,8 @@ class TestBuildCaseStudies:
         ]
 
         result = build_case_studies(since_hours=9999)
-        assert len(result) == 1
-        assert result[0]["case_study_id"] == "cs-tp"
+        assert len(result["created"]) == 1
+        assert result["created"][0]["case_study_id"] == "cs-tp"
         mock_create.assert_called_once()
 
 

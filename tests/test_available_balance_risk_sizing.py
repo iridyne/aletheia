@@ -21,15 +21,15 @@ def test_available_balance_risk_budget_is_cost_then_futures_notional():
         600.0, 2.0, leverage=3, sizing_trace=trace
     ) == 36.0
     assert available_balance_risk_budget_size(200.0, 2.0, leverage=3) == 12.0
-    assert trace == {
-        "policy_version": "available-balance-risk-budget/v1",
-        "value_source": "risk_policy_available_balance",
-        "available_balance_usdt": 600.0,
-        "per_trade_risk_pct": 2.0,
-        "cost_budget_usdt": 12.0,
-        "leverage": 3.0,
-        "target_notional_usdt": 36.0,
-    }
+    # After removing sizing_trace.clear(), helper appends its keys instead of replacing.
+    # Check subset: the helper's keys must be present and correct; caller context preserved.
+    assert trace["policy_version"] == "available-balance-risk-budget/v1"
+    assert trace["value_source"] == "risk_policy_available_balance"
+    assert trace["available_balance_usdt"] == 600.0
+    assert trace["per_trade_risk_pct"] == 2.0
+    assert trace["cost_budget_usdt"] == 12.0
+    assert trace["leverage"] == 3.0
+    assert trace["target_notional_usdt"] == 36.0
 
 
 def test_active_operator_sizing_does_not_use_strategy_sample_scaling(monkeypatch):

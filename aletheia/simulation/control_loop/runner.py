@@ -115,7 +115,7 @@ class ControlLoopHarness:
         # +/-1 USDT result is the complete net result, not a hidden fee estimate.
         cfg.trading.slippage_bps = 0.0
         cfg.trading.execution_fee_pct = 0.0
-        cfg.risk.max_demo_position_notional_usdt = initial_sizing
+        cfg.risk.max_demo_position_margin_usdt = initial_sizing
         loader.save_config(cfg)
         self.db = get_db()
         self.initial_config = self.safe_config()
@@ -171,8 +171,8 @@ class ControlLoopHarness:
                 "default_stop_loss_pct": cfg.trading.default_stop_loss_pct,
             },
             "risk": {
-                "max_demo_position_notional_usdt":
-                    cfg.risk.demo.capital.max_position_notional_usdt,
+                "max_demo_position_margin_usdt":
+                    cfg.risk.demo.capital.max_position_margin_usdt,
             },
         }
 
@@ -183,7 +183,7 @@ class ControlLoopHarness:
         if confidence is not None:
             cfg.trading.min_confidence_to_trade = confidence
         if sizing is not None:
-            cfg.risk.max_demo_position_notional_usdt = sizing
+            cfg.risk.max_demo_position_margin_usdt = sizing
         self._loader.save_config(cfg)
         self._record("set_controls", confidence=confidence, sizing=sizing)
 

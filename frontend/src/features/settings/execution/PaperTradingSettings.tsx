@@ -7,6 +7,7 @@ import {
   SaveMessage as SaveMsg,
   SettingsRow as Row,
   Switch as Toggle,
+  useConfirm,
 } from '../../../components/ui'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import type { SettingsDirtyProps } from '../types'
@@ -14,6 +15,7 @@ import type { SettingsDirtyProps } from '../types'
 const CONFIDENCE_LEVELS = ['high', 'medium', 'speculative'] as const
 
 export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQueryClient>; onDirty?: (id: string, isDirty: boolean) => void }) {
+  const confirm = useConfirm()
   const { data: account, isLoading } = useQuery({ queryKey: ['paper-account'], queryFn: api.getPaperAccount })
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
@@ -78,20 +80,20 @@ export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQue
         <input value={note} onChange={e => setNote(e.target.value)} placeholder="Reason (shown to agent)" style={{ minWidth: '180px' }} />
         <button disabled={!valid || mutate.isPending} onClick={() => mutate.mutate({ action: 'credit', value })}>Add funds</button>
         <button className="secondary" disabled={!valid || value <= 0 || mutate.isPending} onClick={() => mutate.mutate({ action: 'debit', value })}>Remove funds</button>
-        <button className="secondary" disabled={!valid || mutate.isPending} onClick={() => {
-          if (confirm(`Set local paper cash balance to ${value.toFixed(2)} USDT?`)) mutate.mutate({ action: 'set', value })
+        <button className="secondary" disabled={!valid || mutate.isPending} onClick={async () => {
+          if (await confirm({ title: 'Set local paper cash balance?', description: `${value.toFixed(2)} USDT`, confirmLabel: 'Set balance' })) mutate.mutate({ action: 'set', value })
         }}>Set balance</button>
       </Row>
       <div className="danger-zone" style={{ marginTop: '1rem' }}>
         <div className="danger-zone-header">Position Management</div>
         <Row label="Close local spot positions" hint="Closes every open local paper spot position at its last stored market price. Trade history remains intact.">
-          <button className="secondary" disabled={closeMutation.isPending} onClick={() => {
-            if (confirm('Close all local paper spot positions?')) closeMutation.mutate(true)
+          <button className="secondary" disabled={closeMutation.isPending} onClick={async () => {
+            if (await confirm({ title: 'Close local spot positions?', description: 'Every open local paper spot position will be closed.', confirmLabel: 'Close positions', variant: 'danger' })) closeMutation.mutate(true)
           }}>Close local spot positions</button>
         </Row>
         <Row label="Close all local positions" hint="Closes every open local paper position, including futures, at its last stored market price.">
-          <button disabled={closeMutation.isPending} onClick={() => {
-            if (confirm('Close every open local paper position?')) closeMutation.mutate(false)
+          <button disabled={closeMutation.isPending} onClick={async () => {
+            if (await confirm({ title: 'Close all local positions?', description: 'Every open local paper position, including futures, will be closed.', confirmLabel: 'Close positions', variant: 'danger' })) closeMutation.mutate(false)
           }}>Close all local positions</button>
         </Row>
       </div>
@@ -112,8 +114,8 @@ export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQue
 
 export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty: boolean) => void }) {
   const qc = useQueryClient()
-  const { data: events = [] } = useQuery({ queryKey: ['capital-events'], queryFn: api.getCapitalEvents })
-  const { data: netData } = useQuery({ queryKey: ['capital-net-deposits'], queryFn: api.getNetDeposits })
+  const { data: events, isLoading: eventsLoading, isError: eventsError, refetch: refetchEvents } = useQuery({ queryKey: ['capital-events'], queryFn: api.getCapitalEvents })
+  const { data: netData, isLoading: netLoading, isError: netError, refetch: refetchNet } = useQuery({ queryKey: ['capital-net-deposits'], queryFn: api.getNetDeposits })
   const [brokerId, setBrokerId] = useState('')
   const [eventType, setEventType] = useState<'deposit' | 'withdraw'>('deposit')
   const [amount, setAmount] = useState('')
@@ -141,7 +143,12 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
     onError: (e: any) => setMsg(e.message || 'Failed'),
   })
 
-  const netDeposits = netData?.net_deposits_usdt ?? 0
+  const netDepositsDisplay = netLoading
+    ? 'loading…'
+    : netError
+      ? 'not available'
+      : `${Number(netData?.net_deposits_usdt ?? 0).toFixed(2)} USDT`
+
   useSettingsDraftLifecycle({
     id: 'capital-events',
     dirty: brokerId !== '' || eventType !== 'deposit' || amount !== '' || note !== '',
@@ -152,7 +159,10 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
 
   return (
     <div>
-      <p className="text-muted text-sm mb-2">Net deposits: <strong>{netDeposits.toFixed(2)} USDT</strong></p>
+      <p className="text-muted text-sm mb-2">
+        Net deposits: <strong>{netDepositsDisplay}</strong>
+        {netError && <button className="btn-inline-retry" onClick={() => refetchNet()}>Retry</button>}
+      </p>
       <div className="capital-form">
         <select value={eventType} onChange={e => setEventType(e.target.value as any)}>
           <option value="deposit">Deposit</option>
@@ -164,7 +174,14 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
         <button className="btn btn-primary" disabled={!amount || parseFloat(amount) <= 0} onClick={() => mutation.mutate()}>Record</button>
       </div>
       {msg && <p className="save-msg mt-1">{msg}</p>}
-      {(events as any[]).length > 0 && (
+      {eventsLoading && <p className="hint mt-2">Loading capital events…</p>}
+      {eventsError && (
+        <p className="hint mt-2">
+          Capital events unavailable.{' '}
+          <button className="btn-inline-retry" onClick={() => refetchEvents()}>Retry</button>
+        </p>
+      )}
+      {!eventsLoading && !eventsError && (events as any[]).length > 0 && (
         <table className="mini-table mt-2">
           <thead><tr><th>Date</th><th>Type</th><th>Broker</th><th>Amount</th><th>Note</th></tr></thead>
           <tbody>

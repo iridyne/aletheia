@@ -553,7 +553,7 @@ def emit_deterministic_opportunities(
         )
 
         # Guard: only set execution_eligible if there is live price data within the
-        # last 2 hours. Symbols with zero snapshots would otherwise reach PI Agent as
+        # last 2 hours. Symbols with zero snapshots would otherwise reach the Trading Decision daemon as
         # tradeable but fail silently at proposal submission (price=0 → proposal_id=None).
         _exec_eligible = has_fresh_market_snapshot(symbol, market_type)
         if not _exec_eligible:

@@ -497,8 +497,10 @@ def _check_symbol_availability(symbol: str, execution_mode: str, market_type: st
     registry = _load_registry_symbols(venue)
     if registry is None:
         return None  # registry not yet synced — fail-open
-    supported = registry.get(market_type)
-    if supported is not None and canonical not in supported:
+    if market_type not in registry:
+        return f"{symbol} ({market_type}) not available on {execution_mode} (no {market_type} products in venue registry)"
+    supported = registry[market_type]
+    if canonical not in supported:
         return f"{symbol} ({market_type}) not available on {execution_mode}"
     return None
 

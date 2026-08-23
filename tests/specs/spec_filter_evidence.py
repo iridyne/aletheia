@@ -1115,6 +1115,8 @@ def test_persisted_ranker_and_selection_gates_are_registered():
         "execution_eligibility",
         "symbol_filter",
         "direction_present",
+        "demo_entry_quality",
+        "committee_direction_conflict",
         "ranker_confidence_gate",
         "universe_execution_eligibility",
         "family_ttl",

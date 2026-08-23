@@ -103,14 +103,29 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> bool | No
             raise typer.Exit(1)
         _echo_stdout_safe("Gateway machine service start requested; use `gateway status` to confirm readiness.")
         return False
-    cfg = bootstrap()
+    from aletheia.gateway.preflight import run_preflight_checks, assert_preflight_or_exit
+
+    try:
+        cfg = bootstrap()
+    except Exception:
+        # ``bootstrap`` loads the config before the normal preflight pass.  If a
+        # persisted value violates the schema, surface the same explicit blocker
+        # instead of leaking a raw startup traceback or partially starting a gateway.
+        preflight_result = run_preflight_checks()
+        if not preflight_result.passed:
+            _notify_gateway_problem(
+                "Aletheia Gateway configuration blocker",
+                "; ".join(f"{c.name}: {c.message}" for c in preflight_result.failures()),
+                source="gateway_lifecycle",
+            )
+            assert_preflight_or_exit(preflight_result)
+        raise
 
     # T7: If a circuit-break state file exists and 30 min of stability has elapsed,
     # auto-clear the breaker and re-enable the watchdog before attempting a new start.
     _check_circuit_break_auto_reset()
 
     # Preflight checks — fail fast if environment is broken
-    from aletheia.gateway.preflight import run_preflight_checks, assert_preflight_or_exit
     preflight_result = run_preflight_checks()
     if not preflight_result.passed:
         _notify_gateway_problem(

@@ -166,7 +166,8 @@ def _client_or_unconfigured() -> tuple[Optional[object], str]:
     mode = cfg.exchange.mode
     try:
         from aletheia.exchanges.bitget.client import BitgetClient
-        client = BitgetClient(mode=mode, profile=cfg.exchange.bitget_profile)
+        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+        client = BitgetClient(mode=mode, profile=configured_bitget_profile())
         client._get_creds()  # raises RuntimeError when not configured
         return client, mode
     except Exception:

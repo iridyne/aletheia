@@ -156,12 +156,9 @@ def _exchange_open_order_ids(order: dict) -> set[str] | None:
     market_type = str(order.get("market_type") or "spot")
     try:
         from aletheia.exchanges.bitget.client import BitgetClient
-        from aletheia.execution.bitget_broker import _configured_bitget_profile
+        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
 
-        client = BitgetClient(
-            mode=account_mode,
-            profile=_configured_bitget_profile(),
-        )
+        client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
         rows = _run_coro(client.get_open_orders(market_type=market_type))
     except Exception as exc:
         logger.warning(

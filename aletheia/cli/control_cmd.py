@@ -805,10 +805,16 @@ def _ufc_status() -> dict[str, Any]:
 def _profit_loop_coverage(
     *, registration_at: str | None = None, cutoff_at: str | None = None
 ) -> dict[str, Any]:
-    """Read epoch-bounded candidate/Position/path/economics counts without evaluation."""
+    """Read epoch-bounded candidate/Position/path/economics counts without evaluation.
+
+    The candidate section uses window-bounded COUNT/streaming reads
+    (:func:`candidate_coverage_counts`) instead of materializing the full
+    candidate-fact tables, so the liveness probe stays memory-safe on
+    small runtimes (iridite/aletheia#1328).
+    """
 
     try:
-        from aletheia.analytics.candidate_facts import build_candidate_facts
+        from aletheia.analytics.candidate_facts import candidate_coverage_counts
         from aletheia.storage.sqlite import readonly_db
 
         start = str(registration_at or "0001-01-01T00:00:00+00:00")
@@ -823,42 +829,9 @@ def _profit_loop_coverage(
         start = lower.isoformat()
         end = upper.isoformat()
 
-        def _parse_timestamp(value: object) -> datetime | None:
-            if value is None:
-                return None
-            try:
-                timestamp = datetime.fromisoformat(
-                    str(value).replace("Z", "+00:00")
-                )
-                if timestamp.tzinfo is None:
-                    timestamp = timestamp.replace(tzinfo=timezone.utc)
-                return timestamp
-            except (TypeError, ValueError, OverflowError):
-                return None
-
         with readonly_db() as db:
-            candidates = build_candidate_facts(
-                horizon="24h", as_of_at=end, db=db
-            )
-            facts = candidates.get("facts")
-            if not isinstance(facts, list):
-                raise RuntimeError("malformed_candidate_facts")
-            window_facts = []
-            candidate_unknown = 0
-            for fact in facts:
-                if not isinstance(fact, dict):
-                    candidate_unknown += 1
-                    continue
-                timestamp = _parse_timestamp(fact.get("event_at"))
-                if timestamp is None:
-                    candidate_unknown += 1
-                elif lower <= timestamp <= upper:
-                    window_facts.append(fact)
-            window_settled = sum(
-                1
-                for fact in window_facts
-                if isinstance(fact.get("fixed_horizon_outcome"), dict)
-                and fact["fixed_horizon_outcome"].get("status") == "settled"
+            coverage_counts = candidate_coverage_counts(
+                db, horizon="24h", lower=lower, upper=upper
             )
             table_exists = {
                 table: db.execute(
@@ -892,18 +865,20 @@ def _profit_loop_coverage(
             ).fetchone()
         position_counts = dict(position_counts or {})
         path_counts = dict(path_counts or {})
-        candidate_count = len(window_facts)
-        settled_count = window_settled
         return {
             "availability": "available",
             "unavailable_reason": None,
             "candidate": {
                 "availability": "available",
-                "units": candidate_count,
-                "settled_outcome_units": settled_count,
-                "outcome_coverage": candidates.get("outcome_coverage"),
-                "unavailable_units": candidates.get("unavailable_count", 0),
-                "unknown_timestamp_units": candidate_unknown,
+                "units": int(coverage_counts.get("candidate_units") or 0),
+                "settled_outcome_units": int(
+                    coverage_counts.get("settled_outcome_units") or 0
+                ),
+                "outcome_coverage": coverage_counts.get("outcome_coverage"),
+                "unavailable_units": int(coverage_counts.get("unavailable_units") or 0),
+                "unknown_timestamp_units": int(
+                    coverage_counts.get("unknown_timestamp_units") or 0
+                ),
             },
             "position": {
                 "availability": "available",

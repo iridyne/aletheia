@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { Command } from 'cmdk'
 import { api } from '../api/client'
+import { useConfirm } from './ui'
 
 interface CmdAction {
   id: string
@@ -14,6 +15,27 @@ interface CmdAction {
 }
 
 type CommandActionResult = { ok: true } | { ok: false; error: string }
+
+type KillSwitchApiFn = (active: boolean, source: string, confirmRelease?: boolean) => Promise<{ active: boolean }>
+type RefetchFn = (filters: { queryKey: unknown[] }, opts: { throwOnError: boolean }) => Promise<unknown>
+type InvalidateFn = (filters: { queryKey: unknown[] }) => Promise<void>
+
+/** Exported for unit tests: execute the kill-switch transition and refetch authority. */
+export async function executeKillSwitch(
+  active: boolean,
+  setKillSwitchApi: KillSwitchApiFn,
+  refetch: RefetchFn,
+  invalidate: InvalidateFn,
+): Promise<void> {
+  const confirmed = await setKillSwitchApi(active, 'cmd_palette', !active)
+  if (active && confirmed.active !== true) throw new Error('Kill switch engage was not confirmed by backend')
+  if (!active && confirmed.active !== false) throw new Error('Kill switch release was not confirmed by backend')
+  await Promise.all([
+    refetch({ queryKey: ['kill-switch'] }, { throwOnError: true }),
+    refetch({ queryKey: ['risk-status'] }, { throwOnError: true }),
+    invalidate({ queryKey: ['ui-shell-bootstrap'] }),
+  ])
+}
 
 export async function runCommandAction(
   action: () => unknown | Promise<unknown>,
@@ -39,6 +61,7 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
   const executingRef = useRef(false)
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const confirm = useConfirm()
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -68,15 +91,8 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
     setExecutingCommand(null)
   }, [])
 
-  const setKillSwitch = async (active: boolean) => {
-    const confirmedState = await api.setKillSwitch(active, 'cmd_palette', !active)
-    qc.setQueryData(['kill-switch'], confirmedState)
-    await Promise.all([
-      qc.invalidateQueries({ queryKey: ['kill-switch'] }),
-      qc.invalidateQueries({ queryKey: ['risk-status'] }),
-      qc.invalidateQueries({ queryKey: ['ui-shell-bootstrap'] }),
-    ])
-  }
+  const setKillSwitch = (active: boolean) =>
+    executeKillSwitch(active, api.setKillSwitch, qc.refetchQueries.bind(qc), qc.invalidateQueries.bind(qc))
 
   const setGatewayPaused = async (paused: boolean) => {
     await (paused ? api.pause() : api.resume())
@@ -111,8 +127,8 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
 
     { id: 'sys-pause', label: 'Pause Gateway', group: 'System', keywords: 'stop halt', action: () => setGatewayPaused(true) },
     { id: 'sys-resume', label: 'Resume Gateway', group: 'System', keywords: 'start continue', action: () => setGatewayPaused(false) },
-    { id: 'sys-kill', label: 'Engage Kill Switch', group: 'System', dangerous: true, action: async () => { if (confirm('Engage kill switch? All trading will halt.')) await setKillSwitch(true) } },
-    { id: 'sys-unkill', label: 'Release Kill Switch', group: 'System', action: async () => { if (confirm('Release Kill Switch? Trading will resume immediately.')) await setKillSwitch(false) } },
+    { id: 'sys-kill', label: 'Engage Kill Switch', group: 'System', dangerous: true, action: async () => { if (await confirm({ title: 'Engage kill switch?', description: 'All trading will halt.', confirmLabel: 'Engage', variant: 'danger' })) await setKillSwitch(true) } },
+    { id: 'sys-unkill', label: 'Release Kill Switch', group: 'System', action: async () => { if (await confirm({ title: 'Release kill switch?', description: 'Trading will resume immediately.', confirmLabel: 'Release', variant: 'warning' })) await setKillSwitch(false) } },
 
     { id: 'agent-observer', label: 'Run Market Observer', group: 'Agents', keywords: 'trigger start market', action: () => startAgent('market_observer') },
     { id: 'agent-research', label: 'Run Research Agent', group: 'Agents', keywords: 'trigger start research', action: () => startAgent('research_agent') },

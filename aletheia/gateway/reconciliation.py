@@ -35,15 +35,14 @@ def reconcile_fills(
     backfilled: list[PSFill] = []
 
     for rf in remote_fills:
-        if state_store.fill_exists(rf.venue_trade_id, rf.venue_trade_id):
-            continue  # Already known
-
         # Try to match to a local order
         local_order = None
         if rf.client_order_id:
             local_order = state_store.get_order_by_client_id(rf.client_order_id)
 
         if local_order:
+            if state_store.fill_exists(local_order["venue"], rf.venue_trade_id):
+                continue  # Already known
             fill = PSFill(
                 order_id=local_order["order_id"],
                 mode=mode,

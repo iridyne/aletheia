@@ -361,6 +361,9 @@ def run_worker_pass(
         typer.echo(f"observe run: {exc}", err=True)
         raise typer.Exit(code=3) from exc
 
+    pass_status = summary.get("pass_status", "success")
+    pass_reason = summary.get("pass_reason")
+
     payload = {
         "owner": get_execution_owner(),
         "source_commit": source_commit,
@@ -369,22 +372,32 @@ def run_worker_pass(
         "ufc_shadow_equivalence": summary.get("ufc_shadow_equivalence"),
         "experiment_registration": summary.get("experiment_registration"),
         "experiment_evaluation": summary.get("experiment_evaluation"),
+        "pass_status": pass_status,
+        "pass_reason": pass_reason,
     }
+    # Issue #1240: exit non-zero for failed/partial passes to surface evidence
+    # integrity issues to systemd/cron health monitoring.
+    exit_code = 0 if pass_status == "success" else 4
+
     if json_output:
         typer.echo(json.dumps(payload, indent=2, default=str))
-        return
+        raise typer.Exit(code=exit_code)
 
     lab_windows = payload.get("lab_windows") or {}
     ufc = payload.get("ufc_shadow_equivalence") or {}
-    has_window_errors = bool(lab_windows.get("windows_errored"))
-    has_ufc_mismatch = bool(ufc.get("mismatched"))
 
-    if quiet and not (has_window_errors or has_ufc_mismatch):
+    # ponytail: quiet suppresses clean passes, but mismatches/errors are signal
+    has_signal = (
+        (lab_windows.get("windows_errored") or 0) > 0
+        or (ufc.get("mismatched") or 0) > 0
+    )
+    if quiet and pass_status == "success" and not has_signal:
         # Clean pass — stay silent so systemd journal only carries signal.
-        return
+        raise typer.Exit(code=0)
 
     typer.echo(f"owner={payload['owner']} source_commit={payload['source_commit']}")
     typer.echo(f"recommendations_written={payload['recommendations_written']}")
+    typer.echo(f"pass_status={pass_status} pass_reason={pass_reason or 'N/A'}")
     if lab_windows:
         typer.echo(
             f"lab_windows: run={lab_windows.get('windows_run')} "
@@ -396,6 +409,8 @@ def run_worker_pass(
             f"matched={ufc.get('matched')} mismatched={ufc.get('mismatched')} "
             f"skipped={ufc.get('skipped')}"
         )
+
+    raise typer.Exit(code=exit_code)
 
 
 @observe_app.command("sync")

@@ -19,6 +19,7 @@ COLLECTOR_CADENCE_SEC: dict[str, int] = {
     "coinalyze": 600,
     "hyperliquid": 600,
     "defillama": 600,
+    "options_structure": 600,
 }
 
 _PROBLEM_STATUSES = {"failed", "timed_out"}

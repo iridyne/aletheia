@@ -3,15 +3,21 @@
 from collections.abc import Mapping
 from datetime import datetime, timezone
 import logging
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, PrivateAttr, field_validator, model_validator
 
 _logger = logging.getLogger("aletheia.config")
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _WILDCARD_HOSTS = {"0.0.0.0", "::"}
+
+# Shared settings types keep API requests and persisted config on the same
+# boundary.  A schedule hour is a wall-clock hour, while webhook timeouts must
+# remain finite because urllib rejects non-finite or non-positive deadlines.
+NotificationHour = Annotated[int, Field(ge=0, le=23)]
+WebhookTimeoutSeconds = Annotated[FiniteFloat, Field(ge=1.0, le=60.0)]
 
 
 class AppConfig(BaseModel):
@@ -470,9 +476,9 @@ class ProviderConfig(BaseModel):
     verification_reason_code: str | None = None
     verification_detail: str | None = None
     # Request-level model fallback. When the configured model returns a
-    # transient capacity/rate-limit error, the runtime can try these models
-    # before giving up. If empty, the runtime may use list_models() detection as
-    # a best-effort catalogue. This never changes the persisted default model.
+    # transient capacity/rate-limit error, the runtime will try these fallback
+    # models in order before giving up. Discovered catalogue models are NOT
+    # used as automatic fallbacks; this is the complete ordered fallback list.
     model_fallback_enabled: bool = True
     fallback_models: list[str] = Field(default_factory=list)
     # Process-wide inference admission. Every completion for this Provider is
@@ -511,7 +517,7 @@ class RiskCapitalPolicy(StrictRiskPolicyModel):
     # this default is merged underneath every persisted override.
     base_source: Literal["account_equity", "custom"] = "account_equity"
     base_usdt: float = 100.0
-    max_position_notional_usdt: float = 50.0
+    max_position_margin_usdt: float = 50.0
     # Per-symbol cumulative bound (CUM-ADD), expressed as a COUNT of full-size
     # entries — never a currency amount. Same-symbol adds average-merge into ONE
     # position, so the single-position cap does not bound repeated accumulation.
@@ -561,11 +567,21 @@ class RiskExitPolicy(StrictRiskPolicyModel):
     catastrophic_stop_pct: float = 10.0
     catastrophic_stop_pct_serenity: float = 15.0
     horizon_hard_backstop_mult: float = 3.0
+    # Horizon-due review may hold (roll the authored horizon) instead of
+    # flattening. Default True is the safer behavior: expiry is not a forced
+    # close. False restores close-or-explicit-extend.
+    horizon_due_allow_hold: bool = True
 
 
 class RiskEligibilityPolicy(StrictRiskPolicyModel):
     family_min_samples: int = 30
     family_min_win_rate_pct: float = 50.0
+    # Exchange-demo entry quality (ignored on live when left at these defaults).
+    # min_regime_confidence_to_enter <= 0 disables the confidence stand-down.
+    # family_min_expectancy is None on live; 0.0 on demo means "must not be negative".
+    min_regime_confidence_to_enter: float = 0.0
+    sideways_standdown: bool = False
+    family_min_expectancy: float | None = None
 
 
 class ModeRiskPolicy(StrictRiskPolicyModel):
@@ -593,9 +609,12 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
                 "max_live_limited_cap_usdt" if is_live else "starting_capital_usdt",
                 100.0,
             ),
-            "max_position_notional_usdt": data.get(
-                f"max_{suffix}_position_notional_usdt",
-                50.0 if is_live else 100_000.0,
+            "max_position_margin_usdt": data.get(
+                f"max_{suffix}_position_margin_usdt",
+                data.get(
+                    f"max_{suffix}_position_notional_usdt",
+                    50.0 if is_live else 100_000.0,
+                ),
             ),
             "max_per_symbol_entries": data.get("max_per_symbol_entries", 3),
             # Demo default 0 = disabled. This check bounds TOTAL NOTIONAL against
@@ -605,8 +624,11 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
             # ratio correctly (sum(notional x leverage) / equity), so keeping both
             # only means one of them is dead weight. Live keeps its 5% envelope,
             # where 1.0x-equivalent exposure is the intended conservatism.
-            "max_total_exposure_pct": data.get(
-                "max_total_live_exposure_pct", 5.0 if is_live else 0.0
+            # Live reads the flat max_total_live_exposure_pct override; demo is
+            # always 0.0 here because check #17 (account leverage) governs the same
+            # ratio correctly — the flat key must not bleed into demo's base.
+            "max_total_exposure_pct": (
+                data.get("max_total_live_exposure_pct", 5.0) if is_live else 0.0
             ),
         },
         "loss": {
@@ -668,6 +690,9 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
             "horizon_hard_backstop_mult": data.get(
                 "horizon_hard_backstop_mult", 3.0
             ),
+            "horizon_due_allow_hold": data.get(
+                "horizon_due_allow_hold", True
+            ),
         },
         "eligibility": (
             {
@@ -675,8 +700,20 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
                 "family_min_win_rate_pct": data.get(
                     "live_family_min_win_rate_pct", 50.0
                 ),
+                "min_regime_confidence_to_enter": 0.0,
+                "sideways_standdown": False,
+                "family_min_expectancy": None,
             }
-            if is_live else None
+            if is_live
+            else {
+                "family_min_samples": data.get("demo_family_min_samples", 20),
+                "family_min_win_rate_pct": 0.0,
+                "min_regime_confidence_to_enter": data.get(
+                    "demo_min_regime_confidence_to_enter", 0.60
+                ),
+                "sideways_standdown": data.get("demo_sideways_standdown", True),
+                "family_min_expectancy": data.get("demo_family_min_expectancy", 0.0),
+            }
         ),
         "auto_trip_mode_brake_on_daily_loss": data.get(
             f"kill_switch_enabled_{suffix}", is_live
@@ -692,6 +729,9 @@ def default_mode_risk_policy(mode: Literal["demo", "live"]) -> ModeRiskPolicy:
 def _merge_policy(base: dict, override: dict) -> dict:
     merged = dict(base)
     for key, value in override.items():
+        # None override on a nested dict → keep default (None = "use shipped default")
+        if value is None and isinstance(merged.get(key), dict):
+            continue
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
             merged[key] = _merge_policy(merged[key], value)
         else:
@@ -700,7 +740,7 @@ def _merge_policy(base: dict, override: dict) -> dict:
 
 
 class RiskConfig(BaseModel):
-    schema_version: int = 3
+    schema_version: int = 4
     demo: ModeRiskPolicy
     live: ModeRiskPolicy
 
@@ -716,6 +756,33 @@ class RiskConfig(BaseModel):
         # carries no information about how many entries it was meant to allow,
         # and the stale value is exactly what this migration exists to retire.
         data.pop("max_per_symbol_notional_usdt", None)
+        # Flat legacy field rename: max_{live/demo}_position_notional_usdt →
+        # max_{live/demo}_position_margin_usdt. Keep the old key in data so
+        # _legacy_mode_policy can still read it; add the new key for the flat field.
+        for suffix, default in (("live", 50.0), ("demo", 100_000.0)):
+            old_flat = f"max_{suffix}_position_notional_usdt"
+            new_flat = f"max_{suffix}_position_margin_usdt"
+            if old_flat in data and new_flat not in data:
+                data[new_flat] = data[old_flat]
+        # schema_version < 4 migration: demo.capital.max_total_exposure_pct was
+        # persisted as 100.0 by _legacy_mode_policy's old default, or 5.0 by the
+        # flat max_total_live_exposure_pct bleeding into demo. Both were bugs:
+        # 100.0 made check #12 a 1.0x leverage cap, 5.0 came from a live-only flat
+        # override polluting demo's base.  Check #17 governs the same ratio
+        # correctly, so demo defaults to 0 (disabled) as of schema_version 4.
+        # Persisted 100.0 or 5.0 on schema_version < 4 are unambiguously the old
+        # buggy defaults, not user choices — erase them so the code default (0.0)
+        # wins.  Any other value is kept as-is, including a freshly saved 100 or 5
+        # on schema_version 4.
+        incoming_version = int(data.get("schema_version", 0))
+        if incoming_version < 4:
+            demo_override = data.get("demo")
+            if isinstance(demo_override, dict):
+                capital = demo_override.get("capital")
+                val = capital.get("max_total_exposure_pct") if isinstance(capital, dict) else None
+                if val in (100.0, 5.0):
+                    capital = {k: v for k, v in capital.items() if k != "max_total_exposure_pct"}
+                    data["demo"] = {**demo_override, "capital": capital}
         for mode in ("demo", "live"):
             override = data.get(mode)
             if isinstance(override, dict):
@@ -723,6 +790,15 @@ class RiskConfig(BaseModel):
                 if isinstance(capital, dict):
                     capital = dict(capital)
                     capital.pop("max_per_symbol_notional_usdt", None)
+                    old_val = capital.pop("max_position_notional_usdt", None)
+                    if old_val is not None:
+                        new_val = capital.get("max_position_margin_usdt")
+                        if new_val is not None and new_val != old_val:
+                            raise ValueError(
+                                f"{mode}.capital: conflicting max_position_notional_usdt "
+                                f"({old_val}) and max_position_margin_usdt ({new_val})"
+                            )
+                        capital.setdefault("max_position_margin_usdt", old_val)
                     override = {**override, "capital": capital}
                     data[mode] = override
             base = _legacy_mode_policy(data, mode)
@@ -731,7 +807,7 @@ class RiskConfig(BaseModel):
                 if isinstance(override, dict)
                 else base
             )
-        data["schema_version"] = 3
+        data["schema_version"] = 4
         return data
 
     def __setattr__(self, name: str, value) -> None:
@@ -743,10 +819,16 @@ class RiskConfig(BaseModel):
             "max_live_limited_cap_usdt": ("live", "capital", "base_usdt"),
             "starting_capital_usdt": ("demo", "capital", "base_usdt"),
             "max_live_position_notional_usdt": (
-                "live", "capital", "max_position_notional_usdt",
+                "live", "capital", "max_position_margin_usdt",
             ),
             "max_demo_position_notional_usdt": (
-                "demo", "capital", "max_position_notional_usdt",
+                "demo", "capital", "max_position_margin_usdt",
+            ),
+            "max_live_position_margin_usdt": (
+                "live", "capital", "max_position_margin_usdt",
+            ),
+            "max_demo_position_margin_usdt": (
+                "demo", "capital", "max_position_margin_usdt",
             ),
             "max_total_live_exposure_pct": (
                 "live", "capital", "max_total_exposure_pct",
@@ -795,6 +877,18 @@ class RiskConfig(BaseModel):
             "live_family_min_win_rate_pct": (
                 "live", "eligibility", "family_min_win_rate_pct",
             ),
+            "demo_sideways_standdown": (
+                "demo", "eligibility", "sideways_standdown",
+            ),
+            "demo_min_regime_confidence_to_enter": (
+                "demo", "eligibility", "min_regime_confidence_to_enter",
+            ),
+            "demo_family_min_samples": (
+                "demo", "eligibility", "family_min_samples",
+            ),
+            "demo_family_min_expectancy": (
+                "demo", "eligibility", "family_min_expectancy",
+            ),
         }
         shared_paths = {
             "max_per_symbol_entries": ("capital", "max_per_symbol_entries"),
@@ -820,6 +914,9 @@ class RiskConfig(BaseModel):
             "horizon_hard_backstop_mult": (
                 "exits", "horizon_hard_backstop_mult",
             ),
+            "horizon_due_allow_hold": (
+                "exits", "horizon_due_allow_hold",
+            ),
         }
         if name in mode_paths:
             mode, group, field = mode_paths[name]
@@ -842,7 +939,7 @@ class RiskConfig(BaseModel):
     max_total_live_exposure_pct: float = 5.0
     # Hard ceiling and fallback when the matching account has no local balance
     # snapshot. Exchange-backed orders use min(this value, available USDT).
-    max_live_position_notional_usdt: float = 50.0
+    max_live_position_margin_usdt: float = 50.0
     max_live_limited_cap_usdt: float = 100.0
     # Paper/demo boundaries remain explicit Risk Engine inputs even though their
     # dashboard/API controls do not impose application-level maximums. Account
@@ -850,7 +947,7 @@ class RiskConfig(BaseModel):
     starting_capital_usdt: float = 100.0
     # Default demo configured ceiling/fallback. Exchange-backed demo orders use
     # the lower of this value and the demo account's cached available USDT.
-    max_demo_position_notional_usdt: float = 100_000.0
+    max_demo_position_margin_usdt: float = 100_000.0
     # Per-symbol cumulative bound (CUM-ADD), as a COUNT of full-size entries.
     # Same-symbol+direction adds average-merge into ONE position, so repeated adds
     # can grow a position past the single-trade cap. The engine derives the USD
@@ -897,6 +994,7 @@ class RiskConfig(BaseModel):
     # decision (close / extend). The position is auto-closed only at the far backstop
     # min(expected_horizon * this multiplier, the school's absolute max_hold).
     horizon_hard_backstop_mult: float = 3.0
+    horizon_due_allow_hold: bool = True
     max_open_positions_live: int = 3
     max_open_positions_demo: int = 200
     # "whitelist" = only symbol_list may trade; "blacklist" = all except symbol_list.
@@ -916,42 +1014,53 @@ class RiskConfig(BaseModel):
     # edge — at least N settled forward outcomes AND win_rate >= threshold.
     live_family_min_samples: int = 30
     live_family_min_win_rate_pct: float = 50.0
+    # Demo-mode entry quality aliases (check #14 for demo)
+    demo_sideways_standdown: bool = True
+    demo_min_regime_confidence_to_enter: float = 0.60
+    demo_family_min_samples: int = 0
+    demo_family_min_expectancy: float | None = 0.0
 
 
 class TelegramConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     enabled: bool = False
     allowed_chat_ids: list[int] = Field(default_factory=list)
     notify_trade_fills: bool = True
     notify_daily_summary: bool = True
-    daily_summary_hour_cst: int = 8
+    daily_summary_hour_cst: NotificationHour = 8
     dnd_enabled: bool = False
-    dnd_start_hour: int = 23
-    dnd_end_hour: int = 7
+    dnd_start_hour: NotificationHour = 23
+    dnd_end_hour: NotificationHour = 7
 
 
 class WebhookConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     enabled: bool = False
     url: str = ""
     secret: str = ""
     notify_trade_fills: bool = True
     notify_alerts: bool = True
     notify_daily_summary: bool = True
-    timeout_sec: float = 10.0
+    timeout_sec: WebhookTimeoutSeconds = 10.0
 
 
 class HealthConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     enabled: bool = True
     alert_via_telegram: bool = True
     alert_via_windows_toast: bool = True
-    max_agent_failure_ratio: float = 0.5
-    llm_unavailable_alert_after: int = 3
+    max_agent_failure_ratio: float = Field(default=0.5, ge=0.0, le=1.0)
+    llm_unavailable_alert_after: int = Field(default=3, ge=1, le=100)
     # Silent-degradation guard: flag the market-data feed as stale when the newest
     # snapshot is older than this (market data is collected every 5 min).
-    market_data_max_staleness_min: int = 30
+    market_data_max_staleness_min: int = Field(default=30, ge=5, le=1440)
     # Gateway supervisor (process self-healing).
-    supervisor_max_restarts: int = 5
-    supervisor_restart_window_sec: int = 600
-    supervisor_backoff_cap_sec: int = 60
+    supervisor_max_restarts: int = Field(default=5, ge=1, le=50)
+    supervisor_restart_window_sec: int = Field(default=600, ge=60, le=86400)
+    supervisor_backoff_cap_sec: int = Field(default=60, ge=5, le=3600)
     # --- Deterministic self-heal: the health-check job ACTS on the signals it
     # already computes (NO LLM). Closes the gap where /api/health flagged stale
     # code for 11h but nothing consumed the signal to restart.
@@ -959,8 +1068,8 @@ class HealthConfig(BaseModel):
     # min_interval (30m) is deliberately > supervisor_restart_window_sec (600s):
     # two self-heal restarts can never fall inside one supervisor window, so
     # self-heal alone can never exhaust the supervisor's give-up budget.
-    self_heal_min_interval_sec: int = 1800    # >= 30 min between any two self-heal restarts
-    self_heal_max_per_hour: int = 2           # hard ceiling on self-heal restarts/hour
+    self_heal_min_interval_sec: int = Field(default=1800, ge=300, le=86400)
+    self_heal_max_per_hour: int = Field(default=2, ge=0, le=12)
     self_heal_code_drift: bool = True         # restart on code_updated_pending_restart (self-terminating)
     self_heal_market_data: bool = True        # restart on market_data_stale (rate-limited; external root cause)
     self_heal_port_cleanup: bool = True       # clean orphan/port-holder PIDs (cleanup, not restart)
@@ -977,23 +1086,25 @@ class HealthConfig(BaseModel):
     # that opted in keep their setting because loader.load_config merges on top
     # of user-supplied values.
     require_llm_at_startup: bool = False
-    startup_gate_max_retries: int = 3
-    startup_gate_retry_delay_sec: int = 15
+    startup_gate_max_retries: int = Field(default=3, ge=1, le=10)
+    startup_gate_retry_delay_sec: int = Field(default=15, ge=5, le=120)
     # Auto-resume: when startup gate pauses the system, periodically probe LLM
     # and auto-resume when connectivity is restored.
     auto_resume_enabled: bool = True
-    auto_resume_interval_sec: int = 300
+    auto_resume_interval_sec: int = Field(default=300, ge=30, le=3600)
     # Stall detection: after this many consecutive failed probes, escalate to
     # operator with root-cause classification (secret_missing vs network vs auth).
-    auto_resume_stall_threshold: int = 6
-    auto_resume_stall_backoff_factor: float = 2.0
-    auto_resume_max_interval_sec: int = 1800
+    auto_resume_stall_threshold: int = Field(default=6, ge=1, le=100)
+    # backoff_factor must be > 1.0 to actually back off; le=10 caps runaway growth.
+    auto_resume_stall_backoff_factor: float = Field(default=2.0, ge=1.0, le=10.0)
+    # max_interval must be >= 1 to prevent a zero/negative sleep in the loop.
+    auto_resume_max_interval_sec: int = Field(default=1800, ge=1, le=86400)
     # Exchange connectivity monitor: detect network outages and auto-pause/resume.
-    exchange_probe_interval_sec: int = 60
-    exchange_probe_failure_threshold: int = 3
-    exchange_auto_resume_interval_sec: int = 60
-    exchange_auto_resume_success_threshold: int = 2
-    exchange_stall_threshold: int = 30
+    exchange_probe_interval_sec: int = Field(default=60, ge=10, le=300)
+    exchange_probe_failure_threshold: int = Field(default=3, ge=1, le=20)
+    exchange_auto_resume_interval_sec: int = Field(default=60, ge=10, le=600)
+    exchange_auto_resume_success_threshold: int = Field(default=2, ge=1, le=10)
+    exchange_stall_threshold: int = Field(default=30, ge=1, le=100)
     # Layered pause: when True, pause only AI-dependent jobs (observer, trader,
     # operator) while keeping data-collection jobs running. This prevents data
     # gaps during LLM outages. When False, all jobs are halted (legacy behavior).
@@ -1009,7 +1120,7 @@ class HealthConfig(BaseModel):
     # require_llm_at_startup. See agent_runtime/startup_behavior_gate.py.
     startup_behavior_gate_enabled: bool = False
     # How often the startup-gate recheck loop re-evaluates while blocked.
-    startup_gate_recheck_interval_sec: int = 60
+    startup_gate_recheck_interval_sec: int = Field(default=60, ge=5, le=3600)
 
 
 class RetentionConfig(BaseModel):
@@ -1105,11 +1216,11 @@ class MarketAwareExitsConfig(BaseModel):
     enabled: bool = False
     min_hold_hours_before_market_exit: float = 0.5
     max_signal_age_min: float = 35.0
-    urgent_exit_score: int = 80
+    urgent_exit_score: int = Field(default=80, ge=50, le=100)
     urgent_exit_max_pnl_pct: float = -0.3
-    tighten_stop_score: int = 60
-    confidence_collapse_score: int = 30
-    tighten_atr_mult: float = 0.8
+    tighten_stop_score: int = Field(default=60, ge=30, le=90)
+    confidence_collapse_score: int = Field(default=30, ge=10, le=50)
+    tighten_atr_mult: float = Field(default=0.8, ge=0.3, le=2.0)
     tighten_pct: float = 0.8
 
 
@@ -1300,6 +1411,22 @@ class UpdateConfig(BaseModel):
     current_commit: str | None = None
 
 
+class EmitDedupConfig(BaseModel):
+    """Cross-lifecycle dedup guards for universe signal emission (#1325)."""
+
+    enabled: bool = False
+    # W1: Repeat score decay — effective_score = raw × factor^k
+    repeat_decay_enabled: bool = False
+    repeat_decay_factor: float = Field(default=0.85, ge=0.5, le=0.99)
+    repeat_decay_window_hours: float = Field(default=6.0, ge=1.0, le=24.0)
+    # W2: Terminal cooldown — suppress if (symbol, direction, family) emitted within N min
+    terminal_cooldown_enabled: bool = False
+    terminal_cooldown_minutes: int = Field(default=60, ge=10, le=360)
+    # W3: Coarse fingerprint memory — suppress if same bucket seen within window
+    fingerprint_memory_enabled: bool = False
+    fingerprint_memory_window_hours: float = Field(default=6.0, ge=1.0, le=24.0)
+
+
 class UniverseConfig(BaseModel):
     enabled: bool = True
     refresh_interval_min: int = 10
@@ -1363,23 +1490,61 @@ class UniverseConfig(BaseModel):
         "volatile_penalty": 10.0,
         "sideways_trend_penalty": 25.0, "sideways_reversion_bonus": 15.0,
     })
+    # Entry TTL — how long an opportunity's valid_until window stays open for
+    # execution consideration. Consolidated from per-family _FAMILY_TTL (#1325).
+    # Previously each family had its own TTL (30m…24h) which mixed two semantics:
+    # "how long the signal is fresh enough to act on" vs "how long to keep the
+    # symbol on the watchlist". Scanner refreshes every 10 min, so 15 min covers
+    # one missed refresh + ranker processing latency (measured p75=25 min).
+    entry_ttl_sec: int = Field(default=900, ge=300, le=3600)
+    # Cross-lifecycle emission dedup guards (#1325). Default off; each guard
+    # ships in its own week: W1=repeat_decay, W2=terminal_cooldown, W3=fingerprint.
+    emit_dedup: EmitDedupConfig = Field(default_factory=EmitDedupConfig)
+
+    @field_validator("family_quota", "family_quota_by_regime", mode="before")
+    @classmethod
+    def _validate_family_quotas(cls, v: object) -> object:
+        import math as _math
+        _CANONICAL = {"momentum", "mean_reversion", "volatility", "short_bias", "derivatives", "event"}
+        def _check_quota(quota: dict, label: str = "family_quota") -> None:
+            if not isinstance(quota, dict):
+                return
+            for k, val in quota.items():
+                if k not in _CANONICAL:
+                    raise ValueError(f"not in canonical families: '{k}' not in canonical set {sorted(_CANONICAL)}")
+                if not isinstance(val, (int, float)) or not _math.isfinite(float(val)):
+                    raise ValueError(f"finite in {label}: value for '{k}' must be a finite number, got {val!r}")
+                if not (0.0 <= float(val) <= 1.0):
+                    raise ValueError(f"finite in {label}: value for '{k}' must be in [0, 1], got {val}")
+            total = sum(float(x) for x in quota.values())
+            if abs(total - 1.0) > 0.01:
+                raise ValueError(f"finite in {label}: values must sum to ~1.0, got {total:.4f}")
+        if isinstance(v, dict):
+            if v and all(isinstance(val, dict) for val in v.values()):
+                for regime, quota in v.items():
+                    _check_quota(quota, f"family_quota_by_regime[{regime}]")
+            else:
+                _check_quota(v)
+        return v
 
 
 class RegimeConfig(BaseModel):
     enabled: bool = True
-    min_hold_periods: int = 3
+    min_hold_periods: int = Field(default=3, ge=1, le=20)
     bias_threshold: float = 0.30
     short_enabled: bool = True
 
 
 class HistoricalDataConfig(BaseModel):
     """Local OHLCV storage and bulk download settings."""
+
+    model_config = ConfigDict(validate_assignment=True)
     enabled: bool = True
-    max_bars_per_pair: int = 50_000
-    default_months: int = 6
+    max_bars_per_pair: int = Field(default=50_000, ge=1_000, le=200_000)
+    default_months: int = Field(default=6, ge=1, le=24)
     nightly_backfill_enabled: bool = True
-    nightly_backfill_hour_cst: int = 3
-    min_bars_for_backtest: int = 200
+    nightly_backfill_hour_cst: int = Field(default=3, ge=0, le=23)
+    min_bars_for_backtest: int = Field(default=200, ge=30, le=5_000)
     active_universe_backfill_enabled: bool = True
     active_universe_backfill_interval_minutes: int = Field(default=10, ge=5, le=60)
     active_universe_backfill_max_pairs_per_run: int = Field(default=3, ge=1, le=10)
@@ -1433,8 +1598,9 @@ class GuardConfig(BaseModel):
     # permanently shadow-only (see knowledge/guards.py guard_origin + evaluate_guards
     # seam); owner must explicitly opt in AND only manual/authorized guards promote.
     auto_promote_enabled: bool = False
-    min_matching_trades: int = 3
-    max_score_penalty: float = 40.0
+    # Automatic lifecycle mutations require at least one clean trade as evidence.
+    min_matching_trades: int = Field(default=3, ge=1)
+    max_score_penalty: float = Field(default=40.0, ge=0.0, le=100.0)
 
 
 class TunnelConfig(BaseModel):
@@ -1532,11 +1698,12 @@ class PiDaemonConfig(BaseModel):
         legacy REST path:      POST /api/settings/pi_daemon
         current product name:  "System Operator daemon"
     """
+    model_config = ConfigDict(validate_assignment=True)
 
     enabled: bool = True
-    debounce_sec: float = 2.0      # collect burst signals before evaluating
-    cooldown_sec: float = 45.0     # minimum gap between evaluation cycles
-    heartbeat_sec: float = 60.0    # fallback polling interval (safety net)
+    debounce_sec: float = Field(default=2.0, ge=0.0, le=60.0)
+    cooldown_sec: float = Field(default=45.0, ge=0.0, le=600.0)
+    heartbeat_sec: float = Field(default=60.0, ge=60.0, le=3600.0)
 
 
 class NewsFeedEntry(BaseModel):
@@ -1565,9 +1732,10 @@ _DEFAULT_NEWS_FEEDS: list[dict] = [
 
 
 class NewsConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
     enabled: bool = True
-    fetch_interval_minutes: int = 15
-    retention_days: int = 7
+    fetch_interval_minutes: int = Field(default=15, ge=5, le=120)
+    retention_days: int = Field(default=7, ge=1, le=90)
     feeds: list[NewsFeedEntry] = Field(default_factory=lambda: [NewsFeedEntry(**f) for f in _DEFAULT_NEWS_FEEDS])
 
 

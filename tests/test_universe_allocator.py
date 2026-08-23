@@ -144,7 +144,13 @@ def test_explore_exploit_split(cfg):
     assert len(result) <= cfg.max_candidates
 
 
-def test_ttl_assignment_by_family(cfg):
+def test_ttl_assignment_is_unified_from_config(cfg):
+    """Post-#1325: entry TTL is a single config value across all families.
+
+    Previously each family had its own TTL (_FAMILY_TTL), conflating two
+    semantics — membership display and entry-window validity. Now the
+    universe.entry_ttl_sec drives all opportunity valid_until deadlines.
+    """
     items = [
         _scored_item("MOM1", "momentum", 80),
         _scored_item("MR1", "mean_reversion", 75),
@@ -153,7 +159,17 @@ def test_ttl_assignment_by_family(cfg):
     ]
     result = allocate_universe(items, cfg)
     ttls = {r["scanner_family"]: r["ttl_sec"] for r in result}
-    assert ttls.get("momentum", 0) < ttls.get("derivatives", 0)
+    # Every family gets the same entry_ttl_sec (default 900 = 15 min).
+    assert all(ttl == cfg.entry_ttl_sec for ttl in ttls.values()), ttls
+    assert cfg.entry_ttl_sec == 900
+
+
+def test_entry_ttl_reads_config_override(cfg):
+    """A custom entry_ttl_sec on the config propagates to every member."""
+    cfg_short = cfg.model_copy(update={"entry_ttl_sec": 600})
+    items = [_scored_item("MOM1", "momentum", 80)]
+    result = allocate_universe(items, cfg_short)
+    assert result[0]["ttl_sec"] == 600
 
 
 def test_allocator_checks_freshness_for_the_selected_market_type(cfg, monkeypatch):

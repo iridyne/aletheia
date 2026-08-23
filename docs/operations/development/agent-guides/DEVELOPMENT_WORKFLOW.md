@@ -28,6 +28,26 @@ uv sync
 uv run aletheia doctor
 ```
 
+Before changing code:
+
+1. **Identify the SDD depth**:
+   - D0 — implementation conformance repair (no externally observable behavior
+     change; state the existing Contract being repaired)
+   - D1 — externally observable behavior change (state explicit
+     `ADDED / MODIFIED / REMOVED` deltas)
+   - D2 — substantial design change (requires accepted
+     `docs/design/proposals/` before target state enters current Contract)
+2. **Identify the changed boundary** and what remains unchanged.
+3. **State current facts**: existing code paths, tests, durable data, runtime
+   observations, or relevant Contract.
+4. **Determine Contract Delta or `NONE`**: if D0, reference the existing
+   Contract and do not modify it; if D1/D2, name what changes with old→new
+   semantic description.
+5. **Identify Non-goals**: what this change explicitly does not modify.
+6. **Determine Verification**: executable tests, runtime observations, or
+   economic evidence required to prove the change.
+
+
 - Inspect first; add focused failure-path coverage for safety, lifecycle, audit,
   secrets, and trading changes; implement the smallest fix; broaden tests only
   as warranted.

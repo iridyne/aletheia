@@ -1,4 +1,7 @@
 import sqlite3
+import json
+
+import pytest
 
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.sqlite import reset_db
@@ -192,3 +195,97 @@ def test_webhook_respects_notify_daily_summary_false(tmp_path, monkeypatch):
     )
 
     notifications._send_webhook({"realized_pnl": 10.0}, event_type="daily_summary")
+
+
+@pytest.mark.parametrize(
+    ("event_type", "telegram_enabled", "telegram_category", "webhook_enabled", "webhook_category",
+     "expected_telegram", "expected_webhook"),
+    [
+        ("trade_fill", False, True, True, True, 0, 1),
+        ("trade_fill", True, True, False, True, 1, 0),
+        ("trade_fill", True, True, True, True, 1, 1),
+        ("trade_fill", False, True, False, True, 0, 0),
+        ("trade_fill", True, False, True, True, 0, 1),
+        ("trade_fill", True, True, True, False, 1, 0),
+        ("trade_fill", True, False, True, False, 0, 0),
+        ("daily_summary", False, True, True, True, 0, 1),
+        ("daily_summary", True, True, False, True, 1, 0),
+        ("daily_summary", True, True, True, True, 1, 1),
+        ("daily_summary", False, True, False, True, 0, 0),
+        ("daily_summary", True, False, True, True, 0, 1),
+        ("daily_summary", True, True, True, False, 1, 0),
+        ("daily_summary", True, False, True, False, 0, 0),
+    ],
+)
+def test_trade_and_summary_channels_are_independent(
+    tmp_path,
+    monkeypatch,
+    event_type,
+    telegram_enabled,
+    telegram_category,
+    webhook_enabled,
+    webhook_category,
+    expected_telegram,
+    expected_webhook,
+):
+    """Issue #1226: Telegram switches must not gate Webhook delivery."""
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.telegram.enabled = telegram_enabled
+    cfg.telegram.notify_trade_fills = telegram_category
+    cfg.telegram.notify_daily_summary = telegram_category
+    cfg.webhook.enabled = webhook_enabled
+    cfg.webhook.url = "http://example.test/hook"
+    cfg.webhook.notify_trade_fills = webhook_category
+    cfg.webhook.notify_daily_summary = webhook_category
+    save_config(cfg)
+
+    from aletheia import notifications
+
+    telegram_calls: list[tuple[str, dict]] = []
+    webhook_requests = []
+    monkeypatch.setattr(
+        notifications,
+        "_send_telegram_alert",
+        lambda message, **kwargs: telegram_calls.append((message, kwargs)),
+    )
+
+    class FakeOpener:
+        def open(self, request, *, timeout):
+            webhook_requests.append((request, timeout))
+
+    import aletheia.net as net
+    monkeypatch.setattr(net, "build_urllib_opener", lambda: FakeOpener())
+
+    if event_type == "trade_fill":
+        notifications.notify_trade_fill(
+            symbol="BTC/USDT",
+            direction="long",
+            quantity=0.01,
+            fill_price=60000.0,
+            position_id="pos-1226",
+            execution_mode="paper_internal",
+        )
+    else:
+        import aletheia.portfolio.pnl as pnl
+        monkeypatch.setattr(pnl, "today_realized_pnl", lambda: 12.34)
+        monkeypatch.setattr(
+            pnl,
+            "compute_portfolio",
+            lambda: {"unrealized_pnl": 5.67, "positions_count": 2, "total_value_usdt": 123.45},
+        )
+        notifications.notify_daily_summary()
+
+    assert len(telegram_calls) == expected_telegram
+    assert len(webhook_requests) == expected_webhook
+    if webhook_requests:
+        payload = json.loads(webhook_requests[0][0].data)
+        assert payload["event"] == event_type
+        if event_type == "trade_fill":
+            assert payload["symbol"] == "BTC/USDT"
+            assert payload["direction"] == "LONG"
+        else:
+            assert payload["realized_pnl"] == 12.34
+            assert payload["unrealized_pnl"] == 5.67

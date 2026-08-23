@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+
+async def _make_async_provider(provider):
+    """Helper for tests: wrap sync mock provider in async."""
+    return provider
+
+
 import asyncio
 import json
 import sqlite3
@@ -46,7 +52,7 @@ async def test_structured_repair_attempts_share_one_logical_call():
 
     provider = _RepairProvider([{"value": "wrong"}, {"value": 7}])
     with (
-        patch.object(helpers, "get_provider", lambda _name: provider),
+        patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(provider)),
         patch.object(helpers, "complete_with_fallback", _physical_complete),
     ):
         data, error = await helpers.llm_structured(
@@ -92,7 +98,7 @@ async def test_schema_invalid_object_never_becomes_success():
         [{"value": "wrong"}, {"value": "still-wrong"}, {"value": None}]
     )
     with (
-        patch.object(helpers, "get_provider", lambda _name: provider),
+        patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(provider)),
         patch.object(helpers, "complete_with_fallback", _physical_complete),
     ):
         data, error = await helpers.llm_structured(
@@ -138,7 +144,7 @@ async def test_external_cancellation_finalizes_structured_logical_call_and_propa
         await asyncio.Future()
 
     with (
-        patch.object(helpers, "get_provider", lambda _name: object()),
+        patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(object())),
         patch.object(helpers, "complete_with_fallback", hanging_complete),
     ):
         task = asyncio.create_task(
@@ -195,7 +201,7 @@ async def test_context_artifacts_link_to_exact_evaluation_call():
         }
     ]
     with (
-        patch.object(helpers, "get_provider", lambda _name: provider),
+        patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(provider)),
         patch.object(helpers, "complete_with_fallback", _physical_complete),
     ):
         data, error = await helpers.llm_structured(
@@ -243,7 +249,7 @@ async def test_operator_inference_records_existing_causal_identity_without_fabri
             decision_id="pending-exact",
             arbitrary_text="must-not-persist",
         ),
-        patch.object(helpers, "get_provider", lambda _name: provider),
+        patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(provider)),
         patch.object(helpers, "complete_with_fallback", _physical_complete),
     ):
         data, error = await helpers.llm_structured(

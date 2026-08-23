@@ -34,33 +34,35 @@ def _secret_ignore(dirpath, names):
     return [n for n in names if _is_secret_path(n) or n.lower() == "secrets"]
 
 
-def _redact_proxy_url_str(url: str) -> str:
-    if not url:
-        return url
-    try:
-        from urllib.parse import urlsplit, urlunsplit
-        parts = urlsplit(str(url))
-        if parts.username or parts.password:
-            host = parts.hostname or ""
-            if parts.port:
-                host = f"{host}:{parts.port}"
-            return urlunsplit((parts.scheme, f"***@{host}", parts.path, parts.query, parts.fragment))
-    except Exception:
-        return "***"
-    return url
+def _no_symlink_ignore(dirpath: str, names: list[str]) -> list[str]:
+    """shutil.copytree ignore callback — reject symlinks from backup/export trees. (#1434)
+
+    Symlinks can escape the runtime root and pull in credentials or system files.
+    Any symlink encountered is added to the skip list and logged.
+    """
+    import os
+    skipped = []
+    for name in names:
+        full = os.path.join(dirpath, name)
+        if os.path.islink(full):
+            import logging
+            logging.getLogger(__name__).warning(
+                "export: skipping symlink %s (security: symlinks not allowed in backup)", full
+            )
+            skipped.append(name)
+    return skipped
 
 
-def _redact_config_dict(data):
-    """Mask credential-bearing config.yaml fields (proxy creds, legacy coinalyze key) before export."""
-    import copy
-    d = copy.deepcopy(data) if isinstance(data, dict) else {}
-    net = d.get("network")
-    if isinstance(net, dict) and net.get("proxy_url"):
-        net["proxy_url"] = _redact_proxy_url_str(net["proxy_url"])
-    md = d.get("market_data")
-    if isinstance(md, dict) and md.get("coinalyze_api_key"):
-        md["coinalyze_api_key"] = "***REDACTED***"
-    return d
+def _safe_ignore(*callbacks):
+    """Combine multiple copytree ignore callbacks."""
+    def combined(dirpath, names):
+        skipped = set()
+        for cb in callbacks:
+            skipped.update(cb(dirpath, names))
+        return list(skipped)
+    return combined
+
+from aletheia.config.redact import redact_config_dict as _redact_config_dict
 
 
 class ExportService:
@@ -241,7 +243,8 @@ class ExportService:
         # Copy events
         events_dir = self._data_dir / "events"
         if events_dir.exists():
-            shutil.copytree(events_dir, bundle_dir / "events", dirs_exist_ok=True)
+            shutil.copytree(events_dir, bundle_dir / "events", dirs_exist_ok=True,
+                            ignore=_no_symlink_ignore)
         # Copy artifacts (excluding secrets)
         self._copy_artifacts(bundle_dir, None)
 
@@ -278,13 +281,15 @@ class ExportService:
         if categories is None:
             # Copy all
             for item in artifacts_src.iterdir():
-                if item.is_dir() and not _is_secret_path(str(item)):
-                    shutil.copytree(item, artifacts_dst / item.name, dirs_exist_ok=True, ignore=_secret_ignore)
+                if item.is_dir() and not _is_secret_path(str(item)) and not item.is_symlink():
+                    shutil.copytree(item, artifacts_dst / item.name, dirs_exist_ok=True,
+                                    ignore=_safe_ignore(_secret_ignore, _no_symlink_ignore))
         else:
             for cat in categories:
                 src = artifacts_src / cat
-                if src.exists():
-                    shutil.copytree(src, artifacts_dst / cat, dirs_exist_ok=True, ignore=_secret_ignore)
+                if src.exists() and not src.is_symlink():
+                    shutil.copytree(src, artifacts_dst / cat, dirs_exist_ok=True,
+                                    ignore=_safe_ignore(_secret_ignore, _no_symlink_ignore))
 
     def _write_checksums(self, bundle_dir: Path) -> None:
         """Write checksums.txt with SHA-256 of all files."""

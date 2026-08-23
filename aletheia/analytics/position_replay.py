@@ -229,10 +229,13 @@ def _ohlcv_evidence(
         db=db,
     )
     canonical = tuple(_canonical_row(row) for row in candles if start <= int(row["ts"]) < end)
-    if len(canonical) != expected_i:
+    # #1272: require a contiguous, on-grid, duplicate-free window
+    expected_ts_set = set(range(start, end, _BAR_MS))
+    actual_ts_set = {int(row[0]) for row in canonical}  # first element of canonical tuple is ts
+    if actual_ts_set != expected_ts_set:
         base.update(
             {
-                "unavailable_reason": "holding_path_coverage_unavailable",
+                "unavailable_reason": "holding_path_continuity_unavailable",
                 "row_count": len(canonical),
             }
         )
@@ -371,6 +374,8 @@ def build_position_replay(
     db: Any = None,
 ) -> dict[str, Any]:
     """Return one immutable fact projection without mutating runtime state."""
+    if isinstance(as_of_at, str) and as_of_at != "" and _utc(as_of_at) is None:
+        raise ValueError("invalid as_of_at")
     if db is None:
         from aletheia.storage.sqlite import readonly_db
 
@@ -407,6 +412,22 @@ def build_position_replay(
             }
     source = db
     cutoff = _utc(as_of_at) or datetime.now(timezone.utc)
+    started_txn = not getattr(source, "in_transaction", False)
+    if started_txn:
+        source.execute("BEGIN DEFERRED")
+    try:
+        return _build_position_replay_inner(position_id, cutoff=cutoff, source=source)
+    finally:
+        if started_txn:
+            source.execute("ROLLBACK")
+
+
+def _build_position_replay_inner(
+    position_id: str,
+    *,
+    cutoff: datetime,
+    source: Any,
+) -> dict[str, Any]:
     position = _row(source, "positions", position_id)
     base: dict[str, Any] = {
         "contract_version": FACT_CONTRACT_VERSION,
@@ -448,16 +469,30 @@ def build_position_replay(
         _pi_decision(source, str(proposal["id"]), cutoff) if proposal is not None else (None, "proposal_not_recorded")
     )
     risk = _row(source, "risk_decisions", (entry_order or {}).get("risk_decision_id"))
-    entry_fills = (
-        _rows(
+    # #1271: collect all entry legs — original order + scale-in orders for this position
+    scale_in_orders = _rows(
+        source,
+        "SELECT * FROM orders WHERE position_id=? "
+        "AND COALESCE(trim(close_reason),'')='' "
+        "ORDER BY datetime(created_at), rowid",
+        (position_id,),
+    )
+    scale_in_orders = [row for row in scale_in_orders if _at_or_before(row, cutoff)]
+    all_entry_order_ids: list[str] = []
+    if entry_order is not None:
+        all_entry_order_ids.append(str(entry_order["id"]))
+    for scale_order in scale_in_orders:
+        oid = str(scale_order.get("id") or "")
+        if oid and oid not in all_entry_order_ids:
+            all_entry_order_ids.append(oid)
+    entry_fills = []
+    for oid in all_entry_order_ids:
+        fills_for_order = _rows(
             source,
             "SELECT * FROM fills WHERE order_id=? ORDER BY datetime(filled_at), rowid",
-            (entry_order["id"],),
+            (oid,),
         )
-        if entry_order is not None
-        else []
-    )
-    entry_fills = [row for row in entry_fills if _at_or_before(row, cutoff)]
+        entry_fills.extend(row for row in fills_for_order if _at_or_before(row, cutoff))
     close_orders = _rows(
         source,
         "SELECT * FROM orders WHERE position_id=? "
@@ -482,11 +517,27 @@ def build_position_replay(
         (position_id,),
     )
     exit_plans = [row for row in exit_plans if (_utc(row.get("effective_at")) or cutoff) <= cutoff]
+    # #1270: apply cutoff to protection state
     protection_row = source.execute(
         "SELECT * FROM position_protection_state WHERE position_id=?",
         (position_id,),
     ).fetchone()
-    protection = dict(protection_row) if protection_row is not None else None
+    protection: dict[str, Any] | None = None
+    if protection_row is not None:
+        prot_raw = dict(protection_row)
+        updated_at = _utc(prot_raw.get("updated_at"))
+        if updated_at is None or updated_at <= cutoff:
+            protection = prot_raw
+        else:
+            activated_at = _utc(prot_raw.get("activated_at"))
+            if activated_at is not None and activated_at <= cutoff:
+                # activated before cutoff but mutable state updated after — emit identity only
+                protection = {
+                    "position_id": prot_raw.get("position_id"),
+                    "activated_at": prot_raw.get("activated_at"),
+                    "state_at_cutoff": "unavailable",
+                }
+            # else: activated after cutoff — omit entirely (protection stays None)
 
     causal_errors = []
     if proposal is None:
@@ -510,6 +561,12 @@ def build_position_replay(
         causal_errors.append("authoritative_risk_identity_mismatch")
     if pi_error:
         causal_errors.append(pi_error)
+    # #1271: verify entry fill chains
+    if entry_order is not None and not entry_fills:
+        causal_errors.append("entry_fills_missing")
+    # #1271: closed position must have a close fill chain
+    if position.get("status") == "closed" and not close_fills:
+        causal_errors.append("close_fills_missing")
 
     mandate_source_identities = {
         "opportunity_id": position.get("opportunity_id"),
@@ -525,7 +582,7 @@ def build_position_replay(
     economics = _economics(position, db=source)
     provenance = _runtime_identity(
         source,
-        [position, opportunity, proposal, pi_decision, risk, entry_order, *entry_fills, *close_orders, *close_fills],
+        [position, opportunity, proposal, pi_decision, risk, entry_order, *scale_in_orders, *entry_fills, *close_orders, *close_fills],
     )
     market_identity = _instrument(asset, position)
 
@@ -547,6 +604,7 @@ def build_position_replay(
                 "trading_mandate_identity": mandate_provenance["identity"],
                 "trading_mandate_fit": mandate_provenance["fit"],
                 "entry_order_id": position.get("order_id"),
+                "entry_order_ids": all_entry_order_ids,
                 "entry_fill_ids": [row["id"] for row in entry_fills],
                 "close_order_ids": [row["id"] for row in close_orders],
                 "close_fill_ids": [row["id"] for row in close_fills],

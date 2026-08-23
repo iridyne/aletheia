@@ -2,6 +2,21 @@
 
 ## Classify before fixing
 
+## SDD depth (orthogonal to A/B/C)
+
+The A/B/C classification decides when to act. SDD depth decides how deep the
+specification must go. They are independent.
+
+- **D0** — implementation conformance repair; Contract Delta = `NONE`
+- **D1** — externally observable behavior change; requires explicit
+  `ADDED / MODIFIED / REMOVED` Contract Delta
+- **D2** — substantial design change; requires accepted Proposal before target
+  state enters Contract
+
+See [documentation governance](../../../governance/policies/documentation_governance.md)
+for the full rule.
+
+
 - **A — repair now:** crash/hang, wrong persistence target, false accounting,
   or safety-boundary bypass.
 - **B — new observation window:** decision logic, guards, sizing/quota, or

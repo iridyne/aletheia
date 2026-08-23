@@ -1,12 +1,14 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
 import Tabs from '../components/Tabs'
 import type { TabDef } from '../components/Tabs'
 import { StatusBadge } from '../components/DataTable'
-import { Badge, Button, Card, StatusDot, StatusText, Switch, TableWrap, type StatusTone } from '../components/ui'
+import { Badge, Button, Card, StatusDot, StatusText, Switch, TableWrap, type StatusTone, useToast } from '../components/ui'
 import { fmtTimestamp, fmtPct, humanize, fmtSymbol } from '../lib/format'
+import { safeErrorText } from '../lib/mutationErrors'
 import ThesisText from '../components/ThesisText'
 
 type Tab = 'overview' | 'runs' | 'themes' | 'evidence' | 'profile'
@@ -188,8 +190,8 @@ function OverviewTab() {
             </Button>
           </div>
           {createRun.isError && (
-            <div className="lens-status-warning">
-              {(createRun.error as any)?.message || 'Failed to start run'}
+            <div className="lens-status-warning" role="alert">
+              {safeErrorText(createRun.error, 'Failed to start run')}
             </div>
           )}
         </div>
@@ -205,8 +207,23 @@ function OverviewTab() {
 }
 
 // --- Runs Tab ---
-function RunsTab() {
+export function RunsTab() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const restoreRunId = useRef<string | null>(null)
+  const runListHeading = useRef<HTMLHeadingElement>(null)
+
+  useEffect(() => {
+    if (selectedRunId) {
+      restoreRunId.current = selectedRunId
+      return
+    }
+    const id = restoreRunId.current
+    if (!id) return
+    const opener = Array.from(document.querySelectorAll<HTMLElement>('[data-serenity-run-id]'))
+      .find(node => node.dataset.serenityRunId === id)
+    ;(opener || runListHeading.current)?.focus()
+    restoreRunId.current = null
+  }, [selectedRunId])
 
   return (
     <div>
@@ -214,7 +231,7 @@ function RunsTab() {
         <RunDetailPanel runId={selectedRunId} onBack={() => setSelectedRunId(null)} />
       ) : (
         <Card>
-          <h3>Run History</h3>
+          <h3 ref={runListHeading} tabIndex={-1}>Run History</h3>
           <RecentRunsList limit={20} onSelect={setSelectedRunId} />
         </Card>
       )}
@@ -222,7 +239,7 @@ function RunsTab() {
   )
 }
 
-function RecentRunsList({ limit, onSelect }: { limit: number; onSelect?: (id: string) => void }) {
+export function RecentRunsList({ limit, onSelect }: { limit: number; onSelect?: (id: string) => void }) {
   const { data } = useQuery({
     queryKey: ['serenity-runs', limit],
     queryFn: () => api.getSerenityRuns({ limit }),
@@ -259,6 +276,15 @@ function RecentRunsList({ limit, onSelect }: { limit: number; onSelect?: (id: st
               key={r.id}
               className={onSelect ? 'clickable' : ''}
               onClick={() => onSelect?.(r.id)}
+              onKeyDown={onSelect ? (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  onSelect(r.id)
+                }
+              } : undefined}
+              tabIndex={onSelect ? 0 : undefined}
+              data-serenity-run-id={onSelect ? r.id : undefined}
+              aria-label={onSelect ? `Open ${humanize(r.status)} run details from ${shortDate(r.startedAt || r.started_at)}` : undefined}
             >
               <td><RunStatusBadge status={r.status} /></td>
               <td>{r.triggerType || r.trigger_type ? humanize(r.triggerType || r.trigger_type) : '—'}</td>
@@ -277,10 +303,16 @@ function RecentRunsList({ limit, onSelect }: { limit: number; onSelect?: (id: st
 
 function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }) {
   const qc = useQueryClient()
+  const [retryError, setRetryError] = useState('')
+  const [cancelError, setCancelError] = useState('')
   const { data } = useQuery({
     queryKey: ['serenity-run-detail', runId],
     queryFn: () => api.getSerenityRunDetail(runId),
-    refetchInterval: 3000,
+    refetchInterval: (query) => {
+      if (!query.state.data) return 3000
+      const terminal = ['completed', 'failed', 'cancelled', 'error']
+      return terminal.includes(query.state.data.run?.status) ? false : 3000
+    },
   })
 
   const { data: artifacts } = useQuery({
@@ -291,20 +323,24 @@ function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }
 
   const retryMut = useMutation({
     mutationFn: () => api.retrySerenityRun(runId),
+    onMutate: () => setRetryError(''),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['serenity-runs'] })
       qc.invalidateQueries({ queryKey: ['serenity-status'] })
       onBack()
     },
+    onError: (error: unknown) => setRetryError(`Retry failed: ${safeErrorText(error)}`),
   })
 
   const cancelMut = useMutation({
     mutationFn: () => api.cancelSerenityRun(runId),
+    onMutate: () => setCancelError(''),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['serenity-runs'] })
       qc.invalidateQueries({ queryKey: ['serenity-status'] })
       qc.invalidateQueries({ queryKey: ['serenity-run-detail', runId] })
     },
+    onError: (error: unknown) => setCancelError(`Cancel failed: ${safeErrorText(error)}`),
   })
 
   if (!data) return <p>Loading…</p>
@@ -331,6 +367,9 @@ function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }
           )}
         </div>
       </div>
+
+      {retryError && <div className="lens-status-warning" role="alert">✗ {retryError}</div>}
+      {cancelError && <div className="lens-status-warning" role="alert">✗ {cancelError}</div>}
 
       <div className="lens-status-grid">
         <div className="lens-status-item">
@@ -416,10 +455,27 @@ function RunDetailPanel({ runId, onBack }: { runId: string; onBack: () => void }
 }
 
 // --- Themes Tab ---
-function ThemesTab() {
+export function ThemesTab() {
   const qc = useQueryClient()
+  const { toast } = useToast()
   const [selectedTheme, setSelectedTheme] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string>('active')
+  const [promoteErrors, setPromoteErrors] = useState<Record<string, string>>({})
+  const restoreThemeId = useRef<string | null>(null)
+  const themeListFallback = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (selectedTheme) {
+      restoreThemeId.current = selectedTheme
+      return
+    }
+    const id = restoreThemeId.current
+    if (!id) return
+    const opener = Array.from(document.querySelectorAll<HTMLElement>('[data-serenity-theme-id]'))
+      .find(node => node.dataset.serenityThemeId === id)
+    ;(opener || themeListFallback.current)?.focus()
+    restoreThemeId.current = null
+  }, [selectedTheme])
 
   const { data: themes = [] } = useQuery({
     queryKey: ['serenity-themes', statusFilter],
@@ -430,6 +486,7 @@ function ThemesTab() {
     mutationFn: ({ id, status }: { id: string; status: string }) =>
       api.updateSerenityThemeStatus(id, status),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['serenity-themes'] }),
+    onError: (error: unknown) => toast('error', `Theme status failed: ${safeErrorText(error)}`),
   })
 
   const deepDiveMut = useMutation({
@@ -438,17 +495,35 @@ function ThemesTab() {
       qc.invalidateQueries({ queryKey: ['serenity-status'] })
       qc.invalidateQueries({ queryKey: ['serenity-runs'] })
     },
+    onError: (error: unknown) => toast('error', `Deep Dive failed: ${safeErrorText(error)}`),
   })
 
   const promoteMut = useMutation({
     mutationFn: (themeId: string) => api.promoteSerenityTheme(themeId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['serenity-themes'] }),
+    onMutate: (themeId: string) => setPromoteErrors(current => {
+      const next = { ...current }
+      delete next[themeId]
+      return next
+    }),
+    onSuccess: (_result, themeId: string) => {
+      setPromoteErrors(current => {
+        const next = { ...current }
+        delete next[themeId]
+        return next
+      })
+      qc.invalidateQueries({ queryKey: ['serenity-themes'] })
+    },
+    onError: (error: unknown, themeId: string) => setPromoteErrors(current => ({
+      ...current,
+      [themeId]: `Promote failed: ${safeErrorText(error)}`,
+    })),
   })
 
   const feedbackMut = useMutation({
     mutationFn: ({ id, action }: { id: string; action: string }) =>
       api.createSerenityThemeFeedback(id, action, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['serenity-themes'] }),
+    onError: (error: unknown) => toast('error', `Theme feedback failed: ${safeErrorText(error)}`),
   })
 
   if (selectedTheme) {
@@ -463,6 +538,7 @@ function ThemesTab() {
         {STATUS_FILTERS.map(s => (
           <Button
             key={s}
+            ref={s === 'active' ? themeListFallback : undefined}
             className={`lens-filter-btn${statusFilter === s ? ' active' : ''}`}
             onClick={() => setStatusFilter(s)}
           >
@@ -484,7 +560,17 @@ function ThemesTab() {
       {themes.map((t: any) => (
         <Card key={t.id} className="lens-theme-card">
           <div className="lens-theme-header">
-            <h4 className="clickable" onClick={() => setSelectedTheme(t.id)}>{t.name}</h4>
+            <h4>
+              <Button
+                type="button"
+                className="lens-theme-open"
+                onClick={() => setSelectedTheme(t.id)}
+                aria-label={`Open theme ${t.name} details`}
+                data-serenity-theme-id={t.id}
+              >
+                {t.name}
+              </Button>
+            </h4>
             <StatusText tone={t.status === 'active' ? 'green' : t.status === 'watching' || t.status === 'promoted' ? 'blue' : 'yellow'}>
               {humanize(t.status)}
             </StatusText>
@@ -502,43 +588,44 @@ function ThemesTab() {
           <div className="lens-theme-actions">
             {t.status === 'active' && (
               <>
-                <Button variant="secondary" className="btn-sm" onClick={() => feedbackMut.mutate({ id: t.id, action: 'more_like_this' })}>
+                <Button variant="secondary" className="btn-sm" onClick={() => feedbackMut.mutate({ id: t.id, action: 'more_like_this' })} disabled={feedbackMut.isPending}>
                   +More
                 </Button>
-                <Button variant="secondary" className="btn-sm" onClick={() => feedbackMut.mutate({ id: t.id, action: 'not_interested' })}>
+                <Button variant="secondary" className="btn-sm" onClick={() => feedbackMut.mutate({ id: t.id, action: 'not_interested' })} disabled={feedbackMut.isPending}>
                   -Less
                 </Button>
-                <Button variant="secondary" className="btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'watching' })}>
+                <Button variant="secondary" className="btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'watching' })} disabled={statusMut.isPending}>
                   Watch
                 </Button>
-                <Button variant="secondary" className="btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'dismissed' })}>
+                <Button variant="secondary" className="btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'dismissed' })} disabled={statusMut.isPending}>
                   Dismiss
                 </Button>
                 <Button className="btn-sm" onClick={() => deepDiveMut.mutate(t.id)} disabled={deepDiveMut.isPending}>
                   Deep Dive
                 </Button>
-                <Button className="btn-sm btn-promote" onClick={() => promoteMut.mutate(t.id)} disabled={promoteMut.isPending}>
-                  Promote
-                </Button>
-              </>
+                 <Button className="btn-sm btn-promote" onClick={() => promoteMut.mutate(t.id)} disabled={promoteMut.isPending}>
+                   Promote
+                 </Button>
+               </>
             )}
             {t.status === 'watching' && (
               <>
-                <Button variant="secondary" className="btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'active' })}>
+                <Button variant="secondary" className="btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'active' })} disabled={statusMut.isPending}>
                   Reactivate
                 </Button>
-                <Button variant="secondary" className="btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'dismissed' })}>
+                <Button variant="secondary" className="btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'dismissed' })} disabled={statusMut.isPending}>
                   Dismiss
                 </Button>
               </>
             )}
             {t.status === 'dismissed' && (
-              <Button variant="secondary" className="btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'active' })}>
+              <Button variant="secondary" className="btn-sm" onClick={() => statusMut.mutate({ id: t.id, status: 'active' })} disabled={statusMut.isPending}>
                 Reactivate
               </Button>
-            )}
-          </div>
-        </Card>
+             )}
+           </div>
+           {promoteErrors[t.id] && <div className="lens-status-warning" role="alert">✗ {promoteErrors[t.id]}</div>}
+         </Card>
       ))}
     </div>
     </div>
@@ -546,9 +633,10 @@ function ThemesTab() {
 }
 
 // U1: Opportunity row with expandable bear_case
-function OpportunityRow({
-  symbol, direction, rec, grade, evidenceTier, status, bearCase
+export function OpportunityRow({
+  id, symbol, direction, rec, grade, evidenceTier, status, bearCase
 }: {
+  id: string
   symbol: string
   direction: string
   rec?: string
@@ -559,15 +647,25 @@ function OpportunityRow({
 }) {
   const [expanded, setExpanded] = useState(false)
   const hasBearCase = !!bearCase
+  const bearCaseId = `serenity-bear-case-${id}`
 
   return (
     <>
-      <tr
-        style={hasBearCase ? { cursor: 'pointer' } : undefined}
-        onClick={hasBearCase ? () => setExpanded(v => !v) : undefined}
-        title={hasBearCase ? (expanded ? 'Hide bear case' : 'Show bear case') : undefined}
-      >
-        <td className="mono">{symbol}</td>
+      <tr>
+        <td className="mono">
+          {hasBearCase ? (
+            <Button
+              type="button"
+              className="serenity-bearcase-toggle"
+              aria-expanded={expanded}
+              aria-controls={bearCaseId}
+              aria-label={`${expanded ? 'Hide' : 'Show'} bear case for ${symbol}`}
+              onClick={() => setExpanded(v => !v)}
+            >
+              <span aria-hidden="true">{expanded ? '▾' : '▸'}</span> {symbol}
+            </Button>
+          ) : symbol}
+        </td>
         <td>{direction}</td>
         <td>
           {rec ? (
@@ -581,7 +679,7 @@ function OpportunityRow({
         <td><StatusBadge status={status} /></td>
       </tr>
       {expanded && bearCase && (
-        <tr>
+        <tr id={bearCaseId}>
           <td colSpan={6} className="serenity-bearcase-cell">
             <div className="serenity-bearcase-box">
               <span className="serenity-bearcase-label">Bear Case:</span>
@@ -699,6 +797,7 @@ function ThemeDetailPanel({ themeId, onBack }: { themeId: string; onBack: () => 
                   return (
                     <OpportunityRow
                       key={o.id}
+                      id={o.id}
                       symbol={fmtSymbol(o.symbol, o.market_type)}
                       direction={humanize(o.direction)}
                       rec={rec}
@@ -776,9 +875,9 @@ function EvidenceTab() {
                 <td>
                   {e.title}
                   {e.source === 'prediction_market' && (
-                    <a href="/prediction" className="lens-cross-link" title="View in Prediction Lens">
+                    <Link to="/prediction-markets" className="lens-cross-link" title="View in Prediction Lens">
                       → Prediction Lens
-                    </a>
+                    </Link>
                   )}
                 </td>
                 <td>{e.tier}</td>
@@ -808,19 +907,28 @@ function ProfileTab() {
 
   const [editBrief, setEditBrief] = useState('')
   const [parseResult, setParseResult] = useState<any>(null)
+  const [parseError, setParseError] = useState('')
+  const [saveError, setSaveError] = useState('')
 
   const parseMut = useMutation({
     mutationFn: () => api.parseSerenityBrief(editBrief),
+    onMutate: () => {
+      setParseError('')
+      setParseResult(null)
+    },
     onSuccess: (d) => setParseResult(d),
+    onError: (error: unknown) => setParseError(`Preview failed: ${safeErrorText(error)}`),
   })
 
   const saveMut = useMutation({
     mutationFn: (body: any) => api.updateSerenityProfile(body),
+    onMutate: () => setSaveError(''),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['serenity-profile'] })
       setParseResult(null)
       setEditBrief('')
     },
+    onError: (error: unknown) => setSaveError(`Save failed: ${safeErrorText(error)}`),
   })
 
   const profile = data?.profile
@@ -875,6 +983,9 @@ function ProfileTab() {
             )}
           </div>
         </div>
+
+        {parseError && <div className="lens-status-warning" role="alert">✗ {parseError}</div>}
+        {saveError && <div className="lens-status-warning" role="alert">✗ {saveError}</div>}
 
         {parseResult && (
           <div className="lens-parse-result">

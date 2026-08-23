@@ -701,7 +701,7 @@ def _probe_config_gates(report: Report) -> None:
                f"live.state={cfg.live.state}, exchange.mode={cfg.exchange.mode}, "
                f"paper_execution_mode={getattr(cfg.exchange, 'paper_execution_mode', '?')}")
 
-    demo_cap = getattr(cfg.risk, "max_demo_position_notional_usdt", None)
+    demo_cap = getattr(cfg.risk, "max_demo_position_margin_usdt", None)
     paper_mode = getattr(cfg.exchange, "paper_execution_mode", "")
     if (
         cfg.exchange.mode == "demo"
@@ -710,9 +710,9 @@ def _probe_config_gates(report: Report) -> None:
         and float(demo_cap) <= 0
     ):
         report.add(
-            "config.demo_notional_cap",
+            "config.demo_margin_cap",
             "blocker",
-            f"max_demo_position_notional_usdt={float(demo_cap):g} — every paper/demo proposal is rejected",
+            f"max_demo_position_margin_usdt={float(demo_cap):g} — every paper/demo proposal is rejected",
             "set a positive paper/demo notional cap in Settings → Risk Limits after human review",
         )
 
@@ -1772,66 +1772,94 @@ def _probe_profit_loop(report: Report) -> None:
             snapshot = _op_summarize(hours=12)
             operator = snapshot.get("operator") or {}
             epoch = snapshot.get("epoch") or {}
+            section_status = snapshot.get("section_status") or {}
             commit_short = (epoch.get("producer_commit") or "unknown")[:7]
             epoch_short = (epoch.get("policy_epoch_id") or "none")[:12]
-            direct_skip = int(operator.get("direct_model_skip") or 0)
-            conviction_skip = int(operator.get("conviction_gate_skip") or 0)
-            debate_reject = int(operator.get("debate_not_confirmed") or 0)
-            defer = int(operator.get("operator_defer") or 0)
-            trade_intent = int(operator.get("operator_trade_intent") or 0)
-            direction_brake = int(operator.get("direction_brake") or 0)
-            total_skip = direct_skip + conviction_skip + debate_reject
 
-            # Optional distress bypass — only meaningful against the current
-            # epoch's direct model skips, so read reasons scoped to the current
-            # producer_commit rather than the raw 12h window.
-            commit_full = epoch.get("producer_commit")
-            if total_skip > 0 and commit_full:
-                reason_rows = db.execute(
-                    "SELECT reasoning FROM pi_decisions "
-                    "WHERE action='skip' AND producer_commit = ? "
-                    "AND COALESCE(signal_source, 'market_observer') != 'system_cascade' "
-                    "AND julianday(created_at) >= julianday('now','-12 hours') "
-                    "ORDER BY julianday(created_at) DESC LIMIT 10",
-                    (commit_full,),
-                ).fetchall()
-                distress_kws = ("structural distress", "acute distress", "systematic distress")
-                for r in reason_rows:
-                    if any(k in (r[0] or "").lower() for k in distress_kws):
-                        self_protecting = True
-                        break
-                if not self_protecting and cfg.agent.bypass_distress_gate:
+            # Check availability before treating numeric zeros as measured facts
+            op_available = (section_status.get("operator") or {}).get("status") == "available"
+            defer_available = (section_status.get("defer_events") or {}).get("status") == "available"
+            active_defer_available = (section_status.get("active_defer") or {}).get("status") == "available"
+
+            if not op_available:
+                reason_short = (section_status.get("operator") or {}).get("reason", "unknown error")[:60]
+                attribution = (
+                    f" — epoch commit={commit_short} policy={epoch_short}"
+                    f"; operator diagnostics unavailable ({reason_short})"
+                )
+            else:
+                direct_skip = int(operator.get("direct_model_skip") or 0)
+                conviction_skip = int(operator.get("conviction_gate_skip") or 0)
+                debate_reject = int(operator.get("debate_not_confirmed") or 0)
+                defer_raw = operator.get("operator_defer")
+                defer = int(defer_raw) if defer_raw is not None else None
+                trade_intent = int(operator.get("operator_trade_intent") or 0)
+                direction_brake = int(operator.get("direction_brake") or 0)
+                total_skip = direct_skip + conviction_skip + debate_reject
+
+                # Optional distress bypass — only meaningful against the current
+                # epoch's direct model skips, so read reasons scoped to the current
+                # producer_commit rather than the raw 12h window.
+                commit_full = epoch.get("producer_commit")
+                if total_skip > 0 and commit_full:
+                    reason_rows = db.execute(
+                        "SELECT reasoning FROM pi_decisions "
+                        "WHERE action='skip' AND producer_commit = ? "
+                        "AND COALESCE(signal_source, 'market_observer') != 'system_cascade' "
+                        "AND julianday(created_at) >= julianday('now','-12 hours') "
+                        "ORDER BY julianday(created_at) DESC LIMIT 10",
+                        (commit_full,),
+                    ).fetchall()
+                    distress_kws = ("structural distress", "acute distress", "systematic distress")
                     for r in reason_rows:
-                        if "suppressed" in (r[0] or "").lower():
+                        if any(k in (r[0] or "").lower() for k in distress_kws):
                             self_protecting = True
                             break
+                    if not self_protecting and cfg.agent.bypass_distress_gate:
+                        for r in reason_rows:
+                            if "suppressed" in (r[0] or "").lower():
+                                self_protecting = True
+                                break
 
-            # Defer breakdown — market_quiet vs candidate_specific + oldest age +
-            # 12h defer_rate. Populated by pipeline_progress._active_defer_stats
-            # over live rows (defer_until > now); best-effort so an older running
-            # gateway with no active defers renders defer×N unmodified.
-            mq = int(operator.get("operator_defer_market_quiet") or 0)
-            cs = int(operator.get("operator_defer_candidate_specific") or 0)
-            defer_rate = float(operator.get("defer_rate") or 0.0)
-            oldest_seconds = operator.get("oldest_active_defer_age_seconds")
-            if defer > 0 and (mq or cs or oldest_seconds is not None):
-                age_min = (
-                    int(oldest_seconds // 60) if isinstance(oldest_seconds, int) else None
+                # Defer breakdown — market_quiet vs candidate_specific + oldest age +
+                # 12h defer_rate. Populated by pipeline_progress._active_defer_stats
+                # over live rows (defer_until > now); best-effort so an older running
+                # gateway with no active defers renders defer×N unmodified.
+                if defer is not None and active_defer_available:
+                    mq_raw = operator.get("operator_defer_market_quiet")
+                    cs_raw = operator.get("operator_defer_candidate_specific")
+                    mq = int(mq_raw) if mq_raw is not None else 0
+                    cs = int(cs_raw) if cs_raw is not None else 0
+                    defer_rate_raw = operator.get("defer_rate")
+                    defer_rate = float(defer_rate_raw) if defer_rate_raw is not None else 0.0
+                    oldest_seconds = operator.get("oldest_active_defer_age_seconds")
+                    if defer > 0 and (mq or cs or oldest_seconds is not None):
+                        age_min = (
+                            int(oldest_seconds // 60) if isinstance(oldest_seconds, int) else None
+                        )
+                        age_part = f",age={age_min}m" if age_min is not None else ""
+                        rate_part = f",rate={int(round(defer_rate * 100))}%"
+                        defer_suffix = f"/defer×{defer}(mq={mq}/cs={cs}{age_part}{rate_part})"
+                    else:
+                        defer_suffix = f"/defer×{defer}"
+                elif defer is None and not defer_available:
+                    defer_suffix = "/defer(unavailable)"
+                elif defer is None:
+                    # operator says defer is None but defer_events section succeeded —
+                    # this is the transitional case; treat as zero for compatibility
+                    defer_suffix = "/defer×0"
+                else:
+                    defer_suffix = f"/defer×{defer}"
+
+                attribution = (
+                    f" — epoch commit={commit_short} policy={epoch_short}"
+                    f"; operator (12h) direct_skip×{direct_skip}"
+                    f"/conviction_gate×{conviction_skip}"
+                    f"/debate_reject×{debate_reject}"
+                    f"{defer_suffix}"
+                    f"/direction_brake×{direction_brake}"
+                    f"/trade_intent×{trade_intent}"
                 )
-                age_part = f",age={age_min}m" if age_min is not None else ""
-                rate_part = f",rate={int(round(defer_rate * 100))}%"
-                defer_suffix = f"/defer×{defer}(mq={mq}/cs={cs}{age_part}{rate_part})"
-            else:
-                defer_suffix = f"/defer×{defer}"
-            attribution = (
-                f" — epoch commit={commit_short} policy={epoch_short}"
-                f"; operator (12h) direct_skip×{direct_skip}"
-                f"/conviction_gate×{conviction_skip}"
-                f"/debate_reject×{debate_reject}"
-                f"{defer_suffix}"
-                f"/direction_brake×{direction_brake}"
-                f"/trade_intent×{trade_intent}"
-            )
         except Exception:
             pass
         prop_desc = "none ever" if prop_age is None else _fmt_age(prop_age)
@@ -2496,8 +2524,8 @@ def _probe_concentration(report: Report) -> None:
                            f"historical concentration residue: {detail}; newest top-bucket fill {_fmt_age(top_age)}")
             else:
                 report.add("loop.concentration", "warn",
-                           f"PI single-bet bias: {detail}",
-                           "highly correlated exposure — PI may be making one bet "
+                           f"Trading Decision bias: {detail}",
+                           "highly correlated exposure — System Operator may be making one bet "
                            "repeatedly; check trade_proposals for direction diversity")
         elif top_pct > 40:
             report.add("loop.concentration", "info",
@@ -2565,7 +2593,7 @@ def _probe_startup_behavior_gate(report: Report) -> None:
 
 
 def _probe_operator_loop(report: Report) -> None:
-    """PI Operator Loop liveness — checks if it has run within expected cadence."""
+    """System Operator governance loop liveness — checks if it has run within expected cadence."""
     try:
         from aletheia.config.loader import load_config
         cfg = load_config()
@@ -2649,6 +2677,143 @@ def _probe_operator_shell(report: Report) -> None:
         report.add("operator.shell", "warn", detail, hint)
     except Exception as e:
         report.add("operator.shell", "info", f"probe error: {e}")
+
+
+def _probe_pi_daemon(report: Report) -> None:
+    """System Operator (PI Daemon) liveness — the event-driven trade decision loop.
+
+    The daemon is an in-memory ``asyncio.Task`` inside the gateway process, so a
+    separate ``aletheia doctor`` process cannot see its module-level state
+    (``is_daemon_running()`` would always be False when imported here).  We
+    therefore **query the gateway's ``/api/operator/status`` endpoint**, which
+    evaluates ``daemon_status()`` *inside* the real gateway process and returns
+    the ``trading_daemon`` payload.
+
+    Direct import of ``pi_daemon`` is only a fallback for the unusual case where
+    the API is unreachable.
+    """
+    import json
+    import urllib.request
+
+    from aletheia.config.loader import load_config
+    from aletheia.gateway.network import local_frontdoor_host
+
+    cfg = load_config()
+    if not cfg.pi_daemon.enabled:
+        report.add("pi_daemon", "info", "PI daemon disabled in config")
+        return
+
+    # --- Attempt 1: query the gateway HTTP API (cross-process safe) ---
+    # The front door may gzip-compress responses; a bare ProxyHandler opener
+    # does not install urllib's default Content-Encoding handler, so we send
+    # Accept-Encoding: identity and also try the backend port as fallback.
+    daemon: dict | None = None
+    try:
+        host = local_frontdoor_host()
+        runtime_port = os.environ.get("ALETHEIA_RUNTIME_PORT")
+        base_port = int(runtime_port) if runtime_port else cfg.app.dashboard_port
+        for port in (base_port, base_port + 1):
+            try:
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                req = urllib.request.Request(
+                    f"http://{host}:{port}/api/operator/status",
+                    headers={"Accept": "application/json", "Accept-Encoding": "identity"},
+                )
+                with opener.open(req, timeout=2) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
+                payload_daemon = payload.get("trading_daemon")
+                if payload_daemon is not None:
+                    daemon = payload_daemon
+                    break
+            except Exception:
+                continue
+    except Exception:
+        daemon = None
+
+    if daemon is not None:
+        _render_daemon_report(report, daemon)
+        return
+
+    # --- Attempt 2: API unreachable. The gateway may be down, restarting, or
+    # the probe timed out.  Do NOT assert "daemon not running": the in-process
+    # import below only works when doctor runs inside the gateway process
+    # itself. In a separate CLI it would always report False, giving a false
+    # negative.  Report indeterminate unless the import authoritatively says
+    # the daemon IS running.
+    try:
+        from aletheia.agent_runtime.pi_daemon import daemon_status, is_daemon_running
+
+        if is_daemon_running():
+            status = daemon_status()
+            hb_age = status.get("last_heartbeat_age_sec")
+            failures = status.get("consecutive_failures", 0)
+            queue_depth = status.get("signal_pending_queue_depth")
+
+            parts = [f"running (gen={status.get('task_generation', 0)})"]
+            if hb_age is not None:
+                parts.append(f"heartbeat {_fmt_age(hb_age)}")
+            if failures >= 3:
+                parts.append(f"{failures} consecutive eval failures")
+            if queue_depth is not None and queue_depth > 5:
+                parts.append(f"queue depth {queue_depth}")
+
+            if hb_age is not None and hb_age > 120:
+                report.add("pi_daemon", "warn", ", ".join(parts),
+                           "daemon heartbeat stale — watchdog will restart if >3min")
+            elif failures >= 3:
+                report.add("pi_daemon", "warn", ", ".join(parts))
+            else:
+                report.add("pi_daemon", "ok", ", ".join(parts))
+        else:
+            report.add(
+                "pi_daemon", "info",
+                "gateway API unreachable — cannot determine daemon state",
+                "gateway may be restarting; re-run `aletheia doctor` in a moment",
+            )
+    except Exception as e:
+        report.add("pi_daemon", "info", f"probe error: {e}")
+
+
+def _render_daemon_report(report: Report, daemon: dict) -> None:
+    """Render a doctor ``pi_daemon`` line from the ``trading_daemon`` payload
+    returned by ``/api/operator/status``.
+    """
+    configured = daemon.get("configured", True)
+    running = daemon.get("running", False)
+    state = daemon.get("state", "unknown")
+    evaluating = daemon.get("evaluating", False)
+    last_error = daemon.get("last_error_summary")
+    fallback = daemon.get("fallback_available", False)
+
+    if not configured:
+        report.add("pi_daemon", "info", "PI daemon disabled in config")
+        return
+
+    if not running:
+        if fallback:
+            report.add(
+                "pi_daemon", "warn",
+                "PI daemon not running (scheduler fallback active) — "
+                "event-driven decisions paused",
+                "watchdog will auto-restart; if persistent, check gateway logs",
+            )
+        else:
+            report.add(
+                "pi_daemon", "warn",
+                "PI daemon not running — trade decisions stopped",
+                "watchdog will auto-restart; if persistent, check gateway logs",
+            )
+        return
+
+    parts = [f"running (state={state})"]
+    if evaluating:
+        parts.append("evaluating")
+    if last_error:
+        parts.append(f"last error: {last_error}")
+    if fallback:
+        parts.append("scheduler fallback available")
+
+    report.add("pi_daemon", "ok", ", ".join(parts))
 
 
 def _probe_webui_static(report: Report) -> None:
@@ -3017,7 +3182,7 @@ def _probe_content_proposal_bias(report: Report) -> None:
         else:
             report.add("content.proposal_bias", "warn",
                        f"proposal-layer directional bias: {detail}",
-                       "PI proposes almost exclusively one direction (pre-risk) — check trading_decision "
+                       "System Operator proposes almost exclusively one direction (pre-risk) — check trading_decision "
                        "for a stuck regime read or one-sided signal inputs")
     else:
         report.add("content.proposal_bias", "ok", detail)
@@ -4071,6 +4236,7 @@ def build_report(*, probe_llm: bool = False) -> Report:
         _probe_startup_behavior_gate,
         _probe_operator_shell,
         _probe_operator_loop,
+        _probe_pi_daemon,
         _probe_webui_static,
         _probe_git_hooks,
         _probe_network,

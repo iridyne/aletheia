@@ -18,7 +18,10 @@ from typing import Any
 
 from aletheia.learning.ledger import get_record
 from aletheia.learning.models import LearningExperiment, LearningHypothesis
-from aletheia.learning.outcomes import assess_candidate_outcome
+from aletheia.learning.outcomes import (
+    assess_candidate_outcome,
+    candidate_outcome_temporal_reason,
+)
 from aletheia.learning.registry import (
     LEARNING_PATHS,
     get_learning_path,
@@ -48,7 +51,8 @@ SUPPORTED_PATH_IDS = frozenset(
 )
 
 _ECONOMIC_FIELDS = (
-    "horizon", "entry_ts", "venue", "symbol", "market_type", "direction",
+    "horizon", "entry_ts", "due_at", "settled_at", "venue", "symbol",
+    "market_type", "direction",
     "entry_price_usd", "exit_price_usd", "gross_return_pct",
     "directional_return_pct", "net_return_pct", "estimated_fee_pct",
     "estimated_spread_slippage_pct", "estimated_funding_pct", "mfe_pct",
@@ -60,6 +64,7 @@ _MAX_CONFLICT_ROWS = 20
 # next cycle re-evaluates once real samples (or terminal signal) land.
 _TRANSIENT_EXCLUSION_REASONS = frozenset({
     "unsettled",
+    "settlement_after_as_of",
     "missing_exact_outcome",
     "wrong_horizon",
 })
@@ -247,6 +252,7 @@ def build_experiment_cohorts(
     experiment_id: str,
     *,
     assignment_unit_keys: frozenset[str] | None = None,
+    as_of_at: str | datetime | None = None,
 ) -> list[ContributionCohort]:
     """Return validly scoped cohorts without modifying Learning or trading state.
 
@@ -254,6 +260,13 @@ def build_experiment_cohorts(
     inference.  Filtering happens before outcomes or integrity counters are
     resolved, so later rows cannot change an already-declared fixed look.
     """
+    evaluation_as_of = (
+        datetime.now(timezone.utc)
+        if as_of_at is None
+        else _parse_time(as_of_at)
+    )
+    if evaluation_as_of is None:
+        raise ValueError("as_of_at must be a valid timestamp")
     experiment_row = get_record("learning_experiments", experiment_id)
     if experiment_row is None:
         return []
@@ -295,6 +308,7 @@ def build_experiment_cohorts(
         {str(row.get("outcome_candidate_key") or "") for row in rows},
         str(hypothesis.target_horizon or ""),
         path_id=hypothesis.path_id,
+        as_of_at=evaluation_as_of,
     )
     cohorts: dict[CohortKey, ContributionCohort] = {}
     candidates: dict[CohortKey, dict[str, dict[str, list[tuple[dict[str, Any], dict[str, Any]]]]]] = defaultdict(
@@ -446,7 +460,7 @@ def build_experiment_cohorts(
         if mirrored_rows and (key, outcome_key) not in seen_mirrored_outcomes:
             cohort.mirrored_universe_row_n += mirrored_rows
             seen_mirrored_outcomes.add((key, outcome_key))
-        assessment = assess_candidate_outcome(outcome)
+        assessment = assess_candidate_outcome(outcome, as_of_at=evaluation_as_of)
         if not assessment.eligible:
             # Observations before the data-quality floor or with unsettled status are
             # ineligible but not corrupt — exclude them without invalidating the cohort.
@@ -454,6 +468,7 @@ def build_experiment_cohorts(
             # corrupt data and do invalidate.
             if assessment.reason in {
                 "unsettled",
+                "settlement_after_as_of",
                 "dirty_or_missing_entry_time",
                 "dirty_or_missing_close_time",
             }:
@@ -638,6 +653,7 @@ def _load_exact_outcomes(
     horizon: str,
     *,
     path_id: str | None = None,
+    as_of_at: datetime | None = None,
 ) -> dict[
     str,
     tuple[
@@ -650,9 +666,14 @@ def _load_exact_outcomes(
     ],
 ]:
     """Resolve all requested outcomes with two bounded, exact-key query sets."""
+    cutoff = datetime.now(timezone.utc) if as_of_at is None else as_of_at
     requested = {key for key in outcome_candidate_keys if key}
     if path_id == RANKER_CASE_PATH_ID:
-        return _load_ranker_case_outcomes(requested, horizon)
+        return _load_ranker_case_outcomes(
+            requested,
+            horizon,
+            as_of_at=cutoff,
+        )
     filter_keys = {_filter_base_key(key, horizon) for key in requested}
     filter_rows = _rows_for_keys("filter_candidate_outcomes", filter_keys)
     universe_rows = _rows_for_keys("universe_forward_outcomes", requested)
@@ -665,10 +686,19 @@ def _load_exact_outcomes(
 
     resolved = {}
     for outcome_key in requested:
-        filter_all = filters.get(_filter_base_key(outcome_key, horizon), [])
-        universe_all = universe.get(outcome_key, [])
+        filter_all, future_filter = _split_future_settlements(
+            filters.get(_filter_base_key(outcome_key, horizon), []), cutoff,
+        )
+        universe_all, future_universe = _split_future_settlements(
+            universe.get(outcome_key, []), cutoff,
+        )
         filter_matches = [row for row in filter_all if str(row.get("horizon") or "") == horizon]
         universe_matches = [row for row in universe_all if str(row.get("horizon") or "") == horizon]
+        future_matches = [
+            row
+            for row in (*future_filter, *future_universe)
+            if str(row.get("horizon") or "") == horizon
+        ]
         wrong_horizon_n = (
             (len(filter_all) if filter_all and not filter_matches else 0)
             + len(universe_all) - len(universe_matches)
@@ -806,7 +836,11 @@ def _load_exact_outcomes(
         all_rows = filter_all + universe_all
         resolved[outcome_key] = (
             None,
-            "wrong_horizon" if all_rows else "missing_exact_outcome",
+            "settlement_after_as_of"
+            if future_matches
+            else "wrong_horizon"
+            if all_rows
+            else "missing_exact_outcome",
             0,
             wrong_horizon_n,
             None,
@@ -814,9 +848,12 @@ def _load_exact_outcomes(
         )
     return resolved
 
+
 def _load_ranker_case_outcomes(
     requested: set[str],
     horizon: str,
+    *,
+    as_of_at: datetime | None = None,
 ) -> dict[
     str,
     tuple[
@@ -843,6 +880,7 @@ def _load_ranker_case_outcomes(
             _filter_base_key(outcome_key, horizon),
         )
     }
+    cutoff = datetime.now(timezone.utc) if as_of_at is None else as_of_at
     rows = _rows_for_keys("filter_candidate_outcomes", filter_keys)
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -853,16 +891,26 @@ def _load_ranker_case_outcomes(
     resolved: dict[str, tuple[Any, ...]] = {}
     for outcome_key in requested:
         base_key = _filter_base_key(outcome_key, horizon)
-        all_rows = grouped.get(base_key, [])
+        all_rows, future_rows = _split_future_settlements(
+            grouped.get(base_key, []), cutoff,
+        )
         matches = [
             row for row in all_rows
             if str(row.get("horizon") or "") == horizon
         ]
         wrong_horizon_n = len(all_rows) - len(matches)
         if not matches:
+            future_matches = [
+                row for row in future_rows
+                if str(row.get("horizon") or "") == horizon
+            ]
             resolved[outcome_key] = (
                 None,
-                "wrong_horizon" if all_rows else "missing_exact_outcome",
+                "settlement_after_as_of"
+                if future_matches
+                else "wrong_horizon"
+                if all_rows
+                else "missing_exact_outcome",
                 0,
                 wrong_horizon_n,
                 None,
@@ -905,6 +953,25 @@ def _load_ranker_case_outcomes(
             None,
         )
     return resolved
+
+
+def _split_future_settlements(
+    rows: list[dict[str, Any]],
+    cutoff: datetime,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    visible: list[dict[str, Any]] = []
+    future: list[dict[str, Any]] = []
+    for row in rows:
+        temporal_reason = candidate_outcome_temporal_reason(
+            row,
+            as_of_at=cutoff,
+        )
+        (
+            future
+            if temporal_reason == "settlement_after_as_of"
+            else visible
+        ).append(row)
+    return visible, future
 
 
 def _rows_for_keys(table: str, keys: set[str]) -> list[dict[str, Any]]:
@@ -1057,7 +1124,8 @@ def _exact_outcome(
 
 def _outcome_fingerprint(outcome: dict[str, Any]) -> tuple[Any, ...]:
     return tuple(outcome.get(field) for field in (
-        "outcome_candidate_key", "horizon", "status", "entry_ts", "settled_at",
+        "outcome_candidate_key", "horizon", "status", "entry_ts", "due_at",
+        "settled_at",
         "net_return_pct", "estimated_fee_pct", "estimated_spread_slippage_pct",
         "estimated_funding_pct", "mae_pct", "cost_model_version", "market_type", "direction",
         "allocation_selected",
@@ -1138,6 +1206,7 @@ def _conflict_row(source: str, row: dict[str, Any]) -> dict[str, Any]:
         "row_id": row.get("id"),
         "status": row.get("status"),
         "entry_ts": row.get("entry_ts"),
+        "due_at": row.get("due_at"),
         "settled_at": row.get("settled_at"),
         "settlement_price_source": row.get("settlement_price_source"),
         "cost_model_version": row.get("cost_model_version"),

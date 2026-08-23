@@ -222,8 +222,9 @@ The current review classifies 70 rows as `Supported`. Several former Partial
 rows were evidence gaps rather than product gaps. The three external-exchange
 rows and credential verification stay
 `Implemented`, while policy/version history and diff is `Supported` and
-external TP/SL behavior remains `Experimental`. The live
-routing defect remains open as GitHub #418. Health/Doctor is `Supported`; the
+external TP/SL behavior remains `Experimental`. The live-execution routing
+defect tracked by GitHub #418 is resolved (issue closed); EX-04 is
+`Implemented`. Health/Doctor is `Supported`; the
 default-branch delivery resolves #426. EX-09 now routes position wakes into the
 existing Operator portfolio-review command, scopes the prompt to exact Position
 identities, and durably records hold/adjust/close or unavailable results without
@@ -304,9 +305,10 @@ claimed, so the capability remains outside `Supported`.
 
 ## Owner decision boundary
 
-Live trading is intentionally retained as `Experimental`. This does not erase
-known defects: EX-04 remains `Broken` and tracked by GitHub #418, but its repair
-is not a prerequisite for the paper Supported Core. Settings, diagnostics, and
+Live trading is intentionally retained as `Experimental`. EX-04
+live-execution routing is `Implemented` (GitHub #418 is closed); Live remains
+outside the supported surface pending the dedicated qualification packet
+(GitHub #1004). Settings, diagnostics, and
 the Live Unlock contract now state that unlock records an authority prerequisite
 and does not route new Proposals to live execution.
 
@@ -321,16 +323,12 @@ public product surface is broader than the proven support surface. The most
 important integrity problems are not missing modules; they are incomplete
 joins:
 
-1. capital events persist but do not change performance curves;
-2. live unlock changes authority state but not new-proposal execution mode;
-3. market-aware exits now reach a bounded Operator hold/adjust/close review;
-4. progressive Persona authority is default-off and evidence-gated by a
+1. market-aware exits now reach a bounded Operator hold/adjust/close review;
+2. progressive Persona authority is default-off and evidence-gated by a
    durable Persona/policy/step cohort;
-5. exchange-backed close economics lack a complete private funding/bill
-   evidence writer;
-6. pyramid/scale behavior has decision logic without a production
+3. pyramid/scale behavior has decision logic without a production
    materialization path;
-7. Serenity More/Less feedback is recorded but does not adapt later research.
+4. Serenity More/Less feedback is recorded but does not adapt later research.
 
 These are specified narrowly in
 [`ISSUE_CANDIDATES.md`](capability-integrity/ISSUE_CANDIDATES.md).

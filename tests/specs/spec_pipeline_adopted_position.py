@@ -1457,7 +1457,7 @@ def test_adopted_futures_position_persists_leverage_and_provenance(
         execution_mode="bitget_demo",
     )
     assert leverage_result["status"] == "available"
-    assert leverage_result["ratio"] == pytest.approx(3.396)
+    assert leverage_result["ratio"] == pytest.approx(0.849)  # notional(16.98) / equity(20.0)
     assert leverage_result["positions"] == [{
         "symbol": "BNB/USDT",
         "notional": pytest.approx(16.98),

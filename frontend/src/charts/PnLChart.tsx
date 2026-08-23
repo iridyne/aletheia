@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createChart, LineStyle, type IChartApi, type Time } from 'lightweight-charts'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -7,6 +7,13 @@ import { isoToEpochSeconds } from '../lib/format'
 
 interface Props {
   days?: number
+}
+
+function toRows(points: ReadonlyArray<{ time: string; cumulative_pnl: number }>) {
+  return points
+    .map(p => ({ time: isoToEpochSeconds(p.time), value: p.cumulative_pnl }))
+    .filter((r): r is { time: number; value: number } => r.time !== null)
+    .map(r => ({ time: r.time as Time, value: r.value }))
 }
 
 export default function PnLChart({ days }: Props) {
@@ -19,8 +26,6 @@ export default function PnLChart({ days }: Props) {
     refetchInterval: 10_000,
   })
 
-  const rawPoints = data?.raw_recorded_points ?? []
-  const genuinePoints = data?.genuine_points ?? []
   const currentUnrealized = data?.current_unrealized ?? 0
   const currentMarkPoint = data?.current_mark_point ?? null
   const excludedOutcomeCount = data?.excluded_outcome_count ?? 0
@@ -29,18 +34,13 @@ export default function PnLChart({ days }: Props) {
   // Backend closed_at is tz-aware UTC (`...+00:00`). isoToEpochSeconds normalizes
   // it correctly — the old inline `endsWith('Z') ? : +'Z'` turned `+00:00` into an
   // invalid `+00:00Z` → NaN → every point dropped → permanent "no data".
-  const toRows = (points: typeof rawPoints) => points
-    .map(p => ({ time: isoToEpochSeconds(p.time), value: p.cumulative_pnl }))
-    .filter((r): r is { time: number; value: number } => r.time !== null)
-    .map(r => ({ time: r.time as Time, value: r.value }))
-  const rawRows = toRows(rawPoints)
-  const genuineRows = toRows(genuinePoints)
-  const liveMarkRow = currentMarkPoint == null
-    ? null
-    : (() => {
-      const time = isoToEpochSeconds(currentMarkPoint.time)
-      return time === null ? null : { time: time as Time, value: currentMarkPoint.cumulative_pnl }
-    })()
+  const rawRows = useMemo(() => toRows(data?.raw_recorded_points ?? []), [data?.raw_recorded_points])
+  const genuineRows = useMemo(() => toRows(data?.genuine_points ?? []), [data?.genuine_points])
+  const liveMarkRow = useMemo(() => {
+    if (currentMarkPoint == null) return null
+    const time = isoToEpochSeconds(currentMarkPoint.time)
+    return time === null ? null : { time: time as Time, value: currentMarkPoint.cumulative_pnl }
+  }, [currentMarkPoint])
   const hasData = rawRows.length > 0 || genuineRows.length > 0 || liveMarkRow !== null
 
   useEffect(() => {
@@ -100,7 +100,7 @@ export default function PnLChart({ days }: Props) {
     })
     resizeObserver.observe(container)
     return () => { resizeObserver.disconnect(); chart.remove() }
-  }, [data, days, hasData])
+  }, [data, days, genuineRows, hasData, liveMarkRow, rawRows])
 
   if (isLoading) {
     return <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.5 }}>Loading PnL curve...</div>

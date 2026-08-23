@@ -9,6 +9,11 @@ from pathlib import Path
 from aletheia.backup.verify import verify_backup
 
 
+
+class RestoreSecurityError(RuntimeError):
+    """Raised when a restore operation would write outside the target tree via symlink."""
+
+
 class RestoreResult:
     """Result of a restore operation."""
 
@@ -122,6 +127,13 @@ class RestoreService:
                         rel = item.relative_to(bundle_dir)
                         dst = target_dir / rel
                         dst.parent.mkdir(parents=True, exist_ok=True)
+
+                        # #1618: reject symlinks at destination — they redirect restore
+                        # copies outside the intended target tree.
+                        if dst.is_symlink():
+                            raise RestoreSecurityError(
+                                f"restore target is a symlink and would redirect the write: {rel}"
+                            )
 
                         if dst.exists():
                             bk = rollback_dir / rel

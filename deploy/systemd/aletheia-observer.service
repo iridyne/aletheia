@@ -41,6 +41,14 @@ Environment=ALETHEIA_OBSERVATION_ROLE=worker
 # failures are visible in ``systemctl status aletheia-observer.timer``.
 TimeoutStartSec=15min
 
+# Optional memory cap. On tiny hosts (≤4 GB), set MemoryMax to prevent one
+# wedged evaluation from triggering system-wide OOM. On workstations (>8 GB),
+# this can usually be omitted. Example: MemoryMax=1200M prevents worker from
+# exceeding 1.2 GB. This template leaves it disabled; operator adjusts per host.
+# MemoryMax=1200M
+# MemoryHigh=1000M
+
+
 # Trading-credential isolation. The Worker never needs exchange creds;
 # refuse to inherit them so a misconfiguration cannot leak them.
 Environment=BITGET_API_KEY=

@@ -286,7 +286,7 @@ def _select_all(
     sql = f"SELECT * FROM {table}"
     if where:
         sql += f" WHERE {where}"
-    sql += f" ORDER BY {order} LIMIT {limit}"
+    sql += f" ORDER BY {order} LIMIT {max(1, limit)}"
     rows = db.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
 
@@ -1249,6 +1249,92 @@ def transition_queued_opportunity_to_open(oid: str) -> bool:
     return cur.rowcount == 1
 
 
+
+class ReplacementResult:
+    """Outcome of one atomic priority-replacement attempt.
+
+    Attributes
+    ----------
+    committed : bool
+        True when exactly one incumbent was evicted and one replacement was
+        installed in the same transaction.  False when any pre-condition or
+        write failed and the transaction was rolled back.
+    reason : str
+        Short token describing why the attempt was rejected or failed.
+        ``"ok"`` on success; ``"incumbent_not_queued"``, ``"replacement_not_open"``,
+        ``"write_error"`` otherwise.
+    evicted_id : str
+        The incumbent opportunity_id that was released (only meaningful when
+        *committed* is True).
+    """
+
+    __slots__ = ("committed", "reason", "evicted_id")
+
+    def __init__(self, committed: bool, reason: str, evicted_id: str = "") -> None:
+        self.committed = committed
+        self.reason = reason
+        self.evicted_id = evicted_id
+
+
+def atomic_replace_queued_carrier(
+    incumbent_id: str,
+    replacement_id: str,
+    eviction_decision: object,
+    replacement_decision: object,
+    persist_enqueue_evidence_fn: object,
+) -> "ReplacementResult":
+    """Release *incumbent_id* and claim *replacement_id* in one immediate transaction.
+
+    All writes (opportunity state transitions, pi_decisions, enqueue evidence)
+    are committed together or not at all.  If any pre-condition fails — the
+    incumbent is no longer queued, the replacement is no longer open — the whole
+    attempt is rejected without touching the database and the incumbent stays put.
+
+    Parameters
+    ----------
+    incumbent_id : str
+        opportunity_id of the queued carrier to evict.
+    replacement_id : str
+        opportunity_id of the open candidate to promote.
+    eviction_decision : PiDecision
+        Pre-built ``signal_queue_evicted`` decision record for the incumbent.
+    replacement_decision : PiDecision
+        Pre-built ``signal_pending`` decision record for the replacement.
+    persist_enqueue_evidence_fn : callable
+        Zero-argument callable that writes the enqueue evidence row inside the
+        transaction.  Must raise on error so the transaction rolls back cleanly.
+    """
+    assert callable(persist_enqueue_evidence_fn), "persist_enqueue_evidence_fn must be callable"
+
+    try:
+        with transaction(immediate=True):
+            # Verify incumbent still occupies a queue slot (CAS: queued→open).
+            evicted = execute_write(
+                "UPDATE opportunities SET status='open' WHERE id=? AND status='queued'",
+                (incumbent_id,),
+            )
+            if evicted.rowcount != 1:
+                raise _AtomicReplacementAbort("incumbent_not_queued")
+            # Verify replacement is still open (CAS: open→queued).
+            claimed = execute_write(
+                "UPDATE opportunities SET status='queued' WHERE id=? AND status='open'",
+                (replacement_id,),
+            )
+            if claimed.rowcount != 1:
+                raise _AtomicReplacementAbort("replacement_not_open")
+            insert_pi_decision(eviction_decision)
+            insert_pi_decision(replacement_decision)
+            persist_enqueue_evidence_fn()
+    except _AtomicReplacementAbort as exc:
+        return ReplacementResult(committed=False, reason=str(exc), evicted_id=incumbent_id)
+    except Exception:
+        return ReplacementResult(committed=False, reason="write_error", evicted_id=incumbent_id)
+    return ReplacementResult(committed=True, reason="ok", evicted_id=incumbent_id)
+
+
+class _AtomicReplacementAbort(Exception):
+    """Internal signal to abort an atomic replacement attempt cleanly."""
+
 def active_defer_opportunity_ids(now_iso: str | None = None) -> set[str]:
     """opportunity_id set whose most recent Operator observation is an active defer.
 
@@ -1623,6 +1709,8 @@ def _normalized_utc_datetime(value: str) -> datetime:
 
 
 def insert_capital_event(event) -> None:
+    if not math.isfinite(event.amount_usdt):
+        raise ValueError(f"capital event amount_usdt must be finite, got {event.amount_usdt!r}")
     _insert("capital_events", _to_payload_dict(event))
 
 
@@ -1655,12 +1743,19 @@ def list_capital_events_between(start_at: str, end_at: str) -> list[dict]:
 
 
 def get_net_deposits() -> float:
-    """Sum of all deposits minus withdrawals."""
+    """Sum of all deposits minus withdrawals, excluding any historical non-finite rows."""
     db = get_db()
-    row = db.execute(
-        "SELECT COALESCE(SUM(CASE WHEN event_type='deposit' THEN amount_usdt ELSE -amount_usdt END), 0) AS net FROM capital_events"
-    ).fetchone()
-    return float(row["net"]) if row else 0.0
+    rows = db.execute("SELECT id, event_type, amount_usdt FROM capital_events").fetchall()
+    bad_ids = [r["id"] for r in rows if not math.isfinite(r["amount_usdt"])]
+    if bad_ids:
+        logging.getLogger(__name__).warning(
+            "capital_events rows with non-finite amount_usdt excluded from net: %s", bad_ids
+        )
+    return sum(
+        r["amount_usdt"] if r["event_type"] == "deposit" else -r["amount_usdt"]
+        for r in rows
+        if math.isfinite(r["amount_usdt"])
+    )
 
 
 def has_capital_event_for_broker(broker_id: str) -> bool:
@@ -2503,6 +2598,90 @@ def update_order(oid: str, **kwargs) -> None:
     _update("orders", oid, kwargs)
 
 
+def finalize_exchange_acknowledgement(
+    order_id: str,
+    *,
+    exchange_order_id: str | None,
+    status: str,
+    error_reason: str | None,
+    close_position_id: str | None = None,
+    pending_close_status: str | None = None,
+) -> dict:
+    """Apply one aggregate venue acknowledgement without overriding private fills."""
+    incoming_exchange_id = str(exchange_order_id or "").strip() or None
+    with transaction(immediate=True):
+        order = get_order(order_id)
+        if order is None:
+            raise ValueError(f"order not found: {order_id}")
+        current_exchange_id = str(order.get("exchange_order_id") or "").strip() or None
+        if (
+            current_exchange_id
+            and incoming_exchange_id
+            and current_exchange_id != incoming_exchange_id
+        ):
+            raise ValueError("exchange acknowledgement identity conflicts with durable Order")
+
+        position = get_position(close_position_id) if close_position_id else None
+        owns_close_claim = close_position_id is None or bool(
+            position
+            and order.get("position_id") == close_position_id
+            and position.get("status") == "open"
+            and position.get("pending_close_order_id") == order_id
+        )
+        applied = False
+        if order.get("status") in {"pending", "submission_unknown"} and owns_close_claim:
+            cursor = execute_write(
+                """
+                UPDATE orders
+                SET exchange_order_id=?, status=?, error_reason=?, filled_at=NULL
+                WHERE id=? AND status IN ('pending', 'submission_unknown')
+                """,
+                (
+                    current_exchange_id or incoming_exchange_id,
+                    status,
+                    error_reason,
+                    order_id,
+                ),
+            )
+            applied = cursor.rowcount == 1
+            if applied and close_position_id:
+                position_cursor = execute_write(
+                    """
+                    UPDATE positions
+                    SET pending_close_status=?
+                    WHERE id=? AND status='open' AND pending_close_order_id=?
+                    """,
+                    (pending_close_status, close_position_id, order_id),
+                )
+                if position_cursor.rowcount != 1:
+                    raise RuntimeError("close acknowledgement lost its Position claim")
+
+        order = get_order(order_id)
+        position_id = order.get("position_id") if order else close_position_id
+        position = get_position(position_id) if position_id else None
+        fills = [
+            dict(row)
+            for row in get_db().execute(
+                "SELECT id, fill_price, fill_quantity FROM fills "
+                "WHERE order_id=? ORDER BY filled_at, rowid LIMIT 2",
+                (order_id,),
+            ).fetchall()
+        ]
+        fill = fills[0] if len(fills) == 1 else None
+
+    return {
+        "applied": applied,
+        "order_id": order_id,
+        "exchange_order_id": order.get("exchange_order_id") if order else None,
+        "order_status": order.get("status") if order else None,
+        "fill_id": fill.get("id") if fill else None,
+        "position_id": position_id,
+        "fill_price": fill.get("fill_price") if fill else None,
+        "fill_quantity": fill.get("fill_quantity") if fill else 0,
+        "position_status": position.get("status") if position else None,
+    }
+
+
 def list_orders(limit: int = 100) -> list[dict]:
     return _select_all("orders", limit=limit)
 
@@ -2991,11 +3170,18 @@ def list_exhausted_deferred_position_path_buckets(*, limit: int = 2_000) -> list
 
 
 def list_oldest_deferred_position_path_bucket(*, limit: int = 2_000) -> list[dict]:
-    """Return the oldest due bucket for each Position, bounded oldest-first."""
+    """Return the oldest due bucket, at most one queued bucket per Position.
+
+    Open Positions are selected before closed-history recovery. The observer's
+    first cursor does not backfill history, but recovery still enrolls the
+    oldest missing bucket for every closed row. Without this live preference a
+    months-old closed book starves the current open book: one global
+    ``MIN(bucket_open_ms)`` stays on pre-observer closes and never reaches
+    currently open Positions.
+    """
 
     bounded_limit = max(1, min(int(limit), 2_000))
-    rows = get_db().execute(
-        "WITH due AS ("
+    due_sql = (
         "SELECT d.* FROM position_path_observation_deferred_buckets d "
         "WHERE d.attempt_count < ? "
         "AND NOT EXISTS ("
@@ -3003,7 +3189,24 @@ def list_oldest_deferred_position_path_bucket(*, limit: int = 2_000) -> list[dic
         "WHERE earlier.position_id=d.position_id "
         "AND earlier.bucket_open_ms < d.bucket_open_ms"
         ")"
+    )
+    live_rows = get_db().execute(
+        f"WITH due AS ({due_sql}) "
+        "SELECT due.* FROM due "
+        "INNER JOIN positions p ON p.id=due.position_id "
+        "WHERE p.status='open' "
+        "AND due.bucket_open_ms=("
+        "SELECT MIN(due2.bucket_open_ms) FROM due due2 "
+        "INNER JOIN positions p2 ON p2.id=due2.position_id "
+        "WHERE p2.status='open'"
         ") "
+        "ORDER BY due.position_id LIMIT ?",
+        (POSITION_PATH_MAX_RETRY_ATTEMPTS, bounded_limit),
+    ).fetchall()
+    if live_rows:
+        return [dict(row) for row in live_rows]
+    rows = get_db().execute(
+        f"WITH due AS ({due_sql}) "
         "SELECT * FROM due "
         "ORDER BY bucket_open_ms, position_id LIMIT ?",
         (POSITION_PATH_MAX_RETRY_ATTEMPTS, bounded_limit),
@@ -6107,8 +6310,17 @@ def prune_filter_decision_batches(days: int = 30) -> int:
     return _delete_old_rows("filter_decision_batches", days)
 
 
+class ExperimentStateReadError(Exception):
+    """Raised when experiment state cannot be reliably read from storage."""
+    pass
+
+
 def min_open_experiment_exposure_at() -> str | None:
-    """Return the earliest durable exposure of an active open experiment."""
+    """Return the earliest durable exposure of an active open experiment.
+
+    Raises:
+        ExperimentStateReadError: If the query fails and state cannot be proven.
+    """
     db = get_db()
     try:
         row = db.execute(
@@ -6117,8 +6329,8 @@ def min_open_experiment_exposure_at() -> str | None:
             "ON x.experiment_id=e.experiment_id "
             "WHERE e.ended_at IS NULL AND e.status='active'"
         ).fetchone()
-    except Exception:
-        return None
+    except Exception as e:
+        raise ExperimentStateReadError(f"Failed to query experiment state: {e}") from e
     if not row:
         return None
     val = row["m"] if hasattr(row, "keys") else row[0]
@@ -8207,76 +8419,157 @@ def _calibration_source_lineage(db, cutoff: str) -> dict[tuple, dict]:
     return result
 
 
-def filter_pressure_stats() -> list[dict]:
+def _eligible_filter_advisor_rows(
+    source: str,
+    *,
+    require_entry_spread: bool = False,
+    as_of_at: datetime | None = None,
+) -> list[dict]:
+    """Return candidate rows admitted by the shared outcome contract."""
+    from aletheia.analytics.learning_window import clean_window_cutoff
+    from aletheia.learning.outcomes import assess_candidate_outcome
+
+    if source == "filter_candidate_outcomes":
+        table = "filter_candidate_outcomes"
+    elif source == "universe_forward_outcomes":
+        table = "universe_forward_outcomes"
+    else:
+        raise ValueError(f"unsupported candidate outcome source: {source}")
+
+    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
+    spread_column = ", entry_spread_bps" if require_entry_spread else ""
+    spread_filter = "AND entry_spread_bps IS NOT NULL " if require_entry_spread else ""
+    evaluation_as_of = (
+        datetime.now(timezone.utc) if as_of_at is None else as_of_at
+    )
+    rows = get_db().execute(
+        "SELECT outcome_candidate_key, scanner_family, direction, market_type, horizon, "
+        "entry_ts, due_at, settled_at, status, net_return_pct, "
+        f"min_tradable_edge_pct, cost_model_version{spread_column} "
+        f"FROM {table} "
+        "WHERE status = 'settled' "
+        "AND scanner_family IS NOT NULL "
+        f"{spread_filter}"
+        "AND cost_model_version IS NOT NULL "
+        "AND net_return_pct IS NOT NULL "
+        "AND ABS(net_return_pct) <= 100 "
+        "AND direction IN ('long', 'short') "
+        "AND entry_ts >= ?",
+        (cutoff,),
+    ).fetchall()
+    eligible = []
+    for raw in rows:
+        row = dict(raw)
+        assessment = assess_candidate_outcome(row, as_of_at=evaluation_as_of)
+        if assessment.eligible:
+            row["net_return_pct"] = assessment.net_return_pct
+            eligible.append(row)
+    return eligible
+
+
+def _filter_advisor_group(row: Mapping) -> tuple:
+    market_type = row.get("market_type")
+    if market_type in {"perp", "futures", "swap", "usdt_futures"}:
+        market_type = "perp"
+    elif market_type is None:
+        market_type = "spot"
+    return (
+        row.get("scanner_family"),
+        row.get("direction"),
+        market_type,
+        row.get("horizon"),
+    )
+
+
+def filter_pressure_stats(*, as_of_at: datetime | None = None) -> list[dict]:
     """Aggregate cost-aware returns for filter-rejected candidates where scanner_family is known.
 
     These rows come from risk/PI filter stages that run after scanner assignment, so
     scanner_family is populated. Returns per-family miss rates: how often do this
     family's rejected candidates produce positive net returns?
     """
-    from aletheia.analytics.learning_window import clean_window_cutoff
+    groups: dict[tuple, dict[str, list[float]]] = {}
+    for row in _eligible_filter_advisor_rows(
+        "filter_candidate_outcomes",
+        as_of_at=as_of_at,
+    ):
+        group = groups.setdefault(_filter_advisor_group(row), {"net": [], "miss": []})
+        net = float(row["net_return_pct"])
+        try:
+            edge_value = row["min_tradable_edge_pct"]
+            edge = 0.0 if edge_value is None else float(edge_value)
+        except (TypeError, ValueError, OverflowError):
+            edge = math.inf
+        group["net"].append(net)
+        group["miss"].append(1.0 if net > edge else 0.0)
 
-    db = get_db()
-    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
-    rows = db.execute(
-        "SELECT scanner_family, direction, "
-        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
-        "COUNT(*) AS n, "
-        "AVG(net_return_pct) AS avg_net, "
-        "MIN(net_return_pct) AS min_net, "
-        "MAX(net_return_pct) AS max_net, "
-        "AVG(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0) "
-        "  THEN 1.0 ELSE 0.0 END) AS miss_rate "
-        "FROM filter_candidate_outcomes "
-        "WHERE status = 'settled' "
-        "AND scanner_family IS NOT NULL "
-        "AND cost_model_version IS NOT NULL "
-        "AND net_return_pct IS NOT NULL "
-        "AND ABS(net_return_pct) <= 100 "
-        "AND direction IN ('long', 'short') "
-        "AND entry_ts >= ? "
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon "
-        "ORDER BY scanner_family, direction, market_type, horizon",
-        (cutoff,),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    result = []
+    for (family, direction, market_type, horizon), values in sorted(groups.items()):
+        net = values["net"]
+        result.append({
+            "scanner_family": family,
+            "direction": direction,
+            "market_type": market_type,
+            "horizon": horizon,
+            "n": len(net),
+            "avg_net": sum(net) / len(net),
+            "min_net": min(net),
+            "max_net": max(net),
+            "miss_rate": sum(values["miss"]) / len(net),
+        })
+    return result
 
 
-def family_spread_tolerance_stats() -> list[dict]:
+def family_spread_tolerance_stats(
+    *,
+    as_of_at: datetime | None = None,
+) -> list[dict]:
     """Per-family spread sensitivity from settled universe forward outcomes.
 
     Splits outcomes into low-spread (<=15 bps) and high-spread (>15 bps) buckets to
     measure whether a family retains positive net expectancy at higher spreads. Used
     by filter_advisor to compute per-family spread tolerance multipliers.
     """
-    from aletheia.analytics.learning_window import clean_window_cutoff
+    groups: dict[tuple, dict[str, list[float]]] = {}
+    for row in _eligible_filter_advisor_rows(
+        "universe_forward_outcomes",
+        require_entry_spread=True,
+        as_of_at=as_of_at,
+    ):
+        group = groups.setdefault(
+            _filter_advisor_group(row),
+            {"net": [], "low": [], "high": []},
+        )
+        net = float(row["net_return_pct"])
+        group["net"].append(net)
+        try:
+            spread = float(row["entry_spread_bps"])
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if spread <= 15:
+            group["low"].append(net)
+        elif spread > 15:
+            group["high"].append(net)
 
-    db = get_db()
-    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
-    rows = db.execute(
-        "SELECT scanner_family, direction, "
-        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
-        "COUNT(*) AS n, "
-        "AVG(net_return_pct) AS avg_net, "
-        "MIN(net_return_pct) AS min_net, "
-        "COUNT(CASE WHEN entry_spread_bps <= 15 THEN 1 END) AS n_low_spread, "
-        "AVG(CASE WHEN entry_spread_bps <= 15 THEN net_return_pct END) AS avg_net_low_spread, "
-        "COUNT(CASE WHEN entry_spread_bps > 15 THEN 1 END) AS n_high_spread, "
-        "AVG(CASE WHEN entry_spread_bps > 15 THEN net_return_pct END) AS avg_net_high_spread "
-        "FROM universe_forward_outcomes "
-        "WHERE status = 'settled' "
-        "AND scanner_family IS NOT NULL "
-        "AND entry_spread_bps IS NOT NULL "
-        "AND cost_model_version IS NOT NULL "
-        "AND net_return_pct IS NOT NULL "
-        "AND ABS(net_return_pct) <= 100 "
-        "AND direction IN ('long', 'short') "
-        "AND entry_ts >= ? "
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon "
-        "ORDER BY scanner_family, direction, market_type, horizon",
-        (cutoff,),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    result = []
+    for (family, direction, market_type, horizon), values in sorted(groups.items()):
+        net = values["net"]
+        low = values["low"]
+        high = values["high"]
+        result.append({
+            "scanner_family": family,
+            "direction": direction,
+            "market_type": market_type,
+            "horizon": horizon,
+            "n": len(net),
+            "avg_net": sum(net) / len(net),
+            "min_net": min(net),
+            "n_low_spread": len(low),
+            "avg_net_low_spread": sum(low) / len(low) if low else None,
+            "n_high_spread": len(high),
+            "avg_net_high_spread": sum(high) / len(high) if high else None,
+        })
+    return result
 
 
 def family_direction_edge(horizon: str = "24h", within_days: int = 7) -> list[dict]:

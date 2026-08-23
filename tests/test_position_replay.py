@@ -399,3 +399,169 @@ def test_position_replay_cli_emits_json(monkeypatch):
 
     assert result.exit_code == 0
     assert json.loads(result.output)["fact_id"] == "position-1"
+
+
+def test_replay_rejects_invalid_as_of_at():
+    """#1250 — non-empty unparsable as_of_at raises ValueError."""
+    db = _database()
+    try:
+        position_replay.build_position_replay("position-1", as_of_at="not-a-date", db=db)
+        raise AssertionError("expected ValueError")
+    except ValueError as exc:
+        assert "invalid as_of_at" in str(exc)
+
+
+def test_replay_protection_state_activated_before_updated_after_cutoff(monkeypatch):
+    """#1270 — protection activated before cutoff but updated after: emit identity only."""
+    db = _database()
+    db.execute("ALTER TABLE position_protection_state ADD COLUMN activated_at TEXT")
+    db.execute("ALTER TABLE position_protection_state ADD COLUMN updated_at TEXT")
+    db.execute("ALTER TABLE position_protection_state ADD COLUMN extra_field TEXT")
+    db.execute(
+        "UPDATE position_protection_state SET "
+        "activated_at='2026-08-13T00:01:00+00:00', "
+        "updated_at='2026-08-13T01:00:00+00:00', "
+        "extra_field='future_value' "
+        "WHERE position_id='position-1'"
+    )
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *a, **kw: _candles())
+
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T00:30:00+00:00", db=db
+    )
+
+    prot = replay["stages"]["holding"]["protection_state"]
+    assert prot is not None
+    assert prot.get("state_at_cutoff") == "unavailable"
+    assert "extra_field" not in prot
+
+
+def test_replay_protection_state_activated_after_cutoff_omitted(monkeypatch):
+    """#1270 — protection activated after cutoff must be omitted entirely."""
+    db = _database()
+    db.execute("ALTER TABLE position_protection_state ADD COLUMN activated_at TEXT")
+    db.execute("ALTER TABLE position_protection_state ADD COLUMN updated_at TEXT")
+    db.execute(
+        "UPDATE position_protection_state SET "
+        "activated_at='2026-08-13T02:00:00+00:00', "
+        "updated_at='2026-08-13T02:00:00+00:00' "
+        "WHERE position_id='position-1'"
+    )
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *a, **kw: _candles())
+
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T00:30:00+00:00", db=db
+    )
+
+    assert replay["stages"]["holding"]["protection_state"] is None
+
+
+def test_replay_missing_entry_fills_adds_causal_error(monkeypatch):
+    """#1271 — entry order with no fills → causal error entry_fills_missing."""
+    db = _database()
+    db.execute("DELETE FROM fills WHERE id='entry-fill'")
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *a, **kw: _candles())
+
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    assert "entry_fills_missing" in replay["causal_link"]["errors"]
+    assert replay["causal_link"]["status"] == "unavailable"
+
+
+def test_replay_scale_in_order_included_in_entry_legs(monkeypatch):
+    """#1271 — a second order with same position_id and empty close_reason appears in entry_order_ids."""
+    db = _database()
+    db.execute(
+        "INSERT INTO orders VALUES "
+        "('scale-order','proposal-1','risk-1','position-1',NULL,"
+        "'2026-08-13T00:00:35+00:00','session-1','commit-a','behavior-a')"
+    )
+    db.execute(
+        "INSERT INTO fills VALUES "
+        "('scale-fill','scale-order',101.0,0.5,0.05,'broker_ledger',"
+        "'2026-08-13T00:00:45+00:00','session-1','commit-a','behavior-a')"
+    )
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *a, **kw: _candles())
+
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    assert "scale-order" in replay["identity"]["entry_order_ids"]
+    assert "entry-order" in replay["identity"]["entry_order_ids"]
+    assert "scale-fill" in replay["identity"]["entry_fill_ids"]
+
+
+def test_replay_ohlcv_gap_returns_unavailable(monkeypatch):
+    """#1272 — OHLCV with a missing bar → availability=unavailable."""
+    db = _database()
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    # Return only 1 of the 2 expected candles (gap)
+    monkeypatch.setattr(
+        position_replay.repo,
+        "get_ohlcv_candles",
+        lambda *a, **kw: _candles()[:1],
+    )
+
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    ohlcv = replay["stages"]["holding"]["ohlcv"]
+    assert ohlcv["availability"] == "unavailable"
+    assert ohlcv["unavailable_reason"] == "holding_path_continuity_unavailable"
+
+
+def test_replay_ohlcv_contiguous_returns_available(monkeypatch):
+    """#1272 — OHLCV with all contiguous expected slots → availability=available."""
+    db = _database()
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *a, **kw: _candles())
+
+    # Use a cutoff that spans exactly the 2-bar window from _path()/_candles()
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    # With the 66-bar counterfactual window the candles are only 2 but 66 are expected → unavailable
+    # Confirm it reports the right reason (not continuity but coverage)
+    ohlcv = replay["stages"]["holding"]["ohlcv"]
+    assert ohlcv["availability"] == "unavailable"
+    # coverage failure since only 2 of 66 bars supplied
+    assert ohlcv["unavailable_reason"] in ("holding_path_continuity_unavailable", "holding_path_coverage_unavailable")

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime
 import json
 import sqlite3
 import zlib
+
+import pytest
 
 import aletheia.analytics.candidate_facts as candidate_facts
 
@@ -26,7 +29,8 @@ def _db() -> sqlite3.Connection:
         );
         CREATE TABLE filter_candidate_outcomes (
             id TEXT PRIMARY KEY, outcome_candidate_key TEXT, horizon TEXT,
-            entry_ts TEXT, settled_at TEXT, status TEXT, net_return_pct REAL
+            entry_ts TEXT, due_at TEXT, settled_at TEXT, status TEXT,
+            net_return_pct REAL
         );
         CREATE TABLE opportunities (id TEXT PRIMARY KEY, created_at TEXT);
         CREATE TABLE pi_decisions (
@@ -124,12 +128,13 @@ def _db() -> sqlite3.Connection:
     for index, key in enumerate(("outcome-traded", "outcome-skip", "outcome-risk", "outcome-filtered")):
         settled_at = "2026-08-14T00:00:00+00:00" if key != "outcome-filtered" else "2026-08-15T00:00:00+00:00"
         db.execute(
-            "INSERT INTO filter_candidate_outcomes VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO filter_candidate_outcomes VALUES (?,?,?,?,?,?,?,?)",
             (
                 f"fixed-{index}",
                 key,
                 "24h",
                 "2026-08-13T00:00:00+00:00",
+                "2026-08-14T00:00:00+00:00",
                 settled_at,
                 "settled",
                 float(index),
@@ -160,6 +165,84 @@ def test_candidate_facts_preserve_traded_skip_reject_and_filtered_units():
     assert all(fact["variable_horizon_position_outcome"] is None for fact in facts.values())
     assert report["settled_outcome_count"] == 3
     assert report["outcome_coverage"] == 0.75
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "reason"),
+    [
+        ("settled_at", None, "missing_settled_at"),
+        ("settled_at", "not-a-time", "malformed_settled_at"),
+        ("due_at", "2026-08-12T23:59:59+00:00", "due_before_entry"),
+        ("settled_at", "2026-08-15T00:00:00+00:00", "settlement_after_as_of"),
+    ],
+)
+def test_candidate_facts_exclude_temporally_invalid_settled_outcomes(
+    column, value, reason,
+):
+    db = _db()
+    baseline_report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db,
+    )
+    baseline_reason_count = baseline_report["unavailable_reasons"].get(reason, 0)
+
+    from aletheia.analytics.profit_loop_diagnosis import diagnose_candidate_report
+
+    baseline_diagnosis = diagnose_candidate_report(baseline_report)
+    baseline_diagnosis_count = baseline_diagnosis["layers"]["Selection"][
+        "exclusion_reasons"
+    ].get(reason, 0)
+    db.execute(
+        f"UPDATE filter_candidate_outcomes SET {column}=? WHERE id='fixed-0'",
+        (value,),
+    )
+
+    report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db,
+    )
+
+    fact = next(item for item in report["facts"] if item["fact_id"] == "outcome-traded")
+    assert fact["fixed_horizon_outcome"] is None
+    assert fact["fixed_horizon_outcome_unavailable_reason"] == reason
+    assert fact["evidence_available_at"] is None
+    assert report["settled_outcome_count"] == 2
+    assert report["unavailable_reasons"][reason] == baseline_reason_count + 1
+
+    from aletheia.analytics.profit_gradient_evidence import _candidate_sample
+
+    sample, sample_reason = _candidate_sample(
+        db,
+        fact,
+        layer="Risk",
+        cutoff=datetime.fromisoformat("2026-08-14T12:00:00+00:00"),
+        epoch_start=datetime.fromisoformat("2026-08-12T00:00:00+00:00"),
+        cost_model_id="v1",
+        epoch_id="epoch-1",
+    )
+    assert sample is None
+    assert sample_reason == reason
+
+    diagnosis = diagnose_candidate_report(report)
+    assert (
+        diagnosis["layers"]["Selection"]["exclusion_reasons"][reason]
+        == baseline_diagnosis_count + 1
+    )
+
+
+def test_candidate_facts_keep_pending_visible_without_counting_it_as_settled():
+    db = _db()
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET status='pending', settled_at=NULL "
+        "WHERE id='fixed-0'"
+    )
+
+    report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db,
+    )
+
+    fact = next(item for item in report["facts"] if item["fact_id"] == "outcome-traded")
+    assert fact["fixed_horizon_outcome"]["status"] == "pending"
+    assert report["settled_outcome_count"] == 2
+    assert "unsettled" not in report["unavailable_reasons"]
 
 
 def test_candidate_facts_reject_variable_horizon():
@@ -298,3 +381,81 @@ def test_candidate_facts_resolve_serenity_opportunity_by_decision_source():
     fact = next(item for item in report["facts"] if item["fact_id"] == "serenity-outcome")
     assert fact["funnel"]["opportunity_reached"] is True
     assert fact["identity"]["pi_decision_id"] == "serenity-decision"
+
+
+def test_candidate_facts_utc_sort_prefers_earlier_utc_row_over_later_offset_string():
+    """#1266 — two rows with same candidate_key but offset timestamps: earlier UTC wins."""
+    db = _db()
+    # "2026-08-12T23:59:00-00:30" = 2026-08-13T00:29:00Z (lexically "-00:30" sorts BEFORE "+00:00")
+    # "2026-08-13T00:01:00+00:00" = 2026-08-13T00:01:00Z  (UTC-earlier — should be first_exposure)
+    db.execute(
+        "INSERT INTO filter_decisions "
+        "(id, candidate_key, candidate_kind, outcome_candidate_key, opportunity_id, proposal_id,"
+        " filter_name, stage, sequence_no, decision, reason_code, evaluated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "filter-tz-late", "candidate-tz", "opportunity",
+            "outcome-tz", None, None,
+            "ranker", "selection", 10, "passed", "eligible",
+            "2026-08-12T23:59:00-00:30",  # UTC 00:29:00 — lexically first "-" < "+" but UTC-later
+        ),
+    )
+    db.execute(
+        "INSERT INTO filter_decisions "
+        "(id, candidate_key, candidate_kind, outcome_candidate_key, opportunity_id, proposal_id,"
+        " filter_name, stage, sequence_no, decision, reason_code, evaluated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "filter-tz-early", "candidate-tz", "opportunity",
+            "outcome-tz", None, None,
+            "ranker", "selection", 0, "passed", "eligible",
+            "2026-08-13T00:01:00+00:00",  # UTC 00:01:00 — UTC-earlier, must be first_exposure
+        ),
+    )
+
+    report = candidate_facts.build_candidate_facts(horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db)
+
+    fact = next(item for item in report["facts"] if item["fact_id"] == "outcome-tz")
+    # first_exposure must be the UTC-earlier row (00:01), not the lexically-earlier "-00:30" row
+    assert fact["first_exposure"]["id"] == "filter-tz-early"
+
+
+def test_candidate_facts_scrubs_post_cutoff_fill_from_order():
+    """#1267 — order created before cutoff but filled after: must not show as traded."""
+    db = _db()
+    # Replace the existing order so filled_at is after our cutoff
+    db.execute("ALTER TABLE orders ADD COLUMN filled_at TEXT")
+    db.execute(
+        "UPDATE orders SET filled_at='2026-08-13T01:00:00+00:00' WHERE id='order-traded'"
+    )
+
+    # Use cutoff at 00:30 — order created at 00:00:40 is visible, filled_at 01:00 is after cutoff
+    report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-13T00:30:00+00:00", db=db
+    )
+
+    fact = next(item for item in report["facts"] if "traded" in item["fact_id"])
+    assert fact["terminal_state"] != "traded"
+    assert fact["funnel"]["position_reached"] is False
+
+
+def test_candidate_facts_rejects_invalid_as_of_at():
+    """#1250 — non-empty unparsable as_of_at raises ValueError."""
+    db = _db()
+    try:
+        candidate_facts.build_candidate_facts(horizon="24h", as_of_at="not-a-date", db=db)
+        raise AssertionError("expected ValueError")
+    except ValueError as exc:
+        assert "invalid as_of_at" in str(exc)
+
+
+def test_candidate_facts_snapshot_consistency():
+    """#1262 — two calls on same DB must observe same row counts (snapshot isolation)."""
+    db = _db()
+    report1 = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db
+    )
+    # A second call must return the same candidate_count (snapshot seen consistently)
+    report2 = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db
+    )
+    assert report1["candidate_count"] == report2["candidate_count"]
+    assert report1["facts"][0]["fact_id"] == report2["facts"][0]["fact_id"]

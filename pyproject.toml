@@ -27,9 +27,8 @@ dependencies = [
 ]
 
 [project.scripts]
-aletheia = "aletheia.main:app"
-aletheia-install = "aletheia.cli.install:app"
-ato = "aletheia.main:app"
+aletheia = "aletheia.main:_entry_point"
+ato = "aletheia.main:_entry_point"
 
 [project.optional-dependencies]
 dev = [

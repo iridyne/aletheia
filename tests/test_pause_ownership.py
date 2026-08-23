@@ -325,10 +325,8 @@ def test_settings_scheduler_enable_cannot_bypass_pause_owner(
     monkeypatch.setattr(scheduler, "_scheduler", fake_scheduler)
     monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda _event: None)
 
-    result = asyncio.run(
-        settings.update_runtime_config(
-            settings.RuntimeConfigUpdate(scheduler_enabled=True)
-        )
+    result = settings.update_runtime_config(
+        settings.RuntimeConfigUpdate(scheduler_enabled=True)
     )
 
     persisted = load_config()

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import json
 from typing import Any, Iterable
 from aletheia.analytics.filter_evidence import decode_filter_decision_batch
+from aletheia.learning.outcomes import candidate_outcome_temporal_reason
 
 from aletheia.storage import repositories as repo
 
@@ -28,7 +29,7 @@ def _utc(value: str | datetime | None) -> datetime | None:
 
 
 def _visible(row: dict[str, Any], cutoff: datetime) -> bool:
-    for field in ("evaluated_at", "created_at", "entry_ts", "filled_at"):
+    for field in ("evaluated_at", "created_at", "entry_ts", "filled_at", "opened_at"):
         if row.get(field):
             value = _utc(row[field])
             return value is not None and value <= cutoff
@@ -72,7 +73,10 @@ def _batch_facts(
     exclusions: list[dict[str, Any]] = []
     for batch in _rows(
         db,
-        "SELECT * FROM filter_decision_batches ORDER BY datetime(evaluated_at), rowid",
+        "SELECT * FROM filter_decision_batches"
+        " WHERE datetime(evaluated_at) <= datetime(?)"
+        " ORDER BY datetime(evaluated_at), rowid",
+        (cutoff.isoformat(),),
     ):
         if not _visible(batch, cutoff):
             continue
@@ -167,6 +171,128 @@ def _terminal(
     return "traded"
 
 
+def candidate_coverage_counts(
+    db: Any,
+    *,
+    horizon: str = "24h",
+    lower: datetime,
+    upper: datetime,
+) -> dict[str, Any]:
+    """Window-bounded candidate/outcome counts for status probes.
+
+    Unlike :func:`build_candidate_facts`, this never materializes the full
+    ``filter_decisions`` / ``filter_decision_batches`` /
+    ``filter_candidate_outcomes`` tables: it streams only window-scoped rows
+    and retains candidate identities (not full fact dicts), so it stays safe
+    on small-memory runtimes even when the evidence tables hold millions of
+    candidates. Semantics mirror the full report restricted to ``[lower, upper]``:
+
+    - ``candidate_units``: distinct candidate identities whose first exposure
+      falls in the window. For decision rows the first exposure is the earliest
+      ``evaluated_at`` across all rows of the identity (matching the grouped
+      ``event_at`` of the full report); batch facts keep their
+      ``batch_id:sequence`` fallback identity and are counted when their own
+      timestamp lies in the window;
+    - ``settled_outcome_units``: window candidates whose fixed-horizon outcome is
+      settled and settled no later than ``upper``;
+    - ``unavailable_units``: window batches with malformed payloads or a declared
+      candidate count that does not match the decoded facts;
+    - ``unknown_timestamp_units``: decisions whose timestamp is missing or
+      unparseable (table-wide, since such rows cannot be attributed to any
+      window), matching the full report's unknown-timestamp accounting.
+    """
+    if horizon not in _FIXED_HORIZONS:
+        raise ValueError(f"unsupported fixed horizon: {horizon}")
+    if lower.tzinfo is None or upper.tzinfo is None or lower > upper:
+        raise ValueError("invalid_coverage_window")
+    lower_iso = lower.astimezone(timezone.utc).isoformat()
+    upper_iso = upper.astimezone(timezone.utc).isoformat()
+
+    identities: set[str] = set()
+    cursor = db.execute(
+        "SELECT COALESCE(NULLIF(outcome_candidate_key, ''), "
+        "NULLIF(candidate_key, ''), CAST(id AS TEXT)) AS identity "
+        "FROM filter_decisions "
+        "WHERE datetime(evaluated_at) IS NOT NULL "
+        "GROUP BY identity "
+        "HAVING MIN(datetime(evaluated_at)) >= datetime(?) "
+        "AND MIN(datetime(evaluated_at)) <= datetime(?)",
+        (lower_iso, upper_iso),
+    )
+    for row in cursor:
+        identities.add(str(row[0]))
+
+    unknown_row = db.execute(
+        "SELECT COUNT(*) AS unknown FROM filter_decisions "
+        "WHERE datetime(evaluated_at) IS NULL"
+    ).fetchone()
+    unknown_timestamp_units = int((unknown_row[0] if unknown_row is not None else 0) or 0)
+
+    unavailable_units = 0
+    batch_cursor = db.execute(
+        "SELECT id, candidate_count, candidate_facts, evaluated_at "
+        "FROM filter_decision_batches "
+        "WHERE datetime(evaluated_at) >= datetime(?) "
+        "AND datetime(evaluated_at) <= datetime(?) "
+        "ORDER BY datetime(evaluated_at), rowid",
+        (lower_iso, upper_iso),
+    )
+    for batch in batch_cursor:
+        batch_id = str(batch["id"])
+        try:
+            raw_facts = decode_filter_decision_batch(str(batch["candidate_facts"] or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            unavailable_units += 1
+            continue
+        declared_count = batch["candidate_count"]
+        if declared_count is not None:
+            try:
+                declared_count = int(declared_count)
+            except (TypeError, ValueError, OverflowError):
+                declared_count = None
+            if declared_count is None or declared_count < 0 or declared_count != len(raw_facts):
+                unavailable_units += 1
+                continue
+        for sequence, raw in enumerate(raw_facts):
+            if not isinstance(raw, dict):
+                continue
+            fact_at = _utc(raw.get("evaluated_at")) or _utc(batch["evaluated_at"])
+            if fact_at is None or not (lower <= fact_at <= upper):
+                continue
+            identities.add(
+                str(
+                    raw.get("outcome_candidate_key")
+                    or raw.get("candidate_key")
+                    or f"{batch_id}:{sequence}"
+                )
+            )
+
+    settled_keys: set[str] = set()
+    outcome_cursor = db.execute(
+        "SELECT outcome_candidate_key FROM filter_candidate_outcomes "
+        "WHERE horizon=? AND status='settled' "
+        "AND datetime(entry_ts) <= datetime(?) "
+        "AND (settled_at IS NULL OR datetime(settled_at) <= datetime(?))",
+        (horizon, upper_iso, upper_iso),
+    )
+    for row in outcome_cursor:
+        key = str(row[0])
+        if key in identities:
+            settled_keys.add(key)
+
+    candidate_count = len(identities)
+    settled_count = len(settled_keys)
+    return {
+        "fixed_horizon": horizon,
+        "window": {"lower": lower_iso, "upper": upper_iso},
+        "candidate_units": candidate_count,
+        "settled_outcome_units": settled_count,
+        "outcome_coverage": settled_count / candidate_count if candidate_count else None,
+        "unavailable_units": unavailable_units,
+        "unknown_timestamp_units": unknown_timestamp_units,
+    }
+
+
 def build_candidate_facts(
     *,
     horizon: str = "24h",
@@ -176,11 +302,34 @@ def build_candidate_facts(
     """Build first-exposure facts for every durable candidate, including rejects."""
     if horizon not in _FIXED_HORIZONS:
         raise ValueError(f"unsupported fixed horizon: {horizon}")
+    if isinstance(as_of_at, str) and as_of_at != "" and _utc(as_of_at) is None:
+        raise ValueError("invalid as_of_at")
     source = db or repo.get_db()
+    explicit_cutoff = _utc(as_of_at) is not None
     cutoff = _utc(as_of_at) or datetime.now(timezone.utc)
+    started_txn = not getattr(source, "in_transaction", False)
+    if started_txn:
+        source.execute("BEGIN DEFERRED")
+    try:
+        return _build_candidate_facts_inner(horizon=horizon, cutoff=cutoff, explicit_cutoff=explicit_cutoff, source=source)
+    finally:
+        if started_txn:
+            source.execute("ROLLBACK")
+
+
+def _build_candidate_facts_inner(
+    *,
+    horizon: str,
+    cutoff: datetime,
+    explicit_cutoff: bool,
+    source: Any,
+) -> dict[str, Any]:
     explicit = _rows(
         source,
-        "SELECT * FROM filter_decisions ORDER BY datetime(evaluated_at), sequence_no, rowid",
+        "SELECT * FROM filter_decisions"
+        " WHERE datetime(evaluated_at) <= datetime(?)"
+        " ORDER BY datetime(evaluated_at), sequence_no, rowid",
+        (cutoff.isoformat(),),
     )
     filter_rows = [{**row, "source_table": "filter_decisions"} for row in explicit if _visible(row, cutoff)]
     batch_rows, batch_exclusions = _batch_facts(source, cutoff)
@@ -193,22 +342,52 @@ def build_candidate_facts(
 
     outcomes = _rows(
         source,
-        "SELECT * FROM filter_candidate_outcomes WHERE horizon=? ORDER BY datetime(entry_ts), rowid",
+        "SELECT * FROM filter_candidate_outcomes"
+        " WHERE horizon=?"
+        " ORDER BY datetime(entry_ts), rowid",
         (horizon,),
     )
-    outcome_by_key = {
-        str(row["outcome_candidate_key"]): row
-        for row in outcomes
-        if _visible(row, cutoff) and (not row.get("settled_at") or (_utc(row.get("settled_at")) or cutoff) <= cutoff)
-    }
+    outcome_by_key: dict[str, dict[str, Any]] = {}
+    outcome_unavailable_reason_by_key: dict[str, str] = {}
+    outcome_exclusions: list[dict[str, Any]] = []
+    for row in outcomes:
+        outcome_key = str(row.get("outcome_candidate_key") or "")
+        if outcome_key not in grouped:
+            continue
+        if str(row.get("status") or "").lower() == "settled":
+            reason = candidate_outcome_temporal_reason(row, as_of_at=cutoff)
+            if reason:
+                outcome_unavailable_reason_by_key.setdefault(outcome_key, reason)
+                outcome_exclusions.append(
+                    {
+                        "source_table": "filter_candidate_outcomes",
+                        "source_outcome_id": row.get("id"),
+                        "outcome_candidate_key": row.get("outcome_candidate_key"),
+                        "horizon": row.get("horizon"),
+                        "event_at": row.get("settled_at"),
+                        "availability": "unavailable",
+                        "unavailable_reason": reason,
+                    }
+                )
+                continue
+            outcome_by_key[outcome_key] = row
+        elif _visible(row, cutoff):
+            outcome_by_key[outcome_key] = row
 
     facts: list[dict[str, Any]] = []
     terminal_counts: defaultdict[str, int] = defaultdict(int)
-    for fact_id, rows in sorted(grouped.items(), key=lambda item: str(item[1][0].get("evaluated_at") or "")):
+    for fact_id, rows in sorted(
+        grouped.items(),
+        key=lambda item: (
+            _utc(item[1][0].get("evaluated_at")) or datetime.max.replace(tzinfo=timezone.utc),
+            item[1][0].get("sequence_no", 0),
+            str(item[1][0].get("id", "")),
+        ),
+    ):
         ordered = sorted(
             rows,
             key=lambda row: (
-                str(row.get("evaluated_at") or ""),
+                _utc(row.get("evaluated_at")) or datetime.max.replace(tzinfo=timezone.utc),
                 int(row.get("sequence_no") or 0),
                 str(row.get("id") or ""),
             ),
@@ -276,6 +455,16 @@ def build_candidate_facts(
         )
         orders = [row for row in orders if _visible(row, cutoff)]
         order = orders[0] if len(orders) == 1 else None
+        # #1267: scrub post-cutoff fill state from Orders visible before cutoff
+        if order is not None and explicit_cutoff:
+            filled_at = _utc(order.get("filled_at"))
+            if filled_at is not None and filled_at > cutoff:
+                order = {
+                    **order,
+                    "filled_at": None,
+                    "position_id": None,
+                    "status": "open",
+                }
         risk = _one(source, "risk_decisions", (order or {}).get("risk_decision_id"))
         if risk is not None and not _visible(risk, cutoff):
             risk = None
@@ -328,6 +517,11 @@ def build_candidate_facts(
                     "position_reached": position is not None,
                 },
                 "fixed_horizon_outcome": outcome,
+                "fixed_horizon_outcome_unavailable_reason": (
+                    outcome_unavailable_reason_by_key.get(fact_id)
+                    if outcome is None
+                    else None
+                ),
                 "fixed_horizon": horizon,
                 "variable_horizon_position_outcome": None,
             }
@@ -336,11 +530,14 @@ def build_candidate_facts(
     outcome_count = sum(
         1
         for fact in facts
-        if fact["fixed_horizon_outcome"] is not None and fact["fixed_horizon_outcome"].get("status") == "settled"
+        if fact["fixed_horizon_outcome"] is not None
+        and str(fact["fixed_horizon_outcome"].get("status") or "").lower()
+        == "settled"
     )
+    exclusions = [*batch_exclusions, *outcome_exclusions]
     unavailable_reasons = Counter(
         str(item.get("unavailable_reason") or "source_unavailable")
-        for item in batch_exclusions
+        for item in exclusions
     )
     return {
         "contract_version": FACT_CONTRACT_VERSION,
@@ -351,9 +548,9 @@ def build_candidate_facts(
         "candidate_count": len(facts),
         "settled_outcome_count": outcome_count,
         "outcome_coverage": outcome_count / len(facts) if facts else None,
-        "unavailable_count": len(batch_exclusions),
+        "unavailable_count": len(exclusions),
         "unavailable_reasons": dict(sorted(unavailable_reasons.items())),
-        "exclusions": batch_exclusions,
+        "exclusions": exclusions,
         "terminal_counts": dict(sorted(terminal_counts.items())),
         "facts": facts,
     }

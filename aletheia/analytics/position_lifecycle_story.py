@@ -561,19 +561,26 @@ def _related_rows(
 
 
 def _exact_reviews(db: Any, position_id: str, cutoff: datetime) -> list[dict[str, Any]]:
-    """Read only decisions whose persisted manifest names this Position exactly."""
+    """Read only decisions whose persisted manifest names this Position exactly.
+
+    Uses json_extract() to push the position_id filter to SQLite, avoiding a
+    full table scan of pi_decisions (319k+ rows) + Python-side JSON decoding.
+    """
     result: list[dict[str, Any]] = []
     for row in _rows(
         db,
-        "SELECT * FROM pi_decisions ORDER BY created_at, rowid",
+        "SELECT * FROM pi_decisions"
+        " WHERE json_valid(evidence_manifest_json)"
+        " AND json_extract(evidence_manifest_json, '$.position_review.target_position_id') = ?"
+        " AND datetime(created_at) <= datetime(?)"
+        " ORDER BY created_at, rowid",
+        (position_id, cutoff.isoformat()),
     ):
         if not _visible(row, cutoff, "created_at"):
             continue
         manifest = _mapping(row.get("evidence_manifest_json"))
         review = manifest.get("position_review")
         if not isinstance(review, Mapping):
-            continue
-        if str(review.get("target_position_id") or "") != position_id:
             continue
         item = dict(row)
         item["position_review"] = dict(review)

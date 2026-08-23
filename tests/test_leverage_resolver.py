@@ -6,7 +6,7 @@ Covers the completion-gate cases from the issue:
 - tight/wide stops → stop-distance safety constraint
 - low account headroom → headroom constraint
 - tier cap clamping
-- missing entry / stop → 1x fallback
+- missing entry / stop / exhausted headroom → DecisionUnavailable (proposal must not be created)
 - spot → None (unleveraged)
 - AI advisory stored separately, never drives final value
 """
@@ -132,20 +132,20 @@ def test_ai_advisory_does_not_drive_final():
     assert r1 == r2, "advisory should not influence deterministic output"
 
 
-def test_missing_entry_price_fallback():
-    """No entry price → fallback to 1x."""
+def test_missing_entry_price_raises():
+    """No entry price → DecisionUnavailable; a futures proposal cannot be created."""
+    from aletheia.agent_shell.trading_decision import DecisionUnavailable
     d = _decision()
-    result = _resolve(d, _ctx(entry_price=None))
-    assert result == 1
-    assert d.sizing_trace["leverage_resolver"]["reason"] == "missing_entry_price_fallback"
+    with pytest.raises(DecisionUnavailable, match="incomplete_entry_plan:entry_price"):
+        _resolve(d, _ctx(entry_price=None))
 
 
-def test_missing_stop_price_fallback():
-    """No stop price → fallback to 1x."""
+def test_missing_stop_price_raises():
+    """No stop price → DecisionUnavailable; all four plan fields are mandatory."""
+    from aletheia.agent_shell.trading_decision import DecisionUnavailable
     d = _decision(stop_price=None)
-    result = _resolve(d, _ctx())
-    assert result == 1
-    assert d.sizing_trace["leverage_resolver"]["reason"] == "missing_stop_price_fallback"
+    with pytest.raises(DecisionUnavailable, match="incomplete_entry_plan:stop_price"):
+        _resolve(d, _ctx())
 
 
 def test_wide_stop_constrains_to_low_leverage():
@@ -186,12 +186,12 @@ def test_low_account_headroom():
     assert result == 1, f"expected 1x at near-exhausted headroom, got {result}"
 
 
-def test_account_headroom_exhausted_fallback():
-    """account_leverage_ratio ≥ cap → fallback to 1x."""
+def test_account_headroom_exhausted_raises():
+    """account_leverage_ratio ≥ cap → DecisionUnavailable; no room for a new position."""
+    from aletheia.agent_shell.trading_decision import DecisionUnavailable
     d = _decision()
-    result = _resolve(d, _ctx(account_lev_ratio=6.0, account_lev_cap=5.0))
-    assert result == 1
-    assert d.sizing_trace["leverage_resolver"]["reason"] == "account_headroom_exhausted"
+    with pytest.raises(DecisionUnavailable, match="account_headroom_exhausted"):
+        _resolve(d, _ctx(account_lev_ratio=6.0, account_lev_cap=5.0))
 
 
 def test_tier_cap_is_hard_ceiling():

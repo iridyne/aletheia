@@ -24,7 +24,10 @@ from tests.async_test_utils import closing_coro_runner
 
 
 def _make_client():
-    """Return a BitgetClient with mocked _headers (no real credentials needed)."""
+    """Return a BitgetClient with mocked _headers (no real credentials needed).
+
+    classic_v2 profile: exercises the /api/v2/ mix TPSL endpoints directly.
+    """
     from aletheia.exchanges.bitget.client import BitgetClient
     c = BitgetClient.__new__(BitgetClient)
     c._base = "https://api.bitget.com"
@@ -32,6 +35,9 @@ def _make_client():
     c.mode = "demo"
     c.demo = True
     c._headers = lambda method, path, body="": {}
+    c.profile = "classic_v2"
+    c.mode = "demo"
+    c.demo = True
     return c
 
 
@@ -273,12 +279,107 @@ async def test_get_order_fills_rejects_rows_for_another_order():
     mock_httpx.__aexit__ = AsyncMock(return_value=None)
 
     with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
-        with pytest.raises(ValueError, match="mismatched"):
-            await client.get_order_fills(
-                order_id="exec-456",
-                symbol="BTCUSDT",
-                market_type="usdt_futures",
-            )
+        result = await client.get_order_fills(
+            order_id="exec-456",
+            symbol="BTCUSDT",
+            market_type="usdt_futures",
+        )
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_get_order_fills_uses_uta_v3_when_unified():
+    client = _make_client()
+    client.profile = "uta_v3"
+    captured = {}
+
+    async def mock_get(url, headers):
+        captured["url"] = url
+        resp = MagicMock()
+        resp.json.return_value = {
+            "code": "00000",
+            "data": {
+                "list": [
+                    {"orderId": "uta-1", "execId": "fill-1", "fillPx": "1.12"},
+                    {"orderId": "other", "execId": "fill-x", "fillPx": "9"},
+                ]
+            },
+        }
+        return resp
+
+    mock_httpx = MagicMock()
+    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
+    mock_httpx.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+        result = await client.get_order_fills(
+            order_id="uta-1",
+            symbol="XRPUSDT",
+            market_type="usdt_futures",
+        )
+
+    assert "/api/v3/trade/fills" in captured["url"]
+    query = parse_qs(urlparse(captured["url"]).query)
+    assert query["category"] == ["USDT-FUTURES"]
+    assert query["orderId"] == ["uta-1"]
+    assert [row["execId"] for row in result] == ["fill-1"]
+
+
+@pytest.mark.asyncio
+async def test_get_order_fills_uta_treats_null_list_as_empty():
+    client = _make_client()
+    client.profile = "uta_v3"
+
+    async def mock_get(url, headers):
+        resp = MagicMock()
+        resp.json.return_value = {
+            "code": "00000",
+            "data": {"cursor": None, "list": None},
+        }
+        return resp
+
+    mock_httpx = MagicMock()
+    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
+    mock_httpx.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+        result = await client.get_order_fills(
+            order_id="uta-empty",
+            symbol="XRPUSDT",
+            market_type="usdt_futures",
+        )
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_close_uta_position_requires_symbol_and_pos_side():
+    client = _make_client()
+    captured = {}
+
+    async def mock_post(url, content, headers):
+        captured["url"] = url
+        captured["body"] = json.loads(content)
+        resp = MagicMock()
+        resp.json.return_value = {"code": "00000", "data": {"orderId": "flash-1"}}
+        return resp
+
+    mock_httpx = MagicMock()
+    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(post=mock_post))
+    mock_httpx.__aexit__ = AsyncMock(return_value=None)
+
+    with pytest.raises(ValueError, match="pos_side"):
+        await client.close_uta_position(symbol="XRP/USDT", pos_side="both")
+
+    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+        result = await client.close_uta_position(symbol="XRP/USDT", pos_side="short")
+
+    assert "/api/v3/trade/close-positions" in captured["url"]
+    assert captured["body"] == {
+        "category": "USDT-FUTURES",
+        "symbol": "XRPUSDT",
+        "posSide": "short",
+    }
+    assert result["orderId"] == "flash-1"
 
 
 # ─── _try_place_tpsl ─────────────────────────────────────────────────────────

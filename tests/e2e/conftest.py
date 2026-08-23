@@ -73,13 +73,13 @@ def _mock_llm(monkeypatch):
     """
     import aletheia.agents.helpers as _helpers
 
-    def _blocked_get_provider(name=None):
+    async def _blocked_get_provider(name=None):
         raise RuntimeError(
             "E2E guard: LLM provider resolution blocked "
             f"(requested={name!r}). Inject a deterministic response instead."
         )
 
-    monkeypatch.setattr(_helpers, "get_provider", _blocked_get_provider)
+    monkeypatch.setattr(_helpers, "get_provider_async", _blocked_get_provider)
 
 
 @pytest.fixture(autouse=True)

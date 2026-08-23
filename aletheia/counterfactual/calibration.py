@@ -23,7 +23,7 @@ from aletheia.counterfactual.advisories import (
     build_rotation_advisories,
     render_advisories,
 )
-from aletheia.counterfactual.trades import list_deduped_shadows
+from aletheia.counterfactual.trades import _detect_window_epochs, list_deduped_shadows
 
 # Band edges (trade_score). Chosen to straddle the gate so the sign flip is
 # visible on both sides. The gate itself is drawn in as a marker at runtime.
@@ -139,6 +139,23 @@ def build_calibration(
         report["errors"].append(f"Database could not be opened: {exc}")
         return report
 
+    if policy_epoch_id is None:
+        try:
+            _epoch_id, _epoch_status = _detect_window_epochs(days=days)
+        except Exception:
+            _epoch_status, _epoch_id = "all_null", None
+        if _epoch_status == "mixed":
+            report["errors"].append(
+                "mixed_policy_epoch: window spans multiple policy epochs; "
+                "re-run with explicit --policy-epoch"
+            )
+            return report
+        if _epoch_status == "single":
+            policy_epoch_id = _epoch_id
+            report["policy_epoch_id"] = policy_epoch_id
+            report["notes"].append(f"policy_epoch auto-resolved: {policy_epoch_id}")
+        # "all_null": legacy-only window, proceed without epoch filter
+
     try:
         rows = list_deduped_shadows(
             days=days,
@@ -240,7 +257,10 @@ def render_text(report: dict[str, Any]) -> str:
     lines: list[str] = []
     scope = report["symbols"] if report["symbols"] != "ALL" else "all symbols"
     epoch = report.get("policy_epoch_id")
-    epoch_note = f", policy_epoch={epoch}" if epoch else ""
+    if any("mixed_policy_epoch" in e for e in report.get("errors", [])):
+        epoch_note = ", policy_epoch=MIXED (not reported)"
+    else:
+        epoch_note = f", policy_epoch={epoch}" if epoch else ""
     lines.append(
         f"Shadow counterfactual calibration — {report['window_days']}d, {scope}"
         f"{epoch_note}, {report.get('total_candidates', 0)} candidates (deduped)"

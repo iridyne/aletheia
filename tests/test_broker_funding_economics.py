@@ -128,6 +128,210 @@ def test_private_history_retention_cannot_fabricate_complete_zero_funding():
     )
 
 
+def _seed_pending_broker_funding_close(
+    tmp_path,
+    monkeypatch,
+    *,
+    mode: str = "bitget_demo",
+    environment: str = "demo",
+):
+    setup_env(tmp_path, monkeypatch)
+    _demo_config(monkeypatch)
+    _fresh_snapshot(price=110.0)
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=110.0,
+        execution_mode=mode,
+        opened_at="2026-07-14T00:00:00+00:00",
+    )
+    repo.insert_position(position)
+    from aletheia.portfolio.pnl import close_position
+
+    closed_at = "2026-07-14T12:00:00+00:00"
+    close_position(
+        position.id,
+        exit_price=110.0,
+        actual_exit_fee=0.1,
+        closed_at=closed_at,
+        verified_exit_evidence={
+            "source": "private_fills",
+            "fill_ids": ["fill-1"],
+            "fill_quantity": 1.0,
+        },
+    )
+    incomplete = repo._select_one("positions", position.id)
+    assert incomplete["realized_pnl"] is None
+    ledger = make_complete_ledger(
+        broker_id=mode,
+        account_environment=environment,
+        source_endpoint="/private/funding",
+        history_start_ms=1783987200000,
+        history_end_ms=1784073600000,
+        events=[],
+    )
+    funding = compute_broker_funding(
+        position=incomplete,
+        closed_at=closed_at,
+        ledger=ledger,
+    )
+    return position.id, incomplete, funding
+
+
+def _broker_funding_state(position_id: str) -> dict:
+    db = repo.get_db()
+    return {
+        "position": repo._select_one("positions", position_id),
+        "close_events": [
+            dict(row)
+            for row in db.execute(
+                "SELECT * FROM position_close_events WHERE position_id=? ORDER BY rowid",
+                (position_id,),
+            ).fetchall()
+        ],
+        "audit_count": db.execute(
+            """SELECT COUNT(*) FROM audit_events
+               WHERE entity_id=? AND event_type='exchange_position_funding_settled'""",
+            (position_id,),
+        ).fetchone()[0],
+        "hook_count": db.execute(
+            "SELECT COUNT(*) FROM outcome_hook_jobs WHERE position_id=?",
+            (position_id,),
+        ).fetchone()[0],
+        "cash_event_count": db.execute(
+            "SELECT COUNT(*) FROM paper_account_events WHERE position_id=?",
+            (position_id,),
+        ).fetchone()[0],
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("symbol", "ETH/USDT"),
+        ("market_type", "spot"),
+        ("direction", "short"),
+        ("execution_mode", "okx_demo"),
+        ("entry_price", 101.0),
+        ("current_price", 111.0),
+        ("quantity", 2.0),
+        ("entry_fee", 0.2),
+        ("exit_fee", 0.3),
+        ("opened_at", "2026-07-14T00:01:00+00:00"),
+        ("closed_at", "2026-07-14T13:00:00+00:00"),
+        ("close_reason", "owner_changed"),
+        ("exit_price_source", "owner_changed"),
+        ("exit_fill_verified", 0),
+        ("reconciliation_identity", '{"position_id":"other"}'),
+        ("reconciliation_evidence", '{"source":"other"}'),
+        ("outcome_exclusion_reason", "owner_changed"),
+    ],
+)
+def test_broker_funding_rejects_stale_position_snapshot(
+    tmp_path, monkeypatch, field, value,
+):
+    position_id, stale, funding = _seed_pending_broker_funding_close(
+        tmp_path, monkeypatch,
+    )
+    repo.update_position(position_id, **{field: value})
+    before = _broker_funding_state(position_id)
+    from aletheia.portfolio.broker_funding_settlement import (
+        materialize_broker_funding_economics,
+    )
+
+    with pytest.raises(ValueError, match="snapshot changed"):
+        materialize_broker_funding_economics(
+            stale,
+            funding_cost=funding.funding_cost,
+            funding_evidence=funding.evidence,
+        )
+
+    assert _broker_funding_state(position_id) == before
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("symbol", "ETH/USDT"),
+        ("direction", "short"),
+        ("execution_mode", "okx_demo"),
+        ("close_reason", "owner_changed"),
+        ("exit_price", 111.0),
+        ("closed_qty", 2.0),
+        ("entry_fee", 0.2),
+        ("exit_fee", 0.3),
+        ("closed_at", "2026-07-14T13:00:00+00:00"),
+        ("realized_pnl", 123.0),
+    ],
+)
+def test_broker_funding_rejects_stale_full_close_snapshot(
+    tmp_path, monkeypatch, field, value,
+):
+    position_id, stale, funding = _seed_pending_broker_funding_close(
+        tmp_path, monkeypatch,
+    )
+    close_event = repo.get_db().execute(
+        "SELECT * FROM position_close_events WHERE position_id=?",
+        (position_id,),
+    ).fetchone()
+    repo._update("position_close_events", close_event["id"], {field: value})
+    before = _broker_funding_state(position_id)
+    from aletheia.portfolio.broker_funding_settlement import (
+        materialize_broker_funding_economics,
+    )
+
+    with pytest.raises(ValueError, match="snapshot changed"):
+        materialize_broker_funding_economics(
+            stale,
+            funding_cost=funding.funding_cost,
+            funding_evidence=funding.evidence,
+        )
+
+    assert _broker_funding_state(position_id) == before
+
+
+def test_broker_funding_exact_replay_is_a_noop(tmp_path, monkeypatch):
+    position_id, stale, funding = _seed_pending_broker_funding_close(
+        tmp_path, monkeypatch,
+    )
+    from aletheia.portfolio.broker_funding_settlement import (
+        materialize_broker_funding_economics,
+    )
+
+    first = materialize_broker_funding_economics(
+        stale,
+        funding_cost=funding.funding_cost,
+        funding_evidence=funding.evidence,
+    )
+    after_first = _broker_funding_state(position_id)
+    second = materialize_broker_funding_economics(
+        stale,
+        funding_cost=funding.funding_cost,
+        funding_evidence=funding.evidence,
+    )
+    assert first["status"] == "settled"
+    assert second["status"] == "already_current"
+    assert _broker_funding_state(position_id) == after_first
+
+    changed_evidence = {**funding.evidence, "source_endpoint": "/other"}
+    with pytest.raises(ValueError, match="cannot be overwritten"):
+        materialize_broker_funding_economics(
+            stale,
+            funding_cost=funding.funding_cost,
+            funding_evidence=changed_evidence,
+        )
+    with pytest.raises(ValueError, match="cannot be overwritten"):
+        materialize_broker_funding_economics(
+            stale,
+            funding_cost=funding.funding_cost + 1.0,
+            funding_evidence=funding.evidence,
+        )
+    assert _broker_funding_state(position_id) == after_first
+
+
 def test_overlapping_same_symbol_position_rejects_directionless_funding_event():
     event = normalize_bitget_funding_rows([{
         "billId": "bg-shared",
@@ -177,49 +381,11 @@ def test_overlapping_same_symbol_position_rejects_directionless_funding_event():
 def test_closed_exchange_position_can_be_recovered_from_broker_funding(
     tmp_path, monkeypatch, mode, environment,
 ):
-    setup_env(tmp_path, monkeypatch)
-    _demo_config(monkeypatch)
-    _fresh_snapshot(price=110.0)
-    position = Position(
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        quantity=1.0,
-        entry_price=100.0,
-        current_price=110.0,
-        execution_mode=mode,
-        opened_at="2026-07-14T00:00:00+00:00",
-    )
-    repo.insert_position(position)
-    from aletheia.portfolio.pnl import close_position
-
-    closed_at = "2026-07-14T12:00:00+00:00"
-    close_position(
-        position.id,
-        exit_price=110.0,
-        actual_exit_fee=0.1,
-        closed_at=closed_at,
-        verified_exit_evidence={
-            "source": "private_fills",
-            "fill_ids": ["fill-1"],
-            "fill_quantity": 1.0,
-        },
-    )
-    incomplete = repo._select_one("positions", position.id)
-    assert incomplete["realized_pnl"] is None
-
-    ledger = make_complete_ledger(
-        broker_id=mode,
-        account_environment=environment,
-        source_endpoint="/private/funding",
-        history_start_ms=1783987200000,
-        history_end_ms=1784073600000,
-        events=[],
-    )
-    funding = compute_broker_funding(
-        position=incomplete,
-        closed_at=closed_at,
-        ledger=ledger,
+    position_id, incomplete, funding = _seed_pending_broker_funding_close(
+        tmp_path,
+        monkeypatch,
+        mode=mode,
+        environment=environment,
     )
     from aletheia.portfolio.broker_funding_settlement import (
         materialize_broker_funding_economics,
@@ -230,10 +396,10 @@ def test_closed_exchange_position_can_be_recovered_from_broker_funding(
         funding_cost=funding.funding_cost,
         funding_evidence=funding.evidence,
     )
-    stored = repo._select_one("positions", position.id)
+    stored = repo._select_one("positions", position_id)
     close_event = repo.get_db().execute(
         "SELECT * FROM position_close_events WHERE position_id=?",
-        (position.id,),
+        (position_id,),
     ).fetchone()
     assert result["status"] == "settled"
     assert stored["funding_source"] == "broker_ledger"

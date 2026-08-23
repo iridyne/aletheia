@@ -111,8 +111,22 @@ function DrawdownCurve({ data }: { data: TradeInsights['drawdown_curve'] }) {
 
 // ── 3a. Profit Factor card ────────────────────────────────────────────────────
 function ProfitFactorCard({ data }: { data: TradeInsights['profit_factor'] }) {
-  const pf = data.profit_factor
-  const pfColor = pf == null ? C.muted : pf >= 1.5 ? C.green : pf >= 1.0 ? C.yellow : C.red
+  const state = data.profit_factor_state
+  let displayValue: string
+  let pfColor: string
+  
+  if (state === 'unbounded_no_losses') {
+    displayValue = '∞'
+    pfColor = C.green
+  } else if (state === 'unavailable_no_outcomes' || data.profit_factor == null) {
+    displayValue = '—'
+    pfColor = C.muted
+  } else {
+    const pf = data.profit_factor
+    displayValue = pf.toFixed(2)
+    pfColor = pf >= 1.5 ? C.green : pf >= 1.0 ? C.yellow : C.red
+  }
+
   const barData = [
     { label: 'Avg Win', value: data.avg_win, color: C.green },
     { label: 'Avg Loss', value: Math.abs(data.avg_loss), color: C.red },
@@ -122,7 +136,7 @@ function ProfitFactorCard({ data }: { data: TradeInsights['profit_factor'] }) {
       <SectionLabel>Profit Factor</SectionLabel>
       <div className="insights-pf-grid">
         <div className="insights-pf-big" style={{ color: pfColor }}>
-          {pf != null ? pf.toFixed(2) : '—'}
+          {displayValue}
         </div>
         <div className="insights-pf-stats">
           <div><span className="insights-label">Gross Profit</span><span className="mono pos">{data.gross_profit.toFixed(4)}</span></div>
@@ -682,14 +696,23 @@ export default function TradeInsightsPanel() {
     staleTime: 60_000,
   })
 
-  if (isLoading) return <Card><p className="text-muted text-sm">Loading insights…</p></Card>
   if (error || !data) return <Card><p className="text-muted text-sm">Insights unavailable.</p></Card>
 
-  const hasData = data.equity_curve.length > 0
-
-  if (!hasData) {
-    return <Card><p className="text-muted text-sm">No verified strategy outcomes yet. Raw close events: {data.raw_event_count ?? 'unavailable'}; excluded: {data.excluded_outcome_count ?? 'unavailable'}.</p></Card>
+  // Runtime array guard: validate all array fields to prevent .map() crashes if backend
+  // returns an object instead of array. This catches the #2061 class of bug at the
+  // component boundary instead of deep inside Recharts or map() calls.
+  const arrayFields = [
+    'equity_curve', 'drawdown_curve', 'by_day_of_week', 'by_hour', 'pnl_distribution',
+    'by_regime', 'hold_vs_pnl', 'hour_day_heatmap', 'trade_frequency',
+    'symbol_direction_matrix', 'hold_duration_buckets', 'r_multiple_distribution', 'by_exit_reason'
+  ] as const
+  const invalidField = arrayFields.find(field => !Array.isArray(data[field]))
+  if (invalidField) {
+    console.error(`TradeInsights.${invalidField} is not an array:`, typeof data[invalidField], data[invalidField])
+    return <Card><p className="text-muted text-sm">Insights data shape invalid — {invalidField} is not an array.</p></Card>
   }
+
+  const hasData = data.equity_curve.length > 0
 
   return (
     <div className="insights-panel">

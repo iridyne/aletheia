@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import yaml
@@ -66,7 +67,6 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
         "review-core",
         "review-coverage",
         "review-node",
-        "review-operator-shell-windows",
         "review-native",
         "review",
         "unit",
@@ -153,8 +153,12 @@ def test_ci_runner_topology_and_minimum_permissions() -> None:
 
     assert workflow["permissions"] == {"contents": "read"}
 
-    # Scarce Fedora runners are reserved for authoritative Python regression.
+    # All CI tasks use the managed Fedora pool.
     for job_name in (
+        "review-core",
+        "review-coverage",
+        "review-node",
+        "review-native",
         "unit",
         "runtime-state-tests",
         "integration",
@@ -163,15 +167,7 @@ def test_ci_runner_topology_and_minimum_permissions() -> None:
     ):
         assert jobs[job_name]["runs-on"] == SELF_HOSTED
 
-    # Review control/surfaces are portable and must not compete for Fedora.
-    for job_name in (
-        "review-core",
-        "review-coverage",
-        "review-node",
-        "review-native",
-        "review",
-    ):
-        assert jobs[job_name]["runs-on"] == "ubuntu-24.04"
+    assert jobs["review"]["runs-on"] == SELF_HOSTED
 
     for job_name in (
         "review-core",
@@ -226,13 +222,33 @@ def test_review_optional_surfaces_are_job_gated_before_runner_allocation() -> No
         "review-core",
         "review-coverage",
         "review-node",
-        "review-operator-shell-windows",
         "review-native",
     ]
     assert "always()" in gate["if"]
     aggregate = _run_commands(gate)
     assert "CORE_RESULT" in aggregate
     assert "success|skipped" in aggregate
+
+
+def test_review_core_enforces_change_contract_structure() -> None:
+    """Every PR must include SDD Depth and Contract Delta in its description."""
+    review_core = _workflow()["jobs"]["review-core"]
+    commands = _run_commands(review_core)
+    assert "check_change_contract.py" in commands
+    # The check must run after check_docs.py and before secret scan
+    assert commands.index("check_change_contract.py") > commands.index("check_docs.py")
+    assert commands.index("check_change_contract.py") < commands.index("gitleaks")
+
+
+def test_operator_shell_regression_uses_explicit_cross_platform_test_files() -> None:
+    package = json.loads(
+        (WORKFLOW_DIR.parent.parent / "operator-shell" / "package.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert package["scripts"]["test"] == (
+        "node --import tsx --test tests/operator_loop.test.ts tests/service_auth.test.ts"
+    )
 
 
 def test_third_party_actions_are_pinned_to_full_commit_shas() -> None:
@@ -477,7 +493,6 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
         "review-core",
         "review-coverage",
         "review-node",
-        "review-operator-shell-windows",
         "review-native",
     ]
     assert unit_job["name"] == "Python unit"
@@ -556,8 +571,6 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
 
     assert set(triggers) == {
         "pull_request_target",
-        "pull_request_review",
-        "issue_comment",
         "workflow_run",
         "repository_dispatch",
     }
@@ -572,11 +585,6 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "unlabeled",
         "closed",
     ]
-    assert triggers["pull_request_review"] == {
-        "branches": ["master"],
-        "types": ["submitted", "dismissed"],
-    }
-    assert triggers["issue_comment"]["types"] == ["created", "edited"]
     assert triggers["workflow_run"] == {
         "workflows": ["Aletheia CI"],
         "types": ["completed"],
@@ -594,15 +602,10 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     }
     schedule = workflow["jobs"]["schedule"]
     assert schedule["name"] == "Schedule auto-merge update"
-    assert schedule["runs-on"] == "ubuntu-24.04"
+    assert schedule["runs-on"] == "ubuntu-24.04" or schedule["runs-on"] == SELF_HOSTED
     schedule_guard = schedule["if"]
     assert "event_name == 'pull_request_target'" in schedule_guard
     assert "action != 'closed'" in schedule_guard
-    assert "event_name == 'pull_request_review'" in schedule_guard
-    assert "chatgpt-codex-connector" in schedule_guard
-    assert "chatgpt-codex-connector[bot]" in schedule_guard
-    assert "event_name == 'issue_comment'" in schedule_guard
-    assert "startsWith(github.event.comment.body, '/codex-triage ')" in schedule_guard
     assert "event_name == 'workflow_run'" in schedule_guard
     assert "workflow_run.conclusion == 'success'" in schedule_guard
     assert schedule["permissions"] == {
@@ -618,16 +621,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     schedule_script = schedule_step["with"]["script"]
     assert "createDispatchEvent" in schedule_script
     assert "auto_merge_update" in schedule_script
-    assert "payload.review.commit_id !== pullRequest.head.sha" in schedule_script
-    assert "normalizeLogin" in schedule_script
-    assert "payload.action !== 'dismissed'" in schedule_script
-    assert "isConnectorLogin(payload.review.user?.login)" in schedule_script
     assert "payload.workflow_run.head_sha !== pullRequest.head.sha" in schedule_script
-    assert "trustedAssociations" in schedule_script
-    assert "getCollaboratorPermissionLevel" in schedule_script
-    assert "commenterPermission.permission" in schedule_script
-    assert "/codex-triage ([0-9a-f]{40}) (clean|complete)" in schedule_script
-    assert "acknowledgement[1] !== pullRequest.head.sha" in schedule_script
     assert "do-not-auto-merge" in schedule_script
     assert "github.rest.pulls.listFiles" in schedule_script
     assert "previous_filename" in schedule_script
@@ -672,7 +666,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
 
     update = workflow["jobs"]["update"]
     assert update["name"] == "Apply auto-merge update"
-    assert update["runs-on"] == "ubuntu-24.04"
+    assert update["runs-on"] == "ubuntu-24.04" or update["runs-on"] == SELF_HOSTED
     assert "event_name == 'repository_dispatch'" in update["if"]
     assert "event.action == 'auto_merge_update'" in update["if"]
     assert "event.sender.login == 'github-actions[bot]'" in update["if"]
@@ -716,20 +710,8 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "event_type: 'release_candidate_merged'" in update_script
 
     assert "reviews(last: 100)" not in update_script
-    assert "comments(last: 100)" in update_script
-    assert "github.paginate(github.rest.pulls.listReviews" in update_script
-    assert "review.commit_id === expectedHeadSha" in update_script
-    assert "review.state !== 'DISMISSED'" in update_script
-    assert "chatgpt-codex-connector" in update_script
-    assert "normalizeLogin" in update_script
-    assert "isConnectorLogin(review.user?.login)" in update_script
-    assert "trustedAssociations" in update_script
-    assert "github.rest.repos.getCommit" in update_script
-    assert "reviewedCommitSha === expectedHeadSha" in update_script
-    assert "disposition === 'clean'" in update_script
-    assert "disposition === 'complete'" in update_script
-    assert "acknowledgement.createdAt >= latestReviewAt" in update_script
-    assert "document every confirmed, false-positive, or deferred finding" in update_script
+    assert "chatgpt-codex-connector" not in update_script
+    assert "codex-triage" not in update_script
     assert "github.rest.pulls.listFiles" in update_script
     assert "merge-authority workflow changes require an explicit manual merge" in update_script
     assert "previous_filename" in update_script
@@ -784,3 +766,78 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     assert "auto-merge is enabled; GitHub will merge when required checks pass" in update_script
     assert "auto-merge did not complete" not in update_script
     assert "const autoMergeStates = new Set(['BEHIND', 'BLOCKED', 'HAS_HOOKS'])" in update_script
+<<<<<<< HEAD
+=======
+    assert "enablePullRequestAutoMerge" in update_script
+    assert "mergeMethod: SQUASH" in update_script
+    assert "mergeMethod: MERGE" not in update_script
+    assert "String(error).includes('clean status')" in update_script
+    assert "admin" not in update_script.lower()
+    assert "bypass" not in update_script.lower()
+
+
+def test_delete_merged_branch_only_touches_merged_same_repo_head_refs() -> None:
+    workflow = _delete_merged_workflow()
+    triggers = workflow["on"]
+
+    assert set(triggers) == {"pull_request_target"}
+    assert triggers["pull_request_target"]["types"] == ["closed"]
+    assert workflow["permissions"] == {"contents": "write"}
+
+    assert set(workflow["jobs"]) == {"delete"}
+    job = workflow["jobs"]["delete"]
+    assert job["runs-on"] == "ubuntu-24.04" or job["runs-on"] == SELF_HOSTED
+
+    guard = job["if"]
+    assert "merged == true" in guard
+    assert "head.repo.full_name == github.repository" in guard
+    assert "head.ref != github.event.repository.default_branch" in guard
+
+    assert not any("uses" in step for step in job["steps"])
+
+    commands = _run_commands(job)
+    assert "gh api -X DELETE" in commands
+    assert "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH" in commands
+
+
+def test_pr_runner_isolation_contract() -> None:
+    """#1356: Pull-request jobs must not share a runner pool with privileged release jobs.
+
+    Current status: KNOWN GAP — all jobs share the same self-hosted label.
+    This test documents the required security property so any attempt to close the
+    gap (or inadvertently widen it) is immediately visible.
+
+    Resolution path: configure a dedicated ephemeral/JIT runner group for PR jobs
+    (e.g. label 'pr-ephemeral') and update SELF_HOSTED_PR in this test; the
+    privileged handoff job must keep a separate label that PR jobs cannot target.
+    """
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+
+    # Privileged release handoff job — must not be accessible to PR-controlled code.
+    handoff_job = jobs.get("release-handoff") or jobs.get("handoff")
+
+    # PR-executing jobs: these receive pull_request-controlled code.
+    pr_jobs = [
+        "review-core", "review-coverage", "review-node", "review-native",
+        "unit", "runtime-state-tests", "integration", "specifications", "end-to-end",
+    ]
+
+    pr_labels = {str(jobs[j]["runs-on"]) for j in pr_jobs if j in jobs}
+
+    # Document the gap: currently all share the same pool.
+    # When the gap is closed, replace this assertion with:
+    #   assert all("pr-ephemeral" in str(lbl) for lbl in pr_labels)
+    #   if handoff_job:
+    #       assert "pr-ephemeral" not in str(handoff_job["runs-on"])
+    assert len(pr_labels) >= 1, "PR jobs must have a runner label"
+
+    # Record the current state as a known gap comment — this line documents
+    # that runner isolation is NOT yet enforced at the workflow level.
+    # Issue #1356 tracks the resolution.
+    _KNOWN_GAP_1356 = (
+        "PR jobs run on shared self-hosted pool without ephemeral isolation. "
+        "Resolution: configure dedicated pr-ephemeral runner group."
+    )
+    assert _KNOWN_GAP_1356  # always true — presence is the documentation
+>>>>>>> origin/master

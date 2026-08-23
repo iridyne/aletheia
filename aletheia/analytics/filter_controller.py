@@ -289,15 +289,22 @@ def compute_filter_feedback(
     *,
     evaluated_since: str | None = None,
 ) -> list[FilterRecommendation]:
-    """Compare exact pass/reject cohorts without mutating any filter parameter."""
+    """Compare exact pass/reject cohorts without mutating any filter parameter.
+
+    evaluated_since: ISO timestamp lower-bound for first-exposure assignment.
+    When None (e.g. the periodic scheduled call at line ~670), defaults to 90
+    days ago to prevent FIRST_EXPOSURE_CTE from scanning all of filter_decisions
+    (319k+ rows) on every observe cycle.  Pass an explicit value to override.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    if evaluated_since is None:
+        evaluated_since = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+
     try:
         from aletheia.analytics.filter_evidence import filter_feedback_stats
 
-        stats = (
-            filter_feedback_stats(evaluated_since=evaluated_since)
-            if evaluated_since
-            else filter_feedback_stats()
-        )
+        stats = filter_feedback_stats(evaluated_since=evaluated_since)
     except Exception as exc:
         logger.warning("filter_controller: filter evidence unavailable: %s", exc)
         stats = []
@@ -668,7 +675,7 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
 
     run_id = uuid.uuid4().hex
     recs = compute_filter_feedback(min_samples=min_samples)
-
+    persist_failed = False
     written = 0
     skipped_insufficient = 0
     try:
@@ -760,6 +767,7 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
                 written += 1
     except Exception as e:  # pragma: no cover - defensive
         written = 0
+        persist_failed = True
         logger.warning("filter_controller: persist failed: %s", e)
 
     counts: dict[str, int] = {}
@@ -812,6 +820,22 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
         frozen_units_captured, ufc_shadow_equivalence,
         lab_summary["windows_run"], lab_summary["windows_errored"],
     )
+    # 汇总状态：成功/部分/失败（Issue #1240）
+    if persist_failed:
+        pass_status = "failed"
+        pass_reason = "recommendation persistence failed"
+    elif lab_summary["windows_errored"] > 0:
+        pass_status = "partial"
+        pass_reason = f"{lab_summary['windows_errored']} lab windows errored"
+    elif ufc_shadow_equivalence.get("mismatched", 0) > 0:
+        pass_status = "partial"
+        pass_reason = (
+            f"UFC shadow equivalence: {ufc_shadow_equivalence['mismatched']} mismatched"
+        )
+    else:
+        pass_status = "success"
+        pass_reason = None
+
     return {
         "run_id": run_id,
         "generated_at": generated_at,
@@ -825,6 +849,8 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
         "ufc_shadow_equivalence": ufc_shadow_equivalence,
         "lab_windows": lab_summary,
         "experiment_evaluation": experiment_evaluation,
+        "pass_status": pass_status,
+        "pass_reason": pass_reason,
     }
 
 
