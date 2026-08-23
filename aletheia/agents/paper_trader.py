@@ -57,6 +57,10 @@ def _market_identity(value: object) -> str:
     return raw
 
 
+
+class SignalQueueOwnershipUnavailable(RuntimeError):
+    """Raised when the signal queue ownership read fails (DB unavailable or corrupt)."""
+
 @dataclass
 class SignalBatchPlan:
     selected: list[dict]
