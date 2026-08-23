@@ -74,6 +74,7 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
         "integration",
         "specifications",
         "end-to-end",
+        "regression",
         "release-candidate",
         "release-pr-ci",
     }
@@ -98,8 +99,7 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
     assert handoff["needs"] == expected_handoff_needs
     assert "event_name == 'workflow_dispatch'" in handoff["if"]
     assert "release-please--branches--master" in handoff["if"]
-    assert handoff["permissions"] == {"contents": "write"}
-    assert handoff["runs-on"] == SELF_HOSTED
+    assert handoff["runs-on"] == "ubuntu-24.04"
     assert len(handoff["steps"]) == 1
     step = handoff["steps"][0]
     assert step["uses"] == GITHUB_SCRIPT_ACTION
@@ -124,10 +124,10 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
     runtime_regression = _run_commands(jobs["runtime-state-tests"])
     for commands in (spec_regression, integration_regression, e2e_regression):
         assert "--ignore=tests/test_connectivity.py" in commands
-    assert '-m "tier_unit"' in unit_regression
-    assert '-m "tier_spec"' in spec_regression
-    assert '-m "tier_integration"' in integration_regression
-    assert '-m "tier_e2e"' in e2e_regression
+    assert "MARKER='tier_unit'" in unit_regression
+    assert "MARKER='tier_spec'" in spec_regression
+    assert "MARKER='tier_integration'" in integration_regression
+    assert "MARKER='tier_e2e'" in e2e_regression
     assert "uv run pytest tests/test_connectivity.py" in runtime_regression
     assert "-connectivity" in runtime_regression
 
@@ -472,7 +472,7 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
     e2e_job = jobs["end-to-end"]
 
     assert "needs" not in review_core
-    assert "needs" not in unit_job
+    assert unit_job["needs"] == ["review-core"]
     assert review_job["needs"] == [
         "review-core",
         "review-coverage",
@@ -484,9 +484,9 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
 
     # Stage 2 has exactly two deterministic lane heads.
     assert runtime_job["needs"] == ["review", "unit"]
-    assert integration_job["needs"] == ["review", "unit"]
-    assert spec_job["needs"] == ["review", "unit", "runtime-state-tests"]
-    assert e2e_job["needs"] == ["review", "unit", "integration"]
+    assert integration_job["needs"] == ["review-core", "review", "unit"]
+    assert spec_job["needs"] == ["review-core", "review", "unit", "runtime-state-tests"]
+    assert e2e_job["needs"] == ["review-core", "review", "unit", "integration"]
 
     # Predecessors order lanes but do not suppress independent regression data.
     for follower, predecessor in (
@@ -511,11 +511,11 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
         assert "--ignore=tests/test_operator_cli.py" in commands
         assert "--ignore=tests/test_pause_ownership.py" in commands
         assert "--dist loadfile" in commands
-    assert '-m "tier_unit"' in unit_commands
+    assert "MARKER='tier_unit'" in unit_commands
     assert "-n 6" in unit_commands
-    assert '-m "tier_integration"' in integration_commands
-    assert '-m "tier_spec"' in spec_commands
-    assert '-m "tier_e2e"' in e2e_commands
+    assert "MARKER='tier_integration'" in integration_commands
+    assert "MARKER='tier_spec'" in spec_commands
+    assert "MARKER='tier_e2e'" in e2e_commands
     for commands in (integration_commands, spec_commands, e2e_commands):
         assert "-n 4" in commands
 

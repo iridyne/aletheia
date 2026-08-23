@@ -21,5 +21,8 @@ def test_stage2_lane_heads_override_skipped_review_ancestors() -> None:
 
     for job_name in ("runtime-state-tests", "integration"):
         job = jobs[job_name]
-        assert job["needs"] == ["review", "unit"]
+        if job_name == "integration":
+            assert job["needs"] == ["review-core", "review", "unit"]
+        else:
+            assert job["needs"] == ["review", "unit"]
         assert job["if"] == EXPECTED_STAGE1_GATE
