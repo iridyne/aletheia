@@ -330,6 +330,7 @@ def _linked_open_position(order: dict, proposal: dict) -> dict | None:
     ).fetchall()
     strategy_id = proposal.get("strategy_id")
     proposal_school = proposal.get("trade_school") or "short_term"
+    compatible = []
     for row in rows:
         candidate = dict(row)
         if strategy_id is not None and candidate.get("strategy_id") not in (
@@ -340,8 +341,10 @@ def _linked_open_position(order: dict, proposal: dict) -> dict | None:
             continue
         if (candidate.get("trade_school") or "short_term") != proposal_school:
             continue
-        return candidate
-    return None
+        compatible.append(candidate)
+    if len(compatible) > 1:
+        raise MaterializationIntegrityError("entry_position_identity_ambiguous")
+    return compatible[0] if compatible else None
 
 
 def _tail_delta(evidence: list[PrivateFill], quantity: float) -> list[PrivateFill]:

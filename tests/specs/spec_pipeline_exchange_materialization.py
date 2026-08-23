@@ -1385,3 +1385,77 @@ def test_cross_school_averaging_creates_new_position(tmp_path, monkeypatch):
     serenity_pos = next(p for p in positions if p["trade_school"] == "serenity")
     assert serenity_pos["expected_horizon_hours"] == pytest.approx(168.0)
     assert serenity_pos["exit_plan_version"] == 1
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-XM-16",
+        "pipeline_exchange_materialization",
+        "§16 ambiguous entry Position identity",
+        "L2b",
+        "A private entry Fill without an exact backlink must fail closed when more "
+        "than one compatible open Position could own its economics.",
+        status="implemented",
+    )
+)
+@pytest.mark.parametrize("reverse", [False, True])
+def test_backlink_free_entry_rejects_multiple_compatible_positions(
+    tmp_path, monkeypatch, reverse
+):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import (
+        MaterializationIntegrityError,
+        materialize_bitget_entry,
+    )
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    _, _, _, order = _seed_native_chain(
+        exchange_order_id="EX-XM-AMBIGUOUS-ENTRY",
+        quantity=0.25,
+    )
+    quantities = [1.0, 2.0]
+    if reverse:
+        quantities.reverse()
+    positions = []
+    for quantity in quantities:
+        position = Position(
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=quantity,
+            entry_price=100.0,
+            current_price=100.0,
+            execution_mode="bitget_live_limited",
+            trade_school="short_term",
+        )
+        repo.insert_position(position)
+        positions.append(position)
+
+    fill_rows = [
+        _private_fill(
+            "EX-XM-AMBIGUOUS-ENTRY",
+            "BG-XM-AMBIGUOUS-ENTRY-1",
+            price=101.0,
+            quantity=0.25,
+            fee=0.01515,
+            filled_at_ms=1_784_700_000_000,
+        )
+    ]
+
+    with pytest.raises(
+        MaterializationIntegrityError,
+        match="entry_position_identity_ambiguous",
+    ):
+        materialize_bitget_entry(order.id, fill_rows)
+
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)
+    ).fetchone()[0] == 0
+    stored_order = repo.get_order(order.id)
+    assert stored_order["position_id"] is None
+    assert stored_order["status"] == "materialization_missing"
+    assert [
+        repo._select_one("positions", position.id)["quantity"]
+        for position in positions
+    ] == quantities
