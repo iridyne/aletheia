@@ -8,11 +8,11 @@ falls back to requested price/quantity/fees when private evidence is incomplete.
 
 from __future__ import annotations
 
+import json
+import math
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import json
-import math
 from typing import Iterable
 
 from aletheia.data.symbols import to_canonical
@@ -1109,6 +1109,7 @@ def _materialize_complete_private_close(
         raise PrivateFillEvidenceInvalid(
             "private close exit price must be finite"
         )
+    closed_at = max(item.filled_at for item in evidence)
     evidence_identity = _PRIVATE_CLOSE_EVIDENCE.get(execution_mode)
     if evidence_identity is None:
         raise MaterializationIntegrityError(
@@ -1116,6 +1117,7 @@ def _materialize_complete_private_close(
         )
     evidence_source, source_endpoint, account_environment = evidence_identity
     inserted_count = 0
+    funding = None
     close_authority_fields = (
         "proposal_id",
         "position_id",
@@ -1164,6 +1166,25 @@ def _materialize_complete_private_close(
             raise MaterializationIntegrityError(
                 "private close evidence changed during materialization"
             )
+        if funding_ledger is not None and funding is not None:
+            from aletheia.execution.broker_funding import (
+                BrokerFundingIntegrityError,
+                compute_stored_broker_funding,
+            )
+
+            try:
+                current_funding = compute_stored_broker_funding(
+                    repo.get_db(),
+                    position=current_position,
+                    closed_at=closed_at,
+                    ledger=funding_ledger,
+                )
+            except BrokerFundingIntegrityError as exc:
+                raise MaterializationIntegrityError(str(exc)) from exc
+            if current_funding != funding:
+                raise MaterializationIntegrityError(
+                    "broker funding attribution changed during close commit"
+                )
         current_rows = [
             dict(row)
             for row in repo.get_db().execute(
@@ -1234,26 +1255,13 @@ def _materialize_complete_private_close(
 
     funding_kwargs: dict = {}
     if position.get("market_type") == "usdt_futures" and funding_ledger is not None:
-        from aletheia.execution.broker_funding import compute_broker_funding
+        from aletheia.execution.broker_funding import compute_stored_broker_funding
 
-        candidate_rows = [
-            dict(row)
-            for row in repo.get_db().execute(
-                """SELECT * FROM positions
-                   WHERE id<>? AND execution_mode=? AND market_type='usdt_futures'
-                     AND symbol=?""",
-                (
-                    position["id"],
-                    position.get("execution_mode"),
-                    position.get("symbol"),
-                ),
-            ).fetchall()
-        ]
-        funding = compute_broker_funding(
+        funding = compute_stored_broker_funding(
+            repo.get_db(),
             position=position,
-            closed_at=max(item.filled_at for item in evidence),
+            closed_at=closed_at,
             ledger=funding_ledger,
-            candidate_positions=candidate_rows,
         )
         funding_kwargs = {
             "funding_cost": funding.funding_cost,
