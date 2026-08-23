@@ -36,6 +36,7 @@ from aletheia.learning.fixed_look import (
     inference_authority_reason,
     inference_collection_reason,
 )
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 
 PAPER_STAGES = ("paper_10", "paper_25", "paper_50", "paper_active")
@@ -352,7 +353,11 @@ def _legacy_authority_adapter(experiment: LearningExperiment, policy_epoch: str,
         return blocked("missing_activation_verdict")
     if min(int(verdict.get("unique_treatment_n") or 0), int(verdict.get("unique_control_n") or 0)) < experiment.min_samples_per_arm:
         return blocked("legacy_samples_insufficient", verdict)
-    linked = linked_settled_exposure_counts(experiment.experiment_id, policy_epoch=policy_epoch)
+    linked = linked_settled_exposure_counts(
+        experiment.experiment_id,
+        cost_model_version=COST_MODEL_VERSION,
+        policy_epoch=policy_epoch,
+    )
     if min(linked["treatment"], linked["control"]) < experiment.min_samples_per_arm:
         return blocked("legacy_outcomes_insufficient", verdict)
     try:
@@ -506,6 +511,8 @@ def measurement_identity_reason(
         return "measurement_metadata_invalid"
     if not isinstance(metrics, dict):
         return "measurement_metadata_invalid"
+    if metrics.get("expected_cost_model_version") != COST_MODEL_VERSION:
+        return "cost_model_version_mismatch"
     if str(verdict.get("stage") or "") != str(expected_stage):
         return "stage_mismatch"
     if (

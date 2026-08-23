@@ -1205,14 +1205,19 @@ def calibration(
 ):
     """Show net calibration by family, direction, market and horizon."""
     from aletheia.storage.repositories import calibration_stats
-    stats = calibration_stats()
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    stats = calibration_stats(cost_model_version=COST_MODEL_VERSION)
     if not stats:
         typer.echo("(no calibration data)")
         return
     if json_output:
         _output(stats, True)
         return
-    typer.echo("=== Net Signal Calibration (cost-aware outcomes) ===")
+    typer.echo(
+        "=== Net Signal Calibration "
+        f"(cost-aware outcomes, cost_model={COST_MODEL_VERSION}) ==="
+    )
     typer.echo(
         f"  {'family':<18s} {'side':<6s} {'market':<7s} "
         f"{'horizon':<6s} {'n':>4s} {'win%':>6s} {'avg_net':>8s}"
@@ -1370,14 +1375,15 @@ def shadow_trades(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Show shadow trades (counterfactual: what if we traded #2/#3 candidate)."""
-    from aletheia.storage.repositories import list_shadow_trades
-    rows = list_shadow_trades(
+    from aletheia.counterfactual.trades import list_shadow_trade_diagnostics
+
+    rows = list_shadow_trade_diagnostics(
         scanner_family=scanner,
         resolved=resolved or None,
         limit=limit,
     )
     display = [{
-        "batch_id": r.get("batch_id", "")[:8],
+        "batch_id": (r.get("batch_id") or "")[:8],
         "symbol": r.get("symbol"),
         "direction": r.get("direction"),
         "scanner_family": r.get("scanner_family"),
@@ -1386,6 +1392,9 @@ def shadow_trades(
         "was_selected": r.get("was_selected"),
         "pnl_pct": r.get("pnl_pct"),
         "resolved_at": r.get("resolved_at"),
+        "authority_status": r.get("authority_status"),
+        "authorized": r.get("authorized"),
+        "authority_reason": r.get("authority_reason"),
     } for r in rows]
     _output(display, json_output)
 

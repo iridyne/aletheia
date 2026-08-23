@@ -108,6 +108,43 @@ def test_expected_path_starts_after_submillisecond_entry_boundary():
     assert last == _FIRST_BUCKET_MS + 300_000
 
 
+def test_recent_stop_loss_positions_preserve_exact_subsecond_instants():
+    from aletheia.storage import repositories as repo
+
+    rows = [
+        ("latest", "2026-08-23T00:00:00.000900+00:00"),
+        ("equal-z", "2026-08-23T00:00:00.000500Z"),
+        ("equal-offset", "2026-08-23T08:00:00.000500+08:00"),
+        ("early", "2026-08-23T00:00:00.000100Z"),
+        ("invalid", "not-a-time"),
+        ("missing", None),
+    ]
+    repo.get_db().executemany(
+        "INSERT INTO positions "
+        "(id,symbol,market_type,direction,quantity,entry_price,execution_mode,"
+        "status,close_reason,closed_at) "
+        "VALUES (?,'BTC/USDT','spot','long',1,100,'paper_internal',"
+        "'closed','stop_loss',?)",
+        rows,
+    )
+
+    recent = analysis._recent_stop_loss_positions(
+        cutoff="2026-08-23T00:00:00.000500+00:00",
+        limit=10,
+    )
+    newest = analysis._recent_stop_loss_positions(
+        cutoff="2026-08-23T00:00:00.000500+00:00",
+        limit=2,
+    )
+
+    assert [row["id"] for row in recent] == [
+        "latest",
+        "equal-offset",
+        "equal-z",
+    ]
+    assert [row["id"] for row in newest] == ["latest", "equal-offset"]
+
+
 @pytest.mark.parametrize(
     ("position", "highs", "expected_root"),
     [

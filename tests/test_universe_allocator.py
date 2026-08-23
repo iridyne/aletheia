@@ -518,15 +518,52 @@ def test_calibration_no_effect_on_unknown_family(cfg):
 def test_get_family_multipliers_empty_db(monkeypatch):
     """With no calibration data, returns empty dict."""
     import aletheia.storage.repositories as _repo
-    monkeypatch.setattr(_repo, "calibration_stats", lambda: [])
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    calls = []
+    monkeypatch.setattr(
+        _repo, "calibration_stats",
+        lambda **kwargs: calls.append(kwargs) or [],
+    )
     result = get_family_multipliers()
     assert result == {}
+    assert calls == [{"cost_model_version": COST_MODEL_VERSION}]
+
+
+def test_filter_advisor_reads_only_current_cost_model(monkeypatch):
+    import aletheia.storage.repositories as _repo
+    from aletheia.universe.filter_advisor import (
+        get_family_filter_pressure_summary,
+        get_family_spread_tolerances,
+    )
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    calls = []
+
+    def _empty(name):
+        def _read(**kwargs):
+            calls.append((name, kwargs))
+            return []
+        return _read
+
+    monkeypatch.setattr(
+        _repo, "family_spread_tolerance_stats", _empty("spread"),
+    )
+    monkeypatch.setattr(_repo, "filter_pressure_stats", _empty("pressure"))
+
+    assert get_family_spread_tolerances() == {}
+    assert get_family_filter_pressure_summary() == []
+    assert calls == [
+        ("spread", {"cost_model_version": COST_MODEL_VERSION}),
+        ("pressure", {"cost_model_version": COST_MODEL_VERSION}),
+        ("pressure", {"cost_model_version": COST_MODEL_VERSION}),
+    ]
 
 
 def test_get_family_multipliers_insufficient_samples(monkeypatch):
     """Families below _MIN_CALIBRATION_SAMPLES threshold get no multiplier."""
     import aletheia.storage.repositories as _repo
-    monkeypatch.setattr(_repo, "calibration_stats", lambda: [
+    monkeypatch.setattr(_repo, "calibration_stats", lambda **_: [
         {"scanner_family": "momentum", "horizon": "4h", "n": 5, "win_count": 4},
     ])
     result = get_family_multipliers()
@@ -536,7 +573,7 @@ def test_get_family_multipliers_insufficient_samples(monkeypatch):
 def test_get_family_multipliers_above_threshold(monkeypatch):
     """Family with enough samples and positive net expectancy gets boost > 1.0."""
     import aletheia.storage.repositories as _repo
-    monkeypatch.setattr(_repo, "calibration_stats", lambda: [
+    monkeypatch.setattr(_repo, "calibration_stats", lambda **_: [
         {"scanner_family": "momentum", "horizon": "4h", "n": 50,
          "win_count": 35, "avg_return": 1.5, "min_return": -2.0},
     ])
@@ -557,7 +594,7 @@ def test_get_family_multipliers_above_threshold(monkeypatch):
 def test_calibration_keeps_direction_and_market_cohorts_separate(monkeypatch):
     import aletheia.storage.repositories as _repo
 
-    monkeypatch.setattr(_repo, "calibration_stats", lambda: [
+    monkeypatch.setattr(_repo, "calibration_stats", lambda **_: [
         {
             "scanner_family": "momentum", "direction": "long", "market_type": "spot",
             "horizon": "4h", "n": 50, "win_count": 38, "avg_return": 1.2, "min_return": -1.5,
@@ -579,7 +616,7 @@ def test_calibration_penalizes_high_winrate_negative_expectancy(monkeypatch):
     """P1-3: a family that wins often but bleeds money (small wins, big losses → negative
     net expectancy) is PENALIZED, not boosted. Win rate alone would have boosted it."""
     import aletheia.storage.repositories as _repo
-    monkeypatch.setattr(_repo, "calibration_stats", lambda: [
+    monkeypatch.setattr(_repo, "calibration_stats", lambda **_: [
         {"scanner_family": "momentum", "horizon": "4h", "n": 60,
          "win_count": 48, "avg_return": -0.8, "min_return": -6.0},  # 80% win rate, negative net
     ])
@@ -590,7 +627,7 @@ def test_calibration_penalizes_high_winrate_negative_expectancy(monkeypatch):
 def test_calibration_downside_harm_forbids_boost(monkeypatch):
     """P1-3: a positive-mean family with a catastrophic worst-case outcome gets no boost."""
     import aletheia.storage.repositories as _repo
-    monkeypatch.setattr(_repo, "calibration_stats", lambda: [
+    monkeypatch.setattr(_repo, "calibration_stats", lambda **_: [
         {"scanner_family": "momentum", "horizon": "4h", "n": 60,
          "win_count": 40, "avg_return": 1.0, "min_return": -30.0},  # positive mean, fat tail
     ])

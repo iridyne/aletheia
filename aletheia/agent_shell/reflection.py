@@ -703,6 +703,7 @@ def _compute_missed_opportunity(
     if signal_source != "market_observer":
         return "Counterfactual unavailable: source has no registered fixed-horizon outcome."
     try:
+        from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
         from aletheia.storage.sqlite import get_db
         db = get_db()
         opp = db.execute(
@@ -723,8 +724,10 @@ def _compute_missed_opportunity(
                         f"net={assessed.net_return_pct:+.2f}% ({direction or 'unknown'})."
                     )
                 return f"Counterfactual unavailable: linked outcome excluded ({assessed.reason})."
+        keyed_authority = valid_keyed_shadow_projection_sql()
         shadow = db.execute(
             "SELECT * FROM shadow_trades WHERE opportunity_id=? AND resolved_at IS NOT NULL "
+            f"AND (outcome_candidate_key IS NULL OR ({keyed_authority})) "
             "ORDER BY resolved_at DESC LIMIT 1",
             (opportunity_id,),
         ).fetchone()

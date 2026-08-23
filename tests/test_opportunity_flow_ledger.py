@@ -101,12 +101,14 @@ def _insert_forward(
     net = directional - 0.2
     db.execute(
         "INSERT INTO universe_forward_outcomes "
-        "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, entry_price_usd, "
+        "(id, member_id, snapshot_id, venue, symbol, scanner_family, direction, horizon, entry_price_usd, "
         "entry_ts, due_at, settled_at, exit_price_usd, forward_return_pct, gross_return_pct, "
         "directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, "
-        "estimated_funding_pct, net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
-        "VALUES (?, ?, ?, 'BTC/USDT', 'momentum', ?, ?, 100, datetime('now','-2 hours'), "
-        "datetime('now','-1 hour'), datetime('now'), 100.8, ?, ?, ?, 0.1, 0.1, 0, ?, 0.05, 'v1', 'settled')",
+        "estimated_funding_pct, net_return_pct, min_tradable_edge_pct, "
+        "settlement_price_source, settlement_lag_sec, cost_model_version, status) "
+        "VALUES (?, ?, ?, 'bitget', 'BTC/USDT', 'momentum', ?, ?, 100, datetime('now','-2 hours'), "
+        "datetime('now','-1 hour'), datetime('now'), 100.8, ?, ?, ?, 0.1, 0.1, 0, ?, 0.05, "
+        "'horizon_ohlcv', 0, 'v1', 'settled')",
         (
             f"fwd-flow-{member_id}-{snapshot_id}-{horizon}", member_id,
             snapshot_id, direction, horizon, ret, ret, directional, net,
@@ -230,6 +232,49 @@ def test_opportunity_flow_pending_shadow_is_not_reported_as_resolved():
     trace = trace_opportunity_flow("opp-flow-1")
 
     assert trace["counterfactual"]["shadow"]["status"] == "pending"
+    assert not any(event["stage"] == "shadow_resolved" for event in trace["timeline"])
+
+
+def test_opportunity_flow_preserves_unresolved_keyed_shadow_exposure():
+    from aletheia.analytics.opportunity_flow import trace_opportunity_flow
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db)
+    db.execute(
+        "INSERT INTO shadow_trades "
+        "(id, opportunity_id, symbol, direction, scanner_family, trade_score, rank, "
+        "entry_price, outcome_candidate_key) "
+        "VALUES ('shadow-keyed-pending', 'opp-flow-1', 'BTC/USDT', 'long', 'momentum', "
+        "50, 1, 100, 'opportunity:opp-flow-1')"
+    )
+    db.commit()
+
+    trace = trace_opportunity_flow("opp-flow-1")
+
+    assert trace["counterfactual"]["shadow"]["status"] == "pending"
+    assert trace["counterfactual"]["shadow"]["pnl_pct"] is None
+
+
+def test_opportunity_flow_hides_forged_keyed_positive_shadow_result():
+    from aletheia.analytics.opportunity_flow import trace_opportunity_flow
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    _insert_opp(db)
+    db.execute(
+        "INSERT INTO shadow_trades "
+        "(id, opportunity_id, symbol, direction, scanner_family, trade_score, rank, "
+        "entry_price, outcome_candidate_key, resolved_at, pnl_pct) "
+        "VALUES ('shadow-forged-positive', 'opp-flow-1', 'BTC/USDT', 'long', 'momentum', "
+        "50, 1, 100, 'opportunity:opp-flow-1', datetime('now'), 9.0)"
+    )
+    db.commit()
+
+    trace = trace_opportunity_flow("opp-flow-1")
+
+    assert trace["counterfactual"]["shadow"] is None
+    assert trace["counterfactual"]["verdict"] == "insufficient_data"
     assert not any(event["stage"] == "shadow_resolved" for event in trace["timeline"])
 
 

@@ -1988,11 +1988,17 @@ def _family_live_edge(
     )
     try:
         from aletheia.storage.repositories import family_direction_edge
-        for row in family_direction_edge(within_days=7):
+        from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+        for row in family_direction_edge(
+            within_days=7,
+            cost_model_version=COST_MODEL_VERSION,
+        ):
             if (
                 row.get("scanner_family") == family
                 and row.get("direction") == direction
                 and (row.get("market_type") or "spot") == normalized_market
+                and row.get("cost_model_version") == COST_MODEL_VERSION
             ):
                 return row
     except Exception:

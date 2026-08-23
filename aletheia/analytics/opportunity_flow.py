@@ -987,8 +987,15 @@ def _rows_by_ids(db, table: str, column: str, ids: list[Any], order_col: str) ->
 def _counterfactual(db, opp: dict[str, Any], direction: str | None) -> dict[str, Any]:
     out: dict[str, Any] = {"shadow": None, "forward": {}}
     if _table_exists(db, "shadow_trades"):
+        from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
+
+        keyed_authority = valid_keyed_shadow_projection_sql()
         row = db.execute(
             "SELECT * FROM shadow_trades WHERE opportunity_id = ? "
+            "AND (NULLIF(TRIM(outcome_candidate_key), '') IS NULL "
+            "OR (resolved_at IS NULL AND exit_price IS NULL AND pnl_pct IS NULL "
+            "AND gross_return_pct IS NULL AND net_pnl_pct IS NULL) "
+            f"OR {keyed_authority}) "
             "ORDER BY datetime(COALESCE(resolved_at, created_at)) DESC LIMIT 1",
             (opp.get("id"),),
         ).fetchone()

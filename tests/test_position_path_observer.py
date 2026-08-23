@@ -1582,6 +1582,87 @@ def test_observer_first_cursor_initialization_does_not_backfill_history():
     assert repo.get_position_path_observer_cursor()["last_enqueued_bucket_open_ms"] == bucket
 
 
+def test_position_path_bucket_membership_preserves_exact_subsecond_instants():
+    from aletheia.storage import repositories as repo
+
+    rows = [
+        (
+            "opened-before",
+            "2026-08-13T00:05:00.000100Z",
+            "2026-08-13T00:10:00.000900Z",
+        ),
+        (
+            "opened-equal",
+            "2026-08-13T08:05:00.000500+08:00",
+            "2026-08-13T08:10:00.000500+08:00",
+        ),
+        (
+            "opened-after",
+            "2026-08-13T00:05:00.000900Z",
+            "2026-08-13T00:10:00.000900Z",
+        ),
+        (
+            "closed-before",
+            "2026-08-13T00:00:00Z",
+            "2026-08-13T00:10:00.000100Z",
+        ),
+        (
+            "closed-equal",
+            "2026-08-13T00:00:00Z",
+            "2026-08-13T00:10:00.000500Z",
+        ),
+        (
+            "closed-after",
+            "2026-08-13T00:00:00Z",
+            "2026-08-13T00:10:00.000900Z",
+        ),
+        ("invalid-open", "not-a-time", "2026-08-13T00:10:00.000900Z"),
+        ("invalid-close", "2026-08-13T00:00:00Z", "not-a-time"),
+        ("missing-close", "2026-08-13T00:00:00Z", None),
+    ]
+    repo.get_db().executemany(
+        "INSERT INTO positions "
+        "(id,symbol,market_type,direction,quantity,entry_price,execution_mode,"
+        "status,opened_at,closed_at) "
+        "VALUES (?,'BTC/USDT','spot','long',1,100,'paper_internal','closed',?,?)",
+        rows,
+    )
+    repo.get_db().executemany(
+        "INSERT INTO positions "
+        "(id,symbol,market_type,direction,quantity,entry_price,execution_mode,"
+        "status,opened_at) "
+        "VALUES (?,'BTC/USDT','spot','long',1,100,'paper_internal','open',?)",
+        [
+            ("open-before", "2026-08-13T00:05:00.000100Z"),
+            ("open-equal", "2026-08-13T08:05:00.000500+08:00"),
+            ("open-after", "2026-08-13T00:05:00.000900Z"),
+        ],
+    )
+
+    listed = repo.list_positions_for_path_observation_bucket(
+        bucket_open="2026-08-13T00:05:00.000500Z",
+        bucket_end="2026-08-13T00:10:00.000500Z",
+    )
+    result = repo.enqueue_position_path_observation_buckets_through(
+        1_786_579_500_000,
+        observed_at="2026-08-13T00:10:00+00:00",
+    )
+
+    assert [row["id"] for row in listed] == [
+        "open-equal",
+        "open-before",
+        "closed-after",
+        "closed-equal",
+        "opened-equal",
+        "opened-before",
+    ]
+    assert result["enqueued_position_buckets"] == 3
+    assert {
+        row["position_id"]
+        for row in repo.list_oldest_deferred_position_path_bucket(limit=10)
+    } == {"closed-before", "closed-equal", "closed-after"}
+
+
 def test_observer_cursor_and_deferred_rows_roll_back_together():
     from aletheia.storage import repositories as repo
 

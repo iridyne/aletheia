@@ -9,6 +9,8 @@ import math
 from statistics import fmean
 from typing import Any
 
+from aletheia.analytics.outcome_semantics import validated_outcome_economics
+
 
 CONTRACT_VERSION = "risk-policy-value/v1"
 BASELINE_POLICY = "pass-all-candidates/v1"
@@ -89,7 +91,9 @@ def build_risk_policy_contribution(
         "fo.entry_price_usd, fo.entry_ts, fo.due_at, fo.settled_at, "
         "fo.exit_price_usd, fo.directional_return_pct, fo.estimated_fee_pct, "
         "fo.estimated_spread_slippage_pct, fo.estimated_funding_pct, "
-        "fo.net_return_pct, fo.settlement_price_source, fo.cost_model_version, "
+        "fo.net_return_pct, fo.min_tradable_edge_pct, fo.settlement_price_source, "
+        "fo.settlement_lag_sec, "
+        "fo.cost_model_version, "
         "fo.status AS outcome_status "
         "FROM risk_decisions rd "
         "JOIN trade_proposals p ON p.id=rd.proposal_id "
@@ -300,32 +304,29 @@ def _exclusion_reason(row: dict[str, Any], cutoff_at: datetime) -> str | None:
     proposal_price = _finite(row.get("proposal_price"), positive=True)
     if entry is None or proposal_price is None or not math.isclose(entry, proposal_price):
         return "risk_outcome_entry_mismatch"
-    economics = [
-        _finite(row.get(field))
-        for field in (
-            "directional_return_pct", "estimated_fee_pct",
-            "estimated_spread_slippage_pct", "estimated_funding_pct",
-            "net_return_pct",
-        )
-    ]
-    if any(value is None for value in economics) or not row.get("cost_model_version"):
+    economics_fields = (
+        "directional_return_pct", "estimated_fee_pct",
+        "estimated_spread_slippage_pct", "estimated_funding_pct",
+        "net_return_pct", "min_tradable_edge_pct",
+    )
+    if any(row.get(field) is None for field in economics_fields) or not row.get(
+        "cost_model_version"
+    ):
         return "incomplete_risk_outcome_economics"
-    directional, fee, spread, funding, net = economics
-    if fee < 0 or spread < 0:
+    economics = validated_outcome_economics({
+        **{field: row.get(field) for field in economics_fields},
+        "venue": row.get("outcome_venue"),
+        "market_type": row.get("outcome_market_type"),
+        "cost_model_version": row.get("cost_model_version"),
+        "direction": row.get("outcome_direction"),
+        "entry_price_usd": row.get("entry_price_usd"),
+        "exit_price_usd": row.get("exit_price_usd"),
+        "horizon": "24h",
+        "settlement_price_source": row.get("settlement_price_source"),
+        "settlement_lag_sec": row.get("settlement_lag_sec"),
+    })
+    if economics is None:
         return "risk_outcome_economics_mismatch"
-    exit_price = _finite(row.get("exit_price_usd"), positive=True)
-    direction = str(row.get("outcome_direction") or "").lower()
-    if exit_price is None:
-        return "incomplete_risk_outcome_settlement"
-    expected_directional = (exit_price - entry) / entry * 100.0
-    if direction == "short":
-        expected_directional = -expected_directional
-    if not math.isclose(directional, expected_directional, abs_tol=1e-8):
-        return "risk_outcome_economics_mismatch"
-    if not math.isclose(net, directional - fee - spread - funding, abs_tol=1e-8):
-        return "risk_outcome_economics_mismatch"
-    if not row.get("settlement_price_source"):
-        return "incomplete_risk_outcome_settlement"
     return None
 
 

@@ -312,7 +312,7 @@ systemctl --user disable --now aletheia-observer.timer
 - Check `~/.aletheia/observation-lab/lab.db` mtime — should be newer than last observe interval.
 
 **Is UFC equivalence still matching?**
-- `sqlite3 ~/.aletheia/observation-lab/lab.db 'select matched, count(*) from ufc_shadow_equivalence where checked_at > date("now", "-1 day") group by matched'` — `matched=1` should dominate; `matched=0` rows warrant investigation via `mismatch_field`.
+- `aletheia observe overview` — reports decoded `matched / checked` plus `skipped`; a skip is neutral and excluded from the checked denominator. The legacy table stores both skips and mismatches as `matched=0`, so never interpret that raw column without its `notes` and `mismatch_field`.
 
 **Did anything drift?**
 - `sqlite3 ~/.aletheia/observation-lab/lab.db 'select joint_fingerprint from joint_checkpoints order by recorded_at desc limit 2'` — if the two rows differ, that's the moment something moved.

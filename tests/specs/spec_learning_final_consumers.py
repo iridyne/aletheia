@@ -600,12 +600,19 @@ def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanne
     _ts = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
     db.execute(
         "INSERT INTO universe_forward_outcomes "
-        "(id,outcome_candidate_key,member_id,snapshot_id,symbol,scanner_family,direction,horizon,"
-        "entry_price_usd,entry_ts,due_at,settled_at,net_return_pct,min_tradable_edge_pct,"
-        "cost_model_version,status) VALUES (?,?,?,?,?,?,?,?,100,?,?,?,?,0.05,?,?)",
+        "(id,outcome_candidate_key,member_id,snapshot_id,venue,symbol,scanner_family,direction,horizon,"
+        "entry_price_usd,exit_price_usd,entry_ts,due_at,settled_at,directional_return_pct,"
+        "settlement_price_source,settlement_lag_sec,"
+        "estimated_fee_pct,estimated_spread_slippage_pct,estimated_funding_pct,"
+        "net_return_pct,min_tradable_edge_pct,cost_model_version,status) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
-            oid, f"candidate-{oid}" if complete else None, "member", "snapshot", symbol,
-            scanner, direction, "24h", _ts, _ts, _ts, 1.0,
+            oid, f"candidate-{oid}" if complete else None, "member", "snapshot",
+            "bitget" if complete else None, symbol,
+            scanner, direction, "24h", 100.0, 101.2 if direction == "long" else 98.8,
+            _ts, _ts, _ts,
+            1.2, "horizon_ohlcv" if complete else None, 0 if complete else None,
+            0.1, 0.1, 0.0, 1.0, 0.05,
             "v1" if complete else None, "settled",
         ),
     )
@@ -642,6 +649,20 @@ async def test_lesson_reviewer_requires_clean_exact_scope(monkeypatch):
             db, oid=f"dirty-{i}", symbol="BTC/USDT", direction="long", scanner="momentum",
             complete=False,
         )
+    _insert_forward_outcome(
+        db, oid="malformed-edge", symbol="BTC/USDT", direction="long", scanner="momentum",
+    )
+    db.execute(
+        "UPDATE universe_forward_outcomes SET min_tradable_edge_pct='malformed' "
+        "WHERE id='malformed-edge'"
+    )
+    _insert_forward_outcome(
+        db, oid="blob-edge", symbol="BTC/USDT", direction="long", scanner="momentum",
+    )
+    db.execute(
+        "UPDATE universe_forward_outcomes SET min_tradable_edge_pct=? WHERE id='blob-edge'",
+        (b"0.05",),
+    )
     db.commit()
 
     lesson = LessonStore().create(

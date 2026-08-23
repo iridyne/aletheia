@@ -53,9 +53,12 @@ def _insert_settled_outcome(
     db.execute(
         "INSERT INTO filter_candidate_outcomes ("
         "id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
-        "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
-        "cost_model_version, status) VALUES (?, ?, 'test', 'BTC/USDT', 'perp', "
-        "'long', '4h', 100, ?, ?, ?, 0.2, 'test-v1', 'settled')",
+        "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
+        "settlement_price_source, settlement_lag_sec, directional_return_pct, "
+        "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+        "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
+        "VALUES (?, ?, 'test', 'BTC/USDT', 'perp', 'long', '4h', 100, 100.4, ?, ?, ?, "
+        "'horizon_ohlcv', 0.0, 0.4, 0.1, 0.1, 0, 0.2, 0.05, 'v1', 'settled')",
         (f"outcome-{base}", base, now, now, now),
     )
     if not was_in_tx:
@@ -447,6 +450,7 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
     )
     from aletheia.learning.verdicts import METRIC_VERSION
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     kwargs = dict(
         path_id="universe_family_calibration",
@@ -482,6 +486,7 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
             code_commit="older-build",
             behavior_contract_hash=behavior_contract_hash,
             harm_metrics_json=json.dumps({
+                "expected_cost_model_version": COST_MODEL_VERSION,
                 "harm_state": "clear",
                 "breached": False,
                 "assigned_treatment_n": 1,
@@ -564,6 +569,7 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
             metric_version=METRIC_VERSION, code_commit="newer-build",
             behavior_contract_hash=behavior_contract_hash,
             harm_metrics_json=json.dumps({
+                "expected_cost_model_version": COST_MODEL_VERSION,
                 "harm_state": "clear",
                 "breached": False,
                 "assigned_treatment_n": 1,
@@ -712,6 +718,7 @@ def test_universe_calibration_is_neutral_shadow_before_authority(monkeypatch):
     )
     outcome_recorder.register_pending([{
         "id": "member-1", "snapshot_id": "snapshot-1", "symbol": "BTC/USDT",
+        "venue": "okx",
         "scanner_family": "momentum", "direction": "long", "market_type": "perp",
         "entry_price_usd": 100.0, "learning_candidate_key": proposed_feat["learning_candidate_key"],
     }], entry_ts=datetime.now(timezone.utc).isoformat())
@@ -916,15 +923,8 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
          "allocation_status": "dropped"},
     ]
 
-    class _MD:
-        ccxt_exchange = "okx"
-
-    class _Cfg:
-        market_data = _MD()
-
     _register_experiment_candidate_outcomes(
         scored,
-        _Cfg(),
         entry_ts=now,
         allocated=[scored[0]],
     )
@@ -945,9 +945,13 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
 
     was = db.in_transaction
     db.execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.3, "
+        "UPDATE filter_candidate_outcomes SET status='settled', "
+        "directional_return_pct=0.5, exit_price_usd=entry_price_usd * 1.005, "
+        "net_return_pct=0.3, "
         "estimated_fee_pct=0.1, estimated_spread_slippage_pct=0.1, "
-        "estimated_funding_pct=0.0, mae_pct=-0.1, cost_model_version='test-v1', settled_at=? "
+        "estimated_funding_pct=0.0, min_tradable_edge_pct=0.05, "
+        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0.0, "
+        "mae_pct=-0.1, cost_model_version='v1', settled_at=? "
         "WHERE outcome_candidate_key IN (?, ?) AND horizon='4h'",
         (settlement_at.isoformat(), ck_t, ck_c),
     )

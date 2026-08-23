@@ -47,8 +47,9 @@ def _ready_research(*source_ids: str) -> dict:
 ))
 def test_reflection_rejects_symbol_only_outcome_inference(monkeypatch):
     from aletheia.agent_shell import reflection
-    from aletheia.storage.models import Position
-    from aletheia.storage.repositories import insert_position
+    from aletheia.storage.models import Position, ShadowTrade
+    from aletheia.storage.repositories import insert_position, insert_shadow_trade
+    from aletheia.storage.sqlite import get_db
     from tests.test_outcome_closure import _insert_entry_chain
 
     opportunity_id, proposal_id, order_id = _insert_entry_chain(
@@ -102,6 +103,26 @@ def test_reflection_rejects_symbol_only_outcome_inference(monkeypatch):
     assert "causally linked" in exact.lower() and "+10.00" in exact
     assert "unavailable" in reflection._compute_missed_opportunity(
         None, "market_observer", "long", "2026-07-12T08:00:00+00:00"
+    ).lower()
+    insert_shadow_trade(ShadowTrade(
+        id="orphan-keyed-reflection",
+        opportunity_id=opportunity_id,
+        symbol="BTC/USDT",
+        direction="long",
+        entry_price=100.0,
+        outcome_candidate_key="orphan-keyed-reflection",
+    ))
+    get_db().execute(
+        "UPDATE shadow_trades SET exit_price=101,pnl_pct=1,gross_return_pct=1,"
+        "net_pnl_pct=1,estimated_fee_pct=0,estimated_spread_slippage_pct=0,"
+        "estimated_funding_pct=0,min_tradable_edge_pct=0,"
+        "settlement_price_source='horizon_ohlcv',settlement_lag_sec=0,"
+        "cost_model_version='shadow-test-v1',"
+        "resolved_at='2026-07-13T08:00:00+00:00' "
+        "WHERE id='orphan-keyed-reflection'"
+    )
+    assert "unavailable" in reflection._compute_missed_opportunity(
+        opportunity_id, "market_observer", "long", "2026-07-12T08:00:00+00:00"
     ).lower()
 
 

@@ -3569,7 +3569,9 @@ def _probe_ohlcv_coverage(report: Report) -> None:
 def _probe_signal_effectiveness(report: Report) -> None:
     """Check universe signal win-rate over the last 7 days."""
     try:
+        from aletheia.storage.repositories import complete_outcome_economics_sql
         from aletheia.storage.sqlite import get_db
+        from aletheia.universe.outcome_economics import COST_MODEL_VERSION
         from datetime import timedelta
 
         db = get_db()
@@ -3577,17 +3579,17 @@ def _probe_signal_effectiveness(report: Report) -> None:
 
         # 24h horizon — most meaningful for strategy effectiveness
         row = db.execute(
-            """SELECT COUNT(*),
-                      SUM(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0)
+            f"""SELECT COUNT(*),
+                      SUM(CASE WHEN net_return_pct > min_tradable_edge_pct
                                THEN 1 ELSE 0 END),
                       AVG(net_return_pct)
                FROM universe_forward_outcomes
                WHERE status = 'settled'
                  AND horizon = '24h'
                  AND settled_at >= ?
-                 AND net_return_pct IS NOT NULL
-                 AND ABS(net_return_pct) <= 100""",
-            (cutoff,),
+                 AND cost_model_version = ?
+                 AND {complete_outcome_economics_sql()}""",
+            (cutoff, COST_MODEL_VERSION),
         ).fetchone()
 
         total, wins, avg_ret = row if row else (0, None, None)
@@ -3599,20 +3601,24 @@ def _probe_signal_effectiveness(report: Report) -> None:
 
         win_rate = (wins or 0) / total * 100
         avg_str = f"{avg_ret:.3f}%" if avg_ret is not None else "n/a"
+        identity = f"cost_model={COST_MODEL_VERSION}"
 
         if win_rate < 40:
             report.add(
                 "data.signal", "warn",
-                f"24h net signal win_rate {win_rate:.1f}% ({total} settled, avg_net={avg_str}) — "
+                f"24h net signal win_rate {win_rate:.1f}% "
+                f"({total} settled, avg_net={avg_str}, {identity}) — "
                 "aggregate observation requires cohort diagnosis",
                 "inspect outcome coverage, candidate-skip evidence, and cohort splits; do not auto-tune PI",
             )
         elif win_rate >= 55:
             report.add("data.signal", "ok",
-                       f"24h net signal win_rate {win_rate:.1f}% ({total} settled, avg_net={avg_str})")
+                       f"24h net signal win_rate {win_rate:.1f}% "
+                       f"({total} settled, avg_net={avg_str}, {identity})")
         else:
             report.add("data.signal", "info",
-                       f"24h net signal win_rate {win_rate:.1f}% ({total} settled, avg_net={avg_str}) — near-random")
+                       f"24h net signal win_rate {win_rate:.1f}% "
+                       f"({total} settled, avg_net={avg_str}, {identity}) — near-random")
     except Exception:
         pass
 
@@ -3620,19 +3626,23 @@ def _probe_signal_effectiveness(report: Report) -> None:
 def _probe_outcome_economics(report: Report) -> None:
     """Expose whether post-migration outcomes have complete net economics."""
     try:
+        from aletheia.storage.repositories import complete_outcome_economics_sql
         from aletheia.storage.sqlite import get_db
+        from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
         db = get_db()
         row = db.execute(
             "SELECT COUNT(*) AS total, "
-            "SUM(CASE WHEN net_return_pct IS NOT NULL THEN 1 ELSE 0 END) AS complete, "
+            f"SUM(CASE WHEN {complete_outcome_economics_sql()} "
+            "  THEN 1 ELSE 0 END) AS complete, "
             "SUM(CASE WHEN net_return_pct IS NULL "
             "  AND market_type IN ('perp','futures','swap','usdt_futures') "
             "  AND funding_rate_at_entry IS NULL THEN 1 ELSE 0 END) AS missing_funding, "
             "SUM(CASE WHEN net_return_pct IS NULL "
             "  AND settlement_price_source = 'late_ticker' THEN 1 ELSE 0 END) AS late_price "
             "FROM universe_forward_outcomes "
-            "WHERE status='settled' AND cost_model_version='v1'"
+            "WHERE status='settled' AND cost_model_version=?",
+            (COST_MODEL_VERSION,),
         ).fetchone()
         total = int(row["total"] or 0) if row else 0
         complete = int(row["complete"] or 0) if row else 0
@@ -3642,13 +3652,15 @@ def _probe_outcome_economics(report: Report) -> None:
             report.add(
                 "data.outcome_economics",
                 "info",
-                "cost-aware outcome model is warming up; no settled v1 rows yet",
+                "cost-aware outcome model is warming up; no settled "
+                f"{COST_MODEL_VERSION} rows yet",
             )
             return
         ratio = complete / total
         detail = (
             f"cost-aware outcomes complete={complete}/{total} ({ratio:.0%}); "
-            f"missing_funding={missing_funding}, late_price={late_price}"
+            f"missing_funding={missing_funding}, late_price={late_price}; "
+            f"cost_model={COST_MODEL_VERSION}"
         )
         if total >= 10 and ratio < 0.5:
             report.add(
@@ -3668,6 +3680,7 @@ def _probe_outcome_economics(report: Report) -> None:
 def _probe_filter_evidence(report: Report) -> None:
     """Report whether filter pass/reject facts and their net outcomes are connected."""
     try:
+        from aletheia.storage.repositories import complete_outcome_economics_sql
         from aletheia.storage.sqlite import get_db
 
         db = get_db()
@@ -3726,7 +3739,8 @@ def _probe_filter_evidence(report: Report) -> None:
         outcomes = db.execute(
             "SELECT COUNT(DISTINCT outcome_candidate_key) AS registered, "
             "SUM(CASE WHEN status='settled' THEN 1 ELSE 0 END) AS settled, "
-            "SUM(CASE WHEN status='settled' AND net_return_pct IS NOT NULL "
+            "SUM(CASE WHEN status='settled' AND "
+            f"  {complete_outcome_economics_sql()} "
             "  THEN 1 ELSE 0 END) AS net_complete, "
             "SUM(CASE WHEN status='pending' AND datetime(due_at) < datetime(?) "
             "  THEN 1 ELSE 0 END) AS overdue, "

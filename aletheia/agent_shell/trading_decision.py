@@ -2504,24 +2504,6 @@ def _proposal_bias_brake_reason(decision: TradingDecision) -> str | None:
 
 _OI_DIV_LABEL = {1: "hidden_acc", -1: "weak_rally", 0: ""}
 
-def _fmt_family_edge(edge: dict | None) -> str:
-    """Format per-(scanner_family, direction) live edge for the opportunity line.
-
-    Thesis evidence (P1a): shows the PI the actual settled track record of this
-    candidate's scanner family + direction so it weighs the pick against real
-    outcomes, not just the current signal. Empty string when no settled data yet
-    (never fabricate an edge from zero samples). n>=5 lends the number weight.
-    """
-    if not edge or not edge.get("n"):
-        return ""
-    n = edge["n"]
-    wr = edge.get("win_rate")
-    ar = edge.get("avg_return")
-    wr_s = f"{wr:.0f}%WR" if wr is not None else "?WR"
-    ar_s = f"{ar:+.2f}%avg_net" if ar is not None else ""
-    weak = " (thin)" if n < 5 else ""
-    return f" {{edge:{n}T {wr_s} {ar_s}{weak}}}"
-
 
 def _fmt_position_x_context(context: dict | None) -> str:
     if not context or context.get("status") != "ok":

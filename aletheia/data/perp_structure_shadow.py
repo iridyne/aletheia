@@ -7,6 +7,7 @@ import json
 import math
 from statistics import mean, median
 
+from aletheia.analytics.outcome_semantics import valid_settlement_price_provenance
 from aletheia.storage import repositories as repo
 
 
@@ -250,6 +251,8 @@ def _prospective_exclusion(row: dict, max_ingestion_lag_seconds: int) -> str | N
         return "settled_before_due"
     if not row.get("settlement_price_source"):
         return "missing_settlement_source"
+    if not valid_settlement_price_provenance(row):
+        return "invalid_settlement_provenance"
     if not row.get("source_hash") or row.get("source_hash") != row.get("snapshot_source_hash"):
         return "source_identity_mismatch"
     return None

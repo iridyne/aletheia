@@ -92,6 +92,7 @@ def _measurement(
     from aletheia.learning.ledger import insert_record
     from aletheia.learning.models import LearningContributionVerdict
     from aletheia.learning.verdicts import METRIC_VERSION
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     metric = metric or METRIC_VERSION
     behavior_contract_hash = behavior_contract_hash or build_behavior_contract_hash(
@@ -149,6 +150,7 @@ def _measurement(
         confidence_low=0.1,
         confidence_high=0.8,
         harm_metrics_json=json.dumps({
+            "expected_cost_model_version": COST_MODEL_VERSION,
             "policy_epoch": epoch,
             "horizon": horizon,
             "outcome_contract_version": contract,
@@ -1885,6 +1887,44 @@ def test_context_stale_safety_measurement_can_withdraw_authority(monkeypatch, me
     assert get_record("learning_experiments", experiment.experiment_id)["ended_at"] is not None
 
 
+@pytest.mark.parametrize(
+    ("measurement", "expected_action"),
+    [("negative", "refreeze"), ("invalid", "invalidate"), ("positive", "hold")],
+)
+def test_cost_model_stale_measurement_only_permits_safety_actions(
+    monkeypatch, measurement, expected_action,
+):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    verdict = _measurement(hypothesis, experiment, measurement)
+    from aletheia.storage.sqlite import get_db
+
+    metrics = json.loads(verdict.harm_metrics_json)
+    metrics.pop("expected_cost_model_version")
+    get_db().execute(
+        "UPDATE learning_contribution_verdicts SET harm_metrics_json=? "
+        "WHERE verdict_id=?",
+        (json.dumps(metrics), verdict.verdict_id),
+    )
+    get_db().commit()
+    _configure(
+        monkeypatch,
+        _settings(automation=True, paper=True, paths=[hypothesis.path_id]),
+    )
+    from aletheia.learning.lifecycle import process_lifecycle
+
+    result = process_lifecycle(
+        experiment.experiment_id,
+        current_policy_epoch="epoch-a",
+    )
+
+    assert result.action == expected_action
+    assert result.reason == (
+        "cost_model_version_mismatch"
+        if measurement == "positive"
+        else "stale_safety_measurement"
+    )
+
+
 def test_context_stale_harm_breach_can_withdraw_authority(monkeypatch):
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     _measurement(hypothesis, experiment, "positive", epoch="stale-epoch", breached=True)
@@ -1957,7 +1997,9 @@ def test_missing_identity_stale_negative_cannot_mutate_current_experiment(
         epoch="stale-epoch",
     )
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
     metrics = {
+        "expected_cost_model_version": COST_MODEL_VERSION,
         "harm_state": "clear",
         "breached": False,
         "horizon": "4h",
@@ -2008,6 +2050,7 @@ def test_measurement_identity_reason_is_identity_only(monkeypatch):
         measurement_identity_reason,
     )
     from aletheia.learning.verdicts import METRIC_VERSION
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     verdict = {
         "stage": "paper_10",
@@ -2018,7 +2061,11 @@ def test_measurement_identity_reason_is_identity_only(monkeypatch):
         "metric_version": METRIC_VERSION,
         "code_commit": "test-build",
         "behavior_contract_hash": "behavior-current",
-        "harm_metrics_json": _json.dumps({"harm_state": "breached", "breached": True}),
+        "harm_metrics_json": _json.dumps({
+            "expected_cost_model_version": COST_MODEL_VERSION,
+            "harm_state": "breached",
+            "breached": True,
+        }),
     }
     kwargs = dict(
         expected_horizon="4h",
@@ -2029,7 +2076,18 @@ def test_measurement_identity_reason_is_identity_only(monkeypatch):
     assert measurement_identity_reason(verdict, "paper_10", "epoch-a", **kwargs) is None
     assert measurement_harm_block_reason(verdict) == "harm_gate_breached"
 
-    clean = {**verdict, "harm_metrics_json": _json.dumps({"harm_state": "clear", "breached": False})}
+    legacy_metrics = _json.loads(verdict["harm_metrics_json"])
+    legacy_metrics.pop("expected_cost_model_version")
+    legacy = {**verdict, "harm_metrics_json": _json.dumps(legacy_metrics)}
+    assert measurement_identity_reason(
+        legacy, "paper_10", "epoch-a", **kwargs
+    ) == "cost_model_version_mismatch"
+
+    clean = {**verdict, "harm_metrics_json": _json.dumps({
+        "expected_cost_model_version": COST_MODEL_VERSION,
+        "harm_state": "clear",
+        "breached": False,
+    })}
     assert measurement_harm_block_reason(clean) is None
     assert measurement_harm_block_reason({"harm_metrics_json": "{not json"}) == (
         "measurement_metadata_invalid"

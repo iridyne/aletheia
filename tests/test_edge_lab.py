@@ -1,7 +1,7 @@
 """Tests for Edge Lab features: slippage, shadow trades, BTC benchmark, regime tag, family scorecard."""
 
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import pytest
 
 
@@ -51,18 +51,18 @@ class TestSlippage:
         result = _apply_slippage(price, "long", 0.0)
         assert result == 100.0
 
-    @patch("aletheia.config.loader.load_config")
     @patch("aletheia.execution.paper_broker._btc_price_now", return_value=60000.0)
     @patch("aletheia.execution.paper_broker._current_regime", return_value="risk_on")
-    def test_paper_order_uses_slippage(self, _regime, _btc, mock_cfg):
+    def test_paper_order_uses_slippage(self, _regime, _btc):
+        from aletheia.config.loader import load_config, save_config
         from aletheia.execution.paper_broker import execute_paper_order
         from tests.execution_authority import seed_order_authority
 
-        cfg = MagicMock()
+        cfg = load_config()
         cfg.trading.slippage_bps = 10.0
         cfg.trading.execution_fee_pct = 0.1
         cfg.trading.default_take_profit_pct = 4.0
-        mock_cfg.return_value = cfg
+        save_config(cfg)
 
         seed_order_authority(
             proposal_id="prop1",
@@ -89,19 +89,19 @@ class TestSlippage:
         # 10 bps slippage on long = 2000 * 1.001 = 2002.0
         assert result["fill_price"] == pytest.approx(2002.0, abs=0.01)
 
-    @patch("aletheia.config.loader.load_config")
     @patch("aletheia.execution.paper_broker._btc_price_now", return_value=60000.0)
     @patch("aletheia.execution.paper_broker._current_regime", return_value="risk_off")
-    def test_paper_order_records_regime_and_btc(self, _regime, _btc, mock_cfg):
+    def test_paper_order_records_regime_and_btc(self, _regime, _btc):
+        from aletheia.config.loader import load_config, save_config
         from aletheia.execution.paper_broker import execute_paper_order
         from aletheia.storage.repositories import list_positions
         from tests.execution_authority import seed_order_authority
 
-        cfg = MagicMock()
+        cfg = load_config()
         cfg.trading.slippage_bps = 0.0
         cfg.trading.execution_fee_pct = 0.1
         cfg.trading.default_take_profit_pct = 4.0
-        mock_cfg.return_value = cfg
+        save_config(cfg)
 
         seed_order_authority(
             proposal_id="prop2",

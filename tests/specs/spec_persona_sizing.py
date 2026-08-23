@@ -106,11 +106,13 @@ def test_effective_sizing_params_flag_gated():
 def test_vol_target_size_uses_persona_base(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
+    import aletheia.learning.experiments as learning_experiments
     from aletheia.trading import sizing
 
     cfg = AletheiaConfig()
     cfg.trading.vol_sizing_enabled = False  # → returns compute_position_size(base) directly
-    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    production_learning_loader = learning_experiments.load_config
+    monkeypatch.setattr(loader, "load_config", lambda **_kwargs: cfg)
 
     # Disabled → base = legacy default_notional_usdt (25).
     legacy_size = sizing.vol_target_size("BTC/USDT", conviction=70, paper_trade_count=50)
@@ -123,6 +125,7 @@ def test_vol_target_size_uses_persona_base(monkeypatch):
         f"roll persona (base 50) must size larger than legacy (base 25): "
         f"roll={roll_size} legacy={legacy_size}"
     )
+    assert learning_experiments.load_config is production_learning_loader
 
 
 def test_vol_target_size_emits_complete_non_kelly_policy_trace(monkeypatch):

@@ -17,6 +17,10 @@ from typing import Any
 
 from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.analytics.learning_window import outcome_window_metadata
+from aletheia.storage.repositories import (
+    SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC,
+    complete_outcome_economics_sql,
+)
 
 
 VERDICT_NAMES = (
@@ -29,7 +33,6 @@ VERDICT_NAMES = (
 
 MIN_SAMPLE_SIZE = 5
 ALPHA_THRESHOLD_PCT = 0.10
-_RANKER_ENTRY_ALIGNMENT_MAX_SEC = 60
 
 _MODULES_BY_LAYER = {
     "Universe Alpha": [
@@ -748,12 +751,12 @@ def _universe_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         return causal
 
     rows = db.execute(
-        "SELECT symbol, direction, horizon, entry_ts, forward_return_pct "
+        "SELECT symbol, direction, horizon, entry_ts, directional_return_pct "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' "
+        f"AND {complete_outcome_economics_sql()} "
         "AND horizon IN ('1h', '4h', '24h') "
-        "AND forward_return_pct IS NOT NULL "
-        "AND ABS(forward_return_pct) <= 100 "
+        "AND ABS(directional_return_pct) <= 100 "
         "AND datetime(entry_ts) >= datetime(?)",
         (cutoff,),
     ).fetchall()
@@ -764,7 +767,7 @@ def _universe_alpha(db, cutoff: str, min_sample_size: int) -> dict:
 
     for row in rows:
         direction = row["direction"] or "long"
-        selected_ret = _directional_return(row["forward_return_pct"], direction)
+        selected_ret = float(row["directional_return_pct"])
         selected.append(selected_ret)
         base_returns = _deterministic_baseline_returns(
             db,
@@ -820,17 +823,18 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         "ON fo.outcome_candidate_key=s.outcome_candidate_key "
         "WHERE s.batch_id IS NOT NULL AND s.policy_epoch_id IS NOT NULL "
         "AND fo.horizon='24h' AND fo.status='settled' "
-        "AND fo.net_return_pct IS NOT NULL AND fo.cost_model_version IS NOT NULL "
+        f"AND {complete_outcome_economics_sql('fo')} "
         "AND s.cost_model_version=fo.cost_model_version "
         "AND s.venue=fo.venue AND s.symbol=fo.symbol "
         "AND lower(s.direction)=lower(fo.direction) "
         "AND (CASE WHEN lower(s.market_type) IN "
         "('perp','futures','swap','usdt_futures') THEN 'perp' ELSE 'spot' END)=fo.market_type "
         "AND julianday(s.created_at)>=julianday(fo.entry_ts) "
-        "AND (julianday(s.created_at)-julianday(fo.entry_ts))*86400.0<=? "
+        f"AND julianday(s.created_at)<=julianday(fo.entry_ts, "
+        f"'+{SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC} seconds') "
         "AND datetime(fo.entry_ts) >= datetime(?) "
         "ORDER BY datetime(fo.entry_ts) DESC, datetime(s.created_at) DESC, s.id DESC LIMIT 1",
-        (_RANKER_ENTRY_ALIGNMENT_MAX_SEC, cutoff),
+        (cutoff,),
     ).fetchone()
     if not contract:
         return _verdict(
@@ -864,7 +868,7 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         " WHERE s.batch_id IS NOT NULL AND s.policy_epoch_id=?"
         " AND s.rank BETWEEN 1 AND 5"
         " AND fo.horizon='24h' AND fo.status='settled'"
-        " AND fo.net_return_pct IS NOT NULL AND fo.cost_model_version=?"
+        f" AND {complete_outcome_economics_sql('fo')} AND fo.cost_model_version=?"
         " AND s.cost_model_version=fo.cost_model_version"
         " AND s.venue=fo.venue AND s.symbol=fo.symbol"
         " AND lower(s.direction)=lower(fo.direction)"
@@ -892,7 +896,7 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
             temporally_misaligned_batch_ids.add(str(row["batch_id"]))
             continue
         lag_sec = (ranked_at - entry_at).total_seconds()
-        if lag_sec < 0 or lag_sec > _RANKER_ENTRY_ALIGNMENT_MAX_SEC:
+        if lag_sec < 0 or lag_sec > SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC:
             temporally_misaligned_candidates += 1
             temporally_misaligned_batch_ids.add(str(row["batch_id"]))
             continue
@@ -914,7 +918,7 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         valid_entry_times = [ts for ts in entry_times if ts is not None]
         if (
             max(valid_entry_times) - min(valid_entry_times)
-        ).total_seconds() > _RANKER_ENTRY_ALIGNMENT_MAX_SEC:
+        ).total_seconds() > SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC:
             temporally_mixed_batches += 1
             continue
         rank1 = [float(r["net_return_pct"]) for r in batch_rows if int(r["rank"] or 0) == 1]
@@ -935,7 +939,7 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         "temporally_misaligned_candidate_count": temporally_misaligned_candidates,
         "temporally_misaligned_batch_count": len(temporally_misaligned_batch_ids),
         "temporally_mixed_batch_count": temporally_mixed_batches,
-        "first_exposure_alignment_max_sec": _RANKER_ENTRY_ALIGNMENT_MAX_SEC,
+        "first_exposure_alignment_max_sec": SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC,
         "horizon": "24h",
         "statistical_unit": "outcome_candidate_key",
         "assignment_unit": "batch_id",
@@ -1008,8 +1012,8 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         "FROM first_rows fd JOIN filter_candidate_outcomes fo "
         "ON fo.outcome_candidate_key=fd.outcome_candidate_key "
         "WHERE fo.horizon='24h' "
-        "AND fo.status='settled' AND fo.net_return_pct IS NOT NULL "
-        "AND fo.cost_model_version IS NOT NULL "
+        "AND fo.status='settled' "
+        f"AND {complete_outcome_economics_sql('fo')} "
         "AND fd.venue=fo.venue AND fd.symbol=fo.symbol "
         "AND lower(fd.direction)=lower(fo.direction) "
         "AND fd.market_type=fo.market_type "
@@ -1044,7 +1048,8 @@ def _system_operator_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         "FROM first_rows fd JOIN filter_candidate_outcomes fo "
         "ON fo.outcome_candidate_key=fd.outcome_candidate_key "
         "WHERE fd.producer_commit=? AND fd.behavior_fingerprint=? AND fo.cost_model_version=? "
-        "AND fo.horizon='24h' AND fo.status='settled' AND fo.net_return_pct IS NOT NULL "
+        "AND fo.horizon='24h' AND fo.status='settled' "
+        f"AND {complete_outcome_economics_sql('fo')} "
         "AND fd.venue=fo.venue AND fd.symbol=fo.symbol "
         "AND lower(fd.direction)=lower(fo.direction) AND fd.market_type=fo.market_type "
         "AND datetime(fo.entry_ts) >= datetime(?) "
@@ -1866,7 +1871,7 @@ def _control_observation_return(db, row) -> float | None:
     outcome = db.execute(
         "SELECT net_return_pct FROM filter_candidate_outcomes "
         "WHERE outcome_candidate_key=? AND horizon=? AND status='settled' "
-        "AND net_return_pct IS NOT NULL LIMIT 1",
+        f"AND {complete_outcome_economics_sql()} LIMIT 1",
         (outcome_key, row["horizon"]),
     ).fetchone()
     return float(outcome["net_return_pct"]) if outcome else None

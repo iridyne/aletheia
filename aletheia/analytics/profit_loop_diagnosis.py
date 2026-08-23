@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 import statistics
-from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
 from ..storage.proposal_hypothesis import evaluate_hypothesis_prefix
@@ -261,21 +260,13 @@ def diagnose_position_fact(fact: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _group_returns(
-    facts: Iterable[Mapping[str, Any]],
-    predicate,
-    *,
-    as_of_at: Any = None,
-) -> tuple[list[float], dict[str, int]]:
+def _group_returns(facts: Iterable[Mapping[str, Any]], predicate) -> tuple[list[float], dict[str, int]]:
     """Group returns from candidate facts, routing through shared eligibility assessor.
 
     #1269: All rows must pass assess_candidate_outcome(), not direct settled+finite check.
     Returns (eligible_values, rejection_reasons).
     """
-    from aletheia.learning.outcomes import (
-        CANDIDATE_OUTCOME_TEMPORAL_REASONS,
-        assess_candidate_outcome,
-    )
+    from aletheia.learning.outcomes import assess_candidate_outcome
     
     values = []
     rejection_reasons: dict[str, int] = {}
@@ -284,18 +275,10 @@ def _group_returns(
             continue
         outcome = fact.get("fixed_horizon_outcome")
         if not isinstance(outcome, Mapping):
-            unavailable_reason = fact.get(
-                "fixed_horizon_outcome_unavailable_reason"
-            )
-            reason = (
-                str(unavailable_reason)
-                if unavailable_reason in CANDIDATE_OUTCOME_TEMPORAL_REASONS
-                else "missing_outcome"
-            )
-            rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
+            rejection_reasons["missing_outcome"] = rejection_reasons.get("missing_outcome", 0) + 1
             continue
-
-        assessment = assess_candidate_outcome(outcome, as_of_at=as_of_at)
+        
+        assessment = assess_candidate_outcome(dict(outcome))
         if assessment.eligible:
             values.append(assessment.net_return_pct)
         else:
@@ -311,21 +294,15 @@ def _candidate_kind(fact: Mapping[str, Any]) -> str:
 
 def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     facts = [fact for fact in report.get("facts", []) if isinstance(fact, Mapping)]
-    report_as_of = report.get("as_of_at")
-    as_of_at = (
-        datetime.now(timezone.utc) if report_as_of is None else report_as_of
-    )
     comparisons = {
         "Selection": (
             _group_returns(
                 facts,
                 lambda fact: _candidate_kind(fact) == "opportunity" and fact.get("terminal_state") == "filtered",
-                as_of_at=as_of_at,
             ),
             _group_returns(
                 facts,
                 lambda fact: _candidate_kind(fact) == "opportunity" and fact.get("terminal_state") != "filtered",
-                as_of_at=as_of_at,
             ),
         ),
         "Decision": (
@@ -334,7 +311,6 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
                 lambda fact: (
                     _candidate_kind(fact) == "pi_decision" and str(fact.get("terminal_state", "")).startswith("pi_")
                 ),
-                as_of_at=as_of_at,
             ),
             _group_returns(
                 facts,
@@ -342,14 +318,12 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
                     _candidate_kind(fact) == "pi_decision"
                     and fact.get("terminal_state") in {"risk_reject", "approved_unfilled", "traded"}
                 ),
-                as_of_at=as_of_at,
             ),
         ),
         "Risk": (
             _group_returns(
                 facts,
                 lambda fact: _candidate_kind(fact) == "proposal" and fact.get("terminal_state") == "risk_reject",
-                as_of_at=as_of_at,
             ),
             _group_returns(
                 facts,
@@ -357,7 +331,6 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
                     _candidate_kind(fact) == "proposal"
                     and fact.get("terminal_state") in {"approved_unfilled", "traded"}
                 ),
-                as_of_at=as_of_at,
             ),
         ),
     }
@@ -396,9 +369,7 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         "fact_unit": "candidate_fact",
         "read_only": True,
         "behavior_changed": False,
-        "as_of_at": (
-            as_of_at.isoformat() if isinstance(as_of_at, datetime) else as_of_at
-        ),
+        "as_of_at": report.get("as_of_at"),
         "fixed_horizon": report.get("fixed_horizon"),
         "raw_count": len(facts),
         "eligible_count": total_eligible_all,

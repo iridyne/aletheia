@@ -107,6 +107,9 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
             "rank_priority": _score(item.get("trade_score")),
             "reasoning": " ".join(str(item.get("reasoning") or "").split()).lower(),
             "b2": {
+                "version": b2.get("version"),
+                "policy_epoch_id": b2.get("policy_epoch_id"),
+                "horizon": b2.get("horizon"),
                 "status": b2.get("status"),
                 "n_total": b2.get("n_total"),
                 "n_net": b2.get("n_net"),
@@ -114,6 +117,8 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
                 "avg_net_pct": _score(b2.get("avg_net_pct")),
                 "shrunk_avg_net_pct": _score(b2.get("shrunk_avg_net_pct")),
                 "directional_verdict": b2.get("directional_verdict"),
+                "cost_model_version": b2.get("cost_model_version"),
+                "cost_model_mismatch_n": b2.get("cost_model_mismatch_n"),
             },
         }
 
@@ -202,7 +207,7 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
         str(item.get("scanner_family") or ""),
     )
     projection = {
-        "version": "operator-decision-context-v5",
+        "version": "operator-decision-context-v6",
         "skip_policy_epoch_id": ctx.get("skip_policy_epoch_id"),
         "execution_mode": ctx.get("execution_mode"),
         # Account availability and equity are material to deterministic sizing;
@@ -1436,7 +1441,6 @@ def _hydrate_pending_candidate_context(
                 "confidence": opportunity.get("confidence"),
                 "confidence_score": opportunity.get("confidence_score"),
                 "scanner_family": opportunity.get("scanner_family"),
-                "family_edge": None,
                 "thesis": (opportunity.get("thesis") or "")[:220],
                 "key_observations": _top_observations(
                     opportunity.get("key_observations")
@@ -1779,37 +1783,6 @@ def _build_layer1_snapshot() -> dict[str, Any]:
             order="created_at DESC",
             limit=10,
         )
-        # Thesis evidence (P1a 2026-07-02): per-(scanner_family, direction) live edge
-        # from settled forward outcomes, so the PI can weigh each candidate against
-        # the actual track record of its scanner family + direction — the missing
-        # decision-time signal the learning loop already computed but never surfaced.
-        _edge_map: dict[tuple, dict] = {}
-        try:
-            from aletheia.storage.repositories import family_direction_edge
-            for _e in family_direction_edge(horizon="24h", within_days=7):
-                _edge_map[(
-                    _e["scanner_family"],
-                    _e["direction"],
-                    _e.get("market_type") or "spot",
-                )] = {
-                    "n": _e["n"], "win_rate": _e["win_rate"], "avg_return": _e["avg_return"],
-                }
-        except Exception:
-            _edge_map = {}
-
-        def _family_edge_for(o: dict) -> dict | None:
-            fam = o.get("scanner_family")
-            d = (o.get("direction_bias") or "long")
-            if d not in ("long", "short"):
-                d = "long"
-            raw_market = str(o.get("market") or "spot").lower()
-            market_type = (
-                "perp"
-                if raw_market in {"perp", "futures", "swap", "usdt_futures"}
-                else "spot"
-            )
-            return _edge_map.get((fam, d, market_type))
-
         def _opportunity_feature(o: dict) -> dict | None:
             member = (
                 get_universe_member(o.get("universe_member_id"))
@@ -1839,10 +1812,6 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 "confidence": o.get("confidence"),
                 "confidence_score": o.get("confidence_score"),
                 "scanner_family": o.get("scanner_family"),
-                # Per-(scanner_family, direction) live edge from settled forward
-                # outcomes (thesis evidence). None when the family has no settled
-                # outcomes in the 7d window yet.
-                "family_edge": _family_edge_for(o),
                 "thesis": (o.get("thesis") or "")[:220],
                 # market_observer's LLM writes its most specific, data-cited output
                 # here; the PI was previously blind to it (only the truncated thesis
@@ -2379,8 +2348,13 @@ def _build_layer3_wisdom() -> dict[str, Any]:
 def _get_data_health_summary() -> dict[str, Any]:
     """Build a concise data-health dict for System Operator context injection."""
     try:
-        from aletheia.storage.repositories import get_active_universe_members, get_universe_asset
+        from aletheia.storage.repositories import (
+            complete_outcome_economics_sql,
+            get_active_universe_members,
+            get_universe_asset,
+        )
         from aletheia.storage.sqlite import get_db
+        from aletheia.universe.outcome_economics import COST_MODEL_VERSION
         from aletheia.config.loader import load_config
 
         cfg = load_config()
@@ -2410,15 +2384,16 @@ def _get_data_health_summary() -> dict[str, Any]:
         # Signal effectiveness (7d, 24h horizon)
         cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         row = db.execute(
-            """SELECT COUNT(*),
-                      SUM(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0)
+            f"""SELECT COUNT(*),
+                      SUM(CASE WHEN net_return_pct > min_tradable_edge_pct
                                THEN 1 ELSE 0 END)
                FROM universe_forward_outcomes
                WHERE status = 'settled' AND horizon = '24h'
-                 AND settled_at >= ? AND net_return_pct IS NOT NULL
-                 AND ABS(net_return_pct) <= 100
+                 AND settled_at >= ?
+                 AND cost_model_version = ?
+                 AND {complete_outcome_economics_sql()}
                  AND direction IN ('long', 'short')""",
-            (cutoff,),
+            (cutoff, COST_MODEL_VERSION),
         ).fetchone()
         settled, wins = row if row else (0, None)
         win_rate = round((wins or 0) / settled * 100, 1) if settled else None
@@ -2438,6 +2413,7 @@ def _get_data_health_summary() -> dict[str, Any]:
             "total_members": total_members,
             "signal_win_rate_24h": win_rate,
             "signal_status": signal_status,
+            "cost_model_version": COST_MODEL_VERSION,
         }
     except Exception as e:
         logger.debug("data_health_summary failed: %s", e)
@@ -2447,6 +2423,7 @@ def _get_data_health_summary() -> dict[str, Any]:
             "total_members": 0,
             "signal_win_rate_24h": None,
             "signal_status": "unknown",
+            "cost_model_version": "unavailable",
         }
 
 

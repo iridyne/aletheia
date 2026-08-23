@@ -118,20 +118,21 @@ def test_shared_outcome_adapter_fails_closed_on_ineligible_rows():
     from aletheia.learning.outcomes import assess_candidate_outcome, assess_realized_position
 
     now = datetime.now(timezone.utc)
-    entry = now - timedelta(hours=2)
-    due = now - timedelta(hours=1)
-    settled = now - timedelta(minutes=30)
-    clean = entry.isoformat()
+    clean = now.isoformat()
     dirty = "2026-06-24T00:00:00+00:00"
-    candidate = {
-        "outcome_candidate_key": "c-net",
-        "horizon": "4h",
-        "status": "settled",
-        "entry_ts": clean,
-        "due_at": due.isoformat(),
-        "settled_at": settled.isoformat(),
-        "direction": "long",
+    complete_economics = {
+        "venue": "bitget",
+        "market_type": "perp",
+        "entry_price_usd": 100.0,
+        "exit_price_usd": 100.8,
+        "directional_return_pct": 0.8,
+        "estimated_fee_pct": 0.1,
+        "estimated_spread_slippage_pct": 0.1,
+        "estimated_funding_pct": 0.1,
         "net_return_pct": 0.5,
+        "min_tradable_edge_pct": 0.05,
+        "settlement_price_source": "horizon_ohlcv",
+        "settlement_lag_sec": 0,
         "cost_model_version": "v1",
     }
 
@@ -149,51 +150,83 @@ def test_shared_outcome_adapter_fails_closed_on_ineligible_rows():
     }).eligible
     assert not assess_candidate_outcome({
         "outcome_candidate_key": "c-gross", "horizon": "4h", "status": "settled",
-        "entry_ts": clean, "due_at": due.isoformat(),
-        "settled_at": settled.isoformat(), "direction": "long", "gross_return_pct": 2.0,
+        "entry_ts": clean, "direction": "long", "gross_return_pct": 2.0,
         "net_return_pct": None,
-    }, as_of_at=now).eligible
+    }).eligible
     assert not assess_candidate_outcome({
         "outcome_candidate_key": "c-nan", "horizon": "4h", "status": "settled",
-        "entry_ts": clean, "due_at": due.isoformat(),
-        "settled_at": settled.isoformat(), "direction": "long", "net_return_pct": float("nan"),
+        "entry_ts": clean, "direction": "long", "net_return_pct": float("nan"),
         "cost_model_version": "v1",
-    }, as_of_at=now).eligible
-    eligible = assess_candidate_outcome(candidate, as_of_at=now)
+    }).eligible
+    for invalid_net in ("0.5", b"0.5", True):
+        assert not assess_candidate_outcome({
+            "outcome_candidate_key": "c-invalid-net", "horizon": "4h",
+            "status": "settled", "entry_ts": clean, "direction": "long",
+            **complete_economics, "net_return_pct": invalid_net,
+        }).eligible
+    for invalid_cost_model in (None, "", " ", b"v1", True):
+        assert not assess_candidate_outcome({
+            "outcome_candidate_key": "c-invalid-cost-model", "horizon": "4h",
+            "status": "settled", "entry_ts": clean, "direction": "long",
+            **complete_economics, "cost_model_version": invalid_cost_model,
+        }).eligible
+    for invalid_edge in (
+        None, float("nan"), float("inf"), -0.01, "malformed", "0.05", b"0.05", True,
+    ):
+        assert not assess_candidate_outcome({
+            "outcome_candidate_key": "c-invalid-edge", "horizon": "4h",
+            "status": "settled", "entry_ts": clean, "direction": "long",
+            **complete_economics, "min_tradable_edge_pct": invalid_edge,
+        }).eligible
+    for field, invalid_value in (
+        ("directional_return_pct", None),
+        ("estimated_fee_pct", None),
+        ("estimated_spread_slippage_pct", None),
+        ("estimated_funding_pct", None),
+        ("estimated_fee_pct", -0.1),
+        ("estimated_spread_slippage_pct", -0.1),
+        ("estimated_funding_pct", float("inf")),
+        ("estimated_fee_pct", "0.1"),
+        ("estimated_spread_slippage_pct", b"0.1"),
+        ("net_return_pct", 5.0),
+    ):
+        assert not assess_candidate_outcome({
+            "outcome_candidate_key": "c-invalid-cost-tuple", "horizon": "4h",
+            "status": "settled", "entry_ts": clean, "direction": "long",
+            **complete_economics, field: invalid_value,
+        }).eligible
+    for invalid_market in (None, "", "crypto", b"perp"):
+        assert not assess_candidate_outcome({
+            "outcome_candidate_key": "c-invalid-market", "horizon": "4h",
+            "status": "settled", "entry_ts": clean, "direction": "long",
+            **complete_economics, "market_type": invalid_market,
+        }).eligible
+    missing_venue = assess_candidate_outcome({
+        "outcome_candidate_key": "c-missing-venue", "horizon": "4h",
+        "status": "settled", "entry_ts": clean, "direction": "long",
+        **complete_economics, "venue": " \t",
+    })
+    assert not missing_venue.eligible
+    assert missing_venue.reason == "missing_venue"
+    assert not assess_candidate_outcome({
+        "outcome_candidate_key": "c-spot-funding", "horizon": "4h",
+        "status": "settled", "entry_ts": clean, "direction": "long",
+        **complete_economics, "market_type": "spot",
+    }).eligible
+    eligible = assess_candidate_outcome({
+        "outcome_candidate_key": "c-net", "horizon": "4h", "status": "settled",
+        "entry_ts": clean, "direction": "long", **complete_economics,
+    })
     assert eligible.eligible
     assert eligible.net_return_pct == 0.5
-
-    temporal_cases = [
-        ({"due_at": None}, "missing_due_at"),
-        ({"due_at": "not-a-time"}, "malformed_due_at"),
-        ({"settled_at": None}, "missing_settled_at"),
-        ({"settled_at": "not-a-time"}, "malformed_settled_at"),
-        ({"due_at": (entry - timedelta(seconds=1)).isoformat()}, "due_before_entry"),
-        ({"settled_at": (entry - timedelta(seconds=1)).isoformat()}, "settled_before_entry"),
-        ({"settled_at": (due - timedelta(seconds=1)).isoformat()}, "settled_before_due"),
-        ({"settled_at": (now + timedelta(seconds=1)).isoformat()}, "settlement_after_as_of"),
-    ]
-    for changes, reason in temporal_cases:
-        assert assess_candidate_outcome(
-            candidate | changes, as_of_at=now,
-        ).reason == reason
-
-    equality = candidate | {
-        "entry_ts": now.isoformat(),
-        "due_at": now.isoformat(),
-        "settled_at": now.isoformat(),
-    }
-    assert assess_candidate_outcome(equality, as_of_at=now).eligible
-
-    future = candidate | {"settled_at": (now + timedelta(seconds=1)).isoformat()}
-    assert assess_candidate_outcome(future, as_of_at=now).reason == "settlement_after_as_of"
-    assert assess_candidate_outcome(
-        future, as_of_at=now + timedelta(seconds=1),
-    ).eligible
-    with pytest.raises(ValueError, match="as_of_at"):
-        assess_candidate_outcome(candidate, as_of_at="")
-    with pytest.raises(ValueError, match="as_of_at"):
-        assess_candidate_outcome(candidate | {"status": "pending"}, as_of_at="")
+    funding_credit = assess_candidate_outcome({
+        "outcome_candidate_key": "c-funding-credit", "horizon": "4h",
+        "status": "settled", "entry_ts": clean, "direction": "long",
+        **complete_economics, "estimated_funding_pct": -0.1,
+        "net_return_pct": 0.7,
+    })
+    assert funding_credit.eligible
+    assert funding_credit.net_return_pct == 0.7
 
 
 @spec_claim(
@@ -241,9 +274,16 @@ def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(mo
         )
         db.execute(
             "INSERT INTO filter_candidate_outcomes "
-            "(id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, cost_model_version, status) "
-            "VALUES (?, ?, 'test', 'BTC/USDT', 'spot', 'long', '4h', 100, ?, ?, ?, ?, 'v1', 'settled')",
-            (f"fo-{idx}", key, entry, entry, entry, net),
+            "(id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
+            "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
+            "settlement_price_source, settlement_lag_sec, directional_return_pct, "
+            "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+            "net_return_pct, "
+            "min_tradable_edge_pct, cost_model_version, status) "
+            "VALUES (?, ?, 'test', 'BTC/USDT', 'spot', 'long', '4h', 100, ?, ?, ?, ?, "
+            "'horizon_ohlcv', 0, ?, 0.1, 0.1, 0, ?, 0.05, 'v1', 'settled')",
+            (f"fo-{idx}", key, 100.0 * (1.0 + (net + 0.2) / 100.0),
+             entry, entry, entry, net + 0.2, net),
         )
     db.commit()
 
@@ -437,12 +477,14 @@ def test_ranker_case_outcome_adapter_uses_exact_base_key_and_horizon():
     db.execute(
         "INSERT INTO filter_candidate_outcomes ("
         "id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
-        "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
-        "estimated_fee_pct, estimated_spread_slippage_pct, cost_model_version, status"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
+        "settlement_price_source, settlement_lag_sec, directional_return_pct, "
+        "net_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, "
+        "estimated_funding_pct, min_tradable_edge_pct, cost_model_version, status"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100.5, ?, ?, ?, 'horizon_ohlcv', 0, 0.5, ?, ?, ?, 0, 0.05, ?, ?)",
         (
             "ranker-outcome-1", "member-1", "bitget", "BTC/USDT", "spot", "long",
-            "4h", 100.0, now, now, now, 0.4, 0.05, 0.05, "cost-v1", "settled",
+            "4h", 100.0, now, now, now, 0.4, 0.05, 0.05, "v1", "settled",
         ),
     )
     db.commit()
@@ -464,7 +506,6 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
     import aletheia.agents.paper_trader_ranker as ranker
     from aletheia.learning import experiments
     from aletheia.learning.cohorts import build_experiment_cohorts
-    from aletheia.learning.contribution_runner import evaluate_experiment
     from aletheia.learning.experiments import stable_assignment
     from aletheia.learning.models import LearningExperiment
     from aletheia.learning.verdicts import evaluate_cohort
@@ -519,20 +560,24 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
     )
     expose(opposite)
 
-    evaluation_before = datetime.now(timezone.utc)
-    outcome_time = (evaluation_before + timedelta(seconds=1)).isoformat()
+    outcome_time = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
     for candidate_key, outcome in (("member-1", 0.4), (opposite, -0.2)):
         outcome_key = ranker_key(candidate_key)
         db.execute(
             "UPDATE filter_candidate_outcomes SET entry_ts=?, due_at=?, settled_at=?, "
-            "net_return_pct=?, estimated_fee_pct=0.05, "
-            "estimated_spread_slippage_pct=0.05, mae_pct=-0.5, "
-            "cost_model_version='cost-v1', status='settled' "
+            "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+            "directional_return_pct=?, exit_price_usd=entry_price_usd * (1 + ? / 100.0), "
+            "net_return_pct=?, min_tradable_edge_pct=0.05, "
+            "estimated_fee_pct=0.05, estimated_spread_slippage_pct=0.05, "
+            "estimated_funding_pct=0, mae_pct=-0.5, "
+            "cost_model_version='v1', status='settled' "
             "WHERE outcome_candidate_key=? AND horizon='4h'",
             (
                 outcome_time,
                 outcome_time,
                 outcome_time,
+                outcome + 0.1,
+                outcome + 0.1,
                 outcome,
                 outcome_key,
             ),
@@ -540,22 +585,7 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
         assert db.execute("SELECT changes()").fetchone()[0] == 1
     db.commit()
 
-    developing = build_experiment_cohorts(
-        experiment.experiment_id,
-        as_of_at=evaluation_before,
-    )
-    assert len(developing) == 1
-    assert developing[0].samples == []
-    assert developing[0].exclusion_reasons["settlement_after_as_of"] == 2
-    assert evaluate_experiment(
-        experiment.experiment_id,
-        as_of_at=evaluation_before,
-    ) == []
-
-    cohorts = build_experiment_cohorts(
-        experiment.experiment_id,
-        as_of_at=outcome_time,
-    )
+    cohorts = build_experiment_cohorts(experiment.experiment_id)
     assert len(cohorts) == 1
     cohort = cohorts[0]
     assert {sample.assignment_unit_key for sample in cohort.samples} == {
@@ -622,13 +652,18 @@ def test_ranker_case_excludes_wrong_horizon_and_incomplete_cost(monkeypatch):
         outcome_key = ranker_key(candidate_key)
         db.execute(
             "UPDATE filter_candidate_outcomes SET horizon=?, entry_ts=?, due_at=?, "
-            "settled_at=?, net_return_pct=0.4, estimated_fee_pct=?, "
-            "estimated_spread_slippage_pct=?, cost_model_version=?, status='settled' "
+            "settled_at=?, directional_return_pct=0.5, "
+            "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+            "exit_price_usd=entry_price_usd * 1.005, net_return_pct=0.4, "
+            "min_tradable_edge_pct=0.05, "
+            "estimated_fee_pct=?, "
+            "estimated_spread_slippage_pct=?, estimated_funding_pct=0, "
+            "cost_model_version=?, status='settled' "
             "WHERE outcome_candidate_key=? AND horizon='4h'",
             (
                 horizon, now, now, now, fee,
                 0.05,
-                "cost-v1",
+                "v1",
                 outcome_key,
             ),
         )
@@ -639,10 +674,10 @@ def test_ranker_case_excludes_wrong_horizon_and_incomplete_cost(monkeypatch):
         "WHERE path_id='ranker_case_score' LIMIT 1",
     ).fetchone()["experiment_id"]
 
-    cohort = build_experiment_cohorts(experiment_id, as_of_at=now)[0]
+    cohort = build_experiment_cohorts(experiment_id)[0]
     assert cohort.samples == []
     assert cohort.exclusion_reasons["wrong_horizon"] == 1
-    assert cohort.invalid_reasons["incomplete_cost_model"] == 1
+    assert cohort.invalid_reasons["cost_economics_incomplete"] == 1
 
 
 @spec_claim(SpecClaim(

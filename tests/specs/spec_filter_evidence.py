@@ -601,7 +601,8 @@ def test_candidate_skip_claim_creates_one_shared_fixed_outcome_cohort(tmp_path, 
         (f"pi_decision:{claimed['id']}",),
     ).fetchall()
     outcomes = db.execute(
-        "SELECT horizon, entry_price_usd, direction, market_type FROM filter_candidate_outcomes "
+        "SELECT horizon, venue, entry_price_usd, direction, market_type "
+        "FROM filter_candidate_outcomes "
         "WHERE outcome_candidate_key=? ORDER BY horizon",
         (f"pi_decision:{claimed['id']}",),
     ).fetchall()
@@ -612,6 +613,7 @@ def test_candidate_skip_claim_creates_one_shared_fixed_outcome_cohort(tmp_path, 
         "reason_code": "operator_model_skip",
     }]
     assert {row["horizon"] for row in outcomes} == {"15m", "1h", "4h", "24h"}
+    assert {row["venue"] for row in outcomes} == {"test"}
     assert {row["entry_price_usd"] for row in outcomes} == {100.0}
     assert {(row["direction"], row["market_type"]) for row in outcomes} == {("long", "spot")}
 

@@ -862,6 +862,7 @@ export interface CalibrationRow {
   direction: 'long' | 'short'
   market_type: 'spot' | 'perp' | 'futures'
   horizon: string
+  cost_model_version: string
   n: number
   win_count: number
   avg_return: number | null
@@ -879,6 +880,7 @@ export interface CalibrationFamilySummary {
 }
 
 export interface CalibrationResponse {
+  cost_model_version: string
   by_cohort_horizon: CalibrationRow[]
   by_cohort: CalibrationFamilySummary[]
 }

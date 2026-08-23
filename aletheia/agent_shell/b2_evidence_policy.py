@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from aletheia.analytics.pi_evidence import build_b2_evidence_summary
 from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 
 _EPOCH_KIND = "system_operator_b2_candidate_evidence"
@@ -13,6 +14,7 @@ _EFFECTIVE_VALUES = {
     "selection_tier": "ranker_enqueued",
     "score_buckets": ["low_score", "medium_score", "high_score"],
     "horizon": "24h",
+    "cost_model_version": COST_MODEL_VERSION,
     "min_net_samples": 20,
     "min_outcome_coverage": 0.70,
     "shrinkage_prior_mean_pct": 0.0,

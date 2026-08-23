@@ -1335,6 +1335,27 @@ def test_open_candidate_is_not_buried_by_reviewed_history(tmp_path, monkeypatch)
     assert [row["opportunity_id"] for row in candidates] == [open_opp.id]
 
 
+@pytest.mark.parametrize("venue", [None, " \t"])
+def test_ranker_outcome_does_not_infer_missing_venue(monkeypatch, venue):
+    from aletheia.agents.paper_trader_ranker import _register_ranker_case_outcome
+
+    monkeypatch.setattr(
+        "aletheia.storage.repositories.insert_filter_candidate_outcomes_batch",
+        lambda rows: pytest.fail("identity-less outcome must not be persisted"),
+    )
+
+    assert _register_ranker_case_outcome(
+        candidate_key="ranker:missing-venue",
+        opp={"symbol": "BTC/USDT", "market_type": "perp"},
+        direction="long",
+        entry_price_usd=100.0,
+        entry_spread_bps=1.0,
+        funding_rate_at_entry=0.0,
+        entry_ts="2026-07-10T00:00:00+00:00",
+        venue=venue,
+    ) == 0
+
+
 # ---------------------------------------------------------------------------
 # Regime scoring (Position C: strategy-evidence gate/scoring removed — the
 # rules engine is deleted. Regime affinity survives as a scanner-family signal.)

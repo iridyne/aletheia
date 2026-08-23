@@ -257,6 +257,65 @@ def test_missed_alpha_requires_tradable_net_edge():
     assert classify_counterfactual(0.01, 0.45, 0.05) == "positive_gross_move_only"
     assert classify_counterfactual(None, 0.45, 0.05) == "positive_gross_move_only"
     assert classify_counterfactual(-0.20, -0.10, 0.05) == "protective"
+    for invalid_edge in (
+        None, float("nan"), float("inf"), -0.01, "0.05", b"0.05", True,
+    ):
+        assert (
+            classify_counterfactual(0.20, 0.45, invalid_edge)
+            == "positive_gross_move_only"
+        )
+        assert classify_counterfactual(-0.20, -0.10, invalid_edge) == "insufficient_data"
+    assert classify_counterfactual(float("inf"), 0.45, 0.05) == "positive_gross_move_only"
+    assert classify_counterfactual(float("nan"), -0.10, 0.05) == "insufficient_data"
+    for invalid_net in ("0.20", b"0.20", True):
+        assert classify_counterfactual(invalid_net, -0.10, 0.05) == "insufficient_data"
+
+
+def test_row_verdict_requires_reconcilable_cost_economics():
+    from aletheia.analytics.outcome_semantics import classify_outcome_row
+
+    positive = {
+        "venue": "bitget",
+        "market_type": "spot",
+        "direction": "long",
+        "entry_price_usd": 100.0,
+        "exit_price_usd": 100.5,
+        "directional_return_pct": 0.5,
+        "estimated_fee_pct": 0.1,
+        "estimated_spread_slippage_pct": 0.1,
+        "estimated_funding_pct": 0.0,
+        "net_return_pct": 0.3,
+        "min_tradable_edge_pct": 0.05,
+        "cost_model_version": "v1",
+        "horizon": "1h",
+        "settlement_price_source": "horizon_ohlcv",
+        "settlement_lag_sec": 0.0,
+    }
+    assert classify_outcome_row(positive) == "missed_alpha_suspect"
+    for incomplete in (
+        {**positive, "estimated_fee_pct": None},
+        {**positive, "net_return_pct": 0.4},
+        {**positive, "market_type": "crypto"},
+        {**positive, "cost_model_version": " "},
+        {
+            **positive,
+            "estimated_funding_pct": 0.1,
+            "net_return_pct": 0.2,
+        },
+    ):
+        assert classify_outcome_row(incomplete) == "positive_gross_move_only"
+
+    negative = {
+        **positive,
+        "exit_price_usd": 99.5,
+        "directional_return_pct": -0.5,
+        "net_return_pct": -0.7,
+    }
+    assert classify_outcome_row(negative) == "protective"
+    assert (
+        classify_outcome_row({**negative, "estimated_spread_slippage_pct": None})
+        == "insufficient_data"
+    )
 
 
 @spec_claim(
@@ -272,6 +331,7 @@ def test_calibration_excludes_gross_only_rows():
 
     common = dict(
         snapshot_id="snap-oo",
+        venue="bitget",
         scanner_family="momentum",
         direction="long",
         market_type="spot",
@@ -279,22 +339,29 @@ def test_calibration_excludes_gross_only_rows():
         entry_price_usd=100.0,
         due_at="2026-07-10T01:00:00+00:00",
         settled_at="2026-07-10T01:00:00+00:00",
+        settlement_price_source="horizon_ohlcv",
+        settlement_lag_sec=0.0,
         status="settled",
     )
     repo.insert_forward_outcomes_batch([
         UniverseForwardOutcome(
             member_id="member-gross-only", symbol="AAA/USDT",
+            exit_price_usd=109.0,
             forward_return_pct=9.0, gross_return_pct=9.0, **common,
         ),
         UniverseForwardOutcome(
-            member_id="member-net", symbol="BBB/USDT",
-                forward_return_pct=-1.0, gross_return_pct=-1.0,
-                directional_return_pct=-1.0, net_return_pct=-1.2,
-                min_tradable_edge_pct=0.05, cost_model_version="test-v1", **common,
+                member_id="member-net", symbol="BBB/USDT",
+                    exit_price_usd=99.0,
+                    forward_return_pct=-1.0, gross_return_pct=-1.0,
+                    directional_return_pct=-1.0, net_return_pct=-1.2,
+                    estimated_fee_pct=0.1,
+                    estimated_spread_slippage_pct=0.1,
+                    estimated_funding_pct=0.0,
+                    min_tradable_edge_pct=0.05, cost_model_version="test-v1", **common,
         ),
     ])
 
-    rows = repo.calibration_stats()
+    rows = repo.calibration_stats(cost_model_version="test-v1")
     assert len(rows) == 1
     assert rows[0]["n"] == 1
     assert rows[0]["win_count"] == 0

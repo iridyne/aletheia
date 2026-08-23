@@ -83,7 +83,7 @@ async def research_learning_hypothesis(
     if not artifact_ids:
         raise ValueError("hypothesis research requires a source artifact identity")
 
-    target_horizon_hours = _target_horizon_hours(target_horizon)
+    _target_horizon_hours(target_horizon)
     recorded, missing, outcome_ids, cases = _assemble_exact_context(
         artifact_ids, target_horizon,
     )
@@ -115,10 +115,20 @@ async def research_learning_hypothesis(
         )
 
     checks = _bounded_counterfactual_checks(
-        cases, max_counterfactual_checks, target_horizon_hours,
+        cases, max_counterfactual_checks, target_horizon,
     )
     if not checks:
         missing.append("exact_counterfactual_evidence_unavailable")
+        return _insufficient_evidence(
+            observation=observation,
+            candidate_explanation=candidate_explanation,
+            recorded=recorded,
+            missing=missing,
+            reason=(
+                "Exact decision-grade counterfactual evidence is unavailable; "
+                "causal review cannot proceed."
+            ),
+        )
     allowed_material_keys = sorted(
         key for key, values in recorded.items()
         if key not in _BASE_SCOPE_KEYS and len(values) == len(artifact_ids)
@@ -345,7 +355,7 @@ def _recorded_case_context(
 
 
 def _bounded_counterfactual_checks(
-    cases: list[dict[str, Any]], max_checks: int, target_horizon_hours: float,
+    cases: list[dict[str, Any]], max_checks: int, target_horizon: str,
 ) -> list[HypothesisCounterfactualCheckV1]:
     from aletheia.storage import repositories as repo
 
@@ -356,48 +366,61 @@ def _bounded_counterfactual_checks(
     # runtime evidence shows this screen misses a material failure class.
     for case in cases[:3]:
         opportunity_id = str(case.get("opportunity_id") or "")
-        selected_rows = repo.list_shadow_trades(
-            opportunity_id=opportunity_id,
-            was_selected=True,
-            resolved=True,
-            limit=2,
-        )
-        if len(selected_rows) != 1:
-            continue
-        selected = selected_rows[0]
-        if (
-            not selected.get("batch_id")
-            or not _at_or_before(selected.get("created_at"), case.get("opened_at"))
-            or not _shadow_matches_horizon(selected, target_horizon_hours)
-            or selected.get("net_pnl_pct") is None
-        ):
-            continue
-        batch = repo.list_shadow_trades(
-            batch_id=str(selected["batch_id"]), resolved=True, limit=10,
-        )
-        alternatives = sorted(
-            (
-                row for row in batch
-                if row.get("id") != selected.get("id")
-                and not row.get("was_selected")
-                and row.get("outcome_candidate_key")
-                and row.get("net_pnl_pct") is not None
-                and _shadow_matches_horizon(row, target_horizon_hours)
+        with repo.transaction():
+            selected_rows = repo.list_shadow_trades(
+                opportunity_id=opportunity_id,
+                was_selected=True,
+                limit=2,
+            )
+            if len(selected_rows) != 1:
+                continue
+            selected = repo.get_decision_grade_shadow_outcome(
+                str(selected_rows[0].get("id") or ""),
+                str(target_horizon).strip().lower(),
+            )
+            if (
+                selected is None
+                or not selected.get("shadow_batch_id")
+                or not selected.get("shadow_was_selected")
+                or selected.get("shadow_opportunity_id") != opportunity_id
+                or not _at_or_before(
+                    selected.get("shadow_created_at"), case.get("opened_at")
+                )
+            ):
+                continue
+            batch = repo.list_shadow_trades(
+                batch_id=str(selected["shadow_batch_id"]), limit=10,
+            )
+            alternatives = []
+            for row in batch:
+                if row.get("id") == selected.get("shadow_id") or row.get("was_selected"):
+                    continue
+                outcome = repo.get_decision_grade_shadow_outcome(
+                    str(row.get("id") or ""),
+                    str(target_horizon).strip().lower(),
+                )
+                if outcome is not None:
+                    alternatives.append(outcome)
+        alternatives.sort(
+            key=lambda row: (
+                int(row.get("shadow_rank") or 10_000),
+                str(row.get("shadow_id") or ""),
             ),
-            key=lambda row: (int(row.get("rank") or 10_000), str(row.get("id") or "")),
         )
         for alternative in alternatives:
             checks.append(HypothesisCounterfactualCheckV1(
                 check_type="selected_vs_exact_shadow_alternative",
-                source_identity=f"shadow_trade:{selected['id']}",
-                comparison_identity=f"shadow_trade:{alternative['id']}",
+                source_identity=f"filter_candidate_outcome:{selected['id']}",
+                comparison_identity=f"filter_candidate_outcome:{alternative['id']}",
                 evidence={
-                    "batch_id": selected["batch_id"],
+                    "batch_id": selected["shadow_batch_id"],
                     "selected_opportunity_id": opportunity_id,
-                    "selected_net_pnl_pct": selected["net_pnl_pct"],
-                    "alternative_opportunity_id": alternative.get("opportunity_id"),
-                    "alternative_net_pnl_pct": alternative.get("net_pnl_pct"),
-                    "alternative_rank": alternative.get("rank"),
+                    "selected_net_pnl_pct": selected["net_return_pct"],
+                    "alternative_opportunity_id": alternative.get(
+                        "shadow_opportunity_id"
+                    ),
+                    "alternative_net_pnl_pct": alternative.get("net_return_pct"),
+                    "alternative_rank": alternative.get("shadow_rank"),
                 },
             ))
             if len(checks) >= max_checks:
@@ -460,30 +483,6 @@ def _holding_matches_horizon(value: Any, target_horizon: str) -> bool:
         _target_horizon_hours(target_horizon),
         rel_tol=0.0,
         abs_tol=1e-6,
-    )
-
-
-def _shadow_matches_horizon(row: dict[str, Any], target_hours: float) -> bool:
-    price_source = str(row.get("settlement_price_source") or "")
-    lag_seconds = row.get("settlement_lag_sec")
-    if price_source in {"position_close", "stale_forward_ohlcv"}:
-        try:
-            observed_hours = float(lag_seconds) / 3_600.0
-        except (TypeError, ValueError):
-            return False
-    else:
-        created_at = _parse_timestamp(row.get("created_at"))
-        resolved_at = _parse_timestamp(row.get("resolved_at"))
-        if created_at is None or resolved_at is None:
-            return False
-        observed_hours = (resolved_at - created_at).total_seconds() / 3_600.0
-        if lag_seconds is not None and price_source:
-            try:
-                observed_hours -= float(lag_seconds) / 3_600.0
-            except (TypeError, ValueError):
-                return False
-    return math.isclose(
-        observed_hours, target_hours, rel_tol=0.0, abs_tol=1e-6,
     )
 
 

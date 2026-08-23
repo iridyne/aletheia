@@ -136,7 +136,7 @@ class _EmptyAnsweringProvider:
 
         self.ticker_calls += 1
         return Ticker(symbol="ADA/USDT", last_price=0.0, volume_24h=0.0,
-                      change_pct_24h=0.0)
+                      change_pct_24h=0.0, provider=instrument.exchange)
 
     async def close(self):
         pass
@@ -160,7 +160,8 @@ def test_a_transport_error_is_reported_as_deferred_not_as_no_price(monkeypatch):
 
     provider = _BannedProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
     )
     row = _forward_row("row-banned")
 
@@ -185,7 +186,8 @@ def test_an_intact_empty_answer_is_reported_as_no_price(monkeypatch):
 
     provider = _EmptyAnsweringProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
     )
     row = _forward_row("row-empty")
 
@@ -216,7 +218,8 @@ def test_an_unusable_instrument_stays_terminal(monkeypatch):
 
     provider = _BannedProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
     )
     row = _forward_row("row-unplannable")
     row["entry_ts"] = "not-a-timestamp"
@@ -242,7 +245,8 @@ def test_deferrals_are_logged_once_per_batch_as_an_outage(monkeypatch, caplog):
 
     provider = _BannedProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
     )
     rows = [_forward_row(f"row-log-{i}") for i in range(3)]
 
@@ -253,7 +257,7 @@ def test_deferrals_are_logged_once_per_batch_as_an_outage(monkeypatch, caplog):
             _batch_fetch_market_observations(rows, now=datetime.now(timezone.utc))
         )
 
-    outage = [r for r in caplog.records if "could not be reached" in r.getMessage()]
+    outage = [r for r in caplog.records if "could not be observed" in r.getMessage()]
     assert len(outage) == 1, "one line per batch, not one per row"
     assert "3" in outage[0].getMessage()
 
@@ -424,6 +428,106 @@ def test_forward_row_stays_pending_when_the_venue_is_unreachable(monkeypatch):
     ).fetchone()
     assert row["status"] == "pending"
     assert row["settled_at"] is None
+
+
+def test_missing_outcome_venue_is_typed_deferral_without_market_data(monkeypatch):
+    from aletheia.universe.outcome_recorder import (
+        _batch_fetch_market_observations,
+        is_deferred,
+    )
+
+    row = _forward_row("missing-venue")
+    row["venue"] = " \t"
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: pytest.fail(
+            "missing identity must not instantiate a market provider"
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._local_observation",
+        lambda plan: pytest.fail("missing identity must not query local market data"),
+    )
+
+    observations = asyncio.run(
+        _batch_fetch_market_observations([row], now=datetime.now(timezone.utc))
+    )
+
+    observation = observations[row["id"]]
+    assert is_deferred(observation)
+    assert observation["defer_reason"] == "outcome_identity_unavailable"
+
+
+def test_identity_deferrals_do_not_block_later_exact_venue_rows(monkeypatch):
+    from aletheia.universe.outcome_recorder import (
+        _settle_due_once,
+        deferred_observation,
+    )
+
+    rows = [_forward_row(f"missing-venue-{index}") for index in range(32)]
+    for row in rows:
+        row["venue"] = None
+    exact = _forward_row("exact-venue-after-missing")
+    rows.append(exact)
+    settled = []
+
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder.repo.list_pending_forward_outcomes",
+        lambda *, limit, **_: rows[:limit],
+    )
+
+    async def observations(batch, *, now):
+        del now
+        return {
+            row["id"]: (
+                deferred_observation("outcome_identity_unavailable")
+                if not row.get("venue")
+                else {
+                    "exit_price": 101.0,
+                    "range_high": 101.0,
+                    "range_low": 100.0,
+                    "price_source": "horizon_ohlcv_local",
+                    "price_quality_ok": True,
+                    "settlement_lag_sec": 0.0,
+                }
+            )
+            for row in batch
+        }
+
+    async def no_rows(**_):
+        return 0
+
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
+        observations,
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder.repo.fail_forward_outcome",
+        lambda *a, **k: pytest.fail("identity deferral must not become failed"),
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder.repo.settle_forward_outcome",
+        lambda **kwargs: settled.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder.repo.calibration_stats", lambda **_: []
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.outcome_recorder._maybe_generate_guard_candidates",
+        lambda rows: None,
+    )
+    monkeypatch.setattr(
+        "aletheia.universe.filter_outcome_recorder.settle_due_filter_outcomes",
+        no_rows,
+    )
+    monkeypatch.setattr(
+        "aletheia.data.perp_structure_shadow.settle_due_perp_structure_outcomes",
+        no_rows,
+    )
+
+    asyncio.run(_settle_due_once(max_rows=132, time_budget_sec=5.0))
+
+    assert [item["outcome_id"] for item in settled] == [exact["id"]]
 
 
 def test_the_forward_loop_does_not_reselect_a_row_it_deferred(monkeypatch):

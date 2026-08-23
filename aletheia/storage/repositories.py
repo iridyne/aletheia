@@ -13,10 +13,13 @@ import time
 import uuid
 from collections.abc import Mapping, Sequence
 from aletheia.storage.sqlite import (
+    SQLITE_PYTHON_STRIP_CHARS_SQL,
     acquire_write_lock,
     execute_many_write,
     execute_write,
     get_db,
+    iso_instant_us,
+    register_instant_us,
     release_write_lock,
 )
 from aletheia.storage.models import (
@@ -2598,90 +2601,6 @@ def update_order(oid: str, **kwargs) -> None:
     _update("orders", oid, kwargs)
 
 
-def finalize_exchange_acknowledgement(
-    order_id: str,
-    *,
-    exchange_order_id: str | None,
-    status: str,
-    error_reason: str | None,
-    close_position_id: str | None = None,
-    pending_close_status: str | None = None,
-) -> dict:
-    """Apply one aggregate venue acknowledgement without overriding private fills."""
-    incoming_exchange_id = str(exchange_order_id or "").strip() or None
-    with transaction(immediate=True):
-        order = get_order(order_id)
-        if order is None:
-            raise ValueError(f"order not found: {order_id}")
-        current_exchange_id = str(order.get("exchange_order_id") or "").strip() or None
-        if (
-            current_exchange_id
-            and incoming_exchange_id
-            and current_exchange_id != incoming_exchange_id
-        ):
-            raise ValueError("exchange acknowledgement identity conflicts with durable Order")
-
-        position = get_position(close_position_id) if close_position_id else None
-        owns_close_claim = close_position_id is None or bool(
-            position
-            and order.get("position_id") == close_position_id
-            and position.get("status") == "open"
-            and position.get("pending_close_order_id") == order_id
-        )
-        applied = False
-        if order.get("status") in {"pending", "submission_unknown"} and owns_close_claim:
-            cursor = execute_write(
-                """
-                UPDATE orders
-                SET exchange_order_id=?, status=?, error_reason=?, filled_at=NULL
-                WHERE id=? AND status IN ('pending', 'submission_unknown')
-                """,
-                (
-                    current_exchange_id or incoming_exchange_id,
-                    status,
-                    error_reason,
-                    order_id,
-                ),
-            )
-            applied = cursor.rowcount == 1
-            if applied and close_position_id:
-                position_cursor = execute_write(
-                    """
-                    UPDATE positions
-                    SET pending_close_status=?
-                    WHERE id=? AND status='open' AND pending_close_order_id=?
-                    """,
-                    (pending_close_status, close_position_id, order_id),
-                )
-                if position_cursor.rowcount != 1:
-                    raise RuntimeError("close acknowledgement lost its Position claim")
-
-        order = get_order(order_id)
-        position_id = order.get("position_id") if order else close_position_id
-        position = get_position(position_id) if position_id else None
-        fills = [
-            dict(row)
-            for row in get_db().execute(
-                "SELECT id, fill_price, fill_quantity FROM fills "
-                "WHERE order_id=? ORDER BY filled_at, rowid LIMIT 2",
-                (order_id,),
-            ).fetchall()
-        ]
-        fill = fills[0] if len(fills) == 1 else None
-
-    return {
-        "applied": applied,
-        "order_id": order_id,
-        "exchange_order_id": order.get("exchange_order_id") if order else None,
-        "order_status": order.get("status") if order else None,
-        "fill_id": fill.get("id") if fill else None,
-        "position_id": position_id,
-        "fill_price": fill.get("fill_price") if fill else None,
-        "fill_quantity": fill.get("fill_quantity") if fill else 0,
-        "position_status": position.get("status") if position else None,
-    }
-
-
 def list_orders(limit: int = 100) -> list[dict]:
     return _select_all("orders", limit=limit)
 
@@ -2957,6 +2876,7 @@ def enqueue_position_path_observation_buckets_through(
 
     with transaction(immediate=True):
         db = get_db()
+        register_instant_us(db)
         cursor = db.execute(
             "SELECT last_enqueued_bucket_open_ms "
             "FROM position_path_observer_cursor "
@@ -2984,11 +2904,11 @@ def enqueue_position_path_observation_buckets_through(
             ).isoformat()
             positions = db.execute(
                 "SELECT id,opened_at,status,closed_at FROM positions "
-                "WHERE status IN ('open','closed') "
-                "AND datetime(opened_at) <= datetime(?) "
-                "AND (closed_at IS NULL OR datetime(closed_at) >= datetime(?)) "
+                "WHERE aletheia_instant_us(opened_at) <= ? "
+                "AND (status='open' OR ("
+                "status='closed' AND aletheia_instant_us(closed_at) >= ?)) "
                 "ORDER BY rowid",
-                (bucket_open, bucket_end),
+                (iso_instant_us(bucket_open), iso_instant_us(bucket_end)),
             ).fetchall()
             for position in positions:
                 first_bucket_open_ms = _first_full_position_path_bucket_open_ms(
@@ -3049,14 +2969,15 @@ def list_positions_for_path_observation_bucket(
 ) -> list[dict]:
     """Return open Positions plus Positions closed after the target bucket."""
 
-    rows = get_db().execute(
+    db = get_db()
+    register_instant_us(db)
+    rows = db.execute(
         "SELECT * FROM positions "
-        "WHERE status='open' OR ("
-        "status='closed' "
-        "AND datetime(opened_at) <= datetime(?) "
-        "AND datetime(closed_at) >= datetime(?)"
-        ") ORDER BY rowid DESC",
-        (bucket_open, bucket_end),
+        "WHERE aletheia_instant_us(opened_at) <= ? "
+        "AND (status='open' OR ("
+        "status='closed' AND aletheia_instant_us(closed_at) >= ?)) "
+        "ORDER BY rowid DESC",
+        (iso_instant_us(bucket_open), iso_instant_us(bucket_end)),
     ).fetchall()
     return [dict(row) for row in rows]
 
@@ -7688,10 +7609,232 @@ _OUTCOME_MARKET_SQL = (
     "CASE WHEN market_type IN ('perp','futures','swap','usdt_futures') "
     "THEN 'perp' ELSE COALESCE(market_type, 'spot') END"
 )
+SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC = 60
+
+
+def valid_settlement_price_provenance_sql(table_alias: str = "") -> str:
+    """Return the SQLite equivalent of persisted price-provenance validation."""
+    prefix = f"{table_alias}." if table_alias else ""
+    return (
+        f"typeof({prefix}horizon) = 'text' "
+        f"AND {prefix}horizon IN ('15m', '1h', '4h', '24h') AND "
+        f"typeof({prefix}settlement_price_source) = 'text' "
+        f"AND typeof({prefix}settlement_lag_sec) IN ('integer', 'real') "
+        f"AND {prefix}settlement_lag_sec >= 0 "
+        f"AND {prefix}settlement_lag_sec < 1e999 "
+        f"AND ({prefix}settlement_price_source IN "
+        "('horizon_ohlcv', 'horizon_ohlcv_local') "
+        f"OR ({prefix}settlement_price_source = 'near_due_ticker' "
+        f"AND {prefix}settlement_lag_sec <= 0.1 * CASE {prefix}horizon "
+        "WHEN '15m' THEN 900 WHEN '1h' THEN 3600 "
+        "WHEN '4h' THEN 14400 WHEN '24h' THEN 86400 END)) "
+    )
+
+
+def complete_outcome_economics_sql(table_alias: str = "") -> str:
+    """Return the shared SQLite predicate for decision-grade net outcomes."""
+    prefix = f"{table_alias}." if table_alias else ""
+    return (
+        f"typeof({prefix}venue) = 'text' "
+        f"AND TRIM({prefix}venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> '' "
+        f"AND typeof({prefix}direction) = 'text' "
+        f"AND LOWER({prefix}direction) IN ('long', 'short') "
+        f"AND {valid_settlement_price_provenance_sql(table_alias)} "
+        f"AND typeof({prefix}entry_price_usd) IN ('integer', 'real') "
+        f"AND {prefix}entry_price_usd > 0 "
+        f"AND {prefix}entry_price_usd < 1e999 "
+        f"AND typeof({prefix}exit_price_usd) IN ('integer', 'real') "
+        f"AND {prefix}exit_price_usd > 0 "
+        f"AND {prefix}exit_price_usd < 1e999 "
+        f"AND typeof({prefix}directional_return_pct) IN ('integer', 'real') "
+        f"AND ABS({prefix}directional_return_pct) < 1e999 "
+        f"AND ABS({prefix}directional_return_pct - ("
+        f"CASE WHEN LOWER({prefix}direction) = 'short' THEN -1.0 ELSE 1.0 END "
+        f"* (({prefix}exit_price_usd - {prefix}entry_price_usd) "
+        f"/ {prefix}entry_price_usd * 100.0))) <= 1e-8 "
+        f"AND typeof({prefix}estimated_fee_pct) IN ('integer', 'real') "
+        f"AND {prefix}estimated_fee_pct >= 0 "
+        f"AND {prefix}estimated_fee_pct < 1e999 "
+        f"AND typeof({prefix}estimated_spread_slippage_pct) IN ('integer', 'real') "
+        f"AND {prefix}estimated_spread_slippage_pct >= 0 "
+        f"AND {prefix}estimated_spread_slippage_pct < 1e999 "
+        f"AND typeof({prefix}estimated_funding_pct) IN ('integer', 'real') "
+        f"AND ABS({prefix}estimated_funding_pct) < 1e999 "
+        f"AND typeof({prefix}market_type) = 'text' "
+        f"AND LOWER({prefix}market_type) IN "
+        "('spot', 'perp', 'futures', 'swap', 'usdt_futures') "
+        f"AND (LOWER({prefix}market_type) <> 'spot' "
+        f"OR {prefix}estimated_funding_pct = 0) "
+        f"AND typeof({prefix}net_return_pct) IN ('integer', 'real') "
+        f"AND ABS({prefix}net_return_pct - ({prefix}directional_return_pct "
+        f"- {prefix}estimated_fee_pct - {prefix}estimated_spread_slippage_pct "
+        f"- {prefix}estimated_funding_pct)) <= 1e-8 "
+        f"AND typeof({prefix}cost_model_version) = 'text' "
+        f"AND TRIM({prefix}cost_model_version, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> '' "
+        f"AND typeof({prefix}min_tradable_edge_pct) IN ('integer', 'real') "
+        f"AND {prefix}min_tradable_edge_pct >= 0 "
+        f"AND {prefix}min_tradable_edge_pct < 1e999"
+    )
+
+
+def _shadow_candidate_identity_sql(
+    shadow_alias: str,
+    outcome_alias: str,
+) -> str:
+    shadow = f"{shadow_alias}."
+    outcome = f"{outcome_alias}."
+    shadow_market = (
+        f"CASE WHEN LOWER({shadow}market_type) IN "
+        "('perp','futures','swap','usdt_futures') THEN 'perp' "
+        f"ELSE LOWER({shadow}market_type) END"
+    )
+    outcome_market = (
+        f"CASE WHEN LOWER({outcome}market_type) IN "
+        "('perp','futures','swap','usdt_futures') THEN 'perp' "
+        f"ELSE LOWER({outcome}market_type) END"
+    )
+    return (
+        f"typeof({shadow}opportunity_id) = 'text' "
+        f"AND {shadow}opportunity_id <> '' "
+        f"AND {shadow}outcome_candidate_key = 'opportunity:' || {shadow}opportunity_id "
+        f"AND typeof({shadow}venue) = 'text' AND {shadow}venue = {outcome}venue "
+        f"AND typeof({shadow}symbol) = 'text' AND {shadow}symbol = {outcome}symbol "
+        f"AND typeof({shadow}market_type) = 'text' "
+        f"AND {shadow_market} = {outcome_market} "
+        f"AND typeof({shadow}direction) = 'text' "
+        f"AND LOWER({shadow}direction) = LOWER({outcome}direction) "
+        f"AND typeof({shadow}entry_price) IN ('integer', 'real') "
+        f"AND {shadow}entry_price = {outcome}entry_price_usd "
+        f"AND julianday({shadow}created_at) >= julianday({outcome}entry_ts) "
+        f"AND julianday({shadow}created_at) <= julianday({outcome}entry_ts, "
+        f"'+{SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC} seconds')"
+    )
+
+
+def valid_keyed_shadow_projection_sql(
+    shadow_alias: str = "shadow_trades",
+) -> str:
+    """Require one keyed shadow net to equal its canonical settled 24h outcome."""
+    shadow = f"{shadow_alias}." if shadow_alias else ""
+    outcome = "canonical_outcome."
+    numeric_pairs = (
+        ("exit_price", "exit_price_usd"),
+        ("pnl_pct", "directional_return_pct"),
+        ("gross_return_pct", "gross_return_pct"),
+        ("net_pnl_pct", "net_return_pct"),
+        ("estimated_fee_pct", "estimated_fee_pct"),
+        ("estimated_spread_slippage_pct", "estimated_spread_slippage_pct"),
+        ("estimated_funding_pct", "estimated_funding_pct"),
+        ("min_tradable_edge_pct", "min_tradable_edge_pct"),
+        ("settlement_lag_sec", "settlement_lag_sec"),
+    )
+    equality = " ".join(
+        f"AND typeof({shadow}{shadow_field}) IN ('integer', 'real') "
+        f"AND {shadow}{shadow_field} = {outcome}{outcome_field}"
+        for shadow_field, outcome_field in numeric_pairs
+    )
+    return (
+        "EXISTS (SELECT 1 FROM filter_candidate_outcomes AS canonical_outcome "
+        f"WHERE {outcome}outcome_candidate_key = {shadow}outcome_candidate_key "
+        f"AND {outcome}horizon = '24h' "
+        f"AND {outcome}status = 'settled' "
+        f"AND {complete_outcome_economics_sql('canonical_outcome')} "
+        f"AND {_shadow_candidate_identity_sql(shadow_alias, 'canonical_outcome')} "
+        f"AND typeof({shadow}resolved_at) = 'text' "
+        f"AND {shadow}resolved_at = {outcome}settled_at "
+        f"AND typeof({shadow}settlement_price_source) = 'text' "
+        f"AND {shadow}settlement_price_source = {outcome}settlement_price_source "
+        f"AND typeof({shadow}cost_model_version) = 'text' "
+        f"AND {shadow}cost_model_version = {outcome}cost_model_version "
+        f"{equality})"
+    )
+
+
+def get_decision_grade_shadow_outcome(
+    shadow_id: str,
+    horizon: str,
+) -> dict | None:
+    """Return exact canonical outcome evidence for one persisted shadow exposure."""
+    normalized_horizon = str(horizon).strip().lower()
+    authority_sql = (
+        valid_keyed_shadow_projection_sql("shadow_trades")
+        if normalized_horizon == "24h"
+        else _shadow_candidate_identity_sql("shadow_trades", "canonical_outcome")
+    )
+    row = get_db().execute(
+        "SELECT canonical_outcome.*, shadow_trades.id AS shadow_id, "
+        "shadow_trades.batch_id AS shadow_batch_id, "
+        "shadow_trades.opportunity_id AS shadow_opportunity_id, "
+        "shadow_trades.was_selected AS shadow_was_selected, "
+        "shadow_trades.created_at AS shadow_created_at, "
+        "shadow_trades.rank AS shadow_rank "
+        "FROM shadow_trades JOIN filter_candidate_outcomes AS canonical_outcome "
+        "ON canonical_outcome.outcome_candidate_key=shadow_trades.outcome_candidate_key "
+        "AND canonical_outcome.horizon=? "
+        "WHERE shadow_trades.id=? AND canonical_outcome.status='settled' "
+        f"AND {complete_outcome_economics_sql('canonical_outcome')} "
+        f"AND {authority_sql} "
+        "LIMIT 1",
+        (normalized_horizon, shadow_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+_COMPLETE_OUTCOME_ECONOMICS_SQL = complete_outcome_economics_sql()
+
+
+def _forward_outcome_insert_payload(outcome) -> dict:
+    data = outcome.model_dump()
+    if str(data.get("status") or "").lower() == "pending":
+        venue = data.get("venue")
+        if not isinstance(venue, str) or not venue.strip():
+            raise ValueError("pending forward outcome requires a nonblank venue")
+        data["venue"] = venue.strip()
+    return data
+
+
+def _filter_outcome_insert_payload(outcome) -> dict:
+    data = outcome.model_dump()
+    if str(data.get("status") or "").lower() == "pending":
+        venue = data.get("venue")
+        if not isinstance(venue, str) or not venue.strip():
+            raise ValueError("pending filter outcome requires a nonblank venue")
+        data["venue"] = venue.strip()
+    return data
+
+
+def _settle_outcome_with_exact_venue(
+    table: str,
+    outcome_id: str,
+    updates: dict,
+    *,
+    kind: str,
+) -> None:
+    with transaction(immediate=True):
+        row = _select_one(table, outcome_id)
+        if row is not None:
+            venue = row.get("venue")
+            if not isinstance(venue, str) or not venue.strip():
+                raise ValueError(f"{kind} outcome requires a nonblank venue")
+            candidate = {**row, **updates}
+            if candidate.get("net_return_pct") is not None:
+                from aletheia.analytics.outcome_semantics import (
+                    valid_settlement_price_provenance,
+                )
+
+                if (
+                    "settlement_price_source" not in updates
+                    or "settlement_lag_sec" not in updates
+                    or not valid_settlement_price_provenance(candidate)
+                ):
+                    raise ValueError(
+                        f"{kind} outcome requires decision-grade price provenance"
+                    )
+        _update(table, outcome_id, updates)
 
 
 def insert_forward_outcome(outcome) -> None:
-    _insert("universe_forward_outcomes", outcome.model_dump())
+    _insert("universe_forward_outcomes", _forward_outcome_insert_payload(outcome))
 
 
 def insert_forward_outcomes_batch(outcomes: list) -> None:
@@ -7700,18 +7843,34 @@ def insert_forward_outcomes_batch(outcomes: list) -> None:
     with transaction():
         _insert_many(
             "universe_forward_outcomes",
-            [outcome.model_dump() for outcome in outcomes],
+            [_forward_outcome_insert_payload(outcome) for outcome in outcomes],
         )
 
 
 def list_pending_forward_outcomes(before_ts: str, limit: int = 500) -> list[dict]:
     return _select_all(
         "universe_forward_outcomes",
-        where="status = 'pending' AND due_at <= ?",
+        where=(
+            "status = 'pending' AND due_at <= ? "
+            "AND typeof(venue) = 'text' "
+            f"AND TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> ''"
+        ),
         params=(before_ts,),
         order="due_at ASC",
         limit=limit,
     )
+
+
+def count_pending_forward_outcomes_missing_venue(before_ts: str) -> int:
+    db = get_db()
+    row = db.execute(
+        "SELECT COUNT(*) AS n FROM universe_forward_outcomes "
+        "WHERE status = 'pending' AND due_at <= ? AND ("
+        "typeof(venue) <> 'text' "
+        f"OR TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) = '')",
+        (before_ts,),
+    ).fetchone()
+    return int(row["n"] or 0)
 
 
 def settle_forward_outcome(
@@ -7736,7 +7895,12 @@ def settle_forward_outcome(
         updates["settlement_price_source"] = settlement_price_source
     if settlement_lag_sec is not None:
         updates["settlement_lag_sec"] = settlement_lag_sec
-    _update("universe_forward_outcomes", outcome_id, updates)
+    _settle_outcome_with_exact_venue(
+        "universe_forward_outcomes",
+        outcome_id,
+        updates,
+        kind="forward",
+    )
 
 
 def fail_forward_outcome(
@@ -7840,7 +8004,7 @@ def insert_filter_candidate_outcomes_batch(outcomes: list) -> int:
     """
     if not outcomes:
         return 0
-    rows = [outcome.model_dump() for outcome in outcomes]
+    rows = [_filter_outcome_insert_payload(outcome) for outcome in outcomes]
     columns = list(rows[0])
     placeholders = ", ".join("?" for _ in columns)
     db = get_db()
@@ -7862,11 +8026,26 @@ def list_pending_filter_candidate_outcomes(
 ) -> list[dict]:
     return _select_all(
         "filter_candidate_outcomes",
-        where="status = 'pending' AND due_at <= ?",
+        where=(
+            "status = 'pending' AND due_at <= ? "
+            "AND typeof(venue) = 'text' "
+            f"AND TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> ''"
+        ),
         params=(before_ts,),
         order="due_at ASC",
         limit=limit,
     )
+
+
+def count_pending_filter_candidate_outcomes_missing_venue(before_ts: str) -> int:
+    row = get_db().execute(
+        "SELECT COUNT(*) AS n FROM filter_candidate_outcomes "
+        "WHERE status = 'pending' AND due_at <= ? AND ("
+        "typeof(venue) <> 'text' "
+        f"OR TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) = '')",
+        (before_ts,),
+    ).fetchone()
+    return int(row["n"] or 0)
 
 
 def list_open_learning_outcome_candidate_keys(
@@ -8010,6 +8189,8 @@ def list_pending_filter_candidate_outcomes_for_keys(
             "SELECT id, outcome_candidate_key, horizon, due_at "
             "FROM filter_candidate_outcomes "
             "WHERE status='pending' AND due_at <= ? "
+            "AND typeof(venue) = 'text' "
+            f"AND TRIM(venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> '' "
             "AND (due_at > ? OR (due_at = ? AND id > ?)) "
             "ORDER BY due_at ASC, id ASC LIMIT ?",
             (before_ts, last_due, last_due, last_id, _PRIORITY_SCAN_BATCH_ROWS),
@@ -8063,7 +8244,12 @@ def settle_filter_candidate_outcome(
         updates["settlement_price_source"] = settlement_price_source
     if settlement_lag_sec is not None:
         updates["settlement_lag_sec"] = settlement_lag_sec
-    _update("filter_candidate_outcomes", outcome_id, updates)
+    _settle_outcome_with_exact_venue(
+        "filter_candidate_outcomes",
+        outcome_id,
+        updates,
+        kind="filter",
+    )
 
 
 def fail_filter_candidate_outcome(
@@ -8092,37 +8278,38 @@ def fail_filter_candidate_outcome(
 
 def settle_linked_shadow_outcomes(
     outcome_candidate_key: str,
-    *,
-    exit_price: float,
-    settled_at: str,
-    economics: dict,
-    settlement_price_source: str | None,
-    settlement_lag_sec: float | None,
 ) -> int:
-    """Project a settled shared 24h result onto linked shadow rows."""
+    """Project the unique decision-grade canonical 24h row onto linked shadows."""
     db = get_db()
     was_in_tx = db.in_transaction
+    identity_sql = _shadow_candidate_identity_sql(
+        "shadow_trades", "canonical_outcome"
+    )
+    canonical_where = (
+        "canonical_outcome.outcome_candidate_key="
+        "shadow_trades.outcome_candidate_key "
+        "AND canonical_outcome.horizon='24h' "
+        "AND canonical_outcome.status='settled' "
+        "AND typeof(canonical_outcome.settled_at)='text' "
+        "AND typeof(canonical_outcome.gross_return_pct) IN ('integer','real') "
+        "AND ABS(canonical_outcome.gross_return_pct) < 1e999 "
+        f"AND {complete_outcome_economics_sql('canonical_outcome')} "
+        f"AND {identity_sql}"
+    )
     cur = execute_write(
-        "UPDATE shadow_trades SET exit_price=?, pnl_pct=?, gross_return_pct=?, "
-        "net_pnl_pct=?, estimated_fee_pct=?, estimated_spread_slippage_pct=?, "
-        "estimated_funding_pct=?, min_tradable_edge_pct=?, "
-        "settlement_price_source=?, settlement_lag_sec=?, cost_model_version=?, "
-        "resolved_at=? WHERE outcome_candidate_key=? AND resolved_at IS NULL",
-        (
-            exit_price,
-            economics.get("directional_return_pct"),
-            economics.get("gross_return_pct"),
-            economics.get("net_return_pct"),
-            economics.get("estimated_fee_pct"),
-            economics.get("estimated_spread_slippage_pct"),
-            economics.get("estimated_funding_pct"),
-            economics.get("min_tradable_edge_pct"),
-            settlement_price_source,
-            settlement_lag_sec,
-            economics.get("cost_model_version"),
-            settled_at,
-            outcome_candidate_key,
-        ),
+        "UPDATE shadow_trades SET (exit_price,pnl_pct,gross_return_pct,net_pnl_pct,"
+        "estimated_fee_pct,estimated_spread_slippage_pct,estimated_funding_pct,"
+        "min_tradable_edge_pct,settlement_price_source,settlement_lag_sec,"
+        "cost_model_version,resolved_at) = (SELECT exit_price_usd,"
+        "directional_return_pct,gross_return_pct,net_return_pct,estimated_fee_pct,"
+        "estimated_spread_slippage_pct,estimated_funding_pct,min_tradable_edge_pct,"
+        "settlement_price_source,settlement_lag_sec,cost_model_version,settled_at "
+        "FROM filter_candidate_outcomes AS canonical_outcome "
+        f"WHERE {canonical_where}) "
+        "WHERE outcome_candidate_key=? AND resolved_at IS NULL "
+        "AND EXISTS (SELECT 1 FROM filter_candidate_outcomes AS canonical_outcome "
+        f"WHERE {canonical_where})",
+        (outcome_candidate_key,),
     )
     if not was_in_tx:
         db.commit()
@@ -8242,8 +8429,8 @@ def latest_filter_shadow_evaluation(experiment_id: str) -> dict | None:
 # repositories unaware of Lab state.
 
 
-def calibration_stats() -> list[dict]:
-    """Aggregate cost-aware returns by family + direction + market + horizon.
+def calibration_stats(*, cost_model_version: str) -> list[dict]:
+    """Aggregate one exact cost-model cohort by family/direction/market/horizon.
 
     Legacy gross-only rows are intentionally excluded. A win must clear the
     persisted minimum tradable edge after fees, spread/slippage and funding.
@@ -8255,24 +8442,25 @@ def calibration_stats() -> list[dict]:
     rows = db.execute(
         "SELECT scanner_family, direction, "
         f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
+        "cost_model_version, "
         "COUNT(*) as n, "
         "AVG(net_return_pct) as avg_return, "
-        "SUM(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0) "
+        "SUM(CASE WHEN net_return_pct > min_tradable_edge_pct "
         "  THEN 1 ELSE 0 END) as win_count, "
         "MIN(net_return_pct) as min_return, "
         "MAX(net_return_pct) as max_return "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' "
         "AND entry_ts >= ? "
-        "AND net_return_pct IS NOT NULL "
-        "AND cost_model_version IS NOT NULL "
-        "AND ABS(net_return_pct) <= 100 "
+        "AND cost_model_version = ? "
+        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND direction IN ('long', 'short') "
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon "
+        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon, "
+        "cost_model_version "
         "ORDER BY scanner_family, direction, market_type, horizon",
-        (cutoff,),
+        (cutoff, cost_model_version),
     ).fetchall()
-    lineage = _calibration_source_lineage(db, cutoff)
+    lineage = _calibration_source_lineage(db, cutoff, cost_model_version)
     result = []
     for raw in rows:
         row = dict(raw)
@@ -8343,7 +8531,9 @@ def _horizon_separated_counts(
     return independent_n, len(admitted_symbols), len(admitted_days)
 
 
-def _calibration_source_lineage(db, cutoff: str) -> dict[tuple, dict]:
+def _calibration_source_lineage(
+    db, cutoff: str, cost_model_version: str,
+) -> dict[tuple, dict]:
     """Hash every exact row consumed by ``calibration_stats`` without retaining it."""
     cursor = db.execute(
         "SELECT scanner_family, direction, "
@@ -8353,12 +8543,11 @@ def _calibration_source_lineage(db, cutoff: str) -> dict[tuple, dict]:
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' "
         "AND entry_ts >= ? "
-        "AND net_return_pct IS NOT NULL "
-        "AND cost_model_version IS NOT NULL "
-        "AND ABS(net_return_pct) <= 100 "
+        "AND cost_model_version = ? "
+        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND direction IN ('long', 'short') "
         "ORDER BY scanner_family, direction, market_type, horizon, id",
-        (cutoff,),
+        (cutoff, cost_model_version),
     )
     hashers: dict[tuple, object] = {}
     counts: dict[tuple, int] = {}
@@ -8395,167 +8584,93 @@ def _calibration_source_lineage(db, cutoff: str) -> dict[tuple, dict]:
     return result
 
 
-def _eligible_filter_advisor_rows(
-    source: str,
-    *,
-    require_entry_spread: bool = False,
-    as_of_at: datetime | None = None,
-) -> list[dict]:
-    """Return candidate rows admitted by the shared outcome contract."""
-    from aletheia.analytics.learning_window import clean_window_cutoff
-    from aletheia.learning.outcomes import assess_candidate_outcome
-
-    if source == "filter_candidate_outcomes":
-        table = "filter_candidate_outcomes"
-    elif source == "universe_forward_outcomes":
-        table = "universe_forward_outcomes"
-    else:
-        raise ValueError(f"unsupported candidate outcome source: {source}")
-
-    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
-    spread_column = ", entry_spread_bps" if require_entry_spread else ""
-    spread_filter = "AND entry_spread_bps IS NOT NULL " if require_entry_spread else ""
-    evaluation_as_of = (
-        datetime.now(timezone.utc) if as_of_at is None else as_of_at
-    )
-    rows = get_db().execute(
-        "SELECT outcome_candidate_key, scanner_family, direction, market_type, horizon, "
-        "entry_ts, due_at, settled_at, status, net_return_pct, "
-        f"min_tradable_edge_pct, cost_model_version{spread_column} "
-        f"FROM {table} "
-        "WHERE status = 'settled' "
-        "AND scanner_family IS NOT NULL "
-        f"{spread_filter}"
-        "AND cost_model_version IS NOT NULL "
-        "AND net_return_pct IS NOT NULL "
-        "AND ABS(net_return_pct) <= 100 "
-        "AND direction IN ('long', 'short') "
-        "AND entry_ts >= ?",
-        (cutoff,),
-    ).fetchall()
-    eligible = []
-    for raw in rows:
-        row = dict(raw)
-        assessment = assess_candidate_outcome(row, as_of_at=evaluation_as_of)
-        if assessment.eligible:
-            row["net_return_pct"] = assessment.net_return_pct
-            eligible.append(row)
-    return eligible
-
-
-def _filter_advisor_group(row: Mapping) -> tuple:
-    market_type = row.get("market_type")
-    if market_type in {"perp", "futures", "swap", "usdt_futures"}:
-        market_type = "perp"
-    elif market_type is None:
-        market_type = "spot"
-    return (
-        row.get("scanner_family"),
-        row.get("direction"),
-        market_type,
-        row.get("horizon"),
-    )
-
-
-def filter_pressure_stats(*, as_of_at: datetime | None = None) -> list[dict]:
+def filter_pressure_stats(*, cost_model_version: str) -> list[dict]:
     """Aggregate cost-aware returns for filter-rejected candidates where scanner_family is known.
 
     These rows come from risk/PI filter stages that run after scanner assignment, so
     scanner_family is populated. Returns per-family miss rates: how often do this
     family's rejected candidates produce positive net returns?
     """
-    groups: dict[tuple, dict[str, list[float]]] = {}
-    for row in _eligible_filter_advisor_rows(
-        "filter_candidate_outcomes",
-        as_of_at=as_of_at,
-    ):
-        group = groups.setdefault(_filter_advisor_group(row), {"net": [], "miss": []})
-        net = float(row["net_return_pct"])
-        try:
-            edge_value = row["min_tradable_edge_pct"]
-            edge = 0.0 if edge_value is None else float(edge_value)
-        except (TypeError, ValueError, OverflowError):
-            edge = math.inf
-        group["net"].append(net)
-        group["miss"].append(1.0 if net > edge else 0.0)
+    from aletheia.analytics.learning_window import clean_window_cutoff
 
-    result = []
-    for (family, direction, market_type, horizon), values in sorted(groups.items()):
-        net = values["net"]
-        result.append({
-            "scanner_family": family,
-            "direction": direction,
-            "market_type": market_type,
-            "horizon": horizon,
-            "n": len(net),
-            "avg_net": sum(net) / len(net),
-            "min_net": min(net),
-            "max_net": max(net),
-            "miss_rate": sum(values["miss"]) / len(net),
-        })
-    return result
+    db = get_db()
+    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
+    rows = db.execute(
+        "SELECT scanner_family, direction, "
+        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
+        "cost_model_version, "
+        "COUNT(*) AS n, "
+        "AVG(net_return_pct) AS avg_net, "
+        "MIN(net_return_pct) AS min_net, "
+        "MAX(net_return_pct) AS max_net, "
+        "AVG(CASE WHEN net_return_pct > min_tradable_edge_pct "
+        "  THEN 1.0 ELSE 0.0 END) AS miss_rate "
+        "FROM filter_candidate_outcomes "
+        "WHERE status = 'settled' "
+        "AND cost_model_version = ? "
+        "AND scanner_family IS NOT NULL "
+        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
+        "AND direction IN ('long', 'short') "
+        "AND entry_ts >= ? "
+        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon, "
+        "cost_model_version "
+        "ORDER BY scanner_family, direction, market_type, horizon",
+        (cost_model_version, cutoff),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
-def family_spread_tolerance_stats(
-    *,
-    as_of_at: datetime | None = None,
-) -> list[dict]:
+def family_spread_tolerance_stats(*, cost_model_version: str) -> list[dict]:
     """Per-family spread sensitivity from settled universe forward outcomes.
 
     Splits outcomes into low-spread (<=15 bps) and high-spread (>15 bps) buckets to
     measure whether a family retains positive net expectancy at higher spreads. Used
     by filter_advisor to compute per-family spread tolerance multipliers.
     """
-    groups: dict[tuple, dict[str, list[float]]] = {}
-    for row in _eligible_filter_advisor_rows(
-        "universe_forward_outcomes",
-        require_entry_spread=True,
-        as_of_at=as_of_at,
-    ):
-        group = groups.setdefault(
-            _filter_advisor_group(row),
-            {"net": [], "low": [], "high": []},
-        )
-        net = float(row["net_return_pct"])
-        group["net"].append(net)
-        try:
-            spread = float(row["entry_spread_bps"])
-        except (TypeError, ValueError, OverflowError):
-            continue
-        if spread <= 15:
-            group["low"].append(net)
-        elif spread > 15:
-            group["high"].append(net)
+    from aletheia.analytics.learning_window import clean_window_cutoff
 
-    result = []
-    for (family, direction, market_type, horizon), values in sorted(groups.items()):
-        net = values["net"]
-        low = values["low"]
-        high = values["high"]
-        result.append({
-            "scanner_family": family,
-            "direction": direction,
-            "market_type": market_type,
-            "horizon": horizon,
-            "n": len(net),
-            "avg_net": sum(net) / len(net),
-            "min_net": min(net),
-            "n_low_spread": len(low),
-            "avg_net_low_spread": sum(low) / len(low) if low else None,
-            "n_high_spread": len(high),
-            "avg_net_high_spread": sum(high) / len(high) if high else None,
-        })
-    return result
+    db = get_db()
+    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
+    rows = db.execute(
+        "SELECT scanner_family, direction, "
+        f"{_OUTCOME_MARKET_SQL} AS market_type, horizon, "
+        "cost_model_version, "
+        "COUNT(*) AS n, "
+        "AVG(net_return_pct) AS avg_net, "
+        "MIN(net_return_pct) AS min_net, "
+        "COUNT(CASE WHEN entry_spread_bps <= 15 THEN 1 END) AS n_low_spread, "
+        "AVG(CASE WHEN entry_spread_bps <= 15 THEN net_return_pct END) AS avg_net_low_spread, "
+        "COUNT(CASE WHEN entry_spread_bps > 15 THEN 1 END) AS n_high_spread, "
+        "AVG(CASE WHEN entry_spread_bps > 15 THEN net_return_pct END) AS avg_net_high_spread "
+        "FROM universe_forward_outcomes "
+        "WHERE status = 'settled' "
+        "AND cost_model_version = ? "
+        "AND scanner_family IS NOT NULL "
+        "AND entry_spread_bps IS NOT NULL "
+        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
+        "AND direction IN ('long', 'short') "
+        "AND entry_ts >= ? "
+        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, horizon, "
+        "cost_model_version "
+        "ORDER BY scanner_family, direction, market_type, horizon",
+        (cost_model_version, cutoff),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
-def family_direction_edge(horizon: str = "24h", within_days: int = 7) -> list[dict]:
+def family_direction_edge(
+    horizon: str = "24h",
+    within_days: int = 7,
+    *,
+    cost_model_version: str,
+) -> list[dict]:
     """Per-(scanner_family, direction, market_type) cost-aware edge.
 
-    Thesis evidence for the System Operator. Like calibration_stats(), this keeps
-    long/short and spot/perpetual evidence separate; unlike calibration_stats(),
-    it selects one horizon and recent time window for decision-time context.
-    Reuses the existing universe_forward_outcomes store and excludes legacy
-    gross-only rows.
+    Risk live-family evidence and explicit research query. Like
+    calibration_stats(), this keeps long/short and spot/perpetual evidence
+    separate; unlike calibration_stats(), it selects one horizon and recent
+    time window. Reuses the existing universe_forward_outcomes store and
+    excludes legacy gross-only rows.
 
     Returns rows: {scanner_family, direction, market_type, n, win_rate, avg_return}.
     Only families with n >= 1 in the window are returned.
@@ -8565,19 +8680,22 @@ def family_direction_edge(horizon: str = "24h", within_days: int = 7) -> list[di
     rows = db.execute(
         "SELECT scanner_family, direction, "
         f"{_OUTCOME_MARKET_SQL} AS market_type, "
+        "cost_model_version, "
         "COUNT(*) as n, "
         "AVG(net_return_pct) as avg_return, "
-        "SUM(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0) "
+        "SUM(CASE WHEN net_return_pct > min_tradable_edge_pct "
         "  THEN 1 ELSE 0 END) as win_count "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' AND horizon = ? "
-        "AND settled_at >= ? AND net_return_pct IS NOT NULL "
-        "AND ABS(net_return_pct) <= 100 "
+        "AND settled_at >= ? "
+        "AND cost_model_version = ? "
+        f"AND {_COMPLETE_OUTCOME_ECONOMICS_SQL} "
         "AND scanner_family IS NOT NULL "
         "AND direction IN ('long', 'short') "
-        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL} "
+        f"GROUP BY scanner_family, direction, {_OUTCOME_MARKET_SQL}, "
+        "cost_model_version "
         "ORDER BY n DESC",
-        (horizon, cutoff),
+        (horizon, cutoff, cost_model_version),
     ).fetchall()
     out: list[dict] = []
     for r in rows:
@@ -10108,14 +10226,28 @@ def expire_stale_opportunities(ttl_hours: int = 48) -> int:
 
 
 def insert_shadow_trade(shadow) -> None:
-    from aletheia.storage.models import ShadowTrade
-
     data = _to_payload_dict(shadow)
+    keyed_result_fields = (
+        "exit_price",
+        "pnl_pct",
+        "gross_return_pct",
+        "net_pnl_pct",
+        "estimated_fee_pct",
+        "estimated_spread_slippage_pct",
+        "estimated_funding_pct",
+        "min_tradable_edge_pct",
+        "settlement_price_source",
+        "settlement_lag_sec",
+        "cost_model_version",
+        "btc_return_pct",
+        "resolved_at",
+    )
+    if (
+        str(data.get("outcome_candidate_key") or "").strip()
+        and any(data.get(field) is not None for field in keyed_result_fields)
+    ):
+        raise ValueError("keyed shadow results require canonical projection")
     _insert("shadow_trades", data)
-
-
-def update_shadow_trade(shadow_id: str, **kwargs) -> None:
-    _update("shadow_trades", shadow_id, kwargs)
 
 
 def anchor_shadow_trade_exit_price_if_pending(
@@ -10123,11 +10255,13 @@ def anchor_shadow_trade_exit_price_if_pending(
     *,
     exit_price: float,
 ) -> bool:
-    """Persist the first close-event price without marking the row resolved."""
+    """Anchor one legacy unkeyed close-event price without resolving the row."""
     db = get_db()
     was_in_tx = db.in_transaction
     cursor = execute_write(
-        "UPDATE shadow_trades SET exit_price = ? WHERE id = ? AND resolved_at IS NULL AND exit_price IS NULL",
+        "UPDATE shadow_trades SET exit_price = ? WHERE id = ? "
+        "AND outcome_candidate_key IS NULL "
+        "AND resolved_at IS NULL AND exit_price IS NULL",
         (exit_price, shadow_id),
     )
     if not was_in_tx:
@@ -10145,7 +10279,7 @@ def resolve_shadow_trade_if_pending(
     settlement_price_source: str | None = None,
     settlement_lag_sec: float | None = None,
 ) -> bool:
-    """Resolve one shadow row once, leaving an already-resolved row untouched.
+    """Resolve one legacy unkeyed shadow once, leaving keyed rows untouched.
 
     When ``economics`` is provided (dict returned by
     ``aletheia.universe.outcome_economics.estimate_outcome_economics``), the
@@ -10158,7 +10292,8 @@ def resolve_shadow_trade_if_pending(
     if not economics:
         cursor = execute_write(
             "UPDATE shadow_trades SET exit_price = ?, pnl_pct = ?, resolved_at = ? "
-            "WHERE id = ? AND resolved_at IS NULL",
+            "WHERE id = ? AND outcome_candidate_key IS NULL "
+            "AND resolved_at IS NULL",
             (exit_price, pnl_pct, resolved_at, shadow_id),
         )
     else:
@@ -10170,7 +10305,8 @@ def resolve_shadow_trade_if_pending(
             " estimated_funding_pct = ?, min_tradable_edge_pct = ?, "
             " settlement_price_source = ?, settlement_lag_sec = ?, "
             " cost_model_version = ?, resolved_at = ? "
-            "WHERE id = ? AND resolved_at IS NULL",
+            "WHERE id = ? AND outcome_candidate_key IS NULL "
+            "AND resolved_at IS NULL",
             (
                 exit_price,
                 pnl_pct,

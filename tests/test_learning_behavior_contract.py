@@ -91,6 +91,49 @@ def test_declared_behavior_version_rotates_the_policy_epoch(monkeypatch):
     assert after.epoch_hash != before.epoch_hash
 
 
+def test_measured_policy_epochs_rotate_with_cost_model_version(monkeypatch):
+    from aletheia.learning import experiments
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    before = {
+        path_id: experiments._policy_epoch_definition(path_id)
+        for path_id in ("universe_family_calibration", "ranker_case_score")
+    }
+    assert all(
+        epoch.effective_values["cost_model_version"] == COST_MODEL_VERSION
+        for epoch in before.values()
+    )
+    monkeypatch.setattr(experiments, "COST_MODEL_VERSION", "next-cost-model")
+
+    for path_id, epoch in before.items():
+        after = experiments._policy_epoch_definition(path_id)
+        assert after.epoch_hash != epoch.epoch_hash
+        assert after.effective_values["cost_model_version"] == "next-cost-model"
+
+
+def test_measured_cost_model_identity_survives_cold_config_failure(monkeypatch):
+    from aletheia.learning import experiments
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    path_id = "universe_family_calibration"
+    monkeypatch.delitem(
+        experiments._LAST_SUCCESS_POLICY_VALUES, path_id, raising=False,
+    )
+    monkeypatch.setattr(
+        experiments,
+        "load_config",
+        lambda **_kwargs: (_ for _ in ()).throw(OSError("config unavailable")),
+    )
+
+    epoch = experiments._policy_epoch_definition(path_id)
+
+    assert epoch.effective_values == {
+        "config": "unavailable",
+        "path_id": path_id,
+        "cost_model_version": COST_MODEL_VERSION,
+    }
+
+
 def test_behavior_hash_is_reproducible_across_distinct_epoch_ids():
     from aletheia.learning.behavior_contracts import current_behavior_contract_hash
     from aletheia.learning.ledger import insert_record

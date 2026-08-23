@@ -81,16 +81,20 @@ def _insert_shadow(
     db.execute(
         "INSERT INTO filter_candidate_outcomes "
         "(id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
-        "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
-        "cost_model_version, status) "
+        "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
+        "settlement_price_source, settlement_lag_sec, directional_return_pct, "
+        "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+        "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
         "VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', '24h', 100, ?, ?, ?, ?, "
-        "'candidate-net-v1', 'settled')",
+        "'horizon_ohlcv', 0.0, ?, 0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
         (
             f"fco-{batch}-{rank}-{opp}",
             outcome_key,
+            100.0 * (1.0 + (pnl + 0.2) / 100.0),
             entry,
             _iso(hours_after=24),
             _iso(),
+            pnl + 0.2,
             pnl,
         ),
     )
@@ -136,11 +140,17 @@ def _insert_operator_candidate(
     db.execute(
         "INSERT INTO filter_candidate_outcomes "
         "(id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
-        "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
-        "cost_model_version, status) "
+        "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
+        "settlement_price_source, settlement_lag_sec, directional_return_pct, "
+        "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+        "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
         "VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', '24h', 100, ?, ?, ?, ?, "
-        "'candidate-net-v1', 'settled')",
-        (f"fco-operator-{decision}-{idx}", key, entry, _iso(hours_after=24), _iso(), pnl),
+        "'horizon_ohlcv', 0.0, ?, 0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
+        (
+            f"fco-operator-{decision}-{idx}", key,
+            100.0 * (1.0 + (pnl + 0.2) / 100.0), entry,
+            _iso(hours_after=24), _iso(), pnl + 0.2, pnl,
+        ),
     )
 
 
@@ -212,15 +222,22 @@ def _insert_prospective_control_cohort(
             db.execute(
                 "INSERT INTO filter_candidate_outcomes "
                 "(id, outcome_candidate_key, venue, symbol, market_type, direction, "
-                "horizon, entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, status) "
-                "VALUES (?, ?, 'okx', ?, 'spot', 'long', '1h', 100, ?, ?, ?, ?, 'settled')",
+                "horizon, entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
+                "settlement_price_source, settlement_lag_sec, "
+                "directional_return_pct, estimated_fee_pct, "
+                "estimated_spread_slippage_pct, estimated_funding_pct, "
+                "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
+                "VALUES (?, ?, 'okx', ?, 'spot', 'long', '1h', 100, ?, ?, ?, ?, "
+                "'horizon_ohlcv', 0.0, ?, 0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
                 (
                     f"fco-{prefix}-{role}-{i}",
                     outcome_key,
                     symbol,
+                    100.0 * (1.0 + (net_return + 0.2) / 100.0),
                     entry,
                     due_at,
                     due_at,
+                    net_return + 0.2,
                     net_return,
                 ),
             )
@@ -419,7 +436,7 @@ def test_system_operator_alpha_does_not_mix_behavior_fingerprints():
     assert operator["details"]["behavior_fingerprint"] == "behavior-new"
 
 
-def test_universe_alpha_uses_forward_outcomes_against_deterministic_baseline():
+def test_universe_alpha_uses_canonical_directional_outcomes_against_deterministic_baseline():
     from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
     from aletheia.storage.sqlite import get_db
 
@@ -433,13 +450,35 @@ def test_universe_alpha_uses_forward_outcomes_against_deterministic_baseline():
             (f"asset-base-{i}", sym),
         )
         _insert_ohlcv(db, sym, "1h", entry, 100.0, {1: 100.0})
-    for i in range(5):
+    for i in range(7):
+        direction = "short" if i < 5 and i % 2 else "long"
+        directional_return = 2.0 if i < 5 else 99.0
+        gross_return = (
+            -directional_return if direction == "short" else directional_return
+        )
+        legacy_forward_return = (
+            -999.0 if direction == "short" else 999.0
+        ) if i < 5 else gross_return
+        venue = "bitget" if i != 5 else None
+        price_source = "late_ticker" if i == 6 else "horizon_ohlcv"
+        settlement_lag = 3600.0 if i == 6 else 0.0
         db.execute(
             "INSERT INTO universe_forward_outcomes "
-            "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
-            "entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, forward_return_pct, status) "
-            "VALUES (?, ?, 'snap', ?, 'momentum', 'long', '1h', 100, ?, ?, ?, 102, 2.0, 'settled')",
-            (f"ufo-{i}", f"member-{i}", f"SEL{i}/USDT", entry, _iso(days_ago=2, hours_after=1), _iso(days_ago=1)),
+            "(id, member_id, snapshot_id, symbol, venue, market_type, scanner_family, "
+            "direction, horizon, entry_price_usd, entry_ts, due_at, settled_at, "
+            "settlement_price_source, settlement_lag_sec, "
+            "exit_price_usd, forward_return_pct, directional_return_pct, "
+            "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+            "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
+            "VALUES (?, ?, 'snap', ?, ?, 'spot', 'momentum', ?, '1h', 100, ?, ?, ?, "
+            "?, ?, ?, ?, ?, 0, 0, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
+            (
+                f"ufo-{i}", f"member-{i}", f"SEL{i}/USDT", venue, direction, entry,
+                _iso(days_ago=2, hours_after=1), _iso(days_ago=1),
+                price_source, settlement_lag,
+                100.0 + gross_return, legacy_forward_return,
+                directional_return, directional_return,
+            ),
         )
     db.commit()
 
@@ -477,13 +516,21 @@ def test_universe_alpha_prefers_prospective_control_cohort():
                 (f"aco-{role}-{i}", role, sym, entry, json.dumps({"due_at": due_at}), outcome_key),
             )
             db.execute(
-                "INSERT INTO filter_candidate_outcomes "
-                "(id, outcome_candidate_key, venue, symbol, market_type, direction, "
-                "horizon, entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, status) "
-                "VALUES (?, ?, 'okx', ?, 'spot', 'long', '1h', 100, ?, ?, ?, ?, 'settled')",
-                (
-                    f"fco-{role}-{i}", outcome_key, sym, entry, due_at, due_at,
-                    3.0 if role == "selected" else 0.0,
+                    "INSERT INTO filter_candidate_outcomes "
+                    "(id, outcome_candidate_key, venue, symbol, market_type, direction, "
+                    "horizon, entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
+                    "settlement_price_source, settlement_lag_sec, "
+                    "directional_return_pct, estimated_fee_pct, "
+                    "estimated_spread_slippage_pct, estimated_funding_pct, "
+                    "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
+                    "VALUES (?, ?, 'okx', ?, 'spot', 'long', '1h', 100, ?, ?, ?, ?, "
+                    "'horizon_ohlcv', 0.0, ?, 0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
+                    (
+                        f"fco-{role}-{i}", outcome_key, sym,
+                        103.2 if role == "selected" else 100.2,
+                        entry, due_at, due_at,
+                        3.2 if role == "selected" else 0.2,
+                        3.0 if role == "selected" else 0.0,
                 ),
             )
     db.commit()

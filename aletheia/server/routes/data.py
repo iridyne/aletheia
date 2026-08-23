@@ -2876,9 +2876,11 @@ def get_shadow_trades(
     resolved: bool | None = None,
     limit: int = 100,
 ):
-    """List shadow trade records for counterfactual analysis."""
+    """List authority-aware shadow trade diagnostics for counterfactual analysis."""
     _ensure_db()
-    return repo.list_shadow_trades(
+    from aletheia.counterfactual.trades import list_shadow_trade_diagnostics
+
+    return list_shadow_trade_diagnostics(
         batch_id=batch_id,
         scanner_family=scanner_family,
         resolved=resolved,

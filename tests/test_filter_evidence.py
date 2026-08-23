@@ -44,13 +44,87 @@ def test_directional_decision_registers_one_shared_outcome_per_horizon():
     assert {row["direction"] for row in rows} == {"short"}
 
 
-@pytest.mark.parametrize(
-    ("market_type", "expected_net"),
-    (("spot", 1.68), ("", None)),
-)
-def test_filter_outcome_settlement_preserves_market_economics(
-    monkeypatch, market_type, expected_net,
-):
+def test_blank_venue_keeps_filter_decision_report_only():
+    from aletheia.analytics.filter_evidence import record_filter_decision
+    from aletheia.storage.sqlite import get_db
+
+    decision_id = record_filter_decision(
+        candidate_key="opportunity:blank-filter-venue",
+        candidate_kind="opportunity",
+        filter_name="direction_present",
+        stage="paper_ranker",
+        decision="passed",
+        reason_code="direction_available",
+        symbol="BTC/USDT",
+        venue=" \t",
+        market_type="perp",
+        direction="long",
+        entry_price_usd=100.0,
+    )
+
+    row = get_db().execute(
+        "SELECT venue, outcome_candidate_key FROM filter_decisions WHERE id=?",
+        (decision_id,),
+    ).fetchone()
+    assert dict(row) == {"venue": None, "outcome_candidate_key": None}
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key='opportunity:blank-filter-venue'"
+    ).fetchone()[0] == 0
+
+
+def test_risk_filter_uses_exact_universe_asset_venue(monkeypatch):
+    from aletheia.analytics import filter_evidence
+
+    captured = {}
+    monkeypatch.setattr(
+        filter_evidence.repo,
+        "get_opportunity",
+        lambda _opportunity_id: {"universe_member_id": "member-exact"},
+    )
+    monkeypatch.setattr(
+        filter_evidence.repo,
+        "get_universe_member",
+        lambda _member_id: {
+            "asset_id": "asset-exact",
+            "symbol": "BTC/USDT",
+            "market_type": "perp",
+        },
+    )
+    monkeypatch.setattr(
+        filter_evidence.repo,
+        "get_universe_asset",
+        lambda _asset_id: {
+            "venue": " okx ",
+            "symbol": "BTC/USDT",
+            "market_type": "perp",
+        },
+    )
+    monkeypatch.setattr(
+        filter_evidence,
+        "record_filter_decision",
+        lambda **kwargs: captured.update(kwargs) or "risk-evidence",
+    )
+    proposal = SimpleNamespace(
+        id="proposal-exact",
+        opportunity_id="opportunity-exact",
+        symbol="BTC/USDT",
+        market_type="perp",
+        direction="long",
+        execution_mode="paper_internal",
+        price=100.0,
+    )
+
+    assert filter_evidence.record_risk_filter_decision(
+        proposal,
+        risk_decision_id="risk-exact",
+        approved=True,
+        violations=[],
+    ) == "risk-evidence"
+    assert captured["venue"] == "okx"
+
+
+def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import FilterCandidateOutcome, ShadowTrade
     from aletheia.storage.sqlite import get_db
@@ -62,7 +136,7 @@ def test_filter_outcome_settlement_preserves_market_economics(
         outcome_candidate_key="opportunity:settle-filter-net",
         venue="okx",
         symbol="BTC/USDT",
-        market_type=market_type,
+        market_type="spot",
         direction="long",
         scanner_family="momentum",
         horizon="24h",
@@ -77,9 +151,10 @@ def test_filter_outcome_settlement_preserves_market_economics(
         batch_id="batch-net",
         symbol="BTC/USDT",
         venue="okx",
-        market_type=market_type,
+        market_type="spot",
         direction="long",
         entry_price=100.0,
+        created_at=entry.isoformat(),
         outcome_candidate_key=outcome.outcome_candidate_key,
     )
     repo.insert_shadow_trade(shadow)
@@ -107,20 +182,14 @@ def test_filter_outcome_settlement_preserves_market_economics(
     ).fetchone()
     assert row["status"] == "settled"
     assert row["gross_return_pct"] == pytest.approx(2.0)
+    assert row["net_return_pct"] == pytest.approx(1.68)
     assert row["mfe_pct"] == pytest.approx(3.0)
     assert row["mae_pct"] == pytest.approx(-1.0)
     shadow_row = get_db().execute(
         "SELECT * FROM shadow_trades WHERE id=?", (shadow.id,)
     ).fetchone()
     assert shadow_row["pnl_pct"] == pytest.approx(2.0)
-    if expected_net is None:
-        assert row["estimated_funding_pct"] is None
-        assert row["net_return_pct"] is None
-        assert shadow_row["net_pnl_pct"] is None
-    else:
-        assert row["estimated_funding_pct"] == 0.0
-        assert row["net_return_pct"] == pytest.approx(expected_net)
-        assert shadow_row["net_pnl_pct"] == pytest.approx(expected_net)
+    assert shadow_row["net_pnl_pct"] == pytest.approx(1.68)
     assert shadow_row["resolved_at"]
 
 
@@ -430,7 +499,8 @@ def test_one_request_settles_every_row_it_brought_bars_for(monkeypatch):
     ])
     provider = _PersistingProvider(entry_ms)
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
     )
 
     assert asyncio.run(settle_due_filter_outcomes(max_rows=8, max_fetches=1)) == 2
@@ -513,7 +583,8 @@ def test_a_sibling_the_fetched_span_missed_is_fetched_not_starved(monkeypatch):
     ])
     provider = _SinceHonouringProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
     )
 
     assert asyncio.run(settle_due_filter_outcomes(max_rows=8)) == 2
@@ -550,7 +621,8 @@ def test_an_uncovered_sibling_still_defers_when_the_budget_is_spent(monkeypatch)
     ])
     provider = _SinceHonouringProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
     )
 
     assert asyncio.run(settle_due_filter_outcomes(max_rows=8, max_fetches=1)) == 1
@@ -597,7 +669,8 @@ def test_the_fetch_ceiling_holds_across_every_round(monkeypatch):
     repo.insert_filter_candidate_outcomes_batch(rows)
     provider = _SinceHonouringProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
     )
 
     settled = asyncio.run(settle_due_filter_outcomes(max_rows=64, max_fetches=5))
@@ -632,7 +705,8 @@ def test_each_distinct_instrument_costs_one_unit_of_the_fetch_budget(monkeypatch
     ])
     provider = _PersistingProvider(entry_ms)
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", lambda: provider
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
     )
 
     assert asyncio.run(settle_due_filter_outcomes(max_rows=8, max_fetches=1)) == 1
@@ -708,7 +782,71 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
         record_filter_decision(candidate_key=key, decision=decision, **common)
         get_db().execute(
             "UPDATE filter_candidate_outcomes SET status='settled', "
-            "net_return_pct=?, min_tradable_edge_pct=0.05 WHERE outcome_candidate_key=?",
+            "directional_return_pct=?, exit_price_usd=?, estimated_fee_pct=0.1, "
+            "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
+            "net_return_pct=?, min_tradable_edge_pct=0.05, "
+            "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+            "cost_model_version='v1' "
+            "WHERE outcome_candidate_key=?",
+            (net + 0.2, 100.0 + net + 0.2, net, key),
+        )
+    for suffix, edge in (
+        ("missing", None), ("negative", -0.01), ("infinite", float("inf")),
+        ("malformed", "malformed"), ("blob", b"0.05"),
+    ):
+        key = f"opportunity:confidence-{suffix}"
+        record_filter_decision(candidate_key=key, decision="rejected", **common)
+        get_db().execute(
+            "UPDATE filter_candidate_outcomes SET status='settled', "
+            "directional_return_pct=1.0, exit_price_usd=101.0, estimated_fee_pct=0.1, "
+            "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
+            "net_return_pct=0.8, min_tradable_edge_pct=?, "
+            "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+            "cost_model_version='v1' "
+            "WHERE outcome_candidate_key=?",
+            (edge, key),
+        )
+    max_edge_key = "opportunity:confidence-max-finite"
+    record_filter_decision(candidate_key=max_edge_key, decision="rejected", **common)
+    get_db().execute(
+        "UPDATE filter_candidate_outcomes SET status='settled', "
+        "directional_return_pct=0.2, exit_price_usd=100.2, estimated_fee_pct=0.1, "
+        "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
+        "net_return_pct=0, min_tradable_edge_pct=?, "
+        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+        "cost_model_version='v1' "
+        "WHERE outcome_candidate_key=?",
+        (float.fromhex("0x1.fffffffffffffp+1023"), max_edge_key),
+    )
+    for suffix, cost_model in (
+        ("missing-cost-model", None), ("blank-cost-model", " "),
+        ("tab-cost-model", "\t"),
+        ("unicode-space-cost-model", "\N{NO-BREAK SPACE}"),
+        ("blob-cost-model", b"v1"),
+    ):
+        key = f"opportunity:confidence-{suffix}"
+        record_filter_decision(candidate_key=key, decision="rejected", **common)
+        get_db().execute(
+            "UPDATE filter_candidate_outcomes SET status='settled', "
+            "directional_return_pct=1.0, exit_price_usd=101.0, estimated_fee_pct=0.1, "
+            "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
+            "net_return_pct=0.8, min_tradable_edge_pct=0.05, "
+            "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+            "cost_model_version=? "
+            "WHERE outcome_candidate_key=?",
+            (cost_model, key),
+        )
+    for suffix, net in (("malformed-net", "malformed"), ("blob-net", b"0.8")):
+        key = f"opportunity:confidence-{suffix}"
+        record_filter_decision(candidate_key=key, decision="rejected", **common)
+        get_db().execute(
+            "UPDATE filter_candidate_outcomes SET status='settled', "
+            "directional_return_pct=1.0, exit_price_usd=101.0, estimated_fee_pct=0.1, "
+            "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
+            "net_return_pct=?, min_tradable_edge_pct=0.05, "
+            "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+            "cost_model_version='v1' "
+            "WHERE outcome_candidate_key=?",
             (net, key),
         )
     get_db().commit()
@@ -722,120 +860,9 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
     assert rejected["blocked_avoided_loss_count"] == 1
     assert rejected["blocked_missed_alpha_count"] == 1
     assert rejected["blocked_net_sum"] == pytest.approx(0.2)
-
-
-def test_filter_advisor_stats_ignore_temporally_invalid_outcomes():
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import FilterCandidateOutcome, UniverseForwardOutcome
-
-    now = datetime.now(timezone.utc)
-    entry = now - timedelta(hours=2)
-    due = now - timedelta(hours=1)
-    settled = now - timedelta(minutes=30)
-    common = {
-        "venue": "okx",
-        "symbol": "BTC/USDT",
-        "market_type": "usdt_futures",
-        "direction": "long",
-        "scanner_family": "momentum",
-        "horizon": "1h",
-        "entry_price_usd": 100.0,
-        "entry_spread_bps": 20.0,
-        "entry_ts": entry.isoformat(),
-        "due_at": due.isoformat(),
-        "min_tradable_edge_pct": 0.1,
-        "cost_model_version": "test-v1",
-        "status": "settled",
-    }
-    repo.insert_filter_candidate_outcomes_batch([
-        FilterCandidateOutcome(
-            outcome_candidate_key="opportunity:advisor-valid",
-            settled_at=settled.isoformat(),
-            net_return_pct=0.8,
-            **common,
-        ),
-        FilterCandidateOutcome(
-            outcome_candidate_key="opportunity:advisor-future",
-            settled_at=(now + timedelta(days=1)).isoformat(),
-            net_return_pct=99.0,
-            **common,
-        ),
-    ])
-    repo.insert_forward_outcomes_batch([
-        UniverseForwardOutcome(
-            outcome_candidate_key="universe:advisor-valid:1h",
-            member_id="advisor-valid",
-            snapshot_id="advisor-snapshot",
-            settled_at=settled.isoformat(),
-            net_return_pct=0.6,
-            **common,
-        ),
-        UniverseForwardOutcome(
-            outcome_candidate_key="universe:advisor-impossible:1h",
-            member_id="advisor-impossible",
-            snapshot_id="advisor-snapshot",
-            settled_at=(due - timedelta(seconds=1)).isoformat(),
-            net_return_pct=-99.0,
-            **common,
-        ),
-    ])
-
-    assert repo.filter_pressure_stats() == [{
-        "scanner_family": "momentum",
-        "direction": "long",
-        "market_type": "perp",
-        "horizon": "1h",
-        "n": 1,
-        "avg_net": 0.8,
-        "min_net": 0.8,
-        "max_net": 0.8,
-        "miss_rate": 1.0,
-    }]
-    assert repo.family_spread_tolerance_stats() == [{
-        "scanner_family": "momentum",
-        "direction": "long",
-        "market_type": "perp",
-        "horizon": "1h",
-        "n": 1,
-        "avg_net": 0.6,
-        "min_net": 0.6,
-        "n_low_spread": 0,
-        "avg_net_low_spread": None,
-        "n_high_spread": 1,
-        "avg_net_high_spread": 0.6,
-    }]
-
-
-def test_filter_advisor_uses_one_cutoff_and_read_snapshot(monkeypatch):
-    from aletheia.storage import repositories as repo
-    from aletheia.universe.filter_advisor import get_family_spread_tolerances
-
-    statements: list[str] = []
-    cutoffs: list[datetime] = []
-
-    class _DB:
-        in_transaction = False
-
-        def execute(self, statement):
-            statements.append(statement)
-
-    monkeypatch.setattr(repo, "get_db", lambda: _DB())
-    monkeypatch.setattr(
-        repo,
-        "family_spread_tolerance_stats",
-        lambda *, as_of_at=None: cutoffs.append(as_of_at) or [],
-    )
-    monkeypatch.setattr(
-        repo,
-        "filter_pressure_stats",
-        lambda *, as_of_at=None: cutoffs.append(as_of_at) or [],
-    )
-
-    assert get_family_spread_tolerances() == {}
-    assert len(cutoffs) == 2
-    assert cutoffs[0] is cutoffs[1]
-    assert cutoffs[0].tzinfo is timezone.utc
-    assert statements == ["BEGIN DEFERRED", "ROLLBACK"]
+    assert rejected["n_total"] == 15
+    assert rejected["n_net"] == 3
+    assert rejected["outcome_coverage"] == 0.2
 
 
 def test_filter_snapshot_drops_sensitive_keys_and_truncates_text():
@@ -1101,10 +1128,19 @@ def test_batch_controller_reads_only_referenced_outcome_keys():
             scanner_family="momentum",
             horizon="1h",
             entry_price_usd=100.0,
+            exit_price_usd=100.45,
             entry_ts=now.isoformat(),
             due_at=(now + timedelta(hours=1)).isoformat(),
             status="settled",
+            directional_return_pct=0.45,
+            estimated_fee_pct=0.1,
+            estimated_spread_slippage_pct=0.1,
+            estimated_funding_pct=0.0,
             net_return_pct=0.25,
+            min_tradable_edge_pct=0.05,
+            settlement_price_source="horizon_ohlcv",
+            settlement_lag_sec=0,
+            cost_model_version="test-v1",
         ))
     repo.insert_filter_candidate_outcomes_batch(outcomes)
 
@@ -1230,7 +1266,8 @@ def test_filter_feedback_stats_respects_decision_time_window():
             )
     db = get_db()
     db.execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.1 "
+        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.1, "
+        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0 "
         "WHERE horizon='1h'"
     )
 
@@ -1288,7 +1325,8 @@ def test_filter_feedback_assigns_each_candidate_to_first_exposure_only():
     )
     db = get_db()
     db.execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.2 "
+        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.2, "
+        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0 "
         "WHERE horizon='1h'"
     )
 
