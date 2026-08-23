@@ -7,7 +7,6 @@ import pytest
 
 import aletheia.analytics.position_path_observations as analysis
 
-
 _OPENED_AT = "2026-08-13T00:00:00+00:00"
 _CLOSED_AT = "2026-08-13T00:15:00+00:00"
 _FIRST_BUCKET_MS = int(

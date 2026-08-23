@@ -8,12 +8,11 @@ exchange module.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
 import math
 import sqlite3
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
-
 
 OUTCOME_SEMANTICS_VERSION = "oi-v1"
 

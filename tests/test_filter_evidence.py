@@ -1,8 +1,8 @@
 """Focused behavior tests for Opportunity filter evidence."""
 
 import asyncio
-from datetime import datetime, timedelta, timezone
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest

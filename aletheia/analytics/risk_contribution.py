@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-from datetime import datetime, timezone
 import json
 import math
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from statistics import fmean
 from typing import Any
 
 from aletheia.analytics.outcome_semantics import validated_outcome_economics
-
 
 CONTRACT_VERSION = "risk-policy-value/v1"
 BASELINE_POLICY = "pass-all-candidates/v1"

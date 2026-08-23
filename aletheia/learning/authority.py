@@ -7,24 +7,28 @@ identity and safety facts without reinterpreting ``positive`` as the legacy
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
-import json
 from typing import Any
 
 from aletheia.config.loader import load_config
+from aletheia.learning.behavior_contracts import current_behavior_contract_hash
 from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
-from aletheia.learning.registry import get_learning_path
 from aletheia.learning.control import global_learning_refreeze_reason
+from aletheia.learning.fixed_look import (
+    inference_authority_reason,
+    inference_collection_reason,
+)
 from aletheia.learning.ledger import (
     get_latest_measurement_verdict,
-    get_trial_admission_event,
     get_latest_verdict_for_cohort,
     get_record,
+    get_trial_admission_event,
     linked_settled_exposure_counts,
 )
 from aletheia.learning.models import LearningExperiment
-from aletheia.learning.behavior_contracts import current_behavior_contract_hash
+from aletheia.learning.registry import get_learning_path
 from aletheia.learning.verdicts import (
     METRIC_VERSION,
     SHADOW_TRIAL_INTEGRITY_CONTRACT,
@@ -32,12 +36,7 @@ from aletheia.learning.verdicts import (
     SHADOW_TRIAL_MIN_MARKET_DAYS,
     SHADOW_TRIAL_MIN_SAMPLES_PER_ARM,
 )
-from aletheia.learning.fixed_look import (
-    inference_authority_reason,
-    inference_collection_reason,
-)
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
-
 
 PAPER_STAGES = ("paper_10", "paper_25", "paper_50", "paper_active")
 PREVIOUS_STAGE = {

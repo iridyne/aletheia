@@ -10,7 +10,6 @@ from typer.testing import CliRunner
 import aletheia.analytics.profit_gradient_evidence as evidence
 from aletheia.cli.inspect_cmd import inspect_app
 
-
 runner = CliRunner()
 
 

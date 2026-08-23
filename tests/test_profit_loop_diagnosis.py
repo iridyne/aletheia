@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import json
+from copy import deepcopy
 
 import aletheia.analytics.profit_loop_diagnosis as diagnosis
 

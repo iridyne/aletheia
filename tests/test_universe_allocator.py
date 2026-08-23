@@ -3,12 +3,15 @@
 from types import SimpleNamespace
 
 import pytest
+
+from aletheia.config.schema import UniverseConfig
 from aletheia.universe.allocator import (
-    compute_total_score, allocate_universe, compute_late_entry_penalty,
+    allocate_universe,
     compute_direction_exhaustion_signal,
+    compute_late_entry_penalty,
+    compute_total_score,
     get_family_multipliers,
 )
-from aletheia.config.schema import UniverseConfig
 
 
 @pytest.fixture

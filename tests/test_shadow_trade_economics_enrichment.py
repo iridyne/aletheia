@@ -20,14 +20,14 @@ import uuid
 
 import pytest
 
+from aletheia.counterfactual.trades import _compute_shadow_economics, _current_price
+from aletheia.storage.models import ShadowTrade
 from aletheia.storage.repositories import (
     anchor_shadow_trade_exit_price_if_pending,
     insert_shadow_trade,
     resolve_shadow_trade_if_pending,
 )
-from aletheia.storage.models import ShadowTrade
 from aletheia.storage.sqlite import get_db
-from aletheia.counterfactual.trades import _compute_shadow_economics, _current_price
 
 
 def _fresh_shadow(**overrides) -> ShadowTrade:

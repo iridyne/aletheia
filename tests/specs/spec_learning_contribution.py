@@ -9,7 +9,6 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 _CONTRACT = "learning_evolution"
 
 
@@ -313,7 +312,6 @@ def _iso(days_ago: int) -> str:
 )
 def test_learning_alpha_deduplicates_duplicate_lessons_and_reports_raw_counts(monkeypatch):
     import aletheia.analytics.alpha_attribution as alpha_attribution
-
     from aletheia.storage.sqlite import get_db
 
     audit_now = datetime.fromisoformat("2026-07-13T07:10:01+00:00")
@@ -500,8 +498,8 @@ def test_ranker_case_outcome_adapter_uses_exact_base_key_and_horizon():
 
 
 def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
-    from datetime import datetime, timedelta, timezone
     import json
+    from datetime import datetime, timedelta, timezone
 
     import aletheia.agents.paper_trader_ranker as ranker
     from aletheia.learning import experiments

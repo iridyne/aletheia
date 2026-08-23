@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-
 _EXP_ROW = {
     "experiment_id": "exp-x",
     "hypothesis_id": "hyp-x",

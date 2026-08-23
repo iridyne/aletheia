@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 from typing import Any
 
-
 MISSED_ALPHA = "missed_alpha_suspect"
 POSITIVE_GROSS_ONLY = "positive_gross_move_only"
 PROTECTIVE = "protective"

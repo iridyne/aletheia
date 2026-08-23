@@ -1,7 +1,6 @@
 """Tests for aletheia.counterfactual.propensity."""
 from __future__ import annotations
 
-import sqlite3
 from unittest.mock import patch
 
 from aletheia.counterfactual.propensity import (

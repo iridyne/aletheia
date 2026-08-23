@@ -2,35 +2,41 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-import json
-import logging
 from typing import Any
 
 from aletheia.config.loader import load_config
 from aletheia.learning.authority import (
     MEASUREMENT_VERDICTS,
+    TRIAL_ADMISSION_REASONS,
     measurement_harm_block_reason,
     measurement_identity_reason,
     measurement_intervention_block_reason,
     resolve_learning_authority,
     trial_admission_measurement_block_reason,
-    TRIAL_ADMISSION_REASONS,
 )
-from aletheia.learning.cohorts import SUPPORTED_PATH_ID, SUPPORTED_PATH_IDS
 from aletheia.learning.behavior_contracts import current_behavior_contract_hash
+from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
 from aletheia.learning.control import global_learning_refreeze_reason
+from aletheia.learning.experiments import _policy_epoch, current_policy_epoch
+from aletheia.learning.fixed_look import (
+    InferenceContractError,
+    get_consumed_fixed_look_verdict,
+    inference_authority_reason,
+    register_fixed_look_decision,
+)
 from aletheia.learning.ledger import (
     count_unmirrored_lifecycle_events,
     get_latest_measurement_verdict,
     get_lifecycle_event_by_dedup_key,
     get_record,
-    insert_lifecycle_event,
     insert_experiment,
-    list_unmirrored_lifecycle_events,
-    list_open_experiments,
+    insert_lifecycle_event,
     list_lifecycle_events,
+    list_open_experiments,
+    list_unmirrored_lifecycle_events,
     update_lifecycle_audit_mirror,
 )
 from aletheia.learning.models import (
@@ -38,15 +44,8 @@ from aletheia.learning.models import (
     LearningHypothesis,
     LearningLifecycleEvent,
 )
-from aletheia.learning.experiments import _policy_epoch, current_policy_epoch
 from aletheia.learning.registry import get_learning_path
 from aletheia.learning.verdicts import METRIC_VERSION
-from aletheia.learning.fixed_look import (
-    InferenceContractError,
-    get_consumed_fixed_look_verdict,
-    inference_authority_reason,
-    register_fixed_look_decision,
-)
 from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
 

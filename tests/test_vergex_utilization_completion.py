@@ -82,8 +82,8 @@ def test_multitimeframe_features_are_durable_and_instrument_scoped(tmp_path, mon
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import list_universe_feature_snapshots
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     columns = {
@@ -130,8 +130,8 @@ async def test_feature_collector_fetches_and_persists_15m_1h_4h(tmp_path, monkey
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
-    from aletheia.universe.features import _fetch_single_feature
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe.features import _fetch_single_feature
 
     now = datetime.now(timezone.utc)
 
@@ -724,13 +724,13 @@ async def test_structure_shadow_outcome_settles_without_decision_influence(
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
+    import aletheia.universe.outcome_recorder as outcome_recorder
     from aletheia.data.collectors.vergex_structure import ingest_owner_aggregate
     from aletheia.data.perp_structure_shadow import (
         settle_due_perp_structure_outcomes,
         shadow_window_status,
     )
     from aletheia.storage.sqlite import get_db
-    import aletheia.universe.outcome_recorder as outcome_recorder
 
     ingest_owner_aggregate({
         "source_ref": "historical-owner-export",

@@ -198,6 +198,7 @@ def test_xstock_listing_source_is_registered_and_bounded():
 )
 def test_render_has_xvenue_funding_param():
     import inspect
+
     from aletheia.data.context_builder import render_enriched_context_md
     sig = inspect.signature(render_enriched_context_md)
     assert "xvenue_funding" in sig.parameters, (
@@ -642,6 +643,7 @@ def test_regime_is_inline_not_separate_collector():
 )
 def test_coinalyze_registered_in_scheduler_and_config():
     import inspect
+
     from aletheia.config import schema as schema_mod
 
     # 1) scheduler.py 含 CoinalyzeCollector 字符串（已注册到 context lane）
@@ -796,6 +798,7 @@ def test_research_worker_injects_coinalyze_flow():
 
 def _setup_du_db(tmp_path, monkeypatch):
     import sqlite3
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     from aletheia.storage.migrations import run_migrations

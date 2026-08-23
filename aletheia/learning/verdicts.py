@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
+import json
+import math
+import random
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from itertools import combinations
-import json
-import math
-import random
 from statistics import fmean
 from typing import Any
 
-from aletheia.learning.cohorts import ContributionCohort, CohortSample
+from aletheia.learning.cohorts import CohortSample, ContributionCohort
 from aletheia.learning.registry import get_learning_path, metric_version_for_path
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 

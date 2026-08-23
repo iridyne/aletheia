@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import base64
-from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import logging
+import zlib
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
-import zlib
 
 from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
 from aletheia.storage import repositories as repo
@@ -19,7 +19,6 @@ from aletheia.storage.models import (
     FilterDecision,
     FilterDecisionBatch,
 )
-
 
 logger = logging.getLogger("aletheia.analytics.filter_evidence")
 

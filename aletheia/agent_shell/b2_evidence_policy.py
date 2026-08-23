@@ -6,7 +6,6 @@ from aletheia.analytics.pi_evidence import build_b2_evidence_summary
 from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
-
 _EPOCH_KIND = "system_operator_b2_candidate_evidence"
 _EFFECTIVE_VALUES = {
     "version": "b2.1",

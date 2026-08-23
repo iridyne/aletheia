@@ -2,6 +2,7 @@
 
 import json
 from unittest.mock import patch
+
 import pytest
 
 
@@ -9,6 +10,7 @@ import pytest
 def _isolate_db(tmp_path, monkeypatch):
     """Use a fresh file-backed DB for each test."""
     import sqlite3
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     from aletheia.storage.sqlite import reset_db
@@ -181,9 +183,9 @@ class TestBTCBenchmark:
 
     @patch("aletheia.portfolio.pnl._btc_price_at_close", return_value=61000.0)
     def test_btc_exit_price_on_close(self, _mock_btc):
-        from aletheia.storage.repositories import insert_position, _select_one
-        from aletheia.storage.models import Position
         from aletheia.portfolio.pnl import close_position
+        from aletheia.storage.models import Position
+        from aletheia.storage.repositories import _select_one, insert_position
 
         pos = Position(
             symbol="ETH/USDT",
@@ -214,11 +216,16 @@ class TestFamilyScorecard:
         assert result == []
 
     def test_scorecard_with_data(self):
-        from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
         from aletheia.analytics.family_scorecard import compute_family_scorecard
+        from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
         from aletheia.storage import repositories as repo
         from aletheia.storage.models import (
-            Fill, Opportunity, Order, Position, RiskDecision, TradeProposal,
+            Fill,
+            Opportunity,
+            Order,
+            Position,
+            RiskDecision,
+            TradeProposal,
         )
 
         opened_at = "2026-07-12T07:30:00+00:00"
@@ -315,7 +322,7 @@ class TestOpportunityExtendedFields:
 
     def test_opportunity_with_edge_lab_fields(self):
         from aletheia.storage.models import Opportunity
-        from aletheia.storage.repositories import insert_opportunity, _select_one
+        from aletheia.storage.repositories import _select_one, insert_opportunity
 
         opp = Opportunity(
             symbol="ETH/USDT",

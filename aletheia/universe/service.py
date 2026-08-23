@@ -9,18 +9,20 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from contextlib import contextmanager
 import json
 import logging
 import threading
 import time
-from datetime import datetime, timezone, timedelta
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from aletheia.config.loader import load_config
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
-    UniverseSnapshot, UniverseMember, UniverseScannerRun,
+    UniverseMember,
+    UniverseScannerRun,
+    UniverseSnapshot,
 )
 
 logger = logging.getLogger("aletheia.universe")
@@ -290,7 +292,7 @@ def _atomic_universe_publication():
 
 def _volume_ranked_instruments(rows: list, default_venue: str):
     """Normalize structured and legacy volume-ranking rows to exact instruments."""
-    from aletheia.data.symbols import InstrumentId, MARKET_PERP, MARKET_SPOT
+    from aletheia.data.symbols import MARKET_PERP, MARKET_SPOT, InstrumentId
 
     result: list[InstrumentId] = []
     seen: set[str] = set()
@@ -683,21 +685,23 @@ class UniverseService:
 
         Returns the snapshot_id on success, None on failure.
         """
-        from aletheia.universe.registry import sync_registry
+        from aletheia.universe.allocator import (
+            allocate_universe,
+            compute_total_score,
+            get_family_multipliers,
+        )
         from aletheia.universe.features import collect_features
+        from aletheia.universe.filter_advisor import get_family_spread_tolerances
         from aletheia.universe.filters import (
             apply_coarse_tradability_filters,
             apply_fine_tradability_filters,
         )
-        from aletheia.universe.filter_advisor import get_family_spread_tolerances
-        from aletheia.universe.scanners import run_all_scanners
-        from aletheia.universe.allocator import (
-            allocate_universe, compute_total_score, get_family_multipliers,
-        )
         from aletheia.universe.outcome_recorder import build_pending, settle_due
+        from aletheia.universe.registry import sync_registry
+        from aletheia.universe.scanners import run_all_scanners
         from aletheia.universe.signal_emitter import (
-            emit_deterministic_opportunities,
             _infer_direction,
+            emit_deterministic_opportunities,
         )
 
         cfg = load_config()

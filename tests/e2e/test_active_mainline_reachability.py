@@ -99,9 +99,9 @@ def test_registered_learning_consumer_persists_and_links_exact_exposure(
     e2e_db, monkeypatch
 ):
     """A real allocator consumer reaches the ledger and its exact outcome reader."""
-    from aletheia.config.loader import load_config, save_config
     import aletheia.learning.models as learning_models
     import aletheia.learning.policy_epochs as policy_epochs
+    from aletheia.config.loader import load_config, save_config
     from aletheia.learning.ledger import linked_settled_exposure_counts
     from aletheia.learning.registry import get_learning_path
     from aletheia.storage import repositories as repo

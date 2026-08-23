@@ -16,7 +16,6 @@ from typing import Literal
 from aletheia.storage.repositories import complete_outcome_economics_sql
 from aletheia.storage.sqlite import get_db
 
-
 Finding = Literal[
     "not_applicable",
     "awaiting_outcomes",

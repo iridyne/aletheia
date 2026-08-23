@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import math
+from datetime import datetime, timezone
 from statistics import mean, median
 
 from aletheia.analytics.outcome_semantics import valid_settlement_price_provenance

@@ -5,16 +5,17 @@ when it is negative. Rows with NULL direction are excluded because their trade
 side is unknown. These tests pin that contract on the real SQLite path.
 """
 
-from aletheia.storage.sqlite import get_db, reset_db
+from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import UniverseForwardOutcome
-from aletheia.storage import repositories as repo
+from aletheia.storage.sqlite import get_db, reset_db
 
 
 def setup_test_db(tmp_path):
     reset_db()
-    import aletheia.storage.sqlite as sq
     import sqlite3
+
+    import aletheia.storage.sqlite as sq
     sq._db_conn = None
     conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
     conn.row_factory = sqlite3.Row

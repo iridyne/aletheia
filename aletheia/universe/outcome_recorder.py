@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
-from aletheia.storage.models import UniverseForwardOutcome
 from aletheia.storage import repositories as repo
+from aletheia.storage.models import UniverseForwardOutcome
 
 logger = logging.getLogger("aletheia.universe.outcome_recorder")
 

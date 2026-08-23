@@ -305,7 +305,7 @@ def test_b2_horizon_status_compatible_for_long_intent():
 
 def test_b2_version_is_b2_1():
     """New policy epoch uses version b2.1; old b2 data is isolated by policy_epoch_id."""
-    from aletheia.analytics.pi_evidence import build_b2_evidence_summary, _B2_VERSION
+    from aletheia.analytics.pi_evidence import _B2_VERSION
 
     assert _B2_VERSION == "b2.1"
 

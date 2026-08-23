@@ -32,9 +32,10 @@ def test_guard_clean_rows_drops_synthetic_and_pre_floor():
 
 def test_memo_scoring_fades_with_age(monkeypatch):
     """#131: a stale memo must move ranker scoring far less than a fresh one."""
+    from datetime import datetime, timedelta, timezone
+
     import aletheia.agents.paper_trader_ranker as ranker
     from aletheia.regime.detector import MarketRegime
-    from datetime import datetime, timezone, timedelta
 
     rule = {"regime": "bull", "direction": "long", "edge": "strong"}
 
@@ -55,8 +56,9 @@ def test_memo_scoring_fades_with_age(monkeypatch):
 
 def test_case_builder_windows_on_close_time():
     """#16: the case-builder window filters on CLOSE time, not open time."""
+    from datetime import datetime, timedelta, timezone
+
     from aletheia.analytics.trade_case_builder import _closed_after
-    from datetime import datetime, timezone, timedelta
 
     cutoff = datetime.now(timezone.utc).timestamp() - 24 * 3600  # last 24h
     recent_close = {"opened_at": "2026-06-01T00:00:00+00:00",
@@ -93,6 +95,7 @@ def test_lesson_reviewer_zero_win_rate_demotes_exact_scope():
 
 def _reviewer_db(tmp_path, monkeypatch):
     import sqlite3
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     from aletheia.storage.migrations import run_migrations
@@ -117,8 +120,8 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
     """
     import asyncio
     sq = _reviewer_db(tmp_path, monkeypatch)
-    from aletheia.learning.lessons import LessonStore
     from aletheia.agents.lesson_reviewer import run_lesson_reviewer
+    from aletheia.learning.lessons import LessonStore
 
     store = LessonStore()
     les = store.create("block BTC/USDT longs", source_type="test", source_id="t",

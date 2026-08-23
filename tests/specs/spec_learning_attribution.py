@@ -140,11 +140,11 @@ def test_reflection_rejects_symbol_only_outcome_inference(monkeypatch):
     ),
 )
 def test_operator_prompt_bundle_manifest_is_one_durable_unit(monkeypatch):
+    from aletheia.agent_shell import reflection
     from aletheia.learning.prompt_bundles import (
         build_observer_learning_manifest,
         build_operator_learning_manifest,
     )
-    from aletheia.agent_shell import reflection
     from aletheia.storage.models import Opportunity, PiDecision
     from aletheia.storage.repositories import insert_opportunity, insert_pi_decision
     from aletheia.storage.sqlite import get_db
@@ -317,8 +317,8 @@ async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch
     assert "route_automatic_block_recommendation" in dreaming_source
 
     from aletheia.analytics import guard_effectiveness, guard_promotion, trade_attribution
-    from aletheia.learning import control
     from aletheia.knowledge.guards import TradingGuard
+    from aletheia.learning import control
     monkeypatch.setattr(
         guard_promotion, "load_config",
         lambda: SimpleNamespace(guard=SimpleNamespace(

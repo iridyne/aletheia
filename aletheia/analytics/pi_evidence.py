@@ -12,7 +12,6 @@ from typing import Any
 
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
-
 _MIN_NET_SAMPLES = 20
 _MIN_OUTCOME_COVERAGE = 0.70
 _SHRINKAGE_K = 20.0

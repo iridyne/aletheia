@@ -173,8 +173,8 @@ def _compute_shadow_economics(
     fails closed on `net_economics_unavailable`, which is the correct signal).
     """
     try:
-        from aletheia.universe.outcome_economics import estimate_outcome_economics
         from aletheia.config.loader import load_config
+        from aletheia.universe.outcome_economics import estimate_outcome_economics
     except Exception:
         return None
     try:

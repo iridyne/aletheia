@@ -1,30 +1,27 @@
 """Command handlers for the Agent Shell control plane."""
 
-import json
 import hashlib
+import json
 import logging
 import math
 import re
 from datetime import datetime, timedelta, timezone
 
-from aletheia.agent_runtime.orchestrator import run_agent
 import aletheia.config.loader as config_loader
+from aletheia.agent_runtime.orchestrator import run_agent
 from aletheia.storage.repositories import (
     get_agent_run,
     get_trade_proposal,
-    list_all_open_positions,
     list_agent_runs,
+    list_all_open_positions,
     list_fills,
-    list_knowledge_items,
     list_market_snapshots,
-    list_opportunities,
     list_orders,
     list_positions,
     list_risk_decisions,
     list_run_steps,
-    list_trade_proposals,
     list_tool_calls,
-    update_opportunity,
+    list_trade_proposals,
 )
 
 logger = logging.getLogger("aletheia.agent_shell.commands")
@@ -136,7 +133,7 @@ def _slash_command_is_valid(value: str) -> bool:
 
 
 def _extension_sandbox_checks(manifest: dict) -> list[dict[str, str]]:
-    from aletheia.agent_shell.registry import get_command, FORBIDDEN_INTENTS
+    from aletheia.agent_shell.registry import FORBIDDEN_INTENTS, get_command
 
     checks: list[dict[str, str]] = []
     slash_command = str(manifest.get("slash_command") or "").strip()
@@ -1248,7 +1245,7 @@ async def rerun_failed_agent_task(params: dict) -> dict:
 
 
 async def set_symbol_observe_only(params: dict) -> dict:
-    from aletheia.data.symbols import InstrumentId, MARKET_SPOT, to_canonical
+    from aletheia.data.symbols import MARKET_SPOT, InstrumentId, to_canonical
     from aletheia.files.jsonl import write_audit
 
     symbol = params.get("symbol")
@@ -1573,12 +1570,12 @@ def _pending_carrier_authority_failure(decision) -> str | None:
     if not opportunity_id:
         return "pending_signal_required"
 
+    from aletheia.agent_shell.trading_decision import (
+        _resolve_pending_carrier_identity,
+    )
     from aletheia.storage.repositories import (
         find_final_pi_decision_for_opportunity,
         find_pending_pi_decision_for_opportunity,
-    )
-    from aletheia.agent_shell.trading_decision import (
-        _resolve_pending_carrier_identity,
     )
 
     pending = _resolve_pending_carrier_identity(
@@ -1862,6 +1859,8 @@ def _existing_deferred_context_observation(
     if symbol_level and material_fingerprint and symbol:
         from aletheia.agent_shell.trading_context import (
             _normalize_direction as _nd,
+        )
+        from aletheia.agent_shell.trading_context import (
             _normalize_market_type as _nm,
         )
 
@@ -2028,9 +2027,9 @@ def _record_deferred_context_observation(
     # The exact B2/cost identity also prevents a defer from surviving an evidence
     # cohort rotation. Always written (data-harmless); consumers gate on skip_policy flags.
     from aletheia.agent_shell.trading_context import (
-        material_fingerprint_from_candidate_ctx,
         _normalize_direction,
         _normalize_market_type,
+        material_fingerprint_from_candidate_ctx,
     )
     material_fingerprint = material_fingerprint_from_candidate_ctx(ctx, opportunity_id)
     b2 = sel.get("b2_evidence") if isinstance(sel.get("b2_evidence"), dict) else {}
@@ -2121,13 +2120,13 @@ def _record_skip_validated_observation(
     admission slot nor masquerades as an active defer (DL §2.3b). Best-effort:
     callers wrap in try/except so a cache-write failure never blocks the decision.
     """
-    from aletheia.storage.models import OperatorEvaluationEvent
-    from aletheia.storage.repositories import record_operator_evaluation_event
     from aletheia.agent_shell.trading_context import (
-        material_fingerprint_from_candidate_ctx,
         _normalize_direction,
         _normalize_market_type,
+        material_fingerprint_from_candidate_ctx,
     )
+    from aletheia.storage.models import OperatorEvaluationEvent
+    from aletheia.storage.repositories import record_operator_evaluation_event
 
     material_fingerprint = material_fingerprint_from_candidate_ctx(ctx, opportunity_id)
     if not material_fingerprint:
@@ -2191,8 +2190,10 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     from aletheia.agent_shell.trading_decision import (
         DecisionUnavailable,
         attach_candidate_entry_mark,
-        evaluate_trading_opportunity as _evaluate,
         prepare_decision_as_proposal,
+    )
+    from aletheia.agent_shell.trading_decision import (
+        evaluate_trading_opportunity as _evaluate,
     )
     from aletheia.learning.opportunity_information_policy import (
         ensure_opportunity_information_policy_epoch,
@@ -2221,13 +2222,13 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         "status": "available" if account_equity is not None else "unavailable",
         "equity_usdt": account_equity,
     }
-    from aletheia.agent_shell.skip_policy import (
-        ensure_skip_remediation_policy_epoch,
-        skip_policy_context,
-    )
     from aletheia.agent_shell.b2_evidence_policy import (
         attach_b2_candidate_evidence,
         ensure_b2_candidate_evidence_policy_epoch,
+    )
+    from aletheia.agent_shell.skip_policy import (
+        ensure_skip_remediation_policy_epoch,
+        skip_policy_context,
     )
     from aletheia.agent_shell.vergex_policy import ensure_vergex_utilization_policy_epoch
 
@@ -2269,8 +2270,8 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
         ctx["wake_context"] = params
 
     from aletheia.agent_shell.trading_context import (
-        operator_decision_context_fingerprint,
         material_fingerprint_from_candidate_ctx,
+        operator_decision_context_fingerprint,
         scope_operator_context_to_candidate,
     )
 

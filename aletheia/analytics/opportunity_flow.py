@@ -14,6 +14,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from aletheia.analytics.debate_impact import build_debate_impact_audit
 from aletheia.analytics.outcome_semantics import (
     MISSED_ALPHA,
     POSITIVE_GROSS_ONLY,
@@ -21,8 +22,6 @@ from aletheia.analytics.outcome_semantics import (
     classify_outcome_row,
     outcome_values,
 )
-
-from aletheia.analytics.debate_impact import build_debate_impact_audit
 from aletheia.analytics.sizing_trace import build_sizing_trace_audit, compact_sizing_trace_summary
 from aletheia.analytics.thesis_lineage import build_thesis_lineage_audit, compact_thesis_lineage_summary
 from aletheia.analytics.trade_funnel import build_trade_funnel_audit
@@ -310,11 +309,11 @@ def _integrated_audits(hours: int) -> dict[str, Any]:
     except Exception as exc:  # pragma: no cover - defensive read-only boundary
         audits["sizing_trace"] = {"error": str(exc)}
     try:
-        from aletheia.storage.sqlite import get_db
         from aletheia.analytics.candidate_supply import (
             evaluate_candidate_supply_drought,
             latest_candidate_supply_snapshot,
         )
+        from aletheia.storage.sqlite import get_db
 
         # Read-model purity (test_opportunity_flow_read_model_*): analytics/ must
         # NOT import aletheia.agent_shell (list_events lives there). Query the

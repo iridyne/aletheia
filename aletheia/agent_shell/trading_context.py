@@ -13,8 +13,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from copy import deepcopy
 from collections import Counter
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -851,11 +851,11 @@ def build_enriched_trading_context(*, authorize_learning: bool = True) -> dict[s
 def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str, Any]:
     """Build a compact manifest of exact evidence available to one decision."""
     from aletheia.agent_shell.decision_facts import candidate_fact_bundle
-    from aletheia.storage import repositories as repo
     from aletheia.learning.opportunity_information_policy import (
         POLICY_EPOCH_LABEL,
         ensure_opportunity_information_policy_epoch,
     )
+    from aletheia.storage import repositories as repo
 
     information_epoch_id = ctx.get("information_policy_epoch_id")
     if not information_epoch_id:
@@ -1775,7 +1775,9 @@ def _build_layer1_snapshot() -> dict[str, Any]:
     # Open opportunities (what market_observer has flagged — System Operator was blind to these)
     try:
         from aletheia.storage.repositories import (
-            _select_all, get_universe_member, latest_perp_structure,
+            _select_all,
+            get_universe_member,
+            latest_perp_structure,
         )
         opps = _select_all(
             "opportunities",
@@ -2222,6 +2224,7 @@ def _build_layer3_wisdom() -> dict[str, Any]:
                 if fpath:
                     try:
                         from pathlib import Path as _Path
+
                         from aletheia.knowledge.frontmatter import parse_frontmatter as _pfm
                         _meta, _body = _pfm(_Path(fpath))
                         parts: list[str] = []
@@ -2269,6 +2272,7 @@ def _build_layer3_wisdom() -> dict[str, Any]:
                 if fpath:
                     try:
                         from pathlib import Path as _Path
+
                         from aletheia.knowledge.frontmatter import parse_frontmatter as _pfm
                         _meta, _body = _pfm(_Path(fpath))
                         parts: list[str] = []
@@ -2322,8 +2326,9 @@ def _build_layer3_wisdom() -> dict[str, Any]:
     # 'accepted' is a transient state; 'applied' is the stable post-review population.
     # These lessons have passed: deterministic floor (≥20 settled outcomes) + LLM judge.
     try:
-        from aletheia.learning.lessons import LessonStore
         from datetime import datetime, timezone
+
+        from aletheia.learning.lessons import LessonStore
         _now_iso = datetime.now(timezone.utc).isoformat()
         # #18: exclude expired lessons — the risk engine skips them (engine.py:416),
         # so the prompt must not present a stale lesson as active guidance. Fetch a
@@ -2348,6 +2353,7 @@ def _build_layer3_wisdom() -> dict[str, Any]:
 def _get_data_health_summary() -> dict[str, Any]:
     """Build a concise data-health dict for System Operator context injection."""
     try:
+        from aletheia.config.loader import load_config
         from aletheia.storage.repositories import (
             complete_outcome_economics_sql,
             get_active_universe_members,
@@ -2355,7 +2361,6 @@ def _get_data_health_summary() -> dict[str, Any]:
         )
         from aletheia.storage.sqlite import get_db
         from aletheia.universe.outcome_economics import COST_MODEL_VERSION
-        from aletheia.config.loader import load_config
 
         cfg = load_config()
         min_bars = cfg.historical_data.min_bars_for_backtest

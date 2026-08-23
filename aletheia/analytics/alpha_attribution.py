@@ -15,13 +15,12 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean
 from typing import Any
 
-from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.analytics.learning_window import outcome_window_metadata
+from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.storage.repositories import (
     SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC,
     complete_outcome_economics_sql,
 )
-
 
 VERDICT_NAMES = (
     "Universe Alpha",

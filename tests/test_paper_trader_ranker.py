@@ -1,7 +1,7 @@
 """Unit tests for aletheia.agents.paper_trader_ranker."""
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1364,6 +1364,7 @@ def test_ranker_outcome_does_not_infer_missing_venue(monkeypatch, venue):
 def test_regime_scoring_is_direction_aware():
     """Bear regime should reward shorts and penalize longs; bull should do the opposite."""
     from unittest.mock import patch
+
     from aletheia.agents.paper_trader_ranker import _compute_trade_score
     from aletheia.regime.detector import MarketRegime
 

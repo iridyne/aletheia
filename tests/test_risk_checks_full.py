@@ -7,11 +7,12 @@ existing paper flow, which stays permissive.
 """
 
 import sqlite3
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from aletheia.storage.sqlite import reset_db
+from aletheia.risk.engine import evaluate_proposal
+from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import (
     Fill,
@@ -22,8 +23,7 @@ from aletheia.storage.models import (
     RiskDecision,
     TradeProposal,
 )
-from aletheia.storage import repositories as repo
-from aletheia.risk.engine import evaluate_proposal
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -184,8 +184,8 @@ def test_daily_loss_within_limit_approves(tmp_path, monkeypatch):
 
 def test_daily_loss_exceeded_blocks_and_trips_kill_switch(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.risk import kill_switch
     from aletheia.config.loader import load_config, save_config
+    from aletheia.risk import kill_switch
     cfg = load_config()
     cfg.risk.kill_switch_enabled_demo = True  # default False; paper_internal is demo-mode
     save_config(cfg)
@@ -458,6 +458,7 @@ def test_live_family_gate_requires_complete_edge_evidence(
     setup_env(tmp_path, monkeypatch)
     _unlock_live_auto(tmp_path)
     from datetime import datetime, timezone
+
     from aletheia.storage.models import Opportunity, UniverseForwardOutcome
     now = datetime.now(timezone.utc).isoformat()
     # 30 winning settled outcomes for (momentum, long) in the 7d clean window.
@@ -556,6 +557,7 @@ def test_live_family_gate_does_not_pool_old_cost_models(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _unlock_live_auto(tmp_path)
     from datetime import datetime, timezone
+
     from aletheia.storage.models import Opportunity, UniverseForwardOutcome
     from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
@@ -669,7 +671,6 @@ def test_evaluate_proposal_is_serialized(tmp_path, monkeypatch):
     """evaluate_proposal holds a lock so concurrent evaluations can't interleave
     around a kill-switch trip. We assert the lock is actually engaged during a call."""
     setup_env(tmp_path, monkeypatch)
-    import threading
     from aletheia.risk import engine
 
     seen_locked = {"v": False}

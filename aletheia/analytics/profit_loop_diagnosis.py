@@ -8,7 +8,6 @@ from typing import Any, Iterable, Mapping
 
 from ..storage.proposal_hypothesis import evaluate_hypothesis_prefix
 
-
 DIAGNOSIS_CONTRACT_VERSION = "profit_loop_diagnosis/v1"
 
 
@@ -267,7 +266,7 @@ def _group_returns(facts: Iterable[Mapping[str, Any]], predicate) -> tuple[list[
     Returns (eligible_values, rejection_reasons).
     """
     from aletheia.learning.outcomes import assess_candidate_outcome
-    
+
     values = []
     rejection_reasons: dict[str, int] = {}
     for fact in facts:
@@ -277,13 +276,13 @@ def _group_returns(facts: Iterable[Mapping[str, Any]], predicate) -> tuple[list[
         if not isinstance(outcome, Mapping):
             rejection_reasons["missing_outcome"] = rejection_reasons.get("missing_outcome", 0) + 1
             continue
-        
+
         assessment = assess_candidate_outcome(dict(outcome))
         if assessment.eligible:
             values.append(assessment.net_return_pct)
         else:
             rejection_reasons[assessment.reason] = rejection_reasons.get(assessment.reason, 0) + 1
-    
+
     return values, rejection_reasons
 
 

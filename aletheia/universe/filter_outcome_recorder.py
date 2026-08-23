@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 
 from aletheia.storage import repositories as repo
-
 
 logger = logging.getLogger("aletheia.universe.filter_outcome_recorder")
 

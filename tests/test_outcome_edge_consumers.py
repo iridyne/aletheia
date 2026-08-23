@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
+from datetime import datetime, timedelta, timezone
 
 from typer.testing import CliRunner
 
@@ -281,8 +281,7 @@ def test_sql_and_python_enforce_the_same_settlement_price_provenance():
 def test_keyed_shadow_net_requires_exact_canonical_24h_projection():
     from unittest.mock import patch
 
-    from aletheia.counterfactual.trades import list_deduped_shadows
-    from aletheia.counterfactual.trades import persist_shadow_batch
+    from aletheia.counterfactual.trades import list_deduped_shadows, persist_shadow_batch
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
     from tests.shadow_outcome_fixture import (

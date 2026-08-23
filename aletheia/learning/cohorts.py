@@ -7,12 +7,12 @@ through the exact ``outcome_candidate_key`` recorded before its horizon.
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 import hashlib
 import json
 import math
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from statistics import fmean
 from typing import Any
 
@@ -30,7 +30,6 @@ from aletheia.learning.registry import (
 )
 from aletheia.storage.sqlite import get_db
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
-
 
 SUPPORTED_PATH_ID = "universe_family_calibration"
 RANKER_CASE_PATH_ID = "ranker_case_score"

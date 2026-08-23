@@ -23,7 +23,6 @@ from aletheia.learning.hypotheses import (
 )
 from aletheia.model_provider.router import get_provider_for_tier
 
-
 _MISSING_CONTEXT_DIMENSIONS = {
     "regime": ("regime",),
     "volatility": ("volatil", "atr"),

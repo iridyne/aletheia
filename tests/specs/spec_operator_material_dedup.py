@@ -23,14 +23,12 @@ These claims are pure/offline (no LLM): the fingerprint is a deterministic hash.
 
 import json
 
-from tests.specs.spec_meta import SpecClaim, spec_claim
-
 from aletheia.agent_shell import commands
-
 from aletheia.agent_shell.trading_context import (
-    operator_decision_material_fingerprint,
     material_fingerprint_from_candidate_ctx,
+    operator_decision_material_fingerprint,
 )
+from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
 def _fp(**overrides):
@@ -188,10 +186,10 @@ def test_ctx_adapter_fails_open_when_candidate_missing():
 )
 def test_symbol_level_defer_reader_uses_material_fingerprint(tmp_path, monkeypatch):
     """The existing B1.6 consumer, not a generic prompt cache, owns re-eval suppression."""
-    from tests.test_entry_logic import setup_env
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.models import Opportunity
     from aletheia.storage.repositories import insert_opportunity
+    from aletheia.storage.sqlite import get_db
+    from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
     db = get_db()

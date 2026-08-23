@@ -497,8 +497,9 @@ def test_data_health_signal_win_rate_excludes_unknown_direction(tmp_path, monkey
     setup_env(tmp_path, monkeypatch)
 
     from datetime import datetime, timezone
-    from aletheia.storage.models import UniverseForwardOutcome
+
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseForwardOutcome
 
     now = datetime.now(timezone.utc).isoformat()
 
