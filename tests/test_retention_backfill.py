@@ -84,12 +84,14 @@ def _minimal_args(**overrides):
 
 
 def _setup_db(tmp_path: Path) -> tuple[Path, sqlite3.Connection]:
-    """Create a minimal app.db with just enough schema to run the backfill."""
-    import aletheia.config.loader as loader
+    """Create a minimal app.db with just enough schema to run the backfill.
+
+    Caller must have already set DATA_DIR to tmp_path via monkeypatch so that
+    the global connection is scoped to the test's tmp_path.
+    """
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage.sqlite import reset_db, get_db
 
-    loader.DATA_DIR = tmp_path
     reset_db()
     db_file = tmp_path / "app.db"
     conn = get_db()
@@ -97,13 +99,14 @@ def _setup_db(tmp_path: Path) -> tuple[Path, sqlite3.Connection]:
     return db_file, conn
 
 
+@pytest.mark.real_db
 def test_backup_created_before_first_mutation(tmp_path, monkeypatch):
     """#1383: run(apply=True) must create app.db.pre-retention-backup before any DELETE."""
     import aletheia.config.loader as loader
     from aletheia.maintenance import data_retention_backfill as drb
 
-    _db_file, _conn = _setup_db(tmp_path)
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    _db_file, _conn = _setup_db(tmp_path)
 
     created_before_dispatch: list[bool] = []
 
@@ -135,13 +138,14 @@ def test_backup_created_before_first_mutation(tmp_path, monkeypatch):
         verify_conn.close()
 
 
+@pytest.mark.real_db
 def test_backup_is_sqlite_online_copy(tmp_path, monkeypatch):
     """The backup must be a valid independent SQLite database (not just bytes)."""
     import aletheia.config.loader as loader
     from aletheia.maintenance import data_retention_backfill as drb
 
-    _db_file, _conn = _setup_db(tmp_path)
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    _db_file, _conn = _setup_db(tmp_path)
 
     # Patch the dispatch to no-op so the test completes quickly
     monkeypatch.setattr(drb, "_dispatch_prune", lambda _t, _a, _d: 0)
@@ -165,13 +169,14 @@ def test_backup_is_sqlite_online_copy(tmp_path, monkeypatch):
         bc.close()
 
 
+@pytest.mark.real_db
 def test_postflight_failure_triggers_restore_attempt(tmp_path, monkeypatch):
     """#1383: when postflight verification fails, restore is attempted."""
     import aletheia.config.loader as loader
     from aletheia.maintenance import data_retention_backfill as drb
 
-    _db_file, _conn = _setup_db(tmp_path)
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    _db_file, _conn = _setup_db(tmp_path)
 
     restore_called: list[tuple] = []
 
@@ -207,13 +212,14 @@ def test_postflight_failure_triggers_restore_attempt(tmp_path, monkeypatch):
     assert "pre-retention-backup" in str(backup_path_arg)
 
 
+@pytest.mark.real_db
 def test_postflight_failure_reports_correct_backup_path(tmp_path, monkeypatch):
     """#1383: error message must name the actual backup, not a different file."""
     import aletheia.config.loader as loader
     from aletheia.maintenance import data_retention_backfill as drb
 
-    _db_file, _conn = _setup_db(tmp_path)
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    _db_file, _conn = _setup_db(tmp_path)
     monkeypatch.setattr(drb, "_dispatch_prune", lambda _t, _a, _d: 0)
     monkeypatch.setattr(drb, "_retro_strip_message_context", lambda _db, _days: {})
     monkeypatch.setattr(drb, "_run_universe_features_raw_migration", lambda: {"skipped": "test"})
