@@ -18,6 +18,8 @@ from aletheia.storage.sqlite import (
     execute_many_write,
     execute_write,
     get_db,
+    iso_instant_us,
+    register_instant_us,
     release_write_lock,
 )
 from aletheia.storage.models import (
@@ -2874,6 +2876,7 @@ def enqueue_position_path_observation_buckets_through(
 
     with transaction(immediate=True):
         db = get_db()
+        register_instant_us(db)
         cursor = db.execute(
             "SELECT last_enqueued_bucket_open_ms "
             "FROM position_path_observer_cursor "
@@ -2901,11 +2904,11 @@ def enqueue_position_path_observation_buckets_through(
             ).isoformat()
             positions = db.execute(
                 "SELECT id,opened_at,status,closed_at FROM positions "
-                "WHERE status IN ('open','closed') "
-                "AND datetime(opened_at) <= datetime(?) "
-                "AND (closed_at IS NULL OR datetime(closed_at) >= datetime(?)) "
+                "WHERE aletheia_instant_us(opened_at) <= ? "
+                "AND (status='open' OR ("
+                "status='closed' AND aletheia_instant_us(closed_at) >= ?)) "
                 "ORDER BY rowid",
-                (bucket_open, bucket_end),
+                (iso_instant_us(bucket_open), iso_instant_us(bucket_end)),
             ).fetchall()
             for position in positions:
                 first_bucket_open_ms = _first_full_position_path_bucket_open_ms(
@@ -2966,14 +2969,15 @@ def list_positions_for_path_observation_bucket(
 ) -> list[dict]:
     """Return open Positions plus Positions closed after the target bucket."""
 
-    rows = get_db().execute(
+    db = get_db()
+    register_instant_us(db)
+    rows = db.execute(
         "SELECT * FROM positions "
-        "WHERE status='open' OR ("
-        "status='closed' "
-        "AND datetime(opened_at) <= datetime(?) "
-        "AND datetime(closed_at) >= datetime(?)"
-        ") ORDER BY rowid DESC",
-        (bucket_open, bucket_end),
+        "WHERE aletheia_instant_us(opened_at) <= ? "
+        "AND (status='open' OR ("
+        "status='closed' AND aletheia_instant_us(closed_at) >= ?)) "
+        "ORDER BY rowid DESC",
+        (iso_instant_us(bucket_open), iso_instant_us(bucket_end)),
     ).fetchall()
     return [dict(row) for row in rows]
 

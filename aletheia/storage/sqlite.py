@@ -3,6 +3,7 @@
 from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import logging
 import os
 import queue
@@ -89,6 +90,33 @@ SQLITE_PYTHON_STRIP_CHARS_SQL = "||".join(
         8201, 8202, 8232, 8233, 8239, 8287, 12288,
     )
 )
+
+_UTC_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def iso_instant_us(value: object) -> int | None:
+    """Return an ISO instant as exact UTC microseconds for SQLite queries."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        delta = parsed.astimezone(timezone.utc) - _UTC_EPOCH
+    except (OverflowError, ValueError):
+        return None
+    return (
+        delta.days * 86_400_000_000
+        + delta.seconds * 1_000_000
+        + delta.microseconds
+    )
+
+
+def register_instant_us(connection: sqlite3.Connection) -> None:
+    """Register the exact ISO-instant scalar on one explicit connection."""
+    connection.create_function(
+        "aletheia_instant_us", 1, iso_instant_us, deterministic=True
+    )
 
 
 def acquire_write_lock(

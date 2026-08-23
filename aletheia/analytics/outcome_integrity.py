@@ -75,7 +75,6 @@ _STRUCTURED_KEYS = frozenset({
     "outcome_semantics_version",
 })
 _FILTER_UNSET = object()
-_UTC_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -429,24 +428,6 @@ def assess_reportable_outcome(
     return assessment
 
 
-def _instant_us(value: object) -> int | None:
-    """Return an ISO instant as exact UTC microseconds for SQLite ordering."""
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        delta = parsed.astimezone(timezone.utc) - _UTC_EPOCH
-    except (OverflowError, ValueError):
-        return None
-    return (
-        delta.days * 86_400_000_000
-        + delta.seconds * 1_000_000
-        + delta.microseconds
-    )
-
-
 def raw_account_events(
     *,
     execution_mode: str | None = None,
@@ -461,12 +442,14 @@ def raw_account_events(
     """Read immutable closed-position events without implying outcome quality."""
     if limit < 1 or limit > 10_000:
         raise ValueError("limit must be between 1 and 10000")
-    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.sqlite import (
+        get_db,
+        iso_instant_us,
+        register_instant_us,
+    )
 
     connection = db if db is not None else get_db()
-    connection.create_function(
-        "aletheia_instant_us", 1, _instant_us, deterministic=True
-    )
+    register_instant_us(connection)
     conditions = ["p.status = 'closed'"]
     params: list[object] = []
     if execution_mode is not None:
@@ -480,10 +463,10 @@ def raw_account_events(
             params.append(str(strategy_id))
     if closed_after is not None:
         conditions.append("aletheia_instant_us(p.closed_at) >= ?")
-        params.append(_instant_us(closed_after))
+        params.append(iso_instant_us(closed_after))
     if closed_before is not None:
         conditions.append("aletheia_instant_us(p.closed_at) < ?")
-        params.append(_instant_us(closed_before))
+        params.append(iso_instant_us(closed_before))
     if symbol is not None:
         conditions.append("p.symbol = ?")
         params.append(symbol)
