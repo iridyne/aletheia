@@ -1,31 +1,31 @@
 {
   "schema_version": "frontend-performance-v1",
-  "entry": "assets/index-BUwVZhaj.js",
+  "entry": "assets/index-D5iZdFjK.js",
   "modulepreload": [],
   "initial_graph": [
-    "assets/index-BUwVZhaj.js"
+    "assets/index-D5iZdFjK.js"
   ],
   "critical_js": {
-    "raw": 408892,
-    "gzip": 125693,
-    "br": 118660,
+    "raw": 411019,
+    "gzip": 126316,
+    "br": 119242,
     "files": [
-      "assets/index-BUwVZhaj.js"
+      "assets/index-D5iZdFjK.js"
     ]
   },
   "critical_css": {
-    "raw": 150178,
-    "gzip": 25678,
-    "br": 24983,
+    "raw": 151101,
+    "gzip": 25746,
+    "br": 25062,
     "files": [
-      "assets/index-C1mo6f31.css"
+      "assets/index-CICSgm8w.css"
     ]
   },
   "total_static": {
     "html_raw": 4915,
-    "html_gzip": 1661,
-    "html_br": 1465,
-    "critical_br": 145108
+    "html_gzip": 1664,
+    "html_br": 1467,
+    "critical_br": 145771
   },
   "budgets": {
     "critical_js_br": 204800,
