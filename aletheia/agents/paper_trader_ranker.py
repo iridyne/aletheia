@@ -743,7 +743,7 @@ def _compute_trade_score(
         ("bull", "long"):  _srs["bull_long"],
         ("bull", "short"): _srs["bull_short"],
     }
-    _TREND_FAMILIES = {"breakout", "momentum", "ma_crossover", "trend"}
+    _TREND_FAMILIES = {"breakout", "momentum", "ma_crossover", "trend", "short_bias"}
 
     regime = get_current_regime()
     if regime.state in ("bear", "bull"):

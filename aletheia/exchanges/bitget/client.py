@@ -757,6 +757,14 @@ class BitgetClient:
             "unified": False,
         }
 
+    @staticmethod
+    def _safe_position_float(v) -> float:
+        """Parse a position numeric string or number; return 0.0 on failure."""
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
     async def _uta_positions(self) -> list:
         path = "/api/v3/position/current-position?category=USDT-FUTURES"
         headers = self._headers("GET", path)
@@ -1164,6 +1172,8 @@ class BitgetClient:
         symbol = str(symbol or "").strip()
         if not order_id or not symbol:
             raise ValueError("exact Bitget fill query requires order_id and symbol")
+        if self.profile == "uta_v3":
+            return await self._get_order_fills_uta_v3(order_id=order_id, symbol=symbol)
 
         endpoint = "/api/v2/mix/order/fills"
         cursor: str | None = None
@@ -1187,21 +1197,41 @@ class BitgetClient:
             data = payload.get("data")
             if not isinstance(data, dict) or not isinstance(data.get("fillList"), list):
                 raise ValueError("Bitget exact private fill history malformed")
-            page = data["fillList"]
-            if any(
-                not isinstance(row, dict)
-                or str(row.get("orderId") or "") != order_id
-                for row in page
-            ):
-                raise ValueError("Bitget exact private fill history mismatched")
+            page = [
+                row for row in data["fillList"]
+                if isinstance(row, dict) and str(row.get("orderId") or "") == order_id
+            ]
             fills.extend(page)
-            if len(page) < 100:
+            if len(data["fillList"]) < 100:
                 return fills
             next_cursor = str(data.get("endId") or "")
             if not next_cursor or next_cursor == cursor:
                 raise RuntimeError("Bitget exact private fill pagination incomplete")
             cursor = next_cursor
         raise RuntimeError("Bitget exact private fill history incomplete")
+
+    async def _get_order_fills_uta_v3(self, *, order_id: str, symbol: str) -> list[dict]:
+        """Fetch fills via UTA v3 /api/v3/trade/fills, filtering to this order_id."""
+        params = {
+            "category": "USDT-FUTURES",
+            "symbol": symbol,
+            "orderId": order_id,
+            "limit": "100",
+        }
+        path = f"/api/v3/trade/fills?{urlencode(params)}"
+        headers = self._headers("GET", path)
+        async with httpx_client(timeout=15) as client:
+            response = await client.get(f"{self._base}{path}", headers=headers)
+            payload = response.json()
+        if payload.get("code") != "00000":
+            raise RuntimeError("Bitget UTA exact private fill history rejected")
+        data = payload.get("data") or {}
+        raw = data.get("list") or []
+        return [
+            row for row in raw
+            if isinstance(row, dict) and str(row.get("orderId") or "") == order_id
+        ]
+
 
     async def get_funding_ledger(
         self,

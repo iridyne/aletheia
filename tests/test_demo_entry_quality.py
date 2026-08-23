@@ -580,8 +580,8 @@ def test_sideways_trend_tax_includes_short_bias():
     sideways = MarketRegime(state="sideways", confidence=0.75)
     with patch("aletheia.agents.paper_trader_ranker.get_current_regime", return_value=sideways):
         base = {"confidence_score": 50, "symbol": "ETH/USDT", "scanner_family": "short_bias"}
-        score_short, _ = _compute_trade_score(base, None, {"status": "watch"}, "medium", direction="short")
-        score_rev, _ = _compute_trade_score(
+        score_short = _compute_trade_score(base, None, {"status": "watch"}, "medium", direction="short")
+        score_rev = _compute_trade_score(
             dict(base, scanner_family="reversion"),
             None,
             {"status": "watch"},
