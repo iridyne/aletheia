@@ -67,6 +67,10 @@ class _DummySchema:
 
 _MIN_CONVICTION_TO_TRADE = 55       # below this, skip (even after debate)
 _DEBATE_RANGE = (40, 80)            # conviction in this range triggers debate
+# Assess/reassess/debate were truncating at the llm_structured default 2048
+# (530 truncated attempts / 34 triple-truncates in a 7d window). Retries scale
+# 1.5× then 2×, so 4096 → 6144 → 8192.
+_OPERATOR_STRUCTURED_MAX_TOKENS = 4096
 _MAX_CONVICTION_MULTIPLIER = 2.0    # cap: 2× base notional at 100% conviction
 _MIN_CONVICTION_MULTIPLIER = 0.5    # floor: 0.5× base notional at low conviction
 _BIAS_BRAKE_WINDOW_HOURS = 24
@@ -2003,6 +2007,7 @@ async def _assess_opportunity(ctx: dict) -> dict | None:
         provider=get_provider_for_tier("deep"),
         caller="system_operator.assess_opportunity",
         reasoning_effort="none",
+        max_tokens=_OPERATOR_STRUCTURED_MAX_TOKENS,
     )
     if err or result is None:
         logger.warning("LLM assessment failed: %s", err)
@@ -2069,6 +2074,7 @@ async def _reassess_direct_skip(
         provider=get_provider_for_tier("deep"),
         caller="system_operator.reassess_direct_skip",
         reasoning_effort="none",
+        max_tokens=_OPERATOR_STRUCTURED_MAX_TOKENS,
     )
     if err or result is None:
         raise DecisionUnavailable(
@@ -2154,6 +2160,7 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
             provider=_deep_provider,
             caller="system_operator.debate_bull",
             reasoning_effort="none",
+            max_tokens=_OPERATOR_STRUCTURED_MAX_TOKENS,
         ),
         llm_structured(
             system_bear,
@@ -2162,6 +2169,7 @@ async def _run_debate(symbol: str, direction: str | None, ctx: dict) -> DebateRe
             provider=_deep_provider,
             caller="system_operator.debate_bear",
             reasoning_effort="none",
+            max_tokens=_OPERATOR_STRUCTURED_MAX_TOKENS,
         ),
     )
     if bull_err or bear_err or not bull_result or not bear_result:
