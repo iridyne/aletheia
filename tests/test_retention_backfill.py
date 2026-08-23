@@ -26,6 +26,7 @@ def _minimal_args(**overrides):
         tool_calls_days=90,
         runtime_sessions_days=90,
         agent_shell_messages_context_days=7,
+        agent_shell_messages_other_days=14,
         agent_shell_heartbeats_days=90,
         agent_shell_events_days=90,
         agent_shell_session_logs_days=90,
