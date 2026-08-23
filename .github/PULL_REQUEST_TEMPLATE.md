@@ -6,6 +6,14 @@
 
 <!-- D0 / D1 / D2 — state it; do not repeat the full Change Contract here. -->
 
+## Contract Delta
+
+<!--
+D0: write `NONE` and reference the existing Contract/invariant being repaired.
+D1/D2: summarize the approved `ADDED / MODIFIED / REMOVED` behavior delta.
+Do not repeat the full Change Contract from the linked Issue.
+-->
+
 ## Does this change externally observable behavior?
 
 <!-- Yes (D1/D2) / No (D0) -->
@@ -14,7 +22,7 @@
 
 <!--
 Answer each that applies; delete inapplicable rows.
-For D0: only the last two rows matter.
+For D0, the canonical Contract / SpecClaim / Proposal rows are normally not applicable.
 -->
 
 - [ ] The implementation satisfies the Change Contract in the linked Issue.
