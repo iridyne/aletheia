@@ -744,6 +744,22 @@ def _maybe_update_trailing_stop(
     if updates:
         new_stop = updates.get("stop_price")
         if new_stop is not None:
+            # #1467 fix: sync exchange FIRST, then persist to local DB only on success.
+            # If exchange call fails, we don't commit the trailing stop locally (no split state).
+            exchange_synced = False
+            if sync_exchange:
+                try:
+                    from aletheia.execution.stops import replace_exchange_protective_stop
+                    replace_exchange_protective_stop(position["id"], float(new_stop))
+                    exchange_synced = True
+                except Exception as e:
+                    logger.warning(
+                        "exchange stop sync failed pos=%s: %s — local stop not updated",
+                        position["id"], e,
+                    )
+                    return False  # abort local DB update on exchange failure
+            
+            # Exchange succeeded (or sync_exchange=False) → persist to local DB
             from aletheia.portfolio.protective_barrier import (
                 persist_position_exit_plan,
             )
@@ -768,17 +784,6 @@ def _maybe_update_trailing_stop(
             from aletheia.storage.repositories import update_position
 
             update_position(position["id"], **updates)
-        # Sync the exchange TPSL bracket when the stop price changes.
-        # #139 fix: dispatch broker-agnostically through execution.stops so OKX
-        # and (eventually) Binance also honour the trailed stop, not just Bitget.
-        # `replace_exchange_protective_stop` re-checks exchange_tpsl_enabled +
-        # mode gating internally so the trail path stays honest per broker.
-        if new_stop and sync_exchange:
-            try:
-                from aletheia.execution.stops import replace_exchange_protective_stop
-                replace_exchange_protective_stop(position["id"], float(new_stop))
-            except Exception as e:
-                logger.warning("exchange stop sync failed pos=%s: %s", position["id"], e)
         return True
     return False
 
@@ -1334,149 +1339,155 @@ def evaluate_open_positions() -> dict:
             record_error(p, "protective_mark_unavailable")
             continue
 
-        # Layer-0 hard safety (catastrophic stop, liquidation proximity) runs FIRST
-        # and pre-empts trailing / strategy / market-aware. Not relaxable by intent.
-        decision = _layer0_safety_exit(p, float(price), cfg)
-        if decision is not None:
-            logger.warning(
-                "layer0_safety_exit: %s reason=%s entry=%s price=%s lev=%s school=%s",
-                p["symbol"], decision[0], p.get("entry_price"), price,
-                p.get("leverage"), p.get("trade_school"),
-            )
-            catastrophic_exits += 1
-        else:
-            _maybe_update_trailing_stop(
-                p, float(price), cfg, sync_exchange=not pending_close,
-            )
-            decision = _decide_exit(p, float(price), cfg)
-            # Horizon reached but not yet at the hard backstop → wake the Operator
-            # for a must-answer decision instead of auto-closing (D3).
-            if decision is None:
-                _maybe_wake_on_horizon(p)
-                _maybe_wake_on_thesis(p, cfg)
-
-        # Market-aware (M5): a counter-signal now WAKES the Operator to decide (close /
-        # adjust / hold) instead of auto-closing or auto-tightening the stop. The daemon
-        # token bucket rate-limits per position. Off by default (enabled flag).
-        if decision is None and cfg.trading.market_aware_exits.enabled:
-            request = market_signal_requests.get(p["id"])
-            signal = market_signal_index.get(request) if request is not None else None
-            if signal is not None:
-                try:
-                    exact_identity = signal.matches(request)
-                except Exception as exc:
-                    record_error(p, "market_signal_identity_invalid", exc)
-                    continue
-                if not exact_identity:
-                    logger.warning(
-                        "market signal identity mismatch pos=%s position=%s signal=%s:%s:%s",
-                        p["id"], request.instrument, signal.venue,
-                        signal.symbol, signal.market_type,
-                    )
-                    record_error(p, "market_signal_identity_mismatch")
-                    continue
-                try:
-                    from aletheia.portfolio.exit_rules import evaluate_market_exit_rules
-                    from aletheia.agent_runtime.wake_events import ADVERSE_SIGNAL, adverse_signal_priority
-                    action = evaluate_market_exit_rules(p, float(price), signal, cfg)
-                    if action.action in ("urgent_exit", "tighten_stop"):
-                        score = getattr(signal, "confidence_score", None)
-                        evaluated_at = datetime.now(timezone.utc).isoformat()
-                        signal_identity = (
-                            f"{signal.venue}:{signal.symbol}:{signal.market_type}"
-                        )
-                        delivered = _emit_wake(
-                            p, ADVERSE_SIGNAL,
-                            {
-                                "reason": action.reason,
-                                "score": score,
-                                "suggested": action.action,
-                                "symbol": p.get("symbol"),
-                                "position_identity": str(request.instrument),
-                                "signal_identity": signal_identity,
-                                "source_opportunity_id": signal.source_opportunity_id,
-                                "source_created_at": signal.source_created_at,
-                                "source_valid_until": signal.source_valid_until,
-                                "universe_member_id": signal.universe_member_id,
-                                "asset_id": signal.asset_id,
-                                "evidence_status": signal.evidence_status,
-                                "feature_snapshot_id": signal.feature_snapshot_id,
-                                "feature_timestamp": signal.feature_timestamp,
-                            },
-                            source="market_adverse_signal",
-                            priority=adverse_signal_priority(score),
-                        )
-                        from aletheia.storage.repositories import update_position
-                        if delivered:
-                            market_signal_wakes += 1
-                            evidence = _market_signal_evidence(
-                                p, request, signal,
-                                action=action.action,
-                                reason=action.reason,
-                                delivery="scheduled",
-                                evaluated_at=evaluated_at,
-                            )
-                            update_position(
-                                p["id"],
-                                last_market_signal_action=f"wake:{action.action}",
-                                last_market_signal_reason=action.reason[:200],
-                                last_market_signal_at=evaluated_at,
-                                last_market_signal_evidence=json.dumps(
-                                    evidence, sort_keys=True, separators=(",", ":")
-                                ),
-                            )
-                            logger.info(
-                                "market_adverse_wake: %s action=%s reason=%s",
-                                p["symbol"], action.action, action.reason,
-                            )
-                        else:
-                            evidence = _market_signal_evidence(
-                                p, request, signal,
-                                action=action.action,
-                                reason=action.reason,
-                                delivery="operator_daemon_unavailable",
-                                evaluated_at=evaluated_at,
-                            )
-                            update_position(
-                                p["id"],
-                                last_market_signal_action=f"wake_failed:{action.action}",
-                                last_market_signal_reason="operator_daemon_unavailable",
-                                last_market_signal_at=evaluated_at,
-                                last_market_signal_evidence=json.dumps(
-                                    evidence, sort_keys=True, separators=(",", ":")
-                                ),
-                            )
-                            record_error(p, "operator_wake_unavailable")
-                except Exception as e:
-                    logger.warning("market_aware_exit failed %s: %s", p["id"], e)
-                    record_error(p, "market_aware_evaluation_failed", e)
-
-        if decision is None:
-            continue
-        if pending_close:
-            # Keep evaluating fresh marks and protective rules while the durable
-            # exchange claim converges, but never turn a second trigger into a
-            # second close request. The existing claim/reconciliation path owns
-            # the exchange side effect and its eventual truth.
-            record_observation(p, "pending_close_protection_waiting")
-            logger.warning(
-                "protective exit waiting for unresolved close claim: %s order=%s status=%s",
-                p["id"], p.get("pending_close_order_id"),
-                p.get("pending_close_status"),
-            )
-            continue
-        reason, exit_price = decision
+        # #1468 fix: wrap entire position evaluation in try/except so one position
+        # exception doesn't abort the whole loop
         try:
-            # Route through the shared helper so the exchange leg is never skipped
-            # (live positions are already filtered out above; demo modes still need
-            # their real exchange close, paper closes locally).
-            close_result = close_position_routed(p["id"], reason, fallback_exit_price=exit_price)
-            if close_result.get("closed") is True:
-                closed += 1
+            # Layer-0 hard safety (catastrophic stop, liquidation proximity) runs FIRST
+            # and pre-empts trailing / strategy / market-aware. Not relaxable by intent.
+            decision = _layer0_safety_exit(p, float(price), cfg)
+            if decision is not None:
+                logger.warning(
+                    "layer0_safety_exit: %s reason=%s entry=%s price=%s lev=%s school=%s",
+                    p["symbol"], decision[0], p.get("entry_price"), price,
+                    p.get("leverage"), p.get("trade_school"),
+                )
+                catastrophic_exits += 1
+            else:
+                _maybe_update_trailing_stop(
+                    p, float(price), cfg, sync_exchange=not pending_close,
+                )
+                decision = _decide_exit(p, float(price), cfg)
+                # Horizon reached but not yet at the hard backstop → wake the Operator
+                # for a must-answer decision instead of auto-closing (D3).
+                if decision is None:
+                    _maybe_wake_on_horizon(p)
+                    _maybe_wake_on_thesis(p, cfg)
+
+            # Market-aware (M5): a counter-signal now WAKES the Operator to decide (close /
+            # adjust / hold) instead of auto-closing or auto-tightening the stop. The daemon
+            # token bucket rate-limits per position. Off by default (enabled flag).
+            if decision is None and cfg.trading.market_aware_exits.enabled:
+                request = market_signal_requests.get(p["id"])
+                signal = market_signal_index.get(request) if request is not None else None
+                if signal is not None:
+                    try:
+                        exact_identity = signal.matches(request)
+                    except Exception as exc:
+                        record_error(p, "market_signal_identity_invalid", exc)
+                        continue
+                    if not exact_identity:
+                        logger.warning(
+                            "market signal identity mismatch pos=%s position=%s signal=%s:%s:%s",
+                            p["id"], request.instrument, signal.venue,
+                            signal.symbol, signal.market_type,
+                        )
+                        record_error(p, "market_signal_identity_mismatch")
+                        continue
+                    try:
+                        from aletheia.portfolio.exit_rules import evaluate_market_exit_rules
+                        from aletheia.agent_runtime.wake_events import ADVERSE_SIGNAL, adverse_signal_priority
+                        action = evaluate_market_exit_rules(p, float(price), signal, cfg)
+                        if action.action in ("urgent_exit", "tighten_stop"):
+                            score = getattr(signal, "confidence_score", None)
+                            evaluated_at = datetime.now(timezone.utc).isoformat()
+                            signal_identity = (
+                                f"{signal.venue}:{signal.symbol}:{signal.market_type}"
+                            )
+                            delivered = _emit_wake(
+                                p, ADVERSE_SIGNAL,
+                                {
+                                    "reason": action.reason,
+                                    "score": score,
+                                    "suggested": action.action,
+                                    "symbol": p.get("symbol"),
+                                    "position_identity": str(request.instrument),
+                                    "signal_identity": signal_identity,
+                                    "source_opportunity_id": signal.source_opportunity_id,
+                                    "source_created_at": signal.source_created_at,
+                                    "source_valid_until": signal.source_valid_until,
+                                    "universe_member_id": signal.universe_member_id,
+                                    "asset_id": signal.asset_id,
+                                    "evidence_status": signal.evidence_status,
+                                    "feature_snapshot_id": signal.feature_snapshot_id,
+                                    "feature_timestamp": signal.feature_timestamp,
+                                },
+                                source="market_adverse_signal",
+                                priority=adverse_signal_priority(score),
+                            )
+                            from aletheia.storage.repositories import update_position
+                            if delivered:
+                                market_signal_wakes += 1
+                                evidence = _market_signal_evidence(
+                                    p, request, signal,
+                                    action=action.action,
+                                    reason=action.reason,
+                                    delivery="scheduled",
+                                    evaluated_at=evaluated_at,
+                                )
+                                update_position(
+                                    p["id"],
+                                    last_market_signal_action=f"wake:{action.action}",
+                                    last_market_signal_reason=action.reason[:200],
+                                    last_market_signal_at=evaluated_at,
+                                    last_market_signal_evidence=json.dumps(
+                                        evidence, sort_keys=True, separators=(",", ":")
+                                    ),
+                                )
+                                logger.info(
+                                    "market_adverse_wake: %s action=%s reason=%s",
+                                    p["symbol"], action.action, action.reason,
+                                )
+                            else:
+                                evidence = _market_signal_evidence(
+                                    p, request, signal,
+                                    action=action.action,
+                                    reason=action.reason,
+                                    delivery="operator_daemon_unavailable",
+                                    evaluated_at=evaluated_at,
+                                )
+                                update_position(
+                                    p["id"],
+                                    last_market_signal_action=f"wake_failed:{action.action}",
+                                    last_market_signal_reason="operator_daemon_unavailable",
+                                    last_market_signal_at=evaluated_at,
+                                    last_market_signal_evidence=json.dumps(
+                                        evidence, sort_keys=True, separators=(",", ":")
+                                    ),
+                                )
+                                record_error(p, "operator_wake_unavailable")
+                    except Exception as e:
+                        logger.warning("market_aware_exit failed %s: %s", p["id"], e)
+                        record_error(p, "market_aware_evaluation_failed", e)
+
+            if decision is None:
+                continue
+            if pending_close:
+                # Keep evaluating fresh marks and protective rules while the durable
+                # exchange claim converges, but never turn a second trigger into a
+                # second close request. The existing claim/reconciliation path owns
+                # the exchange side effect and its eventual truth.
+                record_observation(p, "pending_close_protection_waiting")
+                logger.warning(
+                    "protective exit waiting for unresolved close claim: %s order=%s status=%s",
+                    p["id"], p.get("pending_close_order_id"),
+                    p.get("pending_close_status"),
+                )
+                continue
+            reason, exit_price = decision
+            try:
+                # Route through the shared helper so the exchange leg is never skipped
+                # (live positions are already filtered out above; demo modes still need
+                # their real exchange close, paper closes locally).
+                close_result = close_position_routed(p["id"], reason, fallback_exit_price=exit_price)
+                if close_result.get("closed") is True:
+                    closed += 1
+            except Exception as e:
+                logger.warning("close failed for %s: %s", p["id"], e)
+                failed_close_count += 1
+                record_error(p, "close_failed", e)
         except Exception as e:
-            logger.warning("close failed for %s: %s", p["id"], e)
-            failed_close_count += 1
-            record_error(p, "close_failed", e)
+            logger.warning("position evaluation failed %s: %s", p["id"], e)
+            record_error(p, "position_evaluation_failed", e)
     return {
         "checked": checked,
         "closed": closed,
