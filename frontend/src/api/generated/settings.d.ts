@@ -1362,6 +1362,26 @@ export interface components {
             correlation_guard_enabled: boolean;
             demo: components["schemas"]["ModeRiskPolicy"];
             /**
+             * Demo Family Min Expectancy
+             * @default 0
+             */
+            demo_family_min_expectancy: number | null;
+            /**
+             * Demo Family Min Samples
+             * @default 0
+             */
+            demo_family_min_samples: number;
+            /**
+             * Demo Min Regime Confidence To Enter
+             * @default 0.6
+             */
+            demo_min_regime_confidence_to_enter: number;
+            /**
+             * Demo Sideways Standdown
+             * @default true
+             */
+            demo_sideways_standdown: boolean;
+            /**
              * Futures Margin Force Close Ratio
              * @default 0.85
              */
