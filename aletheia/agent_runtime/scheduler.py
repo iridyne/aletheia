@@ -3768,6 +3768,7 @@ def _run_outcome_settler():
     except Exception as e:
         logger.warning("outcome_settler failed: %s", e)
         _record_job_failure("outcome_settler", str(e))
+        raise  # #1817: re-raise so APScheduler records EVENT_JOB_ERROR
 
 
 async def _async_paper_funding_settler():
