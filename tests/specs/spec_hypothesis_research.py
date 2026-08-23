@@ -68,6 +68,7 @@ def test_research_evidence_contract_rejects_incomplete_or_unbounded_payloads():
 ))
 async def test_missing_t0_context_fails_closed_without_research_or_authority(monkeypatch):
     from aletheia.learning import guard_routing, hypothesis_research
+    from aletheia.learning.hypotheses import HypothesisCounterfactualCheckV1
     from aletheia.learning.ledger import list_records
     from tests.specs.spec_learning_attribution import _ready_research
 
@@ -179,6 +180,16 @@ async def test_missing_t0_context_fails_closed_without_research_or_authority(mon
         }, None
 
     monkeypatch.setattr(hypothesis_research, "_assemble_exact_context", assembled)
+    monkeypatch.setattr(
+        hypothesis_research,
+        "_bounded_counterfactual_checks",
+        lambda *_args: [HypothesisCounterfactualCheckV1(
+            check_type="exact_fixture",
+            source_identity="filter_candidate_outcome:selected",
+            comparison_identity="filter_candidate_outcome:control",
+            evidence={"fixture": True},
+        )],
+    )
     monkeypatch.setattr(hypothesis_research, "llm_structured", narrowed_review)
     partial = await hypothesis_research.research_learning_hypothesis(
         candidate_explanation="A broad momentum block may improve 4h net utility.",
@@ -214,9 +225,9 @@ async def test_missing_t0_context_fails_closed_without_research_or_authority(mon
 
 @spec_claim(SpecClaim(
     "LE-B34", "learning_evolution", "§9.8 causal red-team replay", "L2c",
-    "A deterministic exact closed-trade replay bounds shadow counterfactuals to three "
-    "and narrows a broad repeated-loss learned-guard claim to recorded risk-off and OI "
-    "context without emitting a guard treatment that cannot express that condition.",
+    "A deterministic exact closed-trade replay sources 4h net from exact canonical outcomes, "
+    "bounds counterfactuals to three, and narrows a broad repeated-loss learned-guard claim "
+    "to recorded risk-off and OI context without emitting an inexpressible treatment.",
     status="implemented",
 ))
 async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypatch):
@@ -226,6 +237,7 @@ async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypa
     from aletheia.learning.registry import get_learning_path
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import PiDecision, Position, ShadowTrade
+    from tests.shadow_outcome_fixture import insert_canonical_outcome_for_shadow
     from tests.test_outcome_closure import _insert_entry_chain
 
     case_ids = []
@@ -330,6 +342,7 @@ async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypa
         batch_id=batch_id,
         opportunity_id=opportunity_id,
         symbol="BTC/USDT",
+        venue="bitget",
         market_type="usdt_futures",
         direction="long",
         scanner_family="momentum",
@@ -338,19 +351,17 @@ async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypa
         outcome_candidate_key=f"opportunity:{opportunity_id}",
         was_selected=True,
         created_at="2026-08-16T00:00:00+00:00",
-        exit_price=98.0,
-        pnl_pct=-2.0,
-        net_pnl_pct=-2.0,
-        settlement_price_source="position_close",
-        settlement_lag_sec=14_400.0,
-        resolved_at="2026-08-16T04:00:00+00:00",
     ))
+    insert_canonical_outcome_for_shadow(
+        "causal-shadow-selected", horizon="4h", net_return_pct=-2.0,
+    )
     for rank in range(2, 6):
         repo.insert_shadow_trade(ShadowTrade(
             id=f"causal-shadow-alt-{rank}",
             batch_id=batch_id,
             opportunity_id=f"alternative-{rank}",
             symbol=f"ALT{rank}/USDT",
+            venue="bitget",
             market_type="usdt_futures",
             direction="long",
             scanner_family="momentum",
@@ -359,13 +370,10 @@ async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypa
             outcome_candidate_key=f"opportunity:alternative-{rank}",
             was_selected=False,
             created_at="2026-08-16T00:00:00+00:00",
-            exit_price=101.0,
-            pnl_pct=1.0,
-            net_pnl_pct=1.0,
-            settlement_price_source="position_close",
-            settlement_lag_sec=14_400.0,
-            resolved_at="2026-08-16T04:00:00+00:00",
         ))
+        insert_canonical_outcome_for_shadow(
+            f"causal-shadow-alt-{rank}", horizon="4h", net_return_pct=1.0,
+        )
 
     review_calls = []
 
@@ -447,11 +455,43 @@ async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypa
     assert ufc.measurement_supported is True
     assert learned_guard.measurement_supported is False
 
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "DELETE FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key=? AND horizon='4h'",
+        (f"opportunity:{opportunity_id}",),
+    )
+    db.commit()
+
+    async def review_without_exact_outcome_must_not_run(**_kwargs):
+        raise AssertionError("red-team review must not run without exact outcome evidence")
+
+    monkeypatch.setattr(
+        hypothesis_research,
+        "llm_structured",
+        review_without_exact_outcome_must_not_run,
+    )
+    missing_outcome = await hypothesis_research.research_learning_hypothesis(
+        candidate_explanation="A broad momentum block may improve 4h net utility.",
+        source_artifact_ids=[case_ids[0]],
+        evidence={"case_count": 1},
+        proposed_scope={"symbol": ["BTC/USDT"], "scanner_family": ["momentum"]},
+        target_horizon="4h",
+    )
+    assert missing_outcome.research_status == "insufficient_context"
+    assert "exact_counterfactual_evidence_unavailable" in missing_outcome.missing_evidence
+    insert_canonical_outcome_for_shadow(
+        "causal-shadow-selected", horizon="4h", net_return_pct=-2.0,
+    )
+
     repo.insert_shadow_trade(ShadowTrade(
         id="causal-shadow-later-selected",
         batch_id="later-causal-replay-batch",
         opportunity_id=opportunity_id,
         symbol="BTC/USDT",
+        venue="bitget",
         market_type="usdt_futures",
         direction="long",
         scanner_family="momentum",
@@ -460,30 +500,12 @@ async def test_exact_closed_trade_replay_narrows_broad_guard_hypothesis(monkeypa
         outcome_candidate_key=f"opportunity:{opportunity_id}",
         was_selected=True,
         created_at="2026-08-16T01:00:00+00:00",
-        exit_price=98.0,
-        pnl_pct=-2.0,
-        net_pnl_pct=-2.0,
-        settlement_price_source="position_close",
-        settlement_lag_sec=14_400.0,
-        resolved_at="2026-08-16T05:00:00+00:00",
     ))
     assert hypothesis_research._bounded_counterfactual_checks(
         [{"opportunity_id": opportunity_id, "opened_at": "2026-08-16T00:00:00+00:00"}],
         3,
-        4.0,
+        "4h",
     ) == []
-    assert not hypothesis_research._shadow_matches_horizon({
-        "created_at": "2026-08-16T00:00:00+00:00",
-        "resolved_at": "2026-08-17T01:00:00+00:00",
-        "settlement_price_source": "horizon_ohlcv",
-        "settlement_lag_sec": 3_600.0,
-    }, 4.0)
-    assert hypothesis_research._shadow_matches_horizon({
-        "created_at": "2026-08-16T00:00:00+00:00",
-        "resolved_at": "2026-08-17T01:00:00+00:00",
-        "settlement_price_source": "horizon_ohlcv",
-        "settlement_lag_sec": 3_600.0,
-    }, 24.0)
 
     repo.update_position(
         "causal-loss-position-0",

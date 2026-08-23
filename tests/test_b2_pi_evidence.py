@@ -97,6 +97,7 @@ def _insert_b2_candidate(
         estimated_spread_slippage_pct=0.1,
         estimated_funding_pct=0.0,
         net_return_pct=net, min_tradable_edge_pct=0.05,
+        settlement_price_source="horizon_ohlcv", settlement_lag_sec=0.0,
         cost_model_version=cost_model_version,
         status="settled",
     )])

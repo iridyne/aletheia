@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import aletheia.storage.sqlite as _sq
 from aletheia.counterfactual.calibration import build_calibration
 from aletheia.counterfactual.estimators import (
     compute_ope_scores,
@@ -12,6 +11,7 @@ from aletheia.counterfactual.estimators import (
 )
 from aletheia.counterfactual.propensity import build_propensity_report
 from aletheia.counterfactual.trades import persist_shadow_batch
+from tests.shadow_outcome_fixture import settle_pending_keyed_shadows
 
 # ---------------------------------------------------------------------------
 # Helpers (shared with test_counterfactual_propensity pattern)
@@ -28,11 +28,7 @@ def _insert_batch(
 ) -> None:
     with patch("aletheia.counterfactual.trades._current_price", return_value=50000.0):
         persist_shadow_batch(candidates, selected, top_n=top_n)
-    _sq._db_conn.execute(
-        "UPDATE shadow_trades SET net_pnl_pct = ? WHERE net_pnl_pct IS NULL",
-        (net_pnl_pct,),
-    )
-    _sq._db_conn.commit()
+    settle_pending_keyed_shadows(net_pnl_pct)
 
 
 def _synthetic_rows(n: int, *, base_score: float = 50.0) -> list[dict]:
@@ -183,6 +179,7 @@ def _populate_db_many_batches(n_batches: int = 20) -> None:
             {
                 "opportunity_id": f"b{b}-{j}",
                 "symbol": "BTC/USDT",
+                "venue": "bitget",
                 "direction": "long" if j % 2 == 0 else "short",
                 "scanner_family": _FAMILIES[j % len(_FAMILIES)],
                 "trade_score": 35.0 + ((b * 6 + j) % 50) * 0.7,
@@ -243,17 +240,13 @@ def _insert_row_with_epoch(opp_id: str, epoch: str | None, net_pnl_pct: float = 
     with patch("aletheia.counterfactual.trades._current_price", return_value=50000.0):
         with patch("aletheia.counterfactual.trades._current_policy_epoch", return_value=epoch):
             persist_shadow_batch(
-                [{"opportunity_id": opp_id, "symbol": "BTC/USDT", "direction": "long",
+                [{"opportunity_id": opp_id, "symbol": "BTC/USDT", "venue": "bitget", "direction": "long",
                   "scanner_family": "momentum", "trade_score": 60.0}],
-                selected={"opportunity_id": opp_id, "symbol": "BTC/USDT", "direction": "long",
+                selected={"opportunity_id": opp_id, "symbol": "BTC/USDT", "venue": "bitget", "direction": "long",
                            "scanner_family": "momentum", "trade_score": 60.0},
                 top_n=5,
             )
-    _sq._db_conn.execute(
-        "UPDATE shadow_trades SET net_pnl_pct = ? WHERE net_pnl_pct IS NULL",
-        (net_pnl_pct,),
-    )
-    _sq._db_conn.commit()
+    settle_pending_keyed_shadows(net_pnl_pct)
 
 
 def test_mixed_epoch_calibration_returns_error():

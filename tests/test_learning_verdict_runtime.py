@@ -144,6 +144,7 @@ def _outcome(
     cost_model_version: str | None = COST_MODEL_VERSION,
     min_tradable_edge_pct: float | None = 0.05,
     settlement_price_source: str = "horizon_ohlcv",
+    settlement_lag_sec: float = 0.0,
     suffix: str = "",
 ):
     from aletheia.storage.sqlite import get_db
@@ -162,9 +163,10 @@ def _outcome(
         "entry_ts, due_at, settled_at, "
         "directional_return_pct, net_return_pct, min_tradable_edge_pct, estimated_fee_pct, "
         "estimated_spread_slippage_pct, estimated_funding_pct, "
-        "mae_pct, settlement_price_source, cost_model_version, status) "
+        "mae_pct, settlement_price_source, settlement_lag_sec, "
+        "cost_model_version, status) "
         "VALUES (?, ?, ?, ?, 'BTC/USDT', 'test', 'perp', 'momentum', 'long', ?, 100, ?, ?, ?, ?, ?, ?, ?, "
-        "0.1, 0.1, 0.0, ?, ?, ?, ?)",
+        "0.1, 0.1, 0.0, ?, ?, ?, ?, ?)",
         (
             f"outcome-{candidate}-{horizon}-{suffix or 'primary'}",
             candidate,
@@ -180,6 +182,7 @@ def _outcome(
             min_tradable_edge_pct,
             mae,
             settlement_price_source,
+            settlement_lag_sec,
             cost_model_version,
             status,
         ),
@@ -198,6 +201,7 @@ def _filter_outcome(
     min_tradable_edge_pct: float | None = 0.05,
     allocation_selected: bool | None = True,
     settlement_price_source: str = "horizon_ohlcv",
+    settlement_lag_sec: float = 0.0,
     suffix: str = "",
 ):
     from aletheia.storage.sqlite import get_db
@@ -215,9 +219,9 @@ def _filter_outcome(
         "entry_ts, due_at, settled_at, "
         "directional_return_pct, net_return_pct, min_tradable_edge_pct, "
         "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, mae_pct, "
-        "settlement_price_source, cost_model_version, status) "
+        "settlement_price_source, settlement_lag_sec, cost_model_version, status) "
         "VALUES (?, ?, 'test', 'BTC/USDT', 'perp', 'momentum', 'long', ?, ?, 100, ?, ?, ?, ?, ?, ?, ?, "
-        "0.1, 0.1, 0.0, ?, ?, ?, ?)",
+        "0.1, 0.1, 0.0, ?, ?, ?, ?, ?)",
         (
             f"filter-outcome-{candidate}-{horizon}-{suffix or 'primary'}",
             candidate,
@@ -232,6 +236,7 @@ def _filter_outcome(
             min_tradable_edge_pct,
             mae,
             settlement_price_source,
+            settlement_lag_sec,
             cost_model_version,
             status,
         ),
@@ -554,6 +559,35 @@ def test_canonical_and_mirror_source_label_difference_is_not_an_economic_conflic
 
     assert verdict.verdict != "invalid"
     assert "conflicting_mirrored_outcome" not in metrics["invalid_reasons"]
+
+
+def test_valid_canonical_and_invalid_mirror_price_provenance_conflict():
+    hypothesis, experiment = _experiment()
+    _exposure(
+        experiment, hypothesis, candidate="provenance-treatment", assignment="treatment",
+        outcome_key="provenance-treatment:4h",
+    )
+    _exposure(
+        experiment, hypothesis, candidate="provenance-control", assignment="control",
+        outcome_key="provenance-control:4h",
+    )
+    _filter_outcome("provenance-treatment", net=1.0)
+    _outcome(
+        "provenance-treatment:4h",
+        net=1.0,
+        settlement_price_source="late_ticker",
+        settlement_lag_sec=3600.0,
+    )
+    _filter_outcome("provenance-control", net=0.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "invalid"
+    assert metrics["invalid_reasons"] == {"conflicting_mirrored_outcome": 1}
+    conflict = metrics["evidence_conflicts"][0]
+    assert conflict["canonical"]["settlement_price_source"] == "horizon_ohlcv"
+    assert conflict["mirrors"][0]["settlement_price_source"] == "late_ticker"
 
 
 def test_mirror_inferred_selection_and_explicit_selection_have_distinct_provenance():

@@ -93,6 +93,8 @@ def _add_candidate(
             estimated_funding_pct=None if is_pending else 0.0,
             net_return_pct=None if is_pending else net,
             min_tradable_edge_pct=None if is_pending else 0.05,
+            settlement_price_source=None if is_pending else "horizon_ohlcv",
+            settlement_lag_sec=None if is_pending else 0,
             cost_model_version=None if is_pending else "test-v1",
             status="pending" if is_pending else "settled",
         ))

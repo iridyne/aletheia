@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 
 from typer.testing import CliRunner
@@ -37,9 +37,11 @@ def _insert_outcome(
         "horizon, entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, forward_return_pct, "
         "gross_return_pct, directional_return_pct, estimated_fee_pct, "
         "estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, "
-        "min_tradable_edge_pct, cost_model_version, status) "
+        "min_tradable_edge_pct, cost_model_version, settlement_price_source, "
+        "settlement_lag_sec, status) "
         "VALUES (?, ?, 'edge-snapshot', 'BTC/USDT', 'okx', 'momentum', ?, ?, "
-        "'24h', 100, ?, ?, ?, ?, 0.1, 0.1, ?, ?, ?, ?, ?, ?, ?, 'settled')",
+        "'24h', 100, ?, ?, ?, ?, 0.1, 0.1, ?, ?, ?, ?, ?, ?, ?, "
+        "'horizon_ohlcv', 0, 'settled')",
         (
             outcome_id, f"member-{outcome_id}", market_type, direction,
             exit_price_usd, now, now, now,
@@ -163,6 +165,9 @@ def test_sql_and_python_reject_directional_returns_not_reconciled_to_prices():
         "min_tradable_edge_pct": 0.05,
         "market_type": "spot",
         "cost_model_version": "v1",
+        "horizon": "1h",
+        "settlement_price_source": "horizon_ohlcv",
+        "settlement_lag_sec": 0.0,
     }
     fields = tuple(base)
     aliases = ", ".join(f"? AS {field}" for field in fields)
@@ -204,6 +209,261 @@ def test_sql_and_python_reject_directional_returns_not_reconciled_to_prices():
     direct = dict(base)
     direct["entry_price_usd"] = True
     assert validated_outcome_economics(direct) is None
+
+
+def test_sql_and_python_enforce_the_same_settlement_price_provenance():
+    from aletheia.analytics.outcome_semantics import validated_outcome_economics
+    from aletheia.storage.repositories import complete_outcome_economics_sql
+    from aletheia.storage.sqlite import get_db
+
+    base = {
+        "venue": "okx",
+        "direction": "long",
+        "horizon": "1h",
+        "settlement_price_source": "near_due_ticker",
+        "settlement_lag_sec": 360.0,
+        "entry_price_usd": 100.0,
+        "exit_price_usd": 100.1,
+        "directional_return_pct": 0.1,
+        "estimated_fee_pct": 0.0,
+        "estimated_spread_slippage_pct": 0.0,
+        "estimated_funding_pct": 0.0,
+        "net_return_pct": 0.1,
+        "min_tradable_edge_pct": 0.05,
+        "market_type": "spot",
+        "cost_model_version": "v1",
+    }
+    fields = tuple(base)
+    aliases = ", ".join(f"? AS {field}" for field in fields)
+
+    def eligibility(row: dict[str, object]) -> tuple[bool, int]:
+        sql_eligible = get_db().execute(
+            "SELECT CASE WHEN "
+            f"{complete_outcome_economics_sql()} THEN 1 ELSE 0 END "
+            f"FROM (SELECT {aliases})",
+            tuple(row[field] for field in fields),
+        ).fetchone()[0]
+        return validated_outcome_economics(row) is not None, sql_eligible
+
+    assert eligibility(base) == (True, 1)
+    for source in ("horizon_ohlcv", "horizon_ohlcv_local"):
+        assert eligibility({
+            **base,
+            "settlement_price_source": source,
+            "settlement_lag_sec": 86_400.0,
+        }) == (True, 1)
+    for horizon, lag in (("15m", 90.0), ("4h", 1440.0), ("24h", 8640.0)):
+        assert eligibility({**base, "horizon": horizon, "settlement_lag_sec": lag}) == (
+            True,
+            1,
+        )
+
+    invalid_mutations = (
+        ("settlement_price_source", "late_ticker"),
+        ("settlement_price_source", "HORIZON_OHLCV"),
+        ("settlement_price_source", ""),
+        ("settlement_price_source", None),
+        ("settlement_price_source", b"horizon_ohlcv"),
+        ("settlement_lag_sec", 360.000001),
+        ("settlement_lag_sec", -0.001),
+        ("settlement_lag_sec", None),
+        ("settlement_lag_sec", "0"),
+        ("settlement_lag_sec", b"0"),
+        ("settlement_lag_sec", float("nan")),
+        ("settlement_lag_sec", float("inf")),
+        ("horizon", "2h"),
+    )
+    for field, value in invalid_mutations:
+        assert eligibility({**base, field: value}) == (False, 0), (field, value)
+    assert validated_outcome_economics({**base, "settlement_lag_sec": True}) is None
+
+
+def test_keyed_shadow_net_requires_exact_canonical_24h_projection():
+    from unittest.mock import patch
+
+    from aletheia.counterfactual.trades import list_deduped_shadows
+    from aletheia.counterfactual.trades import persist_shadow_batch
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+    from tests.shadow_outcome_fixture import (
+        insert_canonical_outcome_for_shadow,
+        settle_pending_keyed_shadows,
+    )
+
+    candidate = {
+        "opportunity_id": "shadow-authority",
+        "symbol": "BTC/USDT",
+        "venue": "bitget",
+        "direction": "long",
+        "scanner_family": "momentum",
+        "trade_score": 60.0,
+    }
+    with patch("aletheia.counterfactual.trades._current_price", return_value=100.0):
+        shadow_id = persist_shadow_batch([candidate], candidate)[0]
+    settle_pending_keyed_shadows(1.0)
+
+    def rows() -> list[dict]:
+        return list_deduped_shadows(days=9999, columns=("id", "net_pnl_pct"))
+
+    assert rows() == [{"id": shadow_id, "net_pnl_pct": 1.0}]
+
+    db = get_db()
+    original = dict(db.execute(
+        "SELECT opportunity_id,venue,symbol,market_type,direction,entry_price,"
+        "created_at,resolved_at "
+        "FROM shadow_trades WHERE id=?",
+        (shadow_id,),
+    ).fetchone())
+    canonical_entry_at = db.execute(
+        "SELECT entry_ts FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key=? AND horizon='24h'",
+        (f"opportunity:{candidate['opportunity_id']}",),
+    ).fetchone()["entry_ts"]
+    aligned_boundary = (
+        datetime.fromisoformat(str(canonical_entry_at).replace("Z", "+00:00"))
+        + timedelta(seconds=60)
+    ).isoformat()
+    db.execute(
+        "UPDATE shadow_trades SET created_at=? WHERE id=?",
+        (aligned_boundary, shadow_id),
+    )
+    assert rows() == [{"id": shadow_id, "net_pnl_pct": 1.0}]
+    db.execute(
+        "UPDATE shadow_trades SET created_at=? WHERE id=?",
+        (original["created_at"], shadow_id),
+    )
+    late_created_at = (
+        datetime.fromisoformat(str(original["created_at"]).replace("Z", "+00:00"))
+        + timedelta(hours=12)
+    ).isoformat()
+    for field, forged in (
+        ("opportunity_id", "borrowed-canonical-victim"),
+        ("venue", "borrowed-venue"),
+        ("symbol", "ETH/USDT"),
+        ("market_type", "perp"),
+        ("direction", "short"),
+        ("entry_price", 101.0),
+        ("created_at", late_created_at),
+        ("resolved_at", "2099-01-01T00:00:00+00:00"),
+    ):
+        db.execute(f"UPDATE shadow_trades SET {field}=? WHERE id=?", (forged, shadow_id))
+        assert rows() == [], field
+        db.execute(
+            f"UPDATE shadow_trades SET {field}=? WHERE id=?",
+            (original[field], shadow_id),
+        )
+
+    db.execute("UPDATE shadow_trades SET net_pnl_pct=2.0 WHERE id=?", (shadow_id,))
+    assert rows() == []
+    db.execute(
+        "UPDATE shadow_trades SET net_pnl_pct=1.0,settlement_price_source='late_ticker' "
+        "WHERE id=?",
+        (shadow_id,),
+    )
+    assert rows() == []
+    db.execute(
+        "UPDATE shadow_trades SET settlement_price_source='horizon_ohlcv' WHERE id=?",
+        (shadow_id,),
+    )
+
+    insert_canonical_outcome_for_shadow(
+        shadow_id,
+        horizon="4h",
+        net_return_pct=0.5,
+    )
+    assert repo.get_decision_grade_shadow_outcome(shadow_id, "24h") is not None
+    assert repo.get_decision_grade_shadow_outcome(shadow_id, "4h") is not None
+    db.execute("UPDATE shadow_trades SET net_pnl_pct=2.0 WHERE id=?", (shadow_id,))
+    assert repo.get_decision_grade_shadow_outcome(shadow_id, "24h") is None
+    assert repo.get_decision_grade_shadow_outcome(shadow_id, "4h") is not None
+    db.execute("UPDATE shadow_trades SET net_pnl_pct=1.0 WHERE id=?", (shadow_id,))
+    with patch("aletheia.counterfactual.trades._current_price", return_value=100.0):
+        late_shadow_id = persist_shadow_batch([candidate], candidate)[0]
+    db.execute(
+        "UPDATE shadow_trades SET created_at=? WHERE id=?",
+        (late_created_at, late_shadow_id),
+    )
+    settle_pending_keyed_shadows(1.0)
+    late_shadow = dict(db.execute(
+        "SELECT resolved_at,net_pnl_pct FROM shadow_trades WHERE id=?",
+        (late_shadow_id,),
+    ).fetchone())
+    assert late_shadow == {"resolved_at": None, "net_pnl_pct": None}
+    assert rows() == [{"id": shadow_id, "net_pnl_pct": 1.0}]
+    assert repo.get_decision_grade_shadow_outcome(late_shadow_id, "4h") is None
+
+    db.execute("DELETE FROM filter_candidate_outcomes")
+    assert rows() == []
+
+
+def test_linked_projection_settles_all_time_aligned_same_key_shadows():
+    from unittest.mock import patch
+
+    from aletheia.counterfactual.trades import persist_shadow_batch
+    from aletheia.storage.sqlite import get_db
+    from tests.shadow_outcome_fixture import settle_pending_keyed_shadows
+
+    candidate = {
+        "opportunity_id": "shadow-many-to-one",
+        "symbol": "BTC/USDT",
+        "venue": "bitget",
+        "direction": "long",
+        "scanner_family": "momentum",
+        "trade_score": 60.0,
+    }
+    with patch("aletheia.counterfactual.trades._current_price", return_value=100.0):
+        first_id = persist_shadow_batch([candidate], candidate)[0]
+        second_id = persist_shadow_batch([candidate], candidate)[0]
+    db = get_db()
+    first_created_at = db.execute(
+        "SELECT created_at FROM shadow_trades WHERE id=?", (first_id,)
+    ).fetchone()["created_at"]
+    aligned_created_at = (
+        datetime.fromisoformat(str(first_created_at).replace("Z", "+00:00"))
+        + timedelta(seconds=30)
+    ).isoformat()
+    db.execute(
+        "UPDATE shadow_trades SET created_at=? WHERE id=?",
+        (aligned_created_at, second_id),
+    )
+
+    settle_pending_keyed_shadows(1.0)
+
+    assert db.execute(
+        "SELECT COUNT(*) FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key='opportunity:shadow-many-to-one' "
+        "AND horizon='24h'"
+    ).fetchone()[0] == 1
+    rows = db.execute(
+        "SELECT id,exit_price,pnl_pct,gross_return_pct,net_pnl_pct,"
+        "estimated_fee_pct,estimated_spread_slippage_pct,estimated_funding_pct,"
+        "min_tradable_edge_pct,settlement_price_source,settlement_lag_sec,"
+        "cost_model_version,resolved_at FROM shadow_trades "
+        "WHERE id IN (?,?) ORDER BY id",
+        (first_id, second_id),
+    ).fetchall()
+    canonical = db.execute(
+        "SELECT * FROM filter_candidate_outcomes "
+        "WHERE outcome_candidate_key='opportunity:shadow-many-to-one' "
+        "AND horizon='24h'"
+    ).fetchone()
+    assert {row["id"] for row in rows} == {first_id, second_id}
+    for row in rows:
+        assert row["exit_price"] == canonical["exit_price_usd"]
+        assert row["pnl_pct"] == canonical["directional_return_pct"]
+        assert row["gross_return_pct"] == canonical["gross_return_pct"]
+        assert row["net_pnl_pct"] == canonical["net_return_pct"]
+        assert row["estimated_fee_pct"] == canonical["estimated_fee_pct"]
+        assert (
+            row["estimated_spread_slippage_pct"]
+            == canonical["estimated_spread_slippage_pct"]
+        )
+        assert row["estimated_funding_pct"] == canonical["estimated_funding_pct"]
+        assert row["min_tradable_edge_pct"] == canonical["min_tradable_edge_pct"]
+        assert row["settlement_price_source"] == canonical["settlement_price_source"]
+        assert row["settlement_lag_sec"] == canonical["settlement_lag_sec"]
+        assert row["cost_model_version"] == canonical["cost_model_version"]
+        assert row["resolved_at"] == canonical["settled_at"]
 
 
 def test_persisted_outlier_policy_not_consumer_cap_controls_large_returns():

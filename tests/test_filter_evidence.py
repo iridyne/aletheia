@@ -154,6 +154,7 @@ def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
         market_type="spot",
         direction="long",
         entry_price=100.0,
+        created_at=entry.isoformat(),
         outcome_candidate_key=outcome.outcome_candidate_key,
     )
     repo.insert_shadow_trade(shadow)
@@ -783,7 +784,9 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
             "UPDATE filter_candidate_outcomes SET status='settled', "
             "directional_return_pct=?, exit_price_usd=?, estimated_fee_pct=0.1, "
             "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
-            "net_return_pct=?, min_tradable_edge_pct=0.05, cost_model_version='v1' "
+            "net_return_pct=?, min_tradable_edge_pct=0.05, "
+            "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+            "cost_model_version='v1' "
             "WHERE outcome_candidate_key=?",
             (net + 0.2, 100.0 + net + 0.2, net, key),
         )
@@ -797,7 +800,9 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
             "UPDATE filter_candidate_outcomes SET status='settled', "
             "directional_return_pct=1.0, exit_price_usd=101.0, estimated_fee_pct=0.1, "
             "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
-            "net_return_pct=0.8, min_tradable_edge_pct=?, cost_model_version='v1' "
+            "net_return_pct=0.8, min_tradable_edge_pct=?, "
+            "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+            "cost_model_version='v1' "
             "WHERE outcome_candidate_key=?",
             (edge, key),
         )
@@ -807,7 +812,9 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
         "UPDATE filter_candidate_outcomes SET status='settled', "
         "directional_return_pct=0.2, exit_price_usd=100.2, estimated_fee_pct=0.1, "
         "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
-        "net_return_pct=0, min_tradable_edge_pct=?, cost_model_version='v1' "
+        "net_return_pct=0, min_tradable_edge_pct=?, "
+        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+        "cost_model_version='v1' "
         "WHERE outcome_candidate_key=?",
         (float.fromhex("0x1.fffffffffffffp+1023"), max_edge_key),
     )
@@ -823,7 +830,9 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
             "UPDATE filter_candidate_outcomes SET status='settled', "
             "directional_return_pct=1.0, exit_price_usd=101.0, estimated_fee_pct=0.1, "
             "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
-            "net_return_pct=0.8, min_tradable_edge_pct=0.05, cost_model_version=? "
+            "net_return_pct=0.8, min_tradable_edge_pct=0.05, "
+            "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+            "cost_model_version=? "
             "WHERE outcome_candidate_key=?",
             (cost_model, key),
         )
@@ -834,7 +843,9 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
             "UPDATE filter_candidate_outcomes SET status='settled', "
             "directional_return_pct=1.0, exit_price_usd=101.0, estimated_fee_pct=0.1, "
             "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
-            "net_return_pct=?, min_tradable_edge_pct=0.05, cost_model_version='v1' "
+            "net_return_pct=?, min_tradable_edge_pct=0.05, "
+            "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+            "cost_model_version='v1' "
             "WHERE outcome_candidate_key=?",
             (net, key),
         )
@@ -1127,6 +1138,8 @@ def test_batch_controller_reads_only_referenced_outcome_keys():
             estimated_funding_pct=0.0,
             net_return_pct=0.25,
             min_tradable_edge_pct=0.05,
+            settlement_price_source="horizon_ohlcv",
+            settlement_lag_sec=0,
             cost_model_version="test-v1",
         ))
     repo.insert_filter_candidate_outcomes_batch(outcomes)
@@ -1253,7 +1266,8 @@ def test_filter_feedback_stats_respects_decision_time_window():
             )
     db = get_db()
     db.execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.1 "
+        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.1, "
+        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0 "
         "WHERE horizon='1h'"
     )
 
@@ -1311,7 +1325,8 @@ def test_filter_feedback_assigns_each_candidate_to_first_exposure_only():
     )
     db = get_db()
     db.execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.2 "
+        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.2, "
+        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0 "
         "WHERE horizon='1h'"
     )
 

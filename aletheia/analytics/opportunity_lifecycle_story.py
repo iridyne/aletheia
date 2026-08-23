@@ -322,11 +322,28 @@ def _counterfactual(
         "forward": {},
     }
     opportunity_id = str(opportunity.get("id"))
+    shadow_where = "opportunity_id=?"
+    shadow_params: tuple[Any, ...] = (opportunity_id,)
+    if _has_column(db, "shadow_trades", "outcome_candidate_key"):
+        # Keyed results are visible only when the canonical outcome projection
+        # proves the exact identity and economics. Pending exposure remains
+        # useful for the lifecycle story; legacy unkeyed rows retain history.
+        if _table_exists(db, "filter_candidate_outcomes"):
+            from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
+
+            keyed_authority = valid_keyed_shadow_projection_sql()
+        else:
+            keyed_authority = "0"
+        shadow_where += (
+            " AND (NULLIF(TRIM(outcome_candidate_key), '') IS NULL "
+            "OR (resolved_at IS NULL AND pnl_pct IS NULL) "
+            f"OR {keyed_authority})"
+        )
     shadow_rows = _rows(
         db,
         "shadow_trades",
-        "opportunity_id=?",
-        (opportunity_id,),
+        shadow_where,
+        shadow_params,
         order_by="datetime(COALESCE(resolved_at,created_at)) DESC, rowid DESC",
         gaps=gaps,
     )

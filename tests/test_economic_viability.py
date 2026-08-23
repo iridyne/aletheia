@@ -113,6 +113,18 @@ def test_operator_viability_requires_same_close_shadow_cohort(monkeypatch):
             0,100.5,0.5,0.5,?,'shadow-cost-v1',?)""",
         (now, now, now, now),
     )
+    db.execute(
+        """INSERT INTO shadow_trades
+           (id,batch_id,opportunity_id,symbol,market_type,direction,rank,entry_price,
+            outcome_candidate_key,was_selected,exit_price,pnl_pct,gross_return_pct,
+            net_pnl_pct,estimated_fee_pct,estimated_spread_slippage_pct,
+            estimated_funding_pct,min_tradable_edge_pct,settlement_price_source,
+            settlement_lag_sec,resolved_at,cost_model_version,created_at)
+           VALUES ('forged-keyed-control','batch-1','opportunity-forged','SOL/USDT',
+                   'spot','long',3,100,'forged-key',0,199,99,99,99,0,0,0,0,
+                   'horizon_ohlcv',0,?,'shadow-cost-v1',?)""",
+        (now, now),
+    )
     _insert_known_llm_cost(
         event_id="operator-cost",
         cost=0.2,

@@ -357,7 +357,7 @@ def _attach_outcomes(db, rows: list[dict]) -> dict[str, int]:
         "venue", "symbol", "market_type", "direction", "entry_ts", "cost_model_version",
         "entry_price_usd", "exit_price_usd", "directional_return_pct", "estimated_fee_pct",
         "estimated_spread_slippage_pct", "estimated_funding_pct",
-        "min_tradable_edge_pct",
+        "min_tradable_edge_pct", "settlement_price_source", "settlement_lag_sec",
     }
     if not _table_exists(db, "filter_candidate_outcomes"):
         return {"missing_outcome_table": len(rows)} if rows else {}
@@ -373,7 +373,8 @@ def _attach_outcomes(db, rows: list[dict]) -> dict[str, int]:
         "SELECT rowid,outcome_candidate_key,horizon,status,net_return_pct,settled_at,"
         "venue,symbol,market_type,direction,entry_ts,cost_model_version,entry_price_usd,"
         "exit_price_usd,directional_return_pct,estimated_fee_pct,estimated_spread_slippage_pct,"
-        "estimated_funding_pct,min_tradable_edge_pct "
+        "estimated_funding_pct,min_tradable_edge_pct,settlement_price_source,"
+        "settlement_lag_sec "
         f"FROM filter_candidate_outcomes WHERE outcome_candidate_key IN ({placeholders}) "
         "ORDER BY outcome_candidate_key,horizon,datetime(settled_at),rowid",
         tuple(keys),

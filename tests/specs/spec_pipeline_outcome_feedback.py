@@ -1427,6 +1427,59 @@ def test_partial_shadow_resolution_fails_job_then_resumes_remaining_rows(
     assert final_rows[counterfactual.id]["resolved_at"] is not None
 
 
+def test_legacy_position_close_does_not_resolve_keyed_batch_sibling(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.counterfactual.trades import resolve_shadow_trades_for_position
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import ShadowTrade
+
+    batch_id = "mixed-authority-shadow-batch"
+    selected = ShadowTrade(
+        id="legacy-selected-shadow",
+        batch_id=batch_id,
+        opportunity_id="legacy-selected-opportunity",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        entry_price=100.0,
+        was_selected=True,
+    )
+    keyed = ShadowTrade(
+        id="keyed-sibling-shadow",
+        batch_id=batch_id,
+        opportunity_id="keyed-sibling-opportunity",
+        symbol="ETH/USDT",
+        venue="bitget",
+        market_type="spot",
+        direction="long",
+        entry_price=100.0,
+        outcome_candidate_key="opportunity:keyed-sibling-opportunity",
+    )
+    repo.insert_shadow_trade(selected)
+    repo.insert_shadow_trade(keyed)
+    monkeypatch.setattr(
+        "aletheia.counterfactual.trades._current_price",
+        lambda *_args, **_kwargs: 110.0,
+    )
+
+    updated = resolve_shadow_trades_for_position({
+        "opportunity_id": selected.opportunity_id,
+        "symbol": selected.symbol,
+        "market_type": selected.market_type,
+        "current_price": 110.0,
+        "closed_at": "2026-08-23T00:00:00+00:00",
+    })
+
+    assert updated == 1
+    assert repo._select_one("shadow_trades", selected.id)["resolved_at"] is not None
+    keyed_row = repo._select_one("shadow_trades", keyed.id)
+    assert keyed_row["exit_price"] is None
+    assert keyed_row["pnl_pct"] is None
+    assert keyed_row["resolved_at"] is None
+
+
 @spec_claim(
     SpecClaim(
         "PL-OF-19",

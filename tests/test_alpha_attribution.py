@@ -81,11 +81,12 @@ def _insert_shadow(
     db.execute(
         "INSERT INTO filter_candidate_outcomes "
         "(id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
-        "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, directional_return_pct, "
+        "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
+        "settlement_price_source, settlement_lag_sec, directional_return_pct, "
         "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
         "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
-        "VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', '24h', 100, ?, ?, ?, ?, ?, "
-        "0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
+        "VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', '24h', 100, ?, ?, ?, ?, "
+        "'horizon_ohlcv', 0.0, ?, 0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
         (
             f"fco-{batch}-{rank}-{opp}",
             outcome_key,
@@ -139,11 +140,12 @@ def _insert_operator_candidate(
     db.execute(
         "INSERT INTO filter_candidate_outcomes "
         "(id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
-        "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, directional_return_pct, "
+        "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
+        "settlement_price_source, settlement_lag_sec, directional_return_pct, "
         "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
         "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
-        "VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', '24h', 100, ?, ?, ?, ?, ?, "
-        "0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
+        "VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', '24h', 100, ?, ?, ?, ?, "
+        "'horizon_ohlcv', 0.0, ?, 0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
         (
             f"fco-operator-{decision}-{idx}", key,
             100.0 * (1.0 + (pnl + 0.2) / 100.0), entry,
@@ -221,11 +223,12 @@ def _insert_prospective_control_cohort(
                 "INSERT INTO filter_candidate_outcomes "
                 "(id, outcome_candidate_key, venue, symbol, market_type, direction, "
                 "horizon, entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
+                "settlement_price_source, settlement_lag_sec, "
                 "directional_return_pct, estimated_fee_pct, "
                 "estimated_spread_slippage_pct, estimated_funding_pct, "
                 "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
-                "VALUES (?, ?, 'okx', ?, 'spot', 'long', '1h', 100, ?, ?, ?, ?, ?, "
-                "0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
+                "VALUES (?, ?, 'okx', ?, 'spot', 'long', '1h', 100, ?, ?, ?, ?, "
+                "'horizon_ohlcv', 0.0, ?, 0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
                 (
                     f"fco-{prefix}-{role}-{i}",
                     outcome_key,
@@ -447,21 +450,25 @@ def test_universe_alpha_uses_forward_outcomes_against_deterministic_baseline():
             (f"asset-base-{i}", sym),
         )
         _insert_ohlcv(db, sym, "1h", entry, 100.0, {1: 100.0})
-    for i in range(6):
+    for i in range(7):
         forward_return = 2.0 if i < 5 else 99.0
-        venue = "bitget" if i < 5 else None
+        venue = "bitget" if i != 5 else None
+        price_source = "late_ticker" if i == 6 else "horizon_ohlcv"
+        settlement_lag = 3600.0 if i == 6 else 0.0
         db.execute(
             "INSERT INTO universe_forward_outcomes "
             "(id, member_id, snapshot_id, symbol, venue, market_type, scanner_family, "
             "direction, horizon, entry_price_usd, entry_ts, due_at, settled_at, "
+            "settlement_price_source, settlement_lag_sec, "
             "exit_price_usd, forward_return_pct, directional_return_pct, "
             "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
             "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
             "VALUES (?, ?, 'snap', ?, ?, 'spot', 'momentum', 'long', '1h', 100, ?, ?, ?, "
-            "?, ?, ?, 0, 0, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
+            "?, ?, ?, ?, ?, 0, 0, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
             (
                 f"ufo-{i}", f"member-{i}", f"SEL{i}/USDT", venue, entry,
                 _iso(days_ago=2, hours_after=1), _iso(days_ago=1),
+                price_source, settlement_lag,
                 100.0 + forward_return, forward_return, forward_return, forward_return,
             ),
         )
@@ -504,11 +511,12 @@ def test_universe_alpha_prefers_prospective_control_cohort():
                     "INSERT INTO filter_candidate_outcomes "
                     "(id, outcome_candidate_key, venue, symbol, market_type, direction, "
                     "horizon, entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
+                    "settlement_price_source, settlement_lag_sec, "
                     "directional_return_pct, estimated_fee_pct, "
                     "estimated_spread_slippage_pct, estimated_funding_pct, "
                     "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
-                    "VALUES (?, ?, 'okx', ?, 'spot', 'long', '1h', 100, ?, ?, ?, ?, ?, "
-                    "0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
+                    "VALUES (?, ?, 'okx', ?, 'spot', 'long', '1h', 100, ?, ?, ?, ?, "
+                    "'horizon_ohlcv', 0.0, ?, 0.1, 0.1, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
                     (
                         f"fco-{role}-{i}", outcome_key, sym,
                         103.2 if role == "selected" else 100.2,

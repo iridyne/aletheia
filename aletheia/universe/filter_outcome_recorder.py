@@ -252,14 +252,7 @@ async def settle_due_filter_outcomes(
             settlement_lag_sec=observation.get("settlement_lag_sec"),
         )
         if row.get("horizon") == "24h":
-            repo.settle_linked_shadow_outcomes(
-                row["outcome_candidate_key"],
-                exit_price=exit_price,
-                settled_at=now_iso,
-                economics=economics,
-                settlement_price_source=observation.get("price_source"),
-                settlement_lag_sec=observation.get("settlement_lag_sec"),
-            )
+            repo.settle_linked_shadow_outcomes(row["outcome_candidate_key"])
         return _SETTLED
 
     # ---- phase A: everything the persisted window already answers ------------

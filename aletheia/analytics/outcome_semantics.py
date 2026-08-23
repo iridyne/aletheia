@@ -14,6 +14,34 @@ _ECONOMICS_TOLERANCE = 1e-8
 _SUPPORTED_MARKET_TYPES = frozenset({
     "spot", "perp", "futures", "swap", "usdt_futures",
 })
+_SETTLEMENT_HORIZON_SECONDS = {
+    "15m": 15 * 60,
+    "1h": 60 * 60,
+    "4h": 4 * 60 * 60,
+    "24h": 24 * 60 * 60,
+}
+_OHLCV_SETTLEMENT_SOURCES = frozenset({
+    "horizon_ohlcv", "horizon_ohlcv_local",
+})
+
+
+def valid_settlement_price_provenance(row: dict[str, Any]) -> bool:
+    """Return whether persisted price evidence can authorize net economics."""
+    source = row.get("settlement_price_source")
+    lag = _to_float(row.get("settlement_lag_sec"))
+    horizon_seconds = _SETTLEMENT_HORIZON_SECONDS.get(
+        str(row.get("horizon") or "")
+    )
+    if (
+        not isinstance(source, str)
+        or lag is None
+        or lag < 0
+        or horizon_seconds is None
+    ):
+        return False
+    if source in _OHLCV_SETTLEMENT_SOURCES:
+        return True
+    return source == "near_due_ticker" and lag <= horizon_seconds * 0.10
 
 
 def validated_outcome_economics(row: dict[str, Any]) -> dict[str, float] | None:
@@ -23,6 +51,8 @@ def validated_outcome_economics(row: dict[str, Any]) -> dict[str, float] | None:
         return None
     cost_model = row.get("cost_model_version")
     if not isinstance(cost_model, str) or not cost_model.strip():
+        return None
+    if not valid_settlement_price_provenance(row):
         return None
     fields = (
         "directional_return_pct",

@@ -92,6 +92,7 @@ def build_risk_policy_contribution(
         "fo.exit_price_usd, fo.directional_return_pct, fo.estimated_fee_pct, "
         "fo.estimated_spread_slippage_pct, fo.estimated_funding_pct, "
         "fo.net_return_pct, fo.min_tradable_edge_pct, fo.settlement_price_source, "
+        "fo.settlement_lag_sec, "
         "fo.cost_model_version, "
         "fo.status AS outcome_status "
         "FROM risk_decisions rd "
@@ -320,11 +321,12 @@ def _exclusion_reason(row: dict[str, Any], cutoff_at: datetime) -> str | None:
         "direction": row.get("outcome_direction"),
         "entry_price_usd": row.get("entry_price_usd"),
         "exit_price_usd": row.get("exit_price_usd"),
+        "horizon": "24h",
+        "settlement_price_source": row.get("settlement_price_source"),
+        "settlement_lag_sec": row.get("settlement_lag_sec"),
     })
     if economics is None:
         return "risk_outcome_economics_mismatch"
-    if not row.get("settlement_price_source"):
-        return "incomplete_risk_outcome_settlement"
     return None
 
 

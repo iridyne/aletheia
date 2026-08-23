@@ -57,6 +57,121 @@ def test_late_price_and_unknown_direction_do_not_create_net_result():
     assert unknown_side["net_return_pct"] is None
 
 
+def test_decision_grade_settlement_writers_require_price_provenance():
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import (
+        FilterCandidateOutcome,
+        ShadowTrade,
+        UniverseForwardOutcome,
+    )
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import estimate_outcome_economics
+
+    common = {
+        "symbol": "BTC/USDT",
+        "venue": "okx",
+        "market_type": "spot",
+        "direction": "long",
+        "horizon": "1h",
+        "entry_price_usd": 100.0,
+        "entry_ts": "2026-07-10T00:00:00+00:00",
+        "due_at": "2026-07-10T01:00:00+00:00",
+    }
+    forward = UniverseForwardOutcome(
+        member_id="writer-forward",
+        snapshot_id="writer-snapshot",
+        **common,
+    )
+    filtered = FilterCandidateOutcome(
+        outcome_candidate_key="writer-filter",
+        **common,
+    )
+    gross_only = FilterCandidateOutcome(
+        outcome_candidate_key="writer-gross-only",
+        **common,
+    )
+    repo.insert_forward_outcome(forward)
+    repo.insert_filter_candidate_outcomes_batch([filtered, gross_only])
+    economics = estimate_outcome_economics(
+        entry_price=100.0,
+        exit_price=101.0,
+        direction="long",
+        market_type="spot",
+        hold_seconds=3600,
+        entry_spread_bps=0.0,
+        fallback_spread_bps=0.0,
+        funding_rate_at_entry=None,
+        execution_fee_pct=0.0,
+        slippage_bps=0.0,
+        price_quality_ok=True,
+    )
+    get_db().execute(
+        "UPDATE universe_forward_outcomes SET settlement_price_source='horizon_ohlcv',"
+        "settlement_lag_sec=0 WHERE id=?",
+        (forward.id,),
+    )
+
+    with pytest.raises(ValueError, match="decision-grade price provenance"):
+        repo.settle_forward_outcome(
+            forward.id,
+            exit_price=101.0,
+            forward_return=1.0,
+            settled_at="2026-07-10T01:00:00+00:00",
+            economics=economics,
+        )
+    assert repo._select_one("universe_forward_outcomes", forward.id)["status"] == "pending"
+
+    with pytest.raises(ValueError, match="decision-grade price provenance"):
+        repo.settle_filter_candidate_outcome(
+            filtered.id,
+            exit_price=101.0,
+            settled_at="2026-07-10T01:00:00+00:00",
+            economics=economics,
+            settlement_price_source="late_ticker",
+            settlement_lag_sec=3600.0,
+        )
+    assert repo._select_one("filter_candidate_outcomes", filtered.id)["status"] == "pending"
+
+    repo.settle_forward_outcome(
+        forward.id,
+        exit_price=101.0,
+        forward_return=1.0,
+        settled_at="2026-07-10T01:00:00+00:00",
+        economics=economics,
+        settlement_price_source="near_due_ticker",
+        settlement_lag_sec=360.0,
+    )
+    assert repo._select_one("universe_forward_outcomes", forward.id)["status"] == "settled"
+
+    late_economics = {**economics, "net_return_pct": None}
+    repo.settle_filter_candidate_outcome(
+        gross_only.id,
+        exit_price=101.0,
+        settled_at="2026-07-10T02:00:00+00:00",
+        economics=late_economics,
+        settlement_price_source="late_ticker",
+        settlement_lag_sec=3600.0,
+    )
+    stored = repo._select_one("filter_candidate_outcomes", gross_only.id)
+    assert stored["status"] == "settled"
+    assert stored["gross_return_pct"] == pytest.approx(1.0)
+    assert stored["net_return_pct"] is None
+
+    shadow = ShadowTrade(
+        opportunity_id="writer-filter",
+        symbol="BTC/USDT",
+        venue="okx",
+        market_type="spot",
+        direction="long",
+        entry_price=100.0,
+        created_at=common["entry_ts"],
+        outcome_candidate_key="opportunity:writer-filter",
+    )
+    repo.insert_shadow_trade(shadow)
+    assert repo.settle_linked_shadow_outcomes("opportunity:writer-filter") == 0
+    assert repo._select_one("shadow_trades", shadow.id)["resolved_at"] is None
+
+
 def test_register_pending_carries_point_in_time_cost_inputs(monkeypatch):
     from aletheia.universe.outcome_recorder import register_pending
 

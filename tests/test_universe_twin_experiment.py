@@ -426,7 +426,7 @@ def test_task6_read_only_evaluation_reports_estimates_but_cannot_promote() -> No
                     "mae_pct": -0.3,
                     "cost_model_version": "v1",
                 },
-                settlement_price_source="test_fixed_horizon",
+                settlement_price_source="horizon_ohlcv",
                 settlement_lag_sec=0.0,
             )
 

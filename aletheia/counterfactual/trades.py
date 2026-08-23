@@ -62,12 +62,6 @@ def persist_shadow_batch(
     now_iso = datetime.now(timezone.utc).isoformat()
     regime = _current_regime()
     policy_epoch_id = _current_policy_epoch()
-    try:
-        from aletheia.config.loader import load_config
-
-        venue = load_config().market_data.ccxt_exchange
-    except Exception:
-        venue = None
 
     inserted_ids: list[str] = []
     selected_candidates = selected if isinstance(selected, list) else ([selected] if selected else [])
@@ -103,6 +97,8 @@ def persist_shadow_batch(
         symbol = candidate.get("symbol") or ""
         direction = candidate.get("direction") or candidate.get("direction_bias") or "long"
         market_type = candidate.get("market_type") or "spot"
+        venue_value = candidate.get("venue")
+        venue = venue_value.strip() if isinstance(venue_value, str) and venue_value.strip() else None
         entry_price = _current_price(symbol, market_type=market_type, exact=True)
         outcome_candidate_key = f"opportunity:{opp_id}" if opp_id else None
 
@@ -441,6 +437,7 @@ def list_deduped_shadows(
         scanner_family: restrict to one scanner family (e.g. ``"momentum"``).
         columns: projection list. Every column must exist in ``shadow_trades``.
     """
+    from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
     from aletheia.storage.sqlite import get_db
 
     if (days is None) == (since_iso is None):
@@ -476,6 +473,7 @@ def list_deduped_shadows(
 
     projection = ", ".join(columns)
     time_where = " AND ".join(time_clauses)
+    authority_where = valid_keyed_shadow_projection_sql()
     sql = f"""
         WITH resolved AS (
             SELECT
@@ -488,6 +486,7 @@ def list_deduped_shadows(
             FROM shadow_trades
             WHERE net_pnl_pct IS NOT NULL
               AND outcome_candidate_key IS NOT NULL
+              AND {authority_where}
               AND {time_where}
               {symbol_clause}
               {epoch_clause}
@@ -513,6 +512,7 @@ def _detect_window_epochs(
       "mixed"    — multiple epochs, or NULL rows alongside non-NULL ones.
       "all_null" — no non-null epoch rows (pure legacy data).
     """
+    from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
     from aletheia.storage.sqlite import get_db
 
     if (days is None) == (since_iso is None):
@@ -529,6 +529,7 @@ def _detect_window_epochs(
         time_clause = "created_at >= datetime('now', ?)"
         params.append(f"-{int(days)} days")
 
+    authority_where = valid_keyed_shadow_projection_sql()
     sql = f"""
         SELECT
             COUNT(DISTINCT policy_epoch_id) AS distinct_epochs,
@@ -537,6 +538,7 @@ def _detect_window_epochs(
         FROM shadow_trades
         WHERE net_pnl_pct IS NOT NULL
           AND outcome_candidate_key IS NOT NULL
+          AND {authority_where}
           AND {time_clause}
     """
     row = get_db().execute(sql, params).fetchone()
@@ -617,10 +619,11 @@ def _verified_position_exit_price(position: dict, shadow: dict) -> float | None:
 
 
 def resolve_shadow_trades_for_position(position: dict) -> int:
-    """Resolve all shadow trades matching the position's opportunity.
+    """Resolve legacy unkeyed shadows matching the position's opportunity.
 
-    Called at position close time to stamp exit_price and pnl on all shadow
-    trades from the same batch (counterfactuals included).
+    Called at position close time to stamp exit_price and pnl on the legacy
+    unkeyed rows from the same batch (counterfactuals included). Keyed rows are
+    projected only from their canonical fixed-horizon outcome.
 
     Returns number of rows updated.
     """
@@ -657,7 +660,8 @@ def resolve_shadow_trades_for_position(position: dict) -> int:
     # Resolve ALL shadows in the batch (both selected and counterfactuals)
     batch_rows = _select_all(
         "shadow_trades",
-        where="batch_id = ? AND resolved_at IS NULL",
+        where="batch_id = ? AND resolved_at IS NULL "
+              "AND outcome_candidate_key IS NULL",
         params=(batch_id,),
         limit=50,
     )
@@ -719,7 +723,8 @@ def resolve_shadow_trades_for_position(position: dict) -> int:
     # stored price, including when another idempotent worker won a CAS race.
     batch_rows = _select_all(
         "shadow_trades",
-        where="batch_id = ? AND resolved_at IS NULL",
+        where="batch_id = ? AND resolved_at IS NULL "
+              "AND outcome_candidate_key IS NULL",
         params=(batch_id,),
         limit=50,
     )

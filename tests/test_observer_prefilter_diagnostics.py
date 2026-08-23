@@ -88,7 +88,8 @@ def test_observer_diagnostics_use_first_exposure_and_are_read_only(
         "estimated_fee_pct=0.1, estimated_spread_slippage_pct=0.1, "
         "estimated_funding_pct=0, net_return_pct = "
         "CASE WHEN outcome_candidate_key='observer:first:rsi' THEN -1.0 ELSE 2.0 END, "
-        "min_tradable_edge_pct=0.05, cost_model_version='test-v1' "
+        "min_tradable_edge_pct=0.05, settlement_price_source='horizon_ohlcv', "
+        "settlement_lag_sec=0, cost_model_version='test-v1' "
         "WHERE outcome_candidate_key IN ('observer:first:rsi','observer:first:neither')"
     )
     db.commit()
@@ -255,7 +256,8 @@ def test_observer_replay_is_fixed_bounded_first_exposure_and_read_only(
         "estimated_fee_pct=0.1, estimated_spread_slippage_pct=0.1, "
         "estimated_funding_pct=0, net_return_pct = "
         "CASE WHEN outcome_candidate_key='observer:replay:control' THEN -1.0 ELSE 2.0 END, "
-        "min_tradable_edge_pct=0.05, cost_model_version='test-v1' "
+        "min_tradable_edge_pct=0.05, settlement_price_source='horizon_ohlcv', "
+        "settlement_lag_sec=0, cost_model_version='test-v1' "
         "WHERE outcome_candidate_key IN "
         "('observer:replay:control','observer:replay:admit')"
     )

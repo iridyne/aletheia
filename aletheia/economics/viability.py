@@ -283,9 +283,11 @@ def _operator_incremental_cohort(
     execution_mode: str,
 ) -> tuple[list[dict[str, Any]], Counter]:
     from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
+    from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
 
     samples: list[dict[str, Any]] = []
     exclusions: Counter = Counter()
+    keyed_authority = valid_keyed_shadow_projection_sql()
     positions = eligible_strategy_outcomes(
         execution_mode=execution_mode,
         closed_after=start_iso,
@@ -306,9 +308,10 @@ def _operator_incremental_cohort(
             exclusions["opportunity_link_missing"] += 1
             continue
         selected = db.execute(
-            """SELECT * FROM shadow_trades
+            f"""SELECT * FROM shadow_trades
                WHERE opportunity_id=? AND was_selected=1 AND batch_id IS NOT NULL
                  AND resolved_at IS NOT NULL AND net_pnl_pct IS NOT NULL
+                 AND (outcome_candidate_key IS NULL OR ({keyed_authority}))
                  AND replace(created_at,' ','T') <= replace(?,' ','T')
                ORDER BY replace(created_at,' ','T') DESC,rowid DESC LIMIT 1""",
             (opportunity_id, proposal["created_at"]),
@@ -337,9 +340,10 @@ def _operator_incremental_cohort(
             exclusions["shadow_cost_model_missing"] += 1
             continue
         controls = db.execute(
-            """SELECT * FROM shadow_trades
+            f"""SELECT * FROM shadow_trades
                WHERE batch_id=? AND opportunity_id<>? AND was_selected=0
                  AND resolved_at IS NOT NULL AND net_pnl_pct IS NOT NULL
+                 AND (outcome_candidate_key IS NULL OR ({keyed_authority}))
                  AND market_type=? AND direction=?
                ORDER BY rank,rowid""",
             (

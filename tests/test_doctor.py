@@ -372,9 +372,10 @@ def test_doctor_reports_incomplete_cost_aware_outcomes(tmp_path, monkeypatch):
                 "gross_return_pct, directional_return_pct, funding_rate_at_entry, "
                 "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
                 "net_return_pct, min_tradable_edge_pct, settlement_price_source, "
+                "settlement_lag_sec, "
                 "cost_model_version, status) "
                 "VALUES (?, ?, 'snap', 'BTC/USDT', 'bitget', 'perp', 'long', '1h', 100, 101, ?, ?, ?, "
-                "1, 1, 1, ?, 0, 0, ?, ?, 0.05, 'horizon_ohlcv', 'v1', 'settled')",
+                "1, 1, 1, ?, 0, 0, ?, ?, 0.05, 'horizon_ohlcv', 0, 'v1', 'settled')",
                 (
                     f"outcome-{i}", f"member-{i}", _iso_ago(120),
                     _iso_ago(60), _iso_ago(55), funding,

@@ -143,6 +143,7 @@ def test_relative_rank_persists_isolated_cluster_and_outcome():
         "estimated_fee_pct=0.1, "
         "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
         "net_return_pct=1.25, min_tradable_edge_pct=0.05, "
+        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
         "cost_model_version='test-v1', settled_at=due_at WHERE id=?",
         (bundle.outcomes[0].id,),
     )

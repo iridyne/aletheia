@@ -62,9 +62,11 @@ def _seed_candidate(db, index: int, *, approved: bool, net_return_pct: float) ->
         "entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, "
         "directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, "
         "estimated_funding_pct, net_return_pct, min_tradable_edge_pct, settlement_price_source, "
+        "settlement_lag_sec, "
         "cost_model_version, status) "
         "VALUES (?, ?, 'bitget', 'BTC/USDT', 'spot', 'long', '24h', 100, ?, "
-        "?, ?, ?, ?, 0.1, 0.1, 0, ?, 0.05, 'test_ohlcv', 'candidate-net-v1', 'settled')",
+        "?, ?, ?, ?, 0.1, 0.1, 0, ?, 0.05, 'horizon_ohlcv', 0, "
+        "'candidate-net-v1', 'settled')",
         (
             f"risk-outcome-{index}", outcome_key, created_at,
             due_at, settled_at, exit_price, directional_return_pct, net_return_pct,

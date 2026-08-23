@@ -16,6 +16,7 @@ import math
 from statistics import fmean
 from typing import Any
 
+from aletheia.analytics.outcome_semantics import valid_settlement_price_provenance
 from aletheia.learning.ledger import get_record
 from aletheia.learning.models import LearningExperiment, LearningHypothesis
 from aletheia.learning.outcomes import assess_candidate_outcome
@@ -1063,11 +1064,14 @@ def _outcome_fingerprint(outcome: dict[str, Any]) -> tuple[Any, ...]:
         "net_return_pct", "estimated_fee_pct", "estimated_spread_slippage_pct",
         "estimated_funding_pct", "mae_pct", "cost_model_version", "market_type", "direction",
         "allocation_selected",
-    ))
+    )) + (valid_settlement_price_provenance(outcome),)
 
 
 def _economic_fingerprint(outcome: dict[str, Any]) -> tuple[Any, ...]:
-    return tuple(outcome.get(field) for field in _ECONOMIC_FIELDS)
+    return (
+        *tuple(outcome.get(field) for field in _ECONOMIC_FIELDS),
+        valid_settlement_price_provenance(outcome),
+    )
 
 
 def _conflict_fingerprint(reason: str, rows: list[dict[str, Any]]) -> str:
@@ -1142,6 +1146,7 @@ def _conflict_row(source: str, row: dict[str, Any]) -> dict[str, Any]:
         "entry_ts": row.get("entry_ts"),
         "settled_at": row.get("settled_at"),
         "settlement_price_source": row.get("settlement_price_source"),
+        "settlement_lag_sec": row.get("settlement_lag_sec"),
         "cost_model_version": row.get("cost_model_version"),
     }
 

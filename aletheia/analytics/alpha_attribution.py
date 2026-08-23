@@ -17,7 +17,10 @@ from typing import Any
 
 from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.analytics.learning_window import outcome_window_metadata
-from aletheia.storage.repositories import complete_outcome_economics_sql
+from aletheia.storage.repositories import (
+    SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC,
+    complete_outcome_economics_sql,
+)
 
 
 VERDICT_NAMES = (
@@ -30,7 +33,6 @@ VERDICT_NAMES = (
 
 MIN_SAMPLE_SIZE = 5
 ALPHA_THRESHOLD_PCT = 0.10
-_RANKER_ENTRY_ALIGNMENT_MAX_SEC = 60
 
 _MODULES_BY_LAYER = {
     "Universe Alpha": [
@@ -829,10 +831,11 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         "AND (CASE WHEN lower(s.market_type) IN "
         "('perp','futures','swap','usdt_futures') THEN 'perp' ELSE 'spot' END)=fo.market_type "
         "AND julianday(s.created_at)>=julianday(fo.entry_ts) "
-        "AND (julianday(s.created_at)-julianday(fo.entry_ts))*86400.0<=? "
+        f"AND julianday(s.created_at)<=julianday(fo.entry_ts, "
+        f"'+{SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC} seconds') "
         "AND datetime(fo.entry_ts) >= datetime(?) "
         "ORDER BY datetime(fo.entry_ts) DESC, datetime(s.created_at) DESC, s.id DESC LIMIT 1",
-        (_RANKER_ENTRY_ALIGNMENT_MAX_SEC, cutoff),
+        (cutoff,),
     ).fetchone()
     if not contract:
         return _verdict(
@@ -894,7 +897,7 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
             temporally_misaligned_batch_ids.add(str(row["batch_id"]))
             continue
         lag_sec = (ranked_at - entry_at).total_seconds()
-        if lag_sec < 0 or lag_sec > _RANKER_ENTRY_ALIGNMENT_MAX_SEC:
+        if lag_sec < 0 or lag_sec > SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC:
             temporally_misaligned_candidates += 1
             temporally_misaligned_batch_ids.add(str(row["batch_id"]))
             continue
@@ -916,7 +919,7 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         valid_entry_times = [ts for ts in entry_times if ts is not None]
         if (
             max(valid_entry_times) - min(valid_entry_times)
-        ).total_seconds() > _RANKER_ENTRY_ALIGNMENT_MAX_SEC:
+        ).total_seconds() > SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC:
             temporally_mixed_batches += 1
             continue
         rank1 = [float(r["net_return_pct"]) for r in batch_rows if int(r["rank"] or 0) == 1]
@@ -937,7 +940,7 @@ def _ranker_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         "temporally_misaligned_candidate_count": temporally_misaligned_candidates,
         "temporally_misaligned_batch_count": len(temporally_misaligned_batch_ids),
         "temporally_mixed_batch_count": temporally_mixed_batches,
-        "first_exposure_alignment_max_sec": _RANKER_ENTRY_ALIGNMENT_MAX_SEC,
+        "first_exposure_alignment_max_sec": SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC,
         "horizon": "24h",
         "statistical_unit": "outcome_candidate_key",
         "assignment_unit": "batch_id",

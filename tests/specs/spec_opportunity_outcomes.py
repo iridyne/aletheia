@@ -255,6 +255,9 @@ def test_row_verdict_requires_reconcilable_cost_economics():
         "net_return_pct": 0.3,
         "min_tradable_edge_pct": 0.05,
         "cost_model_version": "v1",
+        "horizon": "1h",
+        "settlement_price_source": "horizon_ohlcv",
+        "settlement_lag_sec": 0.0,
     }
     assert classify_outcome_row(positive) == "missed_alpha_suspect"
     for incomplete in (
@@ -304,6 +307,8 @@ def test_calibration_excludes_gross_only_rows():
         entry_price_usd=100.0,
         due_at="2026-07-10T01:00:00+00:00",
         settled_at="2026-07-10T01:00:00+00:00",
+        settlement_price_source="horizon_ohlcv",
+        settlement_lag_sec=0.0,
         status="settled",
     )
     repo.insert_forward_outcomes_batch([

@@ -58,6 +58,8 @@ def _settled(
         estimated_funding_pct=0.0,
         net_return_pct=net,
         min_tradable_edge_pct=0.05,
+        settlement_price_source="horizon_ohlcv",
+        settlement_lag_sec=0.0,
         cost_model_version=cost_model_version,
         status="settled",
     )

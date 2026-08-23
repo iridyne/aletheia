@@ -25,6 +25,7 @@ from aletheia.analytics.outcome_semantics import (
 from aletheia.config.loader import get_data_dir
 from aletheia.knowledge.frontmatter import parse_frontmatter
 from aletheia.knowledge.guards import TradingGuard, evaluate_guards, load_trading_guards
+from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
 from aletheia.storage.sqlite import get_db
 
 _HORIZONS = ("1h", "4h", "24h")
@@ -231,9 +232,12 @@ def _pre_guard_skip_reason(opp: dict[str, Any], member: dict[str, Any] | None) -
 def _outcomes_for_candidate(db, opp: dict[str, Any], direction: str) -> dict[str, Any]:
     outcomes: dict[str, Any] = {"shadow": None, "forward": {}}
     if _table_exists(db, "shadow_trades"):
+        keyed_projection = valid_keyed_shadow_projection_sql("shadow_trades")
         row = db.execute(
             "SELECT pnl_pct, resolved_at, created_at, batch_id, rank FROM shadow_trades "
             "WHERE opportunity_id = ? AND pnl_pct IS NOT NULL "
+            "AND (outcome_candidate_key IS NULL OR TRIM(outcome_candidate_key) = '' "
+            f"OR {keyed_projection}) "
             "ORDER BY datetime(resolved_at) DESC, datetime(created_at) DESC LIMIT 1",
             (opp.get("id"),),
         ).fetchone()

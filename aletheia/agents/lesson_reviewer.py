@@ -82,7 +82,8 @@ def _fetch_evidence(lesson) -> dict:
             "entry_price_usd,exit_price_usd,"
             "directional_return_pct,estimated_fee_pct,"
             "estimated_spread_slippage_pct,estimated_funding_pct,"
-            "net_return_pct,min_tradable_edge_pct,cost_model_version "
+            "net_return_pct,min_tradable_edge_pct,cost_model_version,"
+            "settlement_price_source,settlement_lag_sec "
             "FROM universe_forward_outcomes "
             "WHERE status='settled' AND horizon='24h' "
             "AND settled_at >= datetime('now','-30 days') " + where_extra,

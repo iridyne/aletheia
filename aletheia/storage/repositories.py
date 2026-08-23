@@ -7605,6 +7605,28 @@ _OUTCOME_MARKET_SQL = (
     "CASE WHEN market_type IN ('perp','futures','swap','usdt_futures') "
     "THEN 'perp' ELSE COALESCE(market_type, 'spot') END"
 )
+SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC = 60
+
+
+def valid_settlement_price_provenance_sql(table_alias: str = "") -> str:
+    """Return the SQLite equivalent of persisted price-provenance validation."""
+    prefix = f"{table_alias}." if table_alias else ""
+    return (
+        f"typeof({prefix}horizon) = 'text' "
+        f"AND {prefix}horizon IN ('15m', '1h', '4h', '24h') AND "
+        f"typeof({prefix}settlement_price_source) = 'text' "
+        f"AND typeof({prefix}settlement_lag_sec) IN ('integer', 'real') "
+        f"AND {prefix}settlement_lag_sec >= 0 "
+        f"AND {prefix}settlement_lag_sec < 1e999 "
+        f"AND ({prefix}settlement_price_source IN "
+        "('horizon_ohlcv', 'horizon_ohlcv_local') "
+        f"OR ({prefix}settlement_price_source = 'near_due_ticker' "
+        f"AND {prefix}settlement_lag_sec <= 0.1 * CASE {prefix}horizon "
+        "WHEN '15m' THEN 900 WHEN '1h' THEN 3600 "
+        "WHEN '4h' THEN 14400 WHEN '24h' THEN 86400 END)) "
+    )
+
+
 def complete_outcome_economics_sql(table_alias: str = "") -> str:
     """Return the shared SQLite predicate for decision-grade net outcomes."""
     prefix = f"{table_alias}." if table_alias else ""
@@ -7613,6 +7635,7 @@ def complete_outcome_economics_sql(table_alias: str = "") -> str:
         f"AND TRIM({prefix}venue, {SQLITE_PYTHON_STRIP_CHARS_SQL}) <> '' "
         f"AND typeof({prefix}direction) = 'text' "
         f"AND LOWER({prefix}direction) IN ('long', 'short') "
+        f"AND {valid_settlement_price_provenance_sql(table_alias)} "
         f"AND typeof({prefix}entry_price_usd) IN ('integer', 'real') "
         f"AND {prefix}entry_price_usd > 0 "
         f"AND {prefix}entry_price_usd < 1e999 "
@@ -7648,6 +7671,109 @@ def complete_outcome_economics_sql(table_alias: str = "") -> str:
         f"AND {prefix}min_tradable_edge_pct >= 0 "
         f"AND {prefix}min_tradable_edge_pct < 1e999"
     )
+
+
+def _shadow_candidate_identity_sql(
+    shadow_alias: str,
+    outcome_alias: str,
+) -> str:
+    shadow = f"{shadow_alias}."
+    outcome = f"{outcome_alias}."
+    shadow_market = (
+        f"CASE WHEN LOWER({shadow}market_type) IN "
+        "('perp','futures','swap','usdt_futures') THEN 'perp' "
+        f"ELSE LOWER({shadow}market_type) END"
+    )
+    outcome_market = (
+        f"CASE WHEN LOWER({outcome}market_type) IN "
+        "('perp','futures','swap','usdt_futures') THEN 'perp' "
+        f"ELSE LOWER({outcome}market_type) END"
+    )
+    return (
+        f"typeof({shadow}opportunity_id) = 'text' "
+        f"AND {shadow}opportunity_id <> '' "
+        f"AND {shadow}outcome_candidate_key = 'opportunity:' || {shadow}opportunity_id "
+        f"AND typeof({shadow}venue) = 'text' AND {shadow}venue = {outcome}venue "
+        f"AND typeof({shadow}symbol) = 'text' AND {shadow}symbol = {outcome}symbol "
+        f"AND typeof({shadow}market_type) = 'text' "
+        f"AND {shadow_market} = {outcome_market} "
+        f"AND typeof({shadow}direction) = 'text' "
+        f"AND LOWER({shadow}direction) = LOWER({outcome}direction) "
+        f"AND typeof({shadow}entry_price) IN ('integer', 'real') "
+        f"AND {shadow}entry_price = {outcome}entry_price_usd "
+        f"AND julianday({shadow}created_at) >= julianday({outcome}entry_ts) "
+        f"AND julianday({shadow}created_at) <= julianday({outcome}entry_ts, "
+        f"'+{SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC} seconds')"
+    )
+
+
+def valid_keyed_shadow_projection_sql(
+    shadow_alias: str = "shadow_trades",
+) -> str:
+    """Require one keyed shadow net to equal its canonical settled 24h outcome."""
+    shadow = f"{shadow_alias}." if shadow_alias else ""
+    outcome = "canonical_outcome."
+    numeric_pairs = (
+        ("exit_price", "exit_price_usd"),
+        ("pnl_pct", "directional_return_pct"),
+        ("gross_return_pct", "gross_return_pct"),
+        ("net_pnl_pct", "net_return_pct"),
+        ("estimated_fee_pct", "estimated_fee_pct"),
+        ("estimated_spread_slippage_pct", "estimated_spread_slippage_pct"),
+        ("estimated_funding_pct", "estimated_funding_pct"),
+        ("min_tradable_edge_pct", "min_tradable_edge_pct"),
+        ("settlement_lag_sec", "settlement_lag_sec"),
+    )
+    equality = " ".join(
+        f"AND typeof({shadow}{shadow_field}) IN ('integer', 'real') "
+        f"AND {shadow}{shadow_field} = {outcome}{outcome_field}"
+        for shadow_field, outcome_field in numeric_pairs
+    )
+    return (
+        "EXISTS (SELECT 1 FROM filter_candidate_outcomes AS canonical_outcome "
+        f"WHERE {outcome}outcome_candidate_key = {shadow}outcome_candidate_key "
+        f"AND {outcome}horizon = '24h' "
+        f"AND {outcome}status = 'settled' "
+        f"AND {complete_outcome_economics_sql('canonical_outcome')} "
+        f"AND {_shadow_candidate_identity_sql(shadow_alias, 'canonical_outcome')} "
+        f"AND typeof({shadow}resolved_at) = 'text' "
+        f"AND {shadow}resolved_at = {outcome}settled_at "
+        f"AND typeof({shadow}settlement_price_source) = 'text' "
+        f"AND {shadow}settlement_price_source = {outcome}settlement_price_source "
+        f"AND typeof({shadow}cost_model_version) = 'text' "
+        f"AND {shadow}cost_model_version = {outcome}cost_model_version "
+        f"{equality})"
+    )
+
+
+def get_decision_grade_shadow_outcome(
+    shadow_id: str,
+    horizon: str,
+) -> dict | None:
+    """Return exact canonical outcome evidence for one persisted shadow exposure."""
+    normalized_horizon = str(horizon).strip().lower()
+    authority_sql = (
+        valid_keyed_shadow_projection_sql("shadow_trades")
+        if normalized_horizon == "24h"
+        else _shadow_candidate_identity_sql("shadow_trades", "canonical_outcome")
+    )
+    row = get_db().execute(
+        "SELECT canonical_outcome.*, shadow_trades.id AS shadow_id, "
+        "shadow_trades.batch_id AS shadow_batch_id, "
+        "shadow_trades.opportunity_id AS shadow_opportunity_id, "
+        "shadow_trades.was_selected AS shadow_was_selected, "
+        "shadow_trades.created_at AS shadow_created_at, "
+        "shadow_trades.rank AS shadow_rank "
+        "FROM shadow_trades JOIN filter_candidate_outcomes AS canonical_outcome "
+        "ON canonical_outcome.outcome_candidate_key=shadow_trades.outcome_candidate_key "
+        "AND canonical_outcome.horizon=? "
+        "WHERE shadow_trades.id=? AND canonical_outcome.status='settled' "
+        f"AND {complete_outcome_economics_sql('canonical_outcome')} "
+        f"AND {authority_sql} "
+        "LIMIT 1",
+        (normalized_horizon, shadow_id),
+    ).fetchone()
+    return dict(row) if row else None
 
 
 _COMPLETE_OUTCOME_ECONOMICS_SQL = complete_outcome_economics_sql()
@@ -7686,6 +7812,20 @@ def _settle_outcome_with_exact_venue(
             venue = row.get("venue")
             if not isinstance(venue, str) or not venue.strip():
                 raise ValueError(f"{kind} outcome requires a nonblank venue")
+            candidate = {**row, **updates}
+            if candidate.get("net_return_pct") is not None:
+                from aletheia.analytics.outcome_semantics import (
+                    valid_settlement_price_provenance,
+                )
+
+                if (
+                    "settlement_price_source" not in updates
+                    or "settlement_lag_sec" not in updates
+                    or not valid_settlement_price_provenance(candidate)
+                ):
+                    raise ValueError(
+                        f"{kind} outcome requires decision-grade price provenance"
+                    )
         _update(table, outcome_id, updates)
 
 
@@ -8134,37 +8274,38 @@ def fail_filter_candidate_outcome(
 
 def settle_linked_shadow_outcomes(
     outcome_candidate_key: str,
-    *,
-    exit_price: float,
-    settled_at: str,
-    economics: dict,
-    settlement_price_source: str | None,
-    settlement_lag_sec: float | None,
 ) -> int:
-    """Project a settled shared 24h result onto linked shadow rows."""
+    """Project the unique decision-grade canonical 24h row onto linked shadows."""
     db = get_db()
     was_in_tx = db.in_transaction
+    identity_sql = _shadow_candidate_identity_sql(
+        "shadow_trades", "canonical_outcome"
+    )
+    canonical_where = (
+        "canonical_outcome.outcome_candidate_key="
+        "shadow_trades.outcome_candidate_key "
+        "AND canonical_outcome.horizon='24h' "
+        "AND canonical_outcome.status='settled' "
+        "AND typeof(canonical_outcome.settled_at)='text' "
+        "AND typeof(canonical_outcome.gross_return_pct) IN ('integer','real') "
+        "AND ABS(canonical_outcome.gross_return_pct) < 1e999 "
+        f"AND {complete_outcome_economics_sql('canonical_outcome')} "
+        f"AND {identity_sql}"
+    )
     cur = execute_write(
-        "UPDATE shadow_trades SET exit_price=?, pnl_pct=?, gross_return_pct=?, "
-        "net_pnl_pct=?, estimated_fee_pct=?, estimated_spread_slippage_pct=?, "
-        "estimated_funding_pct=?, min_tradable_edge_pct=?, "
-        "settlement_price_source=?, settlement_lag_sec=?, cost_model_version=?, "
-        "resolved_at=? WHERE outcome_candidate_key=? AND resolved_at IS NULL",
-        (
-            exit_price,
-            economics.get("directional_return_pct"),
-            economics.get("gross_return_pct"),
-            economics.get("net_return_pct"),
-            economics.get("estimated_fee_pct"),
-            economics.get("estimated_spread_slippage_pct"),
-            economics.get("estimated_funding_pct"),
-            economics.get("min_tradable_edge_pct"),
-            settlement_price_source,
-            settlement_lag_sec,
-            economics.get("cost_model_version"),
-            settled_at,
-            outcome_candidate_key,
-        ),
+        "UPDATE shadow_trades SET (exit_price,pnl_pct,gross_return_pct,net_pnl_pct,"
+        "estimated_fee_pct,estimated_spread_slippage_pct,estimated_funding_pct,"
+        "min_tradable_edge_pct,settlement_price_source,settlement_lag_sec,"
+        "cost_model_version,resolved_at) = (SELECT exit_price_usd,"
+        "directional_return_pct,gross_return_pct,net_return_pct,estimated_fee_pct,"
+        "estimated_spread_slippage_pct,estimated_funding_pct,min_tradable_edge_pct,"
+        "settlement_price_source,settlement_lag_sec,cost_model_version,settled_at "
+        "FROM filter_candidate_outcomes AS canonical_outcome "
+        f"WHERE {canonical_where}) "
+        "WHERE outcome_candidate_key=? AND resolved_at IS NULL "
+        "AND EXISTS (SELECT 1 FROM filter_candidate_outcomes AS canonical_outcome "
+        f"WHERE {canonical_where})",
+        (outcome_candidate_key,),
     )
     if not was_in_tx:
         db.commit()
@@ -10081,14 +10222,28 @@ def expire_stale_opportunities(ttl_hours: int = 48) -> int:
 
 
 def insert_shadow_trade(shadow) -> None:
-    from aletheia.storage.models import ShadowTrade
-
     data = _to_payload_dict(shadow)
+    keyed_result_fields = (
+        "exit_price",
+        "pnl_pct",
+        "gross_return_pct",
+        "net_pnl_pct",
+        "estimated_fee_pct",
+        "estimated_spread_slippage_pct",
+        "estimated_funding_pct",
+        "min_tradable_edge_pct",
+        "settlement_price_source",
+        "settlement_lag_sec",
+        "cost_model_version",
+        "btc_return_pct",
+        "resolved_at",
+    )
+    if (
+        str(data.get("outcome_candidate_key") or "").strip()
+        and any(data.get(field) is not None for field in keyed_result_fields)
+    ):
+        raise ValueError("keyed shadow results require canonical projection")
     _insert("shadow_trades", data)
-
-
-def update_shadow_trade(shadow_id: str, **kwargs) -> None:
-    _update("shadow_trades", shadow_id, kwargs)
 
 
 def anchor_shadow_trade_exit_price_if_pending(
@@ -10096,11 +10251,13 @@ def anchor_shadow_trade_exit_price_if_pending(
     *,
     exit_price: float,
 ) -> bool:
-    """Persist the first close-event price without marking the row resolved."""
+    """Anchor one legacy unkeyed close-event price without resolving the row."""
     db = get_db()
     was_in_tx = db.in_transaction
     cursor = execute_write(
-        "UPDATE shadow_trades SET exit_price = ? WHERE id = ? AND resolved_at IS NULL AND exit_price IS NULL",
+        "UPDATE shadow_trades SET exit_price = ? WHERE id = ? "
+        "AND outcome_candidate_key IS NULL "
+        "AND resolved_at IS NULL AND exit_price IS NULL",
         (exit_price, shadow_id),
     )
     if not was_in_tx:
@@ -10118,7 +10275,7 @@ def resolve_shadow_trade_if_pending(
     settlement_price_source: str | None = None,
     settlement_lag_sec: float | None = None,
 ) -> bool:
-    """Resolve one shadow row once, leaving an already-resolved row untouched.
+    """Resolve one legacy unkeyed shadow once, leaving keyed rows untouched.
 
     When ``economics`` is provided (dict returned by
     ``aletheia.universe.outcome_economics.estimate_outcome_economics``), the
@@ -10131,7 +10288,8 @@ def resolve_shadow_trade_if_pending(
     if not economics:
         cursor = execute_write(
             "UPDATE shadow_trades SET exit_price = ?, pnl_pct = ?, resolved_at = ? "
-            "WHERE id = ? AND resolved_at IS NULL",
+            "WHERE id = ? AND outcome_candidate_key IS NULL "
+            "AND resolved_at IS NULL",
             (exit_price, pnl_pct, resolved_at, shadow_id),
         )
     else:
@@ -10143,7 +10301,8 @@ def resolve_shadow_trade_if_pending(
             " estimated_funding_pct = ?, min_tradable_edge_pct = ?, "
             " settlement_price_source = ?, settlement_lag_sec = ?, "
             " cost_model_version = ?, resolved_at = ? "
-            "WHERE id = ? AND resolved_at IS NULL",
+            "WHERE id = ? AND outcome_candidate_key IS NULL "
+            "AND resolved_at IS NULL",
             (
                 exit_price,
                 pnl_pct,
