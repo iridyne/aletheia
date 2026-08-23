@@ -729,6 +729,9 @@ def default_mode_risk_policy(mode: Literal["demo", "live"]) -> ModeRiskPolicy:
 def _merge_policy(base: dict, override: dict) -> dict:
     merged = dict(base)
     for key, value in override.items():
+        # None override on a nested dict → keep default (None = "use shipped default")
+        if value is None and isinstance(merged.get(key), dict):
+            continue
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
             merged[key] = _merge_policy(merged[key], value)
         else:
@@ -874,6 +877,18 @@ class RiskConfig(BaseModel):
             "live_family_min_win_rate_pct": (
                 "live", "eligibility", "family_min_win_rate_pct",
             ),
+            "demo_sideways_standdown": (
+                "demo", "eligibility", "sideways_standdown",
+            ),
+            "demo_min_regime_confidence_to_enter": (
+                "demo", "eligibility", "min_regime_confidence_to_enter",
+            ),
+            "demo_family_min_samples": (
+                "demo", "eligibility", "family_min_samples",
+            ),
+            "demo_family_min_expectancy": (
+                "demo", "eligibility", "family_min_expectancy",
+            ),
         }
         shared_paths = {
             "max_per_symbol_entries": ("capital", "max_per_symbol_entries"),
@@ -999,6 +1014,11 @@ class RiskConfig(BaseModel):
     # edge — at least N settled forward outcomes AND win_rate >= threshold.
     live_family_min_samples: int = 30
     live_family_min_win_rate_pct: float = 50.0
+    # Demo-mode entry quality aliases (check #14 for demo)
+    demo_sideways_standdown: bool = True
+    demo_min_regime_confidence_to_enter: float = 0.60
+    demo_family_min_samples: int = 0
+    demo_family_min_expectancy: float | None = 0.0
 
 
 class TelegramConfig(BaseModel):
