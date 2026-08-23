@@ -1456,10 +1456,13 @@ class UniverseConfig(BaseModel):
     @classmethod
     def _validate_family_quotas(cls, v: object) -> object:
         import math as _math
+        _CANONICAL = {"momentum", "mean_reversion", "volatility", "short_bias", "derivatives", "event"}
         def _check_quota(quota: dict, label: str = "family_quota") -> None:
             if not isinstance(quota, dict):
                 return
             for k, val in quota.items():
+                if k not in _CANONICAL:
+                    raise ValueError(f"not in canonical families: '{k}' not in canonical set {sorted(_CANONICAL)}")
                 if not isinstance(val, (int, float)) or not _math.isfinite(float(val)):
                     raise ValueError(f"finite in {label}: value for '{k}' must be a finite number, got {val!r}")
                 if not (0.0 <= float(val) <= 1.0):

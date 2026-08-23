@@ -118,8 +118,12 @@ def test_1219_daemon_gate_failure_blocks_start(monkeypatch):
     
     monkeypatch.setattr("aletheia.agent_runtime.startup_behavior_gate.gate_allows_startup", fake_gate)
     
-    result = asyncio.run(pi_daemon.reconfigure_pi_daemon(
-        enabled=True, debounce_sec=10, cooldown_sec=60, heartbeat_sec=30, loop=asyncio.get_event_loop()
-    ))
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(pi_daemon.reconfigure_pi_daemon(
+            enabled=True, debounce_sec=10, cooldown_sec=60, heartbeat_sec=30, loop=loop
+        ))
+    finally:
+        loop.close()
     assert result["blocker"] == "startup_behavior_gate_error"
     assert result["running"] is False
