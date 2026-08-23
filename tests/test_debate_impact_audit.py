@@ -64,6 +64,7 @@ def _insert_forward(
 ) -> None:
     directional = -ret if direction == "short" else ret
     net = directional - 0.2
+    exit_price = 100.0 * (1.0 + ret / 100.0)
     db.execute(
         "INSERT INTO universe_forward_outcomes "
         "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, entry_price_usd, "
@@ -71,8 +72,11 @@ def _insert_forward(
         "directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, "
         "estimated_funding_pct, net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
         "VALUES (?, ?, 'snap-debate', ?, 'mean_reversion', ?, ?, 100, datetime('now','-2 hours'), "
-        "datetime('now','-1 hour'), datetime('now'), 99, ?, ?, ?, 0.1, 0.1, 0, ?, 0.05, 'v1', 'settled')",
-        (f"fwd-{member_id}-{horizon}", member_id, symbol, direction, horizon, ret, ret, directional, net),
+        "datetime('now','-1 hour'), datetime('now'), ?, ?, ?, ?, 0.1, 0.1, 0, ?, 0.05, 'v1', 'settled')",
+        (
+            f"fwd-{member_id}-{horizon}", member_id, symbol, direction,
+            horizon, exit_price, ret, ret, directional, net,
+        ),
     )
 
 
