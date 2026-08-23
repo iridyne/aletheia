@@ -49,6 +49,7 @@ def test_native_paper_close_reaches_attribution_and_feedback(tmp_path, monkeypat
     _setup_db(tmp_path, monkeypatch)
     from aletheia.analytics.factor_feedback import build_factor_feedback
     from aletheia.analytics.trade_attribution import build_trade_attribution_rows
+    from aletheia.config.loader import load_config
     from aletheia.execution.paper_broker import execute_paper_order
     from aletheia.learning.outcomes import assess_realized_position
     from aletheia.portfolio.position_manager import close_position_routed
@@ -103,10 +104,11 @@ def test_native_paper_close_reaches_attribution_and_feedback(tmp_path, monkeypat
         execution_mode=proposal.execution_mode,
         opportunity_id=opportunity.id,
     )
+    configured_venue = load_config().market_data.ccxt_exchange
     repo.insert_market_snapshot(MarketSnapshot(
         symbol=proposal.symbol,
         market_type="spot",
-        exchange="binance",
+        exchange=configured_venue,
         price=110.0,
         snapshot_at=datetime.now(timezone.utc).isoformat(),
     ))
