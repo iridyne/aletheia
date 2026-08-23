@@ -1056,6 +1056,13 @@ def _materialize_complete_private_close(
     position = _position_for_close_order(order)
     if position is None:
         return None
+    # Gate: clipped Order (qty < Position qty) → atomic partial-reduction path
+    position_quantity = float(position["quantity"])
+    order_quantity = float(order["quantity"])
+    _pos_tolerance = max(1e-12, order_quantity * 1e-9)
+    if order_quantity < position_quantity - _pos_tolerance:
+        return None  # Let atomic branch handle exact-clip-fill partial reduction
+
     if position.get("status") == "closed" and order.get("status") == "filled":
         return MaterializationResult(
             state="filled",
@@ -1451,11 +1458,59 @@ def materialize_bitget_close(
                     exchange_order_id=exchange_order_id,
                 )
 
-            # Exact complete closes are handled before this transaction by
-            # _materialize_complete_private_close(), which lets close_position
-            # own the commit and delays all external side effects until after it.
-            raise MaterializationIntegrityError(
-                "complete private close bypassed atomic close callback"
+            # Exact fill of a clipped Order: idempotent partial position reduction.
+            # _materialize_complete_private_close returned None (order_qty < pos_qty),
+            # so we own the update here inside the atomic transaction.
+            pos_qty = float(position["quantity"])
+            exit_price_partial = (
+                sum(i.quantity * i.price for i in evidence) / exchange_quantity
+            )
+            new_delta = exchange_quantity - local_quantity
+            if new_delta < -tolerance:
+                raise MaterializationIntegrityError(
+                    "partial close local qty exceeds evidence"
+                )
+            # new_pos_qty is always pos_qty - exchange_quantity (full order qty), not
+            # just the incremental delta, so that multi-batch convergence is correct.
+            # The guard `new_delta > tolerance` ensures we only write when there are
+            # genuinely new fills to account for (idempotent on pure replay).
+            new_pos_qty = max(0.0, pos_qty - exchange_quantity)
+            if new_delta > tolerance:
+                repo.update_position(position["id"], quantity=new_pos_qty)
+                from aletheia.storage.models import new_id as _new_id
+                repo.insert_position_close_event({
+                    "id": _new_id(),
+                    "position_id": position["id"],
+                    "symbol": order.get("symbol"),
+                    "direction": position.get("direction"),
+                    "execution_mode": execution_mode,
+                    "close_reason": order.get("close_reason") or "clipped_partial",
+                    "exit_price": exit_price_partial,
+                    "closed_qty": exchange_quantity,
+                    "realized_pnl": None,
+                    "entry_fee": None,
+                    "exit_fee": None,
+                    "is_partial": 1,
+                    "closed_at": max(i.filled_at for i in evidence),
+                })
+            repo.update_order(
+                order_id,
+                status="filled",
+                error_reason=None,
+                filled_at=max(i.filled_at for i in evidence),
+                exchange_order_id=exchange_order_id,
+            )
+            repo.update_position(
+                position["id"],
+                pending_close_order_id=None,
+                pending_close_status=None,
+                pending_close_requested_at=None,
+            )
+            return MaterializationResult(
+                state="filled_clip_partial_position",
+                new_fill_count=len(delta_evidence),
+                position_id=position["id"],
+                exchange_order_id=exchange_order_id,
             )
     except PrivateFillEvidenceInvalid:
         raise
