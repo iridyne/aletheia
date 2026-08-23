@@ -214,12 +214,13 @@ def test_lesson_evidence_uses_complete_rows_at_one_cutoff(tmp_path, monkeypatch)
     db = sq.get_db()
     db.execute(
         "INSERT INTO universe_forward_outcomes "
-        "(id, outcome_candidate_key, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
-        "entry_price_usd, entry_ts, due_at, settled_at, forward_return_pct, gross_return_pct, "
-        "directional_return_pct, net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
-        "VALUES ('temporal', 'candidate-temporal', 'm', 's', 'BTC/USDT', 'momentum', 'long', "
-        "'24h', 100, datetime('now','-2 days'), datetime('now','-1 day'), "
-        "datetime('now','-1 day'), 1, 1, 1, 0.8, 0.05, 'v1', 'settled')"
+        "(id, outcome_candidate_key, member_id, snapshot_id, symbol, venue, scanner_family, direction, horizon, "
+        "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, forward_return_pct, gross_return_pct, "
+        "directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+        "net_return_pct, min_tradable_edge_pct, cost_model_version, settlement_price_source, settlement_lag_sec, status) "
+        "VALUES ('temporal', 'candidate-temporal', 'm', 's', 'BTC/USDT', 'bitget', 'momentum', 'long', "
+        "'24h', 100, 101, datetime('now','-2 days'), datetime('now','-1 day'), "
+        "datetime('now','-1 day'), 1, 1, 1, 0.1, 0.1, 0, 0.8, 0.05, 'v1', 'horizon_ohlcv', 0, 'settled')"
     )
     boundary = datetime.now(timezone.utc) - timedelta(days=30)
     for row_id, settled_at in (
@@ -230,17 +231,18 @@ def test_lesson_evidence_uses_complete_rows_at_one_cutoff(tmp_path, monkeypatch)
         entry_at = due_at - timedelta(hours=24)
         db.execute(
             "INSERT INTO universe_forward_outcomes "
-            "(id, outcome_candidate_key, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
-            "entry_price_usd, entry_ts, due_at, settled_at, forward_return_pct, gross_return_pct, "
-            "directional_return_pct, net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
-            "VALUES (?, ?, 'm', 's', 'BTC/USDT', 'momentum', 'long', '24h', "
-            "100, ?, ?, ?, 1, 1, 1, 0.8, 0.05, 'v1', 'settled')",
+            "(id, outcome_candidate_key, member_id, snapshot_id, symbol, venue, scanner_family, direction, horizon, "
+            "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, forward_return_pct, gross_return_pct, "
+            "directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+            "net_return_pct, min_tradable_edge_pct, cost_model_version, settlement_price_source, settlement_lag_sec, status) "
+            "VALUES (?, ?, 'm', 's', 'BTC/USDT', 'bitget', 'momentum', 'long', '24h', "
+            "100, 101, ?, ?, ?, 1, 1, 1, 0.1, 0.1, 0, 0.8, 0.05, 'v1', 'horizon_ohlcv', 0, 'settled')",
             (
                 row_id,
                 f"candidate-{row_id}",
-                entry_at.isoformat(),
-                due_at.isoformat(),
-                settled_at.isoformat(),
+                entry_at.strftime("%Y-%m-%d %H:%M:%S"),
+                due_at.strftime("%Y-%m-%d %H:%M:%S"),
+                settled_at.strftime("%Y-%m-%d %H:%M:%S"),
             ),
         )
     db.commit()

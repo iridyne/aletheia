@@ -70,15 +70,17 @@ def _fetch_evidence(lesson) -> dict:
     clean, cost-aware 24h outcomes matching every populated scope dimension that
     can be recovered deterministically from the lesson.
     """
+    from datetime import datetime, timezone
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
+    as_of_at = datetime.now(timezone.utc)
 
     def _agg(where_extra: str, params: tuple) -> dict:
         from aletheia.learning.outcomes import assess_candidate_outcome
 
         rows = db.execute(
-            "SELECT id,outcome_candidate_key,status,horizon,entry_ts,venue,direction,market_type,"
+            "SELECT id,outcome_candidate_key,status,horizon,entry_ts,due_at,settled_at,venue,direction,market_type,"
             "entry_price_usd,exit_price_usd,"
             "directional_return_pct,estimated_fee_pct,"
             "estimated_spread_slippage_pct,estimated_funding_pct,"
@@ -92,7 +94,7 @@ def _fetch_evidence(lesson) -> dict:
         eligible_by_outcome: dict[str, tuple[dict, float]] = {}
         for raw in rows:
             row = dict(raw)
-            assessed = assess_candidate_outcome(row)
+            assessed = assess_candidate_outcome(row, as_of_at=as_of_at)
             if (
                 not assessed.eligible
                 or assessed.net_return_pct is None

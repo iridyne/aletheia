@@ -96,7 +96,7 @@ def persist_shadow_batch(
         rank = rank_by_opportunity.get(opp_id, fallback_rank)
         symbol = candidate.get("symbol") or ""
         direction = candidate.get("direction") or candidate.get("direction_bias") or "long"
-        market_type = candidate.get("market_type") or "spot"
+        market_type = str(candidate.get("market_type") or "").strip().lower()
         venue_value = candidate.get("venue")
         venue = venue_value.strip() if isinstance(venue_value, str) and venue_value.strip() else None
         entry_price = _current_price(symbol, market_type=market_type, exact=True)
@@ -190,7 +190,10 @@ def _compute_shadow_economics(
         cfg = load_config()
     except Exception:
         return None
-    market_type = str(row.get("market_type") or "spot").lower()
+    raw_market_type = row.get("market_type")
+    if not raw_market_type:
+        return {"estimated_funding_pct": None, "net_return_pct": None}
+    market_type = str(raw_market_type).lower()
     entry_spread = row.get("entry_spread_bps")
     funding_rate = row.get("funding_rate_at_entry")
     try:
@@ -331,12 +334,9 @@ def _current_price(
             legacy_symbol = to_bitget(canonical)
             if legacy_symbol != canonical:
                 symbols.append(legacy_symbol)
-            normalized_market = (
-                "perp"
-                if str(market_type or "").lower()
-                in {"perp", "futures", "swap", "usdt_futures"}
-                else "spot" if str(market_type or "").lower() == "spot" else None
-            )
+            normalized_market = _normalized_market_type(market_type)
+            if normalized_market is None:
+                return None
 
             placeholders = ",".join("?" for _ in symbols)
             base = (
@@ -373,12 +373,9 @@ def _current_price(
             from aletheia.data.symbols import to_canonical
             from aletheia.storage.repositories import list_market_snapshots
 
-            normalized_market = (
-                "perp"
-                if str(market_type or "spot").lower()
-                in {"perp", "futures", "swap", "usdt_futures"}
-                else "spot"
-            )
+            normalized_market = _normalized_market_type(market_type)
+            if normalized_market is None:
+                return None
             rows = list_market_snapshots(
                 symbol=to_canonical(symbol),
                 market_type=normalized_market,
