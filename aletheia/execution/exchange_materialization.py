@@ -30,6 +30,64 @@ class PrivateFillEvidenceInvalid(MaterializationIntegrityError):
     """An order-matched private row is unusable before evidence acceptance."""
 
 
+def _close_reasoning_for_order(order: dict) -> dict | None:
+    """Load an optional pending-close rationale without inventing provenance."""
+
+    raw = order.get("close_reasoning")
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        raise MaterializationIntegrityError("close reasoning carrier is malformed")
+    try:
+        payload = json.loads(raw)
+        json.dumps(payload, allow_nan=False)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise MaterializationIntegrityError(
+            "close reasoning carrier is malformed"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise MaterializationIntegrityError("close reasoning carrier is not an object")
+    required_text = ("actor", "source", "reason_code", "reason")
+    if payload.get("version") != "trade_decision_rationale.v1" or any(
+        not isinstance(payload.get(field), str) or not payload[field].strip()
+        for field in required_text
+    ):
+        raise MaterializationIntegrityError("close reasoning carrier fields are invalid")
+    if payload["reason_code"] != order.get("close_reason"):
+        raise MaterializationIntegrityError(
+            "close reasoning carrier does not match Order reason"
+        )
+    if len(payload["reason"]) > 1200:
+        raise MaterializationIntegrityError("close reasoning carrier exceeds reason limit")
+    if type(payload.get("is_ai_judgment")) is not bool:
+        raise MaterializationIntegrityError(
+            "close reasoning carrier judgment flag is invalid"
+        )
+    if not isinstance(payload.get("trigger"), dict):
+        raise MaterializationIntegrityError("close reasoning carrier trigger is invalid")
+    allowed_actors = {"system_operator", "system", "human", "position_reconciler"}
+    if payload["actor"] not in allowed_actors:
+        raise MaterializationIntegrityError("close reasoning carrier actor is invalid")
+    if payload["is_ai_judgment"] != (payload["actor"] == "system_operator"):
+        raise MaterializationIntegrityError(
+            "close reasoning carrier actor and judgment flag conflict"
+        )
+    reserved_source_actors = {
+        "portfolio_review": {"system_operator"},
+        "operator_proactive_exit": {"system_operator"},
+        "dashboard_manual_close": {"human"},
+        "position_lifecycle": {"system"},
+        "protective_barrier_1m": {"system"},
+        "verified_exit_protocol": {"system", "position_reconciler"},
+    }
+    expected_actors = reserved_source_actors.get(payload["source"])
+    if expected_actors is not None and payload["actor"] not in expected_actors:
+        raise MaterializationIntegrityError(
+            "close reasoning carrier actor and source conflict"
+        )
+    return payload
+
+
 @dataclass(frozen=True)
 class PrivateFill:
     fill_id: str
@@ -1018,6 +1076,7 @@ def _materialize_complete_private_close(
         symbol=order["symbol"],
     )
     tolerance = max(1e-12, requested_quantity * 1e-9)
+    close_reasoning = _close_reasoning_for_order(order)
     if abs(exchange_quantity - requested_quantity) > tolerance:
         return None
 
@@ -1057,6 +1116,19 @@ def _materialize_complete_private_close(
         )
     evidence_source, source_endpoint, account_environment = evidence_identity
     inserted_count = 0
+    close_authority_fields = (
+        "proposal_id",
+        "position_id",
+        "symbol",
+        "market_type",
+        "direction",
+        "quantity",
+        "execution_mode",
+        "source",
+        "client_order_id",
+        "close_reason",
+        "close_reasoning",
+    )
 
     def _materialize_close_rows() -> None:
         nonlocal inserted_count
@@ -1064,6 +1136,18 @@ def _materialize_complete_private_close(
         if current_order is None:
             raise MaterializationIntegrityError(
                 "close Order disappeared during materialization"
+            )
+        if any(
+            current_order.get(field) != order.get(field)
+            for field in close_authority_fields
+        ):
+            raise MaterializationIntegrityError(
+                "close Order authority changed during materialization"
+            )
+        repo.validate_native_order_authority(current_order)
+        if _close_reasoning_for_order(current_order) != close_reasoning:
+            raise MaterializationIntegrityError(
+                "close reasoning changed during materialization"
             )
         current_position = _position_for_close_order(current_order)
         if current_position is None or current_position["id"] != position["id"]:
@@ -1215,6 +1299,7 @@ def _materialize_complete_private_close(
             ],
         },
         materialize_close=_materialize_close_rows,
+        close_reasoning=close_reasoning,
         **funding_kwargs,
     )
     return MaterializationResult(
@@ -1255,6 +1340,7 @@ def materialize_bitget_close(
                     "close fill maps to a Position that is neither open nor closed"
                 )
             repo.validate_native_order_authority(order)
+            _close_reasoning_for_order(order)
 
             exchange_order_id, evidence = evidence_for_order(order, rows)
             if exchange_order_id is None or not evidence:

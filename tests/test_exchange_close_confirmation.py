@@ -88,27 +88,24 @@ def _patch_unconfirmed_close(
     ],
 )
 @pytest.mark.parametrize(
-    "broker_module,client_name,response_module,close_func,execution_mode",
+    "broker_module,client_name,response_module,execution_mode",
     [
         (
             "aletheia.execution.bitget_broker",
             "BitgetClient",
             "aletheia.exchanges.bitget.client",
-            "close_demo_position",
             "bitget_demo",
         ),
         (
             "aletheia.execution.okx_broker",
             "OKXClient",
             "aletheia.exchanges.okx.client",
-            "close_okx_position",
             "okx_demo",
         ),
         (
             "aletheia.execution.binance_broker",
             "BinanceClient",
             "aletheia.exchanges.binance.client",
-            "close_testnet_position",
             "binance_testnet",
         ),
     ],
@@ -119,7 +116,6 @@ def test_exchange_close_unconfirmed_does_not_fabricate_full_close(
     broker_module,
     client_name,
     response_module,
-    close_func,
     execution_mode,
     exchange_status,
     expected_status,
@@ -136,7 +132,15 @@ def test_exchange_close_unconfirmed_does_not_fabricate_full_close(
         captured,
     )
 
-    result = getattr(importlib.import_module(broker_module), close_func)(pos.id, reason="stop_loss")
+    from aletheia.portfolio.position_manager import close_position_routed
+
+    result = close_position_routed(
+        pos.id,
+        reason="operator_close",
+        decision_reasoning="Thesis changed while breadth weakened.",
+        decision_actor="system_operator",
+        decision_source="portfolio_review",
+    )
 
     assert result["closed"] is False
     assert result["status"] == expected_status
@@ -151,16 +155,32 @@ def test_exchange_close_unconfirmed_does_not_fabricate_full_close(
     assert len(orders) == 1
     assert orders[0]["status"] == expected_status
     assert orders[0]["exchange_order_id"] == "EX-CLOSE-1"
+    close_reasoning = json.loads(orders[0]["close_reasoning"])
+    assert close_reasoning["actor"] == "system_operator"
+    assert close_reasoning["source"] == "portfolio_review"
+    assert close_reasoning["reason_code"] == "operator_close"
+    assert close_reasoning["reason"] == "Thesis changed while breadth weakened."
+    assert "exit_price" not in close_reasoning["trigger"]
+    assert still_open["exit_reasoning"] is None
     assert repo.list_fills() == []
     assert len(captured) == 1
     assert captured[0].client_oid == f"close-{pos.id}"
 
-    second_result = getattr(importlib.import_module(broker_module), close_func)(pos.id, reason="stop_loss")
+    second_result = close_position_routed(
+        pos.id,
+        reason="operator_close",
+        decision_reasoning="A later retry must not replace the original rationale.",
+        decision_actor="system_operator",
+        decision_source="portfolio_review",
+    )
 
     assert second_result["closed"] is False
     assert second_result["already_pending"] is True
     assert len(captured) == 1
     assert len(repo.list_orders()) == 1
+    assert json.loads(repo.list_orders()[0]["close_reasoning"])["reason"] == (
+        "Thesis changed while breadth weakened."
+    )
 
 
 def test_position_manager_counts_only_confirmed_exchange_closes(tmp_path, monkeypatch):
