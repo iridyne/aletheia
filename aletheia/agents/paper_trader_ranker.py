@@ -26,6 +26,7 @@ from aletheia.data.symbols import to_canonical
 from aletheia.storage.repositories import (
     get_ohlcv_candles,
     get_universe_member,
+    list_all_open_positions,
     list_open_trade_opportunities,
 )
 from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation

@@ -632,7 +632,7 @@ metadata={
     attempted: list[str] = []
     last_exc: BaseException | None = None
     for idx, (pn, md) in enumerate(to_try):
-        attempted.append(f"{pn}/{md}")
+        attempted.append(md)
         cand_provider = provider if pn == resolved_provider_name else provider_router.get_provider(pn)
         candidate = cand_provider if md == str(getattr(cand_provider, "model", "") or "") else _clone_provider_with_model(cand_provider, md)
         try:

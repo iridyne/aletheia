@@ -576,6 +576,12 @@ class RiskExitPolicy(StrictRiskPolicyModel):
 class RiskEligibilityPolicy(StrictRiskPolicyModel):
     family_min_samples: int = 30
     family_min_win_rate_pct: float = 50.0
+    # Exchange-demo entry quality (ignored on live when left at these defaults).
+    # min_regime_confidence_to_enter <= 0 disables the confidence stand-down.
+    # family_min_expectancy is None on live; 0.0 on demo means "must not be negative".
+    min_regime_confidence_to_enter: float = 0.0
+    sideways_standdown: bool = False
+    family_min_expectancy: float | None = None
 
 
 class ModeRiskPolicy(StrictRiskPolicyModel):
@@ -694,8 +700,20 @@ def _legacy_mode_policy(data: dict, mode: str) -> dict:
                 "family_min_win_rate_pct": data.get(
                     "live_family_min_win_rate_pct", 50.0
                 ),
+                "min_regime_confidence_to_enter": 0.0,
+                "sideways_standdown": False,
+                "family_min_expectancy": None,
             }
-            if is_live else None
+            if is_live
+            else {
+                "family_min_samples": data.get("demo_family_min_samples", 20),
+                "family_min_win_rate_pct": 0.0,
+                "min_regime_confidence_to_enter": data.get(
+                    "demo_min_regime_confidence_to_enter", 0.60
+                ),
+                "sideways_standdown": data.get("demo_sideways_standdown", True),
+                "family_min_expectancy": data.get("demo_family_min_expectancy", 0.0),
+            }
         ),
         "auto_trip_mode_brake_on_daily_loss": data.get(
             f"kill_switch_enabled_{suffix}", is_live

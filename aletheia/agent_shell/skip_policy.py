@@ -27,8 +27,18 @@ def _material_dedup_killed() -> bool:
 
 
 _EPOCH_KIND = "system_operator_skip_remediation"
+NEUTRAL_SKIP_DEFER_REASON = "direct_skip_not_confirmed:neutral_or_missing_skip_kind"
+STALE_SNAPSHOT_DEFER_REASON = "candidate_technical_snapshot_stale"
+_NO_VALID_UNTIL_EXTEND_REASONS = frozenset({
+    NEUTRAL_SKIP_DEFER_REASON,
+    STALE_SNAPSHOT_DEFER_REASON,
+    "candidate_technical_snapshot_unavailable",
+    "candidate_technical_snapshot_incomplete",
+    "direct_skip_reassessment_unavailable",
+    "operator_structured_schema_invalid",
+})
 _EFFECTIVE_VALUES = {
-    "version": "b1.7",
+    "version": "b1.9",
     "aggregate_signal_health_candidate_veto": False,
     "zero_pending_heartbeat_trading_evaluation": False,
     "aggregate_signal_health_config_tightening": False,
@@ -96,6 +106,19 @@ _EFFECTIVE_VALUES = {
     # fingerprint.
     "reuse_recent_skip_validation": True,
     "reuse_skip_validation_window_minutes": 30,
+    # B1.8: an unconfirmed skip (missing skip_kind) is not a 120-minute market
+    # hedge. Keep a short re-ask cooldown so feature-snapshot churn cannot
+    # re-burn the LLM every 10 minutes, but do not freeze the only queued
+    # candidate for two hours or suppress a fresh emit of the same setup.
+    # Stale technical snapshots must not chain another 120-minute window —
+    # that window equals the freshness budget and guarantees another stale.
+    "neutral_skip_kind_emit_suppression": False,
+    "neutral_skip_kind_defer_window_minutes": 30,
+    "technical_stale_defer_window_minutes": 20,
+    # B1.9: stale/shrug/unavailable is not "worth another look". Extending
+    # valid_until on those reasons life-supports a zombie carrier (UNI 6f46a46a84b1
+    # chained 08:05 → 08:25 → 08:45). Market-judgment retries still widen TTL.
+    "technical_or_shrug_defer_extends_valid_until": False,
 }
 _AFFECTED_PATHS = (
     "system_operator_candidate_context",
@@ -118,11 +141,17 @@ _AFFECTED_PATHS = (
     "emit_active_defer_material_suppression",
     "operator_symbol_level_defer_suppression",
     "operator_reuse_recent_skip_validation",
+    # B1.8 additions
+    "operator_neutral_skip_kind_short_defer",
+    "emit_neutral_skip_kind_not_suppressed",
+    "operator_stale_snapshot_short_defer",
+    # B1.9
+    "operator_stale_shrug_does_not_extend_valid_until",
 )
 
 
 def ensure_skip_remediation_policy_epoch() -> str:
-    """Return the durable B1.7 policy epoch, rotating only if policy changes."""
+    """Return the durable B1.9 policy epoch, rotating only if policy changes."""
     epoch = build_policy_epoch(
         _EPOCH_KIND,
         _EFFECTIVE_VALUES,
@@ -144,3 +173,53 @@ def skip_policy_context() -> dict:
         for flag in _MATERIAL_DEDUP_CONSUMER_FLAGS:
             values[flag] = False
     return values
+
+
+def defer_window_minutes_for_reason(reason: str | None, default: int = 120) -> int:
+    """Return the bounded re-ask window for one persisted defer reason.
+
+    Confirmed market-quiet hedges keep the 120-minute default. An unconfirmed
+    skip and a stale technical snapshot use shorter windows so the only queued
+    candidate cannot chain two-hour freezes.
+    """
+    values = skip_policy_context()
+    code = str(reason or "")
+    fallback = max(int(default), 1)
+    if code == NEUTRAL_SKIP_DEFER_REASON:
+        return max(int(values.get("neutral_skip_kind_defer_window_minutes") or 30), 1)
+    if code == STALE_SNAPSHOT_DEFER_REASON:
+        return max(int(values.get("technical_stale_defer_window_minutes") or 20), 1)
+    return fallback
+
+
+def defer_extends_carrier_valid_until(reason: str | None) -> bool:
+    """Whether this defer may CAS-extend Opportunity.valid_until.
+
+    Low-conviction and debate retries still get a second look inside a widened
+    lifecycle. A stale/incomplete snapshot or an unconfirmed shrug is not a
+    market hedge — extending valid_until turns the only queued carrier into a
+    zombie that outlives its original TTL.
+    """
+    values = skip_policy_context()
+    if values.get("technical_or_shrug_defer_extends_valid_until"):
+        return True
+    return str(reason or "") not in _NO_VALID_UNTIL_EXTEND_REASONS
+
+
+def emit_suppression_applies_to_defer(prior_skip: dict | None) -> bool:
+    """Whether emit-source suppression should honor this active-defer row.
+
+    Validated adverse skips still suppress a same-fingerprint remint. A shrug
+    (``neutral_or_missing_skip_kind``) does not — that is not a market judgment.
+    """
+    values = skip_policy_context()
+    if not values.get("emit_active_defer_suppression"):
+        return False
+    if not prior_skip:
+        return False
+    reason = str(prior_skip.get("defer_reason") or "")
+    if reason == NEUTRAL_SKIP_DEFER_REASON and not values.get(
+        "neutral_skip_kind_emit_suppression"
+    ):
+        return False
+    return True

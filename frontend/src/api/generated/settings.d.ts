@@ -1372,6 +1372,11 @@ export interface components {
              */
             futures_margin_warning_ratio: number;
             /**
+             * Horizon Due Allow Hold
+             * @default true
+             */
+            horizon_due_allow_hold: boolean;
+            /**
              * Horizon Hard Backstop Mult
              * @default 3
              */
@@ -1570,6 +1575,8 @@ export interface components {
         };
         /** RiskEligibilityPolicy */
         RiskEligibilityPolicy: {
+            /** Family Min Expectancy */
+            family_min_expectancy?: number | null;
             /**
              * Family Min Samples
              * @default 30
@@ -1580,6 +1587,16 @@ export interface components {
              * @default 50
              */
             family_min_win_rate_pct: number;
+            /**
+             * Min Regime Confidence To Enter
+             * @default 0
+             */
+            min_regime_confidence_to_enter: number;
+            /**
+             * Sideways Standdown
+             * @default false
+             */
+            sideways_standdown: boolean;
         };
         /** RiskExitPolicy */
         RiskExitPolicy: {
@@ -1598,6 +1615,11 @@ export interface components {
              * @default 15
              */
             catastrophic_stop_pct_serenity: number;
+            /**
+             * Horizon Due Allow Hold
+             * @default true
+             */
+            horizon_due_allow_hold: boolean;
             /**
              * Horizon Hard Backstop Mult
              * @default 3
