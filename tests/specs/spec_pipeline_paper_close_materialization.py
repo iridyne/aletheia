@@ -1765,7 +1765,7 @@ def test_delayed_funding_materialization_rolls_back_every_projection(
 
 @spec_claim(
     SpecClaim(
-        "PFA-MAT-04",
+        "PFA-MAT-10",
         "pipeline_paper_close_materialization",
         "audited cash compensation",
         "L2c",

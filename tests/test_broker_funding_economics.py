@@ -129,6 +129,86 @@ def test_private_history_retention_cannot_fabricate_complete_zero_funding():
     )
 
 
+def _seed_pending_broker_funding_close(
+    tmp_path,
+    monkeypatch,
+    *,
+    mode: str = "bitget_demo",
+    environment: str = "demo",
+):
+    setup_env(tmp_path, monkeypatch)
+    _demo_config(monkeypatch)
+    _fresh_snapshot(price=110.0)
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=110.0,
+        execution_mode=mode,
+        opened_at="2026-07-14T00:00:00+00:00",
+    )
+    repo.insert_position(position)
+    from aletheia.portfolio.pnl import close_position
+
+    closed_at = "2026-07-14T12:00:00+00:00"
+    close_position(
+        position.id,
+        exit_price=110.0,
+        actual_exit_fee=0.1,
+        closed_at=closed_at,
+        verified_exit_evidence={
+            "source": "private_fills",
+            "fill_ids": ["fill-1"],
+            "fill_quantity": 1.0,
+        },
+    )
+    incomplete = repo._select_one("positions", position.id)
+    assert incomplete["realized_pnl"] is None
+    ledger = make_complete_ledger(
+        broker_id=mode,
+        account_environment=environment,
+        source_endpoint="/private/funding",
+        history_start_ms=1783987200000,
+        history_end_ms=1784073600000,
+        events=[],
+    )
+    funding = compute_broker_funding(
+        position=incomplete,
+        closed_at=closed_at,
+        ledger=ledger,
+    )
+    return position.id, incomplete, funding
+
+
+def _broker_funding_state(position_id: str) -> dict:
+    db = repo.get_db()
+    return {
+        "position": repo._select_one("positions", position_id),
+        "close_events": [
+            dict(row)
+            for row in db.execute(
+                "SELECT * FROM position_close_events WHERE position_id=? ORDER BY rowid",
+                (position_id,),
+            ).fetchall()
+        ],
+        "audit_count": db.execute(
+            """SELECT COUNT(*) FROM audit_events
+               WHERE entity_id=? AND event_type='exchange_position_funding_settled'""",
+            (position_id,),
+        ).fetchone()[0],
+        "hook_count": db.execute(
+            "SELECT COUNT(*) FROM outcome_hook_jobs WHERE position_id=?",
+            (position_id,),
+        ).fetchone()[0],
+        "cash_event_count": db.execute(
+            "SELECT COUNT(*) FROM paper_account_events WHERE position_id=?",
+            (position_id,),
+        ).fetchone()[0],
+    }
+
+
 def test_private_history_retention_exposes_typed_terminal_evidence():
     from aletheia.execution.broker_funding import (
         BrokerFundingHistoryExpired,

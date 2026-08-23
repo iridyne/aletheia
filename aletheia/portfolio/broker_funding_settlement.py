@@ -212,9 +212,10 @@ def materialize_broker_funding_economics(
         if current is None:
             raise ValueError(f"position not found: {position_id}")
         if current.get("realized_pnl") is None:
+            _QUEUE_SYNTHETIC_KEYS = {"funding_queue_rowid"}
             changed_fields = sorted(
                 key
-                for key in set(row) | set(current)
+                for key in (set(row) | set(current)) - _QUEUE_SYNTHETIC_KEYS
                 if row.get(key) != current.get(key)
             )
             if changed_fields:
@@ -708,6 +709,7 @@ async def settle_unsettled_exchange_closes(
             logger.warning(
                 "broker funding settler failed for %s (%s)",
                 position_id, type(exc).__name__,
+                exc_info=True,
             )
             errors.append(f"{position_id}: {type(exc).__name__}")
             still_pending += 1
