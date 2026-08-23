@@ -436,7 +436,7 @@ def test_system_operator_alpha_does_not_mix_behavior_fingerprints():
     assert operator["details"]["behavior_fingerprint"] == "behavior-new"
 
 
-def test_universe_alpha_uses_forward_outcomes_against_deterministic_baseline():
+def test_universe_alpha_uses_canonical_directional_outcomes_against_deterministic_baseline():
     from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
     from aletheia.storage.sqlite import get_db
 
@@ -451,7 +451,14 @@ def test_universe_alpha_uses_forward_outcomes_against_deterministic_baseline():
         )
         _insert_ohlcv(db, sym, "1h", entry, 100.0, {1: 100.0})
     for i in range(7):
-        forward_return = 2.0 if i < 5 else 99.0
+        direction = "short" if i < 5 and i % 2 else "long"
+        directional_return = 2.0 if i < 5 else 99.0
+        gross_return = (
+            -directional_return if direction == "short" else directional_return
+        )
+        legacy_forward_return = (
+            -999.0 if direction == "short" else 999.0
+        ) if i < 5 else gross_return
         venue = "bitget" if i != 5 else None
         price_source = "late_ticker" if i == 6 else "horizon_ohlcv"
         settlement_lag = 3600.0 if i == 6 else 0.0
@@ -463,13 +470,14 @@ def test_universe_alpha_uses_forward_outcomes_against_deterministic_baseline():
             "exit_price_usd, forward_return_pct, directional_return_pct, "
             "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
             "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
-            "VALUES (?, ?, 'snap', ?, ?, 'spot', 'momentum', 'long', '1h', 100, ?, ?, ?, "
+            "VALUES (?, ?, 'snap', ?, ?, 'spot', 'momentum', ?, '1h', 100, ?, ?, ?, "
             "?, ?, ?, ?, ?, 0, 0, 0, ?, 0.05, 'candidate-net-v1', 'settled')",
             (
-                f"ufo-{i}", f"member-{i}", f"SEL{i}/USDT", venue, entry,
+                f"ufo-{i}", f"member-{i}", f"SEL{i}/USDT", venue, direction, entry,
                 _iso(days_ago=2, hours_after=1), _iso(days_ago=1),
                 price_source, settlement_lag,
-                100.0 + forward_return, forward_return, forward_return, forward_return,
+                100.0 + gross_return, legacy_forward_return,
+                directional_return, directional_return,
             ),
         )
     db.commit()

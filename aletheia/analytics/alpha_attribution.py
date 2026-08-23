@@ -751,13 +751,12 @@ def _universe_alpha(db, cutoff: str, min_sample_size: int) -> dict:
         return causal
 
     rows = db.execute(
-        "SELECT symbol, direction, horizon, entry_ts, forward_return_pct "
+        "SELECT symbol, direction, horizon, entry_ts, directional_return_pct "
         "FROM universe_forward_outcomes "
         "WHERE status = 'settled' "
         f"AND {complete_outcome_economics_sql()} "
         "AND horizon IN ('1h', '4h', '24h') "
-        "AND forward_return_pct IS NOT NULL "
-        "AND ABS(forward_return_pct) <= 100 "
+        "AND ABS(directional_return_pct) <= 100 "
         "AND datetime(entry_ts) >= datetime(?)",
         (cutoff,),
     ).fetchall()
@@ -768,7 +767,7 @@ def _universe_alpha(db, cutoff: str, min_sample_size: int) -> dict:
 
     for row in rows:
         direction = row["direction"] or "long"
-        selected_ret = _directional_return(row["forward_return_pct"], direction)
+        selected_ret = float(row["directional_return_pct"])
         selected.append(selected_ret)
         base_returns = _deterministic_baseline_returns(
             db,
