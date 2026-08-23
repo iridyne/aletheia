@@ -2397,6 +2397,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
     }
 
     def _deferred_evaluation_result(exc: DecisionUnavailable) -> dict:
+        from aletheia.agent_shell.skip_policy import defer_window_minutes_for_reason
         event = _record_deferred_context_observation(
             ctx,
             context_fingerprint=context_fingerprint,
@@ -2404,7 +2405,7 @@ async def evaluate_trading_opportunity(params: dict) -> dict:
             policy_epoch_id=policy_epoch_id,
             trigger=str(params.get("_trigger") or "manual"),
             reason=exc.reason,
-            window_minutes=defer_window_minutes,
+            window_minutes=defer_window_minutes_for_reason(exc.reason, defer_window_minutes),
             event_kind=_STAGE_TO_EVENT_KIND[exc.stage],
         )
         # DL-INV-7: filter facts must be persisted at the moment they happen.

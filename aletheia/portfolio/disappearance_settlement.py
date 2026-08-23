@@ -84,7 +84,7 @@ def _direct_positions_present(client, position: dict) -> bool | None:
             if close is not None:
                 await close()
 
-    from aletheia.agent_runtime.async_utils import run_coro_from_sync
+    from aletheia.async_utils import run_coro_from_sync
     try:
         rows = run_coro_from_sync(query(), timeout=60)
     except Exception:

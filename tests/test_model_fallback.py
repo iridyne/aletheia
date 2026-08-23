@@ -173,7 +173,7 @@ async def test_transient_failures_put_model_in_cooldown_and_skip_it(tmp_path, mo
         "claude-fallback",
     ]
     meta = resp.raw["aletheia_model_fallback"]
-    assert meta["skipped_cooldown_models"] == ["claude-primary"]
+    assert meta["skipped_cooldown_models"] == ["anthropic_compatible/claude-primary"]
     health = fallback.get_model_health_snapshot()
     primary = next(x for x in health if x["model"] == "claude-primary")
     assert primary["cooling_down"] is True

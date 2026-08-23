@@ -38,8 +38,9 @@ def test_overview_curve_distinguishes_live_mark_from_verified_realized() -> None
     client = (ROOT / "frontend/src/api/client.ts").read_text(encoding="utf-8")
 
     assert "current_mark_point" in client
-    assert "Live mark (closed raw + open uPnL)" in chart
+    # PnLChart shows a single verified baseline; raw/live-mark series removed.
     assert "No verified strategy outcomes yet" in chart
+    assert "genuine_points" in chart
     assert "raw_recorded_points" not in overview_chart
     assert "genuine_points" not in overview_chart
 

@@ -57,7 +57,7 @@ def _query_exchange_fill(exchange_order_id: str, symbol: str) -> dict | None:
         client = BitgetClient(mode="demo", profile=configured_bitget_profile())
         try:
             from aletheia.data.symbols import to_bitget
-            from aletheia.agent_runtime.async_utils import run_coro_from_sync
+            from aletheia.async_utils import run_coro_from_sync
 
             rows = run_coro_from_sync(
                 client.get_order_fills(
@@ -80,7 +80,7 @@ def _query_exchange_fill(exchange_order_id: str, symbol: str) -> dict | None:
                 "filled_at_ms": int(r.get("cTime") or r.get("createdTime") or 0),
             }
         finally:
-            from aletheia.agent_runtime.async_utils import run_coro_from_sync
+            from aletheia.async_utils import run_coro_from_sync
 
             try:
                 run_coro_from_sync(client.close(), timeout=10)

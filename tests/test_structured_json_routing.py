@@ -279,8 +279,12 @@ async def test_llm_structured_requests_json_object_and_skips_failed_flash_model(
         captured.append(request)
         return next(responses)
 
+    async def fake_get_provider_async(_name):
+        return object()
+
     monkeypatch.setattr(helpers, "complete_with_fallback", fake_complete_with_fallback)
     monkeypatch.setattr(helpers, "get_provider", lambda _name: object())
+    monkeypatch.setattr(helpers, "get_provider_async", fake_get_provider_async)
     data, err = await helpers.llm_structured(
         "sys",
         "user",
@@ -312,8 +316,12 @@ async def test_llm_structured_news_keeps_default_model_order_but_still_uses_json
             raw={"usage": {"completion_tokens": 3}},
         )
 
+    async def fake_get_provider_async(_name):
+        return object()
+
     monkeypatch.setattr(helpers, "complete_with_fallback", fake_complete_with_fallback)
     monkeypatch.setattr(helpers, "get_provider", lambda _name: object())
+    monkeypatch.setattr(helpers, "get_provider_async", fake_get_provider_async)
     data, err = await helpers.llm_structured(
         "sys",
         "user",

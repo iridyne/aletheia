@@ -79,17 +79,22 @@ class _FakeProvider:
 
 
 def _patch_providers(monkeypatch, mapping: dict):
-    """Patch the async router boundary used by complete_with_fallback()."""
+    """Patch the router boundary used by complete_with_fallback()."""
 
-    async def fake_get_provider(name):
+    def fake_get_provider_sync(name=None):
+        name = name or ""
         if name not in mapping:
             raise ValueError(f"Cannot resolve provider type for: {name}")
         return mapping[name]
 
-    # The startup gate routes through complete_with_fallback(), which resolves
-    # providers via the async router path.
+    async def fake_get_provider_async(name=None):
+        return fake_get_provider_sync(name)
+
+    # complete_with_fallback() uses the sync get_provider path; the async variant
+    # is used by brokered_complete and other callers — patch both.
     import aletheia.model_provider.router as router
-    monkeypatch.setattr(router, "get_provider_async", fake_get_provider)
+    monkeypatch.setattr(router, "get_provider", fake_get_provider_sync)
+    monkeypatch.setattr(router, "get_provider_async", fake_get_provider_async)
 
 # --- 1. all providers fail → any_usable False, each error reported ---
 
