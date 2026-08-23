@@ -80,17 +80,15 @@ def assess_candidate_outcome(
     *,
     as_of_at: str | datetime | None = None,
 ) -> OutcomeAssessment:
-    temporal_reason = candidate_outcome_temporal_reason(
-        row,
-        as_of_at=datetime.now(timezone.utc) if as_of_at is None else as_of_at,
-    )
-    if temporal_reason:
-        return OutcomeAssessment(
-            False,
-            temporal_reason,
-            category="candidate",
-            source="candidate_outcome",
-        )
+    if as_of_at is not None:
+        temporal_reason = candidate_outcome_temporal_reason(row, as_of_at=as_of_at)
+        if temporal_reason:
+            return OutcomeAssessment(
+                False,
+                temporal_reason,
+                category="candidate",
+                source="candidate_outcome",
+            )
     venue = row.get("venue")
     if not isinstance(venue, str) or not venue.strip():
         return OutcomeAssessment(False, "missing_venue", category="candidate", source="candidate_outcome")

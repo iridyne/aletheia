@@ -259,7 +259,7 @@ def diagnose_position_fact(fact: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _group_returns(facts: Iterable[Mapping[str, Any]], predicate, as_of_at=None) -> tuple[list[float], dict[str, int]]:
+def _group_returns(facts: Iterable[Mapping[str, Any]], predicate) -> tuple[list[float], dict[str, int]]:
     """Group returns from candidate facts, routing through shared eligibility assessor.
 
     #1269: All rows must pass assess_candidate_outcome(), not direct settled+finite check.
@@ -278,7 +278,9 @@ def _group_returns(facts: Iterable[Mapping[str, Any]], predicate, as_of_at=None)
             rejection_reasons[reason] = rejection_reasons.get(reason, 0) + 1
             continue
 
-        assessment = assess_candidate_outcome(dict(outcome), as_of_at=as_of_at)
+        # Temporal filtering already happened in build_candidate_facts before the
+        # outcome was stored as fixed_horizon_outcome; don't re-run it here.
+        assessment = assess_candidate_outcome(dict(outcome))
         if assessment.eligible:
             values.append(assessment.net_return_pct)
         else:
@@ -294,18 +296,15 @@ def _candidate_kind(fact: Mapping[str, Any]) -> str:
 
 def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     facts = [fact for fact in report.get("facts", []) if isinstance(fact, Mapping)]
-    as_of_at = report.get("as_of_at")
     comparisons = {
         "Selection": (
             _group_returns(
                 facts,
                 lambda fact: _candidate_kind(fact) == "opportunity" and fact.get("terminal_state") == "filtered",
-                as_of_at,
             ),
             _group_returns(
                 facts,
                 lambda fact: _candidate_kind(fact) == "opportunity" and fact.get("terminal_state") != "filtered",
-                as_of_at,
             ),
         ),
         "Decision": (
@@ -314,7 +313,6 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
                 lambda fact: (
                     _candidate_kind(fact) == "pi_decision" and str(fact.get("terminal_state", "")).startswith("pi_")
                 ),
-                as_of_at,
             ),
             _group_returns(
                 facts,
@@ -322,14 +320,12 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
                     _candidate_kind(fact) == "pi_decision"
                     and fact.get("terminal_state") in {"risk_reject", "approved_unfilled", "traded"}
                 ),
-                as_of_at,
             ),
         ),
         "Risk": (
             _group_returns(
                 facts,
                 lambda fact: _candidate_kind(fact) == "proposal" and fact.get("terminal_state") == "risk_reject",
-                as_of_at,
             ),
             _group_returns(
                 facts,
@@ -337,7 +333,6 @@ def diagnose_candidate_report(report: Mapping[str, Any]) -> dict[str, Any]:
                     _candidate_kind(fact) == "proposal"
                     and fact.get("terminal_state") in {"approved_unfilled", "traded"}
                 ),
-                as_of_at,
             ),
         ),
     }
