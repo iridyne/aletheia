@@ -37,28 +37,16 @@ def _now() -> str:
 
 
 def _resolve_policy_epoch(experiment_row: dict[str, Any]) -> str:
-    """Best-effort policy epoch for one UFC experiment (v1 design G1 fix).
+    """Resolve the current UFC policy epoch without creating state.
 
     ``LearningExperiment`` does NOT carry ``policy_epoch`` as a column;
-    the epoch lives on ``LearningExposure.concurrent_policy_epoch`` and
-    ``LearningContributionVerdict.policy_epoch``. Sourcing order:
-
-    1. Latest measurement verdict's ``policy_epoch`` for this experiment
-       (the ledger stamp for the cohort the evaluator actually used).
-    2. ``aletheia.learning.experiments.current_policy_epoch(UFC_PATH_ID)``
-       (the epoch the running Learning code would compute right now).
-    3. Sentinel ``"unknown"`` — kept because the audit trail is more
-       useful with a stable placeholder than an unhandled None.
+    derive it from the running policy definition. Historical verdicts are
+    deliberately not a fallback: they describe a prior UFC generation.
     """
-    from aletheia.learning.ledger import get_latest_measurement_verdict
-
-    verdict = get_latest_measurement_verdict(str(experiment_row["experiment_id"]))
-    if verdict and verdict.get("policy_epoch"):
-        return str(verdict["policy_epoch"])
     try:
         from aletheia.learning.experiments import current_policy_epoch as _current_epoch
 
-        computed = _current_epoch(UFC_PATH_ID)
+        computed = _current_epoch(UFC_PATH_ID, persist_config_migrations=False)
         if computed:
             return str(computed)
     except Exception:  # pragma: no cover - config load fallback
@@ -66,7 +54,9 @@ def _resolve_policy_epoch(experiment_row: dict[str, Any]) -> str:
     return "unknown"
 
 
-def _observation_id(experiment_row: dict[str, Any]) -> str:
+def _observation_id(
+    experiment_row: dict[str, Any], *, policy_epoch: str | None = None
+) -> str:
     """Stable Lab identity for one UFC generation.
 
     Per new #1072 Packet 1: ``ufc:<experiment_id>:<policy_epoch>:<fixed_look_generation>``.
@@ -76,7 +66,7 @@ def _observation_id(experiment_row: dict[str, Any]) -> str:
     ``LearningExperiment`` itself.
     """
     exp_id = str(experiment_row["experiment_id"])
-    policy_epoch = _resolve_policy_epoch(experiment_row)
+    policy_epoch = policy_epoch or _resolve_policy_epoch(experiment_row)
     fixed_look_gen = str(
         experiment_row.get("fixed_look_generation")
         or experiment_row.get("stage_generation")
@@ -85,9 +75,12 @@ def _observation_id(experiment_row: dict[str, Any]) -> str:
     return f"ufc:{exp_id}:{policy_epoch}:{fixed_look_gen}"
 
 
-def _cohort_key(experiment_row: dict[str, Any]) -> str:
+def _cohort_key(
+    experiment_row: dict[str, Any], *, policy_epoch: str | None = None
+) -> str:
+    policy_epoch = policy_epoch or _resolve_policy_epoch(experiment_row)
     return (
-        f"{experiment_row['hypothesis_id']}:{_resolve_policy_epoch(experiment_row)}:"
+        f"{experiment_row['hypothesis_id']}:{policy_epoch}:"
         f"{experiment_row.get('stage', '')}"
     )
 
@@ -140,8 +133,11 @@ def run_ufc_shadow_equivalence_pass() -> dict[str, int]:
     admitted trial that has not accumulated enough exposures). They are not
     mismatches — the equivalence gate simply has nothing to compare against.
     """
+    from aletheia.learning.authority import measurement_identity_reason
+    from aletheia.learning.behavior_contracts import current_behavior_contract_hash
     from aletheia.learning.cohorts import build_experiment_cohorts
     from aletheia.learning.ledger import get_latest_measurement_verdict, list_open_experiments
+    from aletheia.learning.registry import get_learning_path
     from aletheia.learning.verdicts import evaluate_cohort
     from aletheia.observation_lab.db import get_lab_db
 
@@ -149,29 +145,24 @@ def run_ufc_shadow_equivalence_pass() -> dict[str, int]:
     open_experiments = list_open_experiments(path_id=UFC_PATH_ID)
     if not open_experiments:
         return summary
+    path = get_learning_path(UFC_PATH_ID)
 
     for exp_row in open_experiments:
         exp_id = str(exp_row["experiment_id"])
-        observation_id = _observation_id(exp_row)
-        cohort_key = _cohort_key(exp_row)
+        policy_epoch = _resolve_policy_epoch(exp_row)
+        observation_id = _observation_id(exp_row, policy_epoch=policy_epoch)
+        cohort_key = _cohort_key(exp_row, policy_epoch=policy_epoch)
 
-        stored_verdict = get_latest_measurement_verdict(exp_id)
-        if stored_verdict is None:
+        if policy_epoch == "unknown":
             summary["skipped"] += 1
-            _record_equivalence(
+            _record_unchecked(
                 get_lab_db(),
                 observation_id=observation_id,
                 experiment_id=exp_id,
                 cohort_key=cohort_key,
                 matched=None,
                 mismatch_field=None,
-                learning_verdict=None,
-                recomputed_verdict=None,
-                learning_treatment_n=None,
-                recomputed_treatment_n=None,
-                learning_control_n=None,
-                recomputed_control_n=None,
-                notes="no_stored_verdict_yet",
+                notes="current_policy_epoch_unavailable",
             )
             continue
 
@@ -183,46 +174,129 @@ def run_ufc_shadow_equivalence_pass() -> dict[str, int]:
                 exp_id, exc,
             )
             summary["mismatched"] += 1
-            _record_equivalence(
+            _record_unchecked(
                 get_lab_db(),
                 observation_id=observation_id,
                 experiment_id=exp_id,
                 cohort_key=cohort_key,
                 matched=False,
                 mismatch_field="cohort_build_error",
-                learning_verdict=str(stored_verdict.get("verdict") or ""),
-                recomputed_verdict=None,
-                learning_treatment_n=int(stored_verdict.get("unique_treatment_n") or 0),
-                recomputed_treatment_n=None,
-                learning_control_n=int(stored_verdict.get("unique_control_n") or 0),
-                recomputed_control_n=None,
                 notes=f"cohort_build_error: {exc!r}"[:400],
             )
             continue
 
         if not cohorts:
             summary["skipped"] += 1
-            _record_equivalence(
+            _record_unchecked(
                 get_lab_db(),
                 observation_id=observation_id,
                 experiment_id=exp_id,
                 cohort_key=cohort_key,
                 matched=None,
                 mismatch_field=None,
-                learning_verdict=str(stored_verdict.get("verdict") or ""),
-                recomputed_verdict=None,
-                learning_treatment_n=int(stored_verdict.get("unique_treatment_n") or 0),
-                recomputed_treatment_n=None,
-                learning_control_n=int(stored_verdict.get("unique_control_n") or 0),
-                recomputed_control_n=None,
                 notes="no_cohorts_yet",
             )
             continue
 
-        # A UFC experiment produces one primary cohort in shadow / paper stages;
-        # take the first as canonical for equivalence. This mirrors how
-        # contribution_runner iterates and stores the primary verdict.
-        primary = cohorts[0]
+        target_horizon = str(cohorts[0].hypothesis.target_horizon or "")
+        try:
+            expected_behavior_contract_hash = current_behavior_contract_hash(
+                path_id=UFC_PATH_ID,
+                policy_epoch=policy_epoch,
+                target_horizon=target_horizon,
+                outcome_contract_version=path.outcome_contract_version,
+                metric_version=path.metric_version,
+            )
+        except (KeyError, ValueError) as exc:
+            summary["mismatched"] += 1
+            _record_unchecked(
+                get_lab_db(),
+                observation_id=observation_id,
+                experiment_id=exp_id,
+                cohort_key=cohort_key,
+                matched=False,
+                mismatch_field="current_behavior_contract_unavailable",
+                notes=f"current_behavior_contract_unavailable: {exc!r}"[:400],
+            )
+            continue
+
+        primary = next((
+            cohort
+            for cohort in cohorts
+            if (
+                cohort.key.experiment_id == exp_id
+                and cohort.key.hypothesis_id == str(exp_row["hypothesis_id"])
+                and cohort.key.policy_epoch == policy_epoch
+                and cohort.key.horizon == target_horizon
+                and cohort.key.outcome_contract_version
+                == path.outcome_contract_version
+                and cohort.key.behavior_contract_hash
+                == expected_behavior_contract_hash
+                and str(cohort.experiment.stage)
+                == str(exp_row.get("stage") or "")
+            )
+        ), None)
+        if primary is None:
+            summary["skipped"] += 1
+            _record_unchecked(
+                get_lab_db(),
+                observation_id=observation_id,
+                experiment_id=exp_id,
+                cohort_key=cohort_key,
+                matched=None,
+                mismatch_field=None,
+                notes="no_exact_current_cohort",
+            )
+            continue
+
+        stored_verdict = get_latest_measurement_verdict(
+            exp_id,
+            policy_epoch=policy_epoch,
+            stage=str(exp_row.get("stage") or ""),
+            hypothesis_id=str(exp_row["hypothesis_id"]),
+            target_horizon=target_horizon,
+            outcome_contract_version=path.outcome_contract_version,
+            metric_version=path.metric_version,
+            behavior_contract_hash=expected_behavior_contract_hash,
+            inference_role="monitoring",
+        )
+        if stored_verdict is None:
+            summary["skipped"] += 1
+            _record_unchecked(
+                get_lab_db(),
+                observation_id=observation_id,
+                experiment_id=exp_id,
+                cohort_key=cohort_key,
+                matched=None,
+                mismatch_field=None,
+                notes="no_exact_current_verdict",
+            )
+            continue
+
+        identity_mismatch = measurement_identity_reason(
+            stored_verdict,
+            str(exp_row.get("stage") or ""),
+            policy_epoch,
+            expected_horizon=target_horizon,
+            expected_behavior_contract_hash=expected_behavior_contract_hash,
+            expected_hypothesis_id=str(exp_row["hypothesis_id"]),
+            expected_outcome_contract_version=path.outcome_contract_version,
+            expected_metric_version=path.metric_version,
+        )
+        if identity_mismatch is not None:
+            summary["mismatched"] += 1
+            _record_unchecked(
+                get_lab_db(),
+                observation_id=observation_id,
+                experiment_id=exp_id,
+                cohort_key=cohort_key,
+                matched=False,
+                mismatch_field=identity_mismatch,
+                notes="stored_verdict_identity_mismatch",
+                stored_verdict=stored_verdict,
+            )
+            continue
+
         try:
             recomputed = evaluate_cohort(primary)
         except Exception as exc:
@@ -231,20 +305,15 @@ def run_ufc_shadow_equivalence_pass() -> dict[str, int]:
                 exp_id, exc,
             )
             summary["mismatched"] += 1
-            _record_equivalence(
+            _record_unchecked(
                 get_lab_db(),
                 observation_id=observation_id,
                 experiment_id=exp_id,
                 cohort_key=cohort_key,
                 matched=False,
                 mismatch_field="evaluator_error",
-                learning_verdict=str(stored_verdict.get("verdict") or ""),
-                recomputed_verdict=None,
-                learning_treatment_n=int(stored_verdict.get("unique_treatment_n") or 0),
-                recomputed_treatment_n=None,
-                learning_control_n=int(stored_verdict.get("unique_control_n") or 0),
-                recomputed_control_n=None,
                 notes=f"evaluator_error: {exc!r}"[:400],
+                stored_verdict=stored_verdict,
             )
             continue
 
@@ -284,6 +353,35 @@ def run_ufc_shadow_equivalence_pass() -> dict[str, int]:
             notes=None,
         )
     return summary
+
+
+def _record_unchecked(
+    lab_db,
+    *,
+    observation_id: str,
+    experiment_id: str,
+    cohort_key: str,
+    matched: bool | None,
+    mismatch_field: str | None,
+    notes: str,
+    stored_verdict: dict[str, Any] | None = None,
+) -> None:
+    stored = _extract_verdict_fields(stored_verdict) if stored_verdict else {}
+    _record_equivalence(
+        lab_db,
+        observation_id=observation_id,
+        experiment_id=experiment_id,
+        cohort_key=cohort_key,
+        matched=matched,
+        mismatch_field=mismatch_field,
+        learning_verdict=stored.get("verdict"),
+        recomputed_verdict=None,
+        learning_treatment_n=stored.get("treatment_n"),
+        recomputed_treatment_n=None,
+        learning_control_n=stored.get("control_n"),
+        recomputed_control_n=None,
+        notes=notes,
+    )
 
 
 def _record_equivalence(
