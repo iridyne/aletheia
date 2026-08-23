@@ -30,6 +30,21 @@ from typing import Any
 logger = logging.getLogger("aletheia.observation_lab.ufc_shadow")
 
 UFC_PATH_ID = "universe_family_calibration"
+_SKIPPED_EQUIVALENCE_NOTES = frozenset({
+    "skipped",
+    "no_stored_verdict_yet",
+    "no_cohorts_yet",
+    "current_policy_epoch_unavailable",
+    "no_exact_current_cohort",
+    "no_exact_current_verdict",
+})
+
+
+def decode_equivalence_result(row: dict[str, Any]) -> str:
+    """Recover the three-state result from the backward-compatible row shape."""
+    if row.get("notes") in _SKIPPED_EQUIVALENCE_NOTES:
+        return "skipped"
+    return "matched" if int(row.get("matched") or 0) == 1 else "mismatched"
 
 
 def _now() -> str:
