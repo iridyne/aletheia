@@ -472,7 +472,7 @@ def test_ranker_case_outcome_adapter_uses_exact_base_key_and_horizon():
         ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100.5, ?, ?, ?, 0.5, ?, ?, ?, 0, 0.05, ?, ?)",
         (
             "ranker-outcome-1", "member-1", "bitget", "BTC/USDT", "spot", "long",
-            "4h", 100.0, now, now, now, 0.4, 0.05, 0.05, "cost-v1", "settled",
+            "4h", 100.0, now, now, now, 0.4, 0.05, 0.05, "v1", "settled",
         ),
     )
     db.commit()
@@ -557,7 +557,7 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
             "net_return_pct=?, min_tradable_edge_pct=0.05, "
             "estimated_fee_pct=0.05, estimated_spread_slippage_pct=0.05, "
             "estimated_funding_pct=0, mae_pct=-0.5, "
-            "cost_model_version='cost-v1', status='settled' "
+            "cost_model_version='v1', status='settled' "
             "WHERE outcome_candidate_key=? AND horizon='4h'",
             (
                 outcome_time,
@@ -649,7 +649,7 @@ def test_ranker_case_excludes_wrong_horizon_and_incomplete_cost(monkeypatch):
             (
                 horizon, now, now, now, fee,
                 0.05,
-                "cost-v1",
+                "v1",
                 outcome_key,
             ),
         )

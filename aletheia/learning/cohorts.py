@@ -25,6 +25,7 @@ from aletheia.learning.registry import (
     outcome_contract_version_for_path,
 )
 from aletheia.storage.sqlite import get_db
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 
 SUPPORTED_PATH_ID = "universe_family_calibration"
@@ -184,6 +185,7 @@ class ContributionCohort:
             "policy_epoch": self.key.policy_epoch,
             "horizon": self.key.horizon,
             "outcome_contract_version": self.key.outcome_contract_version,
+            "expected_cost_model_version": COST_MODEL_VERSION,
             "statistical_unit": get_learning_path(
                 self.hypothesis.path_id
             ).statistical_unit,
@@ -1147,6 +1149,8 @@ def _conflict_row(source: str, row: dict[str, Any]) -> dict[str, Any]:
 def _incomplete_cost_reason(outcome: dict[str, Any]) -> str | None:
     if not outcome.get("cost_model_version"):
         return "missing_cost_model_version"
+    if outcome.get("cost_model_version") != COST_MODEL_VERSION:
+        return "cost_model_version_mismatch"
     for field in ("estimated_fee_pct", "estimated_spread_slippage_pct"):
         if _finite_float(outcome.get(field)) is None:
             return "incomplete_cost_model"

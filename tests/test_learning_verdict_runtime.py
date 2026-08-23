@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
 
 _BASE = datetime(2026, 7, 13, 12, tzinfo=timezone.utc)
 
@@ -139,7 +141,7 @@ def _outcome(
     mae: float | None = -0.1,
     entry_at: str | None = None,
     status: str = "settled",
-    cost_model_version: str | None = "cost-v1",
+    cost_model_version: str | None = COST_MODEL_VERSION,
     min_tradable_edge_pct: float | None = 0.05,
     settlement_price_source: str = "horizon_ohlcv",
     suffix: str = "",
@@ -192,7 +194,7 @@ def _filter_outcome(
     mae: float | None = -0.1,
     entry_at: str | None = None,
     status: str = "settled",
-    cost_model_version: str | None = "cost-v1",
+    cost_model_version: str | None = COST_MODEL_VERSION,
     min_tradable_edge_pct: float | None = 0.05,
     allocation_selected: bool | None = True,
     settlement_price_source: str = "horizon_ohlcv",
@@ -1028,6 +1030,55 @@ def test_incomplete_cost_model_makes_cohort_invalid():
     verdict = _run(experiment.experiment_id)[0]
     assert verdict.verdict == "invalid"
     assert json.loads(verdict.harm_metrics_json)["invalid_reasons"]["missing_cost_model_version"] == 1
+
+
+def test_mixed_cost_model_versions_make_cohort_invalid_and_auditable():
+    hypothesis, experiment = _experiment()
+    _exposure(experiment, hypothesis, candidate="current-treatment", assignment="treatment")
+    _exposure(experiment, hypothesis, candidate="legacy-control", assignment="control")
+    _outcome("current-treatment", net=1.0)
+    _outcome("legacy-control", net=0.0, cost_model_version="legacy-v0")
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "invalid"
+    assert metrics["expected_cost_model_version"] == COST_MODEL_VERSION
+    assert metrics["invalid_reasons"]["cost_model_version_mismatch"] == 1
+
+
+@pytest.mark.parametrize("outcome_source", ["universe", "filter"])
+def test_linked_outcome_counts_require_explicit_exact_cost_model(outcome_source):
+    from aletheia.learning.ledger import linked_settled_exposure_counts
+
+    hypothesis, experiment = _experiment()
+    for candidate, assignment, version in (
+        ("current-linked", "treatment", COST_MODEL_VERSION),
+        ("legacy-linked", "control", "legacy-v0"),
+    ):
+        outcome_key = candidate if outcome_source == "universe" else f"{candidate}:4h"
+        _exposure(
+            experiment, hypothesis, candidate=candidate, assignment=assignment,
+            outcome_key=outcome_key,
+        )
+        if outcome_source == "universe":
+            _outcome(candidate, cost_model_version=version)
+        else:
+            _filter_outcome(candidate, cost_model_version=version)
+
+    current = linked_settled_exposure_counts(
+        experiment.experiment_id,
+        cost_model_version=COST_MODEL_VERSION,
+        policy_epoch="epoch-a",
+    )
+    historical = linked_settled_exposure_counts(
+        experiment.experiment_id,
+        cost_model_version="legacy-v0",
+        policy_epoch="epoch-a",
+    )
+
+    assert current == {"control": 0, "treatment": 1}
+    assert historical == {"control": 1, "treatment": 0}
 
 
 def test_unsettled_outcomes_are_excluded_without_becoming_zero_cost_samples():

@@ -53,7 +53,7 @@ def _insert_settled_outcome(candidate_key: str) -> str:
         "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
         "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
         "VALUES (?, ?, 'test', 'BTC/USDT', 'perp', 'long', '4h', 100, 100.4, ?, ?, ?, "
-        "0.4, 0.1, 0.1, 0, 0.2, 0.05, 'test-v1', 'settled')",
+        "0.4, 0.1, 0.1, 0, 0.2, 0.05, 'v1', 'settled')",
         (f"outcome-{base}", base, now, now, now),
     )
     if not was_in_tx:
@@ -341,6 +341,7 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
     )
     from aletheia.learning.verdicts import METRIC_VERSION
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     kwargs = dict(
         path_id="universe_family_calibration",
@@ -376,6 +377,7 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
             code_commit="older-build",
             behavior_contract_hash=behavior_contract_hash,
             harm_metrics_json=json.dumps({
+                "expected_cost_model_version": COST_MODEL_VERSION,
                 "harm_state": "clear",
                 "breached": False,
                 "assigned_treatment_n": 1,
@@ -458,6 +460,7 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
             metric_version=METRIC_VERSION, code_commit="newer-build",
             behavior_contract_hash=behavior_contract_hash,
             harm_metrics_json=json.dumps({
+                "expected_cost_model_version": COST_MODEL_VERSION,
                 "harm_state": "clear",
                 "breached": False,
                 "assigned_treatment_n": 1,
@@ -842,7 +845,7 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
         "net_return_pct=0.3, "
         "estimated_fee_pct=0.1, estimated_spread_slippage_pct=0.1, "
         "estimated_funding_pct=0.0, min_tradable_edge_pct=0.05, "
-        "mae_pct=-0.1, cost_model_version='test-v1', settled_at=? "
+        "mae_pct=-0.1, cost_model_version='v1', settled_at=? "
         "WHERE outcome_candidate_key IN (?, ?) AND horizon='4h'",
         (now, ck_t, ck_c),
     )

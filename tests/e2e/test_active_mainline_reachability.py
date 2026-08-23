@@ -105,6 +105,7 @@ def test_registered_learning_consumer_persists_and_links_exact_exposure(
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import UniverseForwardOutcome
     from aletheia.universe.allocator import compute_total_score
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     cfg = load_config()
     cfg.agent.autonomous_learning = True
@@ -181,12 +182,14 @@ def test_registered_learning_consumer_persists_and_links_exact_exposure(
         min_tradable_edge_pct=0.23,
         settlement_price_source="horizon_ohlcv",
         settlement_lag_sec=0.0,
-        cost_model_version="outcome_economics.v1",
+        cost_model_version=COST_MODEL_VERSION,
         status="settled",
     )])
 
     linked = linked_settled_exposure_counts(
-        exposure["experiment_id"], policy_epoch=exposure["concurrent_policy_epoch"]
+        exposure["experiment_id"],
+        cost_model_version=COST_MODEL_VERSION,
+        policy_epoch=exposure["concurrent_policy_epoch"],
     )
     assert linked[exposure["assignment"]] == 1
     assert sum(linked.values()) == 1

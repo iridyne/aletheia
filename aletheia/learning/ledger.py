@@ -410,9 +410,12 @@ def get_exposure_by_dedup_key(dedup_key: str) -> dict | None:
 
 
 def linked_settled_exposure_counts(
-    experiment_id: str, *, policy_epoch: str | None = None,
+    experiment_id: str,
+    *,
+    cost_model_version: str,
+    policy_epoch: str | None = None,
 ) -> dict[str, int]:
-    """Count unique arms backed by real clean, cost-aware settled outcomes."""
+    """Count unique arms backed by exact-version clean settled outcomes."""
     from aletheia.analytics.learning_window import clean_window_cutoff
 
     cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
@@ -421,19 +424,29 @@ def linked_settled_exposure_counts(
         " SELECT outcome_candidate_key AS outcome_key FROM universe_forward_outcomes"
         " WHERE status='settled' AND entry_ts>=?"
         f" AND {complete_outcome_economics_sql()}"
+        " AND cost_model_version=?"
         " AND outcome_candidate_key IS NOT NULL"
         " UNION "
         " SELECT outcome_candidate_key || ':' || horizon AS outcome_key"
         " FROM filter_candidate_outcomes"
         " WHERE status='settled' AND entry_ts>=?"
         f" AND {complete_outcome_economics_sql()}"
+        " AND cost_model_version=?"
         ") "
         "SELECT e.assignment, COUNT(DISTINCT e.candidate_key) AS n "
         "FROM learning_exposures e JOIN eligible_keys k"
         " ON k.outcome_key=e.outcome_candidate_key "
         "WHERE e.experiment_id=? AND (? IS NULL OR e.concurrent_policy_epoch=?) "
         "GROUP BY e.assignment",
-        (cutoff, cutoff, experiment_id, policy_epoch, policy_epoch),
+        (
+            cutoff,
+            cost_model_version,
+            cutoff,
+            cost_model_version,
+            experiment_id,
+            policy_epoch,
+            policy_epoch,
+        ),
     ).fetchall()
     counts = {"control": 0, "treatment": 0}
     counts.update({str(row[0]): int(row[1]) for row in rows})

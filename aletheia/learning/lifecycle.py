@@ -195,6 +195,7 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
         "outcome_contract_mismatch",
         "metric_version_mismatch",
         "behavior_contract_mismatch",
+        "cost_model_version_mismatch",
     }
     if identity_reason and not (
         recommended in {"refreeze", "invalidate"}

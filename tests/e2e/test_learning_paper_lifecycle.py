@@ -53,6 +53,7 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
     from aletheia.storage.sqlite import get_db
     from aletheia.universe.allocator import compute_total_score, get_family_multipliers
     from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
     from aletheia.universe.service import (
         _active_paper_learning_identity,
         _register_experiment_candidate_outcomes,
@@ -136,19 +137,20 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
             "exit_price_usd,gross_return_pct,directional_return_pct,estimated_fee_pct,"
             "estimated_spread_slippage_pct,estimated_funding_pct,net_return_pct,"
             "min_tradable_edge_pct,mfe_pct,mae_pct,settlement_price_source,"
-            "settlement_lag_sec,cost_model_version,status) "
-            "VALUES (?,?,?,?,?,'okx','perp','momentum','long','4h',100,?,?,?,102,2,2,"
-            "0.1,0.1,0,1.8,0.2,2,-0.2,'phase4_source',0,'cost-v1','settled')",
-            (
+                "settlement_lag_sec,cost_model_version,status) "
+                "VALUES (?,?,?,?,?,'okx','perp','momentum','long','4h',100,?,?,?,102,2,2,"
+                "0.1,0.1,0,1.8,0.2,2,-0.2,'phase4_source',0,?,'settled')",
+                (
                 f"phase4-source-outcome-{index}",
                 f"phase4-source-candidate-{index}:4h",
                 "phase4-source-member",
                 "phase4-source-snapshot",
                 "SOURCE/USDT",
-                entry_at.isoformat(),
-                (entry_at + timedelta(hours=4)).isoformat(),
-                (entry_at + timedelta(hours=4)).isoformat(),
-            ),
+                    entry_at.isoformat(),
+                    (entry_at + timedelta(hours=4)).isoformat(),
+                    (entry_at + timedelta(hours=4)).isoformat(),
+                    COST_MODEL_VERSION,
+                ),
         )
     source_evidence: dict[str, dict] = {}
     learned_calibration = get_family_multipliers(evidence_out=source_evidence)
@@ -329,7 +331,9 @@ async def test_universe_learning_paper_trial_refreezes_after_determinate_harm(
         }
         assert all(row["status"] == "settled" for row in rows)
         assert all(row["settlement_price_source"] == "phase4_e2e_horizon" for row in rows)
-        assert all(row["cost_model_version"] for row in rows)
+        assert all(
+            row["cost_model_version"] == COST_MODEL_VERSION for row in rows
+        )
         economic_fields = (
             "exit_price_usd",
             "gross_return_pct",
