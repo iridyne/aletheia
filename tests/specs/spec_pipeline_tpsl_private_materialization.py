@@ -139,7 +139,7 @@ def test_demo_tpsl_uses_execute_order_private_fill_not_plan_price(
     calls: list[tuple] = []
 
     class _Client:
-        def __init__(self, mode):
+        def __init__(self, mode, **_kwargs):
             calls.append(("client", mode))
 
         async def get_plan_order_history(self, *, order_id, **kwargs):
@@ -241,7 +241,7 @@ def test_live_tpsl_converges_from_exact_private_fills_without_trading_calls(
     calls: list[tuple] = []
 
     class _Client:
-        def __init__(self, mode):
+        def __init__(self, mode, **_kwargs):
             calls.append(("client", mode))
 
         async def get_plan_order_history(self, *, order_id, **kwargs):
@@ -376,7 +376,7 @@ def test_incomplete_or_ambiguous_plan_identity_stays_open(
     )
 
     class _Client:
-        def __init__(self, mode):
+        def __init__(self, mode, **_kwargs):
             assert mode == "demo"
 
         async def get_plan_order_history(self, **kwargs):
@@ -430,7 +430,7 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
     exact_fill_calls: list[tuple[str, str, str]] = []
 
     class _Client:
-        def __init__(self, mode):
+        def __init__(self, mode, **_kwargs):
             assert mode == "demo"
 
         async def get_plan_order_history(self, **kwargs):
@@ -544,7 +544,7 @@ def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
     failures: list[tuple[str, str]] = []
 
     class _Client:
-        def __init__(self, mode):
+        def __init__(self, mode, **_kwargs):
             assert mode == "demo"
 
         async def get_plan_order_history(self, *, order_id, **_kwargs):

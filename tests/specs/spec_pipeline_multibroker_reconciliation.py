@@ -632,7 +632,7 @@ def test_six_account_modes_construct_only_their_mapped_private_client(
     constructed: list[tuple[str, str]] = []
 
     class _BitgetClient:
-        def __init__(self, mode):
+        def __init__(self, mode, **_kwargs):
             constructed.append(("bitget", mode))
 
         async def get_open_orders(self, **kwargs):
@@ -789,7 +789,7 @@ def test_same_remote_trade_id_is_isolated_across_six_accounts(
         return row
 
     class _BitgetClient:
-        def __init__(self, mode):
+        def __init__(self, mode, **_kwargs):
             self.execution_mode = (
                 "bitget_demo" if mode == "demo" else "bitget_live_limited"
             )

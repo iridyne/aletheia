@@ -3207,9 +3207,9 @@ def test_direct_skip_b14_rotates_a_distinct_policy_epoch(tmp_path, monkeypatch):
 
     assert row["epoch_kind"] == "system_operator_skip_remediation"
     assert values == skip_policy_context()
-    # b1.7 isolates the corrected decision-authored evidence projection from
+    # b1.9 isolates the corrected decision-authored evidence projection from
     # historical b1.6 rows while preserving every control value below.
-    assert values["version"] == "b1.7"
+    assert values["version"] == "b1.9"
     assert values["validated_decision_fact_values"] is True
     assert values["direct_skip_confirmation_required"] is True
     assert values["insufficient_evidence_terminal_skip"] is False
