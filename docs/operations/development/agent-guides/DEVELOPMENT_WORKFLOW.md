@@ -119,6 +119,11 @@ head. Auto-merge reads metadata and deep checks as separate exact-head gates.
 ## Common commands
 
 - Focused test: `uv run pytest tests/test_<area>.py -q`
+- CI Yield baseline (read-only GitHub facts):
+  `uv run --no-sync python scripts/ci_yield.py --limit 20
+  --json-output /tmp/ci-yield.json --markdown-output /tmp/ci-yield.md`.
+  Historical failures remain `unknown` unless bounded evidence proves a unique
+  actionable repair; batch-size correlations are not policy thresholds.
 - Owner/Agent runtime truth: `uv run aletheia control status --json` (the JSON
   snapshot is authoritative for Runtime identity, UFC, profit-loop, Position
   Path observer, and durable pause owners; it is read-only and may report
