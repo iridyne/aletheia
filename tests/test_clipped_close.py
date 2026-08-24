@@ -182,6 +182,96 @@ def test_clipped_close_partial_fill_keeps_claim_for_continued_polling(
     assert position3["status"] == "open"
 
 
+def test_clipped_close_exact_fill_replay_ten_times_stays_reduced(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.storage import repositories as repo
+
+    db = repo.get_db()
+    _seed_position_with_claim(db, position_id="pos-clip", order_id="order-clip",
+                              quantity=424)
+    db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
+
+    first = materialize_bitget_close("order-clip", _fill_rows(212.0))
+    assert first.state == "filled_clip_partial_position"
+    for _ in range(10):
+        replay = materialize_bitget_close("order-clip", _fill_rows(212.0))
+        assert replay.state == "filled"
+        position = repo._select_one("positions", "pos-clip")
+        assert position["status"] == "open"
+        assert abs(float(position["quantity"]) - 212.0) < 1e-9
+
+
+def test_clipped_close_two_batches_100_and_112_reduce_once_to_212(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.storage import repositories as repo
+
+    db = repo.get_db()
+    _seed_position_with_claim(db, position_id="pos-clip", order_id="order-clip",
+                              quantity=424)
+    db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
+
+    first = materialize_bitget_close("order-clip", _fill_rows(100.0))
+    assert first.state == "partially_filled"
+    position = repo._select_one("positions", "pos-clip")
+    assert abs(float(position["quantity"]) - 324.0) < 1e-9
+
+    second = materialize_bitget_close(
+        "order-clip",
+        _fill_rows(100.0) + _fill_rows(112.0, trade_id="FILL-EX-CLIP-1b"),
+    )
+    assert second.state == "filled_clip_partial_position"
+    position = repo._select_one("positions", "pos-clip")
+    assert position["status"] == "open"
+    assert abs(float(position["quantity"]) - 212.0) < 1e-9
+    events = db.execute(
+        "SELECT closed_qty FROM position_close_events WHERE position_id='pos-clip' "
+        "ORDER BY rowid"
+    ).fetchall()
+    assert [row["closed_qty"] for row in events] == [100.0, 112.0]
+
+
+def test_remaining_quantity_matching_fill_closes_position(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.storage import repositories as repo
+
+    db = repo.get_db()
+    _seed_position_with_claim(db, position_id="pos-clip", order_id="order-clip",
+                              quantity=212)
+
+    result = materialize_bitget_close("order-clip", _fill_rows(212.0))
+    assert result.state == "filled"
+    position = repo._select_one("positions", "pos-clip")
+    assert position["status"] == "closed"
+    assert abs(float(position["quantity"]) - 212.0) < 1e-9
+
+
+def test_clipped_close_survives_crash_restart_replay(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.storage import repositories as repo
+
+    db = repo.get_db()
+    _seed_position_with_claim(db, position_id="pos-clip", order_id="order-clip",
+                              quantity=424)
+    db.execute("UPDATE orders SET quantity=212 WHERE id='order-clip'")
+
+    first = materialize_bitget_close("order-clip", _fill_rows(212.0))
+    assert first.state == "filled_clip_partial_position"
+    restart = materialize_bitget_close("order-clip", _fill_rows(212.0))
+    assert restart.state == "filled"
+    position = repo._select_one("positions", "pos-clip")
+    assert position["status"] == "open"
+    assert abs(float(position["quantity"]) - 212.0) < 1e-9
+
 def test_marketable_limit_close_after_venue_market_path_cancel(tmp_path, monkeypatch):
     """After a match-cap cancel the retry becomes a bounded marketable limit."""
     _setup_db(tmp_path, monkeypatch)
