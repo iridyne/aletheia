@@ -499,7 +499,7 @@ def test_ranker_case_outcome_adapter_uses_exact_base_key_and_horizon():
 
 def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
     import json
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone
 
     import aletheia.agents.paper_trader_ranker as ranker
     from aletheia.learning import experiments
@@ -558,7 +558,7 @@ def test_ranker_case_cohort_is_candidate_level_and_shadow_only(monkeypatch):
     )
     expose(opposite)
 
-    outcome_time = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+    outcome_time = datetime.now(timezone.utc).isoformat()
     for candidate_key, outcome in (("member-1", 0.4), (opposite, -0.2)):
         outcome_key = ranker_key(candidate_key)
         db.execute(
@@ -642,7 +642,7 @@ def test_ranker_case_excludes_wrong_horizon_and_incomplete_cost(monkeypatch):
         )
 
     db = get_db()
-    now = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     for candidate_key, horizon, fee in (
         ("wrong-horizon", "1h", 0.05),
         ("missing-cost", "4h", None),
