@@ -75,7 +75,7 @@ def _bounded_limit(value: Any, *, maximum: int = 5_000) -> int:
     return max(1, min(parsed, maximum))
 
 
-def add_pricing_snapshot(
+def add_catalog_pricing_snapshot(
     *,
     provider: str,
     model: str,
@@ -84,14 +84,22 @@ def add_pricing_snapshot(
     reasoning_usd_per_million: float | None = None,
     cached_input_usd_per_million: float | None = None,
     effective_from: str | None = None,
-    source: str = "manual",
-    version: str = "v1",
+    source: str,
+    version: str,
 ) -> dict[str, Any]:
-    """Persist an explicit immutable price contract; no live prices are guessed."""
+    """Persist one immutable LiteLLM public-catalog price estimate.
+
+    Model prices have one source of truth: LiteLLM's public GitHub catalog.
+    There is deliberately no manual/default source and no user-facing writer.
+    """
     provider = provider.strip()
     model = model.strip()
     if not provider or not model:
         raise ValueError("provider and model are required")
+    if not source.startswith("litellm_public_median:"):
+        raise ValueError("model pricing source must be the LiteLLM public catalog")
+    if not version.startswith("catalog-model-family-"):
+        raise ValueError("model pricing version must identify the catalog matching contract")
     rates = {
         "input_usd_per_million": input_usd_per_million,
         "output_usd_per_million": output_usd_per_million,

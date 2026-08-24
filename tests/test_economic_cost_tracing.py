@@ -21,7 +21,7 @@ from aletheia.agent_runtime.run_context import (
 )
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.tracing import (
-    add_pricing_snapshot,
+    add_catalog_pricing_snapshot,
     add_tool_cost_profile,
     aggregate_agent_run_cost,
     initialize_runtime_tracing,
@@ -81,14 +81,27 @@ def _insert_run() -> AgentRun:
 
 
 def _add_test_pricing() -> None:
-    add_pricing_snapshot(
+    add_catalog_pricing_snapshot(
         provider="measured_test",
         model="measured-model",
         input_usd_per_million=1.0,
         output_usd_per_million=2.0,
         effective_from="2020-01-01T00:00:00+00:00",
-        source="test",
+        source="litellm_public_median:test",
+        version="catalog-model-family-test",
     )
+
+
+def test_catalog_pricing_rejects_non_catalog_source():
+    with pytest.raises(ValueError, match="LiteLLM public catalog"):
+        add_catalog_pricing_snapshot(
+            provider="p",
+            model="m",
+            input_usd_per_million=1.0,
+            output_usd_per_million=2.0,
+            source="manual",
+            version="catalog-model-family-test",
+        )
 
 
 def test_normalize_usage_top_level_cache_read_falls_back_to_cached():

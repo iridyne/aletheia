@@ -101,7 +101,7 @@ def test_refresh_reports_unmatched_models_correctly(monkeypatch):
     price_map = {"groq/gpt-4o": {"input_cost_per_token": 2.5e-6, "output_cost_per_token": 1e-5}}
     monkeypatch.setattr(pricing_sync, "_save_cache", lambda content: None)
     monkeypatch.setattr(pricing_sync, "_runtime_models", lambda: [("openai_compatible", "totally-unknown-model")])
-    monkeypatch.setattr(pricing_sync, "add_pricing_snapshot", lambda **kw: None)
+    monkeypatch.setattr(pricing_sync, "add_catalog_pricing_snapshot", lambda **kw: None)
 
     result = pricing_sync.refresh_pricing(fetcher=lambda: (price_map, b"{}"))
 
@@ -111,7 +111,7 @@ def test_refresh_reports_unmatched_models_correctly(monkeypatch):
 
 # ── integration-level refresh test ───────────────────────────────────────────
 
-def test_refresh_uses_model_median_and_preserves_manual_price(monkeypatch):
+def test_refresh_uses_model_median_and_skips_current_catalog_version(monkeypatch):
     price_map = {
         "groq/meta-llama/llama-4-maverick": {
             "input_cost_per_token": 0.0000002,
@@ -133,17 +133,17 @@ def test_refresh_uses_model_median_and_preserves_manual_price(monkeypatch):
         "_runtime_models",
         lambda: [
             ("openai_compatible", "llama-4-maverick"),
-            ("manual_provider", "llama-4-maverick"),
+            ("existing_catalog_provider", "llama-4-maverick"),
         ],
     )
     monkeypatch.setattr(
         pricing_sync,
-        "_may_write_automatic_snapshot",
-        lambda provider, model, version: provider != "manual_provider",
+        "_may_write_catalog_snapshot",
+        lambda provider, model, version: provider != "existing_catalog_provider",
     )
     monkeypatch.setattr(
         pricing_sync,
-        "add_pricing_snapshot",
+        "add_catalog_pricing_snapshot",
         lambda **kwargs: written.append(kwargs),
     )
 

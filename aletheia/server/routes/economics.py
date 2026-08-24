@@ -2,9 +2,9 @@
 
 Mirrors the `aletheia audit` CLI so operators can see LLM spend, broker
 headroom, and per-model cooldown state from the dashboard instead of
-dropping to a shell. Immutable manual pricing writers stay CLI-only; the sole
-dashboard mutation starts a bounded LiteLLM reference-price refresh whose
-results are explicitly estimated.
+dropping to a shell. Model pricing has no manual writer: the sole pricing
+mutation starts a bounded refresh from LiteLLM's public GitHub catalog and
+persists explicitly estimated snapshots.
 
 See `docs/design/proposals/tokenomics_harness_phase_plan_2026-07-30.md`
 §4 Phase 1 for the original read-side constraints.

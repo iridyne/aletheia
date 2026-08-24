@@ -2,7 +2,7 @@
 every mutable-facing tokenomics data source.
 
 Existing coverage:
-    - pricing-set / tool-pricing-set (write, via test_economic_cli)
+    - public-catalog pricing sync / tool-pricing-set
     - budget-set / -list / -disable / -enable (via test_economics_budgets)
     - costs / viability (compute, via test_economic_cli)
 
@@ -25,7 +25,7 @@ from typer.testing import CliRunner
 from aletheia.economics.budgets import add_budget, remove_budget
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.tracing import (
-    add_pricing_snapshot,
+    add_catalog_pricing_snapshot,
     add_tool_cost_profile,
     list_pricing_snapshots,
     list_tool_cost_profiles,
@@ -72,15 +72,17 @@ def test_list_pricing_snapshots_empty():
 
 
 def test_list_pricing_snapshots_returns_seeded_rows():
-    add_pricing_snapshot(
+    add_catalog_pricing_snapshot(
         provider="p1", model="m1",
         input_usd_per_million=1.0, output_usd_per_million=2.0,
-        effective_from="2020-01-01T00:00:00+00:00", source="test",
+        effective_from="2020-01-01T00:00:00+00:00",
+        source="litellm_public_median:test", version="catalog-model-family-test",
     )
-    add_pricing_snapshot(
+    add_catalog_pricing_snapshot(
         provider="p2", model="m2",
         input_usd_per_million=3.0, output_usd_per_million=4.0,
-        effective_from="2020-01-01T00:00:00+00:00", source="test",
+        effective_from="2020-01-01T00:00:00+00:00",
+        source="litellm_public_median:test", version="catalog-model-family-test",
     )
 
     all_rows = list_pricing_snapshots()
@@ -200,7 +202,19 @@ def test_get_viability_report_returns_row_or_none():
     assert get_viability_report("nope") is None
 
 
-# ── CLI: pricing-list ────────────────────────────────────────────────────────
+# ── CLI: catalog pricing is read-only ────────────────────────────────────────
+
+
+def test_cli_has_no_manual_model_pricing_writer():
+    result = runner.invoke(
+        app,
+        [
+            "audit", "pricing-set", "--provider", "p", "--model", "m",
+            "--input", "1", "--output", "2",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "No such command" in result.output
 
 
 def test_cli_pricing_list_empty():
@@ -210,15 +224,17 @@ def test_cli_pricing_list_empty():
 
 
 def test_cli_pricing_list_json_and_filter():
-    add_pricing_snapshot(
+    add_catalog_pricing_snapshot(
         provider="anthropic_native", model="claude-x",
         input_usd_per_million=3.0, output_usd_per_million=15.0,
-        effective_from="2020-01-01T00:00:00+00:00", source="test",
+        effective_from="2020-01-01T00:00:00+00:00",
+        source="litellm_public_median:test", version="catalog-model-family-test",
     )
-    add_pricing_snapshot(
+    add_catalog_pricing_snapshot(
         provider="openai_native", model="gpt-5",
         input_usd_per_million=1.0, output_usd_per_million=4.0,
-        effective_from="2020-01-01T00:00:00+00:00", source="test",
+        effective_from="2020-01-01T00:00:00+00:00",
+        source="litellm_public_median:test", version="catalog-model-family-test",
     )
 
     text_all = runner.invoke(app, ["audit", "pricing-list"])

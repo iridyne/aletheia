@@ -132,35 +132,6 @@ def data(
         typer.echo(f"  Settled: {total_outcomes}  |  Win rate: {win_rate}%  |  Avg return: {round(avg_ret, 4) if avg_ret else 'n/a'}%  |  Status: {status}")
 
 
-@audit_app.command("pricing-set")
-def pricing_set(
-    provider: str = typer.Option(..., "--provider", help="Exact runtime provider name, e.g. openai_native."),
-    model: str = typer.Option(..., "--model", help="Exact model identifier returned by the provider."),
-    input_usd_per_million: float = typer.Option(..., "--input", min=0, help="USD per million input tokens."),
-    output_usd_per_million: float = typer.Option(..., "--output", min=0, help="USD per million output tokens."),
-    reasoning_usd_per_million: Optional[float] = typer.Option(None, "--reasoning", min=0, help="Optional separate reasoning-token rate."),
-    cached_input_usd_per_million: Optional[float] = typer.Option(None, "--cached-input", min=0, help="Optional cached-input rate."),
-    effective_from: Optional[str] = typer.Option(None, "--effective-from", help="ISO timestamp; defaults to now."),
-    source: str = typer.Option("manual", "--source", help="Price source/audit note."),
-    version: str = typer.Option("v1", "--version", help="Immutable price-contract version."),
-):
-    """Add an explicit immutable model-price snapshot; no internet price is guessed."""
-    from aletheia.economics.tracing import add_pricing_snapshot
-
-    row = add_pricing_snapshot(
-        provider=provider,
-        model=model,
-        input_usd_per_million=input_usd_per_million,
-        output_usd_per_million=output_usd_per_million,
-        reasoning_usd_per_million=reasoning_usd_per_million,
-        cached_input_usd_per_million=cached_input_usd_per_million,
-        effective_from=effective_from,
-        source=source,
-        version=version,
-    )
-    typer.echo(json.dumps(row, ensure_ascii=False, indent=2))
-
-
 @audit_app.command("tool-pricing-set")
 def tool_pricing_set(
     tool_name: str = typer.Option(..., "--tool", help="Exact tool name from agent_tool_calls."),

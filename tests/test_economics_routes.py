@@ -20,7 +20,7 @@ pytestmark = pytest.mark.domain_runtime
 
 from aletheia.economics.budgets import add_budget
 from aletheia.economics.schema import ensure_economics_schema
-from aletheia.economics.tracing import add_pricing_snapshot, add_tool_cost_profile
+from aletheia.economics.tracing import add_catalog_pricing_snapshot, add_tool_cost_profile
 from aletheia.model_provider.fallback import reset_model_health
 from aletheia.server.app import app
 from aletheia.storage.migrations import run_migrations
@@ -202,13 +202,13 @@ async def test_usage_insights_projects_latest_litellm_price_without_rewriting_ev
         model="llama-4-maverick",
         usage_json='{"normalized":{"input_tokens":1000000,"output_tokens":1000000}}',
     )
-    add_pricing_snapshot(
+    add_catalog_pricing_snapshot(
         provider="openai_compatible",
         model="llama-4-maverick",
         input_usd_per_million=0.2,
         output_usd_per_million=0.6,
         source="litellm_public_median:test",
-        version="test",
+        version="catalog-model-family-test",
     )
     add_budget(scope="system", subject=None, usd_cap=10, window="daily")
 
@@ -1221,13 +1221,14 @@ async def test_budgets_would_block_scope_filter(client):
 
 @pytest.mark.anyio
 async def test_pricing_returns_seeded_snapshots(client):
-    add_pricing_snapshot(
+    add_catalog_pricing_snapshot(
         provider="test",
         model="model-a",
         input_usd_per_million=1.0,
         output_usd_per_million=2.0,
         effective_from="2020-01-01T00:00:00+00:00",
-        source="test",
+        source="litellm_public_median:test",
+        version="catalog-model-family-test",
     )
     add_tool_cost_profile(
         tool_name="test_tool",

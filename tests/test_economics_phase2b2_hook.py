@@ -22,7 +22,7 @@ import pytest
 
 from aletheia.economics.budgets import add_budget
 from aletheia.economics.schema import ensure_economics_schema
-from aletheia.economics.tracing import add_pricing_snapshot
+from aletheia.economics.tracing import add_catalog_pricing_snapshot
 from aletheia.model_provider.base import (
     ModelProvider,
     ModelRequest,
@@ -54,13 +54,14 @@ class _FakeProvider(ModelProvider):
 
 def _seed_pricing() -> None:
     """Pricing so the hook can estimate cost."""
-    add_pricing_snapshot(
+    add_catalog_pricing_snapshot(
         provider="phase2b2_fake",
         model="fake-model",
         input_usd_per_million=100.0,
         output_usd_per_million=100.0,
         effective_from="2020-01-01T00:00:00+00:00",
-        source="test",
+        source="litellm_public_median:test",
+        version="catalog-model-family-test",
     )
 
 

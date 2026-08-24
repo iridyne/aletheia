@@ -17,7 +17,7 @@ import httpx
 
 from aletheia.config.loader import get_data_dir
 from aletheia.economics.schema import ensure_economics_schema
-from aletheia.economics.tracing import add_pricing_snapshot
+from aletheia.economics.tracing import add_catalog_pricing_snapshot
 
 
 LITELLM_PRICE_MAP_URL = (
@@ -209,17 +209,14 @@ def _runtime_models() -> list[tuple[str, str]]:
     ]
 
 
-def _may_write_automatic_snapshot(provider: str, model: str, version: str) -> bool:
+def _may_write_catalog_snapshot(provider: str, model: str, version: str) -> bool:
     db = ensure_economics_schema()
     row = db.execute(
-        "SELECT source,version FROM pricing_snapshots WHERE provider=? AND model=? "
+        "SELECT version FROM pricing_snapshots WHERE provider=? AND model=? "
         "ORDER BY datetime(effective_from) DESC,rowid DESC LIMIT 1",
         (provider, model),
     ).fetchone()
-    if row is None:
-        return True
-    source, current_version = str(row[0] or ""), str(row[1] or "")
-    return source.startswith(_SOURCE_PREFIX) and current_version != version
+    return row is None or str(row[0] or "") != version
 
 
 def refresh_pricing(
@@ -251,9 +248,9 @@ def refresh_pricing(
             continue
         matched += 1
         samples[f"{provider}/{model}"] = rates
-        if not _may_write_automatic_snapshot(provider, model, version):
+        if not _may_write_catalog_snapshot(provider, model, version):
             continue
-        add_pricing_snapshot(
+        add_catalog_pricing_snapshot(
             provider=provider,
             model=model,
             input_usd_per_million=float(rates["input_usd_per_million"]),
