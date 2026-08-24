@@ -18,15 +18,18 @@ from aletheia.analytics.factor_feedback import lookup_factor_signal
 from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_canonical
-from aletheia.knowledge.guards import GuardEvaluation, evaluate_guards
+from aletheia.knowledge.guards import (
+    ActiveGuardLoadError,
+    GuardEvaluation,
+    evaluate_guards,
+    load_trading_guards,
+)
 from aletheia.regime.detector import MarketRegime, get_current_regime
 from aletheia.storage.repositories import (
     get_universe_member,
     list_all_open_positions,
     list_open_trade_opportunities,
 )
-from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation, ActiveGuardLoadError
-from aletheia.regime.detector import get_current_regime, MarketRegime
 from aletheia.trading.instruments import tradable_symbols_from_config
 
 # Position C (2026-07-02): strategy rules-engine deleted. The ranker no longer
