@@ -24,13 +24,18 @@ The canonical support contracts are [`ACTIVE_RUNTIME_SCOPE.md`](docs/product/ACT
 ```bash
 git clone git@github.com:iridyne/aletheia.git
 cd aletheia
-uv run aletheia-install
+uv sync --locked
+cd frontend
+npm ci
+npm run build
+cd ..
+uv run aletheia install
 aletheia gateway start
 ```
 
 Open `http://127.0.0.1:8787`. Configure model providers, exchange credentials, runtime settings, and any explicit live authority from the dashboard Settings page.
 
-`aletheia-install` registers a small shim in uv's tool bin so `aletheia ...` can be used from any directory while still executing against this checkout's lockfile and environment. It is safe to rerun after moving the repository or changing shell setup.
+`aletheia install` registers a small shim in uv's tool bin so `aletheia ...` can be used from any directory while still executing against this checkout's lockfile and environment. It is safe to rerun after moving the repository or changing shell setup.
 
 Useful commands:
 

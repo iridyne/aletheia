@@ -21,6 +21,20 @@ def test_dashboard_build_artifacts_are_not_tracked():
     assert tracked == ""
 
 
+def test_readme_bootstraps_dashboard_before_starting_gateway():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    quickstart = readme.split("### Humans", 1)[1].split("### AI agents", 1)[0]
+    required_steps = [
+        "uv sync --locked",
+        "npm ci",
+        "npm run build",
+        "uv run aletheia install",
+        "aletheia gateway start",
+    ]
+    positions = [quickstart.index(step) for step in required_steps]
+    assert positions == sorted(positions)
+
+
 def test_worktree_dev_launcher_uses_vite_hmr_without_gateway_lifecycle():
     """Worktree UI development is isolated from the stable gateway on :8787."""
     script = Path("scripts/dev.ps1").read_text(encoding="utf-8")
