@@ -307,7 +307,8 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
     assert "github.event_name == 'repository_dispatch'" in job["if"]
     assert "github.event.sender.login == 'github-actions[bot]'" in job["if"]
     assert "inputs.operational_need == true" in job["if"]
-    assert "github.actor == github.repository_owner" in job["if"]
+    assert "github.event_name == 'workflow_dispatch'" in job["if"]
+    assert "github.actor == github.repository_owner" not in job["if"]
     assert job["runs-on"] == SELF_HOSTED
     assert job["timeout-minutes"] == "10"
     assert job["permissions"] == {
@@ -316,8 +317,15 @@ def test_release_please_is_metadata_only_and_operationally_gated() -> None:
         "issues": "write",
         "pull-requests": "write",
     }
-    assert len(job["steps"]) == 6
-    validate, refresh_validate, node, release, bind_intent, dispatch = job["steps"]
+    assert len(job["steps"]) == 7
+    admin, validate, refresh_validate, node, release, bind_intent, dispatch = job["steps"]
+    assert admin["if"] == "github.event_name == 'workflow_dispatch'"
+    assert admin["uses"] == GITHUB_SCRIPT_ACTION
+    assert admin["with"]["retries"] == "3"
+    admin_script = admin["with"]["script"]
+    assert "getCollaboratorPermissionLevel" in admin_script
+    assert "username: context.actor" in admin_script
+    assert "data.permission !== 'admin'" in admin_script
     assert "github.event.action == 'release_candidate_merged'" in validate["if"]
     assert validate["uses"] == GITHUB_SCRIPT_ACTION
     validate_script = validate["with"]["script"]
