@@ -242,20 +242,33 @@ def _token_mix(llm_rows: list[dict[str, Any]]) -> tuple[dict[str, Any], int]:
                 available[field] += 1
     total = len(llm_rows)
     field_coverage = {field: _pct(available[field], total) for field in fields}
-    status = _status(total, min(available.values(), default=0))
-    reason = None if status == "available" else "No normalized token usage is recorded in this window." if total == 0 or usable_rows == 0 else "Some displayed token fields are absent from one or more LLM events."
+    # Status reflects only the core fields (input + output); reasoning and cached
+    # are optional sub-fields that most models never report, so excluding them from
+    # the status denominator prevents a permanent spurious Partial badge.
+    core_min = min(available["input_tokens"], available["output_tokens"])
+    status = _status(total, core_min)
+    if status == "available":
+        reason = None
+    elif total == 0 or usable_rows == 0:
+        reason = "No normalized token usage is recorded in this window."
+    else:
+        reason = "Some displayed token fields are absent from one or more LLM events."
+    # total_tokens: sum whatever input+output rows we have; failed attempts
+    # legitimately carry no usage, so we do not require 100% row coverage.
+    has_input = available["input_tokens"] > 0
+    has_output = available["output_tokens"] > 0
+    total_tokens: float | None
+    if has_input and has_output:
+        total_tokens = _number(totals["input_tokens"] + totals["output_tokens"])
+    else:
+        total_tokens = None
     return (
         _section(
             status,
             reason,
-            input_tokens=_number(totals["input_tokens"]) if available["input_tokens"] else None,
-            output_tokens=_number(totals["output_tokens"]) if available["output_tokens"] else None,
-            total_tokens=(
-                _number(totals["input_tokens"] + totals["output_tokens"])
-                if available["input_tokens"] == total
-                and available["output_tokens"] == total
-                else None
-            ),
+            input_tokens=_number(totals["input_tokens"]) if has_input else None,
+            output_tokens=_number(totals["output_tokens"]) if has_output else None,
+            total_tokens=total_tokens,
             reasoning_tokens=_number(totals["reasoning_tokens"]) if available["reasoning_tokens"] else None,
             cached_tokens=_number(totals["cached_tokens"]) if available["cached_tokens"] else None,
             event_count=total or None,
@@ -588,6 +601,21 @@ def _budgets(db: sqlite3.Connection, tables: set[str], end: datetime) -> tuple[d
     return _section(status, reason, rows=rows), calculable, len(policies)
 
 
+def _session_has_cost_events(db: sqlite3.Connection, session_id: str) -> bool:
+    """Return True when at least one cost event was recorded for this session.
+
+    Used to promote legacy sessions (economics_tracing_enabled IS NULL) that
+    demonstrably produced cost events — the presence of rows is ground-truth
+    evidence that tracing was active during those intervals, regardless of
+    whether the column was written at session-start time.
+    """
+    row = db.execute(
+        "SELECT 1 FROM runtime_cost_events WHERE runtime_session_id=? LIMIT 1",
+        (session_id,),
+    ).fetchone()
+    return row is not None
+
+
 def _traced_intervals(db: sqlite3.Connection, tables: set[str], start: datetime, end: datetime) -> tuple[list[tuple[datetime, datetime]], dict[str, Any]]:
     if "runtime_sessions" not in tables:
         return [], {"status": "not_available", "reason": "The runtime-session ledger is not available.", "session_count": 0, "traced_session_count": 0, "legacy_or_untraced_session_count": 0}
@@ -605,13 +633,31 @@ def _traced_intervals(db: sqlite3.Connection, tables: set[str], start: datetime,
         ended_at = _iso(row.get("ended_at"))
         if ended_at is None:
             if row.get("session_id") != active_session_id:
-                legacy_or_untraced += 1
-                continue
-            ended_at = end
+                # Open sessions that are not the active one may be stale
+                # (crash, daemon restart). Only promote them if they have cost
+                # events — evidence that tracing genuinely ran in that interval.
+                if row.get("economics_tracing_enabled") == 1 or (
+                    row.get("economics_tracing_enabled") is None
+                    and _session_has_cost_events(db, str(row["session_id"]))
+                ):
+                    # Use now as a conservative upper bound for stale open sessions.
+                    ended_at = end
+                else:
+                    legacy_or_untraced += 1
+                    continue
+            else:
+                ended_at = end
         if started_at is None or ended_at <= start or started_at >= end:
             continue
         session_count += 1
-        if row.get("economics_tracing_enabled") == 1:
+        tracing_flag = row.get("economics_tracing_enabled")
+        if tracing_flag == 1:
+            # Explicitly opted in at session start.
+            intervals.append((max(started_at, start), min(ended_at, end)))
+            traced += 1
+        elif tracing_flag is None and _session_has_cost_events(db, str(row["session_id"])):
+            # Legacy session (column added after session was created) that
+            # provably produced cost events — treat as traced.
             intervals.append((max(started_at, start), min(ended_at, end)))
             traced += 1
         else:
@@ -662,7 +708,7 @@ def _trends(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[st
                 input_tokens += int(input_value)
                 output_tokens += int(output_value)
                 token_rows += 1
-        priced = sum(_cost_known(row) for row in entries)
+        priced = sum(_cost_priced(row) for row in entries)  # known + estimated
         total = len(entries)
         full = start <= day_start and end >= day_end
         traced_seconds = _covered_seconds(intervals, day_start, day_end)
@@ -680,23 +726,38 @@ def _trends(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[st
         days.append({"date": cursor.isoformat(), "event_count": total, "llm_event_count": len(llm_entries), "token_covered_event_count": token_rows, "input_tokens": input_tokens if token_rows else None, "output_tokens": output_tokens if token_rows else None, "total_tokens": input_tokens + output_tokens if token_rows else None, "known_cost_usd": _number(sum(_cost_value(row) for row in entries)), "estimated_cost_usd": _number(sum(_estimated_cost_value(row) for row in entries)), "unknown_event_count": total - sum(_cost_priced(row) for row in entries), "pricing_coverage_pct": _pct(sum(_cost_priced(row) for row in entries), total), "known_pricing_coverage_pct": _pct(sum(_cost_known(row) for row in entries), total), "full_window_day": full, "trace_coverage_pct": trace_coverage_pct, "zero_observation_status": zero_status, "zero_observation_reason": zero_reason, "anomaly_eligible": False, "cost_anomaly_z_score": None, "cost_anomaly": None})
         cursor += timedelta(days=1)
     full_days = [row for row in days if row["full_window_day"]]
-    baseline_days = [row for row in full_days if row["trace_coverage_pct"] == 100 and row["known_pricing_coverage_pct"] == 100]
+    # Baseline eligibility: full trace coverage + pricing coverage (known or
+    # estimated). Anomaly detection needs consistent pricing, not authoritative
+    # pricing source. 99.0% threshold tolerates one-off failed/retried events.
+    _PRICING_COVERAGE_THRESHOLD = 99.0
+    baseline_days = [
+        row for row in full_days
+        if row["trace_coverage_pct"] == 100
+        and (row["pricing_coverage_pct"] or 0) >= _PRICING_COVERAGE_THRESHOLD
+    ]
     baseline = None
     if len(baseline_days) >= _BASELINE_MIN_FULL_DAYS:
-        values = [float(row["known_cost_usd"]) for row in baseline_days]
+        # Use total cost (known + estimated) as the anomaly signal so that the
+        # baseline is consistent with how cost is surfaced to users.
+        values = [float(row["known_cost_usd"]) + float(row["estimated_cost_usd"]) for row in baseline_days]
         mean = sum(values) / len(values)
         variance = sum((value - mean) ** 2 for value in values) / len(values)
         deviation = math.sqrt(variance)
-        baseline = {"full_day_count": len(values), "mean_known_cost_usd": _number(mean), "stddev_known_cost_usd": _number(deviation), "anomaly_threshold_z": _ANOMALY_Z_THRESHOLD}
+        baseline = {"full_day_count": len(values), "mean_total_cost_usd": _number(mean), "stddev_total_cost_usd": _number(deviation), "anomaly_threshold_z": _ANOMALY_Z_THRESHOLD}
         if deviation > 0:
             for row in days:
-                if row["full_window_day"] and row["trace_coverage_pct"] == 100 and row["known_pricing_coverage_pct"] == 100:
-                    score = (float(row["known_cost_usd"]) - mean) / deviation
+                if (
+                    row["full_window_day"]
+                    and row["trace_coverage_pct"] == 100
+                    and (row["pricing_coverage_pct"] or 0) >= _PRICING_COVERAGE_THRESHOLD
+                ):
+                    day_cost = float(row["known_cost_usd"]) + float(row["estimated_cost_usd"])
+                    score = (day_cost - mean) / deviation
                     row["anomaly_eligible"] = True
                     row["cost_anomaly_z_score"] = round(score, 4)
                     row["cost_anomaly"] = abs(score) >= _ANOMALY_Z_THRESHOLD
     event_count = len(runtime_rows)
-    priced = sum(_cost_known(row) for row in runtime_rows)
+    priced = sum(_cost_priced(row) for row in runtime_rows)  # known + estimated
     full_coverage = len(baseline_days) == len(full_days) and bool(full_days)
     if full_coverage and (not event_count or priced == event_count):
         status = "available"

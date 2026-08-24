@@ -232,7 +232,9 @@ async def test_usage_insights_projects_latest_litellm_price_without_rewriting_ev
 
 
 @pytest.mark.anyio
-async def test_usage_insights_withholds_total_tokens_when_event_coverage_is_partial(client):
+async def test_usage_insights_total_tokens_sums_available_rows(client):
+    """total_tokens sums rows that have both input and output; a partial-coverage
+    row (failed attempt with no usage) must not suppress the total entirely."""
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -242,6 +244,30 @@ async def test_usage_insights_withholds_total_tokens_when_event_coverage_is_part
         cost=0.1,
         usage_json='{"normalized":{"input_tokens":10,"output_tokens":4}}',
     )
+    # Simulate a failed LLM attempt: no usage data at all.
+    _seed_llm_cost(
+        db,
+        event_id="failed-attempt",
+        cost=None,
+        usage_json='{}',
+    )
+
+    data = (await client.get("/api/economics/usage-insights?days=1&group=summary")).json()
+
+    assert data["token_mix"]["input_tokens"] == 10
+    assert data["token_mix"]["output_tokens"] == 4
+    # total_tokens is now present: failed attempt has no tokens, does not block the sum
+    assert data["token_mix"]["total_tokens"] == 14
+    # status is partial because one event has no usage
+    assert data["token_mix"]["status"] == "partial"
+
+
+@pytest.mark.anyio
+async def test_usage_insights_withholds_total_tokens_when_output_entirely_absent(client):
+    """total_tokens remains None only when NO event has output tokens at all."""
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
     _seed_llm_cost(
         db,
         event_id="input-only-usage",
@@ -251,8 +277,8 @@ async def test_usage_insights_withholds_total_tokens_when_event_coverage_is_part
 
     data = (await client.get("/api/economics/usage-insights?days=1&group=summary")).json()
 
-    assert data["token_mix"]["input_tokens"] == 15
-    assert data["token_mix"]["output_tokens"] == 4
+    assert data["token_mix"]["input_tokens"] == 5
+    assert data["token_mix"]["output_tokens"] is None
     assert data["token_mix"]["total_tokens"] is None
 
 
@@ -430,6 +456,60 @@ async def test_status_returns_kill_switch_state(client):
     data = resp.json()
     assert isinstance(data["tracing_enabled"], bool)
     assert isinstance(data["audit_enabled"], bool)
+
+
+@pytest.mark.anyio
+async def test_usage_insights_legacy_null_session_counts_as_traced_when_it_has_cost_events(client):
+    """A session created before migration v20 (economics_tracing_enabled IS NULL)
+    that produced cost events must be counted as a traced interval, not legacy/untraced."""
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    session_start = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    session_end = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    # NULL economics_tracing_enabled simulates a pre-v20 legacy session.
+    db.execute(
+        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
+        ("legacy-session", session_start, session_end, None),
+    )
+    _seed_llm_cost(
+        db,
+        event_id="legacy-cost-event",
+        cost=0.05,
+        started_at=session_start,
+        usage_json='{"normalized":{"input_tokens":100,"output_tokens":20}}',
+    )
+    # Attach the cost event to the legacy session via runtime_session_id.
+    db.execute(
+        "UPDATE runtime_cost_events SET runtime_session_id=? WHERE id=?",
+        ("legacy-session", "legacy-cost-event"),
+    )
+
+    data = (await client.get("/api/economics/usage-insights?days=1&group=operations")).json()
+
+    tc = data["trends"]["trace_coverage"]
+    assert tc["traced_session_count"] >= 1, "Legacy session with cost events must be counted as traced"
+    assert tc["legacy_or_untraced_session_count"] == 0, "Session with cost events must not be legacy/untraced"
+
+
+@pytest.mark.anyio
+async def test_usage_insights_legacy_null_session_without_cost_events_stays_untraced(client):
+    """A session with NULL economics_tracing_enabled and no cost events must
+    remain in legacy_or_untraced (we have no evidence tracing ran)."""
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    session_start = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    session_end = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    db.execute(
+        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
+        ("empty-legacy-session", session_start, session_end, None),
+    )
+
+    data = (await client.get("/api/economics/usage-insights?days=1&group=operations")).json()
+
+    tc = data["trends"]["trace_coverage"]
+    assert tc["legacy_or_untraced_session_count"] >= 1
 
 
 @pytest.mark.anyio
