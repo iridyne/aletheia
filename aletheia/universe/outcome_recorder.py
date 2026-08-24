@@ -1077,7 +1077,9 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
     for row in candidates:
         net = row["net_return_pct"]
         direction = row.get("direction") or "long"
-        raw_market_type = str(row.get("market_type") or "spot").lower()
+        raw_market_type = str(row.get("market_type") or "").lower()
+        if raw_market_type not in {"spot", "perp", "futures", "swap", "usdt_futures"}:
+            continue
         market_type = (
             "perp"
             if raw_market_type in {"perp", "futures", "swap", "usdt_futures"}
