@@ -243,8 +243,8 @@ uv run aletheia update --no-restart
 `--no-restart` is an emergency source-checkout control: it does not build or
 activate dashboard artifacts. Do not use it while adopting a change that removes
 tracked dashboard build output. Use the default update path instead. If the
-dashboard is already absent, run `cd frontend && npm run build && cd ..` before
-restarting the Gateway.
+dashboard is already absent, run
+`cd frontend && npm ci && npm run build && cd ..` before restarting the Gateway.
 
 The same bare command selects the safe path for the current runtime: source checkouts
 use the controlled Git deployment above, while packaged runtimes use the signed-release
