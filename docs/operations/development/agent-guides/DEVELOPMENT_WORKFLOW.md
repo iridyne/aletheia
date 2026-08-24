@@ -47,6 +47,26 @@ Before changing code:
 6. **Determine Verification**: executable tests, runtime observations, or
    economic evidence required to prove the change.
 
+## PR metadata preflight (Phase 1)
+
+Before the first CI-triggering PR create/update and before pushing an
+exact-head repair, prepare the intended PR body from
+[`.github/PULL_REQUEST_TEMPLATE.md`](../../../../.github/PULL_REQUEST_TEMPLATE.md)
+and run the repository-native deterministic preflight:
+
+```sh
+uv run --no-sync python scripts/ci_preflight.py --pr-body-file /path/to/pr-body.md
+```
+
+It validates the same Change Contract parser and changed-file exemption logic
+as GitHub CI, needs no fabricated GitHub event payload, performs no network I/O
+or Runtime startup, and prints bounded structured reason codes on failure.
+
+If only `SDD Depth` / `Contract Delta` metadata is invalid after a PR exists,
+fix the PR body on the **same head SHA**, rerun this command, and let `Verify
+Change Contract` re-run from the PR `edited` event. Never add a no-op,
+retrigger, or metadata-only source commit. The deep CI evidence for that head
+remains unchanged; the metadata check is a separate required status boundary.
 
 - Inspect first; add focused failure-path coverage for safety, lifecycle, audit,
   secrets, and trading changes; implement the smallest fix; broaden tests only

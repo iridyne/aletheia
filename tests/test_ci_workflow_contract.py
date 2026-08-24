@@ -8,6 +8,8 @@ import yaml
 
 WORKFLOW_DIR = Path(__file__).resolve().parents[1] / ".github" / "workflows"
 WORKFLOW_PATH = WORKFLOW_DIR / "ci.yml"
+CHANGE_CONTRACT_WORKFLOW_PATH = WORKFLOW_DIR / "ci-change-contract.yml"
+CODEX_SHEPHERD_WORKFLOW_PATH = WORKFLOW_DIR / "codex-shepherd.yml"
 AUTO_MERGE_WORKFLOW_PATH = WORKFLOW_DIR / "auto-merge.yml"
 DELETE_MERGED_WORKFLOW_PATH = WORKFLOW_DIR / "delete-merged-branch.yml"
 RELEASE_WORKFLOW_PATH = WORKFLOW_DIR / "release-please.yml"
@@ -21,6 +23,20 @@ SELF_HOSTED = ["self-hosted", "Linux", "X64", "ubuntu-24.04"]
 
 def _workflow() -> dict:
     return yaml.load(WORKFLOW_PATH.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+
+def _change_contract_workflow() -> dict:
+    return yaml.load(
+        CHANGE_CONTRACT_WORKFLOW_PATH.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+
+def _shepherd_workflow() -> dict:
+    return yaml.load(
+        CODEX_SHEPHERD_WORKFLOW_PATH.read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
 
 
 def _auto_merge_workflow() -> dict:
@@ -55,6 +71,7 @@ def _run_commands(job: dict) -> str:
 def test_only_expected_workflows_are_active() -> None:
     assert sorted(path.name for path in WORKFLOW_DIR.glob("*.yml")) == [
         "auto-merge.yml",
+        "ci-change-contract.yml",
         "ci.yml",
         "codex-shepherd.yml",
         "delete-merged-branch.yml",
@@ -240,14 +257,77 @@ def test_review_optional_surfaces_are_job_gated_before_runner_allocation() -> No
     assert "success|skipped" in aggregate
 
 
-def test_review_core_enforces_change_contract_structure() -> None:
-    """Every PR must include SDD Depth and Contract Delta in its description."""
-    review_core = _workflow()["jobs"]["review-core"]
-    commands = _run_commands(review_core)
+def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -> None:
+    """#2167 Phase 1/addendum A: metadata has its own same-head status boundary."""
+    gate = _change_contract_workflow()
+    triggers = gate["on"]
+    ci_triggers = _workflow()["on"]
+
+    assert triggers == {
+        "pull_request": {
+            "branches": ["master"],
+            "types": ["opened", "synchronize", "reopened", "edited"],
+        },
+    }
+    # Deep CI intentionally keeps the GitHub default code-changing PR events;
+    # it must not re-run/skipped-pass on a PR-body-only metadata edit.
+    assert ci_triggers["pull_request"] == {"branches": ["master"]}
+
+    assert gate["permissions"] == {"contents": "read"}
+    assert gate["concurrency"] == {
+        "group": "change-contract-${{ github.event.pull_request.number }}",
+        "cancel-in-progress": "true",
+    }
+    assert set(gate["jobs"]) == {"verify-change-contract"}
+    job = gate["jobs"]["verify-change-contract"]
+    assert job["name"] == "Verify Change Contract"
+    assert job["runs-on"] == SELF_HOSTED
+    assert job["timeout-minutes"] == "5"
+
+    checkout = job["steps"][0]
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert checkout["with"] == {"fetch-depth": "0"}
+    commands = _run_commands(job)
     assert "check_change_contract.py" in commands
-    # The check must run after check_docs.py and before secret scan
-    assert commands.index("check_change_contract.py") > commands.index("check_docs.py")
-    assert commands.index("check_change_contract.py") < commands.index("gitleaks")
+    assert "uv run --no-sync python scripts/check_change_contract.py" in commands
+    assert "uv sync" not in commands
+    assert "ci_failure_handoff.py" in commands
+    assert "preflight_metadata" in commands
+    assert "upload-artifact" not in CHANGE_CONTRACT_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    review_commands = _run_commands(_workflow()["jobs"]["review-core"])
+    assert "check_change_contract.py" not in review_commands
+    assert "ci-change-contract.yml" in WORKFLOW_PATH.read_text(encoding="utf-8")
+
+
+def test_shepherd_transports_versioned_failure_handoffs_without_holding_metadata_repairs() -> None:
+    shepherd = _shepherd_workflow()
+    assert shepherd["on"]["workflow_run"] == {
+        "workflows": ["Aletheia CI", "Aletheia Change Contract gate"],
+        "types": ["completed"],
+    }
+
+    script = shepherd["jobs"]["shepherd"]["steps"][0]["with"]["script"]
+    for token in (
+        "ci_failure_handoff.v1",
+        "preflight_metadata",
+        "runner_or_ci_infra",
+        "lint_static",
+        "test_contract_drift",
+        "product_regression",
+        "external_io_in_unit",
+        "metadata_edit_required",
+        "listJobsForWorkflowRun",
+        "do not create a no-op/retrigger commit",
+    ):
+        assert token in script
+
+    metadata_branch = script[
+        script.index("const metadataRun") : script.index("// The files endpoint")
+    ]
+    assert "holdForOwner" not in metadata_branch
+    assert "issues.addLabels" not in metadata_branch
+    assert "createComment" not in metadata_branch  # uses the existing postComment helper
 
 
 def test_operator_shell_regression_uses_explicit_cross_platform_test_files() -> None:

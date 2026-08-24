@@ -84,7 +84,28 @@ def check_pr_description(pr_body: str, changed_files: list[str]) -> list[str]:
 
     Returns a list of failure messages. Empty list means pass.
     """
-    failures: list[str] = []
+    return [failure["message"] for failure in structured_check_pr(pr_body, changed_files)]
+
+
+# Canonical structured reason-code messages for machine-readable preflight / handoff
+# use. This is the single mapping between a Change-Contract failure and its bounded
+# code/message pair.
+FAILURE_MESSAGES = {
+    "missing_sdd_depth": "Missing required section: ## SDD Depth",
+    "missing_contract_delta": "Missing required section: ## Contract Delta",
+    "invalid_sdd_depth_value": "## SDD Depth section must contain one of: {depths}",
+}
+
+
+def structured_check_pr(pr_body: str, changed_files: list[str]) -> list[dict[str, str]]:
+    """Check PR description for required Change Contract structure.
+
+    Returns a list of ``{"code": ..., "message": ...}`` failure objects. Empty
+    list means pass. This is the single source of Change-Contract semantics;
+    the local :mod:`scripts.ci_preflight` and the GitHub metadata gate both
+    consume it so they can never diverge from each other.
+    """
+    failures: list[dict[str, str]] = []
 
     # Exempt release-please PRs
     if "release-please" in pr_body.lower():
@@ -98,16 +119,23 @@ def check_pr_description(pr_body: str, changed_files: list[str]) -> list[str]:
     normalized_body = pr_body.lower()
     for header in REQUIRED_HEADERS:
         if header.lower() not in normalized_body:
-            failures.append(f"Missing required section: {header}")
+            code = (
+                "missing_sdd_depth" if header == "## SDD Depth"
+                else "missing_contract_delta"
+            )
+            failures.append({"code": code, "message": FAILURE_MESSAGES[code]})
 
     # Check SDD Depth value is present
     sdd_section = _extract_section(pr_body, "## SDD Depth")
     if sdd_section and not any(
         depth in sdd_section for depth in VALID_SDD_DEPTHS
     ):
-        failures.append(
-            f"## SDD Depth section must contain one of: {', '.join(VALID_SDD_DEPTHS)}"
-        )
+        failures.append({
+            "code": "invalid_sdd_depth_value",
+            "message": FAILURE_MESSAGES["invalid_sdd_depth_value"].format(
+                depths=", ".join(VALID_SDD_DEPTHS)
+            ),
+        })
 
     return failures
 
@@ -141,11 +169,11 @@ def main() -> int:
             )
             return 1
 
-    failures = check_pr_description(pr_body, changed_files)
+    failures = structured_check_pr(pr_body, changed_files)
     if failures:
         print("Change Contract check failed:", file=sys.stderr)
         for failure in failures:
-            print(f"  - {failure}", file=sys.stderr)
+            print(f"  - {failure['message']}", file=sys.stderr)
         print("\nEvery PR must include:", file=sys.stderr)
         print("  ## SDD Depth", file=sys.stderr)
         print("  (one of: D0, D1, D2)", file=sys.stderr)

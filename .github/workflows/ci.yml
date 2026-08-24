@@ -182,13 +182,12 @@ jobs:
       - name: Check documentation governance
         run: uv run python scripts/check_docs.py
 
-      - name: Verify Change Contract structure
-        env:
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_EVENT_PATH: ${{ github.event_path }}
-        run: uv run python scripts/check_change_contract.py
-
-
+      # NOTE: the Change Contract metadata check intentionally lives in the
+      # dedicated `.github/workflows/ci-change-contract.yml` gate (listens to
+      # `pull_request` `edited` too). It is NOT here: a metadata-only failure
+      # must not redden the required `Review checks` aggregate for the same
+      # head, which would force a no-op/retrigger commit instead of the
+      # supported same-head metadata recovery path (#2167 Phase 1 / addendum A).
       - name: Scan the pull-request commit range for leaked secrets
         shell: bash
         run: |
