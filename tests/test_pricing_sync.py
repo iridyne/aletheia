@@ -116,6 +116,9 @@ def test_refresh_uses_model_median_and_skips_current_catalog_version(monkeypatch
         "groq/meta-llama/llama-4-maverick": {
             "input_cost_per_token": 0.0000002,
             "output_cost_per_token": 0.0000006,
+            "search_context_cost_per_query": {
+                "search_context_size_medium": 0.01,
+            },
         },
         "lambda/llama-4-maverick": {
             "input_cost_per_token": 0.00000005,
@@ -124,6 +127,10 @@ def test_refresh_uses_model_median_and_skips_current_catalog_version(monkeypatch
         "together/llama-4-maverick": {
             "input_cost_per_token": 0.0000003,
             "output_cost_per_token": 0.0000009,
+            "search_context_cost_per_query": {
+                "search_context_size_low": 0.02,
+                "search_context_size_high": 0.04,
+            },
         },
     }
     written = []
@@ -156,5 +163,6 @@ def test_refresh_uses_model_median_and_skips_current_catalog_version(monkeypatch
     assert written[0]["provider"] == "openai_compatible"
     assert written[0]["input_usd_per_million"] == pytest.approx(0.2)
     assert written[0]["output_usd_per_million"] == pytest.approx(0.6)
+    assert written[0]["web_search_usd_per_request"] == pytest.approx(0.02)
     assert written[0]["source"].startswith("litellm_public_median:")
     assert written[0]["version"].startswith("catalog-model-family-v2:sha256:")

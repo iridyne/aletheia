@@ -132,27 +132,6 @@ def data(
         typer.echo(f"  Settled: {total_outcomes}  |  Win rate: {win_rate}%  |  Avg return: {round(avg_ret, 4) if avg_ret else 'n/a'}%  |  Status: {status}")
 
 
-@audit_app.command("tool-pricing-set")
-def tool_pricing_set(
-    tool_name: str = typer.Option(..., "--tool", help="Exact tool name from agent_tool_calls."),
-    usd_per_call: float = typer.Option(..., "--per-call", min=0, help="USD charged for one call; use 0 for explicitly free local tools."),
-    effective_from: Optional[str] = typer.Option(None, "--effective-from", help="ISO timestamp; defaults to now."),
-    source: str = typer.Option("manual", "--source", help="Price source/audit note."),
-    version: str = typer.Option("v1", "--version", help="Immutable tool-cost contract version."),
-):
-    """Add an immutable per-call Tool/API cost profile."""
-    from aletheia.economics.tracing import add_tool_cost_profile
-
-    row = add_tool_cost_profile(
-        tool_name=tool_name,
-        usd_per_call=usd_per_call,
-        effective_from=effective_from,
-        source=source,
-        version=version,
-    )
-    typer.echo(json.dumps(row, ensure_ascii=False, indent=2))
-
-
 @audit_app.command("pricing-list")
 def pricing_list(
     provider: Optional[str] = typer.Option(None, "--provider", help="Filter by exact provider name."),
@@ -179,34 +158,6 @@ def pricing_list(
             f"{str(row['effective_from'])[:26]:<26} "
             f"{_display_decimal(row['input_usd_per_million'], 4):>10} "
             f"{_display_decimal(row['output_usd_per_million'], 4):>10} "
-            f"{str(row['source'])[:12]:<12}"
-        )
-
-
-@audit_app.command("tool-pricing-list")
-def tool_pricing_list(
-    tool_name: Optional[str] = typer.Option(None, "--tool", help="Filter by exact tool name."),
-    limit: int = typer.Option(50, "--limit", min=1, max=5_000),
-    output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
-):
-    """List currently persisted per-call tool cost profiles (immutable table)."""
-    from aletheia.economics.tracing import list_tool_cost_profiles
-
-    rows = list_tool_cost_profiles(tool_name=tool_name, limit=limit)
-    if output_json:
-        typer.echo(json.dumps(rows, ensure_ascii=False, indent=2))
-        return
-    if not rows:
-        typer.echo("No tool cost profiles recorded.")
-        return
-    header = f"{'TOOL':<32} {'EFFECTIVE_FROM':<26} {'$/CALL':>12} {'SOURCE':<12}"
-    typer.echo(header)
-    typer.echo("-" * len(header))
-    for row in rows:
-        typer.echo(
-            f"{str(row['tool_name'])[:32]:<32} "
-            f"{str(row['effective_from'])[:26]:<26} "
-            f"{_display_decimal(row['usd_per_call'], 6):>12} "
             f"{str(row['source'])[:12]:<12}"
         )
 

@@ -83,6 +83,7 @@ def add_catalog_pricing_snapshot(
     output_usd_per_million: float,
     reasoning_usd_per_million: float | None = None,
     cached_input_usd_per_million: float | None = None,
+    web_search_usd_per_request: float | None = None,
     effective_from: str | None = None,
     source: str,
     version: str,
@@ -105,6 +106,7 @@ def add_catalog_pricing_snapshot(
         "output_usd_per_million": output_usd_per_million,
         "reasoning_usd_per_million": reasoning_usd_per_million,
         "cached_input_usd_per_million": cached_input_usd_per_million,
+        "web_search_usd_per_request": web_search_usd_per_request,
     }
     parsed_rates = {name: _float(value) for name, value in rates.items()}
     for name, value in parsed_rates.items():
@@ -130,6 +132,7 @@ def add_catalog_pricing_snapshot(
         "output_usd_per_million": parsed_rates["output_usd_per_million"],
         "reasoning_usd_per_million": parsed_rates["reasoning_usd_per_million"],
         "cached_input_usd_per_million": parsed_rates["cached_input_usd_per_million"],
+        "web_search_usd_per_request": parsed_rates["web_search_usd_per_request"],
         "currency": "USD",
         "source": source,
         "version": version,
@@ -140,8 +143,9 @@ def add_catalog_pricing_snapshot(
         """INSERT OR IGNORE INTO pricing_snapshots (
             id, provider, model, effective_from, input_usd_per_million,
             output_usd_per_million, reasoning_usd_per_million,
-            cached_input_usd_per_million, currency, source, version, created_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            cached_input_usd_per_million, web_search_usd_per_request,
+            currency, source, version, created_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         tuple(row.values()),
     )
     stored = db.execute(
@@ -193,91 +197,6 @@ def resolve_pricing_snapshot(
     return dict(row) if row else None
 
 
-def add_tool_cost_profile(
-    *,
-    tool_name: str,
-    usd_per_call: float,
-    effective_from: str | None = None,
-    source: str = "manual",
-    version: str = "v1",
-) -> dict[str, Any]:
-    """Persist an explicit immutable per-call Tool/API cost contract."""
-    tool_name = tool_name.strip()
-    parsed_cost = _float(usd_per_call)
-    if not tool_name:
-        raise ValueError("tool_name is required")
-    if parsed_cost is None or parsed_cost < 0:
-        raise ValueError("usd_per_call must be a finite non-negative number")
-    created_at = _utcnow()
-    effective = _normalize_iso(effective_from)
-    identity = _json(
-        {
-            "tool_name": tool_name,
-            "effective_from": effective,
-            "version": version,
-        }
-    )
-    profile_id = "toolprice_" + hashlib.sha256(identity.encode()).hexdigest()[:16]
-    row = {
-        "id": profile_id,
-        "tool_name": tool_name,
-        "effective_from": effective,
-        "usd_per_call": parsed_cost,
-        "currency": "USD",
-        "source": source,
-        "version": version,
-        "created_at": created_at,
-    }
-    db = ensure_economics_schema()
-    db.execute(
-        """INSERT OR IGNORE INTO tool_cost_profiles (
-            id,tool_name,effective_from,usd_per_call,currency,source,version,created_at
-        ) VALUES (?,?,?,?,?,?,?,?)""",
-        tuple(row.values()),
-    )
-    stored = db.execute(
-        "SELECT * FROM tool_cost_profiles WHERE id=?", (profile_id,)
-    ).fetchone()
-    return dict(stored) if stored else row
-
-
-def list_tool_cost_profiles(
-    *,
-    tool_name: str | None = None,
-    limit: int = 200,
-) -> list[dict[str, Any]]:
-    """List currently persisted tool cost profiles for CLI/UI inspection.
-
-    Read-only. Immutable table by contract.
-    """
-    db = ensure_economics_schema()
-    where: list[str] = []
-    params: list[Any] = []
-    if tool_name:
-        where.append("tool_name=?")
-        params.append(tool_name)
-    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-    rows = db.execute(
-        f"SELECT * FROM tool_cost_profiles {where_sql} "
-        f"ORDER BY tool_name, replace(effective_from,' ','T') DESC, created_at DESC "
-        f"LIMIT ?",
-        (*params, _bounded_limit(limit)),
-    ).fetchall()
-    return [dict(row) for row in rows]
-
-
-def resolve_tool_cost_profile(tool_name: str, at: str) -> dict[str, Any] | None:
-    db = ensure_economics_schema()
-    row = db.execute(
-        """SELECT * FROM tool_cost_profiles
-           WHERE tool_name=?
-             AND replace(effective_from,' ','T') <= replace(?,' ','T')
-           ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1""",
-        (tool_name, at),
-    ).fetchone()
-    return dict(row) if row else None
-
-
 def observe_token_integrity(usage: dict[str, int | None]) -> list[dict[str, str]]:
     """Return non-blocking integrity observations without estimating tokens."""
     findings: list[dict[str, str]] = []
@@ -315,6 +234,8 @@ def normalize_usage(raw_usage: Any) -> dict[str, int | None]:
         or usage.get("output_tokens_details")
         or {}
     )
+    server_tool_use = usage.get("server_tool_use") or {}
+    server_side_tools = usage.get("server_side_tool_usage_details") or {}
 
     def token(*keys: str) -> int | None:
         for key in keys:
@@ -344,6 +265,11 @@ def normalize_usage(raw_usage: Any) -> dict[str, int | None]:
     cached_from_details = detail(
         prompt_details, "cached_tokens", "cached_input_tokens"
     )
+    web_search_requests = detail(prompt_details, "web_search_requests")
+    if web_search_requests is None:
+        web_search_requests = detail(server_tool_use, "web_search_requests")
+    if web_search_requests is None:
+        web_search_requests = detail(server_side_tools, "web_search_calls")
     return {
         "input_tokens": token("prompt_tokens", "input_tokens"),
         "output_tokens": token("completion_tokens", "output_tokens"),
@@ -365,6 +291,7 @@ def normalize_usage(raw_usage: Any) -> dict[str, int | None]:
         ),
         "provider_cache_read_input_tokens": token("cache_read_input_tokens"),
         "provider_cache_creation_input_tokens": token("cache_creation_input_tokens"),
+        "web_search_requests": web_search_requests,
     }
 
 
@@ -379,6 +306,7 @@ def estimate_llm_cost(
     cached_tokens = usage.get("cached_input_tokens") or 0
     provider_cache_read = usage.get("provider_cache_read_input_tokens") or 0
     provider_cache_creation = usage.get("provider_cache_creation_input_tokens") or 0
+    web_search_requests = usage.get("web_search_requests") or 0
     if provider_cache_read or provider_cache_creation:
         return (
             None,
@@ -398,12 +326,15 @@ def estimate_llm_cost(
     output_rate = _float(pricing.get("output_usd_per_million"))
     reasoning_rate = _float(pricing.get("reasoning_usd_per_million"))
     cached_rate = _float(pricing.get("cached_input_usd_per_million"))
+    web_search_rate = _float(pricing.get("web_search_usd_per_request"))
     if input_rate is None or output_rate is None:
         return None, "unknown", {"reason": "required_pricing_rate_missing"}
     if cached_tokens and cached_rate is None:
         return None, "unknown", {"reason": "cached_input_pricing_missing"}
     if reasoning_tokens > output_tokens:
         return None, "unknown", {"reason": "reasoning_tokens_exceed_output_tokens"}
+    if web_search_requests and web_search_rate is None:
+        return None, "unknown", {"reason": "web_search_pricing_missing"}
 
     ordinary_input = input_tokens - cached_tokens
     ordinary_output = (
@@ -416,6 +347,7 @@ def estimate_llm_cost(
     cost += ordinary_output * output_rate / 1_000_000
     if reasoning_rate is not None:
         cost += reasoning_tokens * reasoning_rate / 1_000_000
+    cost += web_search_requests * (web_search_rate or 0.0)
     return (
         round(cost, 12),
         "estimated",
@@ -423,6 +355,8 @@ def estimate_llm_cost(
             "ordinary_input_tokens": ordinary_input,
             "ordinary_output_tokens": ordinary_output,
             "reasoning_priced_separately": reasoning_rate is not None,
+            "web_search_requests": web_search_requests,
+            "web_search_cost_usd": web_search_requests * (web_search_rate or 0.0),
         },
     )
 
@@ -520,78 +454,6 @@ def record_llm_attempt(
                 estimated_cost_usd,currency,cost_status,error_type,metadata_json,created_at
             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             row,
-        )
-        return event_id
-    except Exception:
-        return None
-
-
-def record_tool_event(
-    *,
-    run_id: str | None,
-    tool_name: str,
-    status: str,
-    started_at: str | None = None,
-    finished_at: str | None = None,
-    latency_ms: float | None = None,
-    external_cost_usd: float | None = None,
-    cost_status: str | None = None,
-    attempt_index: int = 0,
-    metadata: dict[str, Any] | None = None,
-) -> str | None:
-    if not tracing_enabled() or not run_id:
-        return None
-    try:
-        start = started_at or finished_at or _utcnow()
-        end = finished_at or start
-        profile = None
-        if external_cost_usd is None:
-            profile = resolve_tool_cost_profile(tool_name, start)
-            cost = _float(profile.get("usd_per_call")) if profile else None
-            resolved_status = "estimated" if profile and cost is not None else "unknown"
-        else:
-            cost = _float(external_cost_usd)
-            if cost is None or cost < 0:
-                raise ValueError("external_cost_usd must be finite and non-negative")
-            resolved_status = (
-                cost_status if cost_status in {"known", "estimated"} else "known"
-            )
-        call_id = (
-            "tool_"
-            + hashlib.sha256(
-                f"{run_id}:{tool_name}:{attempt_index}:{start}".encode()
-            ).hexdigest()[:16]
-        )
-        provenance = _current_provenance()
-        event_id = "cost_" + uuid4().hex[:16]
-        db = ensure_economics_schema()
-        db.execute(
-            """INSERT OR IGNORE INTO runtime_cost_events (
-                id,event_type,run_id,runtime_session_id,call_id,provider,model_or_tool,
-                attempt_index,status,started_at,finished_at,latency_ms,usage_json,
-                cost_profile_id,estimated_cost_usd,currency,cost_status,metadata_json,created_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                event_id,
-                "tool",
-                run_id,
-                provenance.get("runtime_session_id"),
-                call_id,
-                "tool",
-                tool_name,
-                int(attempt_index),
-                status,
-                start,
-                end,
-                latency_ms,
-                "{}",
-                profile.get("id") if profile else None,
-                cost,
-                "USD",
-                resolved_status,
-                _json(metadata or {}),
-                _utcnow(),
-            ),
         )
         return event_id
     except Exception:
@@ -1101,12 +963,12 @@ def list_cost_breakdown_by_tool(
     Tool rows are mirrored into ``runtime_cost_events`` from ``agent_tool_calls``
     by the ``trg_agent_tool_call_cost_event`` trigger: ``provider`` is always
     ``"tool"`` and the tool name lives in ``model_or_tool``. ``status`` is
-    ``recorded`` (permitted) or ``denied``. The trigger never writes a latency
-    or usage blob, so this rollup carries no latency/token fields — those would
-    be invented zeros.
+    ``recorded`` (permitted) or ``denied``. Duration is copied when measured;
+    token usage is never invented.
 
-    Costs come from ``tool_cost_profiles`` via ``cost_profile_id``; rows without
-    a profile stay ``unknown`` and are counted, never dropped.
+    Aletheia-local tools carry zero external marginal cost. Provider-native
+    built-in tool charges are priced on the corresponding LLM event from
+    LiteLLM catalog rates and measured usage counters, preventing double count.
     """
     db = ensure_economics_schema()
     if not tracing_enabled():
@@ -1155,11 +1017,10 @@ def list_cost_breakdown_by_tool(
             bucket["denied_count"] += 1
         else:
             bucket["recorded_count"] += 1
-        expense = row.get("estimated_cost_usd")
-        if expense is None or row.get("cost_status") == "unknown":
-            bucket["unknown_count"] += 1
-        else:
-            bucket["known_cost_usd"] += float(expense)
+        # Historical local-tool rows may carry retired manual profiles. The
+        # read model ignores them: local wrappers are zero external cost and
+        # provider-native tool charges live on catalog-priced LLM events.
+        bucket["known_cost_usd"] += 0.0
 
     for bucket in tools.values():
         bucket["known_cost_usd"] = round(bucket["known_cost_usd"], 12)

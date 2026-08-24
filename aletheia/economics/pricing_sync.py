@@ -195,6 +195,20 @@ def _representative_rates(
         ]
         if values:
             result[target_key] = median(values) * 1_000_000
+    search_rates: list[float] = []
+    for _, _, entry in paired:
+        tiers = entry.get("search_context_cost_per_query")
+        if not isinstance(tiers, dict):
+            continue
+        rate = _rate(tiers.get("search_context_size_medium"))
+        if rate is None:
+            available = [_rate(value) for value in tiers.values()]
+            usable = [value for value in available if value is not None]
+            rate = median(usable) if usable else None
+        if rate is not None:
+            search_rates.append(rate)
+    if search_rates:
+        result["web_search_usd_per_request"] = median(search_rates)
     return result
 
 
@@ -263,6 +277,11 @@ def refresh_pricing(
             cached_input_usd_per_million=(
                 float(rates["cached_input_usd_per_million"])
                 if "cached_input_usd_per_million" in rates
+                else None
+            ),
+            web_search_usd_per_request=(
+                float(rates["web_search_usd_per_request"])
+                if "web_search_usd_per_request" in rates
                 else None
             ),
             effective_from=effective_from,

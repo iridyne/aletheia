@@ -198,6 +198,14 @@ def _project_latest_litellm_estimates(
         snapshots.setdefault((str(snapshot["provider"]), str(snapshot["model"])), snapshot)
 
     for row in runtime_rows:
+        if row.get("event_type") == "tool":
+            # agent_tool_calls are local orchestration operations. Provider-native
+            # tool charges (for example web search) are priced on the LLM event
+            # from catalog usage counters, so any legacy/manual local-tool price
+            # is ignored in this projection to prevent double counting.
+            row["estimated_cost_usd"] = 0.0
+            row["cost_status"] = "estimated"
+            continue
         if row.get("event_type") != "llm" or _cost_priced(row):
             continue
         pricing = snapshots.get((str(row.get("provider") or ""), str(row.get("model_or_tool") or "")))
@@ -364,29 +372,7 @@ def _attribution(db: sqlite3.Connection, llm_rows: list[dict[str, Any]], tables:
     return _section(status, reason, rows=rows), attributable
 
 
-def _tool_profiles(db: sqlite3.Connection, tables: set[str], as_of: str) -> dict[str, list[dict[str, Any]]]:
-    if "tool_cost_profiles" not in tables:
-        return {}
-    profiles = _query_rows(
-        db,
-        "SELECT tool_name,effective_from,usd_per_call FROM tool_cost_profiles WHERE replace(effective_from,' ','T') <= replace(?,' ','T') ORDER BY tool_name,replace(effective_from,' ','T')",
-        (as_of,),
-    )
-    result: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for profile in profiles:
-        result[str(profile["tool_name"])].append(profile)
-    return result
-
-
-def _effective_tool_price(profiles: dict[str, list[dict[str, Any]]], tool_name: str, at: str) -> float | None:
-    candidate = None
-    for profile in profiles.get(tool_name, []):
-        if str(profile.get("effective_from") or "") <= at:
-            candidate = profile
-    return _number(candidate.get("usd_per_call")) if candidate is not None else None
-
-
-def _tools(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[str, Any]], window: tuple[str, str], as_of: str) -> tuple[dict[str, Any], int, int]:
+def _tools(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[str, Any]], window: tuple[str, str]) -> tuple[dict[str, Any], int, int]:
     if "agent_tool_calls" not in tables:
         return _section("not_available", "The agent tool-call ledger is not available.", rows=[], timing_coverage_pct=None, pricing_coverage_pct=None), 0, 0
     columns = _columns(db, "agent_tool_calls")
@@ -397,7 +383,6 @@ def _tools(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[str
         window,
     )
     runtime_by_call = {str(row.get("call_id")): row for row in runtime_rows if row.get("event_type") == "tool" and row.get("call_id")}
-    profiles = _tool_profiles(db, tables, as_of)
     buckets: dict[tuple[str, str], dict[str, Any]] = {}
     priced_calls = timed_calls = 0
     for call in calls:
@@ -407,16 +392,13 @@ def _tools(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[str
         bucket["event_count"] += 1
         bucket["permitted_count" if call.get("permitted") else "denied_count"] += 1
         event = runtime_by_call.get("tool_" + str(call["id"]))
-        if event is not None and _cost_known(event):
-            price = _cost_value(event)
-        elif call.get("permitted"):
-            price = _effective_tool_price(profiles, name, str(call.get("created_at") or ""))
-        else:
-            price = 0.0
-        if price is not None:
-            priced_calls += 1
-            bucket["priced_event_count"] += 1
-            bucket["known_cost_usd"] += price
+        # Local orchestration tools have zero external marginal cost. Any
+        # provider-native built-in tool charge is included on its LLM event from
+        # LiteLLM catalog usage counters, never duplicated here.
+        price = _number(event.get("estimated_cost_usd")) if event and _cost_priced(event) else 0.0
+        priced_calls += 1
+        bucket["priced_event_count"] += 1
+        bucket["known_cost_usd"] += price
         duration_ms = call.get("duration_ms")
         if isinstance(duration_ms, (int, float)) and duration_ms >= 0:
             timed_calls += 1
@@ -439,8 +421,8 @@ def _tools(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[str
     total = len(calls)
     if not total:
         return _section("not_available", "No tool calls are recorded in this window.", rows=[], timing_coverage_pct=None, pricing_coverage_pct=None), 0, 0
-    status = "available" if priced_calls == total and timed_calls == total else "partial"
-    reason = None if status == "available" else "The nullable duration field is absent or incomplete." if "duration_ms" not in columns or timed_calls < total else "Some tool calls have no effective price record."
+    status = "available" if timed_calls == total else "partial"
+    reason = None if status == "available" else "The nullable duration field is absent or incomplete."
     return _section(status, reason, rows=rows, timing_coverage_pct=_pct(timed_calls, total), pricing_coverage_pct=_pct(priced_calls, total)), priced_calls, timed_calls
 
 
@@ -943,7 +925,7 @@ def build_usage_insights(
                 ])
             if group in (None, "operations"):
                 attribution, attributable_events = _attribution(db, llm_rows, tables)
-                tools, priced_tools, timed_tools = _tools(db, tables, runtime_rows, window, end.isoformat())
+                tools, priced_tools, timed_tools = _tools(db, tables, runtime_rows, window)
                 budgets, calculable_budgets, total_budgets = _budgets(db, tables, end)
                 trends, trace_covered_trend_days, full_trend_days = _trends(db, tables, runtime_rows, start, end)
                 result.update(attribution=attribution, tools=tools, budgets=budgets, trends=trends)

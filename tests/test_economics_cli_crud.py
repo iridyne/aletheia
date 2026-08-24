@@ -2,12 +2,12 @@
 every mutable-facing tokenomics data source.
 
 Existing coverage:
-    - public-catalog pricing sync / tool-pricing-set
+    - public-catalog pricing sync (model and provider-native tool rates)
     - budget-set / -list / -disable / -enable (via test_economics_budgets)
     - costs / viability (compute, via test_economic_cli)
 
 This file locks the missing reads + delete:
-    - pricing-list, tool-pricing-list  (R for immutable pricing tables)
+    - pricing-list                     (R for immutable catalog snapshots)
     - budget-remove                    (D for mutable policy table)
     - viability-list, viability-show   (R for persisted reports)
 
@@ -26,9 +26,7 @@ from aletheia.economics.budgets import add_budget, remove_budget
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.tracing import (
     add_catalog_pricing_snapshot,
-    add_tool_cost_profile,
     list_pricing_snapshots,
-    list_tool_cost_profiles,
 )
 from aletheia.economics.viability import (
     get_viability_report,
@@ -75,6 +73,7 @@ def test_list_pricing_snapshots_returns_seeded_rows():
     add_catalog_pricing_snapshot(
         provider="p1", model="m1",
         input_usd_per_million=1.0, output_usd_per_million=2.0,
+        web_search_usd_per_request=0.01,
         effective_from="2020-01-01T00:00:00+00:00",
         source="litellm_public_median:test", version="catalog-model-family-test",
     )
@@ -90,33 +89,10 @@ def test_list_pricing_snapshots_returns_seeded_rows():
 
     only_p1 = list_pricing_snapshots(provider="p1")
     assert len(only_p1) == 1 and only_p1[0]["provider"] == "p1"
+    assert only_p1[0]["web_search_usd_per_request"] == 0.01
 
     only_m2 = list_pricing_snapshots(model="m2")
     assert len(only_m2) == 1 and only_m2[0]["model"] == "m2"
-
-
-# ── list_tool_cost_profiles helper ───────────────────────────────────────────
-
-
-def test_list_tool_cost_profiles_empty():
-    ensure_economics_schema()
-    assert list_tool_cost_profiles() == []
-
-
-def test_list_tool_cost_profiles_returns_seeded_rows():
-    add_tool_cost_profile(
-        tool_name="tool_a", usd_per_call=0.001,
-        effective_from="2020-01-01T00:00:00+00:00", source="test",
-    )
-    add_tool_cost_profile(
-        tool_name="tool_b", usd_per_call=0.002,
-        effective_from="2020-01-01T00:00:00+00:00", source="test",
-    )
-
-    assert len(list_tool_cost_profiles()) == 2
-
-    filtered = list_tool_cost_profiles(tool_name="tool_b")
-    assert len(filtered) == 1 and filtered[0]["tool_name"] == "tool_b"
 
 
 # ── remove_budget helper ─────────────────────────────────────────────────────
@@ -250,26 +226,9 @@ def test_cli_pricing_list_json_and_filter():
     assert len(rows) == 1 and rows[0]["provider"] == "openai_native"
 
 
-# ── CLI: tool-pricing-list ───────────────────────────────────────────────────
-
-
-def test_cli_tool_pricing_list_empty():
-    result = runner.invoke(app, ["audit", "tool-pricing-list"])
-    assert result.exit_code == 0
-    assert "No tool cost profiles recorded" in result.output
-
-
-def test_cli_tool_pricing_list_seeded():
-    add_tool_cost_profile(
-        tool_name="brave_search", usd_per_call=0.005,
-        effective_from="2020-01-01T00:00:00+00:00", source="test",
-    )
-    result = runner.invoke(app, ["audit", "tool-pricing-list", "--json"])
-    assert result.exit_code == 0
-    rows = json.loads(result.output)
-    assert len(rows) == 1
-    assert rows[0]["tool_name"] == "brave_search"
-    assert rows[0]["usd_per_call"] == pytest.approx(0.005)
+def test_cli_has_no_manual_tool_pricing_writer_or_profile_list():
+    assert runner.invoke(app, ["audit", "tool-pricing-set"]).exit_code != 0
+    assert runner.invoke(app, ["audit", "tool-pricing-list"]).exit_code != 0
 
 
 # ── CLI: budget-remove ───────────────────────────────────────────────────────

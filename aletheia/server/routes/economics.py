@@ -2,9 +2,9 @@
 
 Mirrors the `aletheia audit` CLI so operators can see LLM spend, broker
 headroom, and per-model cooldown state from the dashboard instead of
-dropping to a shell. Model pricing has no manual writer: the sole pricing
-mutation starts a bounded refresh from LiteLLM's public GitHub catalog and
-persists explicitly estimated snapshots.
+dropping to a shell. Model and provider-native tool pricing have no manual
+writer: the sole pricing mutation starts a bounded refresh from LiteLLM's
+public GitHub catalog and persists explicitly estimated snapshots.
 
 See `docs/design/proposals/tokenomics_harness_phase_plan_2026-07-30.md`
 §4 Phase 1 for the original read-side constraints.
@@ -137,9 +137,9 @@ def costs_by_tool(
     """Per-tool call rollup for the Usage dashboard.
 
     Mirrors ``/costs/by-provider`` for ``event_type='tool'`` rows (the
-    ``agent_tool_calls`` mirror): call counts split by recorded/denied plus
-    known cost from ``tool_cost_profiles``. Tool rows carry no token usage or
-    latency, so this rollup deliberately omits those fields.
+    ``agent_tool_calls`` mirror): call counts split by recorded/denied. Local
+    orchestration calls have zero external marginal cost; provider-native tool
+    charges are included in their LLM event from LiteLLM catalog usage fields.
     """
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
@@ -271,7 +271,7 @@ def context_artifacts(
 
 @router.get("/pricing")
 def pricing() -> dict:
-    """List currently effective pricing snapshots and tool cost profiles."""
+    """List catalog-derived model and provider-native tool pricing."""
     db = ensure_economics_schema()
     models = [
         dict(row)
@@ -280,14 +280,9 @@ def pricing() -> dict:
             "ORDER BY effective_from DESC, created_at DESC LIMIT 200"
         ).fetchall()
     ]
-    tools = [
-        dict(row)
-        for row in db.execute(
-            "SELECT * FROM tool_cost_profiles "
-            "ORDER BY effective_from DESC, created_at DESC LIMIT 200"
-        ).fetchall()
-    ]
-    return {"models": models, "tools": tools}
+    # Compatibility key: provider-native tool rates are columns on each model
+    # snapshot; local agent tools are zero external cost and need no profiles.
+    return {"models": models, "tools": []}
 
 
 @router.get("/pricing/refresh-status")

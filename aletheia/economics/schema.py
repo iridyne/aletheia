@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS pricing_snapshots (
     output_usd_per_million REAL NOT NULL CHECK(output_usd_per_million >= 0),
     reasoning_usd_per_million REAL,
     cached_input_usd_per_million REAL,
+    web_search_usd_per_request REAL,
     currency TEXT NOT NULL DEFAULT 'USD',
     source TEXT NOT NULL,
     version TEXT NOT NULL,
@@ -254,33 +255,16 @@ SELECT
     NULL,
     '{}',
     NULL,
-    CASE WHEN calls.permitted=0 THEN NULL ELSE (
-        SELECT id FROM tool_cost_profiles
-        WHERE tool_name=calls.tool_name
-          AND replace(effective_from,' ','T') <= replace(calls.created_at,' ','T')
-        ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1
-    ) END,
-    CASE WHEN calls.permitted=0 THEN 0.0 ELSE (
-        SELECT usd_per_call FROM tool_cost_profiles
-        WHERE tool_name=calls.tool_name
-          AND replace(effective_from,' ','T') <= replace(calls.created_at,' ','T')
-        ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1
-    ) END,
+    NULL,
+    0.0,
     'USD',
-    CASE
-        WHEN calls.permitted=0 THEN 'known'
-        WHEN EXISTS (
-            SELECT 1 FROM tool_cost_profiles
-            WHERE tool_name=calls.tool_name
-              AND replace(effective_from,' ','T') <= replace(calls.created_at,' ','T')
-        ) THEN 'estimated'
-        ELSE 'unknown'
-    END,
+    CASE WHEN calls.permitted=0 THEN 'known' ELSE 'estimated' END,
     NULL,
     json_object(
         'tool_class',calls.tool_class,
         'permitted',calls.permitted,
         'inference_call_id',calls.inference_call_id,
+        'cost_source','catalog_model_tool_cost_v1',
         'legacy_backfill',1
     ),
     calls.created_at
@@ -336,32 +320,15 @@ def _install_tool_trigger(db: sqlite3.Connection) -> None:
                 NEW.created_at,
                 NEW.duration_ms,
                 '{}',
-                CASE WHEN NEW.permitted=0 THEN NULL ELSE (
-                    SELECT id FROM tool_cost_profiles
-                    WHERE tool_name=NEW.tool_name
-                      AND replace(effective_from,' ','T') <= replace(NEW.created_at,' ','T')
-                    ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1
-                ) END,
-                CASE WHEN NEW.permitted=0 THEN 0.0 ELSE (
-                    SELECT usd_per_call FROM tool_cost_profiles
-                    WHERE tool_name=NEW.tool_name
-                      AND replace(effective_from,' ','T') <= replace(NEW.created_at,' ','T')
-                    ORDER BY replace(effective_from,' ','T') DESC,rowid DESC LIMIT 1
-                ) END,
+                NULL,
+                0.0,
                 'USD',
-                CASE
-                    WHEN NEW.permitted=0 THEN 'known'
-                    WHEN EXISTS (
-                        SELECT 1 FROM tool_cost_profiles
-                        WHERE tool_name=NEW.tool_name
-                          AND replace(effective_from,' ','T') <= replace(NEW.created_at,' ','T')
-                    ) THEN 'estimated'
-                    ELSE 'unknown'
-                END,
+                CASE WHEN NEW.permitted=0 THEN 'known' ELSE 'estimated' END,
                 json_object(
                     'tool_class',NEW.tool_class,
                     'permitted',NEW.permitted,
                     'inference_call_id',NEW.inference_call_id,
+                    'cost_source','catalog_model_tool_cost_v1',
                     'legacy_backfill',0
                 ),
                 NEW.created_at
@@ -416,6 +383,7 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
     trigger_sql = str(trigger_row[0] or "") if trigger_row else ""
     trigger_ready = bool(
         "inference_call_id" in trigger_sql
+        and "catalog_model_tool_cost_v1" in trigger_sql
         and (not tool_duration_ready or "NEW.duration_ms" in trigger_sql)
     )
 
@@ -425,6 +393,18 @@ def ensure_economics_schema(db: sqlite3.Connection | None = None) -> sqlite3.Con
                 "economics schema initialization refused inside an active transaction"
             )
         db.executescript(ECONOMICS_DDL)
+
+    pricing_columns = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(pricing_snapshots)")
+    }
+    if "web_search_usd_per_request" not in pricing_columns:
+        if db.in_transaction:
+            raise RuntimeError(
+                "economics pricing schema upgrade refused inside an active transaction"
+            )
+        db.execute(
+            "ALTER TABLE pricing_snapshots ADD COLUMN web_search_usd_per_request REAL"
+        )
 
     context_columns = {
         str(row[1]) for row in db.execute("PRAGMA table_info(llm_context_artifacts)")

@@ -20,7 +20,7 @@ pytestmark = pytest.mark.domain_runtime
 
 from aletheia.economics.budgets import add_budget
 from aletheia.economics.schema import ensure_economics_schema
-from aletheia.economics.tracing import add_catalog_pricing_snapshot, add_tool_cost_profile
+from aletheia.economics.tracing import add_catalog_pricing_snapshot
 from aletheia.model_provider.fallback import reset_model_health
 from aletheia.server.app import app
 from aletheia.storage.migrations import run_migrations
@@ -147,7 +147,7 @@ async def test_usage_insights_is_exact_aggregate_only_and_windowed(client):
         "budgets", "trends", "research_yield",
     ]
     assert data["pricing"]["known_cost_usd"] == pytest.approx(2.01)
-    assert data["pricing"]["estimated_cost_usd"] == pytest.approx(0.02)
+    assert data["pricing"]["estimated_cost_usd"] == 0
     assert data["pricing"]["unknown_event_count"] == 1
     assert data["attribution"]["status"] == "partial"
     assert any(row["axis"] == "agent_run" for row in data["attribution"]["rows"])
@@ -285,7 +285,6 @@ async def test_usage_insights_withholds_total_tokens_when_output_entirely_absent
 @pytest.mark.anyio
 async def test_usage_insights_projects_typed_and_timed_facts_without_content(client):
     from aletheia.economics.budgets import add_budget
-    from aletheia.economics.tracing import add_tool_cost_profile
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -331,10 +330,6 @@ async def test_usage_insights_projects_typed_and_timed_facts_without_content(cli
             "context", "tools", "c", 0.0, 100, 1, "success", 1, 1, 2, 1, 1,
             "provider-b", "model-b", now, now, "{}", now,
         ),
-    )
-    add_tool_cost_profile(
-        tool_name="timed_tool", usd_per_call=0.03,
-        effective_from="2020-01-01T00:00:00+00:00", source="test",
     )
     db.execute(
         """INSERT INTO agent_tool_calls (
@@ -407,7 +402,8 @@ async def test_usage_insights_projects_typed_and_timed_facts_without_content(cli
     assert tool["tool_name"] == "timed_tool"
     assert tool["timing_coverage_pct"] == 100
     assert tool["p50_duration_ms"] == 125
-    assert tool["known_cost_usd"] == pytest.approx(0.03)
+    assert tool["priced_event_count"] == 1
+    assert tool["known_cost_usd"] == 0
     assert data["reliability"]["logical"]["retry_count"] == 1
     assert data["reliability"]["physical"]["fallback_call_count"] == 1
     assert data["reliability"]["physical"]["error_categories"] == [{"error_type": "timeout", "event_count": 1}]
@@ -824,15 +820,15 @@ async def test_costs_by_tool_rolls_up_recorded_denied_and_cost(client):
     assert build["event_count"] == 4
     assert build["recorded_count"] == 3
     assert build["denied_count"] == 1
-    assert build["known_cost_usd"] == pytest.approx(0.002 + 0.003 + 0.001)
-    assert build["unknown_count"] == 1
+    assert build["known_cost_usd"] == 0
+    assert build["unknown_count"] == 0
 
     create = data["tools"]["create_opportunity"]
     assert create["event_count"] == 2
     assert create["recorded_count"] == 2
     assert create["denied_count"] == 0
-    assert create["known_cost_usd"] == pytest.approx(0.01)
-    assert create["unknown_count"] == 1
+    assert create["known_cost_usd"] == 0
+    assert create["unknown_count"] == 0
 
 
 @pytest.mark.anyio
@@ -1230,18 +1226,11 @@ async def test_pricing_returns_seeded_snapshots(client):
         source="litellm_public_median:test",
         version="catalog-model-family-test",
     )
-    add_tool_cost_profile(
-        tool_name="test_tool",
-        usd_per_call=0.001,
-        effective_from="2020-01-01T00:00:00+00:00",
-        source="test",
-    )
-
     resp = await client.get("/api/economics/pricing")
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["models"]) == 1
     assert data["models"][0]["provider"] == "test"
     assert data["models"][0]["model"] == "model-a"
-    assert len(data["tools"]) == 1
-    assert data["tools"][0]["tool_name"] == "test_tool"
+    assert data["tools"] == []
+    assert data["models"][0]["web_search_usd_per_request"] is None

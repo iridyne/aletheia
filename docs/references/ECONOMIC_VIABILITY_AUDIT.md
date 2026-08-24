@@ -68,17 +68,12 @@ Persisted catalog snapshots are inspectable with:
 uv run aletheia audit pricing-list --json
 ```
 
-Tool/API pricing is a separate boundary because the model catalog does not
-contain internal tool costs. Tool/API profile:
-
-```bash
-uv run aletheia audit tool-pricing-set \
-  --tool <exact-tool-name> \
-  --per-call <usd-per-call> \
-  --source <invoice-or-allocation-reference>
-```
-
-Use `--per-call 0` only when zero cost is an explicit fact.
+Provider-native built-in tool charges are also read from the same public catalog
+when both a catalog rate and a measured usage counter exist. Web-search request
+counts are currently supported. Missing counters or rates remain Unknown.
+Aletheia-local orchestration tools have zero external marginal cost; their
+underlying LLM calls are priced separately, preventing double counting. There is
+no manual tool-price writer.
 
 ## System Viability contract
 
