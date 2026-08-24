@@ -123,7 +123,7 @@ def _is_managed_venv() -> bool:
     """True when running inside the project-managed venv (not a foreign Python)."""
     venv = _PROJECT_ROOT / ".venv"
     try:
-        return Path(sys.executable).resolve().is_relative_to(venv.resolve())
+        return Path(sys.prefix).resolve() == venv.resolve()
     except Exception:
         return False
 
