@@ -60,6 +60,23 @@ def test_changed_files_vs_base_uses_merge_base_not_current_base_tip(monkeypatch)
     ]
 
 
+def test_default_base_ignores_feature_branch_upstream(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **kwargs: object) -> SimpleNamespace:
+        calls.append(args)
+        if args == ["git", "merge-base", "HEAD", "origin/master"]:
+            return SimpleNamespace(stdout="base-123\n")
+        if args == ["git", "diff", "--name-only", "base-123...HEAD", "--"]:
+            return SimpleNamespace(stdout="docs/ci/guide.md\n")
+        raise AssertionError(f"unexpected git invocation: {args}")
+
+    monkeypatch.setattr(preflight.subprocess, "run", fake_run)
+
+    assert preflight.changed_files_vs_base() == ["docs/ci/guide.md"]
+    assert all("@{upstream}" not in call for call in calls)
+
+
 def test_main_reports_bounded_json_and_nonzero_for_invalid_metadata(tmp_path, capsys) -> None:
     body_path = tmp_path / "pr.md"
     body_path.write_text("## Contract Delta\n\nNONE\n", encoding="utf-8")

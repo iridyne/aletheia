@@ -29,6 +29,9 @@ jobs:
   # invalid first submission from allocating Review/Unit/Stage 2 runners.
   change-contract-preflight:
     name: Change Contract preflight for deep CI
+    permissions:
+      contents: read
+      pull-requests: read
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 5
     steps:
@@ -42,10 +45,29 @@ jobs:
           version: "0.12.0"
           python-version: "3.12"
           enable-cache: false
+      - name: Read current exact-head PR body
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
+        with:
+          script: |
+            const fs = require('fs');
+            const {data: pullRequest} = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            if (pullRequest.head.sha !== context.payload.pull_request.head.sha) {
+              throw new Error('pull-request head changed before metadata verification');
+            }
+            fs.writeFileSync(
+              `${process.env.RUNNER_TEMP}/current-pr-body.md`,
+              pullRequest.body || '',
+              'utf8',
+            );
       - name: Verify Change Contract before deep CI (no dependency sync)
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_EVENT_PATH: ${{ github.event_path }}
+          CHANGE_CONTRACT_PR_BODY_FILE: ${{ github.event_name == 'pull_request' && format('{0}/current-pr-body.md', runner.temp) || '' }}
         run: uv run --no-sync python scripts/check_change_contract.py
 
   review-core:

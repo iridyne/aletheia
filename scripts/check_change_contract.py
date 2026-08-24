@@ -154,7 +154,16 @@ def main() -> int:
         return 1
 
     payload = json.loads(Path(event_path).read_text(encoding="utf-8"))
-    pr_body = payload.get("pull_request", {}).get("body", "") or ""
+    body_file = os.getenv("CHANGE_CONTRACT_PR_BODY_FILE", "")
+    try:
+        pr_body = (
+            Path(body_file).read_text(encoding="utf-8")
+            if body_file
+            else payload.get("pull_request", {}).get("body", "") or ""
+        )
+    except OSError as exc:
+        print(f"Unable to read current pull-request body: {exc}", file=sys.stderr)
+        return 1
 
     # Release automation is exempt by identity and does not need a diff read.
     if "release-please" in pr_body.lower():

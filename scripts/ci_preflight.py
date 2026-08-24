@@ -50,9 +50,12 @@ def changed_files_vs_base(base_ref: str | None = None) -> list[str]:
     Prefers the merge-base with the given base so a long-lived branch compares
     against the point it actually diverged from, mirroring the synthetic
     merge-base semantics used by the GitHub gate (``HEAD^1``). If ``base_ref``
-    is omitted, use ``@{upstream}`` and fall back to ``origin/master``.
+    is omitted, use the repository's ``origin/master`` and then local ``master``.
+    A feature branch's upstream is its remote tracking branch, not its PR base;
+    comparing against it after the first push would incorrectly produce an empty
+    changed-file set and diverge from GitHub's exemption decision.
     """
-    refs = [base_ref] if base_ref else ["@{upstream}", "origin/master"]
+    refs = [base_ref] if base_ref else ["origin/master", "master"]
     last_error: Exception | None = None
     for ref in refs:
         try:
