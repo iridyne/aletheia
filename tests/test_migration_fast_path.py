@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 39)
+        f"aletheia-sqlite-v{version}" for version in range(2, 40)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v38"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v39"
     connection.close()
 
 
@@ -438,6 +438,30 @@ def test_agent_usage_storage_v20_is_additive_and_keeps_legacy_null():
     }
     assert artifact_columns["created_at"][3] == 1
     assert "datetime('now')" in str(artifact_columns["created_at"][4])
+    connection.close()
+
+
+def test_agent_artifact_reference_v39_marks_existing_links_as_legacy():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        """
+        CREATE TABLE agent_run_artifacts (
+            run_id TEXT NOT NULL,
+            artifact_type TEXT NOT NULL,
+            artifact_id TEXT NOT NULL
+        );
+        INSERT INTO agent_run_artifacts VALUES ('run-1', 'pi_decision', 'pending-1');
+        """
+    )
+
+    migrations._apply_agent_artifact_reference_v39(connection)
+    migrations._apply_agent_artifact_reference_v39(connection)
+
+    assert connection.execute(
+        "SELECT reference_version FROM agent_run_artifacts"
+    ).fetchone()[0] == "v1"
     connection.close()
 
 
@@ -648,6 +672,13 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE orders (id TEXT PRIMARY KEY);
         CREATE TABLE shadow_trades (id TEXT PRIMARY KEY);
         CREATE TABLE agent_runs (id TEXT PRIMARY KEY);
+        CREATE TABLE agent_run_artifacts (
+            run_id TEXT NOT NULL,
+            artifact_type TEXT NOT NULL,
+            artifact_id TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (run_id, artifact_type, artifact_id)
+        );
         CREATE TABLE agent_tool_calls (id TEXT PRIMARY KEY);
         CREATE TABLE agent_shell_commands (id TEXT PRIMARY KEY);
         CREATE TABLE runtime_sessions (session_id TEXT PRIMARY KEY);
@@ -664,6 +695,11 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     migrations._apply_universe_twin_shadow_evidence_v8(connection)
     migrations._apply_position_protection_state_v9(connection)
     connection.executescript(migrations._MIGRATION_LEDGER_DDL)
+    pending_v24_index = next(
+        index
+        for index, step in enumerate(migrations._MIGRATIONS)
+        if step.migration_id == "20260811_0023_learning_hypothesis_identity_v24"
+    )
     connection.executemany(
         "INSERT INTO aletheia_schema_migrations "
         "(migration_id, checksum, schema_version, applied_at, duration_ms) "
@@ -676,8 +712,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
             # (Observation Lab frozen units), v34 (EX-04 live authorization
             # ref), v35 (momentum-short exhaustion shadow), v36 (options
             # market structure), v37 (gamma-flip reset), and v38 (pending-close
-            # reasoning handoff).
-            for step in migrations._MIGRATIONS[:-15]
+            # reasoning handoff), and v39 (durable artifact reference version).
+            for step in migrations._MIGRATIONS[:pending_v24_index]
         ],
     )
     connection.commit()
@@ -695,8 +731,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260823_0037_pending_close_reasoning_v38",
-        "aletheia-sqlite-v38",
+        "20260824_0038_agent_artifact_reference_v39",
+        "aletheia-sqlite-v39",
     )
     order_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(orders)")

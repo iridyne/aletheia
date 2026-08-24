@@ -434,14 +434,68 @@ def insert_agent_run_artifacts(artifacts: list[AgentRunArtifact]) -> None:
     """Persist current-run artifact references without rewriting legacy outputs."""
     if not artifacts:
         return
+    rows = [
+        (
+            artifact.run_id,
+            artifact.artifact_type,
+            _durable_agent_artifact_id(artifact.artifact_type, artifact.artifact_id),
+        )
+        for artifact in artifacts
+    ]
     execute_many_write(
         "INSERT OR IGNORE INTO agent_run_artifacts "
-        "(run_id, artifact_type, artifact_id) VALUES (?, ?, ?)",
-        [
-            (artifact.run_id, artifact.artifact_type, artifact.artifact_id)
-            for artifact in artifacts
-        ],
+        "(run_id, artifact_type, artifact_id, reference_version) VALUES (?, ?, ?, 'v2')",
+        rows,
     )
+
+
+def _durable_agent_artifact_id(artifact_type: str, artifact_id: str) -> str:
+    """Promote a late-written pending PI artifact to its one durable final row."""
+    if artifact_type != "pi_decision":
+        return artifact_id
+    rows = get_db().execute(
+        "SELECT final.id FROM pi_decisions pending "
+        "JOIN pi_decisions final ON final.opportunity_id=pending.opportunity_id "
+        " AND COALESCE(final.signal_source, 'market_observer')="
+        "     COALESCE(pending.signal_source, 'market_observer') "
+        " AND final.action IN ('trade','scale_in','flip','skip','watch') "
+        " AND (julianday(final.created_at)>julianday(pending.created_at) "
+        "      OR (julianday(final.created_at)=julianday(pending.created_at) "
+        "          AND final.rowid>pending.rowid)) "
+        "WHERE pending.id=? AND pending.action='signal_pending' "
+        "AND NOT EXISTS ("
+        " SELECT 1 FROM pi_decisions newer_pending "
+        " WHERE newer_pending.opportunity_id=pending.opportunity_id "
+        " AND COALESCE(newer_pending.signal_source, 'market_observer')="
+        "     COALESCE(pending.signal_source, 'market_observer') "
+        " AND newer_pending.action='signal_pending' "
+        " AND (julianday(newer_pending.created_at)>julianday(pending.created_at) "
+        "      OR (julianday(newer_pending.created_at)=julianday(pending.created_at) "
+        "          AND newer_pending.rowid>pending.rowid)) "
+        " AND (julianday(newer_pending.created_at)<julianday(final.created_at) "
+        "      OR (julianday(newer_pending.created_at)=julianday(final.created_at) "
+        "          AND newer_pending.rowid<final.rowid))"
+        ") ORDER BY julianday(final.created_at), final.rowid LIMIT 2",
+        (artifact_id,),
+    ).fetchall()
+    return str(rows[0][0]) if len(rows) == 1 else artifact_id
+
+
+def rebind_agent_run_pi_decision_artifacts(pending_id: str, final_id: str) -> int:
+    """Atomically replace transient PI carrier links with their final decision."""
+    if not pending_id or not final_id or pending_id == final_id:
+        return 0
+    execute_write(
+        "INSERT OR IGNORE INTO agent_run_artifacts "
+        "(run_id, artifact_type, artifact_id, created_at, reference_version) "
+        "SELECT run_id, artifact_type, ?, created_at, reference_version "
+        "FROM agent_run_artifacts WHERE artifact_type='pi_decision' AND artifact_id=?",
+        (final_id, pending_id),
+    )
+    return execute_write(
+        "DELETE FROM agent_run_artifacts WHERE artifact_type='pi_decision' AND artifact_id=?",
+        (pending_id,),
+    ).rowcount
 
 
 def update_agent_run(run_id: str, **kwargs) -> None:
@@ -6486,6 +6540,11 @@ def prune_pi_decisions(days: int = 7) -> int:
             f"WHERE {exact_final} "
             "AND f.proposal_status IS NOT NULL "
             "AND f.proposal_status!='submitting'"
+            ") "
+            "AND NOT EXISTS ("
+            " SELECT 1 FROM agent_run_artifacts artifact "
+            " WHERE artifact.artifact_type='pi_decision' "
+            " AND artifact.artifact_id=pi_decisions.id"
             ")"
         ),
         extra_params=(*_PENDING_FINAL_ACTIONS, *_PENDING_FINAL_ACTIONS),
@@ -6516,6 +6575,11 @@ def prune_signal_pending_stale(minutes: int = 30) -> int:
         "     COALESCE(pi_decisions.signal_source, 'market_observer') "
         " AND final.action!='signal_pending' "
         " AND final.proposal_status='submitting'"
+        ") "
+        "AND NOT EXISTS ("
+        " SELECT 1 FROM agent_run_artifacts artifact "
+        " WHERE artifact.artifact_type='pi_decision' "
+        " AND artifact.artifact_id=pi_decisions.id"
         ")",
         (f"-{minutes}",),
     )

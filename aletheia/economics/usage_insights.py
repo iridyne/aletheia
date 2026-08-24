@@ -58,6 +58,13 @@ def _status(denominator: int, numerator: int) -> str:
     return "available" if numerator == denominator else "partial"
 
 
+def _lineage_status(referenced: int, covered: int, legacy_retired: int = 0) -> str:
+    active_references = referenced - legacy_retired
+    if active_references == 0:
+        return "not_observed"
+    return "available" if covered == active_references else "partial"
+
+
 def _section(status: str, reason: str | None, **fields: Any) -> dict[str, Any]:
     return {"status": status, "reason": reason, **fields}
 
@@ -549,7 +556,7 @@ def _budgets(db: sqlite3.Connection, tables: set[str], end: datetime) -> tuple[d
         return _section("not_available", "The economics budget ledger is not available.", rows=[]), 0, 0
     policies = _query_rows(db, "SELECT id,scope,subject,usd_cap,window,enabled FROM economics_budgets ORDER BY id", ())
     if not policies:
-        return _section("not_available", "No budget policies are declared.", rows=[]), 0, 0
+        return _section("not_configured", "No budget policies are declared.", rows=[]), 0, 0
     weekly_start = end - timedelta(days=7)
     events = _runtime_rows(db, (weekly_start.isoformat(), end.isoformat()))
     _project_latest_litellm_estimates(db, events)
@@ -760,18 +767,36 @@ def _trends(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[st
 
 def _lineage_row(db: sqlite3.Connection, artifact_type: str, table: str, stage: str, tables: set[str], window: tuple[str, str], target_key: str = "id") -> dict[str, Any]:
     if table not in tables:
-        return {"stage": stage, "artifact_type": artifact_type, "status": "not_available", "reason": f"The {table} table is not available.", "referenced_count": 0, "factual_record_count": None, "missing_record_count": None}
+        return {"stage": stage, "artifact_type": artifact_type, "status": "not_available", "reason": f"The {table} table is not available.", "referenced_count": 0, "factual_record_count": None, "covered_reference_count": None, "legacy_retired_reference_count": None, "missing_record_count": None}
+    artifact_columns = _columns(db, "agent_run_artifacts")
+    legacy_retired = (
+        f"SUM(CASE WHEN artifact.reference_version='v1' AND target.{target_key} IS NULL "
+        "THEN 1 ELSE 0 END) AS legacy_retired_reference_count"
+        if artifact_type == "pi_decision" and "reference_version" in artifact_columns
+        else "0 AS legacy_retired_reference_count"
+    )
     row = db.execute(
-        f"SELECT COUNT(*) AS referenced_count, COUNT(target.{target_key}) AS factual_record_count "
+        f"SELECT COUNT(*) AS referenced_count, COUNT(target.{target_key}) AS factual_record_count, {legacy_retired} "
         "FROM agent_run_artifacts artifact JOIN agent_runs run ON run.id=artifact.run_id "
         f"LEFT JOIN {table} target ON target.{target_key}=artifact.artifact_id "
         "WHERE artifact.artifact_type=? AND " + _window_sql("run.started_at"),
         (artifact_type, *window),
     ).fetchone()
     referenced, factual = _count(row["referenced_count"]), _count(row["factual_record_count"])
-    status = _status(referenced, factual)
-    reason = None if status == "available" else "No typed references of this stage are recorded in this window." if not referenced else "Some typed artifact references no longer resolve to a factual record."
-    return {"stage": stage, "artifact_type": artifact_type, "status": status, "reason": reason, "referenced_count": referenced, "factual_record_count": factual, "missing_record_count": referenced - factual}
+    legacy = _count(row["legacy_retired_reference_count"])
+    covered = factual + legacy
+    status = _lineage_status(referenced, factual, legacy)
+    if not referenced:
+        reason = "No typed references of this stage were observed in this window."
+    elif referenced == legacy:
+        reason = "Historical transient PI carrier references predate durable linkage and remain audit-only."
+    elif status != "available":
+        reason = "Some typed artifact references no longer resolve to a factual record."
+    elif legacy:
+        reason = "Historical transient PI carrier references are retained as audit-only compatibility evidence."
+    else:
+        reason = None
+    return {"stage": stage, "artifact_type": artifact_type, "status": status, "reason": reason, "referenced_count": referenced, "factual_record_count": factual, "covered_reference_count": covered, "legacy_retired_reference_count": legacy, "missing_record_count": referenced - covered}
 
 
 def _decision_proposal_lineage(db: sqlite3.Connection, tables: set[str], window: tuple[str, str]) -> list[dict[str, Any]]:
@@ -794,6 +819,9 @@ def _decision_proposal_lineage(db: sqlite3.Connection, tables: set[str], window:
         f"SELECT COUNT(DISTINCT proposal_id) FROM ({references}) WHERE proposal_id IS NOT NULL",
         parameters,
     ).fetchone()[0])
+    if reference_count == 0:
+        reason = "No durable decision artifacts refer to a proposal in this window."
+        return [{"stage": stage, "artifact_type": "decision_proposal", "status": "not_observed", "reason": reason, "referenced_count": 0, "factual_record_count": 0, "covered_reference_count": 0, "missing_record_count": 0} for stage in stages]
     if "trade_proposals" not in tables:
         reason = "The trade-proposals table is not available."
         return [{"stage": stage, "artifact_type": "decision_proposal", "status": "not_available", "reason": reason, "referenced_count": reference_count, "factual_record_count": None, "missing_record_count": None} for stage in stages]
@@ -801,7 +829,7 @@ def _decision_proposal_lineage(db: sqlite3.Connection, tables: set[str], window:
     def factual_row(stage: str, sql: str, missing_reason: str) -> dict[str, Any]:
         row = db.execute(sql, parameters).fetchone()
         referenced, record_count, covered = (_count(row[key]) for key in ("referenced_count", "factual_record_count", "covered_reference_count"))
-        status = _status(referenced, covered)
+        status = _lineage_status(referenced, covered)
         reason = None if status == "available" else "No typed decision artifacts refer to a proposal in this window." if not referenced else missing_reason
         return {"stage": stage, "artifact_type": "decision_proposal", "status": status, "reason": reason, "referenced_count": referenced, "factual_record_count": record_count, "covered_reference_count": covered, "missing_record_count": referenced - covered}
 
@@ -873,16 +901,40 @@ def _research_yield(db: sqlite3.Connection, tables: set[str], window: tuple[str,
     ]
     lineage.extend(_decision_proposal_lineage(db, tables, window))
     referenced = sum(_count(row.get("referenced_count")) for row in lineage)
-    factual = sum(_count(row.get("covered_reference_count", row.get("factual_record_count"))) for row in lineage)
-    status = _status(referenced, factual)
-    reason = None if status == "available" else "No typed artifacts are recorded in this window." if not artifacts else "Typed artifacts exist, but some factual stage links are unavailable or unresolved."
-    return _section(status, reason, artifacts=artifacts, lineage=lineage), factual, referenced
+    legacy_retired = sum(_count(row.get("legacy_retired_reference_count")) for row in lineage)
+    active_referenced = referenced - legacy_retired
+    factual = sum(_count(row.get("factual_record_count")) for row in lineage)
+    status = "not_observed" if not active_referenced else "available" if factual == active_referenced else "partial"
+    reason = (
+        None
+        if status == "available"
+        else "Historical transient PI carrier references remain as audit-only compatibility evidence."
+        if referenced and referenced == legacy_retired
+        else "No typed artifacts were observed in this window."
+        if not artifacts
+        else "Typed artifacts exist, but some factual stage links are unavailable or unresolved."
+    )
+    return _section(status, reason, artifacts=artifacts, lineage=lineage), factual, active_referenced
 
 
 def _coverage(axes: list[dict[str, Any]]) -> dict[str, Any]:
     statuses = {axis["status"] for axis in axes}
     status = "available" if statuses == {"available"} else "not_available" if statuses == {"not_available"} else "partial"
-    reason = None if status == "available" else "No coverage axis is measurable in this window." if status == "not_available" else "Some coverage axes are incomplete or unavailable."
+    if statuses == {"not_configured"}:
+        status = "not_configured"
+    elif statuses == {"not_observed"}:
+        status = "not_observed"
+    reason = (
+        None
+        if status == "available"
+        else "No coverage axis is measurable in this window."
+        if status == "not_available"
+        else "No owner-declared policy is configured for this coverage group."
+        if status == "not_configured"
+        else "No durable observations were recorded in this coverage group."
+        if status == "not_observed"
+        else "Some coverage axes are incomplete or unavailable."
+    )
     return _section(status, reason, axes=axes)
 
 
@@ -933,14 +985,14 @@ def build_usage_insights(
                 axes.extend([
                     {"id": "attribution", "label": "Attribution", "status": _status(len(llm_rows), attributable_events), "coverage_pct": _pct(attributable_events, len(llm_rows)), "reason": attribution["reason"]},
                     {"id": "tools", "label": "Tools", "status": _status(tool_total, min(priced_tools, timed_tools)), "coverage_pct": _pct(min(priced_tools, timed_tools), tool_total), "reason": tools["reason"]},
-                    {"id": "budgets", "label": "Budgets", "status": _status(total_budgets, calculable_budgets), "coverage_pct": _pct(calculable_budgets, total_budgets), "reason": budgets["reason"]},
+                    {"id": "budgets", "label": "Budgets", "status": budgets["status"], "coverage_pct": _pct(calculable_budgets, total_budgets), "reason": budgets["reason"]},
                     {"id": "trends", "label": "Trends", "status": trends["status"], "coverage_pct": _pct(trace_covered_trend_days, full_trend_days), "reason": trends["reason"]},
                 ])
             if group in (None, "analysis"):
                 research_yield, factual_stages, referenced_stages = _research_yield(db, tables, window)
                 result.update(research_yield=research_yield)
                 axes.extend([
-                    {"id": "research_yield", "label": "Research yield", "status": _status(referenced_stages, factual_stages), "coverage_pct": _pct(factual_stages, referenced_stages), "reason": research_yield["reason"]},
+                    {"id": "research_yield", "label": "Research yield", "status": research_yield["status"], "coverage_pct": _pct(factual_stages, referenced_stages), "reason": research_yield["reason"]},
                 ])
             if group is None:
                 order = {

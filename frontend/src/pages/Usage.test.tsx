@@ -132,4 +132,44 @@ describe('Usage', () => {
     expect(html).toContain('1 / 4')
     expect(html).toContain('usage-table-card')
   })
+
+  it('labels unconfigured and unobserved data while rendering cooldown epochs as UTC', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
+    const semanticInsights: UsageInsightsResponse = {
+      ...insights,
+      coverage: {
+        ...insights.coverage,
+        axes: [
+          ...insights.coverage.axes,
+          { id: 'budgets', label: 'Budgets', status: 'not_configured', coverage_pct: null, reason: 'No budget policies are declared.' },
+          { id: 'research_yield', label: 'Research yield', status: 'not_observed', coverage_pct: null, reason: 'No typed artifacts were observed.' },
+        ],
+      },
+      reliability: {
+        ...insights.reliability,
+        current_model_cooldown: {
+          ...insights.reliability.current_model_cooldown,
+          rows: [{ provider: 'test', model: 'model', cooling_down: false, last_success_at: 1700000000 }],
+        },
+      },
+      budgets: { status: 'not_configured', reason: 'No budget policies are declared.', rows: [] },
+      research_yield: { status: 'not_observed', reason: 'No typed artifacts were observed.', artifacts: [], lineage: [] },
+    }
+    client.setQueryData(['usage-insights', 1, 'summary'], semanticInsights)
+    client.setQueryData(['usage-insights', 1, 'operations'], semanticInsights)
+    client.setQueryData(['usage-insights', 1, 'analysis'], semanticInsights)
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <Usage />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    )
+
+    expect(html).toContain('Not configured')
+    expect(html).toContain('No observations')
+    expect(html).toContain('2023-11-14T22:13:20.000Z')
+    expect(html).not.toContain('1,700,000,000')
+  })
 })

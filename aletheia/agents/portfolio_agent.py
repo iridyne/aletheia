@@ -18,10 +18,23 @@ async def run_portfolio_agent(permission_mode: str = "Observe", run_id: str | No
         errors.append("get_positions not permitted in current mode")
         return {"outputs": outputs, "errors": errors}
 
+    from aletheia.config.loader import load_config
     from aletheia.portfolio.pnl import compute_and_store_snapshot
+
+    cfg = load_config()
+    live_modes = {
+        "bitget": "bitget_live_limited",
+        "okx": "okx_live_limited",
+        "binance": "binance_live_limited",
+    }
+    execution_mode = (
+        live_modes.get(cfg.exchange.name, "bitget_live_limited")
+        if cfg.exchange.mode == "live"
+        else cfg.exchange.paper_execution_mode
+    )
     log_tool(run_id, "get_positions", "observe", True)
     started_at = time.monotonic()
-    snap = compute_and_store_snapshot()
+    snap = compute_and_store_snapshot(execution_mode=execution_mode)
     log_tool(
         run_id,
         "get_account_summary",

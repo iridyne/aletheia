@@ -18,12 +18,26 @@ const usd = (value: number | null | undefined) => value == null ? '—' : `$${fm
 const count = (value: number | null | undefined) => value == null ? '—' : fmtCompact(value)
 const windowLabel = (days: number | undefined) => days === 1 ? 'last 24 hours' : `last ${days ?? 1} days`
 const humanize = (key: string) => key.replace(/_/g, ' ')
+const emptyUsageRows: UsageInsightsRow[] = []
+const availabilityLabel = (status: string) => ({ available: 'Available', partial: 'Partial', not_configured: 'Not configured', not_observed: 'No observations', not_available: 'N/A' } as Record<string, string>)[status] ?? status
+const availabilityTone = (status: string) => status === 'available' ? 'green' : status === 'partial' ? 'yellow' : status === 'not_configured' ? 'blue' : 'muted'
 
-function valueText(value: unknown): string {
+function valueText(value: unknown, key?: string): string {
   if (value == null) return 'N/A'
-  if (typeof value === 'number') return Number.isFinite(value) ? fmtNum(value) : 'N/A'
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return 'N/A'
+    if (key === 'last_failure_at' || key === 'last_success_at') {
+      const timestamp = new Date(value * 1000)
+      return Number.isNaN(timestamp.getTime()) ? 'N/A' : timestamp.toISOString()
+    }
+    return fmtNum(value)
+  }
   if (typeof value === 'boolean') return value ? 'yes' : 'no'
-  if (typeof value === 'string') return value.trim() || 'unknown'
+  if (typeof value === 'string') {
+    const text = value.trim()
+    if (key === 'status' && ['available', 'partial', 'not_configured', 'not_observed', 'not_available'].includes(text)) return availabilityLabel(text)
+    return text || 'unknown'
+  }
   if (Array.isArray(value)) return value.length ? value.map(item => typeof item === 'object' && item != null && 'error_type' in item && 'event_count' in item ? `${String(item.error_type)}: ${String(item.event_count)}` : typeof item === 'string' ? item : 'item').join(', ') : 'none'
   return 'unknown'
 }
@@ -33,7 +47,7 @@ function Section({ title, section, children }: { title: string; section: UsageIn
     <section className="usage-section">
       <div className="usage-section-head">
         <h2>{title}</h2>
-        {section.status !== 'available' && <Badge tone="yellow">{section.status === 'partial' ? 'Partial' : 'N/A'}</Badge>}
+        {section.status !== 'available' && <Badge tone={availabilityTone(section.status)}>{availabilityLabel(section.status)}</Badge>}
       </div>
       {section.status !== 'available' && <p className="hint">{section.reason ?? 'This section is not fully measured.'}</p>}
       {children}
@@ -51,8 +65,8 @@ function LoadingIndicator() {
 
 function InsightTable({ title, rows, empty }: { title: string; rows: UsageInsightsRow[]; empty: string }) {
   // #2063: guard against Python returning a dict instead of array
-  const safeRows = Array.isArray(rows) ? rows : []
-  const columns = useMemo<ColumnDef<UsageInsightsRow>[]>(() => Array.from(new Set(safeRows.flatMap(Object.keys))).map(key => ({ accessorKey: key, header: humanize(key), cell: ({ row }) => valueText(row.original[key]) })), [safeRows])
+  const safeRows = Array.isArray(rows) ? rows : emptyUsageRows
+  const columns = useMemo<ColumnDef<UsageInsightsRow>[]>(() => Array.from(new Set(safeRows.flatMap(Object.keys))).map(key => ({ accessorKey: key, header: humanize(key), cell: ({ row }) => valueText(row.original[key], key) })), [safeRows])
   if (!safeRows.length || !columns.length) return <p className="hint">{empty}</p>
   return <Card flush className="usage-table-card"><CardHeader title={`${title} (${safeRows.length.toLocaleString()})`} /><DataTable data={safeRows} columns={columns} pageSize={25} emptyMessage={empty} /></Card>
 }
@@ -60,7 +74,7 @@ function InsightTable({ title, rows, empty }: { title: string; rows: UsageInsigh
 function Facts({ title, facts }: { title: string; facts: UsageInsightsRow | null }) {
   const rows = Object.entries(facts ?? {})
   if (!rows.length) return <p className="hint">N/A — no facts reported.</p>
-  return <Card flush className="usage-facts"><TableWrap><table className="mono"><caption>{title}</caption><tbody>{rows.map(([key, value]) => <tr key={key}><th scope="row">{humanize(key)}</th><td>{valueText(value)}</td></tr>)}</tbody></table></TableWrap></Card>
+  return <Card flush className="usage-facts"><TableWrap><table className="mono"><caption>{title}</caption><tbody>{rows.map(([key, value]) => <tr key={key}><th scope="row">{humanize(key)}</th><td>{valueText(value, key)}</td></tr>)}</tbody></table></TableWrap></Card>
 }
 
 function TokenComposition({ input, output, cached, reasoning }: { input: number | null; output: number | null; cached: number | null; reasoning: number | null }) {
@@ -77,7 +91,7 @@ function TokenComposition({ input, output, cached, reasoning }: { input: number 
 function CoverageList({ axes }: { axes: Array<{ id: string; label: string; status: string; coverage_pct: number | null; reason: string | null }> }) {
   // #2063: guard against Python returning a dict instead of array
   const safeAxes = Array.isArray(axes) ? axes : []
-  return <Card className="usage-coverage-list">{safeAxes.map(axis => <div className="usage-coverage-row" key={axis.id}><div><strong>{axis.label}</strong><span>{axis.reason ?? 'Measured for the selected window.'}</span></div><div className="usage-coverage-value"><span>{fmtPct(axis.coverage_pct, { decimals: 1, dash: 'N/A', scale: 'percent' })}</span><Badge tone={axis.status === 'available' ? 'green' : 'yellow'}>{axis.status === 'not_available' ? 'N/A' : axis.status}</Badge></div></div>)}</Card>
+  return <Card className="usage-coverage-list">{safeAxes.map(axis => <div className="usage-coverage-row" key={axis.id}><div><strong>{axis.label}</strong><span>{axis.reason ?? 'Measured for the selected window.'}</span></div><div className="usage-coverage-value"><span>{fmtPct(axis.coverage_pct, { decimals: 1, dash: 'N/A', scale: 'percent' })}</span><Badge tone={availabilityTone(axis.status)}>{availabilityLabel(axis.status)}</Badge></div></div>)}</Card>
 }
 
 export default function Usage() {

@@ -152,7 +152,7 @@ async def test_usage_insights_is_exact_aggregate_only_and_windowed(client):
     assert data["attribution"]["status"] == "partial"
     assert any(row["axis"] == "agent_run" for row in data["attribution"]["rows"])
     assert data["tools"]["status"] == "not_available"
-    assert data["research_yield"]["status"] == "not_available"
+    assert data["research_yield"]["status"] == "not_observed"
     unavailable_zero_days = [
         row for row in data["trends"]["daily"]
         if row["full_window_day"] and row["event_count"] == 0
@@ -440,6 +440,43 @@ async def test_usage_insights_projects_typed_and_timed_facts_without_content(cli
     assert cooldown["rows"][0]["cooling_down"] is True
     assert "serenity_raw_content_must_not_escape" not in str(data)
     assert "cooldown_raw_error_must_not_escape" not in str(data)
+
+
+@pytest.mark.anyio
+async def test_usage_insights_distinguishes_legacy_carriers_and_unobserved_outputs(client):
+    from aletheia.economics.schema import ensure_economics_schema
+
+    db = ensure_economics_schema()
+    now = datetime.now(timezone.utc).isoformat()
+    db.execute(
+        "INSERT INTO agent_runs (id,agent_name,permission_mode,started_at) VALUES (?,?,?,?)",
+        ("legacy-carrier-run", "paper_trader", "Observe", now),
+    )
+    db.execute(
+        "INSERT INTO agent_run_artifacts (run_id,artifact_type,artifact_id) VALUES (?,?,?)",
+        ("legacy-carrier-run", "pi_decision", "pruned-pending-carrier"),
+    )
+    db.commit()
+
+    data = (await client.get("/api/economics/usage-insights?days=1")).json()
+
+    pi = next(
+        row
+        for row in data["research_yield"]["lineage"]
+        if row["artifact_type"] == "pi_decision"
+    )
+    lineage_by_stage = {row["stage"]: row for row in data["research_yield"]["lineage"]}
+    assert pi["status"] == "not_observed"
+    assert pi["legacy_retired_reference_count"] == 1
+    assert pi["missing_record_count"] == 0
+    assert "audit-only" in pi["reason"]
+    assert all(
+        lineage_by_stage[stage]["status"] == "not_observed"
+        for stage in ("proposal", "order", "fill", "position", "serenity_evidence", "research_note", "portfolio_snapshot")
+    )
+    assert data["budgets"]["status"] == "not_configured"
+    budgets_axis = next(axis for axis in data["coverage"]["axes"] if axis["id"] == "budgets")
+    assert budgets_axis["status"] == "not_configured"
 
 
 # ── /api/economics/status ────────────────────────────────────────────────────

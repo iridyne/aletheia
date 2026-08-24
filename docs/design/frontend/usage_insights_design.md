@@ -67,3 +67,10 @@ element and `aria-busy` communicate background work without fabricating completi
   supported. Aletheia-local tool wrappers are zero external marginal cost and never duplicate
   their underlying LLM event cost. No manual model or tool price writer exists.
 - Current model cooldown is current process state, not historical window evidence.
+- A supported stage with no durable artifacts is `No observations`; it is distinct
+  from an unavailable ledger. A missing owner-declared budget policy is `Not
+  configured`; Usage never invents a cap to make that section look complete.
+- Current cooldown epoch values render as UTC ISO timestamps, never as raw numeric
+  counters. Historical `pi_decision` links written before durable-final rebinding
+  remain audit-only compatibility evidence; only current unresolved links count as
+  lineage gaps.
