@@ -307,6 +307,16 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     preflight_commands = _run_commands(deep_preflight)
     assert "uv run --no-sync python scripts/check_change_contract.py" in preflight_commands
     assert "uv sync" not in preflight_commands
+    assert deep_preflight["permissions"] == {
+        "contents": "read",
+        "pull-requests": "read",
+    }
+    assert deep_preflight["steps"][2]["name"] == "Read current exact-head PR body"
+    assert "github.rest.pulls.get" in deep_preflight["steps"][2]["with"]["script"]
+    assert "pullRequest.head.sha !== context.payload.pull_request.head.sha" in (
+        deep_preflight["steps"][2]["with"]["script"]
+    )
+    assert "CHANGE_CONTRACT_PR_BODY_FILE" in deep_preflight["steps"][3]["env"]
     assert workflow_jobs["review-core"]["needs"] == ["change-contract-preflight"]
     assert workflow_jobs["unit"]["needs"] == ["change-contract-preflight"]
     assert "needs.change-contract-preflight.result == 'success'" in workflow_jobs["unit"]["if"]
@@ -344,6 +354,27 @@ def test_shepherd_transports_versioned_failure_handoffs_without_holding_metadata
     assert "holdForOwner" not in metadata_branch
     assert "issues.addLabels" not in metadata_branch
     assert "createComment" not in metadata_branch  # uses the existing postComment helper
+
+    recovery = shepherd["jobs"]["metadata-ci-recovery"]
+    assert recovery["permissions"] == {
+        "actions": "write",
+        "checks": "read",
+        "contents": "read",
+        "pull-requests": "read",
+    }
+    assert "workflow_run.conclusion == 'success'" in recovery["if"]
+    recovery_script = recovery["steps"][0]["with"]["script"]
+    for token in (
+        "pullRequest.head.sha !== metadataRun.head_sha",
+        "latest exact-head metadata check is not successful",
+        "Change Contract preflight for deep CI",
+        "reRunWorkflowFailedJobs",
+    ):
+        assert token in recovery_script
+    assert "reRunWorkflow" not in recovery_script.replace("reRunWorkflowFailedJobs", "")
+    assert "createWorkflowDispatch" not in recovery_script
+    assert "metadata recovery job owns any required same-head CI rerun" in metadata_branch
+    assert script.count("failure.category === 'preflight_metadata'") == 2
 
 
 def test_operator_shell_regression_uses_explicit_cross_platform_test_files() -> None:

@@ -45,7 +45,9 @@ Final report:
    repair push. It must pass against the intended body and current branch/base diff.
 4. Push the branch and use the PR as the durable review and handoff surface. If only
    Change Contract metadata needs repair, edit the PR body on the same head and wait
-   for `Verify Change Contract`; never create a no-op/retrigger source commit.
+   for `Verify Change Contract`; never create a no-op/retrigger source commit. If the
+   invalid metadata had blocked deep CI, the trusted recovery job re-runs only that
+   failed exact-head run and its dependants after the metadata check turns green.
 5. Record long-lived decisions in
    [`Architecture Decision Log`](../decisions/DECISIONS.md) or the relevant
    design document. Do not commit external-orchestrator session state.

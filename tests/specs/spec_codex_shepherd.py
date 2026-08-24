@@ -78,6 +78,17 @@ def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
     assert "github.rest.git.updateRef" not in script
     assert "actions: write" not in str(job)
 
+    recovery = workflow["jobs"]["metadata-ci-recovery"]
+    assert recovery["permissions"] == {
+        "actions": "write",
+        "checks": "read",
+        "contents": "read",
+        "pull-requests": "read",
+    }
+    assert "actions/checkout" not in str(recovery)
+    assert "reRunWorkflowFailedJobs" in recovery["steps"][0]["with"]["script"]
+    assert "pulls.merge" not in recovery["steps"][0]["with"]["script"]
+
 
 def test_codex_shepherd_binds_callbacks_and_control_markers_to_trusted_identity() -> None:
     script = _script()

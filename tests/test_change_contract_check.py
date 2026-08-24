@@ -227,3 +227,26 @@ def test_main_applies_docs_only_exemption_from_real_checkout_path(
     )
 
     assert checker.main() == 0
+
+
+def test_main_prefers_current_pr_body_file_over_stale_event_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event_path = tmp_path / "event.json"
+    event_path.write_text(
+        json.dumps({"pull_request": {"body": MISSING_SDD_DEPTH, "number": 123}}),
+        encoding="utf-8",
+    )
+    body_path = tmp_path / "current-pr-body.md"
+    body_path.write_text(VALID_D1_PR, encoding="utf-8")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setenv("CHANGE_CONTRACT_PR_BODY_FILE", str(body_path))
+    monkeypatch.setattr(
+        checker,
+        "_changed_files_from_checkout",
+        lambda: ["aletheia/core.py"],
+    )
+
+    assert checker.main() == 0
