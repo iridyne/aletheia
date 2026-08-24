@@ -21,8 +21,7 @@ from aletheia.agent_runtime.run_context import (
 )
 from aletheia.economics.schema import ensure_economics_schema
 from aletheia.economics.tracing import (
-    add_pricing_snapshot,
-    add_tool_cost_profile,
+    add_catalog_pricing_snapshot,
     aggregate_agent_run_cost,
     initialize_runtime_tracing,
     normalize_usage,
@@ -81,14 +80,27 @@ def _insert_run() -> AgentRun:
 
 
 def _add_test_pricing() -> None:
-    add_pricing_snapshot(
+    add_catalog_pricing_snapshot(
         provider="measured_test",
         model="measured-model",
         input_usd_per_million=1.0,
         output_usd_per_million=2.0,
         effective_from="2020-01-01T00:00:00+00:00",
-        source="test",
+        source="litellm_public_median:test",
+        version="catalog-model-family-test",
     )
+
+
+def test_catalog_pricing_rejects_non_catalog_source():
+    with pytest.raises(ValueError, match="LiteLLM public catalog"):
+        add_catalog_pricing_snapshot(
+            provider="p",
+            model="m",
+            input_usd_per_million=1.0,
+            output_usd_per_million=2.0,
+            source="manual",
+            version="catalog-model-family-test",
+        )
 
 
 def test_normalize_usage_top_level_cache_read_falls_back_to_cached():
@@ -505,7 +517,7 @@ async def test_inherited_stream_records_one_physical_attempt_not_two():
     assert count == 1
 
 
-def test_existing_tool_ledger_is_mirrored_as_unknown_not_zero():
+def test_local_tool_ledger_is_mirrored_as_zero_external_cost():
     initialize_runtime_tracing()
     run = _insert_run()
     get_db().execute(
@@ -520,8 +532,8 @@ def test_existing_tool_ledger_is_mirrored_as_unknown_not_zero():
     ).fetchone()
     assert row is not None
     assert row["event_type"] == "tool"
-    assert row["cost_status"] == "unknown"
-    assert row["estimated_cost_usd"] is None
+    assert row["cost_status"] == "estimated"
+    assert row["estimated_cost_usd"] == 0
     assert row["latency_ms"] == 125
 
 
@@ -546,9 +558,11 @@ def test_preexisting_tool_rows_are_backfilled_idempotently():
         "SELECT * FROM runtime_cost_events WHERE id='toolcost_tool-backfill-test'"
     ).fetchall()
     assert len(rows) == 1
-    assert rows[0]["cost_status"] == "unknown"
+    assert rows[0]["cost_status"] == "estimated"
+    assert rows[0]["estimated_cost_usd"] == 0
     assert rows[0]["latency_ms"] is None
     metadata = json.loads(rows[0]["metadata_json"])
+    assert metadata["cost_source"] == "catalog_model_tool_cost_v1"
     assert metadata["legacy_backfill"] == 1
 
 
@@ -571,15 +585,9 @@ def test_denied_tool_call_is_known_zero_cost():
     assert row["estimated_cost_usd"] == pytest.approx(0.0)
 
 
-def test_tool_cost_profile_can_explicitly_price_local_or_external_tool():
+def test_local_agent_tool_has_zero_external_cost_without_manual_profile():
     initialize_runtime_tracing()
     run = _insert_run()
-    add_tool_cost_profile(
-        tool_name="local_lookup",
-        usd_per_call=0.0,
-        effective_from="2020-01-01T00:00:00+00:00",
-        source="test-explicit-free",
-    )
     get_db().execute(
         """INSERT INTO agent_tool_calls
            (id,run_id,tool_name,tool_class,input_data,output_data,permitted,created_at)
@@ -593,7 +601,8 @@ def test_tool_cost_profile_can_explicitly_price_local_or_external_tool():
     assert row is not None
     assert row["cost_status"] == "estimated"
     assert row["estimated_cost_usd"] == pytest.approx(0.0)
-    assert row["cost_profile_id"] is not None
+    assert row["cost_profile_id"] is None
+    assert json.loads(row["metadata_json"])["cost_source"] == "catalog_model_tool_cost_v1"
 
 
 def test_first_schema_install_refuses_to_commit_an_active_transaction():

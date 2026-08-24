@@ -20,7 +20,7 @@ pytestmark = pytest.mark.domain_runtime
 
 from aletheia.economics.budgets import add_budget
 from aletheia.economics.schema import ensure_economics_schema
-from aletheia.economics.tracing import add_pricing_snapshot, add_tool_cost_profile
+from aletheia.economics.tracing import add_catalog_pricing_snapshot
 from aletheia.model_provider.fallback import reset_model_health
 from aletheia.server.app import app
 from aletheia.storage.migrations import run_migrations
@@ -147,7 +147,7 @@ async def test_usage_insights_is_exact_aggregate_only_and_windowed(client):
         "budgets", "trends", "research_yield",
     ]
     assert data["pricing"]["known_cost_usd"] == pytest.approx(2.01)
-    assert data["pricing"]["estimated_cost_usd"] == pytest.approx(0.02)
+    assert data["pricing"]["estimated_cost_usd"] == 0
     assert data["pricing"]["unknown_event_count"] == 1
     assert data["attribution"]["status"] == "partial"
     assert any(row["axis"] == "agent_run" for row in data["attribution"]["rows"])
@@ -202,13 +202,13 @@ async def test_usage_insights_projects_latest_litellm_price_without_rewriting_ev
         model="llama-4-maverick",
         usage_json='{"normalized":{"input_tokens":1000000,"output_tokens":1000000}}',
     )
-    add_pricing_snapshot(
+    add_catalog_pricing_snapshot(
         provider="openai_compatible",
         model="llama-4-maverick",
         input_usd_per_million=0.2,
         output_usd_per_million=0.6,
         source="litellm_public_median:test",
-        version="test",
+        version="catalog-model-family-test",
     )
     add_budget(scope="system", subject=None, usd_cap=10, window="daily")
 
@@ -232,7 +232,9 @@ async def test_usage_insights_projects_latest_litellm_price_without_rewriting_ev
 
 
 @pytest.mark.anyio
-async def test_usage_insights_withholds_total_tokens_when_event_coverage_is_partial(client):
+async def test_usage_insights_total_tokens_sums_available_rows(client):
+    """total_tokens sums rows that have both input and output; a partial-coverage
+    row (failed attempt with no usage) must not suppress the total entirely."""
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -242,6 +244,30 @@ async def test_usage_insights_withholds_total_tokens_when_event_coverage_is_part
         cost=0.1,
         usage_json='{"normalized":{"input_tokens":10,"output_tokens":4}}',
     )
+    # Simulate a failed LLM attempt: no usage data at all.
+    _seed_llm_cost(
+        db,
+        event_id="failed-attempt",
+        cost=None,
+        usage_json='{}',
+    )
+
+    data = (await client.get("/api/economics/usage-insights?days=1&group=summary")).json()
+
+    assert data["token_mix"]["input_tokens"] == 10
+    assert data["token_mix"]["output_tokens"] == 4
+    # total_tokens is now present: failed attempt has no tokens, does not block the sum
+    assert data["token_mix"]["total_tokens"] == 14
+    # status is partial because one event has no usage
+    assert data["token_mix"]["status"] == "partial"
+
+
+@pytest.mark.anyio
+async def test_usage_insights_withholds_total_tokens_when_output_entirely_absent(client):
+    """total_tokens remains None only when NO event has output tokens at all."""
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
     _seed_llm_cost(
         db,
         event_id="input-only-usage",
@@ -251,15 +277,14 @@ async def test_usage_insights_withholds_total_tokens_when_event_coverage_is_part
 
     data = (await client.get("/api/economics/usage-insights?days=1&group=summary")).json()
 
-    assert data["token_mix"]["input_tokens"] == 15
-    assert data["token_mix"]["output_tokens"] == 4
+    assert data["token_mix"]["input_tokens"] == 5
+    assert data["token_mix"]["output_tokens"] is None
     assert data["token_mix"]["total_tokens"] is None
 
 
 @pytest.mark.anyio
 async def test_usage_insights_projects_typed_and_timed_facts_without_content(client):
     from aletheia.economics.budgets import add_budget
-    from aletheia.economics.tracing import add_tool_cost_profile
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -305,10 +330,6 @@ async def test_usage_insights_projects_typed_and_timed_facts_without_content(cli
             "context", "tools", "c", 0.0, 100, 1, "success", 1, 1, 2, 1, 1,
             "provider-b", "model-b", now, now, "{}", now,
         ),
-    )
-    add_tool_cost_profile(
-        tool_name="timed_tool", usd_per_call=0.03,
-        effective_from="2020-01-01T00:00:00+00:00", source="test",
     )
     db.execute(
         """INSERT INTO agent_tool_calls (
@@ -381,7 +402,8 @@ async def test_usage_insights_projects_typed_and_timed_facts_without_content(cli
     assert tool["tool_name"] == "timed_tool"
     assert tool["timing_coverage_pct"] == 100
     assert tool["p50_duration_ms"] == 125
-    assert tool["known_cost_usd"] == pytest.approx(0.03)
+    assert tool["priced_event_count"] == 1
+    assert tool["known_cost_usd"] == 0
     assert data["reliability"]["logical"]["retry_count"] == 1
     assert data["reliability"]["physical"]["fallback_call_count"] == 1
     assert data["reliability"]["physical"]["error_categories"] == [{"error_type": "timeout", "event_count": 1}]
@@ -430,6 +452,60 @@ async def test_status_returns_kill_switch_state(client):
     data = resp.json()
     assert isinstance(data["tracing_enabled"], bool)
     assert isinstance(data["audit_enabled"], bool)
+
+
+@pytest.mark.anyio
+async def test_usage_insights_legacy_null_session_counts_as_traced_when_it_has_cost_events(client):
+    """A session created before migration v20 (economics_tracing_enabled IS NULL)
+    that produced cost events must be counted as a traced interval, not legacy/untraced."""
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    session_start = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    session_end = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    # NULL economics_tracing_enabled simulates a pre-v20 legacy session.
+    db.execute(
+        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
+        ("legacy-session", session_start, session_end, None),
+    )
+    _seed_llm_cost(
+        db,
+        event_id="legacy-cost-event",
+        cost=0.05,
+        started_at=session_start,
+        usage_json='{"normalized":{"input_tokens":100,"output_tokens":20}}',
+    )
+    # Attach the cost event to the legacy session via runtime_session_id.
+    db.execute(
+        "UPDATE runtime_cost_events SET runtime_session_id=? WHERE id=?",
+        ("legacy-session", "legacy-cost-event"),
+    )
+
+    data = (await client.get("/api/economics/usage-insights?days=1&group=operations")).json()
+
+    tc = data["trends"]["trace_coverage"]
+    assert tc["traced_session_count"] >= 1, "Legacy session with cost events must be counted as traced"
+    assert tc["legacy_or_untraced_session_count"] == 0, "Session with cost events must not be legacy/untraced"
+
+
+@pytest.mark.anyio
+async def test_usage_insights_legacy_null_session_without_cost_events_stays_untraced(client):
+    """A session with NULL economics_tracing_enabled and no cost events must
+    remain in legacy_or_untraced (we have no evidence tracing ran)."""
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    session_start = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    session_end = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    db.execute(
+        "INSERT INTO runtime_sessions (session_id,started_at,ended_at,economics_tracing_enabled) VALUES (?,?,?,?)",
+        ("empty-legacy-session", session_start, session_end, None),
+    )
+
+    data = (await client.get("/api/economics/usage-insights?days=1&group=operations")).json()
+
+    tc = data["trends"]["trace_coverage"]
+    assert tc["legacy_or_untraced_session_count"] >= 1
 
 
 @pytest.mark.anyio
@@ -744,15 +820,15 @@ async def test_costs_by_tool_rolls_up_recorded_denied_and_cost(client):
     assert build["event_count"] == 4
     assert build["recorded_count"] == 3
     assert build["denied_count"] == 1
-    assert build["known_cost_usd"] == pytest.approx(0.002 + 0.003 + 0.001)
-    assert build["unknown_count"] == 1
+    assert build["known_cost_usd"] == 0
+    assert build["unknown_count"] == 0
 
     create = data["tools"]["create_opportunity"]
     assert create["event_count"] == 2
     assert create["recorded_count"] == 2
     assert create["denied_count"] == 0
-    assert create["known_cost_usd"] == pytest.approx(0.01)
-    assert create["unknown_count"] == 1
+    assert create["known_cost_usd"] == 0
+    assert create["unknown_count"] == 0
 
 
 @pytest.mark.anyio
@@ -1141,26 +1217,20 @@ async def test_budgets_would_block_scope_filter(client):
 
 @pytest.mark.anyio
 async def test_pricing_returns_seeded_snapshots(client):
-    add_pricing_snapshot(
+    add_catalog_pricing_snapshot(
         provider="test",
         model="model-a",
         input_usd_per_million=1.0,
         output_usd_per_million=2.0,
         effective_from="2020-01-01T00:00:00+00:00",
-        source="test",
+        source="litellm_public_median:test",
+        version="catalog-model-family-test",
     )
-    add_tool_cost_profile(
-        tool_name="test_tool",
-        usd_per_call=0.001,
-        effective_from="2020-01-01T00:00:00+00:00",
-        source="test",
-    )
-
     resp = await client.get("/api/economics/pricing")
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["models"]) == 1
     assert data["models"][0]["provider"] == "test"
     assert data["models"][0]["model"] == "model-a"
-    assert len(data["tools"]) == 1
-    assert data["tools"][0]["tool_name"] == "test_tool"
+    assert data["tools"] == []
+    assert data["models"][0]["web_search_usd_per_request"] is None

@@ -6,7 +6,7 @@ Phase 2B-1 (see docs/design/proposals/tokenomics_harness_phase_plan_2026-07-30.m
 This module ships:
 
 - `add_budget()`, `list_budgets()`, `set_budget_enabled()` — CLI-fed
-  writers matching the existing `add_pricing_snapshot` shape.
+  budget-policy writers. Model pricing is catalog-only and has no CLI writer.
 - `check_would_block()` — pure function computing which declared
   budgets a hypothetical additional cost would breach. No side
   effects. The hook that will call it lives in Phase 2B-2.

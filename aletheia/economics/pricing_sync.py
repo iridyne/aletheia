@@ -1,4 +1,4 @@
-"""Refresh approximate model pricing from LiteLLM's public model-cost map."""
+"""Refresh provider-independent estimates from LiteLLM's public price catalog."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,7 +17,7 @@ import httpx
 
 from aletheia.config.loader import get_data_dir
 from aletheia.economics.schema import ensure_economics_schema
-from aletheia.economics.tracing import add_pricing_snapshot
+from aletheia.economics.tracing import add_catalog_pricing_snapshot
 
 
 LITELLM_PRICE_MAP_URL = (
@@ -26,11 +27,74 @@ LITELLM_PRICE_MAP_URL = (
 _MIN_MODEL_COUNT = 50
 _MIN_RELATIVE_SIZE = 0.5
 _SOURCE_PREFIX = "litellm_public_median:"
-_MODEL_MARKERS = {
-    "qwen35-122b-a10b": "qwen3.5-122b-a10b",
-    "qwen3.5-122b-a10b": "qwen3.5-122b-a10b",
-    "llama-4-maverick": "llama-4-maverick",
-}
+_MATCH_VERSION = "catalog-model-family-v2"
+_FAMILY_SUFFIXES = ("instruct", "chat")
+
+
+def _normalize(s: str) -> str:
+    """Strip all non-alphanumeric chars and lowercase for catalog identity."""
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def _build_price_index(
+    price_map: dict[str, Any],
+) -> dict[str, list[tuple[str, dict[str, Any]]]]:
+    """Index priced catalog entries by normalized model name and aliases.
+
+    LiteLLM keys are either bare model names or ``provider/.../model``. The
+    catalog is used as an independent public reference: the runtime API base is
+    intentionally irrelevant. Zero-cost entries remain valid prices.
+    """
+    index: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for key, entry in price_map.items():
+        if not isinstance(entry, dict):
+            continue
+        if _rate(entry.get("input_cost_per_token")) is None or _rate(entry.get("output_cost_per_token")) is None:
+            continue
+        names = [key.split("/")[-1]]
+        aliases = entry.get("aliases")
+        if isinstance(aliases, list):
+            names.extend(alias for alias in aliases if isinstance(alias, str))
+        for name in names:
+            bucket = index.setdefault(_normalize(name), [])
+            candidate = (key, entry)
+            if candidate not in bucket:
+                bucket.append(candidate)
+    return index
+
+
+def _family_match(needle: str, stem: str) -> bool:
+    """Allow only conservative deployment/version suffix differences.
+
+    Exact model identity wins. Family fallback accepts numeric deployment
+    suffixes (dates, parameter sizes) and explicit ``instruct``/``chat``
+    suffixes, but rejects semantic variants such as ``mini`` and ``thinking``.
+    """
+    if stem.startswith(needle):
+        suffix = stem[len(needle):]
+    elif needle.startswith(stem):
+        suffix = needle[len(stem):]
+    else:
+        return False
+    return bool(suffix) and (suffix[0].isdigit() or suffix.startswith(_FAMILY_SUFFIXES))
+
+
+def _match_entries(
+    index: dict[str, list[tuple[str, dict[str, Any]]]],
+    model: str,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Match a runtime model against the provider-independent public catalog."""
+    needle = _normalize(model)
+    matches: list[tuple[str, dict[str, Any]]] = []
+    seen: set[str] = set()
+    for stem, entries in index.items():
+        if stem != needle and not _family_match(needle, stem):
+            continue
+        for key, entry in entries:
+            if key not in seen:
+                seen.add(key)
+                matches.append((key, entry))
+    return matches
 
 _state_lock = threading.Lock()
 _worker: threading.Thread | None = None
@@ -86,29 +150,28 @@ def _fetch_price_map() -> tuple[dict[str, Any], bytes]:
     return parsed, content
 
 
-def _positive_rate(value: object) -> float | None:
+def _rate(value: object) -> float | None:
     try:
-        rate = float(value)
+        rate = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
-    return rate if math.isfinite(rate) and rate > 0 else None
+    return rate if math.isfinite(rate) and rate >= 0 else None
 
 
 def _representative_rates(
-    price_map: dict[str, Any], marker: str
+    entries: list[tuple[str, dict[str, Any]]],
 ) -> dict[str, float | int] | None:
-    matches = [
-        value
-        for key, value in price_map.items()
-        if marker in key.lower() and isinstance(value, dict)
-    ]
+    """Aggregate matched LiteLLM entries into median rates.
+
+    Accepts the list of ``(litellm_key, entry_dict)`` tuples produced by
+    ``_match_entries``.  Returns ``None`` when no entry has both input and
+    output rates.
+    """
     paired = [
-        (input_rate, output_rate, value)
-        for value in matches
-        if (input_rate := _positive_rate(value.get("input_cost_per_token")))
-        is not None
-        and (output_rate := _positive_rate(value.get("output_cost_per_token")))
-        is not None
+        (input_rate, output_rate, entry)
+        for _, entry in entries
+        if (input_rate := _rate(entry.get("input_cost_per_token"))) is not None
+        and (output_rate := _rate(entry.get("output_cost_per_token"))) is not None
     ]
     if not paired:
         return None
@@ -128,10 +191,24 @@ def _representative_rates(
         values = [
             rate
             for _, _, entry in paired
-            if (rate := _positive_rate(entry.get(source_key))) is not None
+            if (rate := _rate(entry.get(source_key))) is not None
         ]
         if values:
             result[target_key] = median(values) * 1_000_000
+    search_rates: list[float] = []
+    for _, _, entry in paired:
+        tiers = entry.get("search_context_cost_per_query")
+        if not isinstance(tiers, dict):
+            continue
+        rate = _rate(tiers.get("search_context_size_medium"))
+        if rate is None:
+            available = [_rate(value) for value in tiers.values()]
+            usable = [value for value in available if value is not None]
+            rate = median(usable) if usable else None
+        if rate is not None:
+            search_rates.append(rate)
+    if search_rates:
+        result["web_search_usd_per_request"] = median(search_rates)
     return result
 
 
@@ -146,43 +223,48 @@ def _runtime_models() -> list[tuple[str, str]]:
     ]
 
 
-def _may_write_automatic_snapshot(provider: str, model: str, version: str) -> bool:
+def _may_write_catalog_snapshot(provider: str, model: str, version: str) -> bool:
     db = ensure_economics_schema()
     row = db.execute(
-        "SELECT source,version FROM pricing_snapshots WHERE provider=? AND model=? "
+        "SELECT version FROM pricing_snapshots WHERE provider=? AND model=? "
         "ORDER BY datetime(effective_from) DESC,rowid DESC LIMIT 1",
         (provider, model),
     ).fetchone()
-    if row is None:
-        return True
-    source, current_version = str(row[0] or ""), str(row[1] or "")
-    return source.startswith(_SOURCE_PREFIX) and current_version != version
+    return row is None or str(row[0] or "") != version
 
 
 def refresh_pricing(
     fetcher: Callable[[], tuple[dict[str, Any], bytes]] = _fetch_price_map,
 ) -> dict[str, Any]:
-    """Fetch, aggregate, and append forward-only estimated price snapshots."""
+    """Fetch public prices and append forward-only estimated snapshots.
+
+    The catalog is independent of the configured runtime provider or API base.
+    Exact model/alias matches are preferred; conservative family matching
+    handles deployment suffixes. Multiple provider listings are aggregated as
+    a public-market median and never labelled provider-billed or known cost.
+    """
     price_map, content = fetcher()
     _save_cache(content)
-    version = "sha256:" + hashlib.sha256(content).hexdigest()
+    version = _MATCH_VERSION + ":sha256:" + hashlib.sha256(content).hexdigest()
     effective_from = _utcnow()
     source = _SOURCE_PREFIX + LITELLM_PRICE_MAP_URL
     created = matched = 0
     unmatched: list[str] = []
     samples: dict[str, dict[str, float | int]] = {}
 
+    index = _build_price_index(price_map)
+
     for provider, model in _runtime_models():
-        marker = _MODEL_MARKERS.get(model.lower())
-        rates = _representative_rates(price_map, marker) if marker else None
+        entries = _match_entries(index, model)
+        rates = _representative_rates(entries) if entries else None
         if rates is None:
             unmatched.append(f"{provider}/{model}")
             continue
         matched += 1
         samples[f"{provider}/{model}"] = rates
-        if not _may_write_automatic_snapshot(provider, model, version):
+        if not _may_write_catalog_snapshot(provider, model, version):
             continue
-        add_pricing_snapshot(
+        add_catalog_pricing_snapshot(
             provider=provider,
             model=model,
             input_usd_per_million=float(rates["input_usd_per_million"]),
@@ -195,6 +277,11 @@ def refresh_pricing(
             cached_input_usd_per_million=(
                 float(rates["cached_input_usd_per_million"])
                 if "cached_input_usd_per_million" in rates
+                else None
+            ),
+            web_search_usd_per_request=(
+                float(rates["web_search_usd_per_request"])
+                if "web_search_usd_per_request" in rates
                 else None
             ),
             effective_from=effective_from,
