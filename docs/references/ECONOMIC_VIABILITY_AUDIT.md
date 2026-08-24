@@ -56,36 +56,24 @@ The event-driven System Operator daemon is deliberately not represented as a fab
 
 ## Pricing contracts
 
-No current internet price is guessed and no historical call is silently repriced.
+Model pricing has exactly one source: LiteLLM's public GitHub price catalog.
+It is provider/API-base independent and is refreshed automatically at startup or
+through the audited Usage-page refresh action. There is no manual model-price
+writer. Catalog prices remain explicitly estimated, and historical cost-event
+rows are never rewritten.
+
+Persisted catalog snapshots are inspectable with:
 
 ```bash
-uv run aletheia audit pricing-set \
-  --provider <configured-provider-name> \
-  --model <exact-model-id> \
-  --input <usd-per-million-input-tokens> \
-  --output <usd-per-million-output-tokens> \
-  --source <invoice-or-contract-reference>
+uv run aletheia audit pricing-list --json
 ```
 
-Optional rates:
-
-```text
---reasoning <usd-per-million-reasoning-tokens>
---cached-input <usd-per-million-cached-input-tokens>
---effective-from <ISO timestamp>
---version <contract version>
-```
-
-Tool/API profile:
-
-```bash
-uv run aletheia audit tool-pricing-set \
-  --tool <exact-tool-name> \
-  --per-call <usd-per-call> \
-  --source <invoice-or-allocation-reference>
-```
-
-Use `--per-call 0` only when zero cost is an explicit fact.
+Provider-native built-in tool charges are also read from the same public catalog
+when both a catalog rate and a measured usage counter exist. Web-search request
+counts are currently supported. Missing counters or rates remain Unknown.
+Aletheia-local orchestration tools have zero external marginal cost; their
+underlying LLM calls are priced separately, preventing double counting. There is
+no manual tool-price writer.
 
 ## System Viability contract
 

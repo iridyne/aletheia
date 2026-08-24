@@ -51,11 +51,11 @@ _CONTRACT = "data_utilization_contract"
     SpecClaim(
         "DU-S27",
         _CONTRACT,
-        "§3 LiteLLM public pricing reference",
+        "§3 LiteLLM public model and native-tool pricing reference",
         "L2a",
-        "LiteLLM public pricing is registered as an estimated-only source with "
-        "startup and dashboard refresh consumers, manual-price precedence, and no "
-        "historical ledger rewrite.",
+        "LiteLLM public pricing is the sole estimated model and provider-native "
+        "tool source, with startup and dashboard refresh consumers, no manual "
+        "writer, and no historical ledger rewrite.",
         status="implemented",
     ),
 )
@@ -70,11 +70,13 @@ def test_litellm_pricing_source_is_registered_and_estimated_only():
         encoding="utf-8"
     )
 
-    assert "DU-S27" in doc and "LiteLLM 公共模型价格目录" in doc
+    assert "DU-S27" in doc and "LiteLLM 公共模型/原生工具价格目录" in doc
     assert "start_pricing_refresh" in app and 'trigger="startup"' in app
     assert '@router.post("/pricing/refresh"' in routes
-    assert "_may_write_automatic_snapshot" in sync
-    assert 'return source.startswith(_SOURCE_PREFIX)' in sync
+    assert "_may_write_catalog_snapshot" in sync
+    assert "web_search_usd_per_request" in sync
+    assert 'source.startswith("litellm_public_median:")' in tracing
+    assert "def add_pricing_snapshot(" not in tracing
     assert '"estimated"' in tracing
 
 

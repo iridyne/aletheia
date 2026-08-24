@@ -48,7 +48,54 @@ def test_openai_usage_details_preserve_cached_tokens():
         "cached_input_tokens": 80,
         "provider_cache_read_input_tokens": None,
         "provider_cache_creation_input_tokens": None,
+        "web_search_requests": None,
     }
+
+
+def test_web_search_usage_is_normalized_and_priced_from_catalog():
+    usage = normalize_usage(
+        {
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "prompt_tokens_details": {"web_search_requests": 3},
+        }
+    )
+
+    cost, status, metadata = estimate_llm_cost(
+        usage,
+        {
+            "input_usd_per_million": 1.0,
+            "output_usd_per_million": 2.0,
+            "web_search_usd_per_request": 0.01,
+        },
+    )
+
+    assert usage["web_search_requests"] == 3
+    assert cost == 0.03014
+    assert status == "estimated"
+    assert metadata["web_search_cost_usd"] == 0.03
+
+
+def test_web_search_usage_without_catalog_rate_is_unknown():
+    usage = normalize_usage(
+        {
+            "prompt_tokens": 100,
+            "completion_tokens": 20,
+            "server_tool_use": {"web_search_requests": 1},
+        }
+    )
+
+    cost, status, metadata = estimate_llm_cost(
+        usage,
+        {
+            "input_usd_per_million": 1.0,
+            "output_usd_per_million": 2.0,
+        },
+    )
+
+    assert cost is None
+    assert status == "unknown"
+    assert metadata["reason"] == "web_search_pricing_missing"
 
 
 def test_anthropic_usage_preserves_provider_cache_fields():
