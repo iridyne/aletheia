@@ -2437,12 +2437,11 @@ def _run_exchange_sync():
 
 
 def _run_portfolio_snapshot():
-    cfg = load_config()
     try:
-        from aletheia.portfolio.pnl import compute_and_store_snapshot
-        _live_mode_map = {"bitget": "bitget_live_limited", "okx": "okx_live_limited", "binance": "binance_live_limited"}
-        _mode = _live_mode_map.get(cfg.exchange.name, "bitget_live_limited") if cfg.exchange.mode == "live" else cfg.exchange.paper_execution_mode
-        _run_sync_with_timeout("portfolio_snapshot", lambda: compute_and_store_snapshot(execution_mode=_mode))
+        _run_sync_with_timeout(
+            "portfolio_snapshot",
+            lambda: asyncio.run(_async_run("portfolio_agent")),
+        )
         _record_job_success("portfolio_snapshot")
     except TimeoutError:
         logger.warning(

@@ -332,8 +332,10 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
     """
     from aletheia.storage.repositories import (
         classify_final_pi_decision_for_opportunity,
+        find_pending_pi_decision_for_opportunity,
         insert_pi_decision,
         insert_trade_proposal,
+        rebind_agent_run_pi_decision_artifacts,
         transaction,
         transition_opportunity_to_reviewed,
         transition_serenity_opportunity_to_reviewed,
@@ -342,6 +344,7 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
     pi_dec = _build_pi_decision(decision_result)
     mandate_config = _mandate_config_for_proposal(proposal)
     claim_failure: str | None = None
+    pending_id: str | None = None
     with transaction(immediate=True, savepoint=True):
         classification = (
             classify_final_pi_decision_for_opportunity(
@@ -388,6 +391,14 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
             pi_dec.opportunity_id or pi_dec.action in _NEW_ENTRY_ACTIONS
         ):
             claim_failure = _pending_claim_authority_failure(pi_dec)
+            if claim_failure is None:
+                pending = find_pending_pi_decision_for_opportunity(
+                    pi_dec.opportunity_id,
+                    pi_dec.signal_source,
+                )
+                pending_id = str(pending["id"]) if pending else None
+                if pending_id is None:
+                    claim_failure = "pending_signal_required"
         if proposal is not None:
             if claim_failure is None:
                 insert_trade_proposal(
@@ -400,6 +411,8 @@ def claim_decision(decision_result: dict, *, proposal=None) -> tuple[dict, bool]
                 pi_dec.proposal_reason = None
         if claim_failure is None:
             insert_pi_decision(pi_dec)
+            if pending_id is not None:
+                rebind_agent_run_pi_decision_artifacts(pending_id, pi_dec.id)
             if pi_dec.action == "signal_queue_evicted" and decision_result.get(
                 "filter_trace"
             ):

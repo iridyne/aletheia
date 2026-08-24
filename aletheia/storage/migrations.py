@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v38"
+SCHEMA_VERSION = "aletheia-sqlite-v39"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3403,6 +3403,16 @@ _AGENT_USAGE_STORAGE_CHECKSUM = hashlib.sha256(
         repr(_AGENT_USAGE_STORAGE_COLUMNS)
         + _AGENT_RUN_ARTIFACTS_SQL
         + "\nadditive_agent_usage_storage_v1"
+    ).encode("utf-8")
+).hexdigest()
+
+_AGENT_ARTIFACT_REFERENCE_COLUMNS = (
+    ("reference_version", "agent_run_artifacts", "TEXT NOT NULL DEFAULT 'v1'"),
+)
+_AGENT_ARTIFACT_REFERENCE_CHECKSUM = hashlib.sha256(
+    (
+        repr(_AGENT_ARTIFACT_REFERENCE_COLUMNS)
+        + "\nadditive_agent_artifact_reference_v1"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -4972,6 +4982,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260823_0037_pending_close_reasoning_v38": (
         "durable Operator rationale handoff for pending exchange closes"
     ),
+    "20260824_0038_agent_artifact_reference_v39": (
+        "durable agent-artifact reference version"
+    ),
 }
 
 
@@ -5083,6 +5096,17 @@ def _apply_agent_usage_storage_v20(db: sqlite3.Connection) -> None:
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
     db.executescript(_AGENT_RUN_ARTIFACTS_SQL)
+
+
+def _apply_agent_artifact_reference_v39(db: sqlite3.Connection) -> None:
+    """Mark pre-durable artifact links without rewriting retained evidence."""
+
+    for column, table, column_type in _AGENT_ARTIFACT_REFERENCE_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
 def _apply_lesson_reviewer_attempts_v21(db: sqlite3.Connection) -> None:
@@ -5855,6 +5879,12 @@ _MIGRATIONS = (
         checksum=_PENDING_CLOSE_REASONING_CHECKSUM,
         schema_version="aletheia-sqlite-v38",
         apply=_apply_pending_close_reasoning_v38,
+    ),
+    MigrationStep(
+        migration_id="20260824_0038_agent_artifact_reference_v39",
+        checksum=_AGENT_ARTIFACT_REFERENCE_CHECKSUM,
+        schema_version="aletheia-sqlite-v39",
+        apply=_apply_agent_artifact_reference_v39,
     ),
 )
 

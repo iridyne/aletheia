@@ -38,6 +38,50 @@ def test_end_run_persists_typed_output_artifacts_without_rewriting_outputs_creat
     ]
 
 
+def test_pi_artifacts_rebind_to_final_decisions_before_or_after_run_end():
+    from aletheia.agent_runtime.run_logger import end_run, start_run
+    from aletheia.storage.models import AgentArtifactRef, AgentRunArtifact, PiDecision
+    from aletheia.storage.repositories import (
+        insert_agent_run_artifacts,
+        insert_pi_decision,
+        rebind_agent_run_pi_decision_artifacts,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    pending = PiDecision(
+        id="pending-artifact", action="signal_pending", opportunity_id="opp-artifact"
+    )
+    final = PiDecision(
+        id="final-artifact", action="skip", opportunity_id="opp-artifact"
+    )
+    insert_pi_decision(pending)
+    run = start_run("paper_trader", "scheduled", "Observe")
+    insert_agent_run_artifacts([
+        AgentRunArtifact(
+            run_id=run.id, artifact_type="pi_decision", artifact_id=pending.id
+        )
+    ])
+    insert_pi_decision(final)
+    assert rebind_agent_run_pi_decision_artifacts(pending.id, final.id) == 1
+
+    late_run = start_run("paper_trader", "scheduled", "Observe")
+    end_run(
+        late_run,
+        artifact_refs=[
+            AgentArtifactRef(artifact_type="pi_decision", artifact_id=pending.id)
+        ],
+    )
+    rows = get_db().execute(
+        "SELECT run_id,artifact_id,reference_version FROM agent_run_artifacts "
+        "WHERE run_id IN (?,?)",
+        (run.id, late_run.id),
+    ).fetchall()
+    assert {tuple(row) for row in rows} == {
+        (run.id, final.id, "v2"),
+        (late_run.id, final.id, "v2"),
+    }
+
+
 @pytest.mark.anyio
 async def test_orchestrator_persists_registered_agent_output_artifacts(monkeypatch):
     import aletheia.agents as agents
@@ -84,7 +128,7 @@ async def test_portfolio_agent_returns_current_snapshot_as_output_artifact(monke
     monkeypatch.setattr(
         pnl,
         "compute_and_store_snapshot",
-        lambda: PortfolioSnapshot(id="snapshot-current", total_value_usdt=100.0),
+        lambda **_kwargs: PortfolioSnapshot(id="snapshot-current", total_value_usdt=100.0),
     )
     init_tool_registry()
 
@@ -93,4 +137,47 @@ async def test_portfolio_agent_returns_current_snapshot_as_output_artifact(monke
     assert result["outputs"] == ["portfolio_snapshot:snapshot-current"]
     assert result["output_artifacts"] == [
         {"artifact_type": "portfolio_snapshot", "artifact_id": "snapshot-current"}
+    ]
+
+
+def test_scheduler_portfolio_snapshot_uses_registered_agent(monkeypatch):
+    from aletheia.agent_runtime import orchestrator, scheduler
+
+    calls: list[object] = []
+
+    async def fake_run_agent(name: str, *, trigger_type: str = "scheduled"):
+        calls.append(name)
+        return {"status": "completed"}
+
+    monkeypatch.setattr(orchestrator, "run_agent", fake_run_agent)
+    monkeypatch.setattr(scheduler, "_run_sync_with_timeout", lambda _job, fn: fn())
+    monkeypatch.setattr(scheduler, "_record_job_success", lambda job: calls.append(job))
+
+    scheduler._run_portfolio_snapshot()
+
+    assert calls == ["portfolio_agent", "portfolio_snapshot"]
+
+
+def test_scheduler_portfolio_snapshot_records_agent_errors(monkeypatch):
+    from aletheia.agent_runtime import orchestrator, scheduler
+
+    calls: list[object] = []
+
+    async def fake_run_agent(name: str, *, trigger_type: str = "scheduled"):
+        calls.append(name)
+        return {"status": "completed_with_errors", "errors": ["snapshot failed"]}
+
+    monkeypatch.setattr(orchestrator, "run_agent", fake_run_agent)
+    monkeypatch.setattr(scheduler, "_run_sync_with_timeout", lambda _job, fn: fn())
+    monkeypatch.setattr(
+        scheduler,
+        "_record_job_failure",
+        lambda job, reason: calls.append((job, reason)),
+    )
+
+    scheduler._run_portfolio_snapshot()
+
+    assert calls == [
+        "portfolio_agent",
+        ("portfolio_snapshot", "scheduled_agent_reported_errors:portfolio_agent"),
     ]

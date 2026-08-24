@@ -412,6 +412,35 @@ def test_prune_pi_decisions_keeps_audit_and_only_deletes_settled_pending(
     assert "sp_settled" not in remaining
 
 
+def test_prune_pi_decisions_keeps_a_referenced_carrier(tmp_path, monkeypatch):
+    conn = setup_env(tmp_path, monkeypatch)
+    old = _old(30)
+    conn.execute(
+        "INSERT INTO agent_runs (id,agent_name,permission_mode,started_at) VALUES (?,?,?,?)",
+        ("artifact-run", "paper_trader", "Observe", old),
+    )
+    for row in (
+        ("referenced-pending", "signal_pending", None),
+        ("referenced-final", "trade", "executed"),
+    ):
+        conn.execute(
+            "INSERT INTO pi_decisions "
+            "(id,action,opportunity_id,signal_source,proposal_status,created_at,conviction,debate_ran) "
+            "VALUES (?,?,?,?,?,?,0,0)",
+            (row[0], row[1], "referenced-opp", "market_observer", row[2], old),
+        )
+    conn.execute(
+        "INSERT INTO agent_run_artifacts (run_id,artifact_type,artifact_id) VALUES (?,?,?)",
+        ("artifact-run", "pi_decision", "referenced-pending"),
+    )
+    conn.commit()
+
+    assert repo.prune_pi_decisions(7) == 0
+    assert conn.execute(
+        "SELECT 1 FROM pi_decisions WHERE id='referenced-pending'"
+    ).fetchone() is not None
+
+
 def test_delete_old_rows_requires_condition_for_pi_decisions(tmp_path, monkeypatch):
     """pi_decisions mixes transient queue rows with causal decisions.
 

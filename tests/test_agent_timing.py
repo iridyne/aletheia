@@ -86,6 +86,47 @@ def test_tool_duration_is_persisted_without_backfilling_legacy_rows(tmp_path, mo
     ]
 
 
+def test_llm_tool_uses_completed_logical_inference_duration(tmp_path, monkeypatch):
+    conn = _setup_db(tmp_path, monkeypatch)
+    from aletheia.economics.schema import ensure_economics_schema
+
+    db = ensure_economics_schema()
+    db.execute(
+        "INSERT INTO agent_runs (id,agent_name,permission_mode,started_at) VALUES (?,?,?,?)",
+        ("llm-duration-run", "test_agent", "Observe", "2026-08-24T00:00:00+00:00"),
+    )
+    db.execute(
+        """INSERT INTO llm_inference_calls (
+            logical_call_id,schema_version,caller,prompt_template_id,prompt_version,
+            prompt_static_sha256,rendered_prompt_sha256,context_adapter_id,tool_policy_id,
+            allowed_tools_sha256,temperature,max_tokens,allow_model_fallback,status,
+            attempt_count,retry_count,started_at,finished_at,metadata_json,created_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            "logical-duration", "test", "test_agent", "template", "v1", "a", "b",
+            "none", "none", "c", 0.0, 1, 1, "success", 1, 0,
+            "2026-08-24T00:00:00+00:00", "2026-08-24T00:00:01.250000+00:00",
+            "{}", "2026-08-24T00:00:00+00:00",
+        ),
+    )
+    db.commit()
+
+    from aletheia.agents.helpers import _release_run_counter, log_tool
+
+    log_tool(
+        "llm-duration-run",
+        "llm_complete",
+        "observe",
+        True,
+        inference_call_id="logical-duration",
+    )
+    _release_run_counter("llm-duration-run")
+
+    assert conn.execute(
+        "SELECT duration_ms FROM agent_tool_calls WHERE run_id='llm-duration-run'"
+    ).fetchone()[0] == 1250
+
+
 @pytest.mark.asyncio
 async def test_command_duration_uses_monotonic_clock_and_keeps_legacy_null(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)

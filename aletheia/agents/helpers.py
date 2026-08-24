@@ -1196,10 +1196,15 @@ def log_tool(
     """
     if not run_id:
         return
+    linked_inference_call_id = inference_call_id or current_inference_call_id()
     try:
         duration_ms = max(0, int(duration_ms)) if duration_ms is not None else None
     except (TypeError, ValueError, OverflowError):
         duration_ms = None
+    if duration_ms is None and tool_name.startswith("llm_") and linked_inference_call_id:
+        from aletheia.economics.inference_calls import inference_duration_ms
+
+        duration_ms = inference_duration_ms(linked_inference_call_id)
     _buffer_telemetry(
         run_id,
         {
@@ -1210,7 +1215,7 @@ def log_tool(
             "permitted": permitted,
             "output_data": output,
             "input_data": input_data,
-            "inference_call_id": inference_call_id or current_inference_call_id(),
+            "inference_call_id": linked_inference_call_id,
             "duration_ms": duration_ms,
         },
     )

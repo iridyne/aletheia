@@ -734,6 +734,8 @@ export interface ModelProviderHealth {
 export type UsageInsightsAvailability =
 	| "available"
 	| "partial"
+	| "not_configured"
+	| "not_observed"
 	| "not_available";
 
 export interface UsageInsightsSection {

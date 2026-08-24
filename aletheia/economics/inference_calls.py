@@ -232,6 +232,26 @@ def record_inference_finished(
         return False
 
 
+def inference_duration_ms(logical_call_id: str | None) -> int | None:
+    """Return one completed logical-call duration for adjacent local telemetry."""
+    if not logical_call_id:
+        return None
+    try:
+        from aletheia.storage.sqlite import get_db
+
+        row = get_db().execute(
+            "SELECT started_at,finished_at FROM llm_inference_calls WHERE logical_call_id=?",
+            (logical_call_id,),
+        ).fetchone()
+        if row is None or not row["started_at"] or not row["finished_at"]:
+            return None
+        started = datetime.fromisoformat(str(row["started_at"]).replace("Z", "+00:00"))
+        finished = datetime.fromisoformat(str(row["finished_at"]).replace("Z", "+00:00"))
+        return max(0, int((finished - started).total_seconds() * 1000))
+    except Exception:
+        return None
+
+
 def list_inference_calls(
     *,
     days: int = 7,
