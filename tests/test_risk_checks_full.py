@@ -323,6 +323,117 @@ def test_live_exposure_cap_allows_order_under_limit(tmp_path, monkeypatch):
     assert not any("max_total_live_exposure_exceeded" in v for v in result.violations)
 
 
+@pytest.mark.parametrize(
+    ("execution_mode", "field", "value", "expected_field"),
+    [
+        ("bitget_live_limited", "quantity", "not-a-number", "quantity"),
+        ("paper_internal", "quantity", "not-a-number", "quantity"),
+        ("paper_internal", "quantity", float("nan"), "quantity"),
+        ("paper_internal", "quantity", float("inf"), "quantity"),
+        ("paper_internal", "quantity", 0.0, "quantity"),
+        ("paper_internal", "quantity", None, "quantity"),
+        ("paper_internal", "current_price", float("inf"), "current_price"),
+    ],
+)
+def test_total_account_exposure_rejects_invalid_matching_position(
+    tmp_path, monkeypatch, execution_mode, field, value, expected_field
+):
+    setup_env(tmp_path, monkeypatch)
+    if execution_mode == "bitget_live_limited":
+        _unlock_live_auto(tmp_path)
+        repo.insert_market_snapshot(
+            MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=100.0)
+        )
+        prerequisites = {}
+    else:
+        from tests.paper_trade_fixture import approvable_paper_trade
+
+        prerequisites = approvable_paper_trade(
+            monkeypatch,
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            price=100.0,
+        )
+
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        execution_mode=execution_mode,
+        quantity=0.1,
+        price=100.0,
+        **prerequisites,
+    )
+    position = {
+        "id": "position-corrupt",
+        "symbol": "ETH/USDT",
+        "market_type": "spot",
+        "direction": "long",
+        "quantity": 1.0,
+        "entry_price": 100.0,
+        "current_price": 100.0,
+        "execution_mode": execution_mode,
+        "leverage": None,
+    }
+    position[field] = value
+    monkeypatch.setattr(
+        "aletheia.risk.engine.list_all_open_positions", lambda: [position]
+    )
+    repo.insert_trade_proposal(proposal)
+
+    result = evaluate_proposal(proposal)
+    violation = (
+        "account_exposure_check_error:invalid_position_exposure:"
+        f"position=position-corrupt:field={expected_field}"
+    )
+    assert result.approved is False
+    assert violation in result.violations
+    assert violation in repo.list_risk_decisions(limit=1)[0]["violations"]
+    assert repo.has_order_for_proposal(proposal.id) is False
+
+
+def test_total_account_exposure_ignores_invalid_other_demo_pool(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from tests.paper_trade_fixture import approvable_paper_trade
+
+    prerequisites = approvable_paper_trade(
+        monkeypatch,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        price=100.0,
+    )
+    proposal = TradeProposal(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        execution_mode="paper_internal",
+        quantity=0.1,
+        price=100.0,
+        **prerequisites,
+    )
+    monkeypatch.setattr(
+        "aletheia.risk.engine.list_all_open_positions",
+        lambda: [{
+            "id": "other-demo-position",
+            "symbol": "ETH/USDT",
+            "market_type": "spot",
+            "direction": "long",
+            "quantity": "not-a-number",
+            "entry_price": 100.0,
+            "current_price": 100.0,
+            "execution_mode": "okx_demo",
+            "leverage": None,
+        }],
+    )
+    repo.insert_trade_proposal(proposal)
+
+    result = evaluate_proposal(proposal)
+    assert result.approved is True, result.violations
+    assert not any(v.startswith("account_exposure_check_error:") for v in result.violations)
+
+
 # --- max_leverage (futures) ---
 
 def test_demo_leverage_over_limit_blocks(tmp_path, monkeypatch):
