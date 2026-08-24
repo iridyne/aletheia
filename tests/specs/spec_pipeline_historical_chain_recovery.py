@@ -123,7 +123,7 @@ def _patch_bitget_client(monkeypatch, rows, calls):
     from aletheia.exchanges.bitget import client as bitget_client
 
     class _ReadOnlyClient:
-        def __init__(self, mode):
+        def __init__(self, mode, **_kwargs):
             calls.append(("client", mode))
             assert mode == "demo"
 
