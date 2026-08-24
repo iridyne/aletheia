@@ -7,7 +7,7 @@ build_report() with a real (empty) DB to prove they never raise.
 """
 
 import sqlite3
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 from aletheia.diagnostics import doctor as dx
 
@@ -57,8 +57,9 @@ def test_fmt_age_buckets():
 
 
 def test_doctor_cli_glyphs_fall_back_when_stdout_encoding_cannot_encode(monkeypatch):
-    import aletheia.cli.doctor_cmd as doctor_cmd
     import sys
+
+    import aletheia.cli.doctor_cmd as doctor_cmd
 
     monkeypatch.setattr(sys, "stdout", _FakeStdout("gbk"))
 
@@ -67,8 +68,9 @@ def test_doctor_cli_glyphs_fall_back_when_stdout_encoding_cannot_encode(monkeypa
 
 
 def test_doctor_cli_arrow_falls_back_when_stdout_encoding_cannot_encode(monkeypatch):
-    import aletheia.cli.doctor_cmd as doctor_cmd
     import sys
+
+    import aletheia.cli.doctor_cmd as doctor_cmd
 
     monkeypatch.setattr(sys, "stdout", _FakeStdout("ascii"))
 
@@ -76,8 +78,9 @@ def test_doctor_cli_arrow_falls_back_when_stdout_encoding_cannot_encode(monkeypa
 
 
 def test_doctor_cli_glyphs_use_unicode_when_stdout_supports_it(monkeypatch):
-    import aletheia.cli.doctor_cmd as doctor_cmd
     import sys
+
+    import aletheia.cli.doctor_cmd as doctor_cmd
 
     monkeypatch.setattr(sys, "stdout", _FakeStdout("utf-8"))
 
@@ -367,14 +370,20 @@ def test_doctor_reports_incomplete_cost_aware_outcomes(tmp_path, monkeypatch):
         funding = 0.0001 if i < 4 else None
         db.execute(
             "INSERT INTO universe_forward_outcomes "
-            "(id, member_id, snapshot_id, symbol, market_type, direction, horizon, "
-            "entry_price_usd, entry_ts, due_at, settled_at, forward_return_pct, "
-            "gross_return_pct, directional_return_pct, funding_rate_at_entry, "
-            "net_return_pct, min_tradable_edge_pct, settlement_price_source, "
-            "cost_model_version, status) "
-            "VALUES (?, ?, 'snap', 'BTC/USDT', 'perp', 'long', '1h', 100, ?, ?, ?, "
-            "1, 1, 1, ?, ?, 0.05, 'horizon_ohlcv', 'v1', 'settled')",
-            (f"outcome-{i}", f"member-{i}", _iso_ago(120), _iso_ago(60), _iso_ago(55), funding, net),
+            "(id, member_id, snapshot_id, symbol, venue, market_type, direction, horizon, "
+            "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, forward_return_pct, "
+                "gross_return_pct, directional_return_pct, funding_rate_at_entry, "
+                "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+                "net_return_pct, min_tradable_edge_pct, settlement_price_source, "
+                "settlement_lag_sec, "
+                "cost_model_version, status) "
+                "VALUES (?, ?, 'snap', 'BTC/USDT', 'bitget', 'perp', 'long', '1h', 100, 101, ?, ?, ?, "
+                "1, 1, 1, ?, 0, 0, ?, ?, 0.05, 'horizon_ohlcv', 0, 'v1', 'settled')",
+                (
+                    f"outcome-{i}", f"member-{i}", _iso_ago(120),
+                    _iso_ago(60), _iso_ago(55), funding,
+                    0.0 if i < 4 else None, net,
+                ),
         )
     db.commit()
     report = dx.Report(generated_at="t")
@@ -776,6 +785,7 @@ def test_deep_diagnostics_includes_log_policy_redacted_tails_and_attention(tmp_p
 def test_doctor_cli_verbose_json_includes_diagnostics(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from typer.testing import CliRunner
+
     from aletheia.main import app
 
     result = CliRunner().invoke(app, ["doctor", "--json", "--verbose"])
@@ -790,6 +800,7 @@ def test_doctor_cli_bundle_writes_redacted_diagnostic_file(tmp_path, monkeypatch
     setup_env(tmp_path, monkeypatch)
     (tmp_path / "logs" / "errors.log").write_text("api_key=DOCTORSECRET\n", encoding="utf-8")
     from typer.testing import CliRunner
+
     from aletheia.main import app
 
     bundle_path = tmp_path / "diagnostics" / "doctor.json"
@@ -875,8 +886,8 @@ def test_kill_switch_active_is_a_blocker(monkeypatch):
 
 def test_paused_config_reports_each_active_owner(monkeypatch):
     """Doctor explains why recovery remains blocked instead of a bare boolean."""
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()
     cfg.runtime.acquire_pause(
@@ -919,9 +930,9 @@ def test_zero_demo_notional_cap_is_a_blocker(monkeypatch):
 
 
 def test_llm_credentials_use_current_models_secret_ref(monkeypatch):
-    from aletheia.config.schema import AletheiaConfig, ProviderConfig
     import aletheia.config.loader as loader
     import aletheia.config.secrets as secrets
+    from aletheia.config.schema import AletheiaConfig, ProviderConfig
 
     cfg = AletheiaConfig()
     cfg.models.default_provider = "anthropic_compatible"
@@ -940,9 +951,9 @@ def test_llm_credentials_use_current_models_secret_ref(monkeypatch):
 
 
 def test_llm_credentials_warn_when_enabled_http_provider_secret_missing(monkeypatch):
-    from aletheia.config.schema import AletheiaConfig, ProviderConfig
     import aletheia.config.loader as loader
     import aletheia.config.secrets as secrets
+    from aletheia.config.schema import AletheiaConfig, ProviderConfig
 
     cfg = AletheiaConfig()
     cfg.models.default_provider = "anthropic_compatible"
@@ -961,9 +972,9 @@ def test_llm_credentials_warn_when_enabled_http_provider_secret_missing(monkeypa
 
 
 def test_llm_credentials_do_not_require_api_key_for_cli_provider(monkeypatch):
-    from aletheia.config.schema import AletheiaConfig, ProviderConfig
     import aletheia.config.loader as loader
     import aletheia.config.secrets as secrets
+    from aletheia.config.schema import AletheiaConfig, ProviderConfig
 
     cfg = AletheiaConfig()
     cfg.models.default_provider = "codex_cli"
@@ -990,9 +1001,9 @@ def test_llm_credentials_do_not_require_api_key_for_cli_provider(monkeypatch):
 # only ever validated config shape.
 
 def _llm_creds_config(monkeypatch, *, endpoint="http://127.0.0.1:4000/v1"):
-    from aletheia.config.schema import AletheiaConfig, ProviderConfig
     import aletheia.config.loader as loader
     import aletheia.config.secrets as secrets
+    from aletheia.config.schema import AletheiaConfig, ProviderConfig
 
     cfg = AletheiaConfig()
     cfg.models.default_provider = "openai_compatible"
@@ -1201,8 +1212,8 @@ def test_active_probe_is_off_by_default_so_doctor_stays_cheap(tmp_path, monkeypa
 
 
 def test_universe_market_coverage_warns_when_enabled_perps_have_no_features(tmp_path, monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.storage.sqlite import get_db
 
     setup_env(tmp_path, monkeypatch)
@@ -1236,8 +1247,8 @@ def test_universe_market_coverage_warns_when_enabled_perps_have_no_features(tmp_
 
 
 def test_universe_market_coverage_ok_when_enabled_markets_both_produce_features(tmp_path, monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.config.loader as loader
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.storage.sqlite import get_db
 
     setup_env(tmp_path, monkeypatch)
@@ -1628,8 +1639,8 @@ def test_operator_shell_probe_warns_when_online_heartbeat_is_stale(tmp_path, mon
 
 def _insert_churn(symbol, direction="short", entry=100.0):
     """A flip-flop signature row-pair (reconciled_gone close + adopted reopen), recent."""
-    from aletheia.storage.models import Position
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
     now = datetime.now(timezone.utc).isoformat()
     repo.insert_position(Position(
         symbol=symbol, market_type="usdt_futures", direction=direction,
@@ -1665,8 +1676,8 @@ def test_reconcile_thrash_probe_warns_on_fingerprint(tmp_path, monkeypatch):
 
 def test_reconciled_ratio_high_without_active_thrash_is_info(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    from aletheia.storage.models import Position
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
 
     now = datetime.now(timezone.utc).isoformat()
     for i in range(12):

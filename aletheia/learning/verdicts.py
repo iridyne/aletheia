@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import math
+import random
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from itertools import combinations
-import json
-import math
-import random
 from statistics import fmean
 from typing import Any
 
-from aletheia.learning.cohorts import ContributionCohort, CohortSample
+from aletheia.learning.cohorts import CohortSample, ContributionCohort
 from aletheia.learning.registry import get_learning_path, metric_version_for_path
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 METRIC_VERSION = "universe_family_calibration_cluster_allocation_utility_v10"
 RANDOMIZATION_INFERENCE_VERSION = "conditional-randomization-itt/v1"
@@ -577,6 +578,7 @@ def _harm_metrics(
         "policy_epoch": cohort.key.policy_epoch,
         "horizon": cohort.key.horizon,
         "outcome_contract_version": cohort.key.outcome_contract_version,
+        "expected_cost_model_version": COST_MODEL_VERSION,
         "behavior_contract_hash": cohort.key.behavior_contract_hash or None,
         "source_code_commits": sorted(cohort.source_code_commits),
         "source_code_commit_unknown_n": cohort.source_code_commit_unknown_n,

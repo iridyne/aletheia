@@ -7,24 +7,28 @@ identity and safety facts without reinterpreting ``positive`` as the legacy
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
-import json
 from typing import Any
 
 from aletheia.config.loader import load_config
+from aletheia.learning.behavior_contracts import current_behavior_contract_hash
 from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
-from aletheia.learning.registry import get_learning_path
 from aletheia.learning.control import global_learning_refreeze_reason
+from aletheia.learning.fixed_look import (
+    inference_authority_reason,
+    inference_collection_reason,
+)
 from aletheia.learning.ledger import (
     get_latest_measurement_verdict,
-    get_trial_admission_event,
     get_latest_verdict_for_cohort,
     get_record,
+    get_trial_admission_event,
     linked_settled_exposure_counts,
 )
 from aletheia.learning.models import LearningExperiment
-from aletheia.learning.behavior_contracts import current_behavior_contract_hash
+from aletheia.learning.registry import get_learning_path
 from aletheia.learning.verdicts import (
     METRIC_VERSION,
     SHADOW_TRIAL_INTEGRITY_CONTRACT,
@@ -32,11 +36,7 @@ from aletheia.learning.verdicts import (
     SHADOW_TRIAL_MIN_MARKET_DAYS,
     SHADOW_TRIAL_MIN_SAMPLES_PER_ARM,
 )
-from aletheia.learning.fixed_look import (
-    inference_authority_reason,
-    inference_collection_reason,
-)
-
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 PAPER_STAGES = ("paper_10", "paper_25", "paper_50", "paper_active")
 PREVIOUS_STAGE = {
@@ -352,7 +352,11 @@ def _legacy_authority_adapter(experiment: LearningExperiment, policy_epoch: str,
         return blocked("missing_activation_verdict")
     if min(int(verdict.get("unique_treatment_n") or 0), int(verdict.get("unique_control_n") or 0)) < experiment.min_samples_per_arm:
         return blocked("legacy_samples_insufficient", verdict)
-    linked = linked_settled_exposure_counts(experiment.experiment_id, policy_epoch=policy_epoch)
+    linked = linked_settled_exposure_counts(
+        experiment.experiment_id,
+        cost_model_version=COST_MODEL_VERSION,
+        policy_epoch=policy_epoch,
+    )
     if min(linked["treatment"], linked["control"]) < experiment.min_samples_per_arm:
         return blocked("legacy_outcomes_insufficient", verdict)
     try:
@@ -506,6 +510,8 @@ def measurement_identity_reason(
         return "measurement_metadata_invalid"
     if not isinstance(metrics, dict):
         return "measurement_metadata_invalid"
+    if metrics.get("expected_cost_model_version") != COST_MODEL_VERSION:
+        return "cost_model_version_mismatch"
     if str(verdict.get("stage") or "") != str(expected_stage):
         return "stage_mismatch"
     if (

@@ -5,7 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 
 
 def _closed_row(**overrides) -> dict:
@@ -310,6 +311,54 @@ def test_raw_account_events_caps_the_latest_rows_then_restores_chronological_ord
     assert [row["closed_at"] for row in result] == sorted(
         row["closed_at"] for row in result
     )
+
+
+def test_raw_account_events_preserves_exact_subsecond_instants():
+    from aletheia.analytics.outcome_integrity import raw_account_events
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    rows = [
+        ("zz-earliest", "2026-08-23 00:00:00.100000"),
+        ("zy-cutoff", "2026-08-23T08:00:00.100001+08:00"),
+        ("aa-middle", "2026-08-23T00:00:00.100499Z"),
+        ("bb-latest", "2026-08-23T00:00:00.100500+00:00"),
+        ("cc-latest", "2026-08-23T00:00:00.100500+00:00"),
+        ("invalid", "not-a-time"),
+        ("missing", None),
+    ]
+    db.executemany(
+        """
+        INSERT INTO positions (
+            id, symbol, market_type, direction, quantity, entry_price,
+            execution_mode, status, closed_at
+        ) VALUES (?, 'BTC/USDT', 'spot', 'long', 1, 100,
+                  'paper_internal', 'closed', ?)
+        """,
+        rows,
+    )
+    db.commit()
+
+    window = raw_account_events(
+        closed_after="2026-08-23T00:00:00.100001Z",
+        closed_before="2026-08-23T00:00:00.100500+00:00",
+    )
+    assert [row["id"] for row in window] == ["zy-cutoff", "aa-middle"]
+
+    before = raw_account_events(
+        closed_before="2026-08-23T00:00:00.100001+00:00"
+    )
+    assert [row["id"] for row in before] == ["zz-earliest"]
+
+    raw_ids = {row["id"] for row in raw_account_events()}
+    assert {"invalid", "missing"} <= raw_ids
+
+    newest = raw_account_events(limit=3)
+    assert [row["id"] for row in newest] == [
+        "aa-middle",
+        "bb-latest",
+        "cc-latest",
+    ]
 
 
 def test_learning_realized_assessment_composes_central_semantics():

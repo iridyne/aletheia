@@ -15,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean, median
 from typing import Any
 
+from aletheia.analytics.outcome_semantics import validated_outcome_economics
+
 _HORIZONS = ("15m", "1h", "4h", "24h")
 _ENTRY_ALIGNMENT_MAX_SEC = 60
 _LEGACY_EPOCH = "legacy_or_unavailable"
@@ -353,7 +355,9 @@ def _attach_outcomes(db, rows: list[dict]) -> dict[str, int]:
     required = {
         "outcome_candidate_key", "horizon", "status", "net_return_pct", "settled_at",
         "venue", "symbol", "market_type", "direction", "entry_ts", "cost_model_version",
-        "entry_price_usd",
+        "entry_price_usd", "exit_price_usd", "directional_return_pct", "estimated_fee_pct",
+        "estimated_spread_slippage_pct", "estimated_funding_pct",
+        "min_tradable_edge_pct", "settlement_price_source", "settlement_lag_sec",
     }
     if not _table_exists(db, "filter_candidate_outcomes"):
         return {"missing_outcome_table": len(rows)} if rows else {}
@@ -367,7 +371,10 @@ def _attach_outcomes(db, rows: list[dict]) -> dict[str, int]:
     placeholders = ",".join("?" for _ in keys)
     outcomes = db.execute(
         "SELECT rowid,outcome_candidate_key,horizon,status,net_return_pct,settled_at,"
-        "venue,symbol,market_type,direction,entry_ts,cost_model_version,entry_price_usd "
+        "venue,symbol,market_type,direction,entry_ts,cost_model_version,entry_price_usd,"
+        "exit_price_usd,directional_return_pct,estimated_fee_pct,estimated_spread_slippage_pct,"
+        "estimated_funding_pct,min_tradable_edge_pct,settlement_price_source,"
+        "settlement_lag_sec "
         f"FROM filter_candidate_outcomes WHERE outcome_candidate_key IN ({placeholders}) "
         "ORDER BY outcome_candidate_key,horizon,datetime(settled_at),rowid",
         tuple(keys),
@@ -472,11 +479,11 @@ def _apply_outcome_facts(row: dict, horizon: str, facts: list[Any]) -> None:
         if raw is None:
             settled_has_null = True
             continue
-        value = _finite(raw)
-        if value is None:
+        economics = validated_outcome_economics(dict(item))
+        if economics is None:
             settled_has_malformed = True
             continue
-        settled_values.add(value)
+        settled_values.add(economics["net_return_pct"])
     mixed_statuses = any(str(item["status"]).lower() != "settled" for item in facts)
     if (
         settled_has_malformed

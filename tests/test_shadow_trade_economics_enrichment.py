@@ -20,13 +20,14 @@ import uuid
 
 import pytest
 
+from aletheia.counterfactual.trades import _compute_shadow_economics, _current_price
+from aletheia.storage.models import ShadowTrade
 from aletheia.storage.repositories import (
+    anchor_shadow_trade_exit_price_if_pending,
     insert_shadow_trade,
     resolve_shadow_trade_if_pending,
 )
-from aletheia.storage.models import ShadowTrade
 from aletheia.storage.sqlite import get_db
-from aletheia.counterfactual.trades import _compute_shadow_economics, _current_price
 
 
 def _fresh_shadow(**overrides) -> ShadowTrade:
@@ -146,6 +147,59 @@ def test_enriched_resolve_leaves_resolved_row_untouched():
     ).fetchone()
     assert row["pnl_pct"] == 10.0  # untouched
     assert row["cost_model_version"] is None  # still legacy shape
+
+
+def test_legacy_shadow_writers_reject_keyed_rows():
+    shadow = _fresh_shadow(outcome_candidate_key="opportunity:keyed-shadow")
+    insert_shadow_trade(shadow)
+
+    assert anchor_shadow_trade_exit_price_if_pending(
+        shadow.id,
+        exit_price=110.0,
+    ) is False
+    assert resolve_shadow_trade_if_pending(
+        shadow.id,
+        exit_price=110.0,
+        pnl_pct=10.0,
+        resolved_at="2026-07-19T12:00:00+00:00",
+    ) is False
+
+    row = get_db().execute(
+        "SELECT exit_price,pnl_pct,resolved_at FROM shadow_trades WHERE id=?",
+        (shadow.id,),
+    ).fetchone()
+    assert dict(row) == {"exit_price": None, "pnl_pct": None, "resolved_at": None}
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("exit_price", 110.0),
+        ("pnl_pct", 10.0),
+        ("gross_return_pct", 10.0),
+        ("net_pnl_pct", 9.0),
+        ("estimated_fee_pct", 0.1),
+        ("estimated_spread_slippage_pct", 0.1),
+        ("estimated_funding_pct", 0.1),
+        ("min_tradable_edge_pct", 0.1),
+        ("settlement_price_source", "horizon_ohlcv"),
+        ("settlement_lag_sec", 0.0),
+        ("cost_model_version", "v1"),
+        ("btc_return_pct", 1.0),
+        ("resolved_at", "2026-07-19T12:00:00+00:00"),
+    ),
+)
+def test_keyed_shadow_insert_rejects_prefilled_results(field, value):
+    shadow = _fresh_shadow(
+        outcome_candidate_key="opportunity:keyed-shadow",
+        **{field: value},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="keyed shadow results require canonical projection",
+    ):
+        insert_shadow_trade(shadow)
 
 
 def test_economics_returns_none_for_missing_entry():

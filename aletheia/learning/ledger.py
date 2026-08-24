@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from aletheia.storage.repositories import transaction
+from aletheia.storage.repositories import (
+    complete_outcome_economics_sql,
+    transaction,
+)
 from aletheia.storage.sqlite import get_db
-
 
 _TABLE_ID = {
     "learning_hypotheses": "hypothesis_id",
@@ -407,67 +409,46 @@ def get_exposure_by_dedup_key(dedup_key: str) -> dict | None:
 
 
 def linked_settled_exposure_counts(
-    experiment_id: str, *, policy_epoch: str | None = None,
+    experiment_id: str,
+    *,
+    cost_model_version: str,
+    policy_epoch: str | None = None,
 ) -> dict[str, int]:
-    """Count unique arms backed by real clean, cost-aware settled outcomes."""
-    from datetime import datetime, timezone
+    """Count unique arms backed by exact-version clean settled outcomes."""
+    from aletheia.analytics.learning_window import clean_window_cutoff
 
-    from aletheia.learning.outcomes import assess_candidate_outcome
-
-    db = get_db()
-    as_of = datetime.now(timezone.utc)
-    unique_candidates: dict[str, set[str]] = {}
-    selected = (
-        "o.status, o.entry_ts, o.due_at, o.settled_at, o.direction, "
-        "o.net_return_pct, o.cost_model_version, o.outcome_candidate_key, "
-        "o.horizon, e.assignment AS linked_assignment, "
-        "e.candidate_key AS linked_candidate_key, "
-        "e.exposed_at AS linked_exposed_at "
-    )
-    rows = db.execute(
-        f"SELECT {selected}FROM universe_forward_outcomes o "
-        "JOIN learning_exposures e "
-        "ON e.outcome_candidate_key=o.outcome_candidate_key "
-        "WHERE o.status='settled' AND e.experiment_id=? "
-        "AND (? IS NULL OR e.concurrent_policy_epoch=?) "
-        "UNION ALL "
-        f"SELECT {selected}FROM filter_candidate_outcomes o "
-        "JOIN learning_exposures e "
-        "ON e.outcome_candidate_key=o.outcome_candidate_key || ':' || o.horizon "
-        "WHERE o.status='settled' AND e.experiment_id=? "
-        "AND (? IS NULL OR e.concurrent_policy_epoch=?)",
+    cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
+    rows = get_db().execute(
+        "WITH eligible_keys AS ("
+        " SELECT outcome_candidate_key AS outcome_key FROM universe_forward_outcomes"
+        " WHERE status='settled' AND entry_ts>=?"
+        f" AND {complete_outcome_economics_sql()}"
+        " AND cost_model_version=?"
+        " AND outcome_candidate_key IS NOT NULL"
+        " UNION "
+        " SELECT outcome_candidate_key || ':' || horizon AS outcome_key"
+        " FROM filter_candidate_outcomes"
+        " WHERE status='settled' AND entry_ts>=?"
+        f" AND {complete_outcome_economics_sql()}"
+        " AND cost_model_version=?"
+        ") "
+        "SELECT e.assignment, COUNT(DISTINCT e.candidate_key) AS n "
+        "FROM learning_exposures e JOIN eligible_keys k"
+        " ON k.outcome_key=e.outcome_candidate_key "
+        "WHERE e.experiment_id=? AND (? IS NULL OR e.concurrent_policy_epoch=?) "
+        "GROUP BY e.assignment",
         (
-            experiment_id, policy_epoch, policy_epoch,
-            experiment_id, policy_epoch, policy_epoch,
+            cutoff,
+            cost_model_version,
+            cutoff,
+            cost_model_version,
+            experiment_id,
+            policy_epoch,
+            policy_epoch,
         ),
     ).fetchall()
-    for raw in rows:
-        outcome = dict(raw)
-        candidate_key = outcome["linked_candidate_key"]
-        try:
-            exposed_at = datetime.fromisoformat(
-                str(outcome["linked_exposed_at"]).replace("Z", "+00:00")
-            )
-            entry_at = datetime.fromisoformat(
-                str(outcome["entry_ts"]).replace("Z", "+00:00")
-            )
-            if exposed_at.tzinfo is None:
-                exposed_at = exposed_at.replace(tzinfo=timezone.utc)
-            if entry_at.tzinfo is None:
-                entry_at = entry_at.replace(tzinfo=timezone.utc)
-        except (TypeError, ValueError):
-            continue
-        if (
-            candidate_key is None
-            or entry_at.astimezone(timezone.utc) < exposed_at.astimezone(timezone.utc)
-            or not assess_candidate_outcome(outcome, as_of_at=as_of).eligible
-        ):
-            continue
-        unique_candidates.setdefault(
-            str(outcome["linked_assignment"]), set(),
-        ).add(str(candidate_key))
     counts = {"control": 0, "treatment": 0}
-    counts.update({arm: len(candidates) for arm, candidates in unique_candidates.items()})
+    counts.update({str(row[0]): int(row[1]) for row in rows})
     return counts
 
 

@@ -1,10 +1,8 @@
 """Tests for aletheia.counterfactual.propensity."""
 from __future__ import annotations
 
-import sqlite3
 from unittest.mock import patch
 
-import aletheia.storage.sqlite as _sq
 from aletheia.counterfactual.propensity import (
     _encode,
     _fit,
@@ -13,6 +11,7 @@ from aletheia.counterfactual.propensity import (
     build_propensity_report,
 )
 from aletheia.counterfactual.trades import persist_shadow_batch
+from tests.shadow_outcome_fixture import settle_pending_keyed_shadows
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -26,6 +25,7 @@ def _make_candidates(n: int, score_start: float = 35.0, score_step: float = 0.4)
         {
             "opportunity_id": f"opp-{i:04d}",
             "symbol": "BTC/USDT",
+            "venue": "bitget",
             "direction": "long" if i % 2 == 0 else "short",
             "scanner_family": _FAMILIES[i % len(_FAMILIES)],
             "trade_score": score_start + i * score_step,
@@ -44,11 +44,7 @@ def _insert_and_settle(
     """Insert a shadow batch then mark all rows as settled."""
     with patch("aletheia.counterfactual.trades._current_price", return_value=50000.0):
         persist_shadow_batch(candidates, selected, top_n=top_n)
-    _sq._db_conn.execute(
-        "UPDATE shadow_trades SET net_pnl_pct = ? WHERE net_pnl_pct IS NULL",
-        (net_pnl_pct,),
-    )
-    _sq._db_conn.commit()
+    settle_pending_keyed_shadows(net_pnl_pct)
 
 
 def _insert_many_batches(
@@ -62,6 +58,7 @@ def _insert_many_batches(
             {
                 "opportunity_id": f"b{b}-{j}",
                 "symbol": "BTC/USDT",
+                "venue": "bitget",
                 "direction": "long" if j % 2 == 0 else "short",
                 "scanner_family": _FAMILIES[j % len(_FAMILIES)],
                 "trade_score": 35.0 + (b * batch_size + j) % 50 * 0.8,
@@ -180,6 +177,7 @@ def test_propensity_forced_rank():
             {
                 "opportunity_id": f"f{b}-top{j}",
                 "symbol": "BTC/USDT",
+                "venue": "bitget",
                 "direction": "long",
                 "scanner_family": "momentum",
                 "trade_score": 60.0 - j,  # rank 1=60, 2=59, 3=58
@@ -190,6 +188,7 @@ def test_propensity_forced_rank():
         forced = {
             "opportunity_id": f"f{b}-forced",
             "symbol": "BTC/USDT",
+            "venue": "bitget",
             "direction": "long",
             "scanner_family": "momentum",
             "trade_score": 40.0,  # lower score → rank 4 in list of 4, but top_n=3 excludes it

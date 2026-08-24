@@ -389,7 +389,7 @@ def risk(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """List risk decisions (enriched with proposal symbol/direction)."""
-    from aletheia.storage.repositories import list_risk_decisions, get_trade_proposal
+    from aletheia.storage.repositories import get_trade_proposal, list_risk_decisions
     rows = list_risk_decisions(limit=limit)
     if rejected_only:
         rows = [r for r in rows if not r.get("approved")]
@@ -837,12 +837,13 @@ def status(
 ):
     """One-shot system dashboard: portfolio, PnL, orders, universe, data quality."""
     from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
-    from aletheia.analytics.trade_stats import compute_rolling_trade_stats, compute_order_stats
+    from aletheia.analytics.trade_stats import compute_order_stats, compute_rolling_trade_stats
     from aletheia.data.price_feed import cache_stats
-    from aletheia.portfolio.pnl import mark_positions_to_market
     from aletheia.maintenance.historical_accounting import historical_accounting_summary
+    from aletheia.portfolio.pnl import mark_positions_to_market
     from aletheia.storage.repositories import (
-        get_active_universe_snapshot, get_active_universe_members,
+        get_active_universe_members,
+        get_active_universe_snapshot,
     )
 
     # Portfolio
@@ -985,8 +986,8 @@ def pnl(
         eligible_strategy_outcomes,
     )
     from aletheia.analytics.trade_stats import compute_rolling_trade_stats
-    from aletheia.portfolio.pnl import mark_positions_to_market
     from aletheia.maintenance.historical_accounting import historical_accounting_summary
+    from aletheia.portfolio.pnl import mark_positions_to_market
 
     # Today detail
     today_str = datetime.now(timezone.utc).date().isoformat()
@@ -1173,8 +1174,7 @@ def liquidations(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Show recent liquidation events from Binance Futures."""
-    from aletheia.storage.repositories import recent_liquidations
-    from aletheia.storage.repositories import get_active_universe_members
+    from aletheia.storage.repositories import get_active_universe_members, recent_liquidations
     if symbol:
         rows = recent_liquidations(symbol, hours=hours)[:limit]
     else:
@@ -1205,14 +1205,19 @@ def calibration(
 ):
     """Show net calibration by family, direction, market and horizon."""
     from aletheia.storage.repositories import calibration_stats
-    stats = calibration_stats()
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    stats = calibration_stats(cost_model_version=COST_MODEL_VERSION)
     if not stats:
         typer.echo("(no calibration data)")
         return
     if json_output:
         _output(stats, True)
         return
-    typer.echo("=== Net Signal Calibration (cost-aware outcomes) ===")
+    typer.echo(
+        "=== Net Signal Calibration "
+        f"(cost-aware outcomes, cost_model={COST_MODEL_VERSION}) ==="
+    )
     typer.echo(
         f"  {'family':<18s} {'side':<6s} {'market':<7s} "
         f"{'horizon':<6s} {'n':>4s} {'win%':>6s} {'avg_net':>8s}"
@@ -1370,14 +1375,15 @@ def shadow_trades(
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Show shadow trades (counterfactual: what if we traded #2/#3 candidate)."""
-    from aletheia.storage.repositories import list_shadow_trades
-    rows = list_shadow_trades(
+    from aletheia.counterfactual.trades import list_shadow_trade_diagnostics
+
+    rows = list_shadow_trade_diagnostics(
         scanner_family=scanner,
         resolved=resolved or None,
         limit=limit,
     )
     display = [{
-        "batch_id": r.get("batch_id", "")[:8],
+        "batch_id": (r.get("batch_id") or "")[:8],
         "symbol": r.get("symbol"),
         "direction": r.get("direction"),
         "scanner_family": r.get("scanner_family"),
@@ -1386,6 +1392,9 @@ def shadow_trades(
         "was_selected": r.get("was_selected"),
         "pnl_pct": r.get("pnl_pct"),
         "resolved_at": r.get("resolved_at"),
+        "authority_status": r.get("authority_status"),
+        "authorized": r.get("authorized"),
+        "authority_reason": r.get("authority_reason"),
     } for r in rows]
     _output(display, json_output)
 
@@ -1487,8 +1496,8 @@ def _gateway_base() -> str:
 
 def _gateway_fetch(path: str, *, base: str | None = None, timeout: int = 5) -> dict:
     """Fetch a gateway JSON endpoint; raises typer.Exit(1) if unreachable."""
-    import urllib.request
     import urllib.error
+    import urllib.request
     b = base or _gateway_base()
     url = f"{b}{path}"
     try:

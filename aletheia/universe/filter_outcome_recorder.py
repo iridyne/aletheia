@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 
 from aletheia.storage import repositories as repo
-
 
 logger = logging.getLogger("aletheia.universe.filter_outcome_recorder")
 
@@ -72,6 +71,15 @@ async def settle_due_filter_outcomes(
     deadline = time.monotonic() + max(0.0, time_budget_sec)
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
+    identity_unavailable = repo.count_pending_filter_candidate_outcomes_missing_venue(
+        now_iso
+    )
+    if identity_unavailable:
+        logger.warning(
+            "filter outcome settler: %d due rows have outcome_identity_unavailable "
+            "(missing venue); they remain pending and are excluded from settlement",
+            identity_unavailable,
+        )
     cfg = load_config()
     processed = 0
     settled = 0
@@ -243,14 +251,7 @@ async def settle_due_filter_outcomes(
             settlement_lag_sec=observation.get("settlement_lag_sec"),
         )
         if row.get("horizon") == "24h":
-            repo.settle_linked_shadow_outcomes(
-                row["outcome_candidate_key"],
-                exit_price=exit_price,
-                settled_at=now_iso,
-                economics=economics,
-                settlement_price_source=observation.get("price_source"),
-                settlement_lag_sec=observation.get("settlement_lag_sec"),
-            )
+            repo.settle_linked_shadow_outcomes(row["outcome_candidate_key"])
         return _SETTLED
 
     # ---- phase A: everything the persisted window already answers ------------
@@ -262,7 +263,6 @@ async def settle_due_filter_outcomes(
     local_obs, network_rows, local_reasons = local_market_observations(
         candidates,
         now=now,
-        default_venue=cfg.market_data.ccxt_exchange,
     )
     local_processed = 0
     for row in candidates:
@@ -309,7 +309,6 @@ async def settle_due_filter_outcomes(
     # carried into the next round: its representative is dropped either way, so
     # each round removes at least one row per group even when the representative
     # got no write at all because the venue was unreachable.
-    default_venue = cfg.market_data.ccxt_exchange
     unanswered = list(network_rows)
     fetch_allowance = (
         len(unanswered) if max_fetches is None else max(0, int(max_fetches))
@@ -318,7 +317,8 @@ async def settle_due_filter_outcomes(
     harvested = 0
     rounds = 0
     deferred = 0
-    venue_unreachable = False
+    deferred_reasons: dict[str, int] = {}
+    wave_fully_deferred = False
     while unanswered and fetched_groups < fetch_allowance:
         if time.monotonic() >= deadline:
             break
@@ -326,7 +326,7 @@ async def settle_due_filter_outcomes(
         groups: dict[str, list[dict]] = {}
         ungroupable: list[dict] = []
         for row in unanswered:
-            key = fetch_group_key(row, now=now, default_venue=default_venue)
+            key = fetch_group_key(row, now=now)
             if key is None:
                 # Unplannable. Leave it to the per-row path, which reports it.
                 ungroupable.append(row)
@@ -354,18 +354,19 @@ async def settle_due_filter_outcomes(
                     # Not processed: nothing was measured and nothing was written.
                     deferred += 1
                     wave_deferred += 1
+                    observation = observations.get(row["id"]) or {}
+                    reason = str(observation.get("defer_reason") or "unknown")
+                    deferred_reasons[reason] = deferred_reasons.get(reason, 0) + 1
                     continue
                 processed += 1
                 if verdict == _SETTLED:
                     settled += 1
             if wave_deferred == len(wave):
-                # A whole wave reached nothing, so the venue is down rather than
-                # this wave being unlucky. Every later wave and round would regroup
-                # more rows and spend more of the allowance against an endpoint
-                # that is not answering — and when the cause is a rate-limit ban,
-                # that spending is what extends the ban. Stop for this cycle; the
-                # rows are all still measurable when it answers again.
-                venue_unreachable = True
+                # A whole wave produced no observation. Further work in this round
+                # would either repeat an unavailable identity or keep spending the
+                # allowance against a venue that is not answering. Stop this cycle;
+                # every row remains pending and no false verdict is written.
+                wave_fully_deferred = True
                 break
 
         # ---- harvest: siblings the requests above just warmed ----------------
@@ -379,7 +380,7 @@ async def settle_due_filter_outcomes(
         still_unanswered: list[dict] = []
         if siblings and time.monotonic() < deadline:
             harvest_obs, _missing, _harvest_reasons = local_market_observations(
-                siblings, now=now, default_venue=default_venue,
+                siblings, now=now,
             )
             for row in siblings:
                 observation = harvest_obs.get(row["id"])
@@ -395,7 +396,7 @@ async def settle_due_filter_outcomes(
         # Rows the deadline cut out of `budgeted` keep their 'pending' status and
         # are simply left to the next cycle, so they are not carried forward here.
         unanswered = still_unanswered
-        if venue_unreachable:
+        if wave_fully_deferred:
             break
 
     if settled or processed:
@@ -420,11 +421,14 @@ async def settle_due_filter_outcomes(
         # the venue, or chase the settler. Say which one this was, and say plainly
         # that the evidence survived.
         logger.warning(
-            "filter outcome settler: settled 0 of %d due rows — the venue was "
-            "unreachable for all %d rows asked about (%d requests, %d rounds); those "
-            "rows stay pending and are retried next cycle, none were written off",
+            "filter outcome settler: settled 0 of %d due rows — all %d rows asked "
+            "about were unreachable or identity unavailable (%s; %d requests, %d "
+            "rounds); those rows stay pending, none were written off",
             len(candidates),
             deferred,
+            " ".join(
+                f"{key}={value}" for key, value in sorted(deferred_reasons.items())
+            ),
             fetched_groups,
             rounds,
         )

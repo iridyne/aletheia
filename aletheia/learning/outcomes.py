@@ -6,16 +6,16 @@ consumers migrate in later phases; unknown economics always fail closed.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from datetime import datetime, timezone
 import math
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Mapping
 
 from aletheia.analytics.learning_window import LEARNING_DATA_FLOOR_ISO
 from aletheia.analytics.outcome_integrity import (
     OutcomeAssessment,
     assess_position_closure,
 )
+from aletheia.analytics.outcome_semantics import validated_outcome_economics
 
 CANDIDATE_OUTCOME_TEMPORAL_REASONS = (
     "unsettled",
@@ -29,13 +29,6 @@ CANDIDATE_OUTCOME_TEMPORAL_REASONS = (
     "settled_before_due",
     "settlement_after_as_of",
 )
-
-
-def assess_realized_position(row: dict[str, Any]) -> OutcomeAssessment:
-    closed_at = row.get("closed_at")
-    if not _at_or_after_floor(closed_at):
-        return OutcomeAssessment(False, "dirty_or_missing_close_time", source="realized_position")
-    return assess_position_closure(row)
 
 
 def candidate_outcome_temporal_reason(
@@ -75,29 +68,44 @@ def candidate_outcome_temporal_reason(
     return None
 
 
+def assess_realized_position(row: dict[str, Any]) -> OutcomeAssessment:
+    closed_at = row.get("closed_at")
+    if not _at_or_after_floor(closed_at):
+        return OutcomeAssessment(False, "dirty_or_missing_close_time", source="realized_position")
+    return assess_position_closure(row)
+
+
 def assess_candidate_outcome(
     row: Mapping[str, Any],
     *,
     as_of_at: str | datetime | None = None,
 ) -> OutcomeAssessment:
-    temporal_reason = candidate_outcome_temporal_reason(
-        row,
-        as_of_at=datetime.now(timezone.utc) if as_of_at is None else as_of_at,
-    )
-    if temporal_reason:
-        return OutcomeAssessment(
-            False,
-            temporal_reason,
-            category="candidate",
-            source="candidate_outcome",
-        )
+    if as_of_at is not None:
+        temporal_reason = candidate_outcome_temporal_reason(row, as_of_at=as_of_at)
+        if temporal_reason:
+            return OutcomeAssessment(
+                False,
+                temporal_reason,
+                category="candidate",
+                source="candidate_outcome",
+            )
+    venue = row.get("venue")
+    if not isinstance(venue, str) or not venue.strip():
+        return OutcomeAssessment(False, "missing_venue", category="candidate", source="candidate_outcome")
     if str(row.get("direction") or "").lower() not in {"long", "short"}:
         return OutcomeAssessment(False, "missing_direction", category="candidate", source="candidate_outcome")
     net = _to_float(row.get("net_return_pct"))
     if net is None:
         return OutcomeAssessment(False, "net_economics_unavailable", category="candidate", source="candidate_outcome")
-    if not row.get("cost_model_version"):
+    edge = _to_float(row.get("min_tradable_edge_pct"))
+    if edge is None or edge < 0:
+        return OutcomeAssessment(False, "tradable_edge_unavailable", category="candidate", source="candidate_outcome")
+    cost_model = row.get("cost_model_version")
+    if not isinstance(cost_model, str) or not cost_model.strip():
         return OutcomeAssessment(False, "missing_cost_model_version", category="candidate", source="candidate_outcome")
+    economics = validated_outcome_economics(row)
+    if economics is None:
+        return OutcomeAssessment(False, "cost_economics_incomplete", category="candidate", source="candidate_outcome")
     key = row.get("outcome_candidate_key")
     horizon = row.get("horizon")
     if not key or not horizon:
@@ -108,7 +116,7 @@ def assess_candidate_outcome(
         category="candidate",
         outcome_key=f"candidate:{key}",
         horizon=str(horizon),
-        net_return_pct=net,
+        net_return_pct=economics["net_return_pct"],
         source="candidate_outcome",
     )
 
@@ -132,10 +140,7 @@ def _parse_dt(value: Any) -> datetime | None:
 
 
 def _to_float(value: Any) -> float | None:
-    if value is None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    try:
-        number = float(value)
-        return number if math.isfinite(number) else None
-    except (TypeError, ValueError):
-        return None
+    number = float(value)
+    return number if math.isfinite(number) else None

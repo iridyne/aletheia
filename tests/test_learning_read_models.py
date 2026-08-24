@@ -27,6 +27,7 @@ def _setup_env(tmp_path: Path, monkeypatch) -> None:
 
 def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
     from aletheia.agent_runtime import build_info
+    from aletheia.learning.behavior_contracts import current_behavior_contract_hash
     from aletheia.learning.experiments import _policy_epoch
     from aletheia.learning.ledger import (
         insert_experiment,
@@ -40,7 +41,7 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
         LearningJobHealth,
     )
     from aletheia.learning.verdicts import METRIC_VERSION
-    from aletheia.learning.behavior_contracts import current_behavior_contract_hash
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     monkeypatch.setattr(build_info, "_boot_commit", "commit-current")
     hypothesis = LearningHypothesis(
@@ -88,6 +89,7 @@ def _seed_current_experiment(monkeypatch) -> tuple[str, str]:
         confidence_low=0.01,
         confidence_high=0.5,
         harm_metrics_json=json.dumps({
+            "expected_cost_model_version": COST_MODEL_VERSION,
             "raw_exposure_n": 18,
             "exposed_treatment_assignment_unit_n": 4,
             "exposed_authority_applied_treatment_unit_n": 0,
@@ -338,8 +340,8 @@ def test_lco_projection_never_recommends_promotion_from_monitoring_positive(
 def test_lco_projection_reports_resolved_treatment_authority(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     _seed_current_experiment(monkeypatch)
-    from aletheia.learning.authority import AuthorityDecision
     import aletheia.learning.authority as authority
+    from aletheia.learning.authority import AuthorityDecision
 
     monkeypatch.setattr(
         authority,
@@ -793,7 +795,7 @@ def test_lco_projection_never_offers_admission_for_malformed_measurement_metadat
 
     lifecycle_view = build_learning_contribution_projection()["items"][0]["lifecycle"]
 
-    assert lifecycle_view["recommended_action"] == "admit_trial"
+    assert lifecycle_view["recommended_action"] == "hold"
     assert lifecycle_view["mutation_available"] is False
     assert lifecycle_view["mutation_unavailable_reason"] == (
         "measurement_metadata_invalid"
@@ -844,6 +846,37 @@ def test_lco_projection_keeps_matching_behavior_current_across_commits(
     assert item["measurement"]["state"] == "insufficient_data"
     assert item["current_identity"]["matches_running_cohort"] is True
     assert item["latest_historical_measurement"]["code_commit"] == "old-commit"
+
+
+def test_lco_projection_keeps_legacy_cost_model_verdict_historical(
+    tmp_path, monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    _, experiment_id = _seed_current_experiment(monkeypatch)
+    from aletheia.storage.sqlite import get_db
+
+    row = get_db().execute(
+        "SELECT harm_metrics_json FROM learning_contribution_verdicts "
+        "WHERE experiment_id=?",
+        (experiment_id,),
+    ).fetchone()
+    metrics = json.loads(row["harm_metrics_json"])
+    metrics.pop("expected_cost_model_version")
+    get_db().execute(
+        "UPDATE learning_contribution_verdicts SET harm_metrics_json=? "
+        "WHERE experiment_id=?",
+        (json.dumps(metrics), experiment_id),
+    )
+    get_db().commit()
+
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    item = build_learning_contribution_projection()["items"][0]
+
+    assert item["measurement"]["state"] == "not_measured"
+    assert item["measurement"]["reason"] == "cost_model_version_mismatch"
+    assert item["current_identity"]["matches_running_cohort"] is False
+    assert item["latest_historical_measurement"]["current"] is False
 
 
 def test_lco_projection_selects_current_verdict_before_newer_historical_row(
@@ -975,7 +1008,6 @@ def test_lco_projection_reads_the_newest_evaluation_not_the_latest_window(
     from aletheia.learning.ledger import get_record, insert_record
     from aletheia.learning.models import LearningContributionVerdict
     from aletheia.learning.verdicts import METRIC_VERSION
-
     from aletheia.storage.sqlite import get_db
 
     seeded_id = _seeded_verdict_id(experiment_id)
@@ -1121,10 +1153,10 @@ def test_lco_projection_reports_an_overdue_evaluator_as_overdue(
     """
     _setup_env(tmp_path, monkeypatch)
     _seed_current_experiment(monkeypatch)
-    from aletheia.storage.sqlite import get_db
     from aletheia.learning.read_models import (
         build_learning_contribution_projection,
     )
+    from aletheia.storage.sqlite import get_db
 
     db = get_db()
     db.execute(
@@ -1153,10 +1185,10 @@ def test_lco_projection_does_not_mark_a_job_overdue_before_it_is_due(
     _seed_current_experiment(monkeypatch)
     from datetime import datetime, timedelta, timezone
 
-    from aletheia.storage.sqlite import get_db
     from aletheia.learning.read_models import (
         build_learning_contribution_projection,
     )
+    from aletheia.storage.sqlite import get_db
 
     due = datetime.now(timezone.utc) + timedelta(minutes=30)
     db = get_db()

@@ -20,15 +20,14 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from aletheia.analytics.filter_registry import (
-    FilterSpec,
     FILTER_REGISTRY,
-    tunable_filters,
     report_only_filters,
+    tunable_filters,
 )
 
 logger = logging.getLogger("aletheia.analytics.filter_controller")
@@ -120,6 +119,7 @@ def _batch_scanner_weights_quota_stats(
     """
     try:
         from aletheia.analytics.filter_evidence import decode_filter_decision_batch
+        from aletheia.storage.repositories import complete_outcome_economics_sql
         from aletheia.storage.sqlite import get_db
     except Exception:
         return []
@@ -193,7 +193,9 @@ def _batch_scanner_weights_quota_stats(
             chunk = outcome_keys[offset : offset + 500]
             placeholders = ",".join("?" for _ in chunk)
             cursor = db.execute(
-                "SELECT outcome_candidate_key, horizon, status, net_return_pct "
+                "SELECT outcome_candidate_key, horizon, status, net_return_pct, "
+                f"CASE WHEN {complete_outcome_economics_sql()} "
+                "THEN 1 ELSE 0 END AS economics_complete "
                 "FROM filter_candidate_outcomes "
                 f"WHERE outcome_candidate_key IN ({placeholders})",
                 tuple(chunk),
@@ -217,7 +219,7 @@ def _batch_scanner_weights_quota_stats(
                 bucket["candidates"].add(key)
                 if (
                     outcome.get("status") == "settled"
-                    and outcome.get("net_return_pct") is not None
+                    and outcome.get("economics_complete") == 1
                 ):
                     net = float(outcome["net_return_pct"])
                     bucket["settled"].append(net)
@@ -296,7 +298,7 @@ def compute_filter_feedback(
     days ago to prevent FIRST_EXPOSURE_CTE from scanning all of filter_decisions
     (319k+ rows) on every observe cycle.  Pass an explicit value to override.
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
 
     if evaluated_since is None:
         evaluated_since = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
@@ -788,10 +790,10 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
     # bounded pass advances every Observation Window under one exception
     # boundary.
     try:
-        from aletheia.counterfactual.filter_replay import build_bounded_filter_replays
         from aletheia.counterfactual.filter_experiments import (
             register_replay_ready_experiments,
         )
+        from aletheia.counterfactual.filter_replay import build_bounded_filter_replays
 
         replays = build_bounded_filter_replays(recs, min_samples=min_samples)
         experiment_registration = register_replay_ready_experiments(replays)

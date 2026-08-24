@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
-
 
 _NOW = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)
 
@@ -92,6 +91,7 @@ def _measurement(
     from aletheia.learning.ledger import insert_record
     from aletheia.learning.models import LearningContributionVerdict
     from aletheia.learning.verdicts import METRIC_VERSION
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     metric = metric or METRIC_VERSION
     behavior_contract_hash = behavior_contract_hash or build_behavior_contract_hash(
@@ -149,6 +149,7 @@ def _measurement(
         confidence_low=0.1,
         confidence_high=0.8,
         harm_metrics_json=json.dumps({
+            "expected_cost_model_version": COST_MODEL_VERSION,
             "policy_epoch": epoch,
             "horizon": horizon,
             "outcome_contract_version": contract,
@@ -339,9 +340,9 @@ def test_newer_confirmatory_cannot_mask_monitoring_invalid_safety(monkeypatch):
 
 
 def _configure(monkeypatch, cfg):
-    from aletheia.learning.behavior_contracts import build_behavior_contract_hash
     import aletheia.learning.authority as authority
     import aletheia.learning.lifecycle as lifecycle
+    from aletheia.learning.behavior_contracts import build_behavior_contract_hash
 
     monkeypatch.setattr(authority, "load_config", lambda: cfg)
     monkeypatch.setattr(lifecycle, "load_config", lambda: cfg)
@@ -479,8 +480,8 @@ def test_shadow_positive_never_auto_promotes_to_paper(monkeypatch):
     hypothesis, experiment = _experiment()
     verdict = _measurement(hypothesis, experiment, "positive")
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
-    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.learning.ledger import get_record
+    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.storage.sqlite import get_db
 
     result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
@@ -507,8 +508,8 @@ def test_shadow_no_intervention_only_recommends_owner_trial_with_all_gates_enabl
     _configure(monkeypatch, _settings(
         automation=True, paper=True, paths=[hypothesis.path_id],
     ))
-    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.learning.ledger import get_record
+    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.storage.sqlite import get_db
 
     result = process_lifecycle(
@@ -684,8 +685,8 @@ def test_wrong_hypothesis_negative_measurement_cannot_invalidate_experiment(monk
     foreign_hypothesis, _ = _experiment(allocation=0.6)
     verdict = _measurement(foreign_hypothesis, experiment, "negative")
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
-    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.learning.ledger import get_record
+    from aletheia.learning.lifecycle import process_lifecycle
 
     result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
 
@@ -846,8 +847,8 @@ def test_non_owner_identity_cannot_admit_shadow_trial(monkeypatch, actor):
     _configure(monkeypatch, _settings(
         automation=True, paper=True, paths=[hypothesis.path_id],
     ))
-    from aletheia.learning.lifecycle import admit_shadow_trial
     from aletheia.learning.ledger import get_record
+    from aletheia.learning.lifecycle import admit_shadow_trial
     from aletheia.storage.sqlite import get_db
 
     result = admit_shadow_trial(
@@ -875,8 +876,8 @@ def test_owner_string_cannot_replace_an_authenticated_admission_boundary(monkeyp
         reason="no_actual_intervention",
     )
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
-    from aletheia.learning.lifecycle import admit_shadow_trial
     from aletheia.learning.ledger import get_record
+    from aletheia.learning.lifecycle import admit_shadow_trial
     from aletheia.storage.sqlite import get_db
 
     first = admit_shadow_trial(
@@ -1252,8 +1253,8 @@ def test_positive_without_paper_influence_records_blocked_recommendation_not_aut
         hypothesis, experiment, _measurement(hypothesis, experiment, "positive")
     )
     _configure(monkeypatch, _settings(automation=True, paper=False, paths=[hypothesis.path_id]))
-    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.learning.authority import resolve_learning_authority
+    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.storage.sqlite import get_db
 
     result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
@@ -1383,8 +1384,8 @@ def test_owner_admitted_trial_keeps_authority_while_current_stage_is_underpowere
     complete = _consume_confirmatory(
         hypothesis, successor, _measurement(hypothesis, successor, "positive")
     )
-    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.learning.ledger import get_record
+    from aletheia.learning.lifecycle import process_lifecycle
 
     transition = process_lifecycle(
         successor.experiment_id,
@@ -1626,10 +1627,10 @@ def test_retired_operator_path_cannot_recover_legacy_authority(monkeypatch):
 
 
 def test_canonical_defaults_keep_unadmitted_shadow_consumers_on_static_baseline(monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.learning.authority as authority
     import aletheia.learning.control as control
     import aletheia.learning.experiments as experiments
+    from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()
     monkeypatch.setattr(authority, "load_config", lambda: cfg)
@@ -1664,11 +1665,11 @@ def test_refrozen_hypothesis_reopens_only_for_new_behavior_contract(monkeypatch)
     hypothesis got a new experiment on the next tick and kept accruing evidence for
     a line of enquiry that had already been rejected.
     """
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.learning.authority as authority
     import aletheia.learning.control as control
     import aletheia.learning.experiments as experiments
     import aletheia.learning.lifecycle as lifecycle
+    from aletheia.config.schema import AletheiaConfig
     from aletheia.learning.ledger import get_record
     from aletheia.storage.sqlite import get_db
 
@@ -1800,8 +1801,8 @@ def test_negative_and_invalid_fail_closed_in_authority_and_lifecycle(monkeypatch
     _measurement(hypothesis, experiment, measurement)
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
     from aletheia.learning.authority import resolve_learning_authority
-    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.learning.ledger import get_record
+    from aletheia.learning.lifecycle import process_lifecycle
 
     before_controller = resolve_learning_authority(hypothesis.path_id, experiment, "epoch-a")
     result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
@@ -1829,8 +1830,8 @@ def test_harm_breach_does_not_suppress_the_safety_action_it_is_evidence_for(
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     verdict = _measurement(hypothesis, experiment, measurement, breached=True)
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
-    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.learning.ledger import get_record
+    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.storage.sqlite import get_db
 
     result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
@@ -1852,8 +1853,8 @@ def test_harm_breach_blocks_authority_and_refreezes_instead_of_promoting(monkeyp
     _measurement(hypothesis, experiment, "positive", breached=True)
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
     from aletheia.learning.authority import resolve_learning_authority
-    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.learning.ledger import get_record
+    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.storage.sqlite import get_db
 
     decision = resolve_learning_authority(hypothesis.path_id, experiment, "epoch-a")
@@ -1875,14 +1876,52 @@ def test_context_stale_safety_measurement_can_withdraw_authority(monkeypatch, me
     hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
     _measurement(hypothesis, experiment, measurement, epoch="stale-epoch")
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
-    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.learning.ledger import get_record
+    from aletheia.learning.lifecycle import process_lifecycle
 
     result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
 
     assert result.action == ("invalidate" if measurement == "invalid" else "refreeze")
     assert result.reason == "stale_safety_measurement"
     assert get_record("learning_experiments", experiment.experiment_id)["ended_at"] is not None
+
+
+@pytest.mark.parametrize(
+    ("measurement", "expected_action"),
+    [("negative", "refreeze"), ("invalid", "invalidate"), ("positive", "hold")],
+)
+def test_cost_model_stale_measurement_only_permits_safety_actions(
+    monkeypatch, measurement, expected_action,
+):
+    hypothesis, experiment = _experiment(stage="paper_10", allocation=0.1)
+    verdict = _measurement(hypothesis, experiment, measurement)
+    from aletheia.storage.sqlite import get_db
+
+    metrics = json.loads(verdict.harm_metrics_json)
+    metrics.pop("expected_cost_model_version")
+    get_db().execute(
+        "UPDATE learning_contribution_verdicts SET harm_metrics_json=? "
+        "WHERE verdict_id=?",
+        (json.dumps(metrics), verdict.verdict_id),
+    )
+    get_db().commit()
+    _configure(
+        monkeypatch,
+        _settings(automation=True, paper=True, paths=[hypothesis.path_id]),
+    )
+    from aletheia.learning.lifecycle import process_lifecycle
+
+    result = process_lifecycle(
+        experiment.experiment_id,
+        current_policy_epoch="epoch-a",
+    )
+
+    assert result.action == expected_action
+    assert result.reason == (
+        "cost_model_version_mismatch"
+        if measurement == "positive"
+        else "stale_safety_measurement"
+    )
 
 
 def test_context_stale_harm_breach_can_withdraw_authority(monkeypatch):
@@ -1908,8 +1947,8 @@ def test_wrong_stage_stale_negative_cannot_mutate_current_experiment(monkeypatch
         epoch="stale-epoch",
     )
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
-    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.learning.ledger import get_record
+    from aletheia.learning.lifecycle import process_lifecycle
 
     result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
 
@@ -1934,8 +1973,8 @@ def test_malformed_stale_negative_cannot_mutate_current_experiment(monkeypatch):
     )
     get_db().commit()
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
-    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.learning.ledger import get_record
+    from aletheia.learning.lifecycle import process_lifecycle
 
     result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
 
@@ -1957,7 +1996,9 @@ def test_missing_identity_stale_negative_cannot_mutate_current_experiment(
         epoch="stale-epoch",
     )
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
     metrics = {
+        "expected_cost_model_version": COST_MODEL_VERSION,
         "harm_state": "clear",
         "breached": False,
         "horizon": "4h",
@@ -1973,8 +2014,8 @@ def test_missing_identity_stale_negative_cannot_mutate_current_experiment(
     )
     get_db().commit()
     _configure(monkeypatch, _settings(automation=True, paper=True, paths=[hypothesis.path_id]))
-    from aletheia.learning.lifecycle import process_lifecycle
     from aletheia.learning.ledger import get_record
+    from aletheia.learning.lifecycle import process_lifecycle
 
     result = process_lifecycle(experiment.experiment_id, current_policy_epoch="epoch-a")
 
@@ -2008,6 +2049,7 @@ def test_measurement_identity_reason_is_identity_only(monkeypatch):
         measurement_identity_reason,
     )
     from aletheia.learning.verdicts import METRIC_VERSION
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     verdict = {
         "stage": "paper_10",
@@ -2018,7 +2060,11 @@ def test_measurement_identity_reason_is_identity_only(monkeypatch):
         "metric_version": METRIC_VERSION,
         "code_commit": "test-build",
         "behavior_contract_hash": "behavior-current",
-        "harm_metrics_json": _json.dumps({"harm_state": "breached", "breached": True}),
+        "harm_metrics_json": _json.dumps({
+            "expected_cost_model_version": COST_MODEL_VERSION,
+            "harm_state": "breached",
+            "breached": True,
+        }),
     }
     kwargs = dict(
         expected_horizon="4h",
@@ -2029,7 +2075,18 @@ def test_measurement_identity_reason_is_identity_only(monkeypatch):
     assert measurement_identity_reason(verdict, "paper_10", "epoch-a", **kwargs) is None
     assert measurement_harm_block_reason(verdict) == "harm_gate_breached"
 
-    clean = {**verdict, "harm_metrics_json": _json.dumps({"harm_state": "clear", "breached": False})}
+    legacy_metrics = _json.loads(verdict["harm_metrics_json"])
+    legacy_metrics.pop("expected_cost_model_version")
+    legacy = {**verdict, "harm_metrics_json": _json.dumps(legacy_metrics)}
+    assert measurement_identity_reason(
+        legacy, "paper_10", "epoch-a", **kwargs
+    ) == "cost_model_version_mismatch"
+
+    clean = {**verdict, "harm_metrics_json": _json.dumps({
+        "expected_cost_model_version": COST_MODEL_VERSION,
+        "harm_state": "clear",
+        "breached": False,
+    })}
     assert measurement_harm_block_reason(clean) is None
     assert measurement_harm_block_reason({"harm_metrics_json": "{not json"}) == (
         "measurement_metadata_invalid"
@@ -2164,6 +2221,7 @@ def test_read_only_inspection_reports_no_progress_without_behavior_contract(monk
 def test_concurrent_promotion_attempts_create_one_durable_successor(tmp_path, monkeypatch):
     """Two scheduler workers racing the same verdict remain deduplicated."""
     from concurrent.futures import ThreadPoolExecutor
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sqlite
     from aletheia.storage.migrations import run_migrations
@@ -2202,8 +2260,7 @@ def test_contribution_evaluator_isolates_a_failing_experiment(monkeypatch):
     remaining experiment — and the next cycle crashed on the same first row,
     starving verdict production permanently.
     """
-    from aletheia.learning import lifecycle
-    from aletheia.learning import contribution_runner
+    from aletheia.learning import contribution_runner, lifecycle
 
     _good_hyp, good_exp = _experiment(stage="paper_10", allocation=0.10)
     _bad_hyp, bad_exp = _experiment(stage="paper_10", allocation=0.25)

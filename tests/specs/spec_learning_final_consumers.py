@@ -85,8 +85,9 @@ def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch):
     assert diagnostic["manifest"]["lesson_ids"] == ["current-reviewed-lesson"]
     assert [row["lesson_id"] for row in diagnostic["lessons"]] == ["current-reviewed-lesson"]
 
-    from aletheia.server.routes.operator import operator_llm_session
     import inspect
+
+    from aletheia.server.routes.operator import operator_llm_session
     source = inspect.getsource(operator_llm_session)
     assert '["system", "market", "agents", "trading", "learning"]' in source
     assert '"learning_manifest": learning_manifest' in source
@@ -600,12 +601,19 @@ def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanne
     _ts = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
     db.execute(
         "INSERT INTO universe_forward_outcomes "
-        "(id,outcome_candidate_key,member_id,snapshot_id,symbol,scanner_family,direction,horizon,"
-        "entry_price_usd,entry_ts,due_at,settled_at,net_return_pct,min_tradable_edge_pct,"
-        "cost_model_version,status) VALUES (?,?,?,?,?,?,?,?,100,?,?,?,?,0.05,?,?)",
+        "(id,outcome_candidate_key,member_id,snapshot_id,venue,symbol,scanner_family,direction,horizon,"
+        "entry_price_usd,exit_price_usd,entry_ts,due_at,settled_at,directional_return_pct,"
+        "settlement_price_source,settlement_lag_sec,"
+        "estimated_fee_pct,estimated_spread_slippage_pct,estimated_funding_pct,"
+        "net_return_pct,min_tradable_edge_pct,cost_model_version,status) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
-            oid, f"candidate-{oid}" if complete else None, "member", "snapshot", symbol,
-            scanner, direction, "24h", _ts, _ts, _ts, 1.0,
+            oid, f"candidate-{oid}" if complete else None, "member", "snapshot",
+            "bitget" if complete else None, symbol,
+            scanner, direction, "24h", 100.0, 101.2 if direction == "long" else 98.8,
+            _ts, _ts, _ts,
+            1.2, "horizon_ohlcv" if complete else None, 0 if complete else None,
+            0.1, 0.1, 0.0, 1.0, 0.05,
             "v1" if complete else None, "settled",
         ),
     )
@@ -642,6 +650,20 @@ async def test_lesson_reviewer_requires_clean_exact_scope(monkeypatch):
             db, oid=f"dirty-{i}", symbol="BTC/USDT", direction="long", scanner="momentum",
             complete=False,
         )
+    _insert_forward_outcome(
+        db, oid="malformed-edge", symbol="BTC/USDT", direction="long", scanner="momentum",
+    )
+    db.execute(
+        "UPDATE universe_forward_outcomes SET min_tradable_edge_pct='malformed' "
+        "WHERE id='malformed-edge'"
+    )
+    _insert_forward_outcome(
+        db, oid="blob-edge", symbol="BTC/USDT", direction="long", scanner="momentum",
+    )
+    db.execute(
+        "UPDATE universe_forward_outcomes SET min_tradable_edge_pct=? WHERE id='blob-edge'",
+        (b"0.05",),
+    )
     db.commit()
 
     lesson = LessonStore().create(
@@ -725,9 +747,9 @@ def test_sizing_records_baseline_learned_and_actual_notional(monkeypatch):
     assert unavailable["reason"] == "adapter_error"
 
     monkeypatch.setattr("aletheia.learning.experiments.apply_numeric_treatment", refrozen)
+    import aletheia.config.loader as loader
     from aletheia.config.schema import AletheiaConfig
     from aletheia.trading import persona, sizing
-    import aletheia.config.loader as loader
     cfg = AletheiaConfig()
     cfg.trading.vol_sizing_enabled = False
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
@@ -789,6 +811,7 @@ def test_final_learning_consumers_do_not_gain_execution_or_risk_authority():
             assert token not in source, f"{path.name} crosses the Learning authority boundary"
 
     import inspect
+
     from aletheia.agents import paper_trader_ranker
     ranker_learning_source = inspect.getsource(paper_trader_ranker._compute_trade_score)
     ranker_learning_source += inspect.getsource(paper_trader_ranker._authorized_ranker_delta)

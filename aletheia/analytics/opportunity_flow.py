@@ -14,6 +14,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from aletheia.analytics.debate_impact import build_debate_impact_audit
 from aletheia.analytics.outcome_semantics import (
     MISSED_ALPHA,
     POSITIVE_GROSS_ONLY,
@@ -21,8 +22,6 @@ from aletheia.analytics.outcome_semantics import (
     classify_outcome_row,
     outcome_values,
 )
-
-from aletheia.analytics.debate_impact import build_debate_impact_audit
 from aletheia.analytics.sizing_trace import build_sizing_trace_audit, compact_sizing_trace_summary
 from aletheia.analytics.thesis_lineage import build_thesis_lineage_audit, compact_thesis_lineage_summary
 from aletheia.analytics.trade_funnel import build_trade_funnel_audit
@@ -310,11 +309,11 @@ def _integrated_audits(hours: int) -> dict[str, Any]:
     except Exception as exc:  # pragma: no cover - defensive read-only boundary
         audits["sizing_trace"] = {"error": str(exc)}
     try:
-        from aletheia.storage.sqlite import get_db
         from aletheia.analytics.candidate_supply import (
             evaluate_candidate_supply_drought,
             latest_candidate_supply_snapshot,
         )
+        from aletheia.storage.sqlite import get_db
 
         # Read-model purity (test_opportunity_flow_read_model_*): analytics/ must
         # NOT import aletheia.agent_shell (list_events lives there). Query the
@@ -987,8 +986,15 @@ def _rows_by_ids(db, table: str, column: str, ids: list[Any], order_col: str) ->
 def _counterfactual(db, opp: dict[str, Any], direction: str | None) -> dict[str, Any]:
     out: dict[str, Any] = {"shadow": None, "forward": {}}
     if _table_exists(db, "shadow_trades"):
+        from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
+
+        keyed_authority = valid_keyed_shadow_projection_sql()
         row = db.execute(
             "SELECT * FROM shadow_trades WHERE opportunity_id = ? "
+            "AND (NULLIF(TRIM(outcome_candidate_key), '') IS NULL "
+            "OR (resolved_at IS NULL AND exit_price IS NULL AND pnl_pct IS NULL "
+            "AND gross_return_pct IS NULL AND net_pnl_pct IS NULL) "
+            f"OR {keyed_authority}) "
             "ORDER BY datetime(COALESCE(resolved_at, created_at)) DESC LIMIT 1",
             (opp.get("id"),),
         ).fetchone()

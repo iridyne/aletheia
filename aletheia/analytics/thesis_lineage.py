@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from statistics import mean
 from typing import Any
@@ -24,7 +24,7 @@ from aletheia.analytics.outcome_semantics import (
     classify_outcome_row,
     outcome_values,
 )
-
+from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
 
 _MISS_THRESHOLD_PCT = 0.5
 _POOR_EXPRESSION_DELTA_PCT = 0.5
@@ -398,9 +398,26 @@ def _build_context(db, market_roots: list[dict], serenity_roots: list[dict], cut
                     ctx["positions_by_root"][p.get("opportunity_id")] = p
     if _table_exists(db, "shadow_trades"):
         batch_values: dict[str, list[float]] = defaultdict(list)
+        shadow_where = (
+            "opportunity_id IN ({}) AND datetime(created_at) >= datetime(?)"
+        )
+        # Legacy unkeyed rows and keyed exposures without any result remain
+        # visible. A keyed result-bearing row must be the exact canonical
+        # projection; a missing canonical table is unavailable, not authority.
+        keyed_result = (
+            "outcome_candidate_key IS NOT NULL AND TRIM(outcome_candidate_key) <> '' "
+            "AND (exit_price IS NOT NULL OR pnl_pct IS NOT NULL OR gross_return_pct IS NOT NULL "
+            "OR net_pnl_pct IS NOT NULL OR resolved_at IS NOT NULL)"
+        )
+        keyed_authority = (
+            valid_keyed_shadow_projection_sql("shadow_trades")
+            if _table_exists(db, "filter_candidate_outcomes")
+            else "0"
+        )
+        shadow_where += f" AND (NOT ({keyed_result}) OR {keyed_authority})"
         for rows in _select_in(
             db,
-            "SELECT * FROM shadow_trades WHERE opportunity_id IN ({}) AND datetime(created_at) >= datetime(?)",
+            f"SELECT * FROM shadow_trades WHERE {shadow_where}",
             root_ids,
             extra_params=(cutoff,),
         ):

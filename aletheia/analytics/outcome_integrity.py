@@ -8,12 +8,11 @@ exchange module.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
 import math
 import sqlite3
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
-
 
 OUTCOME_SEMANTICS_VERSION = "oi-v1"
 
@@ -442,8 +441,14 @@ def raw_account_events(
     """Read immutable closed-position events without implying outcome quality."""
     if limit < 1 or limit > 10_000:
         raise ValueError("limit must be between 1 and 10000")
-    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.sqlite import (
+        get_db,
+        iso_instant_us,
+        register_instant_us,
+    )
 
+    connection = db if db is not None else get_db()
+    register_instant_us(connection)
     conditions = ["p.status = 'closed'"]
     params: list[object] = []
     if execution_mode is not None:
@@ -456,11 +461,11 @@ def raw_account_events(
             conditions.append("p.strategy_id = ?")
             params.append(str(strategy_id))
     if closed_after is not None:
-        conditions.append("datetime(p.closed_at) >= datetime(?)")
-        params.append(closed_after)
+        conditions.append("aletheia_instant_us(p.closed_at) >= ?")
+        params.append(iso_instant_us(closed_after))
     if closed_before is not None:
-        conditions.append("datetime(p.closed_at) < datetime(?)")
-        params.append(closed_before)
+        conditions.append("aletheia_instant_us(p.closed_at) < ?")
+        params.append(iso_instant_us(closed_before))
     if symbol is not None:
         conditions.append("p.symbol = ?")
         params.append(symbol)
@@ -468,7 +473,7 @@ def raw_account_events(
         conditions.append("p.runtime_session_id = ?")
         params.append(runtime_session_id)
     params.append(limit)
-    rows = (db or get_db()).execute(
+    rows = connection.execute(
         """
         SELECT recent.* FROM (
         SELECT p.*,
@@ -516,8 +521,9 @@ def raw_account_events(
                ) THEN 1 ELSE 0 END AS _attribution_complete
         FROM positions p
         WHERE """ + " AND ".join(conditions)
-        + " ORDER BY datetime(p.closed_at) DESC, p.id DESC LIMIT ?"
-        + ") AS recent ORDER BY datetime(recent.closed_at) ASC, recent.id ASC",
+        + " ORDER BY aletheia_instant_us(p.closed_at) DESC, p.id DESC LIMIT ?"
+        + ") AS recent ORDER BY "
+        + "aletheia_instant_us(recent.closed_at) ASC, recent.id ASC",
         params,
     ).fetchall()
     return [dict(row) for row in rows]

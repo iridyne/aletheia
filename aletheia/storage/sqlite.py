@@ -1,8 +1,5 @@
 """SQLite connection management and process-local write serialization."""
 
-from concurrent.futures import Future
-from contextlib import contextmanager
-from dataclasses import dataclass
 import logging
 import os
 import queue
@@ -10,6 +7,10 @@ import re
 import sqlite3
 import threading
 import time
+from concurrent.futures import Future
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, TypeVar
 
@@ -78,6 +79,44 @@ _MUTATING_SQL = {
 _TRANSACTION_START_SQL = {"BEGIN", "SAVEPOINT"}
 _TRANSACTION_END_SQL = {"COMMIT", "END", "RELEASE", "ROLLBACK"}
 _WITH_WRITE_RE = re.compile(r"\b(?:INSERT|UPDATE|DELETE|REPLACE)\b", re.IGNORECASE)
+
+# SQLite TRIM defaults to ASCII space only.  Keep SQL evidence gates aligned
+# with Python str.strip() so whitespace-only authority identities fail closed.
+SQLITE_PYTHON_STRIP_CHARS_SQL = "||".join(
+    f"char({codepoint})"
+    for codepoint in (
+        9, 10, 11, 12, 13, 28, 29, 30, 31, 32, 133, 160, 5760,
+        8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200,
+        8201, 8202, 8232, 8233, 8239, 8287, 12288,
+    )
+)
+
+_UTC_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def iso_instant_us(value: object) -> int | None:
+    """Return an ISO instant as exact UTC microseconds for SQLite queries."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        delta = parsed.astimezone(timezone.utc) - _UTC_EPOCH
+    except (OverflowError, ValueError):
+        return None
+    return (
+        delta.days * 86_400_000_000
+        + delta.seconds * 1_000_000
+        + delta.microseconds
+    )
+
+
+def register_instant_us(connection: sqlite3.Connection) -> None:
+    """Register the exact ISO-instant scalar on one explicit connection."""
+    connection.create_function(
+        "aletheia_instant_us", 1, iso_instant_us, deterministic=True
+    )
 
 
 def acquire_write_lock(

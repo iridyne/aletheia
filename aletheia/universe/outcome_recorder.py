@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
-from aletheia.storage.models import UniverseForwardOutcome
 from aletheia.storage import repositories as repo
+from aletheia.storage.models import UniverseForwardOutcome
 
 logger = logging.getLogger("aletheia.universe.outcome_recorder")
 
@@ -100,6 +100,11 @@ _settle_in_flight = False
 # Marks an observation attempt that never reached the venue. See
 # deferred_observation() for why "no price" needed splitting into two answers.
 _DEFER_KEY = "deferred"
+_IDENTITY_UNAVAILABLE = "outcome_identity_unavailable"
+
+
+class OutcomeIdentityUnavailable(ValueError):
+    """A persisted outcome does not identify an exact market instrument."""
 
 
 def deferred_observation(reason: str) -> dict:
@@ -122,9 +127,10 @@ def deferred_observation(reason: str) -> dict:
     their 1m bars sat in ``market_ohlcv`` the whole time. One failed fetch
     permanently condemned a row that was fully measurable.
 
-    So this is the third answer: measured nothing, decide nothing, come back next
-    cycle. It needs no new status value and no retry counter, because it lasts
-    exactly as long as the outage that caused it — the row stays ``pending``,
+    So this is the third answer: measured nothing, decide nothing, come back after
+    the blocking condition changes. It needs no new status value: a reachability
+    deferral waits for the venue, while an identity deferral waits for the durable
+    row to regain its exact instrument. In both cases the row stays ``pending``,
     which is already the state meaning "still owed an observation".
 
     The verdict rides inside the existing ``dict[row_id, dict]`` observation map
@@ -137,7 +143,7 @@ def deferred_observation(reason: str) -> dict:
 
 
 def is_deferred(observation: dict | None) -> bool:
-    """True when the venue was never reached, so no terminal write is allowed."""
+    """True when no market observation occurred, so no terminal write is allowed."""
     return bool(observation) and bool(observation.get(_DEFER_KEY))
 
 
@@ -145,7 +151,7 @@ def build_pending(members: list[dict], entry_ts: str) -> list[UniverseForwardOut
     """Create pending outcome rows for each member × horizon.
 
     Args:
-        members: list of member dicts (must have id, snapshot_id, symbol,
+        members: list of member dicts (must have id, snapshot_id, symbol, venue,
                  scanner_family, entry_price_usd).
         entry_ts: ISO timestamp of the universe snapshot creation.
 
@@ -158,11 +164,17 @@ def build_pending(members: list[dict], entry_ts: str) -> list[UniverseForwardOut
 
     outcomes: list[UniverseForwardOutcome] = []
     skipped_no_price = 0
+    skipped_no_venue = 0
     for m in members:
         entry_price = m.get("entry_price_usd")
         if not entry_price or entry_price <= 0:
             skipped_no_price += 1
             continue
+        venue = m.get("venue")
+        if not isinstance(venue, str) or not venue.strip():
+            skipped_no_venue += 1
+            continue
+        venue = venue.strip()
 
         for horizon_key, delta in _HORIZONS.items():
             due_at = (ts + delta).isoformat()
@@ -174,8 +186,8 @@ def build_pending(members: list[dict], entry_ts: str) -> list[UniverseForwardOut
                 member_id=m["id"],
                 snapshot_id=m["snapshot_id"],
                 symbol=m["symbol"],
-                venue=m.get("venue"),
-                market_type=str(m.get("market_type") or "").strip().lower(),
+                venue=venue,
+                market_type=m.get("market_type", "spot"),
                 scanner_family=m.get("scanner_family"),
                 direction=m.get("direction"),
                 horizon=horizon_key,
@@ -190,6 +202,13 @@ def build_pending(members: list[dict], entry_ts: str) -> list[UniverseForwardOut
         logger.info(
             "Forward-outcome registration skipped %d/%d members with no entry price "
             "(missing 1h OHLCV at feature collection)", skipped_no_price, len(members),
+        )
+    if skipped_no_venue:
+        logger.warning(
+            "Forward-outcome registration skipped %d/%d members with "
+            "outcome_identity_unavailable (missing venue)",
+            skipped_no_venue,
+            len(members),
         )
 
     return outcomes
@@ -256,6 +275,13 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
     deadline = _time.monotonic() + time_budget_sec
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
+    identity_unavailable = repo.count_pending_forward_outcomes_missing_venue(now_iso)
+    if identity_unavailable:
+        logger.warning(
+            "outcome_settler: %d due rows have outcome_identity_unavailable — "
+            "left pending for exact-identity repair and excluded from fetch budget",
+            identity_unavailable,
+        )
 
     total_settled = 0
     total_processed = 0
@@ -337,15 +363,17 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
 
         batch_settled_rows: list[dict] = []
         batch_deferred = 0
+        batch_defer_reasons: dict[str, int] = {}
         for row in pending:
             symbol = row["symbol"]
             observation = observations.get(row["id"])
             if is_deferred(observation):
-                # Never reached the venue, so nothing about this row was measured
-                # and there is no verdict to write. It stays pending and comes
-                # back next cycle, when the venue may answer again.
+                # No market observation occurred, so there is no verdict to write.
+                # It stays pending until reachability or exact identity is repaired.
                 deferred_ids.add(row["id"])
                 batch_deferred += 1
+                reason = str(observation.get("defer_reason") or "unknown")
+                batch_defer_reasons[reason] = batch_defer_reasons.get(reason, 0) + 1
                 total_processed += 1
                 continue
             price = observation.get("exit_price") if observation else None
@@ -397,7 +425,7 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
                 entry_price=entry,
                 exit_price=price,
                 direction=row.get("direction"),
-                market_type=row.get("market_type"),
+                market_type=row.get("market_type") or "spot",
                 hold_seconds=hold_seconds,
                 entry_spread_bps=row.get("entry_spread_bps"),
                 fallback_spread_bps=cfg.universe.max_spread_bps,
@@ -437,14 +465,26 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
         all_settled_rows.extend(batch_settled_rows)
 
         if batch_deferred == len(pending):
+            if set(batch_defer_reasons) == {_IDENTITY_UNAVAILABLE}:
+                logger.warning(
+                    "outcome_settler: %d rows have outcome_identity_unavailable — "
+                    "left pending for exact-identity repair; continuing past them",
+                    len(pending),
+                )
+                continue
             # A whole batch reached nothing: the venue is down, not this batch.
             # Draining further batches against it would only add load to an
             # endpoint that is already refusing, and every one of those rows is
             # measurable again the moment it answers.
             logger.warning(
-                "outcome_settler: the venue answered none of %d rows — stopping the "
-                "forward drain for this cycle, %d rows left pending",
-                len(pending), len(deferred_ids),
+                "outcome_settler: none of %d rows could be observed (%s) — stopping "
+                "the forward drain for this cycle, %d rows left pending",
+                len(pending),
+                " ".join(
+                    f"{key}={value}"
+                    for key, value in sorted(batch_defer_reasons.items())
+                ),
+                len(deferred_ids),
             )
             break
 
@@ -457,7 +497,9 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
     # Emit cost-aware cohort metrics for observability (§4.2).
     if total_settled:
         try:
-            stats = repo.calibration_stats()
+            from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+            stats = repo.calibration_stats(cost_model_version=COST_MODEL_VERSION)
             for row in stats:
                 if row["n"] >= 10:
                     wr = row["win_count"] / row["n"] * 100
@@ -534,25 +576,33 @@ async def _batch_fetch_market_observations(
     """
     import asyncio
 
-    from aletheia.config.loader import load_config
-    from aletheia.data.ccxt_provider import get_market_data_provider
+    from aletheia.data.ccxt_provider import (
+        get_market_data_provider,
+        require_exact_ticker_venue,
+    )
 
-    provider = get_market_data_provider()
-    default_venue = load_config().market_data.ccxt_exchange
+    input_count = len(rows)
+    identity_deferrals = {
+        row["id"]: deferred_observation(_IDENTITY_UNAVAILABLE)
+        for row in rows
+        if not isinstance(row.get("venue"), str) or not row["venue"].strip()
+    }
+    rows = [row for row in rows if row["id"] not in identity_deferrals]
+    venues = sorted({str(row["venue"]).strip().lower() for row in rows})
+    providers = {}
     semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
     local_reasons: dict[str, int] = {}
 
     async def fetch_one(row: dict) -> tuple[str, dict | None]:
-        # Plan construction is caught HERE rather than left to fetch_bounded,
-        # because its failures are deterministic — an unparseable timestamp or a
-        # symbol that is not an instrument on this venue — and a deterministic
-        # failure must stay terminal. A deferral is bounded only by the outage
-        # that caused it; a row that can never be planned has no such end, so
-        # deferring it would park it in the queue until retention deleted it and
-        # re-plan it every cycle. Keeping this catch local means fetch_bounded's
-        # own catch only ever sees the transport.
+        # Plan construction is caught HERE rather than left to fetch_bounded.
+        # Missing durable venue identity is explicitly non-authorizing and remains
+        # pending for repair; other deterministic failures keep the pre-existing
+        # terminal no-observation path. Keeping this catch local means
+        # fetch_bounded's own catch only ever sees the transport.
         try:
-            plan = _build_plan(row, default_venue=default_venue, now=now)
+            plan = _build_plan(row, now=now)
+        except OutcomeIdentityUnavailable:
+            return row["id"], deferred_observation(_IDENTITY_UNAVAILABLE)
         except Exception as exc:
             logger.debug(
                 "outcome observation unplannable for %s: %s", row.get("id"), exc
@@ -560,6 +610,7 @@ async def _batch_fetch_market_observations(
             return row["id"], None
         if plan is None:
             return row["id"], None
+        provider = providers[str(row["venue"]).strip().lower()]
 
         # Local store first, deliberately OUTSIDE the semaphore: a hit must not
         # consume one of the _MAX_CONCURRENT_FETCHES network permits, which is
@@ -611,7 +662,10 @@ async def _batch_fetch_market_observations(
                 )
 
             try:
-                ticker = await provider.get_ticker(plan.instrument)
+                ticker = require_exact_ticker_venue(
+                    await provider.get_ticker(plan.instrument),
+                    plan.instrument.exchange,
+                )
                 price = float(ticker.last_price) if ticker.last_price else None
             except Exception as exc:
                 unreachable.append(f"ticker:{type(exc).__name__}")
@@ -645,7 +699,14 @@ async def _batch_fetch_market_observations(
             return row["id"], deferred_observation(f"fetch:{type(exc).__name__}")
 
     try:
-        fetched = await asyncio.gather(*(fetch_bounded(row) for row in rows))
+        for venue in venues:
+            providers[venue] = get_market_data_provider(
+                venue,
+                native_ccxt=True,
+                fallback_exchange=venue,
+            )
+        fetched = list(identity_deferrals.items())
+        fetched.extend(await asyncio.gather(*(fetch_bounded(row) for row in rows)))
         if local_reasons:
             logger.info(
                 "outcome observations: %d rows, local OHLCV %s",
@@ -670,22 +731,29 @@ async def _batch_fetch_market_observations(
                 reason = str(value.get("defer_reason") or "unknown")
                 reasons[reason] = reasons.get(reason, 0) + 1
             logger.warning(
-                "outcome observations: %d of %d rows could not be reached (%s) — "
+                "outcome observations: %d of %d rows could not be observed (%s) — "
                 "left pending rather than written off",
                 len(deferrals),
-                len(rows),
+                input_count,
                 " ".join(f"{k}={v}" for k, v in sorted(reasons.items())),
             )
         return observations
     finally:
-        await provider.close()
+        for venue, provider in providers.items():
+            try:
+                await provider.close()
+            except Exception as exc:
+                logger.warning(
+                    "outcome observation provider close failed for %s: %s",
+                    venue,
+                    exc,
+                )
 
 
 def local_market_observations(
     rows: list[dict],
     *,
     now: datetime,
-    default_venue: str | None = None,
 ) -> tuple[dict[str, dict], list[dict], dict[str, int]]:
     """Observe every row that the already-persisted window can answer. No network.
 
@@ -702,17 +770,16 @@ def local_market_observations(
     settle loops treat "no observation" as terminal and mark the row ``failed``,
     so a row deferred for lack of budget must never reach that path.
     """
-    if default_venue is None:
-        from aletheia.config.loader import load_config
-
-        default_venue = load_config().market_data.ccxt_exchange
-
     observations: dict[str, dict] = {}
     misses: list[dict] = []
     reasons: dict[str, int] = {}
     for row in rows:
         try:
-            plan = _build_plan(row, default_venue=default_venue, now=now)
+            plan = _build_plan(row, now=now)
+        except OutcomeIdentityUnavailable:
+            reasons[_IDENTITY_UNAVAILABLE] = reasons.get(_IDENTITY_UNAVAILABLE, 0) + 1
+            misses.append(row)
+            continue
         except Exception as exc:
             # An unparseable instrument is the exchange path's problem to report,
             # exactly as before this was split out.
@@ -737,7 +804,6 @@ def fetch_group_key(
     row: dict,
     *,
     now: datetime,
-    default_venue: str,
 ) -> str | None:
     """Identify the single exchange request that could serve this row.
 
@@ -752,7 +818,7 @@ def fetch_group_key(
     the per-row path to report rather than silently folding it into a group.
     """
     try:
-        plan = _build_plan(row, default_venue=default_venue, now=now)
+        plan = _build_plan(row, now=now)
     except Exception:
         return None
     if plan is None:
@@ -783,9 +849,7 @@ class _ObservationPlan:
     lag_sec: float
 
 
-def _build_plan(
-    row: dict, *, default_venue: str, now: datetime
-) -> _ObservationPlan | None:
+def _build_plan(row: dict, *, now: datetime) -> _ObservationPlan | None:
     """Derive the exact instrument and no-lookahead window for one row.
 
     Returns None for an unparseable entry/due pair. Raises for a symbol that is not
@@ -799,17 +863,16 @@ def _build_plan(
     due_dt = _parse_dt(row.get("due_at"))
     if entry_dt is None or due_dt is None:
         return None
-    raw_market_type = str(row.get("market_type") or "").strip().lower()
+    raw_market_type = str(row.get("market_type") or "spot").lower()
     market_type = (
         "perp"
         if raw_market_type in {"perp", "swap", "usdt_futures"}
         else raw_market_type
     )
-    instrument = InstrumentId.from_parts(
-        row.get("venue") or default_venue,
-        row["symbol"],
-        market_type,
-    )
+    venue = row.get("venue")
+    if not isinstance(venue, str) or not venue.strip():
+        raise OutcomeIdentityUnavailable(_IDENTITY_UNAVAILABLE)
+    instrument = InstrumentId.from_parts(venue.strip(), row["symbol"], market_type)
     horizon = row.get("horizon") or "1h"
     timeframe, limit = _FETCH_PLAN.get(horizon, ("1h", 27))
     return _ObservationPlan(
@@ -1014,13 +1077,12 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
     for row in candidates:
         net = row["net_return_pct"]
         direction = row.get("direction") or "long"
-        raw_market_type = str(row.get("market_type") or "").strip().lower()
-        if raw_market_type in {"perp", "futures", "swap", "usdt_futures"}:
-            market_type = "perp"
-        elif raw_market_type == "spot":
-            market_type = "spot"
-        else:
-            continue
+        raw_market_type = str(row.get("market_type") or "spot").lower()
+        market_type = (
+            "perp"
+            if raw_market_type in {"perp", "futures", "swap", "usdt_futures"}
+            else "spot"
+        )
         symbol = row["symbol"]
         family = row["scanner_family"]
 
@@ -1047,9 +1109,7 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
             continue
 
         title = f"Auto guard candidate: {symbol} {family} {direction} {market_type} 4h net loss"
-        content = _build_guard_candidate_content(
-            {**row, "market_type": market_type}, net, direction,
-        )
+        content = _build_guard_candidate_content(row, net, direction)
 
         # Stable guard_id per (family, direction, symbol) loss pattern so the
         # promoter (run_promotion_check) can match + promote/move it, and so the

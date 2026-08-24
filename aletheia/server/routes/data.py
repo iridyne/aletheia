@@ -13,28 +13,28 @@ from pydantic import BaseModel
 from aletheia.config.loader import is_preview_mode, load_config
 from aletheia.config.prediction import prediction_observer_blocked_reason
 from aletheia.portfolio.pnl import compute_portfolio
-from aletheia.storage.sqlite import get_db
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
-    SerenityTheme,
     SerenityEvidence,
-    SerenityOpportunity,
-    SerenityRiskGate,
-    SerenityReplaySnapshot,
-    SerenityPostMortem,
-    SerenityResearchRun,
-    SerenityRunEvent,
-    SerenityUserProfile,
-    SerenityProfileSnapshot,
     SerenityFeedbackEvent,
+    SerenityOpportunity,
+    SerenityPostMortem,
+    SerenityProfileSnapshot,
+    SerenityReplaySnapshot,
+    SerenityResearchRun,
+    SerenityRiskGate,
+    SerenityRunEvent,
+    SerenityTheme,
+    SerenityUserProfile,
+)
+from aletheia.storage.sqlite import get_db
+from aletheia.trading.serenity_evidence import (
+    assess_evidence_tier,
+    normalize_tier,
 )
 from aletheia.trading.serenity_scoring import (
     make_replay_snapshot_payload,
     score_serenity_opportunity,
-)
-from aletheia.trading.serenity_evidence import (
-    assess_evidence_tier,
-    normalize_tier,
 )
 
 router = APIRouter(prefix="/api", tags=["data"])
@@ -417,6 +417,7 @@ class StartAgentRequest(BaseModel):
 def start_agent_run(req: StartAgentRequest, request: Request):
     _ensure_db()
     from fastapi import HTTPException
+
     from aletheia.agent_runtime.job_queue import (
         AgentJobAlreadyQueued,
         AgentJobManagerClosed,
@@ -1140,9 +1141,10 @@ def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit: int =
     report actually needs. Still CSV, still under the same URL, only the
     columns change.
     """
-    from fastapi.responses import StreamingResponse
     import csv
     import io
+
+    from fastapi.responses import StreamingResponse
 
     _ensure_db()
     from aletheia.portfolio.pnl import position_realized_pnl_view
@@ -1315,8 +1317,9 @@ async def manual_close_position(position_id: str, req: ManualCloseRequest):
         raise HTTPException(400, {"code": "invalid_order_type", "message": "order_type must be 'market' or 'limit'"})
 
     import asyncio
-    from aletheia.storage.repositories import get_position
+
     from aletheia.portfolio.position_manager import proactive_exit
+    from aletheia.storage.repositories import get_position
 
     pos = get_position(position_id)
     if pos is None or pos.get("status") != "open":
@@ -1502,10 +1505,11 @@ async def get_market_ohlcv(
     """
     import asyncio
     import logging
+
     from aletheia.config.loader import load_config
-    from aletheia.data.ccxt_provider import get_market_data_provider, timeframe_ms
     from aletheia.data.cache import get_cache
-    from aletheia.data.symbols import to_canonical, InstrumentId
+    from aletheia.data.ccxt_provider import get_market_data_provider, timeframe_ms
+    from aletheia.data.symbols import InstrumentId, to_canonical
 
     cfg = load_config()
     md_cfg = cfg.market_data
@@ -2903,8 +2907,8 @@ def _parse_brief_to_profile(brief: str) -> dict:
 def get_family_scorecard():
     """Per-scanner_family performance statistics (win_rate, expectancy, alpha)."""
     _ensure_db()
-    from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
     from aletheia.analytics.family_scorecard import compute_family_scorecard_with_epoch
+    from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
 
     scorecard = compute_family_scorecard_with_epoch()
     return {**scorecard, **build_outcome_cohort_summary()}
@@ -2917,9 +2921,11 @@ def get_shadow_trades(
     resolved: bool | None = None,
     limit: int = 100,
 ):
-    """List shadow trade records for counterfactual analysis."""
+    """List authority-aware shadow trade diagnostics for counterfactual analysis."""
     _ensure_db()
-    return repo.list_shadow_trades(
+    from aletheia.counterfactual.trades import list_shadow_trade_diagnostics
+
+    return list_shadow_trade_diagnostics(
         batch_id=batch_id,
         scanner_family=scanner_family,
         resolved=resolved,

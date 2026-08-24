@@ -40,11 +40,12 @@ def _register_ranker() -> None:
     )
 
 
-def _seed_equivalence_row(*, matched: bool) -> None:
+def _seed_equivalence_row(*, result: str) -> None:
     import uuid
 
     from aletheia.observation_lab.db import get_lab_db
 
+    assert result in {"matched", "mismatched", "skipped"}
     get_lab_db().execute(
         "INSERT INTO ufc_shadow_equivalence "
         "(id, observation_id, experiment_id, cohort_key, checked_at, matched, "
@@ -54,17 +55,38 @@ def _seed_equivalence_row(*, matched: bool) -> None:
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             uuid.uuid4().hex,
-            "ufc:exp-x:epoch-1:0",
+            f"ufc:{result}:epoch-1:0",
             "exp-x",
             "hyp-x:epoch-1:shadow",
             "2026-08-19T12:00:00+00:00",
-            1 if matched else 0,
-            None if matched else "verdict",
+            1 if result == "matched" else 0,
+            "verdict" if result == "mismatched" else None,
             "positive",
-            "positive" if matched else "negative",
+            "negative" if result == "mismatched" else "positive",
             50, 50, 50, 50,
-            None,
+            "no_exact_current_verdict" if result == "skipped" else None,
         ),
+    )
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "skipped",
+        "no_stored_verdict_yet",
+        "no_cohorts_yet",
+        "current_policy_epoch_unavailable",
+        "no_exact_current_cohort",
+        "no_exact_current_verdict",
+    ],
+)
+def test_decode_equivalence_result_preserves_historical_skip_notes(note: str):
+    from aletheia.observation_lab.ufc_shadow import decode_equivalence_result
+
+    assert decode_equivalence_result({"matched": 0, "notes": note}) == "skipped"
+    assert (
+        decode_equivalence_result({"matched": 0, "notes": "evaluator failed"})
+        == "mismatched"
     )
 
 
@@ -73,7 +95,10 @@ def test_collect_overview_shape_on_empty_lab():
 
     assert payload["experiments"]["total"] == 0
     assert payload["ufc_equivalence"]["recent_total"] == 0
+    assert payload["ufc_equivalence"]["recent_checked"] == 0
     assert payload["ufc_equivalence"]["recent_matched"] == 0
+    assert payload["ufc_equivalence"]["recent_mismatched"] == 0
+    assert payload["ufc_equivalence"]["recent_skipped"] == 0
     assert payload["manifests"]["active_count"] == 0
     # First verify on a fresh lab reports first_checkpoint.
     assert payload["checkpoint"]["verified"]["ok"] is True
@@ -82,18 +107,33 @@ def test_collect_overview_shape_on_empty_lab():
 
 def test_collect_overview_reports_experiments_and_equivalence():
     _register_ranker()
-    _seed_equivalence_row(matched=True)
-    _seed_equivalence_row(matched=False)
+    _seed_equivalence_row(result="matched")
+    _seed_equivalence_row(result="mismatched")
+    _seed_equivalence_row(result="skipped")
 
     payload = _collect_overview(equivalence_limit=10)
 
     assert payload["experiments"]["total"] == 1
     assert payload["experiments"]["collecting"] == 1
-    assert payload["ufc_equivalence"]["recent_total"] == 2
+    assert payload["ufc_equivalence"]["recent_total"] == 3
+    assert payload["ufc_equivalence"]["recent_checked"] == 2
     assert payload["ufc_equivalence"]["recent_matched"] == 1
-    # Records ordered by checked_at DESC — both share timestamp so both present.
+    assert payload["ufc_equivalence"]["recent_mismatched"] == 1
+    assert payload["ufc_equivalence"]["recent_skipped"] == 1
+    records = {
+        row["result"]: row
+        for row in payload["ufc_equivalence"]["recent_records"]
+    }
+    assert records["matched"]["matched"] is True
+    assert records["mismatched"]["matched"] is False
+    assert records["skipped"]["matched"] is None
+    # Records share a timestamp, so compare the complete identity set.
     ids = [r["observation_id"] for r in payload["ufc_equivalence"]["recent_records"]]
-    assert ids == ["ufc:exp-x:epoch-1:0", "ufc:exp-x:epoch-1:0"]
+    assert set(ids) == {
+        "ufc:matched:epoch-1:0",
+        "ufc:mismatched:epoch-1:0",
+        "ufc:skipped:epoch-1:0",
+    }
 
 
 def test_collect_overview_reports_active_manifests():
@@ -129,7 +169,7 @@ def test_collect_overview_reports_active_manifests():
 
 def test_observe_overview_json_matches_collect(runner: CliRunner):
     _register_ranker()
-    _seed_equivalence_row(matched=True)
+    _seed_equivalence_row(result="matched")
 
     result = runner.invoke(observe_app, ["overview", "--json"])
     assert result.exit_code == 0, result.stdout + result.stderr
@@ -140,6 +180,21 @@ def test_observe_overview_json_matches_collect(runner: CliRunner):
     assert "ufc_equivalence" in payload
     assert "manifests" in payload
     assert "checkpoint" in payload
+
+
+def test_observe_overview_renders_skip_neutrally(runner: CliRunner):
+    _seed_equivalence_row(result="matched")
+    _seed_equivalence_row(result="mismatched")
+    _seed_equivalence_row(result="skipped")
+
+    result = runner.invoke(observe_app, ["overview", "--equivalence-limit", "10"])
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert "matched=1/2 skipped=1" in result.stdout
+    assert "✓" in result.stdout
+    assert "✗" in result.stdout
+    assert "○" in result.stdout
+    assert "skipped=no_exact_current_verdict" in result.stdout
 
 
 def test_observe_checkpoint_command_saves_and_verifies(runner: CliRunner):

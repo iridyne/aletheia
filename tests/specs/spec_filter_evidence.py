@@ -7,7 +7,6 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 _CONTRACT = "filter_evidence_contract"
 
 
@@ -427,6 +426,7 @@ def test_universe_member_persists_scanner_direction():
 )
 def test_system_operator_carries_filter_trace_to_reflection():
     from pathlib import Path
+
     from aletheia.agent_shell.trading_decision import TradingDecision
 
     assert "filter_trace" in TradingDecision.__dataclass_fields__
@@ -601,7 +601,8 @@ def test_candidate_skip_claim_creates_one_shared_fixed_outcome_cohort(tmp_path, 
         (f"pi_decision:{claimed['id']}",),
     ).fetchall()
     outcomes = db.execute(
-        "SELECT horizon, entry_price_usd, direction, market_type FROM filter_candidate_outcomes "
+        "SELECT horizon, venue, entry_price_usd, direction, market_type "
+        "FROM filter_candidate_outcomes "
         "WHERE outcome_candidate_key=? ORDER BY horizon",
         (f"pi_decision:{claimed['id']}",),
     ).fetchall()
@@ -612,6 +613,7 @@ def test_candidate_skip_claim_creates_one_shared_fixed_outcome_cohort(tmp_path, 
         "reason_code": "operator_model_skip",
     }]
     assert {row["horizon"] for row in outcomes} == {"15m", "1h", "4h", "24h"}
+    assert {row["venue"] for row in outcomes} == {"test"}
     assert {row["entry_price_usd"] for row in outcomes} == {100.0}
     assert {(row["direction"], row["market_type"]) for row in outcomes} == {("long", "spot")}
 
@@ -797,11 +799,6 @@ def test_doctor_excludes_pre_remediation_skip_gaps_from_current_finding(tmp_path
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_shell.skip_policy import ensure_skip_remediation_policy_epoch
-    from aletheia.diagnostics import doctor
-    from aletheia.storage.models import PiDecision
-    from aletheia.storage.repositories import insert_pi_decision
-
     # This record represents the reload-era incomplete evidence.  It remains
     # visible in the raw 24h count, but must not diagnose the newly started B1
     # policy epoch as broken.
@@ -810,7 +807,12 @@ def test_doctor_excludes_pre_remediation_skip_gaps_from_current_finding(tmp_path
     # epoch-open can land on the same tick → identical timestamps → the decision
     # is epoch-scoped and the test fails.  Fix: stamp the legacy decision with an
     # explicit past time so "pre-epoch" is guaranteed regardless of clock resolution.
-    from datetime import timezone, timedelta
+    from datetime import timedelta, timezone
+
+    from aletheia.agent_shell.skip_policy import ensure_skip_remediation_policy_epoch
+    from aletheia.diagnostics import doctor
+    from aletheia.storage.models import PiDecision
+    from aletheia.storage.repositories import insert_pi_decision
     from aletheia.storage.sqlite import get_db
     _past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     insert_pi_decision(PiDecision(
@@ -929,6 +931,7 @@ def test_doctor_excludes_administrative_cascade_from_candidate_skips(
 )
 def test_risk_evidence_is_appended_after_authoritative_decision():
     from pathlib import Path
+
     from aletheia.analytics.filter_registry import filter_by_name
 
     source = (

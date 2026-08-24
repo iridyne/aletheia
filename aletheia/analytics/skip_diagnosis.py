@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
+from aletheia.storage.repositories import complete_outcome_economics_sql
 from aletheia.storage.sqlite import get_db
-
 
 Finding = Literal[
     "not_applicable",
@@ -237,7 +237,9 @@ def _diagnose(
     traced_keys = {str(row["outcome_candidate_key"] or "") for row in trace_rows}
     reason_codes = Counter(str(row["reason_code"] or "unknown") for row in trace_rows)
     outcome_rows = db.execute(
-        f"""SELECT outcome_candidate_key, horizon, status, net_return_pct
+        f"""SELECT outcome_candidate_key, horizon, status, net_return_pct,
+            CASE WHEN {complete_outcome_economics_sql()}
+                 THEN 1 ELSE 0 END AS economics_complete
             FROM filter_candidate_outcomes
             WHERE outcome_candidate_key IN ({placeholders})""",
         tuple(keys),
@@ -274,7 +276,11 @@ def _diagnose(
     unsettled = 0
     for key in mature_keys:
         primary = next((row for row in outcomes[key] if row["horizon"] == _PRIMARY_HORIZON), None)
-        if primary is None or primary["status"] != "settled" or primary["net_return_pct"] is None:
+        if (
+            primary is None
+            or primary["status"] != "settled"
+            or primary["economics_complete"] != 1
+        ):
             unsettled += 1
         else:
             settled_skip_nets.append(float(primary["net_return_pct"]))
@@ -287,7 +293,7 @@ def _diagnose(
         )
 
     pass_rows = db.execute(
-        """SELECT DISTINCT fo.outcome_candidate_key, fo.net_return_pct
+        f"""SELECT DISTINCT fo.outcome_candidate_key, fo.net_return_pct
            FROM filter_decisions fd
            JOIN filter_candidate_outcomes fo
              ON fo.outcome_candidate_key=fd.outcome_candidate_key
@@ -295,7 +301,8 @@ def _diagnose(
              AND fd.decision='passed'
              AND julianday(fd.evaluated_at) >= julianday(?)
              AND julianday(fd.evaluated_at) < julianday(?)
-             AND fo.horizon=? AND fo.status='settled' AND fo.net_return_pct IS NOT NULL""",
+             AND fo.horizon=? AND fo.status='settled'
+             AND {complete_outcome_economics_sql('fo')}""",
         (start_iso, end_iso, _PRIMARY_HORIZON),
     ).fetchall()
     pass_nets = [float(row["net_return_pct"]) for row in pass_rows]

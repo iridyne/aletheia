@@ -8,11 +8,11 @@ Public funding rates and guessed zeros are deliberately outside this boundary.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import hashlib
 import json
 import math
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Iterable, Mapping
 
 from aletheia.data.symbols import to_canonical
@@ -38,6 +38,7 @@ _MODE_ENVIRONMENTS = {
     "binance_testnet": "testnet",
     "binance_live_limited": "live",
 }
+_MAX_BROKER_FUNDING_CANDIDATES = 1000
 
 
 def require_retained_history(
@@ -257,6 +258,78 @@ def funding_query_window(position: Mapping, closed_at: object) -> tuple[int, int
     if opened is None or closed is None or closed <= opened:
         raise BrokerFundingIntegrityError("position funding window is invalid")
     return int(opened.timestamp() * 1000), int(closed.timestamp() * 1000)
+
+
+def load_broker_funding_candidates(
+    db,
+    *,
+    position: Mapping,
+    closed_at: object,
+    max_candidates: int = _MAX_BROKER_FUNDING_CANDIDATES,
+) -> list[dict]:
+    """Load the complete canonical-equivalent attribution set for one window."""
+    position_id = str(position.get("id") or "")
+    execution_mode = str(position.get("execution_mode") or "")
+    symbol = to_canonical(str(position.get("symbol") or ""))
+    opened = _utc(position.get("opened_at"))
+    closed = _utc(closed_at)
+    if (
+        not position_id
+        or execution_mode not in _MODE_ENVIRONMENTS
+        or position.get("market_type") != "usdt_futures"
+        or not symbol
+        or opened is None
+        or closed is None
+        or closed <= opened
+    ):
+        raise BrokerFundingIntegrityError("position funding identity is incomplete")
+    if max_candidates <= 0:
+        raise BrokerFundingIntegrityError("broker funding candidate limit is invalid")
+
+    rows = db.execute(
+        "SELECT * FROM positions WHERE id<>? AND execution_mode=? "
+        "AND market_type='usdt_futures' "
+        "AND (julianday(opened_at) IS NULL OR julianday(opened_at) < julianday(?)) "
+        "AND (closed_at IS NULL OR julianday(closed_at) IS NULL "
+        "OR julianday(closed_at) > julianday(?)) "
+        "ORDER BY rowid LIMIT ?",
+        (
+            position_id,
+            execution_mode,
+            closed.isoformat(),
+            opened.isoformat(),
+            int(max_candidates) + 1,
+        ),
+    ).fetchall()
+    if len(rows) > max_candidates:
+        raise BrokerFundingIntegrityError(
+            "broker funding candidate universe exceeds the safe bound"
+        )
+    return [
+        dict(row)
+        for row in rows
+        if to_canonical(str(row["symbol"] or "")) == symbol
+    ]
+
+
+def compute_stored_broker_funding(
+    db,
+    *,
+    position: Mapping,
+    closed_at: object,
+    ledger: Mapping,
+) -> BrokerFundingComputation:
+    """Compute against the same complete stored candidate set in every caller."""
+    return compute_broker_funding(
+        position=position,
+        closed_at=closed_at,
+        ledger=ledger,
+        candidate_positions=load_broker_funding_candidates(
+            db,
+            position=position,
+            closed_at=closed_at,
+        ),
+    )
 
 
 def _position_contains_event(
