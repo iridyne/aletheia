@@ -112,7 +112,7 @@
 | DU-S23 | L2c | 本地 paper 历史账本 settler 消费 primary-venue funding history；不冒充 broker ledger |
 | DU-S24 | L2a | xStock 上市状态源在 §3 登记；实现经 provider factory 精确查询责任 venue，单轮复用、有硬截止、不确定时保留配置，确认缺失的配置变更写 system audit |
 | DU-S25 | L2a | LLM 逻辑调用、物理 attempt 与 context manifest 三层数据已登记并以 logical_call_id 关联；持久化契约不含 prompt/response/source body |
-| DU-S27 | L2a | LiteLLM 公共 price map 生成 estimated 快照；startup/UI 共用单飞 refresh，人工快照优先；Usage 可只读估算旧缺价事件，但历史账本不回写 |
+| DU-S27 | L2a | LiteLLM 公共模型/原生工具价格目录生成 estimated 快照；startup/UI 共用单飞 refresh，且没有人工价格 writer；可测 web-search request 随 LLM event 计费，Usage 可只读估算旧缺价事件，但历史账本不回写 |
 | DU-B01 | L2b | 给定 HL+主所 annualized funding，render 产出"Cross-venue funding"段、divergence 以 pp 计、含 predicted |
 | DU-B02 | L2b | 某 symbol 无 HL 数据时，跨venue段整体省略（不漏空行噪音，遵 R3） |
 | DU-C01 | L2a | `CoinalyzeCollector` 存在，有 `collect()` 方法和 `domain` 属性（Coinalyze 清算+OI 采集入口） |
