@@ -5309,8 +5309,24 @@ def _apply_legacy_tracing_backfill_v39(db: sqlite3.Connection) -> None:
 
     The UPDATE is idempotent: it only touches rows where the column is still
     NULL and at least one ``runtime_cost_events`` row carries the session id.
+
+    ``runtime_cost_events`` is owned by the economics schema (not the migration
+    chain) so it may not exist in minimal test databases. Guard with a table
+    existence check before running the UPDATE.
     """
-    db.executescript(_LEGACY_TRACING_BACKFILL_SQL)
+    tables = {str(row[0]) for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "runtime_cost_events" not in tables or "runtime_sessions" not in tables:
+        return
+    db.execute(
+        "UPDATE runtime_sessions"
+        " SET economics_tracing_enabled = 1"
+        " WHERE economics_tracing_enabled IS NULL"
+        " AND EXISTS ("
+        "   SELECT 1 FROM runtime_cost_events"
+        "   WHERE runtime_cost_events.runtime_session_id = runtime_sessions.session_id"
+        "   LIMIT 1"
+        ")"
+    )
     db.execute("PRAGMA optimize")
 
 

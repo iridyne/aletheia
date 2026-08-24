@@ -486,6 +486,31 @@ def test_legacy_tracing_backfill_v39_promotes_sessions_with_cost_events():
     connection.close()
 
 
+def test_legacy_tracing_backfill_v39_is_noop_when_economics_table_absent():
+    """Migration v39 must silently skip when runtime_cost_events does not exist
+    (e.g. minimal test DB that has not loaded the economics schema)."""
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        """
+        CREATE TABLE runtime_sessions (
+            session_id TEXT PRIMARY KEY,
+            economics_tracing_enabled INTEGER
+        );
+        INSERT INTO runtime_sessions VALUES ('s1', NULL);
+        """
+    )
+
+    # Must not raise.
+    migrations._apply_legacy_tracing_backfill_v39(connection)
+
+    assert connection.execute(
+        "SELECT economics_tracing_enabled FROM runtime_sessions WHERE session_id='s1'"
+    ).fetchone()[0] is None
+    connection.close()
+
+
 def test_learning_fixed_look_v10_migration_is_additive_and_idempotent():
     import aletheia.storage.migrations as migrations
 
