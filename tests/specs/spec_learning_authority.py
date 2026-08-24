@@ -204,6 +204,7 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
     )
     from aletheia.learning.models import LearningContributionVerdict
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     common = dict(
         path_id="ranker_factor_filter",
@@ -282,7 +283,9 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
     ))
 
     assert linked_settled_exposure_counts(
-        shadow.experiment_id, policy_epoch=epoch,
+        shadow.experiment_id,
+        cost_model_version=COST_MODEL_VERSION,
+        policy_epoch=epoch,
     ) == {"control": 0, "treatment": 0}
     blocked = resolve_learning_authority(common["path_id"], experiment, epoch)
     assert not blocked.authorized
@@ -319,7 +322,9 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
         **common,
     )
     assert linked_settled_exposure_counts(
-        shadow.experiment_id, policy_epoch=epoch,
+        shadow.experiment_id,
+        cost_model_version=COST_MODEL_VERSION,
+        policy_epoch=epoch,
     ) == {"control": 0, "treatment": 0}
 
     candidate = next(
@@ -351,7 +356,9 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
         control_candidate, at=prospective_outcome,
     ) == control_link
     assert linked_settled_exposure_counts(
-        shadow.experiment_id, policy_epoch=epoch,
+        shadow.experiment_id,
+        cost_model_version=COST_MODEL_VERSION,
+        policy_epoch=epoch,
     ) == {"control": 1, "treatment": 1}
     applied_candidate = next(
         f"applied:{i}" for i in range(1000)

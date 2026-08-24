@@ -3247,6 +3247,7 @@ def test_neutral_skip_defers_but_adjacent_qualified_negative_becomes_terminal(
         insert_pi_decision,
     )
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     opportunity = Opportunity(
         id="opp-neutral-defer",
@@ -3334,6 +3335,7 @@ def test_neutral_skip_defers_but_adjacent_qualified_negative_becomes_terminal(
                 "outcome_coverage": 0.8333, "avg_net_pct": -0.63,
                 "shrunk_avg_net_pct": -0.35, "directional_verdict": "negative",
                 "policy_epoch_id": policy_epoch_id,
+                "cost_model_version": COST_MODEL_VERSION,
             }
             if evidence_state["qualified"]
             else {
@@ -3341,6 +3343,7 @@ def test_neutral_skip_defers_but_adjacent_qualified_negative_becomes_terminal(
                 "outcome_coverage": 0.641, "avg_net_pct": 1.71,
                 "shrunk_avg_net_pct": 0.95, "directional_verdict": None,
                 "policy_epoch_id": policy_epoch_id,
+                "cost_model_version": COST_MODEL_VERSION,
             }
         )
         ctx["layer2"]["executable_candidates"][0]["b2_evidence"] = dict(

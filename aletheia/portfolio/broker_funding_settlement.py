@@ -54,6 +54,38 @@ def _realized(row: dict, funding_cost: float) -> float:
     return value
 
 
+def _close_event_matches_position(event: dict, position: dict) -> bool:
+    if any(
+        event.get(event_field) != position.get(position_field)
+        for event_field, position_field in (
+            ("position_id", "id"),
+            ("symbol", "symbol"),
+            ("direction", "direction"),
+            ("execution_mode", "execution_mode"),
+            ("close_reason", "close_reason"),
+            ("closed_at", "closed_at"),
+        )
+    ):
+        return False
+    for event_field, position_field in (
+        ("exit_price", "current_price"),
+        ("closed_qty", "quantity"),
+        ("entry_fee", "entry_fee"),
+        ("exit_fee", "exit_fee"),
+    ):
+        try:
+            if not math.isclose(
+                float(event[event_field]),
+                float(position[position_field]),
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            ):
+                return False
+        except (KeyError, TypeError, ValueError):
+            return False
+    return int(event.get("is_partial") or 0) == 0
+
+
 def materialize_broker_funding_economics(
     row: dict,
     *,
@@ -75,17 +107,6 @@ def materialize_broker_funding_economics(
         or funding_evidence.get("source") != "broker_ledger"
     ):
         raise ValueError("broker funding settlement requires a verified exchange close")
-    realized = _realized(row, float(funding_cost))
-    candidate = {
-        **row,
-        "realized_pnl": realized,
-        "funding_cost": float(funding_cost),
-        "funding_source": "broker_ledger",
-        "exit_fill_verified": True,
-    }
-    outcome_eligible, outcome_reason = outcome_write_eligibility(
-        candidate, exit_fill_verified=True,
-    )
     fingerprint = _fingerprint(funding_evidence)
     audit_payload: dict | None = None
 
@@ -93,20 +114,54 @@ def materialize_broker_funding_economics(
         current = repo._select_one("positions", position_id)
         if current is None:
             raise ValueError(f"position not found: {position_id}")
-        if current.get("status") != "closed":
-            raise ValueError("position is no longer closed")
-        evidence_root: dict = {}
+        if current.get("realized_pnl") is None:
+            changed_fields = sorted(
+                key
+                for key in set(row) | set(current)
+                if row.get(key) != current.get(key)
+            )
+            if changed_fields:
+                raise ValueError(
+                    "broker funding settlement snapshot changed"
+                    f" ({', '.join(changed_fields)})"
+                )
+        if (
+            current.get("status") != "closed"
+            or current.get("execution_mode") not in _EXCHANGE_FUNDING_MODES
+            or current.get("market_type") != "usdt_futures"
+            or not current.get("exit_fill_verified")
+        ):
+            raise ValueError("position is no longer a verified exchange close")
+        close_events = [
+            dict(event)
+            for event in get_db().execute(
+                """SELECT * FROM position_close_events
+                   WHERE position_id=? AND is_partial=0 ORDER BY rowid""",
+                (position_id,),
+            ).fetchall()
+        ]
+        if (
+            len(close_events) != 1
+            or not _close_event_matches_position(close_events[0], current)
+        ):
+            raise ValueError("broker funding settlement snapshot changed")
+
         raw_evidence = current.get("reconciliation_evidence")
         if raw_evidence:
             try:
-                parsed = json.loads(str(raw_evidence))
-                if isinstance(parsed, dict):
-                    evidence_root = parsed
-            except (TypeError, ValueError, json.JSONDecodeError):
-                evidence_root = {}
+                evidence_root = json.loads(str(raw_evidence))
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ValueError("position reconciliation evidence is malformed") from exc
+            if not isinstance(evidence_root, dict):
+                raise ValueError("position reconciliation evidence is malformed")
+        else:
+            evidence_root = {}
+
+        realized = _realized(current, float(funding_cost))
         if current.get("realized_pnl") is not None:
             same = (
-                current.get("funding_cost") is not None
+                current.get("funding_source") == "broker_ledger"
+                and current.get("funding_cost") is not None
                 and math.isclose(
                     float(current["funding_cost"]), float(funding_cost),
                     rel_tol=0.0, abs_tol=1e-12,
@@ -115,7 +170,14 @@ def materialize_broker_funding_economics(
                     float(current["realized_pnl"]), realized,
                     rel_tol=0.0, abs_tol=1e-8,
                 )
+                and close_events[0].get("realized_pnl") is not None
+                and math.isclose(
+                    float(close_events[0]["realized_pnl"]), realized,
+                    rel_tol=0.0, abs_tol=1e-8,
+                )
                 and evidence_root.get("funding_economics_fingerprint") == fingerprint
+                and evidence_root.get("funding_accounting_version") == "broker-funding-v1"
+                and evidence_root.get("funding") == funding_evidence
             )
             if same:
                 return {
@@ -125,6 +187,8 @@ def materialize_broker_funding_economics(
                 }
             raise ValueError("existing exchange economics cannot be overwritten")
 
+        if close_events[0].get("realized_pnl") is not None:
+            raise ValueError("broker funding settlement snapshot changed")
         current_funding = compute_stored_broker_funding(
             get_db(),
             position=current,
@@ -139,21 +203,21 @@ def materialize_broker_funding_economics(
             raise ValueError(
                 "broker funding attribution changed before settlement commit"
             )
+        candidate = {
+            **current,
+            "realized_pnl": realized,
+            "funding_cost": float(funding_cost),
+            "funding_source": "broker_ledger",
+            "exit_fill_verified": True,
+        }
+        outcome_eligible, outcome_reason = outcome_write_eligibility(
+            candidate, exit_fill_verified=True,
+        )
         evidence_root.update({
             "funding": funding_evidence,
             "funding_economics_fingerprint": fingerprint,
             "funding_accounting_version": "broker-funding-v1",
         })
-        close_events = [
-            dict(event)
-            for event in get_db().execute(
-                """SELECT * FROM position_close_events
-                   WHERE position_id=? AND is_partial=0 ORDER BY rowid""",
-                (position_id,),
-            ).fetchall()
-        ]
-        if len(close_events) != 1:
-            raise ValueError("exactly one full close event is required")
 
         repo.update_position(
             position_id,
@@ -169,10 +233,13 @@ def materialize_broker_funding_economics(
                 default=str,
             ),
         )
-        get_db().execute(
-            "UPDATE position_close_events SET realized_pnl=? WHERE id=?",
+        updated = get_db().execute(
+            """UPDATE position_close_events SET realized_pnl=?
+               WHERE id=? AND realized_pnl IS NULL""",
             (realized, close_events[0]["id"]),
         )
+        if updated.rowcount != 1:
+            raise ValueError("broker funding settlement snapshot changed")
         if outcome_eligible:
             enqueue_outcome_hook_jobs({
                 **current,
