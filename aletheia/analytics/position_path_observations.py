@@ -7,14 +7,14 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from aletheia.storage import repositories as repo
-from aletheia.portfolio.position_path_observer import (
-    expected_position_path_bucket_bounds,
-)
 from aletheia.analytics.outcome_integrity import (
     assess_reportable_outcome,
     validated_funding_economics,
 )
+from aletheia.portfolio.position_path_observer import (
+    expected_position_path_bucket_bounds,
+)
+from aletheia.storage import repositories as repo
 
 
 def _finite(value: object) -> float | None:
@@ -428,13 +428,17 @@ def build_position_path_report(position_id: str, *, limit: int = 10_000) -> dict
 
 
 def _recent_stop_loss_positions(*, cutoff: str, limit: int) -> list[dict[str, Any]]:
-    rows = repo.get_db().execute(
+    from aletheia.storage.sqlite import iso_instant_us, register_instant_us
+
+    db = repo.get_db()
+    register_instant_us(db)
+    rows = db.execute(
         "SELECT * FROM positions "
         "WHERE status='closed' "
         "AND LOWER(COALESCE(close_reason, ''))='stop_loss' "
-        "AND closed_at IS NOT NULL AND datetime(closed_at) >= datetime(?) "
-        "ORDER BY datetime(closed_at) DESC, rowid DESC LIMIT ?",
-        (cutoff, limit),
+        "AND aletheia_instant_us(closed_at) >= ? "
+        "ORDER BY aletheia_instant_us(closed_at) DESC, rowid DESC LIMIT ?",
+        (iso_instant_us(cutoff), limit),
     ).fetchall()
     return [dict(row) for row in rows]
 

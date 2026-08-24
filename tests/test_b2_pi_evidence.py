@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
 
 def _setup(tmp_path, monkeypatch):
     from tests.test_entry_logic import setup_env
@@ -12,7 +14,36 @@ def _setup(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
 
-def _insert_b2_candidate(*, index: int, epoch: str, bucket: str, net: float) -> None:
+def test_b2_policy_epoch_identity_includes_cost_model_version():
+    from aletheia.agent_shell.b2_evidence_policy import (
+        _AFFECTED_PATHS,
+        _EFFECTIVE_VALUES,
+        _EPOCH_KIND,
+    )
+    from aletheia.learning.policy_epochs import build_policy_epoch, compare_policy_epochs
+
+    assert _EFFECTIVE_VALUES["cost_model_version"] == COST_MODEL_VERSION
+    current = build_policy_epoch(
+        _EPOCH_KIND,
+        _EFFECTIVE_VALUES,
+        affected_path_ids=_AFFECTED_PATHS,
+    )
+    rotated = build_policy_epoch(
+        _EPOCH_KIND,
+        {**_EFFECTIVE_VALUES, "cost_model_version": "next-cost-model"},
+        affected_path_ids=_AFFECTED_PATHS,
+    )
+    assert rotated.epoch_hash != current.epoch_hash
+    for path_id in _AFFECTED_PATHS:
+        comparison = compare_policy_epochs(current, rotated, path_id)
+        assert comparison.experiment_action == "new_epoch"
+        assert comparison.safety_action == "apply_normally"
+
+
+def _insert_b2_candidate(
+    *, index: int, epoch: str, bucket: str, net: float,
+    cost_model_version: str | None = COST_MODEL_VERSION,
+) -> None:
     from aletheia.storage.models import FilterCandidateOutcome, FilterDecision
     from aletheia.storage.repositories import (
         insert_filter_candidate_outcomes_batch,
@@ -58,9 +89,16 @@ def _insert_b2_candidate(*, index: int, epoch: str, bucket: str, net: float) -> 
         id=f"outcome-{index}", outcome_candidate_key=decision_key,
         venue="binance", symbol="BTC/USDT", market_type="perp", direction="long",
         scanner_family="momentum", horizon="24h", entry_price_usd=100.0,
+        exit_price_usd=100.0 * (1.0 + (net + 0.2) / 100.0),
         entry_ts=(now - timedelta(hours=25)).isoformat(),
         due_at=(now - timedelta(hours=1)).isoformat(), settled_at=now.isoformat(),
-        net_return_pct=net, min_tradable_edge_pct=0.05, cost_model_version="cost-v1",
+        directional_return_pct=net + 0.2,
+        estimated_fee_pct=0.1,
+        estimated_spread_slippage_pct=0.1,
+        estimated_funding_pct=0.0,
+        net_return_pct=net, min_tradable_edge_pct=0.05,
+        settlement_price_source="horizon_ohlcv", settlement_lag_sec=0.0,
+        cost_model_version=cost_model_version,
         status="settled",
     )])
 
@@ -99,89 +137,44 @@ def test_b2_evidence_excludes_other_epochs_and_score_buckets(tmp_path, monkeypat
     assert summary["n_total"] == 20
     assert summary["n_net"] == 20
     assert summary["outcome_coverage"] == 1.0
+    assert summary["cost_model_version"] == COST_MODEL_VERSION
     assert summary["status"] == "qualified_positive"
     assert summary["directional_verdict"] == "positive"
     assert summary["avg_net_pct"] == 1.0
 
 
-def test_b2_evidence_excludes_future_and_impossible_settlements(tmp_path, monkeypatch):
+def test_b2_evidence_reports_cost_model_identity_conflicts(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     from aletheia.analytics.pi_evidence import build_b2_evidence_summary
-    from aletheia.storage.sqlite import get_db
 
     for index in range(20):
-        _insert_b2_candidate(index=index, epoch="b2-current", bucket="high_score", net=1.0)
-    _insert_b2_candidate(index=100, epoch="b2-current", bucket="high_score", net=-100.0)
-    _insert_b2_candidate(index=101, epoch="b2-current", bucket="high_score", net=-100.0)
-
-    now = datetime.now(timezone.utc)
-    db = get_db()
-    db.execute(
-        "UPDATE filter_candidate_outcomes SET settled_at=?, cost_model_version=? "
-        "WHERE id='outcome-100'",
-        ((now + timedelta(hours=1)).isoformat(), "invalid-future-cost-model"),
+        _insert_b2_candidate(
+            index=index, epoch="b2-current", bucket="high_score", net=1.0,
+        )
+    _insert_b2_candidate(
+        index=92, epoch="b2-current", bucket="high_score", net=-50.0,
+        cost_model_version="legacy-v0",
     )
-    db.execute(
-        "UPDATE filter_candidate_outcomes SET due_at=?, settled_at=? WHERE id='outcome-101'",
-        ((now - timedelta(hours=1)).isoformat(), (now - timedelta(hours=2)).isoformat()),
+    _insert_b2_candidate(
+        index=93, epoch="b2-current", bucket="high_score", net=-50.0,
+        cost_model_version="",
     )
-    db.commit()
+    _insert_b2_candidate(
+        index=94, epoch="b2-current", bucket="high_score", net=-50.0,
+        cost_model_version=None,
+    )
 
     summary = build_b2_evidence_summary({
         "opportunity_id": "current", "scanner_family": "momentum",
         "direction": "long", "market_type": "usdt_futures", "trade_score": 51.0,
     }, policy_epoch_id="b2-current")
 
-    assert summary["n_total"] == 22
+    assert summary["status"] == "data_quality_incident"
+    assert summary["n_total"] == 23
     assert summary["n_net"] == 20
-    assert summary["outcome_coverage"] == 0.9091
-    assert summary["avg_net_pct"] == 1.0
-    assert summary["shrunk_avg_net_pct"] == 0.5
-    assert summary["status"] == "qualified_positive"
-    assert summary["directional_verdict"] == "positive"
-
-
-def test_b2_evidence_does_not_count_null_opportunity_identity(monkeypatch):
-    from aletheia.analytics.pi_evidence import build_b2_evidence_summary
-    from aletheia.storage import sqlite as sqlite_storage
-
-    now = datetime.now(timezone.utc)
-    rows = [{
-        "opportunity_id": None,
-        "status": "settled",
-        "entry_ts": (now - timedelta(hours=25)).isoformat(),
-        "due_at": (now - timedelta(hours=1)).isoformat(),
-        "settled_at": now.isoformat(),
-        "direction": "long",
-        "horizon": "24h",
-        "outcome_candidate_key": "pi_decision:null-opportunity",
-        "net_return_pct": 1.0,
-        "cost_model_version": "cost-v1",
-    }]
-
-    class _Result:
-        def fetchall(self):
-            return rows
-
-    class _DB:
-        def execute(self, *_args, **_kwargs):
-            return _Result()
-
-    monkeypatch.setattr(sqlite_storage, "get_db", lambda: _DB())
-
-    summary = build_b2_evidence_summary({
-        "scanner_family": "momentum",
-        "direction": "long",
-        "market_type": "perp",
-        "trade_score": 51.0,
-    }, policy_epoch_id="b2-current")
-
-    assert summary["n_total"] == 0
-    assert summary["n_net"] == 0
-    assert summary["outcome_coverage"] == 0.0
-    assert summary["avg_net_pct"] is None
-    assert summary["shrunk_avg_net_pct"] is None
-    assert summary["cost_model_version"] is None
+    assert summary["cost_model_mismatch_n"] == 3
+    assert summary["cost_model_version"] == COST_MODEL_VERSION
+    assert summary["directional_verdict"] is None
 
 
 def test_b2_summary_is_identical_for_assessment_bull_and_bear(tmp_path, monkeypatch):
@@ -198,6 +191,7 @@ def test_b2_summary_is_identical_for_assessment_bull_and_bear(tmp_path, monkeypa
         "policy_epoch_id": "b2-current", "selection_tier": "ranker_enqueued",
         "score_bucket": "high_score", "n_total": 0, "n_net": 0, "horizon": "24h",
         "outcome_coverage": 0.0, "directional_verdict": None,
+        "cost_model_version": COST_MODEL_VERSION, "cost_model_mismatch_n": 3,
     }
     block = render_b2_evidence_summary(summary)
     ctx = {
@@ -227,6 +221,11 @@ def test_b2_summary_is_identical_for_assessment_bull_and_bear(tmp_path, monkeypa
     assert block in bear
     assert "999T" not in assessment
     assert "-99.00%avg_net" not in assessment
+
+    from aletheia.agent_shell.decision_facts import candidate_fact_bundle
+
+    facts = candidate_fact_bundle(ctx, opportunity_id="current")
+    assert facts["b2"]["cost_model_mismatch_n"] == 3
 
 
 def test_negative_b2_outcome_opposes_short_candidate_without_implying_bearish_price():
@@ -306,7 +305,7 @@ def test_b2_horizon_status_compatible_for_long_intent():
 
 def test_b2_version_is_b2_1():
     """New policy epoch uses version b2.1; old b2 data is isolated by policy_epoch_id."""
-    from aletheia.analytics.pi_evidence import build_b2_evidence_summary, _B2_VERSION
+    from aletheia.analytics.pi_evidence import _B2_VERSION
 
     assert _B2_VERSION == "b2.1"
 

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import random
 import logging
+import random
 
 from aletheia.config.schema import UniverseConfig
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
 
 logger = logging.getLogger("aletheia.universe.allocator")
@@ -145,7 +146,7 @@ def get_family_multipliers(
     from aletheia.storage import repositories as repo
 
     try:
-        stats = repo.calibration_stats()
+        stats = repo.calibration_stats(cost_model_version=COST_MODEL_VERSION)
     except Exception:
         return {}
 
@@ -197,6 +198,7 @@ def get_family_multipliers(
                 "direction": direction,
                 "market_type": market_type,
                 "horizon": row.get("horizon"),
+                "cost_model_version": row.get("cost_model_version"),
                 "eligible_outcome_n": int(n),
                 "independent_outcome_n": int(independent_n),
                 "distinct_symbols": int(row.get("distinct_symbols") or 0),

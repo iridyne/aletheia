@@ -7,15 +7,16 @@ through the exact ``outcome_candidate_key`` recorded before its horizon.
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 import hashlib
 import json
 import math
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from statistics import fmean
 from typing import Any
 
+from aletheia.analytics.outcome_semantics import valid_settlement_price_provenance
 from aletheia.learning.ledger import get_record
 from aletheia.learning.models import LearningExperiment, LearningHypothesis
 from aletheia.learning.outcomes import (
@@ -28,7 +29,7 @@ from aletheia.learning.registry import (
     outcome_contract_version_for_path,
 )
 from aletheia.storage.sqlite import get_db
-
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 SUPPORTED_PATH_ID = "universe_family_calibration"
 RANKER_CASE_PATH_ID = "ranker_case_score"
@@ -189,6 +190,7 @@ class ContributionCohort:
             "policy_epoch": self.key.policy_epoch,
             "horizon": self.key.horizon,
             "outcome_contract_version": self.key.outcome_contract_version,
+            "expected_cost_model_version": COST_MODEL_VERSION,
             "statistical_unit": get_learning_path(
                 self.hypothesis.path_id
             ).statistical_unit,
@@ -1129,11 +1131,14 @@ def _outcome_fingerprint(outcome: dict[str, Any]) -> tuple[Any, ...]:
         "net_return_pct", "estimated_fee_pct", "estimated_spread_slippage_pct",
         "estimated_funding_pct", "mae_pct", "cost_model_version", "market_type", "direction",
         "allocation_selected",
-    ))
+    )) + (valid_settlement_price_provenance(outcome),)
 
 
 def _economic_fingerprint(outcome: dict[str, Any]) -> tuple[Any, ...]:
-    return tuple(outcome.get(field) for field in _ECONOMIC_FIELDS)
+    return (
+        *tuple(outcome.get(field) for field in _ECONOMIC_FIELDS),
+        valid_settlement_price_provenance(outcome),
+    )
 
 
 def _conflict_fingerprint(reason: str, rows: list[dict[str, Any]]) -> str:
@@ -1209,6 +1214,7 @@ def _conflict_row(source: str, row: dict[str, Any]) -> dict[str, Any]:
         "due_at": row.get("due_at"),
         "settled_at": row.get("settled_at"),
         "settlement_price_source": row.get("settlement_price_source"),
+        "settlement_lag_sec": row.get("settlement_lag_sec"),
         "cost_model_version": row.get("cost_model_version"),
     }
 
@@ -1216,6 +1222,8 @@ def _conflict_row(source: str, row: dict[str, Any]) -> dict[str, Any]:
 def _incomplete_cost_reason(outcome: dict[str, Any]) -> str | None:
     if not outcome.get("cost_model_version"):
         return "missing_cost_model_version"
+    if outcome.get("cost_model_version") != COST_MODEL_VERSION:
+        return "cost_model_version_mismatch"
     for field in ("estimated_fee_pct", "estimated_spread_slippage_pct"):
         if _finite_float(outcome.get(field)) is None:
             return "incomplete_cost_model"

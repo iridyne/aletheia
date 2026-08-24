@@ -44,6 +44,7 @@ def _record_ttl_candidate(
 ) -> str:
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     expires_at = (
         evaluated_at + timedelta(minutes=10)
@@ -74,8 +75,17 @@ def _record_ttl_candidate(
     db = get_db()
     db.execute(
         "UPDATE filter_candidate_outcomes SET status='settled', settled_at=?, "
-        "net_return_pct=? WHERE outcome_candidate_key=? AND horizon='1h'",
-        (evaluated_at.isoformat(), net_return_pct, key),
+        "directional_return_pct=?, exit_price_usd=?, estimated_fee_pct=0.1, "
+        "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0.0, "
+        "net_return_pct=?, min_tradable_edge_pct=0.05, "
+        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+        "cost_model_version=? "
+        "WHERE outcome_candidate_key=? AND horizon='1h'",
+        (
+            evaluated_at.isoformat(), net_return_pct + 0.2,
+            100.0 + net_return_pct + 0.2,
+            net_return_pct, COST_MODEL_VERSION, key,
+        ),
     )
     return db.execute(
         "SELECT filter_version FROM filter_decisions WHERE candidate_key=?",
@@ -426,7 +436,8 @@ def _record_ranker_candidate(
     if net_return_pct is not None:
         db.execute(
             "UPDATE filter_candidate_outcomes SET status='settled', settled_at=?, "
-            "net_return_pct=? WHERE outcome_candidate_key=? AND horizon=?",
+            "net_return_pct=?, settlement_price_source='horizon_ohlcv', "
+            "settlement_lag_sec=0 WHERE outcome_candidate_key=? AND horizon=?",
             (evaluated_at.isoformat(), net_return_pct, key, horizon),
         )
     return db.execute(

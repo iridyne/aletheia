@@ -200,6 +200,7 @@ def test_xstock_listing_source_is_registered_and_bounded():
 )
 def test_render_has_xvenue_funding_param():
     import inspect
+
     from aletheia.data.context_builder import render_enriched_context_md
     sig = inspect.signature(render_enriched_context_md)
     assert "xvenue_funding" in sig.parameters, (
@@ -644,6 +645,7 @@ def test_regime_is_inline_not_separate_collector():
 )
 def test_coinalyze_registered_in_scheduler_and_config():
     import inspect
+
     from aletheia.config import schema as schema_mod
 
     # 1) scheduler.py 含 CoinalyzeCollector 字符串（已注册到 context lane）
@@ -798,6 +800,7 @@ def test_research_worker_injects_coinalyze_flow():
 
 def _setup_du_db(tmp_path, monkeypatch):
     import sqlite3
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     from aletheia.storage.migrations import run_migrations
@@ -815,7 +818,10 @@ def _setup_du_db(tmp_path, monkeypatch):
     return conn
 
 
-def _seed_forward_outcome(conn, family, direction, forward_return, horizon="24h"):
+def _seed_forward_outcome(
+    conn, family, direction, forward_return, horizon="24h", edge=0.05,
+    cost_model_version="v1",
+):
     import uuid
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
@@ -827,14 +833,20 @@ def _seed_forward_outcome(conn, family, direction, forward_return, horizon="24h"
     net = directional - 0.2 if directional is not None else None
     conn.execute(
         "INSERT INTO universe_forward_outcomes "
-        "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
-        " entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, "
-        " forward_return_pct, gross_return_pct, directional_return_pct, net_return_pct, "
+        "(id, member_id, snapshot_id, venue, symbol, scanner_family, direction, horizon, "
+        " entry_price_usd, entry_ts, due_at, settled_at, "
+        " settlement_price_source, settlement_lag_sec, exit_price_usd, "
+        " forward_return_pct, gross_return_pct, directional_return_pct, "
+        " estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+        " net_return_pct, "
         " min_tradable_edge_pct, market_type, cost_model_version, status) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()), "X/USDT",
-         family, direction, horizon, 100.0, now, now, now, 101.0,
-         forward_return, forward_return, directional, net, 0.05, "spot", "v1", "settled"),
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()), "bitget", "X/USDT",
+         family, direction, horizon, 100.0, now, now, now,
+         "horizon_ohlcv", 0.0,
+         100.0 * (1.0 + forward_return / 100.0),
+         forward_return, forward_return, directional, 0.1, 0.1, 0.0,
+         net, edge, "spot", cost_model_version, "settled"),
     )
     conn.commit()
 
@@ -855,13 +867,16 @@ def test_family_direction_edge_groups_by_direction(tmp_path, monkeypatch):
     _seed_forward_outcome(conn, "momentum", "long", 2.0)
     _seed_forward_outcome(conn, "momentum", "long", 1.0)
     _seed_forward_outcome(conn, "momentum", "long", -1.0)
+    _seed_forward_outcome(conn, "momentum", "long", 9.0, edge=None)
     # momentum:short — 2 outcomes, 2 wins (negative return = short win)
     _seed_forward_outcome(conn, "momentum", "short", -2.0)
     _seed_forward_outcome(conn, "momentum", "short", -3.0)
     # Unknown-direction legacy row must not be folded into momentum:long.
     _seed_forward_outcome(conn, "momentum", None, 9.0)
 
-    rows = family_direction_edge(horizon="24h", within_days=7)
+    rows = family_direction_edge(
+        horizon="24h", within_days=7, cost_model_version="v1",
+    )
     by_key = {(r["scanner_family"], r["direction"], r["market_type"]): r for r in rows}
 
     assert ("momentum", "long", "spot") in by_key, "momentum:long:spot thesis missing"
@@ -876,27 +891,38 @@ def test_family_direction_edge_groups_by_direction(tmp_path, monkeypatch):
     )
 
 
-@spec_claim(
-    SpecClaim(
-        "DU-S11", _CONTRACT, "§no-orphan: forward-outcome edge → PI", "L2a",
-        "trading_context attaches family_edge to each Layer-1 opportunity (from "
-        "family_direction_edge) AND trading_decision renders it in the opportunity "
-        "line — the per-family+direction track record reaches the PI at decision "
-        "time, not just the universe-wide aggregate.",
-    ),
-)
-def test_forward_outcome_edge_routed_to_pi():
+def test_family_direction_edge_requires_one_exact_cost_model(tmp_path, monkeypatch):
+    conn = _setup_du_db(tmp_path, monkeypatch)
+    from aletheia.storage.repositories import family_direction_edge
+
+    for _ in range(30):
+        _seed_forward_outcome(
+            conn, "momentum", "long", 2.0,
+            cost_model_version="legacy-v0",
+        )
+    for _ in range(29):
+        _seed_forward_outcome(conn, "momentum", "long", 2.0)
+
+    current = family_direction_edge(cost_model_version="v1")
+    legacy = family_direction_edge(cost_model_version="legacy-v0")
+
+    assert current[0]["n"] == 29
+    assert current[0]["cost_model_version"] == "v1"
+    assert legacy[0]["n"] == 30
+    assert legacy[0]["cost_model_version"] == "legacy-v0"
+    with pytest.raises(TypeError):
+        family_direction_edge()
+
+    _seed_forward_outcome(conn, "momentum", "long", 2.0)
+    assert family_direction_edge(cost_model_version="v1")[0]["n"] == 30
+
+
+def test_full_pool_family_edge_is_not_routed_to_pi():
     tc = (_ROOT / "aletheia" / "agent_shell" / "trading_context.py").read_text(encoding="utf-8")
     td = (_ROOT / "aletheia" / "agent_shell" / "trading_decision.py").read_text(encoding="utf-8")
-    assert "family_direction_edge" in tc, (
-        "trading_context must call family_direction_edge to build the thesis-evidence map"
-    )
-    assert '"family_edge"' in tc or "'family_edge'" in tc, (
-        "trading_context must attach family_edge to each opportunity"
-    )
-    assert "_fmt_family_edge" in td, (
-        "trading_decision must render family_edge in the System Operator prompt (opportunity line)"
-    )
+    assert "family_direction_edge" not in tc
+    assert '"family_edge"' not in tc and "'family_edge'" not in tc
+    assert "_fmt_family_edge" not in td
 
 
 # ---------------------------------------------------------------------------

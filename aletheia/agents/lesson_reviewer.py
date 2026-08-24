@@ -32,7 +32,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel
@@ -70,22 +70,26 @@ def _fetch_evidence(lesson) -> dict:
     clean, cost-aware 24h outcomes matching every populated scope dimension that
     can be recovered deterministically from the lesson.
     """
+    from datetime import datetime, timezone
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
     as_of_at = datetime.now(timezone.utc)
-    window_start = as_of_at - timedelta(days=30)
 
-    def _agg(where_extra: str, params: tuple, *, as_of_at: datetime) -> dict:
+    def _agg(where_extra: str, params: tuple) -> dict:
         from aletheia.learning.outcomes import assess_candidate_outcome
 
         rows = db.execute(
-            "SELECT id,outcome_candidate_key,status,horizon,entry_ts,direction,"
-            "due_at,settled_at,net_return_pct,min_tradable_edge_pct,cost_model_version "
+            "SELECT id,outcome_candidate_key,status,horizon,entry_ts,due_at,settled_at,venue,direction,market_type,"
+            "entry_price_usd,exit_price_usd,"
+            "directional_return_pct,estimated_fee_pct,"
+            "estimated_spread_slippage_pct,estimated_funding_pct,"
+            "net_return_pct,min_tradable_edge_pct,cost_model_version,"
+            "settlement_price_source,settlement_lag_sec "
             "FROM universe_forward_outcomes "
             "WHERE status='settled' AND horizon='24h' "
-            "AND datetime(settled_at) >= datetime(?) " + where_extra,
-            (window_start.isoformat(), *params),
+            "AND settled_at >= datetime('now','-30 days') " + where_extra,
+            params,
         ).fetchall()
         eligible_by_outcome: dict[str, tuple[dict, float]] = {}
         for raw in rows:
@@ -104,7 +108,7 @@ def _fetch_evidence(lesson) -> dict:
         total = len(eligible)
         wins = sum(
             1 for row, net in eligible
-            if net > float(row.get("min_tradable_edge_pct") or 0.0)
+            if net > float(row["min_tradable_edge_pct"])
         )
         avg_return = (
             sum(net for _, net in eligible) / total if total else None
@@ -116,7 +120,7 @@ def _fetch_evidence(lesson) -> dict:
             "avg_return": round(avg_return, 3) if avg_return is not None else None,
         }
 
-    evidence = {"aggregate": _agg("", (), as_of_at=as_of_at)}
+    evidence = {"aggregate": _agg("", ())}
 
     def _json_dict(raw: str | None) -> dict:
         try:
@@ -147,9 +151,7 @@ def _fetch_evidence(lesson) -> dict:
 
     evidence["symbol"] = symbol
     if symbol:
-        evidence["symbol_stats"] = _agg(
-            "AND symbol = ?", (symbol,), as_of_at=as_of_at,
-        )
+        evidence["symbol_stats"] = _agg("AND symbol = ?", (symbol,))
 
     # Scanner-family slice (#99): a block_scanner lesson must be judged against the
     # scanner-family's OWN settled outcomes, not just the global/symbol aggregates —
@@ -164,9 +166,7 @@ def _fetch_evidence(lesson) -> dict:
             scanner = families[0]
     evidence["scanner_family"] = scanner
     if scanner:
-        evidence["scanner_family_stats"] = _agg(
-            "AND scanner_family = ?", (scanner,), as_of_at=as_of_at,
-        )
+        evidence["scanner_family_stats"] = _agg("AND scanner_family = ?", (scanner,))
 
     direction = rec.get("direction") or ev.get("direction") or _single_factor_value(2)
     if not direction and lesson.summary:
@@ -179,9 +179,7 @@ def _fetch_evidence(lesson) -> dict:
         direction = None
     evidence["direction"] = direction
     if direction:
-        evidence["direction_stats"] = _agg(
-            "AND direction = ?", (direction,), as_of_at=as_of_at,
-        )
+        evidence["direction_stats"] = _agg("AND direction = ?", (direction,))
 
     scope_clauses: list[str] = []
     scope_params: list[str] = []
@@ -200,9 +198,7 @@ def _fetch_evidence(lesson) -> dict:
         }.items() if value
     }
     evidence["exact_scope"] = (
-        _agg(
-            " ".join(scope_clauses), tuple(scope_params), as_of_at=as_of_at,
-        )
+        _agg(" ".join(scope_clauses), tuple(scope_params))
         if scope_clauses else {"total": 0, "wins": 0, "win_rate": None, "avg_return": None}
     )
     return evidence

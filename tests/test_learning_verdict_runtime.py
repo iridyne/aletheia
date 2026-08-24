@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 _BASE = datetime(2026, 7, 13, 12, tzinfo=timezone.utc)
 
@@ -139,8 +140,10 @@ def _outcome(
     mae: float | None = -0.1,
     entry_at: str | None = None,
     status: str = "settled",
-    cost_model_version: str | None = "cost-v1",
+    cost_model_version: str | None = COST_MODEL_VERSION,
+    min_tradable_edge_pct: float | None = 0.05,
     settlement_price_source: str = "horizon_ohlcv",
+    settlement_lag_sec: float = 0.0,
     suffix: str = "",
 ):
     from aletheia.storage.sqlite import get_db
@@ -150,26 +153,35 @@ def _outcome(
     entry_dt = datetime.fromisoformat(entry.replace("Z", "+00:00"))
     due = (entry_dt + timedelta(hours=4)).isoformat()
     settled = (entry_dt + timedelta(hours=4, minutes=1)).isoformat()
+    directional = net + 0.2 if net is not None else None
+    exit_price = 100.0 * (1.0 + directional / 100.0) if directional is not None else None
     db.execute(
         "INSERT INTO universe_forward_outcomes "
         "(id, outcome_candidate_key, member_id, snapshot_id, symbol, venue, market_type, "
-        "scanner_family, direction, horizon, entry_price_usd, entry_ts, due_at, settled_at, "
-        "net_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
-        "mae_pct, settlement_price_source, cost_model_version, status) "
-        "VALUES (?, ?, ?, ?, 'BTC/USDT', 'test', 'perp', 'momentum', 'long', ?, 100, ?, ?, ?, ?, "
-        "0.1, 0.1, 0.0, ?, ?, ?, ?)",
+        "scanner_family, direction, horizon, entry_price_usd, exit_price_usd, "
+        "entry_ts, due_at, settled_at, "
+        "directional_return_pct, net_return_pct, min_tradable_edge_pct, estimated_fee_pct, "
+        "estimated_spread_slippage_pct, estimated_funding_pct, "
+        "mae_pct, settlement_price_source, settlement_lag_sec, "
+        "cost_model_version, status) "
+        "VALUES (?, ?, ?, ?, 'BTC/USDT', 'test', 'perp', 'momentum', 'long', ?, 100, ?, ?, ?, ?, ?, ?, ?, "
+        "0.1, 0.1, 0.0, ?, ?, ?, ?, ?)",
         (
             f"outcome-{candidate}-{horizon}-{suffix or 'primary'}",
             candidate,
             f"member-{candidate}-{suffix or 'primary'}",
             f"snapshot-{candidate}-{suffix or 'primary'}",
             horizon,
+            exit_price,
             entry,
             due,
             settled,
+            directional,
             net,
+            min_tradable_edge_pct,
             mae,
             settlement_price_source,
+            settlement_lag_sec,
             cost_model_version,
             status,
         ),
@@ -184,9 +196,11 @@ def _filter_outcome(
     mae: float | None = -0.1,
     entry_at: str | None = None,
     status: str = "settled",
-    cost_model_version: str | None = "cost-v1",
+    cost_model_version: str | None = COST_MODEL_VERSION,
+    min_tradable_edge_pct: float | None = 0.05,
     allocation_selected: bool | None = True,
     settlement_price_source: str = "horizon_ohlcv",
+    settlement_lag_sec: float = 0.0,
     suffix: str = "",
 ):
     from aletheia.storage.sqlite import get_db
@@ -195,25 +209,33 @@ def _filter_outcome(
     entry_dt = datetime.fromisoformat(entry.replace("Z", "+00:00"))
     due = (entry_dt + timedelta(hours=4)).isoformat()
     settled = (entry_dt + timedelta(hours=4, minutes=1)).isoformat()
+    directional = net + 0.2 if net is not None else None
+    exit_price = 100.0 * (1.0 + directional / 100.0) if directional is not None else None
     get_db().execute(
         "INSERT INTO filter_candidate_outcomes "
         "(id, outcome_candidate_key, venue, symbol, market_type, scanner_family, direction, "
-        "horizon, allocation_selected, entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
+        "horizon, allocation_selected, entry_price_usd, exit_price_usd, "
+        "entry_ts, due_at, settled_at, "
+        "directional_return_pct, net_return_pct, min_tradable_edge_pct, "
         "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, mae_pct, "
-        "settlement_price_source, cost_model_version, status) "
-        "VALUES (?, ?, 'test', 'BTC/USDT', 'perp', 'momentum', 'long', ?, ?, 100, ?, ?, ?, ?, "
-        "0.1, 0.1, 0.0, ?, ?, ?, ?)",
+        "settlement_price_source, settlement_lag_sec, cost_model_version, status) "
+        "VALUES (?, ?, 'test', 'BTC/USDT', 'perp', 'momentum', 'long', ?, ?, 100, ?, ?, ?, ?, ?, ?, ?, "
+        "0.1, 0.1, 0.0, ?, ?, ?, ?, ?)",
         (
             f"filter-outcome-{candidate}-{horizon}-{suffix or 'primary'}",
             candidate,
             horizon,
             allocation_selected,
+            exit_price,
             entry,
             due,
             settled,
+            directional,
             net,
+            min_tradable_edge_pct,
             mae,
             settlement_price_source,
+            settlement_lag_sec,
             cost_model_version,
             status,
         ),
@@ -577,6 +599,35 @@ def test_canonical_and_mirror_source_label_difference_is_not_an_economic_conflic
     assert "conflicting_mirrored_outcome" not in metrics["invalid_reasons"]
 
 
+def test_valid_canonical_and_invalid_mirror_price_provenance_conflict():
+    hypothesis, experiment = _experiment()
+    _exposure(
+        experiment, hypothesis, candidate="provenance-treatment", assignment="treatment",
+        outcome_key="provenance-treatment:4h",
+    )
+    _exposure(
+        experiment, hypothesis, candidate="provenance-control", assignment="control",
+        outcome_key="provenance-control:4h",
+    )
+    _filter_outcome("provenance-treatment", net=1.0)
+    _outcome(
+        "provenance-treatment:4h",
+        net=1.0,
+        settlement_price_source="late_ticker",
+        settlement_lag_sec=3600.0,
+    )
+    _filter_outcome("provenance-control", net=0.0)
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "invalid"
+    assert metrics["invalid_reasons"] == {"conflicting_mirrored_outcome": 1}
+    conflict = metrics["evidence_conflicts"][0]
+    assert conflict["canonical"]["settlement_price_source"] == "horizon_ohlcv"
+    assert conflict["mirrors"][0]["settlement_price_source"] == "late_ticker"
+
+
 def test_mirror_inferred_selection_and_explicit_selection_have_distinct_provenance():
     hypothesis, experiment = _experiment()
     for candidate, assignment, net in (
@@ -655,7 +706,8 @@ def test_changed_conflicting_evidence_creates_a_distinct_invalid_verdict():
     from aletheia.storage.sqlite import get_db
     db = get_db()
     db.execute(
-        "UPDATE universe_forward_outcomes SET net_return_pct=-2.0 "
+        "UPDATE universe_forward_outcomes SET directional_return_pct=-1.8, "
+        "exit_price_usd=entry_price_usd * 0.982, net_return_pct=-2.0 "
         "WHERE outcome_candidate_key='changing-conflict:4h'"
     )
     db.commit()
@@ -1148,6 +1200,55 @@ def test_incomplete_cost_model_makes_cohort_invalid():
     verdict = _run(experiment.experiment_id)[0]
     assert verdict.verdict == "invalid"
     assert json.loads(verdict.harm_metrics_json)["invalid_reasons"]["missing_cost_model_version"] == 1
+
+
+def test_mixed_cost_model_versions_make_cohort_invalid_and_auditable():
+    hypothesis, experiment = _experiment()
+    _exposure(experiment, hypothesis, candidate="current-treatment", assignment="treatment")
+    _exposure(experiment, hypothesis, candidate="legacy-control", assignment="control")
+    _outcome("current-treatment", net=1.0)
+    _outcome("legacy-control", net=0.0, cost_model_version="legacy-v0")
+
+    verdict = _run(experiment.experiment_id)[0]
+    metrics = json.loads(verdict.harm_metrics_json)
+
+    assert verdict.verdict == "invalid"
+    assert metrics["expected_cost_model_version"] == COST_MODEL_VERSION
+    assert metrics["invalid_reasons"]["cost_model_version_mismatch"] == 1
+
+
+@pytest.mark.parametrize("outcome_source", ["universe", "filter"])
+def test_linked_outcome_counts_require_explicit_exact_cost_model(outcome_source):
+    from aletheia.learning.ledger import linked_settled_exposure_counts
+
+    hypothesis, experiment = _experiment()
+    for candidate, assignment, version in (
+        ("current-linked", "treatment", COST_MODEL_VERSION),
+        ("legacy-linked", "control", "legacy-v0"),
+    ):
+        outcome_key = candidate if outcome_source == "universe" else f"{candidate}:4h"
+        _exposure(
+            experiment, hypothesis, candidate=candidate, assignment=assignment,
+            outcome_key=outcome_key,
+        )
+        if outcome_source == "universe":
+            _outcome(candidate, cost_model_version=version)
+        else:
+            _filter_outcome(candidate, cost_model_version=version)
+
+    current = linked_settled_exposure_counts(
+        experiment.experiment_id,
+        cost_model_version=COST_MODEL_VERSION,
+        policy_epoch="epoch-a",
+    )
+    historical = linked_settled_exposure_counts(
+        experiment.experiment_id,
+        cost_model_version="legacy-v0",
+        policy_epoch="epoch-a",
+    )
+
+    assert current == {"control": 0, "treatment": 1}
+    assert historical == {"control": 1, "treatment": 0}
 
 
 def test_unsettled_outcomes_are_excluded_without_becoming_zero_cost_samples():
@@ -2100,8 +2201,9 @@ def test_real_shadow_flow_stays_shadow_after_at01_and_at02(monkeypatch):
 
 def test_pre_floor_outcomes_are_excluded_not_invalid():
     """Outcomes before the data-quality floor must be excluded (not corrupt the cohort)."""
+    from datetime import datetime, timedelta
+
     from aletheia.analytics.learning_window import LEARNING_DATA_FLOOR_ISO
-    from datetime import datetime, timezone, timedelta
 
     hypothesis, experiment = _experiment()
     _exposure(experiment, hypothesis, candidate="pre-floor-t", assignment="treatment")
@@ -2219,11 +2321,11 @@ def test_legacy_authority_verdict_without_behavior_hash_cannot_authorize(monkeyp
     _exposure(experiment, hypothesis, candidate="authority-control", assignment="control")
     _outcome("authority-treatment", net=1.0)
     _outcome("authority-control", net=0.0)
+    import aletheia.learning.authority as authority
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.learning.experiments import _verdict_authorizes
     from aletheia.learning.ledger import insert_record
     from aletheia.learning.models import LearningContributionVerdict, LearningExperiment
-    from aletheia.learning.experiments import _verdict_authorizes
-    from aletheia.config.schema import AletheiaConfig
-    import aletheia.learning.authority as authority
 
     cfg = AletheiaConfig()
     cfg.learning.paper_influence_enabled = True

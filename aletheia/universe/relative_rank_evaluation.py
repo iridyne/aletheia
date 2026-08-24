@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 from statistics import fmean
-import json
 from typing import Any
 
+from aletheia.analytics.outcome_semantics import validated_outcome_economics
 from aletheia.storage.sqlite import get_db
 
 
@@ -123,8 +124,15 @@ def evaluate_relative_rank_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
             continue
         selected = [record for record in records if record.get("assigned_policy_selected")]
         selected_rows = [outcomes.get(str(record.get("outcome_candidate_key"))) for record in selected]
+        selected_economics = [
+            validated_outcome_economics(row) if row is not None else None
+            for row in selected_rows
+        ]
         if any(
-            row is None or row.get("status") != "settled" or row.get("net_return_pct") is None for row in selected_rows
+            row is None
+            or row.get("status") != "settled"
+            or economics is None
+            for row, economics in zip(selected_rows, selected_economics, strict=True)
         ):
             incomplete += 1
             continue
@@ -136,7 +144,14 @@ def evaluate_relative_rank_shadow_epoch(policy_epoch_id: str) -> dict[str, Any]:
         if denominator <= 0:
             invalid.add("eligible_denominator_invalid")
             continue
-        utilities[arm].append(sum(float(row["net_return_pct"]) for row in selected_rows) / denominator)
+        utilities[arm].append(
+            sum(
+                economics["net_return_pct"]
+                for economics in selected_economics
+                if economics is not None
+            )
+            / denominator
+        )
         try:
             eligible_days.add(date.fromisoformat(str(batch["captured_at"])[:10]))
         except ValueError:

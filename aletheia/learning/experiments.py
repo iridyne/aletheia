@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
 import logging
 import math
+from dataclasses import dataclass
 from uuid import uuid4
 
 _log = logging.getLogger(__name__)
@@ -18,27 +18,32 @@ _log = logging.getLogger(__name__)
 _LAST_SUCCESS_POLICY_VALUES: dict[str, dict] = {}
 
 from aletheia.config.loader import load_config
+from aletheia.learning.behavior_contracts import current_behavior_contract_hash
 from aletheia.learning.hypotheses import (
     HYPOTHESIS_FINGERPRINT_SCHEMA_VERSION,
     hypothesis_fingerprint,
 )
-from aletheia.learning.behavior_contracts import current_behavior_contract_hash
 from aletheia.learning.ledger import (
-    get_record,
-    get_hypothesis_by_fingerprint,
     get_exposure_by_dedup_key,
+    get_hypothesis_by_fingerprint,
     get_open_experiment,
+    get_record,
     insert_experiment,
     insert_exposure,
     insert_hypothesis,
 )
 from aletheia.learning.models import LearningExperiment, LearningExposure, LearningHypothesis
-from aletheia.learning.registry import get_learning_path
 from aletheia.learning.policy_epochs import PolicyEpoch, build_policy_epoch
+from aletheia.learning.registry import get_learning_path
+from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 # Hypothesis statuses that forbid opening a *new* experiment. They are durable
 # terminal decisions on the hypothesis, not merely on one experiment row.
 TERMINAL_HYPOTHESIS_STATUSES = frozenset({"refrozen", "idle_expired"})
+_COST_MODEL_MEASURED_PATH_IDS = frozenset({
+    "universe_family_calibration",
+    "ranker_case_score",
+})
 
 
 @dataclass(frozen=True)
@@ -329,6 +334,8 @@ def _policy_epoch_definition(
                 path_id, exc,
             )
             values = {"config": "unavailable", "path_id": path_id}
+    if path_id in _COST_MODEL_MEASURED_PATH_IDS:
+        values = {**values, "cost_model_version": COST_MODEL_VERSION}
     return build_policy_epoch(
         f"decision_policy:{path_id}", values, affected_path_ids=(path_id,)
     )

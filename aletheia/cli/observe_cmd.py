@@ -125,13 +125,19 @@ def observation_overview(
     typer.echo(
         f"ufc_shadow_equivalence: last {equivalence_limit} — "
         f"matched={payload['ufc_equivalence']['recent_matched']}/"
-        f"{payload['ufc_equivalence']['recent_total']}"
+        f"{payload['ufc_equivalence']['recent_checked']} "
+        f"skipped={payload['ufc_equivalence']['recent_skipped']}"
     )
     for record in payload["ufc_equivalence"]["recent_records"]:
-        marker = "✓" if record["matched"] else "✗"
+        marker = {"matched": "✓", "mismatched": "✗", "skipped": "○"}[
+            record["result"]
+        ]
         detail = (
             f" mismatch={record['mismatch_field']}"
-            if not record["matched"] and record.get("mismatch_field") else ""
+            if record["result"] == "mismatched" and record.get("mismatch_field")
+            else f" skipped={record['notes']}"
+            if record["result"] == "skipped"
+            else ""
         )
         typer.echo(
             f"  {marker} {record['checked_at']} {record['observation_id']}{detail}"
@@ -643,6 +649,7 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
     )
     from aletheia.observation_lab.db import get_lab_db
     from aletheia.observation_lab.manifest import load_active_manifests
+    from aletheia.observation_lab.ufc_shadow import decode_equivalence_result
     from aletheia.storage import repositories as repo
 
     experiments = repo.list_filter_shadow_experiments(limit=1000)
@@ -659,7 +666,13 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
             (limit,),
         ).fetchall()
     ]
-    recent_matched = sum(1 for r in equivalence_rows if r["matched"] == 1)
+    for row in equivalence_rows:
+        row["result"] = decode_equivalence_result(row)
+    recent_matched = sum(1 for row in equivalence_rows if row["result"] == "matched")
+    recent_mismatched = sum(
+        1 for row in equivalence_rows if row["result"] == "mismatched"
+    )
+    recent_skipped = sum(1 for row in equivalence_rows if row["result"] == "skipped")
 
     active_manifests = load_active_manifests()
     manifest_dicts = [
@@ -698,7 +711,14 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
                 {
                     "observation_id": r["observation_id"],
                     "checked_at": r["checked_at"],
-                    "matched": bool(r["matched"]),
+                    "result": r["result"],
+                    "matched": (
+                        True
+                        if r["result"] == "matched"
+                        else False
+                        if r["result"] == "mismatched"
+                        else None
+                    ),
                     "mismatch_field": r.get("mismatch_field"),
                     "learning_verdict": r.get("learning_verdict"),
                     "recomputed_verdict": r.get("recomputed_verdict"),
@@ -707,6 +727,9 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
                 for r in equivalence_rows
             ],
             "recent_matched": recent_matched,
+            "recent_mismatched": recent_mismatched,
+            "recent_skipped": recent_skipped,
+            "recent_checked": recent_matched + recent_mismatched,
             "recent_total": len(equivalence_rows),
         },
         "manifests": {

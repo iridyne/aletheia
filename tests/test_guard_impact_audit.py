@@ -96,15 +96,60 @@ def _insert_forward(
 ) -> None:
     directional = -ret if direction == "short" else ret
     net = directional - 0.2
+    exit_price = 100.0 * (1.0 + ret / 100.0)
     db.execute(
         "INSERT INTO universe_forward_outcomes "
-        "(id, member_id, snapshot_id, symbol, scanner_family, direction, horizon, entry_price_usd, "
+        "(id, member_id, snapshot_id, venue, symbol, scanner_family, direction, horizon, entry_price_usd, "
         "entry_ts, due_at, settled_at, exit_price_usd, forward_return_pct, gross_return_pct, "
         "directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, "
-        "estimated_funding_pct, net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
-        "VALUES (?, ?, 'snap-guard-impact', ?, 'momentum', ?, ?, 100, datetime('now','-5 hours'), "
-        "datetime('now','-1 hour'), datetime('now'), 102, ?, ?, ?, 0.1, 0.1, 0, ?, 0.05, 'v1', 'settled')",
-        (f"fwd-{member_id}-{horizon}", member_id, symbol, direction, horizon, ret, ret, directional, net),
+        "estimated_funding_pct, net_return_pct, min_tradable_edge_pct, settlement_price_source, "
+        "settlement_lag_sec, cost_model_version, status) "
+        "VALUES (?, ?, 'snap-guard-impact', 'bitget', ?, 'momentum', ?, ?, 100, datetime('now','-5 hours'), "
+        "datetime('now','-1 hour'), datetime('now'), ?, ?, ?, ?, 0.1, 0.1, 0, ?, 0.05, "
+        "'horizon_ohlcv', 0, 'v1', 'settled')",
+        (
+            f"fwd-{member_id}-{horizon}", member_id, symbol, direction,
+            horizon, exit_price, ret, ret, directional, net,
+        ),
+    )
+
+
+def _insert_keyed_shadow_with_canonical(
+    db: sqlite3.Connection,
+    *,
+    opportunity_id: str = "opp-guard-impact",
+    symbol: str = "SEED/USDT",
+    shadow_venue: str = "bitget",
+    canonical_venue: str = "bitget",
+) -> None:
+    db.execute(
+        "INSERT INTO shadow_trades "
+        "(id, batch_id, opportunity_id, symbol, venue, market_type, direction, scanner_family, "
+        "entry_price, outcome_candidate_key, was_selected, created_at, exit_price, pnl_pct, "
+        "gross_return_pct, net_pnl_pct, estimated_fee_pct, estimated_spread_slippage_pct, "
+        "estimated_funding_pct, min_tradable_edge_pct, settlement_price_source, settlement_lag_sec, "
+        "cost_model_version, resolved_at) "
+        "VALUES (?, 'batch-guard-impact', ?, ?, ?, 'perp', 'long', 'momentum', 100, ?, 1, "
+        "datetime('now','-1 hour'), 102, 2, 2, 1.8, 0.1, 0.1, 0, 0.05, 'horizon_ohlcv', 0, 'v1', datetime('now'))",
+        (
+            "shadow-guard-impact",
+            opportunity_id,
+            symbol,
+            shadow_venue,
+            f"opportunity:{opportunity_id}",
+        ),
+    )
+    db.execute(
+        "INSERT INTO filter_candidate_outcomes "
+        "(id, outcome_candidate_key, venue, symbol, market_type, direction, scanner_family, horizon, "
+        "entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, gross_return_pct, "
+        "directional_return_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+        "net_return_pct, min_tradable_edge_pct, settlement_price_source, settlement_lag_sec, "
+        "cost_model_version, status) "
+        "VALUES ('fco-guard-impact', ?, ?, ?, 'perp', 'long', 'momentum', '24h', 100, "
+        "datetime('now','-1 hour'), datetime('now'), datetime('now'), 102, 2, 2, 0.1, 0.1, 0, "
+        "1.8, 0.05, 'horizon_ohlcv', 0, 'v1', 'settled')",
+        (f"opportunity:{opportunity_id}", canonical_venue, symbol),
     )
 
 
@@ -182,8 +227,8 @@ def test_guard_impact_no_active_guards_returns_clean_report():
 
 
 def test_guard_impact_flags_positive_blocked_outcome_as_overbroad_suspect(tmp_path):
-    from aletheia.storage.sqlite import get_db
     from aletheia.analytics.guard_impact import build_guard_impact_audit
+    from aletheia.storage.sqlite import get_db
 
     _write_guard(tmp_path)
     db = get_db()
@@ -208,8 +253,8 @@ def test_guard_impact_flags_positive_blocked_outcome_as_overbroad_suspect(tmp_pa
 
 
 def test_guard_impact_negative_blocked_outcome_is_protective(tmp_path):
-    from aletheia.storage.sqlite import get_db
     from aletheia.analytics.guard_impact import build_guard_impact_audit
+    from aletheia.storage.sqlite import get_db
 
     _write_guard(tmp_path)
     db = get_db()
@@ -223,9 +268,30 @@ def test_guard_impact_negative_blocked_outcome_is_protective(tmp_path):
     assert report["verdict"] == "protective"
 
 
-def test_guard_impact_excludes_local_pre_guard_skips(tmp_path):
-    from aletheia.storage.sqlite import get_db
+def test_guard_impact_excludes_keyed_shadow_with_canonical_identity_mismatch(tmp_path):
     from aletheia.analytics.guard_impact import build_guard_impact_audit
+    from aletheia.storage.sqlite import get_db
+
+    _write_guard(tmp_path)
+    db = get_db()
+    _insert_member(db, symbol="SEED/USDT")
+    _insert_opportunity(db, symbol="SEED/USDT")
+    _insert_keyed_shadow_with_canonical(
+        db,
+        shadow_venue="bitget",
+        canonical_venue="other-venue",
+    )
+
+    report = build_guard_impact_audit(hours=24)
+
+    assert report["blocked_candidates"][0]["outcomes"]["shadow"] is None
+    assert report["blocked_candidates"][0]["verdict"] == "insufficient_data"
+    assert report["verdict"] == "insufficient_data"
+
+
+def test_guard_impact_excludes_local_pre_guard_skips(tmp_path):
+    from aletheia.analytics.guard_impact import build_guard_impact_audit
+    from aletheia.storage.sqlite import get_db
 
     _write_guard(tmp_path)
     db = get_db()
@@ -242,8 +308,8 @@ def test_guard_impact_excludes_local_pre_guard_skips(tmp_path):
 
 
 def test_guard_impact_cli_outputs_human_and_json(tmp_path):
-    from aletheia.storage.sqlite import get_db
     from aletheia.cli.inspect_cmd import inspect_app
+    from aletheia.storage.sqlite import get_db
 
     _write_guard(tmp_path)
     db = get_db()

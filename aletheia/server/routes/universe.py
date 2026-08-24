@@ -1,9 +1,7 @@
 """Universe Generator API routes."""
 
-import asyncio
-import json
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException
 
 from aletheia.config.loader import load_config
 from aletheia.storage import repositories as repo
@@ -109,7 +107,9 @@ def get_calibration():
 
     Answers: "do the scanner families actually pick winners?"
     """
-    stats = repo.calibration_stats()
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    stats = repo.calibration_stats(cost_model_version=COST_MODEL_VERSION)
 
     cohort_agg: dict[tuple[str, str, str], dict] = {}
     for row in stats:
@@ -143,6 +143,7 @@ def get_calibration():
         })
 
     return {
+        "cost_model_version": COST_MODEL_VERSION,
         "by_cohort_horizon": stats,
         "by_cohort": summaries,
     }

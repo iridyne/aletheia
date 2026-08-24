@@ -38,9 +38,14 @@ def _record_ttl_decision(
     )
     db = get_db()
     db.execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=? "
+        "UPDATE filter_candidate_outcomes SET status='settled', "
+        "directional_return_pct=?, exit_price_usd=?, estimated_fee_pct=0.1, "
+        "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
+        "net_return_pct=?, min_tradable_edge_pct=0.05, "
+        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+        "cost_model_version='test-v1' "
         "WHERE outcome_candidate_key=? AND horizon='1h'",
-        (net_1h, key),
+        (net_1h + 0.2, 100.0 + net_1h + 0.2, net_1h, key),
     )
 
 
@@ -68,9 +73,14 @@ def _record_confidence_decision(
         evaluated_at=now.isoformat(),
     )
     get_db().execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=? "
+        "UPDATE filter_candidate_outcomes SET status='settled', "
+        "directional_return_pct=?, exit_price_usd=?, estimated_fee_pct=0.1, "
+        "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
+        "net_return_pct=?, min_tradable_edge_pct=0.05, "
+        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+        "cost_model_version='test-v1' "
         "WHERE outcome_candidate_key=? AND horizon='4h'",
-        (net_4h, key),
+        (net_4h + 0.2, 100.0 + net_4h + 0.2, net_4h, key),
     )
 
 

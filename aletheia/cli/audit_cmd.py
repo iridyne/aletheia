@@ -5,7 +5,6 @@ from typing import Optional
 
 import typer
 
-
 audit_app = typer.Typer(no_args_is_help=True)
 
 
@@ -41,10 +40,15 @@ def data(
     output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON"),
 ):
     """Check OHLCV coverage and signal effectiveness for all active members."""
-    from aletheia.storage.repositories import get_active_universe_members
-    from aletheia.storage.sqlite import get_db
+    from datetime import datetime, timedelta, timezone
+
     from aletheia.config.loader import load_config
-    from datetime import datetime, timezone, timedelta
+    from aletheia.storage.repositories import (
+        complete_outcome_economics_sql,
+        get_active_universe_members,
+    )
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     cfg = load_config()
     min_bars = cfg.historical_data.min_bars_for_backtest
@@ -73,17 +77,17 @@ def data(
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     row = db.execute(
-        """SELECT COUNT(*),
-                  SUM(CASE WHEN net_return_pct > COALESCE(min_tradable_edge_pct, 0)
+        f"""SELECT COUNT(*),
+                  SUM(CASE WHEN net_return_pct > min_tradable_edge_pct
                            THEN 1 ELSE 0 END),
                   AVG(net_return_pct)
            FROM universe_forward_outcomes
            WHERE status = 'settled'
              AND horizon = '24h'
              AND settled_at >= ?
-             AND net_return_pct IS NOT NULL
-             AND ABS(net_return_pct) <= 100""",
-        (cutoff,),
+             AND cost_model_version = ?
+             AND {complete_outcome_economics_sql()}""",
+        (cutoff, COST_MODEL_VERSION),
     ).fetchone()
     total_outcomes, wins, avg_ret = row if row else (0, None, None)
     win_rate = round((wins or 0) / total_outcomes * 100, 1) if total_outcomes else None
@@ -95,6 +99,7 @@ def data(
         "symbol_coverage": symbol_coverage,
         "signal_effectiveness_7d": {
             "horizon": "24h",
+            "cost_model_version": COST_MODEL_VERSION,
             "settled_outcomes": total_outcomes,
             "win_rate_pct": win_rate,
             "avg_net_return_pct": round(avg_ret, 4) if avg_ret is not None else None,
@@ -320,6 +325,7 @@ def costs(
 ):
     """Inspect append-only runtime cost events and unknown-cost gaps."""
     from datetime import datetime, timedelta, timezone
+
     from aletheia.economics.tracing import list_cost_summary
 
     end = datetime.now(timezone.utc)
@@ -352,6 +358,7 @@ def tokens(
 ):
     """Inspect provider-reported input/output/cache token telemetry."""
     from datetime import datetime, timedelta, timezone
+
     from aletheia.economics.tracing import list_token_summary
 
     end = datetime.now(timezone.utc)

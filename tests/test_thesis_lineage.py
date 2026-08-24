@@ -197,29 +197,51 @@ def _insert_order_fill_position(
     )
 
 
-def _insert_shadow(db, idx: int, *, pnl_pct: float, batch: str = "batch-lineage", rank: int = 1) -> None:
+def _insert_shadow(
+    db,
+    idx: int,
+    *,
+    pnl_pct: float | None,
+    batch: str = "batch-lineage",
+    rank: int = 1,
+    keyed: bool = False,
+) -> None:
     db.execute(
         "INSERT INTO shadow_trades "
         "(id, batch_id, opportunity_id, symbol, direction, scanner_family, trade_score, rank, entry_price, "
-        "was_selected, created_at, exit_price, pnl_pct, resolved_at) "
-        "VALUES (?, ?, ?, 'BTC/USDT', 'long', 'momentum', 80, ?, 100, 0, ?, 101, ?, ?)",
-        (f"shadow-lineage-{idx}", batch, f"opp-lineage-{idx}", rank, _iso(), pnl_pct, _iso()),
+        "was_selected, created_at, exit_price, pnl_pct, resolved_at, outcome_candidate_key) "
+        "VALUES (?, ?, ?, 'BTC/USDT', 'long', 'momentum', 80, ?, 100, 0, ?, ?, ?, ?, ?)",
+        (
+            f"shadow-lineage-{idx}",
+            batch,
+            f"opp-lineage-{idx}",
+            rank,
+            _iso(),
+            None if keyed else 101,
+            pnl_pct,
+            _iso() if not keyed else None,
+            f"opportunity:opp-lineage-{idx}" if keyed else None,
+        ),
     )
 
 
 def _insert_forward_net(db, idx: int, *, gross: float, net: float) -> None:
+    spread = gross - 0.1 - net
+    assert spread >= 0
     db.execute(
         "INSERT INTO universe_forward_outcomes "
-        "(id, member_id, snapshot_id, symbol, market_type, scanner_family, direction, horizon, "
+        "(id, member_id, snapshot_id, venue, symbol, market_type, scanner_family, direction, horizon, "
         "entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, forward_return_pct, "
         "gross_return_pct, directional_return_pct, estimated_fee_pct, "
         "estimated_spread_slippage_pct, estimated_funding_pct, net_return_pct, "
-        "min_tradable_edge_pct, cost_model_version, status) "
-        "VALUES (?, ?, ?, 'BTC/USDT', 'perp', 'momentum', 'long', '24h', 100, ?, ?, ?, 102, "
-        "?, ?, ?, 0.1, 0.1, 0, ?, 0.05, 'v1', 'settled')",
+        "min_tradable_edge_pct, settlement_price_source, settlement_lag_sec, "
+        "cost_model_version, status) "
+        "VALUES (?, ?, ?, 'bitget', 'BTC/USDT', 'perp', 'momentum', 'long', '24h', 100, ?, ?, ?, ?, "
+        "?, ?, ?, 0.1, ?, 0, ?, 0.05, 'horizon_ohlcv', 0, 'v1', 'settled')",
         (
             f"forward-lineage-{idx}", f"um-lineage-{idx}", f"snap-lineage-{idx}",
-            _iso(25), _iso(), _iso(), gross, gross, gross, net,
+            _iso(25), _iso(), _iso(), 100.0 * (1.0 + gross / 100.0),
+            gross, gross, gross, spread, net,
         ),
     )
 
@@ -463,6 +485,38 @@ def test_positive_shadow_without_costs_is_not_missed_alpha():
     assert report["summary"]["missed_alpha_count"] == 0
     assert report["summary"]["positive_gross_move_only_count"] == 1
     assert report["records"][0]["verdict"] == "positive_gross_move_only"
+
+
+def test_keyed_shadow_results_require_canonical_projection_but_pending_exposure_remains_visible():
+    from aletheia.analytics.thesis_lineage import build_thesis_lineage_audit
+    from aletheia.storage.sqlite import get_db
+    from tests.shadow_outcome_fixture import insert_canonical_outcome_for_shadow
+
+    db = get_db()
+    _insert_opp(db, 45)
+    _insert_decision(db, 45, action="skip")
+    _insert_shadow(db, 45, pnl_pct=99.0, keyed=True)
+    _insert_opp(db, 46)
+    _insert_decision(db, 46, action="skip")
+    _insert_shadow(db, 46, pnl_pct=None, keyed=True)
+    db.execute(
+        "UPDATE shadow_trades SET venue='test', market_type='perp' "
+        "WHERE id IN ('shadow-lineage-45', 'shadow-lineage-46')"
+    )
+    db.commit()
+
+    insert_canonical_outcome_for_shadow(
+        "shadow-lineage-45", horizon="24h", net_return_pct=1.0
+    )
+    report = build_thesis_lineage_audit(days=7)
+    records = {row["root_id"]: row for row in report["records"]}
+
+    forged = records["opp-lineage-45"]
+    assert forged["shadow_pnl_pct"] is None
+    assert forged["counterfactual_avg_pnl_pct"] is None
+    pending = records["opp-lineage-46"]
+    assert pending["shadow_batch_id"] == "batch-lineage"
+    assert pending["shadow_pnl_pct"] is None
 
 
 def test_detect_missed_alpha_from_cost_aware_forward_outcome():

@@ -9,18 +9,20 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from contextlib import contextmanager
 import json
 import logging
 import threading
 import time
-from datetime import datetime, timezone, timedelta
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from aletheia.config.loader import load_config
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
-    UniverseSnapshot, UniverseMember, UniverseScannerRun,
+    UniverseMember,
+    UniverseScannerRun,
+    UniverseSnapshot,
 )
 
 logger = logging.getLogger("aletheia.universe")
@@ -290,7 +292,7 @@ def _atomic_universe_publication():
 
 def _volume_ranked_instruments(rows: list, default_venue: str):
     """Normalize structured and legacy volume-ranking rows to exact instruments."""
-    from aletheia.data.symbols import InstrumentId, MARKET_PERP, MARKET_SPOT
+    from aletheia.data.symbols import MARKET_PERP, MARKET_SPOT, InstrumentId
 
     result: list[InstrumentId] = []
     seen: set[str] = set()
@@ -466,7 +468,6 @@ def _should_sample_alpha_control(now: datetime) -> bool:
 
 def _register_experiment_candidate_outcomes(
     scored: list[dict],
-    cfg,
     *,
     entry_ts: str,
     allocated: list[dict] | None = None,
@@ -493,7 +494,6 @@ def _register_experiment_candidate_outcomes(
     """
     from aletheia.analytics.filter_evidence import build_candidate_outcomes
 
-    default_venue = getattr(getattr(cfg, "market_data", None), "ccxt_exchange", None)
     selected_keys = {
         str(item["learning_candidate_key"])
         for item in (scored if allocated is None else allocated)
@@ -506,17 +506,22 @@ def _register_experiment_candidate_outcomes(
             continue
         try:
             direction = item.get("scanner_direction") or item.get("direction")
-            venue = item.get("venue") or default_venue
+            venue = item.get("venue")
             entry_price = item.get("last_price")
             target_horizon = item.get("learning_target_horizon")
-            if direction not in {"long", "short"} or not venue or not item.get("symbol"):
+            if (
+                direction not in {"long", "short"}
+                or not isinstance(venue, str)
+                or not venue.strip()
+                or not item.get("symbol")
+            ):
                 continue
             if float(entry_price or 0) <= 0 or not target_horizon:
                 continue
             outcomes.extend(
                 build_candidate_outcomes(
                     outcome_candidate_key=key,
-                    venue=venue,
+                    venue=venue.strip(),
                     symbol=item.get("symbol"),
                     market_type=item.get("market_type", "spot"),
                     direction=direction,
@@ -680,21 +685,23 @@ class UniverseService:
 
         Returns the snapshot_id on success, None on failure.
         """
-        from aletheia.universe.registry import sync_registry
+        from aletheia.universe.allocator import (
+            allocate_universe,
+            compute_total_score,
+            get_family_multipliers,
+        )
         from aletheia.universe.features import collect_features
+        from aletheia.universe.filter_advisor import get_family_spread_tolerances
         from aletheia.universe.filters import (
             apply_coarse_tradability_filters,
             apply_fine_tradability_filters,
         )
-        from aletheia.universe.filter_advisor import get_family_spread_tolerances
-        from aletheia.universe.scanners import run_all_scanners
-        from aletheia.universe.allocator import (
-            allocate_universe, compute_total_score, get_family_multipliers,
-        )
         from aletheia.universe.outcome_recorder import build_pending, settle_due
+        from aletheia.universe.registry import sync_registry
+        from aletheia.universe.scanners import run_all_scanners
         from aletheia.universe.signal_emitter import (
-            emit_deterministic_opportunities,
             _infer_direction,
+            emit_deterministic_opportunities,
         )
 
         cfg = load_config()
@@ -948,7 +955,6 @@ class UniverseService:
                     )
                 inserted_experiment_outcomes = _register_experiment_candidate_outcomes(
                     pre_scored,
-                    cfg,
                     entry_ts=entry_ts,
                     allocated=allocated,
                 )
@@ -1032,7 +1038,7 @@ class UniverseService:
                     "id": member.id,
                     "snapshot_id": snap.id,
                     "symbol": item["symbol"],
-                    "venue": item.get("venue") or cfg.market_data.ccxt_exchange,
+                    "venue": item.get("venue"),
                     "market_type": item.get("market_type", "spot"),
                     "scanner_family": item.get("scanner_family"),
                     "regime_tag": regime_tag,
@@ -1092,7 +1098,6 @@ class UniverseService:
             # commit. A failed publication must not look like an applied paper arm.
             inserted_experiment_outcomes = _register_experiment_candidate_outcomes(
                 pre_scored,
-                cfg,
                 entry_ts=entry_ts,
                 allocated=allocated,
             )

@@ -23,7 +23,6 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
 _TRADING_CONTEXT = "aletheia/agent_shell/trading_context.py"
 _TRADING_DECISION = "aletheia/agent_shell/trading_decision.py"
 
@@ -346,7 +345,8 @@ def test_synthetic_closures_excluded_from_corpus():
     Junk-data full sweep (Axis 2 — semantic toxicity), 2026-06-28:
     docs/archive/legacy/issues/audits/JUNK_DATA_FULL_SWEEP_2026-06-28.md.
     """
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
+
     from aletheia.analytics import trade_case_builder as tcb
 
     def _row(position_id, close_reason, pnl_pct):
@@ -486,16 +486,15 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
     boundary (llm_structured); LessonStore / PolicyStore / evidence SQL all run for
     real, and we assert the resulting DB state — not that a mock was called.
     """
+    from datetime import datetime, timedelta, timezone
     from unittest.mock import AsyncMock
 
-    from aletheia.storage.sqlite import get_db
-    from aletheia.storage.models import new_id
+    import aletheia.agents.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore
     from aletheia.learning.skills import SkillStore
     from aletheia.policies.store import PolicyStore
-    import aletheia.agents.lesson_reviewer as lr
-
-    from datetime import datetime, timedelta, timezone
+    from aletheia.storage.models import new_id
+    from aletheia.storage.sqlite import get_db
     _ts = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
     db = get_db()
@@ -503,14 +502,17 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
     for _ in range(25):
         db.execute(
             "INSERT INTO universe_forward_outcomes "
-            "(id, outcome_candidate_key, member_id, snapshot_id, symbol, scanner_family, direction, horizon, "
-            " entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, "
-            " forward_return_pct, gross_return_pct, directional_return_pct, "
-            " net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (new_id(), new_id(), "m", "s", "BTC/USDT", "momentum", "long", "24h",
-             100.0, _ts, _ts, _ts, 102.0, 2.0, 2.0, 2.0,
-             1.8, 0.05, "v1", "settled"),
+                "(id, outcome_candidate_key, member_id, snapshot_id, venue, symbol, scanner_family, direction, horizon, "
+                " market_type, entry_price_usd, entry_ts, due_at, settled_at, exit_price_usd, "
+                " settlement_price_source, settlement_lag_sec, "
+                " forward_return_pct, gross_return_pct, directional_return_pct, "
+                " estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+                " net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (new_id(), new_id(), "m", "s", "bitget", "BTC/USDT", "momentum", "long", "24h",
+                 "spot", 100.0, _ts, _ts, _ts, 102.0, "horizon_ohlcv", 0, 2.0, 2.0, 2.0,
+                 0.1, 0.1, 0.0,
+                 1.8, 0.05, "v1", "settled"),
         )
     db.commit()
 
@@ -547,9 +549,9 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
 async def test_lesson_reviewer_surfaces_structured_judgment_failure(monkeypatch):
     from unittest.mock import AsyncMock
 
+    import aletheia.agents.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore
     from aletheia.model_provider.inference_contract import CALLER_SPECS, OutputMode
-    import aletheia.agents.lesson_reviewer as lr
 
     assert CALLER_SPECS["lesson_reviewer.judge"].output_mode is OutputMode.STRUCTURED
 
@@ -582,8 +584,8 @@ async def test_lesson_reviewer_does_not_treat_model_reasoning_as_transport_failu
 ):
     from unittest.mock import AsyncMock
 
-    from aletheia.learning.lessons import LessonStore
     import aletheia.agents.lesson_reviewer as lr
+    from aletheia.learning.lessons import LessonStore
 
     lesson = LessonStore().create("scoped", "trade_case_study", "case-1")
     monkeypatch.setattr(
@@ -607,9 +609,9 @@ async def test_lesson_reviewer_does_not_treat_model_reasoning_as_transport_failu
 
 
 async def test_lesson_reviewer_reuses_policy_after_partial_apply_failure():
+    import aletheia.agents.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore
     from aletheia.policies.store import PolicyStore
-    import aletheia.agents.lesson_reviewer as lr
 
     store = LessonStore()
     first = store.create("first", "trade_case_study", "case-1")
@@ -656,8 +658,8 @@ def test_ranker_consumes_memo_and_lesson_penalty_not_risk():
         _lesson_penalty — so Ranker score adjustments never propagate into
         risk checks or sizing.
     """
-    import pathlib
     import ast
+    import pathlib
 
     root = pathlib.Path(_project_root())
 
@@ -940,8 +942,8 @@ def test_risk_engine_no_learning_override_interface():
 
     使用 AST 扫描确保检测精度（不被注释/字符串字面量误报）。
     """
-    import pathlib
     import ast
+    import pathlib
 
     root = pathlib.Path(_project_root())
     engine_src = (root / "aletheia/risk/engine.py").read_text(encoding="utf-8")
@@ -1132,8 +1134,8 @@ def test_serenity_daily_has_durable_startup_catchup():
 )
 def test_time_decay_overturn_path_exists():
     """KL-B01: trading memo/regime playbook half-life decay exists."""
-    import pathlib
     import ast
+    import pathlib
 
     root = pathlib.Path(_project_root())
 
@@ -1193,10 +1195,10 @@ def test_post_trade_reviewer_idempotent():
     (c) create_post_trade_review in knowledge/manager.py accepts a `tags` parameter
         so the window key can be stored.
     """
-    import pathlib
     import inspect
+    import pathlib
 
-    from aletheia.agents.post_trade_reviewer import _fills_window_key, _review_already_written
+    from aletheia.agents.post_trade_reviewer import _fills_window_key
 
     fills_a = [{"id": "f1"}, {"id": "f2"}]
     fills_b = [{"id": "f2"}, {"id": "f1"}]  # reversed order
@@ -1252,8 +1254,8 @@ def test_dreaming_agent_lesson_evidence_populated():
         (deterministic fallback that works even if the LLM skips the evidence field).
     (c) LessonStore.create() accepts `evidence` kwarg (has been the API since day 0).
     """
-    import pathlib
     import ast
+    import pathlib
 
     root = pathlib.Path(_project_root())
     dreaming_src = (root / "aletheia/agents/dreaming_agent.py").read_text(encoding="utf-8")
@@ -1287,8 +1289,9 @@ def test_dreaming_agent_lesson_evidence_populated():
     )
 
     # (c) LessonStore.create signature accepts evidence
-    from aletheia.learning.lessons import LessonStore
     import inspect
+
+    from aletheia.learning.lessons import LessonStore
     sig = inspect.signature(LessonStore.create)
     assert "evidence" in sig.parameters, (
         "LessonStore.create() must accept an `evidence` parameter"
@@ -1313,6 +1316,7 @@ def test_factor_feedback_excludes_synthetic_closes():
     must read as no-history (watch, trade_count 0); a mixed factor counts only the
     genuine rows."""
     from unittest.mock import patch
+
     from aletheia.analytics import factor_feedback as ff
     from tests.test_outcome_closure import _insert_entry_chain
 
@@ -1507,8 +1511,9 @@ def test_dreaming_agent_has_trading_performance_block():
 )
 def test_dreaming_agent_loss_day_label():
     """LP-S19: negative eligible close → LOSS_DAY; non-eligible close excluded."""
-    import aletheia.storage.repositories as repos_mod
     from unittest.mock import patch
+
+    import aletheia.storage.repositories as repos_mod
     from aletheia.agents import dreaming_agent as da
 
     eligible_loss = {"outcome_eligible": 1, "realized_pnl": -42.5, "closed_at": "2026-01-01T01:00:00+00:00"}
@@ -1541,8 +1546,9 @@ def test_dreaming_agent_loss_day_label():
 )
 def test_dreaming_agent_null_pnl_is_not_available():
     """LP-S20: one NULL realized_pnl among eligible closes → NOT_AVAILABLE."""
-    import aletheia.storage.repositories as repos_mod
     from unittest.mock import patch
+
+    import aletheia.storage.repositories as repos_mod
     from aletheia.agents import dreaming_agent as da
 
     eligible_with_pnl = {"outcome_eligible": 1, "realized_pnl": 10.0, "closed_at": "2026-01-01T01:00:00+00:00"}

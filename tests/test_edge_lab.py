@@ -1,7 +1,8 @@
 """Tests for Edge Lab features: slippage, shadow trades, BTC benchmark, regime tag, family scorecard."""
 
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+
 import pytest
 
 
@@ -9,6 +10,7 @@ import pytest
 def _isolate_db(tmp_path, monkeypatch):
     """Use a fresh file-backed DB for each test."""
     import sqlite3
+
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     from aletheia.storage.sqlite import reset_db
@@ -51,18 +53,18 @@ class TestSlippage:
         result = _apply_slippage(price, "long", 0.0)
         assert result == 100.0
 
-    @patch("aletheia.config.loader.load_config")
     @patch("aletheia.execution.paper_broker._btc_price_now", return_value=60000.0)
     @patch("aletheia.execution.paper_broker._current_regime", return_value="risk_on")
-    def test_paper_order_uses_slippage(self, _regime, _btc, mock_cfg):
+    def test_paper_order_uses_slippage(self, _regime, _btc):
+        from aletheia.config.loader import load_config, save_config
         from aletheia.execution.paper_broker import execute_paper_order
         from tests.execution_authority import seed_order_authority
 
-        cfg = MagicMock()
+        cfg = load_config()
         cfg.trading.slippage_bps = 10.0
         cfg.trading.execution_fee_pct = 0.1
         cfg.trading.default_take_profit_pct = 4.0
-        mock_cfg.return_value = cfg
+        save_config(cfg)
 
         seed_order_authority(
             proposal_id="prop1",
@@ -89,19 +91,19 @@ class TestSlippage:
         # 10 bps slippage on long = 2000 * 1.001 = 2002.0
         assert result["fill_price"] == pytest.approx(2002.0, abs=0.01)
 
-    @patch("aletheia.config.loader.load_config")
     @patch("aletheia.execution.paper_broker._btc_price_now", return_value=60000.0)
     @patch("aletheia.execution.paper_broker._current_regime", return_value="risk_off")
-    def test_paper_order_records_regime_and_btc(self, _regime, _btc, mock_cfg):
+    def test_paper_order_records_regime_and_btc(self, _regime, _btc):
+        from aletheia.config.loader import load_config, save_config
         from aletheia.execution.paper_broker import execute_paper_order
         from aletheia.storage.repositories import list_positions
         from tests.execution_authority import seed_order_authority
 
-        cfg = MagicMock()
+        cfg = load_config()
         cfg.trading.slippage_bps = 0.0
         cfg.trading.execution_fee_pct = 0.1
         cfg.trading.default_take_profit_pct = 4.0
-        mock_cfg.return_value = cfg
+        save_config(cfg)
 
         seed_order_authority(
             proposal_id="prop2",
@@ -181,9 +183,9 @@ class TestBTCBenchmark:
 
     @patch("aletheia.portfolio.pnl._btc_price_at_close", return_value=61000.0)
     def test_btc_exit_price_on_close(self, _mock_btc):
-        from aletheia.storage.repositories import insert_position, _select_one
-        from aletheia.storage.models import Position
         from aletheia.portfolio.pnl import close_position
+        from aletheia.storage.models import Position
+        from aletheia.storage.repositories import _select_one, insert_position
 
         pos = Position(
             symbol="ETH/USDT",
@@ -214,11 +216,16 @@ class TestFamilyScorecard:
         assert result == []
 
     def test_scorecard_with_data(self):
-        from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
         from aletheia.analytics.family_scorecard import compute_family_scorecard
+        from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
         from aletheia.storage import repositories as repo
         from aletheia.storage.models import (
-            Fill, Opportunity, Order, Position, RiskDecision, TradeProposal,
+            Fill,
+            Opportunity,
+            Order,
+            Position,
+            RiskDecision,
+            TradeProposal,
         )
 
         opened_at = "2026-07-12T07:30:00+00:00"
@@ -315,7 +322,7 @@ class TestOpportunityExtendedFields:
 
     def test_opportunity_with_edge_lab_fields(self):
         from aletheia.storage.models import Opportunity
-        from aletheia.storage.repositories import insert_opportunity, _select_one
+        from aletheia.storage.repositories import _select_one, insert_opportunity
 
         opp = Opportunity(
             symbol="ETH/USDT",

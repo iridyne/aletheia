@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -13,10 +13,10 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 def _enable_legacy_paper_authority(monkeypatch, path_id: str) -> None:
     from dataclasses import replace
 
-    from aletheia.config.schema import AletheiaConfig
     import aletheia.learning.authority as authority
     import aletheia.learning.behavior_contracts as behavior_contracts
     import aletheia.learning.experiments as experiments
+    from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()
     cfg.agent.autonomous_learning = True
@@ -53,9 +53,12 @@ def _insert_settled_outcome(
     db.execute(
         "INSERT INTO filter_candidate_outcomes ("
         "id, outcome_candidate_key, venue, symbol, market_type, direction, horizon, "
-        "entry_price_usd, entry_ts, due_at, settled_at, net_return_pct, "
-        "cost_model_version, status) VALUES (?, ?, 'test', 'BTC/USDT', 'perp', "
-        "'long', '4h', 100, ?, ?, ?, 0.2, 'test-v1', 'settled')",
+        "entry_price_usd, exit_price_usd, entry_ts, due_at, settled_at, "
+        "settlement_price_source, settlement_lag_sec, directional_return_pct, "
+        "estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+        "net_return_pct, min_tradable_edge_pct, cost_model_version, status) "
+        "VALUES (?, ?, 'test', 'BTC/USDT', 'perp', 'long', '4h', 100, 100.4, ?, ?, ?, "
+        "'horizon_ohlcv', 0.0, 0.4, 0.1, 0.1, 0, 0.2, 0.05, 'v1', 'settled')",
         (f"outcome-{base}", base, now, now, now),
     )
     if not was_in_tx:
@@ -201,6 +204,7 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
     )
     from aletheia.learning.models import LearningContributionVerdict
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     common = dict(
         path_id="ranker_factor_filter",
@@ -279,7 +283,9 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
     ))
 
     assert linked_settled_exposure_counts(
-        shadow.experiment_id, policy_epoch=epoch,
+        shadow.experiment_id,
+        cost_model_version=COST_MODEL_VERSION,
+        policy_epoch=epoch,
     ) == {"control": 0, "treatment": 0}
     blocked = resolve_learning_authority(common["path_id"], experiment, epoch)
     assert not blocked.authorized
@@ -316,7 +322,9 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
         **common,
     )
     assert linked_settled_exposure_counts(
-        shadow.experiment_id, policy_epoch=epoch,
+        shadow.experiment_id,
+        cost_model_version=COST_MODEL_VERSION,
+        policy_epoch=epoch,
     ) == {"control": 0, "treatment": 0}
 
     candidate = next(
@@ -348,7 +356,9 @@ def test_authorized_numeric_treatment_records_before_after(monkeypatch):
         control_candidate, at=prospective_outcome,
     ) == control_link
     assert linked_settled_exposure_counts(
-        shadow.experiment_id, policy_epoch=epoch,
+        shadow.experiment_id,
+        cost_model_version=COST_MODEL_VERSION,
+        policy_epoch=epoch,
     ) == {"control": 1, "treatment": 1}
     applied_candidate = next(
         f"applied:{i}" for i in range(1000)
@@ -447,6 +457,7 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
     )
     from aletheia.learning.verdicts import METRIC_VERSION
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     kwargs = dict(
         path_id="universe_family_calibration",
@@ -482,6 +493,7 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
             code_commit="older-build",
             behavior_contract_hash=behavior_contract_hash,
             harm_metrics_json=json.dumps({
+                "expected_cost_model_version": COST_MODEL_VERSION,
                 "harm_state": "clear",
                 "breached": False,
                 "assigned_treatment_n": 1,
@@ -564,6 +576,7 @@ def test_negative_verdict_refreezes_to_static_baseline(monkeypatch):
             metric_version=METRIC_VERSION, code_commit="newer-build",
             behavior_contract_hash=behavior_contract_hash,
             harm_metrics_json=json.dumps({
+                "expected_cost_model_version": COST_MODEL_VERSION,
                 "harm_state": "clear",
                 "breached": False,
                 "assigned_treatment_n": 1,
@@ -669,9 +682,9 @@ def test_factor_history_without_measurement_adapter_stays_diagnostic(monkeypatch
     status="implemented",
 ))
 def test_universe_calibration_is_neutral_shadow_before_authority(monkeypatch):
+    from aletheia.config.schema import UniverseConfig
     from aletheia.storage.sqlite import get_db
     from aletheia.universe.allocator import compute_total_score
-    from aletheia.config.schema import UniverseConfig
 
     feat = {
         "feature_snapshot_id": "feature-1", "asset_id": "asset-1",
@@ -712,6 +725,7 @@ def test_universe_calibration_is_neutral_shadow_before_authority(monkeypatch):
     )
     outcome_recorder.register_pending([{
         "id": "member-1", "snapshot_id": "snapshot-1", "symbol": "BTC/USDT",
+        "venue": "okx",
         "scanner_family": "momentum", "direction": "long", "market_type": "perp",
         "entry_price_usd": 100.0, "learning_candidate_key": proposed_feat["learning_candidate_key"],
     }], entry_ts=datetime.now(timezone.utc).isoformat())
@@ -814,21 +828,21 @@ def test_operator_factor_context_uses_factor_key(monkeypatch):
 ))
 def test_dropped_experiment_candidates_settle_into_both_arms():
     from aletheia.learning.behavior_contracts import build_behavior_contract_hash
-    from aletheia.universe.service import _register_experiment_candidate_outcomes
     from aletheia.learning.contribution_runner import evaluate_experiment
+    from aletheia.learning.ledger import (
+        insert_experiment,
+        insert_exposure,
+        insert_hypothesis,
+    )
     from aletheia.learning.models import (
         LearningExperiment,
         LearningExposure,
         LearningHypothesis,
         LearningPolicyEpoch,
     )
-    from aletheia.learning.ledger import (
-        insert_experiment,
-        insert_exposure,
-        insert_hypothesis,
-    )
-    from aletheia.storage.sqlite import get_db
     from aletheia.learning.verdicts import METRIC_VERSION
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.service import _register_experiment_candidate_outcomes
 
     epoch, exp = "epoch-p03", "exp-p03"
     ck_t = "universe:featT:momentum:long:perp"
@@ -916,15 +930,8 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
          "allocation_status": "dropped"},
     ]
 
-    class _MD:
-        ccxt_exchange = "okx"
-
-    class _Cfg:
-        market_data = _MD()
-
     _register_experiment_candidate_outcomes(
         scored,
-        _Cfg(),
         entry_ts=now,
         allocated=[scored[0]],
     )
@@ -945,9 +952,13 @@ def test_dropped_experiment_candidates_settle_into_both_arms():
 
     was = db.in_transaction
     db.execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', net_return_pct=0.3, "
+        "UPDATE filter_candidate_outcomes SET status='settled', "
+        "directional_return_pct=0.5, exit_price_usd=entry_price_usd * 1.005, "
+        "net_return_pct=0.3, "
         "estimated_fee_pct=0.1, estimated_spread_slippage_pct=0.1, "
-        "estimated_funding_pct=0.0, mae_pct=-0.1, cost_model_version='test-v1', settled_at=? "
+        "estimated_funding_pct=0.0, min_tradable_edge_pct=0.05, "
+        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0.0, "
+        "mae_pct=-0.1, cost_model_version='v1', settled_at=? "
         "WHERE outcome_candidate_key IN (?, ?) AND horizon='4h'",
         (settlement_at.isoformat(), ck_t, ck_c),
     )
@@ -1022,9 +1033,9 @@ def test_stale_epoch_verdict_does_not_authorize(monkeypatch):
     status="implemented",
 ))
 def test_policy_epoch_ignores_code_only_rebuild_and_rotates_on_config_change(monkeypatch):
-    from aletheia.learning import experiments as exp
     import aletheia.agent_runtime.build_info as build_info
     from aletheia.config.loader import load_config
+    from aletheia.learning import experiments as exp
     from aletheia.learning.ledger import get_record
     from aletheia.storage.sqlite import get_db
 

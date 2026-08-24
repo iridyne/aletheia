@@ -9,11 +9,11 @@ import sqlite3
 
 import pytest
 
-from aletheia.storage.sqlite import reset_db
-from aletheia.storage.migrations import run_migrations
-from aletheia.storage import repositories as repo
 from aletheia.exchanges.bitget.client import OrderResponse
+from aletheia.storage import repositories as repo
+from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import Position, RiskDecision, TradeProposal
+from aletheia.storage.sqlite import reset_db
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -206,6 +206,7 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
 
     # fresh market data so the data-freshness check passes
     from datetime import datetime, timezone
+
     from aletheia.storage.models import MarketSnapshot, Opportunity, UniverseForwardOutcome
 
     # #14 scanner-family evidence gate (Position C 2026-07-02): a LIVE order is
@@ -216,6 +217,7 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
     for i in range(30):
         repo.insert_forward_outcome(UniverseForwardOutcome(
             member_id=f"m{i}", snapshot_id="snap1", symbol="BTC/USDT",
+            venue="bitget",
             scanner_family="momentum", direction="long", horizon="24h",
             entry_price_usd=100.0, due_at=now, settled_at=now,
             exit_price_usd=105.0, forward_return_pct=5.0,
@@ -223,6 +225,7 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
             estimated_fee_pct=0.12, estimated_spread_slippage_pct=0.15,
             estimated_funding_pct=0.0, net_return_pct=4.73,
             min_tradable_edge_pct=0.05, cost_model_version="v1",
+            settlement_price_source="horizon_ohlcv", settlement_lag_sec=0.0,
             market_type="spot", status="settled",
         ))
     opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long", scanner_family="momentum")

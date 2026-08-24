@@ -663,7 +663,7 @@ def list_cost_summary(
         result = db.execute(
             "SELECT * FROM runtime_cost_events "
             "WHERE replace(started_at,' ','T') >= replace(?,' ','T') "
-            "AND replace(started_at,' ','T') <= replace(?,' ','T') "
+            "AND replace(started_at,' ','T') < replace(?,' ','T') "
             "AND run_id=? ORDER BY started_at,id",
             (window_start, window_end, run_id),
         )
@@ -671,7 +671,7 @@ def list_cost_summary(
         result = db.execute(
             "SELECT * FROM runtime_cost_events "
             "WHERE replace(started_at,' ','T') >= replace(?,' ','T') "
-            "AND replace(started_at,' ','T') <= replace(?,' ','T') "
+            "AND replace(started_at,' ','T') < replace(?,' ','T') "
             "ORDER BY started_at,id",
             (window_start, window_end),
         )

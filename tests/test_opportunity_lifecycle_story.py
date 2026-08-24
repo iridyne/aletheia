@@ -6,7 +6,6 @@ import pytest
 
 import aletheia.analytics.opportunity_lifecycle_story as lifecycle
 
-
 _PRE_CLOSE = "2026-08-13T00:02:30+00:00"
 _POST_CLOSE = "2026-08-13T00:06:00+00:00"
 
@@ -274,6 +273,55 @@ def test_shadow_multiplicity_is_preserved(monkeypatch):
         "shadow-1",
     ]
     assert "shadow_trades:multiple_observations_not_collapsed" in story["evidence"]["evidence_gaps"]
+
+
+def test_keyed_shadow_result_requires_canonical_projection_but_pending_and_legacy_remain_visible():
+    db = _db()
+    db.execute(
+        "CREATE TABLE shadow_trades ("
+        "id TEXT PRIMARY KEY, opportunity_id TEXT, created_at TEXT, resolved_at TEXT, "
+        "pnl_pct REAL, entry_price REAL, exit_price REAL, outcome_candidate_key TEXT, "
+        "venue TEXT, symbol TEXT, market_type TEXT, direction TEXT, gross_return_pct REAL, "
+        "net_pnl_pct REAL, estimated_fee_pct REAL, estimated_spread_slippage_pct REAL, "
+        "estimated_funding_pct REAL, min_tradable_edge_pct REAL, settlement_price_source TEXT, "
+        "settlement_lag_sec REAL, cost_model_version TEXT)"
+    )
+    db.execute(
+        "CREATE TABLE filter_candidate_outcomes ("
+        "outcome_candidate_key TEXT, horizon TEXT, status TEXT, venue TEXT, symbol TEXT, "
+        "market_type TEXT, direction TEXT, entry_price_usd REAL, exit_price_usd REAL, "
+        "entry_ts TEXT, settled_at TEXT, directional_return_pct REAL, gross_return_pct REAL, "
+        "estimated_fee_pct REAL, estimated_spread_slippage_pct REAL, estimated_funding_pct REAL, "
+        "net_return_pct REAL, min_tradable_edge_pct REAL, cost_model_version TEXT, "
+        "settlement_price_source TEXT, settlement_lag_sec REAL)"
+    )
+    rows = [
+        ("forged", "2026-08-13T00:01:00+00:00", "2026-08-13T00:05:00+00:00", 99.0, 98.0, "opportunity:opp-1"),
+        ("pending", "2026-08-13T00:02:00+00:00", None, None, None, "opportunity:opp-1"),
+        ("legacy", "2026-08-13T00:03:00+00:00", "2026-08-13T00:04:00+00:00", 1.0, 101.0, None),
+    ]
+    for row_id, created_at, resolved_at, pnl_pct, exit_price, candidate_key in rows:
+        db.execute(
+            "INSERT INTO shadow_trades "
+            "(id, opportunity_id, created_at, resolved_at, pnl_pct, entry_price, exit_price, "
+            "outcome_candidate_key, venue, symbol, market_type, direction, gross_return_pct, "
+            "net_pnl_pct, estimated_fee_pct, estimated_spread_slippage_pct, estimated_funding_pct, "
+            "min_tradable_edge_pct, settlement_price_source, settlement_lag_sec, cost_model_version) "
+            "VALUES (?, 'opp-1', ?, ?, ?, 100, ?, ?, 'test', 'BTC/USDT', 'perp', 'long', "
+            "1, ?, 0, 0, 0, 0.1, 'horizon_ohlcv', 0, 'v1')",
+            (row_id, created_at, resolved_at, pnl_pct, exit_price, candidate_key, pnl_pct),
+        )
+    db.commit()
+
+    story = lifecycle.build_opportunity_lifecycle_story("opp-1", as_of_at=_POST_CLOSE, db=db)
+
+    assert {row["id"] for row in story["counterfactual"]["shadow_observations"]} == {
+        "pending",
+        "legacy",
+    }
+    assert "forged" not in {
+        row["id"] for row in story["counterfactual"]["shadow_observations"]
+    }
 
 
 def test_zero_position_is_valid_and_multiple_positions_are_explicit(monkeypatch):

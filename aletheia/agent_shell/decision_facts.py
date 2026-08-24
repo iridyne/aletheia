@@ -8,10 +8,9 @@ that bundle.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
-import json
-
 
 _CANDIDATE_TECHNICAL_MAX_AGE_SEC = 7200
 # Same thresholds as aletheia/agents/committee/trend_agent.py RSI evidence.
@@ -209,7 +208,7 @@ def candidate_fact_bundle(
             for key in (
                 "version", "policy_epoch_id", "horizon", "status", "n_total", "n_net",
                 "outcome_coverage", "avg_net_pct", "shrunk_avg_net_pct",
-                "directional_verdict", "cost_model_version",
+                "directional_verdict", "cost_model_version", "cost_model_mismatch_n",
             )
         },
         "regime": {

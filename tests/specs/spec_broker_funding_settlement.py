@@ -26,23 +26,14 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 async def test_delayed_broker_funding_rejects_stale_position_after_await(
     tmp_path, monkeypatch,
 ):
-    position_id, stale, _funding = funding_tests._seed_pending_broker_funding_close(
-        tmp_path, monkeypatch,
+    position_id, stale, _funding, ledger = (
+        funding_tests._seed_pending_broker_funding_close(tmp_path, monkeypatch)
     )
-    from aletheia.execution.broker_funding import make_complete_ledger
     from aletheia.files import jsonl
     from aletheia.portfolio import broker_funding_settlement as settlement
     from aletheia.portfolio import outcome_hooks
     from aletheia.storage import repositories as repo
 
-    ledger = make_complete_ledger(
-        broker_id="bitget_demo",
-        account_environment="demo",
-        source_endpoint="/private/funding",
-        history_start_ms=1783987200000,
-        history_end_ms=1784073600000,
-        events=[],
-    )
     reader_started = asyncio.Event()
     release_reader = asyncio.Event()
 

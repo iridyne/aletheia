@@ -2,24 +2,23 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import math
+from datetime import datetime, timezone
 from typing import Any
 
-from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
 from aletheia.learning.behavior_contracts import current_behavior_contract_hash
+from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
 from aletheia.learning.experiments import current_policy_epoch
-from aletheia.learning.ledger import get_latest_measurement_verdict
-from aletheia.learning.registry import LEARNING_PATHS, get_learning_path
-from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.learning.fixed_look import (
     get_consumed_fixed_look_verdict,
     get_fixed_look_decision,
     inference_authority_reason,
 )
+from aletheia.learning.ledger import get_latest_measurement_verdict
+from aletheia.learning.registry import LEARNING_PATHS, get_learning_path
+from aletheia.learning.verdicts import METRIC_VERSION
 from aletheia.storage.sqlite import get_db
-
 
 SCHEMA_VERSION = "lco-v1"
 _OUTCOME_CONTRACT_VERSION = "v1"
@@ -38,13 +37,12 @@ def build_learning_contribution_projection(*, limit: int = 20) -> dict[str, Any]
     generated_at = datetime.now(timezone.utc).isoformat()
 
     from aletheia.agent_runtime.build_info import get_boot_commit
+    from aletheia.config.loader import load_config
     from aletheia.learning.control import (
         get_learning_job_health,
         job_health_view,
         measurement_catchup_due,
     )
-
-    from aletheia.config.loader import load_config
 
     cfg = load_config(persist_migrations=False)
     stale_after_sec = max(
@@ -359,12 +357,32 @@ def _project_experiment(
             behavior_contract_hash=behavior_contract_hash,
             inference_role="monitoring",
         )
-    historical_mismatch = identity_precondition_reason or _identity_mismatch(
-        row,
-        policy_epoch=policy_epoch,
-        behavior_contract_hash=behavior_contract_hash,
-        expected_outcome_contract_version=outcome_contract_version,
-        expected_metric_version=metric_version,
+    current_identity_mismatch = None
+    if current_verdict is not None:
+        from aletheia.learning.authority import measurement_identity_reason
+
+        current_identity_mismatch = measurement_identity_reason(
+            current_verdict,
+            str(row.get("stage") or ""),
+            str(policy_epoch or ""),
+            expected_horizon=str(row.get("target_horizon") or ""),
+            expected_behavior_contract_hash=behavior_contract_hash,
+            expected_hypothesis_id=str(row.get("hypothesis_id") or ""),
+            expected_outcome_contract_version=outcome_contract_version,
+            expected_metric_version=metric_version,
+        )
+        if current_identity_mismatch is not None:
+            current_verdict = None
+    historical_mismatch = (
+        identity_precondition_reason
+        or current_identity_mismatch
+        or _identity_mismatch(
+            row,
+            policy_epoch=policy_epoch,
+            behavior_contract_hash=behavior_contract_hash,
+            expected_outcome_contract_version=outcome_contract_version,
+            expected_metric_version=metric_version,
+        )
     )
     current = current_verdict is not None
     mismatch = None if current else historical_mismatch
@@ -446,7 +464,7 @@ def _project_experiment(
         )
         if intervention_block_reason is not None:
             recommended = "hold"
-    mutation_reason = "admission_not_recommended"
+    mutation_reason = mismatch or "admission_not_recommended"
     mutation_available = False
     if recommended == "admit_trial" and current_verdict is not None:
         from aletheia.learning.authority import (

@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import logging
 import math
+from datetime import datetime, timezone
 
 from aletheia.analytics.outcome_integrity import outcome_write_eligibility
 from aletheia.execution.broker_funding import (
-    compute_broker_funding,
+    compute_stored_broker_funding,
     funding_query_window,
 )
 from aletheia.storage import repositories as repo
@@ -91,6 +91,7 @@ def materialize_broker_funding_economics(
     *,
     funding_cost: float,
     funding_evidence: dict,
+    funding_ledger: dict,
 ) -> dict:
     """Atomically repair Position, close ledger, audit, and outcome-hook authority."""
     from aletheia.files.jsonl import write_audit
@@ -188,7 +189,20 @@ def materialize_broker_funding_economics(
 
         if close_events[0].get("realized_pnl") is not None:
             raise ValueError("broker funding settlement snapshot changed")
-
+        current_funding = compute_stored_broker_funding(
+            get_db(),
+            position=current,
+            closed_at=current.get("closed_at"),
+            ledger=funding_ledger,
+        )
+        if (
+            not current_funding.complete
+            or current_funding.funding_cost != funding_cost
+            or current_funding.evidence != funding_evidence
+        ):
+            raise ValueError(
+                "broker funding attribution changed before settlement commit"
+            )
         candidate = {
             **current,
             "realized_pnl": realized,
@@ -352,20 +366,11 @@ async def settle_unsettled_exchange_closes(limit: int = 50) -> dict:
                 start_time_ms=start_ms,
                 end_time_ms=end_ms,
             )
-            candidates = [
-                dict(item)
-                for item in get_db().execute(
-                    """SELECT * FROM positions
-                       WHERE id<>? AND execution_mode=?
-                         AND market_type='usdt_futures' AND symbol=?""",
-                    (position_id, row["execution_mode"], row["symbol"]),
-                ).fetchall()
-            ]
-            funding = compute_broker_funding(
+            funding = compute_stored_broker_funding(
+                get_db(),
                 position=row,
                 closed_at=row["closed_at"],
                 ledger=ledger,
-                candidate_positions=candidates,
             )
             if not funding.complete or funding.funding_cost is None:
                 still_pending += 1
@@ -374,6 +379,7 @@ async def settle_unsettled_exchange_closes(limit: int = 50) -> dict:
                 row,
                 funding_cost=funding.funding_cost,
                 funding_evidence=funding.evidence,
+                funding_ledger=ledger,
             )
             settled += 1
         except Exception as exc:

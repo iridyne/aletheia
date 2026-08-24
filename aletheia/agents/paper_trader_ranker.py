@@ -16,22 +16,22 @@ from datetime import datetime, timezone
 
 from aletheia.analytics.factor_feedback import lookup_factor_signal
 from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
-from aletheia.analytics.trade_attribution import (
-    confidence_bucket,
-    late_entry_bucket,
-    factor_key as compute_factor_key,
-)
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_canonical
+from aletheia.knowledge.guards import (
+    ActiveGuardLoadError,
+    GuardEvaluation,
+    evaluate_guards,
+    load_trading_guards,
+)
+from aletheia.regime.detector import MarketRegime, get_current_regime
 from aletheia.storage.repositories import (
-    get_ohlcv_candles,
     get_universe_member,
     list_all_open_positions,
     list_open_trade_opportunities,
 )
-from aletheia.knowledge.guards import evaluate_guards, load_trading_guards, GuardEvaluation, ActiveGuardLoadError
-from aletheia.regime.detector import get_current_regime, MarketRegime
 from aletheia.trading.instruments import tradable_symbols_from_config
+
 # Position C (2026-07-02): strategy rules-engine deleted. The ranker no longer
 # resolves a StrategyRecord, evaluates a RuleSet, or reads backtest evidence.
 # linked_strategy_id is passed through as a pure attribution label; regime
@@ -737,9 +737,9 @@ def _compute_trade_score(
         score += float(factor_signal.get("score_delta") or 0.0)
 
     # Position C (2026-07-02): the strategy-evidence bonus/penalty (backtest +
-    # paper-drift scoring) was removed with the rules engine. Per-family live edge is
-    # surfaced to the PI via family_direction_edge (P1a); the deterministic ranker no
-    # longer scores on per-strategy backtest evidence.
+    # paper-drift scoring) was removed with the rules engine. Current System Operator
+    # history is candidate-conditioned B2 evidence; the deterministic ranker does not
+    # score on the old per-strategy/full-pool aggregate.
 
     # P0-5: Regime-aware scoring with smooth confidence weighting (no 0.5 cliff).
     # P0-2: Sideways branch added — trend-family scanners penalised in sideways (CTA lit.).
@@ -903,12 +903,11 @@ def _register_ranker_case_outcome(
     from aletheia.analytics.filter_evidence import build_candidate_outcomes
     from aletheia.storage.repositories import insert_filter_candidate_outcomes_batch
 
-    if not venue:
-        cfg = load_config()
-        venue = getattr(getattr(cfg, "market_data", None), "ccxt_exchange", None)
+    if not isinstance(venue, str) or not venue.strip():
+        return 0
     outcomes = build_candidate_outcomes(
         outcome_candidate_key=candidate_key,
-        venue=str(venue or "bitget"),
+        venue=venue.strip(),
         symbol=str(opp["symbol"]),
         market_type=str(opp.get("market") or opp.get("market_type") or "spot"),
         direction=direction,
@@ -1386,9 +1385,8 @@ def _parse_risk_flags(universe_member: dict | None) -> list:
 
 # Position C (2026-07-02): _lookup_strategy_evidence was removed with the strategy
 # rules engine. It read backtest_runs + classified evidence via the deleted
-# analytics.strategy_evidence module. Per-family live edge (the honest replacement)
-# is surfaced to the PI via repositories.family_direction_edge (P1a), and the ranker
-# no longer gates or scores on per-strategy backtest evidence.
+# analytics.strategy_evidence module. Candidate-conditioned B2 evidence replaced the
+# old full-pool PI aggregate; the ranker does not gate or score on either source.
 
 
 def _safe_get(fn, key: str | None):
