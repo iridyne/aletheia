@@ -81,6 +81,7 @@ CALLER_SPECS: dict[str, InferenceCallerSpec] = {
         ),
         _spec("agent_shell.portfolio_review", OutputMode.STRUCTURED),
         _spec("agent_shell.intent_classification", OutputMode.STRUCTURED),
+        _spec("committee.llm_analysis", OutputMode.STRUCTURED),
         _spec("system_operator.assess_opportunity", OutputMode.STRUCTURED),
         _spec("system_operator.reassess_direct_skip", OutputMode.STRUCTURED),
         _spec("system_operator.debate_bull", OutputMode.STRUCTURED),
