@@ -1,4 +1,4 @@
-"""Refresh approximate model pricing from LiteLLM's public model-cost map."""
+"""Refresh provider-independent estimates from LiteLLM's public price catalog."""
 
 from __future__ import annotations
 
@@ -27,57 +27,74 @@ LITELLM_PRICE_MAP_URL = (
 _MIN_MODEL_COUNT = 50
 _MIN_RELATIVE_SIZE = 0.5
 _SOURCE_PREFIX = "litellm_public_median:"
+_MATCH_VERSION = "catalog-model-family-v2"
+_FAMILY_SUFFIXES = ("instruct", "chat")
 
 
 def _normalize(s: str) -> str:
-    """Strip all non-alphanumeric chars and lowercase for fuzzy model matching."""
+    """Strip all non-alphanumeric chars and lowercase for catalog identity."""
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
 
 def _build_price_index(
     price_map: dict[str, Any],
 ) -> dict[str, list[tuple[str, dict[str, Any]]]]:
-    """Index priced entries by their normalized model-name stem.
+    """Index priced catalog entries by normalized model name and aliases.
 
-    Key format in LiteLLM is ``provider/model`` or bare ``model``.  We index
-    by the last path component so that ``groq/meta-llama/llama-4-maverick-17b``
-    is reachable via the stem ``llama4maverick17b``.
+    LiteLLM keys are either bare model names or ``provider/.../model``. The
+    catalog is used as an independent public reference: the runtime API base is
+    intentionally irrelevant. Zero-cost entries remain valid prices.
     """
     index: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     for key, entry in price_map.items():
         if not isinstance(entry, dict):
             continue
-        if not entry.get("input_cost_per_token") or not entry.get("output_cost_per_token"):
+        if _rate(entry.get("input_cost_per_token")) is None or _rate(entry.get("output_cost_per_token")) is None:
             continue
-        stem = _normalize(key.split("/")[-1])
-        index.setdefault(stem, []).append((key, entry))
+        names = [key.split("/")[-1]]
+        aliases = entry.get("aliases")
+        if isinstance(aliases, list):
+            names.extend(alias for alias in aliases if isinstance(alias, str))
+        for name in names:
+            bucket = index.setdefault(_normalize(name), [])
+            candidate = (key, entry)
+            if candidate not in bucket:
+                bucket.append(candidate)
     return index
+
+
+def _family_match(needle: str, stem: str) -> bool:
+    """Allow only conservative deployment/version suffix differences.
+
+    Exact model identity wins. Family fallback accepts numeric deployment
+    suffixes (dates, parameter sizes) and explicit ``instruct``/``chat``
+    suffixes, but rejects semantic variants such as ``mini`` and ``thinking``.
+    """
+    if stem.startswith(needle):
+        suffix = stem[len(needle):]
+    elif needle.startswith(stem):
+        suffix = needle[len(stem):]
+    else:
+        return False
+    return bool(suffix) and (suffix[0].isdigit() or suffix.startswith(_FAMILY_SUFFIXES))
 
 
 def _match_entries(
     index: dict[str, list[tuple[str, dict[str, Any]]]],
     model: str,
 ) -> list[tuple[str, dict[str, Any]]]:
-    """Return all priced LiteLLM entries whose model stem matches *model*.
-
-    Matching strategy (first non-empty result wins):
-    1. Exact stem match (``normalize(model) == stem``).
-    2. Runtime stem is a prefix of an index stem (e.g. ``llama4maverick``
-       matches ``llama4maverick17b128e``).
-    3. An index stem is a prefix of the runtime stem.
-    """
+    """Match a runtime model against the provider-independent public catalog."""
     needle = _normalize(model)
-    # 1. exact
-    hits = index.get(needle, [])
-    if hits:
-        return hits
-    # 2 & 3. prefix
-    return [
-        entry
-        for stem, entries in index.items()
-        if stem.startswith(needle) or needle.startswith(stem)
-        for entry in entries
-    ]
+    matches: list[tuple[str, dict[str, Any]]] = []
+    seen: set[str] = set()
+    for stem, entries in index.items():
+        if stem != needle and not _family_match(needle, stem):
+            continue
+        for key, entry in entries:
+            if key not in seen:
+                seen.add(key)
+                matches.append((key, entry))
+    return matches
 
 _state_lock = threading.Lock()
 _worker: threading.Thread | None = None
@@ -133,12 +150,12 @@ def _fetch_price_map() -> tuple[dict[str, Any], bytes]:
     return parsed, content
 
 
-def _positive_rate(value: object) -> float | None:
+def _rate(value: object) -> float | None:
     try:
-        rate = float(value)
+        rate = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
-    return rate if math.isfinite(rate) and rate > 0 else None
+    return rate if math.isfinite(rate) and rate >= 0 else None
 
 
 def _representative_rates(
@@ -153,10 +170,8 @@ def _representative_rates(
     paired = [
         (input_rate, output_rate, entry)
         for _, entry in entries
-        if (input_rate := _positive_rate(entry.get("input_cost_per_token")))
-        is not None
-        and (output_rate := _positive_rate(entry.get("output_cost_per_token")))
-        is not None
+        if (input_rate := _rate(entry.get("input_cost_per_token"))) is not None
+        and (output_rate := _rate(entry.get("output_cost_per_token"))) is not None
     ]
     if not paired:
         return None
@@ -176,7 +191,7 @@ def _representative_rates(
         values = [
             rate
             for _, _, entry in paired
-            if (rate := _positive_rate(entry.get(source_key))) is not None
+            if (rate := _rate(entry.get(source_key))) is not None
         ]
         if values:
             result[target_key] = median(values) * 1_000_000
@@ -210,15 +225,16 @@ def _may_write_automatic_snapshot(provider: str, model: str, version: str) -> bo
 def refresh_pricing(
     fetcher: Callable[[], tuple[dict[str, Any], bytes]] = _fetch_price_map,
 ) -> dict[str, Any]:
-    """Fetch, aggregate, and append forward-only estimated price snapshots.
+    """Fetch public prices and append forward-only estimated snapshots.
 
-    Model matching is fully automatic: each runtime model name is normalized
-    (strip non-alphanumeric, lowercase) and looked up in a pre-built index of
-    the LiteLLM price map.  No hand-maintained mapping table is needed.
+    The catalog is independent of the configured runtime provider or API base.
+    Exact model/alias matches are preferred; conservative family matching
+    handles deployment suffixes. Multiple provider listings are aggregated as
+    a public-market median and never labelled provider-billed or known cost.
     """
     price_map, content = fetcher()
     _save_cache(content)
-    version = "sha256:" + hashlib.sha256(content).hexdigest()
+    version = _MATCH_VERSION + ":sha256:" + hashlib.sha256(content).hexdigest()
     effective_from = _utcnow()
     source = _SOURCE_PREFIX + LITELLM_PRICE_MAP_URL
     created = matched = 0

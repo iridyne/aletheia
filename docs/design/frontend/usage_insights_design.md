@@ -56,6 +56,11 @@ element and `aria-busy` communicate background work without fabricating completi
 
 - Missing token counters, unmatched models, unsupported cache pricing, and incomplete
   attribution remain `N/A`, `Partial`, or `Unknown`.
-- LiteLLM prices are estimates. Historical events may be projected in memory for the Usage
-  response, but the append-only runtime ledger is not rewritten.
+- The LiteLLM GitHub price map is a provider-independent public catalog, not a dependency on
+  using LiteLLM as the runtime gateway. Runtime model names are matched to catalog model names;
+  exact names and catalog aliases win, conservative family matching covers deployment/version
+  suffixes, and ambiguous or unmatched models remain Unknown. Multiple provider listings are
+  aggregated as a public-market median. These prices are always estimates, never provider-billed
+  truth. Historical events may be projected in memory for the Usage response, but the append-only
+  runtime ledger is not rewritten.
 - Current model cooldown is current process state, not historical window evidence.

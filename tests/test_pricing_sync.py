@@ -1,7 +1,12 @@
 import pytest
 
 from aletheia.economics import pricing_sync
-from aletheia.economics.pricing_sync import _build_price_index, _match_entries, _normalize, _representative_rates
+from aletheia.economics.pricing_sync import (
+    _build_price_index,
+    _match_entries,
+    _normalize,
+    _representative_rates,
+)
 
 
 # ── unit tests for the auto-discovery helpers ────────────────────────────────
@@ -21,13 +26,20 @@ def test_build_price_index_keys_by_last_path_component():
         "openai/gpt-4o": {
             "input_cost_per_token": 2.5e-6,
             "output_cost_per_token": 1e-5,
+            "aliases": ["gpt-4o-current"],
+        },
+        "free/model": {
+            "input_cost_per_token": 0,
+            "output_cost_per_token": 0,
         },
         "no-price-model": {"context_window": 4096},  # no cost fields — excluded
     }
     index = _build_price_index(price_map)
     assert "llama4maverick17b" in index
     assert "gpt4o" in index
-    assert "nopricemodelcomponent" not in index  # excluded
+    assert "gpt4ocurrent" in index
+    assert "model" in index  # zero-cost entries are valid catalog prices
+    assert "nopricemodel" not in index
     assert len(index["llama4maverick17b"]) == 1
 
 
@@ -51,8 +63,32 @@ def test_match_entries_prefix_runtime_shorter():
     assert len(hits) == 1
 
 
+def test_match_entries_rejects_semantic_variant_suffixes():
+    index = _build_price_index(
+        {
+            "openai/gpt-4o-mini": {
+                "input_cost_per_token": 1e-7,
+                "output_cost_per_token": 4e-7,
+            },
+            "libertai/qwen3.5-122b-a10b-thinking": {
+                "input_cost_per_token": 2.5e-7,
+                "output_cost_per_token": 1.75e-6,
+            },
+        }
+    )
+    assert _match_entries(index, "gpt-4o") == []
+    assert _match_entries(index, "qwen35-122b-a10b") == []
+
+
 def test_match_entries_returns_empty_for_unknown_model():
-    index = _build_price_index({"openai/gpt-4o": {"input_cost_per_token": 2.5e-6, "output_cost_per_token": 1e-5}})
+    index = _build_price_index(
+        {
+            "openai/gpt-4o": {
+                "input_cost_per_token": 2.5e-6,
+                "output_cost_per_token": 1e-5,
+            }
+        }
+    )
     assert _match_entries(index, "completely-unknown-xyz") == []
 
 
@@ -121,3 +157,4 @@ def test_refresh_uses_model_median_and_preserves_manual_price(monkeypatch):
     assert written[0]["input_usd_per_million"] == pytest.approx(0.2)
     assert written[0]["output_usd_per_million"] == pytest.approx(0.6)
     assert written[0]["source"].startswith("litellm_public_median:")
+    assert written[0]["version"].startswith("catalog-model-family-v2:sha256:")

@@ -601,21 +601,6 @@ def _budgets(db: sqlite3.Connection, tables: set[str], end: datetime) -> tuple[d
     return _section(status, reason, rows=rows), calculable, len(policies)
 
 
-def _session_has_cost_events(db: sqlite3.Connection, session_id: str) -> bool:
-    """Return True when at least one cost event was recorded for this session.
-
-    Used to promote legacy sessions (economics_tracing_enabled IS NULL) that
-    demonstrably produced cost events — the presence of rows is ground-truth
-    evidence that tracing was active during those intervals, regardless of
-    whether the column was written at session-start time.
-    """
-    row = db.execute(
-        "SELECT 1 FROM runtime_cost_events WHERE runtime_session_id=? LIMIT 1",
-        (session_id,),
-    ).fetchone()
-    return row is not None
-
-
 def _traced_intervals(db: sqlite3.Connection, tables: set[str], start: datetime, end: datetime) -> tuple[list[tuple[datetime, datetime]], dict[str, Any]]:
     if "runtime_sessions" not in tables:
         return [], {"status": "not_available", "reason": "The runtime-session ledger is not available.", "session_count": 0, "traced_session_count": 0, "legacy_or_untraced_session_count": 0}
@@ -628,36 +613,37 @@ def _traced_intervals(db: sqlite3.Connection, tables: set[str], start: datetime,
         active_session_id = current_session_id()
     except Exception:
         active_session_id = None
-    for row in _query_rows(db, "SELECT session_id,started_at,ended_at,economics_tracing_enabled FROM runtime_sessions", ()):
+    rows = _query_rows(
+        db,
+        "SELECT session.session_id,session.started_at,session.ended_at,"
+        "session.economics_tracing_enabled,"
+        "MAX(COALESCE(event.finished_at,event.started_at)) AS last_cost_at,"
+        "COUNT(event.id) AS cost_event_count "
+        "FROM runtime_sessions session "
+        "LEFT JOIN runtime_cost_events event ON event.runtime_session_id=session.session_id "
+        "WHERE replace(session.started_at,' ','T') < replace(?,' ','T') "
+        "AND (session.ended_at IS NULL OR replace(session.ended_at,' ','T') > replace(?,' ','T')) "
+        "GROUP BY session.session_id,session.started_at,session.ended_at,session.economics_tracing_enabled",
+        (end.isoformat(), start.isoformat()),
+    )
+    for row in rows:
         started_at = _iso(row.get("started_at"))
         ended_at = _iso(row.get("ended_at"))
+        has_cost_events = _count(row.get("cost_event_count")) > 0
         if ended_at is None:
-            if row.get("session_id") != active_session_id:
-                # Open sessions that are not the active one may be stale
-                # (crash, daemon restart). Only promote them if they have cost
-                # events — evidence that tracing genuinely ran in that interval.
-                if row.get("economics_tracing_enabled") == 1 or (
-                    row.get("economics_tracing_enabled") is None
-                    and _session_has_cost_events(db, str(row["session_id"]))
-                ):
-                    # Use now as a conservative upper bound for stale open sessions.
-                    ended_at = end
-                else:
-                    legacy_or_untraced += 1
-                    continue
-            else:
+            if row.get("session_id") == active_session_id:
                 ended_at = end
-        if started_at is None or ended_at <= start or started_at >= end:
+            else:
+                # A stale open session ended no later than its final cost event.
+                # Using the query window end would invent continuous trace coverage
+                # after a crashed process stopped emitting facts.
+                ended_at = _iso(row.get("last_cost_at")) if has_cost_events else None
+        if started_at is None or ended_at is None or ended_at <= start or started_at >= end:
             continue
         session_count += 1
         tracing_flag = row.get("economics_tracing_enabled")
-        if tracing_flag == 1:
-            # Explicitly opted in at session start.
-            intervals.append((max(started_at, start), min(ended_at, end)))
-            traced += 1
-        elif tracing_flag is None and _session_has_cost_events(db, str(row["session_id"])):
-            # Legacy session (column added after session was created) that
-            # provably produced cost events — treat as traced.
+        if tracing_flag == 1 or (tracing_flag is None and has_cost_events):
+            # NULL is promoted only with event-level evidence that tracing ran.
             intervals.append((max(started_at, start), min(ended_at, end)))
             traced += 1
         else:
@@ -726,14 +712,19 @@ def _trends(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[st
         days.append({"date": cursor.isoformat(), "event_count": total, "llm_event_count": len(llm_entries), "token_covered_event_count": token_rows, "input_tokens": input_tokens if token_rows else None, "output_tokens": output_tokens if token_rows else None, "total_tokens": input_tokens + output_tokens if token_rows else None, "known_cost_usd": _number(sum(_cost_value(row) for row in entries)), "estimated_cost_usd": _number(sum(_estimated_cost_value(row) for row in entries)), "unknown_event_count": total - sum(_cost_priced(row) for row in entries), "pricing_coverage_pct": _pct(sum(_cost_priced(row) for row in entries), total), "known_pricing_coverage_pct": _pct(sum(_cost_known(row) for row in entries), total), "full_window_day": full, "trace_coverage_pct": trace_coverage_pct, "zero_observation_status": zero_status, "zero_observation_reason": zero_reason, "anomaly_eligible": False, "cost_anomaly_z_score": None, "cost_anomaly": None})
         cursor += timedelta(days=1)
     full_days = [row for row in days if row["full_window_day"]]
-    # Baseline eligibility: full trace coverage + pricing coverage (known or
-    # estimated). Anomaly detection needs consistent pricing, not authoritative
-    # pricing source. 99.0% threshold tolerates one-off failed/retried events.
+    # Trend availability, baseline eligibility, and pricing completeness are
+    # separate facts. The rolling 1d window normally contains no full UTC day,
+    # so section status must use coverage of the selected window rather than
+    # baseline-day count.
+    _TRACE_COVERAGE_THRESHOLD = 99.99
     _PRICING_COVERAGE_THRESHOLD = 99.0
+    window_seconds = max((end - start).total_seconds(), 1)
+    window_traced_seconds = _covered_seconds(intervals, start, end)
+    window_trace_coverage_pct = round(window_traced_seconds * 100 / window_seconds, 4)
+    trace_days = [row for row in full_days if row["trace_coverage_pct"] >= _TRACE_COVERAGE_THRESHOLD]
     baseline_days = [
-        row for row in full_days
-        if row["trace_coverage_pct"] == 100
-        and (row["pricing_coverage_pct"] or 0) >= _PRICING_COVERAGE_THRESHOLD
+        row for row in trace_days
+        if (row["pricing_coverage_pct"] or 0) >= _PRICING_COVERAGE_THRESHOLD
     ]
     baseline = None
     if len(baseline_days) >= _BASELINE_MIN_FULL_DAYS:
@@ -748,7 +739,7 @@ def _trends(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[st
             for row in days:
                 if (
                     row["full_window_day"]
-                    and row["trace_coverage_pct"] == 100
+                    and row["trace_coverage_pct"] >= _TRACE_COVERAGE_THRESHOLD
                     and (row["pricing_coverage_pct"] or 0) >= _PRICING_COVERAGE_THRESHOLD
                 ):
                     day_cost = float(row["known_cost_usd"]) + float(row["estimated_cost_usd"])
@@ -758,29 +749,31 @@ def _trends(db: sqlite3.Connection, tables: set[str], runtime_rows: list[dict[st
                     row["cost_anomaly"] = abs(score) >= _ANOMALY_Z_THRESHOLD
     event_count = len(runtime_rows)
     priced = sum(_cost_priced(row) for row in runtime_rows)  # known + estimated
-    full_coverage = len(baseline_days) == len(full_days) and bool(full_days)
-    if full_coverage and (not event_count or priced == event_count):
+    trace_complete = window_trace_coverage_pct >= _TRACE_COVERAGE_THRESHOLD
+    if event_count and trace_complete and priced == event_count:
         status = "available"
-        reason = None if baseline is not None else "A baseline needs at least seven trace-covered full UTC days."
-    elif event_count or baseline_days:
+        reason = None
+    elif event_count:
         status = "partial"
-        reason = "Some full UTC days lack trace-enabled runtime coverage." if not full_coverage else "Some cost events lack prices."
+        reason = "Selected window lacks complete trace-enabled runtime coverage." if not trace_complete else "Some cost events lack prices."
     else:
         status = "not_available"
         reason = trace["reason"]
     observed_zero_days = sum(row["zero_observation_status"] == "observed_zero" for row in full_days)
-    trace_status = _status(len(full_days), len(baseline_days))
-    trace_reason = None if trace_status == "available" else trace["reason"] if not baseline_days else "Some full UTC days lack trace-enabled runtime coverage."
+    trace_status = "available" if trace_complete else "partial" if window_traced_seconds else "not_available"
+    trace_reason = None if trace_complete else trace["reason"] or "Selected window lacks complete trace-enabled runtime coverage."
     trace_coverage = {
         **trace,
         "status": trace_status,
         "reason": trace_reason,
+        "window_coverage_pct": window_trace_coverage_pct,
         "full_day_count": len(full_days),
-        "trace_covered_full_day_count": len(baseline_days),
+        "trace_covered_full_day_count": len(trace_days),
+        "baseline_eligible_full_day_count": len(baseline_days),
         "observed_zero_day_count": observed_zero_days,
         "unavailable_zero_day_count": sum(row["zero_observation_status"] == "not_available" for row in full_days),
     }
-    return _section(status, reason, daily=days, baseline=baseline, trace_coverage=trace_coverage), len(baseline_days), len(full_days)
+    return _section(status, reason, daily=days, baseline=baseline, trace_coverage=trace_coverage), round(window_traced_seconds), round(window_seconds)
 
 
 def _lineage_row(db: sqlite3.Connection, artifact_type: str, table: str, stage: str, tables: set[str], window: tuple[str, str], target_key: str = "id") -> dict[str, Any]:
