@@ -56,6 +56,12 @@ jobs:
                 pull_number: pullRequestNumber,
               });
               if (
+                pullRequest.head.repo?.full_name !== context.repo.owner + '/' + context.repo.repo
+              ) {
+                core.info('cross-repository pull request is outside the autonomous merge boundary');
+                continue;
+              }
+              if (
                 pullRequest.state !== 'open' ||
                 pullRequest.base.ref !== 'master' ||
                 pullRequest.draft ||
@@ -403,6 +409,12 @@ jobs:
                 { pullRequestId: pullRequest.id },
               );
             };
+            const rejectCrossRepositoryAutoMerge = async (pullRequest) => {
+              if (!pullRequest.isCrossRepository) return false;
+              await disableAutoMerge(pullRequest);
+              core.info('cross-repository pull request is outside the autonomous merge boundary');
+              return true;
+            };
             if (operation === 'disable') {
               const pullRequest = await fetchPullRequest();
               if (!pullRequest || pullRequest.state !== 'OPEN') {
@@ -423,6 +435,7 @@ jobs:
                 core.info('pull request is no longer open; no auto-merge update needed');
                 return;
               }
+              if (await rejectCrossRepositoryAutoMerge(pullRequest)) return;
               if (pullRequest.state === 'MERGED') {
                 await closeLinkedIssues(pullRequest);
                 return;
@@ -517,6 +530,7 @@ jobs:
                 core.info('pull request is no longer open; no auto-merge update needed');
                 return;
               }
+              if (await rejectCrossRepositoryAutoMerge(pullRequest)) return;
               if (pullRequest.state === 'MERGED') {
                 const cleanupPromise = closeLinkedIssues(pullRequest);
                 await dispatchRelease(pullRequest, pullRequest.mergeCommit?.oid);

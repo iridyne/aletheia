@@ -644,6 +644,8 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "github.rest.pulls.listFiles" in schedule_script
     assert "previous_filename" in schedule_script
     assert "[filename, previous_filename].includes('.github/workflows/auto-merge.yml')" in schedule_script
+    assert "pullRequest.head.repo?.full_name !== context.repo.owner + '/' + context.repo.repo" in schedule_script
+    assert "cross-repository pull request is outside the autonomous merge boundary" in schedule_script
 
     release_candidate = workflow["jobs"]["release-candidate"]
     assert release_candidate["permissions"] == {
@@ -718,6 +720,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "setTimeout" in update_script
     assert "enablePullRequestAutoMerge" in update_script
     assert "disablePullRequestAutoMerge" in update_script
+    assert "const rejectCrossRepositoryAutoMerge" in update_script
     assert "do-not-auto-merge" in update_script
     assert "releaseAfterMerge" in update_script
     assert "baseRefOid" in update_script
@@ -736,11 +739,14 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     ordinary_path = update_script[
         update_script.index("if (!releaseAfterMerge)") : update_script.index("const autoMergeStates")
     ]
+    assert "if (await rejectCrossRepositoryAutoMerge(pullRequest)) return;" in ordinary_path
     assert "disableAutoMerge(pullRequest)" in ordinary_path
     assert "pullRequest.mergeStateStatus !== 'CLEAN'" in ordinary_path
     assert "github.rest.pulls.merge" in ordinary_path
     assert "setTimeout" not in ordinary_path
     assert "event_type: 'release_please'" not in update_script
+    release_path = update_script[update_script.index("const autoMergeStates") :]
+    assert "if (await rejectCrossRepositoryAutoMerge(pullRequest)) return;" in release_path
 
     assert not any(
         str(step.get("uses", "")).startswith("actions/checkout@") or bool(step.get("run"))
