@@ -26,6 +26,7 @@ def _make_candidates(n: int, score_start: float = 35.0, score_step: float = 0.4)
             "opportunity_id": f"opp-{i:04d}",
             "symbol": "BTC/USDT",
             "venue": "bitget",
+            "market_type": "spot",
             "direction": "long" if i % 2 == 0 else "short",
             "scanner_family": _FAMILIES[i % len(_FAMILIES)],
             "trade_score": score_start + i * score_step,
@@ -59,6 +60,7 @@ def _insert_many_batches(
                 "opportunity_id": f"b{b}-{j}",
                 "symbol": "BTC/USDT",
                 "venue": "bitget",
+                "market_type": "spot",
                 "direction": "long" if j % 2 == 0 else "short",
                 "scanner_family": _FAMILIES[j % len(_FAMILIES)],
                 "trade_score": 35.0 + (b * batch_size + j) % 50 * 0.8,
@@ -178,6 +180,7 @@ def test_propensity_forced_rank():
                 "opportunity_id": f"f{b}-top{j}",
                 "symbol": "BTC/USDT",
                 "venue": "bitget",
+                "market_type": "spot",
                 "direction": "long",
                 "scanner_family": "momentum",
                 "trade_score": 60.0 - j,  # rank 1=60, 2=59, 3=58
@@ -189,6 +192,7 @@ def test_propensity_forced_rank():
             "opportunity_id": f"f{b}-forced",
             "symbol": "BTC/USDT",
             "venue": "bitget",
+            "market_type": "spot",
             "direction": "long",
             "scanner_family": "momentum",
             "trade_score": 40.0,  # lower score → rank 4 in list of 4, but top_n=3 excludes it

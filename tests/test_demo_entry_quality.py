@@ -275,26 +275,30 @@ def _publish_regime(monkeypatch, *, state="sideways", confidence=0.50):
 
 def _insert_family_outcomes(family, direction, *, n, net_return_pct, market_type="spot"):
     now = datetime.now(timezone.utc).isoformat()
+    gross_return_pct = net_return_pct if direction == "long" else -net_return_pct
     for i in range(n):
         repo.insert_forward_outcome(UniverseForwardOutcome(
             member_id=f"m{i}",
             snapshot_id="snap1",
             symbol="BTC/USDT",
+            venue="okx",
             scanner_family=family,
             direction=direction,
             horizon="24h",
             entry_price_usd=100.0,
             due_at=now,
             settled_at=now,
-            exit_price_usd=100.0 + net_return_pct,
-            forward_return_pct=net_return_pct,
-            gross_return_pct=net_return_pct,
+            exit_price_usd=100.0 + gross_return_pct,
+            forward_return_pct=gross_return_pct,
+            gross_return_pct=gross_return_pct,
             directional_return_pct=net_return_pct,
             estimated_fee_pct=0.0,
             estimated_spread_slippage_pct=0.0,
             estimated_funding_pct=0.0,
             net_return_pct=net_return_pct,
             min_tradable_edge_pct=0.05,
+            settlement_price_source="horizon_ohlcv",
+            settlement_lag_sec=0.0,
             cost_model_version="v1",
             market_type=market_type,
             status="settled",

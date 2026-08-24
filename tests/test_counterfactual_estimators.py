@@ -180,6 +180,7 @@ def _populate_db_many_batches(n_batches: int = 20) -> None:
                 "opportunity_id": f"b{b}-{j}",
                 "symbol": "BTC/USDT",
                 "venue": "bitget",
+                "market_type": "spot",
                 "direction": "long" if j % 2 == 0 else "short",
                 "scanner_family": _FAMILIES[j % len(_FAMILIES)],
                 "trade_score": 35.0 + ((b * 6 + j) % 50) * 0.7,
@@ -240,9 +241,11 @@ def _insert_row_with_epoch(opp_id: str, epoch: str | None, net_pnl_pct: float = 
     with patch("aletheia.counterfactual.trades._current_price", return_value=50000.0):
         with patch("aletheia.counterfactual.trades._current_policy_epoch", return_value=epoch):
             persist_shadow_batch(
-                [{"opportunity_id": opp_id, "symbol": "BTC/USDT", "venue": "bitget", "direction": "long",
+                [{"opportunity_id": opp_id, "symbol": "BTC/USDT", "venue": "bitget",
+                  "market_type": "spot", "direction": "long",
                   "scanner_family": "momentum", "trade_score": 60.0}],
-                selected={"opportunity_id": opp_id, "symbol": "BTC/USDT", "venue": "bitget", "direction": "long",
+                selected={"opportunity_id": opp_id, "symbol": "BTC/USDT", "venue": "bitget",
+                           "market_type": "spot", "direction": "long",
                            "scanner_family": "momentum", "trade_score": 60.0},
                 top_n=5,
             )
