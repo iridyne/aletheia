@@ -1471,7 +1471,7 @@ def test_partial_private_close_fill_keeps_position_open(tmp_path, monkeypatch):
     assert stored_order["status"] == "partially_filled"
     assert stored_order["filled_at"] is None
     assert stored_position["status"] == "open"
-    assert stored_position["quantity"] == pytest.approx(1.0)
+    assert stored_position["quantity"] == pytest.approx(0.6)
     assert stored_position["pending_close_order_id"] == close_order.id
     assert stored_position["pending_close_status"] == "partially_filled"
     assert stored_position["closed_at"] is None

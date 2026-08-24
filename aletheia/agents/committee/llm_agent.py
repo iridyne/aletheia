@@ -20,9 +20,23 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("aletheia.committee.llm")
+
+
+class CommitteeRead(BaseModel):
+    """Metadata schema for the committee's structured JSON response."""
+
+    direction: Literal["long", "short", "neutral"] = "neutral"
+    confidence: str = "low"
+    confidence_score: float = 30.0
+    reasoning: str = ""
+    evidence: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    position_size_factor: float = 0.3
 
 
 # --- Prompt Templates ---
@@ -250,22 +264,34 @@ async def analyze_with_llm(
     try:
         from aletheia.model_provider.fallback import complete_with_fallback
         from aletheia.model_provider.base import ModelRequest
+        from aletheia.model_provider.inference_contract import build_inference_call
 
         user_prompt = _build_user_prompt(symbol, market_type, data)
-
+        messages = [{"role": "user", "content": user_prompt}]
+        provider_name = provider or "sensenova"
+        inference_call = build_inference_call(
+            caller="committee.llm_analysis",
+            system=_SYSTEM_PROMPT,
+            prompt_static_text=_SYSTEM_PROMPT,
+            messages=messages,
+            context_adapter_id="committee.llm_analysis.v1",
+            context_manifest={"symbol": symbol, "market_type": market_type},
+            schema=CommitteeRead,
+            requested_provider=provider_name,
+            temperature=0.1,
+            max_tokens=1500,
+        )
         req = ModelRequest(
-            messages=[
-                {"role": "user", "content": user_prompt},
-            ],
+            messages=messages,
             system=_SYSTEM_PROMPT,
             temperature=0.1,  # lower temp for more deterministic JSON output
             max_tokens=1500,
+            inference=inference_call,
         )
 
         # Use complete_with_fallback for intelligent routing
         # This will try the primary model first, then fall back through
         # the configured chain on transient errors (429, 502, 503, 504)
-        provider_name = provider or "sensenova"
         resp = await complete_with_fallback(
             req,
             provider_name=provider_name,

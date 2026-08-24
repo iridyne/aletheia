@@ -2215,6 +2215,9 @@ def test_position_absence_claim_converges_without_fabricated_economics(
         async def place_order(self, *args, **kwargs):
             raise AssertionError("verified reconciliation must never place an order")
 
+        async def get_positions(self):
+            return []
+
         async def close(self):
             return None
 

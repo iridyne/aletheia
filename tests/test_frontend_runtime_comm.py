@@ -65,8 +65,8 @@ def test_chart_lifecycle_tracks_market_identity_and_container_size():
     assert "resizeObserver.disconnect()" in pnl
     assert "resizeObserver.observe(containerRef.current)" in account
     assert "window.addEventListener('resize'" not in account
-    assert "chartTheme.accountEquityAdjusted" in account
-    assert "accountEquityAdjusted" in theme
+    assert "chartTheme.accountEquityRaw" in account
+    assert "accountEquityRaw" in theme
 
 
 def test_routes_recover_inside_shell_and_redirect_legacy_paths():
