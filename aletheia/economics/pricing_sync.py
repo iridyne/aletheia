@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,11 +27,57 @@ LITELLM_PRICE_MAP_URL = (
 _MIN_MODEL_COUNT = 50
 _MIN_RELATIVE_SIZE = 0.5
 _SOURCE_PREFIX = "litellm_public_median:"
-_MODEL_MARKERS = {
-    "qwen35-122b-a10b": "qwen3.5-122b-a10b",
-    "qwen3.5-122b-a10b": "qwen3.5-122b-a10b",
-    "llama-4-maverick": "llama-4-maverick",
-}
+
+
+def _normalize(s: str) -> str:
+    """Strip all non-alphanumeric chars and lowercase for fuzzy model matching."""
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def _build_price_index(
+    price_map: dict[str, Any],
+) -> dict[str, list[tuple[str, dict[str, Any]]]]:
+    """Index priced entries by their normalized model-name stem.
+
+    Key format in LiteLLM is ``provider/model`` or bare ``model``.  We index
+    by the last path component so that ``groq/meta-llama/llama-4-maverick-17b``
+    is reachable via the stem ``llama4maverick17b``.
+    """
+    index: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for key, entry in price_map.items():
+        if not isinstance(entry, dict):
+            continue
+        if not entry.get("input_cost_per_token") or not entry.get("output_cost_per_token"):
+            continue
+        stem = _normalize(key.split("/")[-1])
+        index.setdefault(stem, []).append((key, entry))
+    return index
+
+
+def _match_entries(
+    index: dict[str, list[tuple[str, dict[str, Any]]]],
+    model: str,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Return all priced LiteLLM entries whose model stem matches *model*.
+
+    Matching strategy (first non-empty result wins):
+    1. Exact stem match (``normalize(model) == stem``).
+    2. Runtime stem is a prefix of an index stem (e.g. ``llama4maverick``
+       matches ``llama4maverick17b128e``).
+    3. An index stem is a prefix of the runtime stem.
+    """
+    needle = _normalize(model)
+    # 1. exact
+    hits = index.get(needle, [])
+    if hits:
+        return hits
+    # 2 & 3. prefix
+    return [
+        entry
+        for stem, entries in index.items()
+        if stem.startswith(needle) or needle.startswith(stem)
+        for entry in entries
+    ]
 
 _state_lock = threading.Lock()
 _worker: threading.Thread | None = None
@@ -95,19 +142,20 @@ def _positive_rate(value: object) -> float | None:
 
 
 def _representative_rates(
-    price_map: dict[str, Any], marker: str
+    entries: list[tuple[str, dict[str, Any]]],
 ) -> dict[str, float | int] | None:
-    matches = [
-        value
-        for key, value in price_map.items()
-        if marker in key.lower() and isinstance(value, dict)
-    ]
+    """Aggregate matched LiteLLM entries into median rates.
+
+    Accepts the list of ``(litellm_key, entry_dict)`` tuples produced by
+    ``_match_entries``.  Returns ``None`` when no entry has both input and
+    output rates.
+    """
     paired = [
-        (input_rate, output_rate, value)
-        for value in matches
-        if (input_rate := _positive_rate(value.get("input_cost_per_token")))
+        (input_rate, output_rate, entry)
+        for _, entry in entries
+        if (input_rate := _positive_rate(entry.get("input_cost_per_token")))
         is not None
-        and (output_rate := _positive_rate(value.get("output_cost_per_token")))
+        and (output_rate := _positive_rate(entry.get("output_cost_per_token")))
         is not None
     ]
     if not paired:
@@ -162,7 +210,12 @@ def _may_write_automatic_snapshot(provider: str, model: str, version: str) -> bo
 def refresh_pricing(
     fetcher: Callable[[], tuple[dict[str, Any], bytes]] = _fetch_price_map,
 ) -> dict[str, Any]:
-    """Fetch, aggregate, and append forward-only estimated price snapshots."""
+    """Fetch, aggregate, and append forward-only estimated price snapshots.
+
+    Model matching is fully automatic: each runtime model name is normalized
+    (strip non-alphanumeric, lowercase) and looked up in a pre-built index of
+    the LiteLLM price map.  No hand-maintained mapping table is needed.
+    """
     price_map, content = fetcher()
     _save_cache(content)
     version = "sha256:" + hashlib.sha256(content).hexdigest()
@@ -172,9 +225,11 @@ def refresh_pricing(
     unmatched: list[str] = []
     samples: dict[str, dict[str, float | int]] = {}
 
+    index = _build_price_index(price_map)
+
     for provider, model in _runtime_models():
-        marker = _MODEL_MARKERS.get(model.lower())
-        rates = _representative_rates(price_map, marker) if marker else None
+        entries = _match_entries(index, model)
+        rates = _representative_rates(entries) if entries else None
         if rates is None:
             unmatched.append(f"{provider}/{model}")
             continue
