@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v38"
+SCHEMA_VERSION = "aletheia-sqlite-v39"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -5279,6 +5279,41 @@ def _apply_gamma_flip_reset_v37(db: sqlite3.Connection) -> None:
     db.executescript(_GAMMA_FLIP_RESET_SQL)
 
 
+_LEGACY_TRACING_BACKFILL_SQL = """
+UPDATE runtime_sessions
+SET economics_tracing_enabled = 1
+WHERE economics_tracing_enabled IS NULL
+  AND EXISTS (
+      SELECT 1 FROM runtime_cost_events
+      WHERE runtime_cost_events.runtime_session_id = runtime_sessions.session_id
+      LIMIT 1
+  );
+"""
+_LEGACY_TRACING_BACKFILL_CHECKSUM = hashlib.sha256(
+    ("\nlegacy_tracing_backfill_v1\n" + _LEGACY_TRACING_BACKFILL_SQL).encode("utf-8")
+).hexdigest()
+
+
+def _apply_legacy_tracing_backfill_v39(db: sqlite3.Connection) -> None:
+    """Back-fill economics_tracing_enabled for legacy sessions that provably
+    produced cost events.
+
+    The ``economics_tracing_enabled`` column was added to ``runtime_sessions``
+    via migration v20 without backfill ("without backfill" was intentional at
+    the time: the column was only meaningful for sessions started after v20).
+    However, sessions created before v20 that later became the active session
+    after the migration was applied have ``NULL`` in this column even though
+    their ``runtime_cost_events`` rows confirm tracing was running.  The
+    projection layer already handles ``NULL`` defensively, but a permanent DB
+    fix is preferable to per-session fallback queries at read time.
+
+    The UPDATE is idempotent: it only touches rows where the column is still
+    NULL and at least one ``runtime_cost_events`` row carries the session id.
+    """
+    db.executescript(_LEGACY_TRACING_BACKFILL_SQL)
+    db.execute("PRAGMA optimize")
+
+
 def _apply_pending_close_reasoning_v38(db: sqlite3.Connection) -> None:
     """Add the nullable pending-close rationale carrier without rewriting history."""
 
@@ -5855,6 +5890,12 @@ _MIGRATIONS = (
         checksum=_PENDING_CLOSE_REASONING_CHECKSUM,
         schema_version="aletheia-sqlite-v38",
         apply=_apply_pending_close_reasoning_v38,
+    ),
+    MigrationStep(
+        migration_id="20260824_0038_legacy_tracing_backfill_v39",
+        checksum=_LEGACY_TRACING_BACKFILL_CHECKSUM,
+        schema_version="aletheia-sqlite-v39",
+        apply=_apply_legacy_tracing_backfill_v39,
     ),
 )
 

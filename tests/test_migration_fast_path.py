@@ -441,6 +441,51 @@ def test_agent_usage_storage_v20_is_additive_and_keeps_legacy_null():
     connection.close()
 
 
+def test_legacy_tracing_backfill_v39_promotes_sessions_with_cost_events():
+    """Migration v39 sets economics_tracing_enabled=1 for sessions that have
+    runtime_cost_events rows, and leaves sessions without cost events as NULL."""
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        """
+        CREATE TABLE runtime_sessions (
+            session_id TEXT PRIMARY KEY,
+            economics_tracing_enabled INTEGER
+        );
+        CREATE TABLE runtime_cost_events (
+            id TEXT PRIMARY KEY,
+            runtime_session_id TEXT
+        );
+        -- Legacy session that produced cost events: should be promoted.
+        INSERT INTO runtime_sessions VALUES ('has-events', NULL);
+        -- Legacy session with no cost events: must remain NULL.
+        INSERT INTO runtime_sessions VALUES ('no-events', NULL);
+        -- Already-set session: must stay untouched.
+        INSERT INTO runtime_sessions VALUES ('explicit-1', 1);
+        INSERT INTO runtime_sessions VALUES ('explicit-0', 0);
+        -- One cost event linked to 'has-events'.
+        INSERT INTO runtime_cost_events VALUES ('evt-1', 'has-events');
+        """
+    )
+
+    migrations._apply_legacy_tracing_backfill_v39(connection)
+    # Idempotent: second call must not change anything.
+    migrations._apply_legacy_tracing_backfill_v39(connection)
+
+    rows = {
+        row[0]: row[1]
+        for row in connection.execute(
+            "SELECT session_id, economics_tracing_enabled FROM runtime_sessions"
+        )
+    }
+    assert rows["has-events"] == 1, "Session with cost events must be promoted to 1"
+    assert rows["no-events"] is None, "Session without cost events must remain NULL"
+    assert rows["explicit-1"] == 1, "Explicit 1 must be unchanged"
+    assert rows["explicit-0"] == 0, "Explicit 0 must be unchanged"
+    connection.close()
+
+
 def test_learning_fixed_look_v10_migration_is_additive_and_idempotent():
     import aletheia.storage.migrations as migrations
 
