@@ -110,7 +110,7 @@ def test_macro_collect_with_fng_disabled(monkeypatch):
         return (50.0, 1e12, 1.5)
 
     monkeypatch.setattr(macro_mod, "_fetch_coingecko", _fake_coingecko)
-    monkeypatch.setattr(macro_mod, "_fetch_tradfi", lambda: (None, None, None, None))
+    monkeypatch.setattr(macro_mod, "_fetch_one_tradfi_ticker", lambda _ticker: None)
     monkeypatch.delenv("FRED_API_KEY", raising=False)
 
     # Spy on _fetch_fng: track whether it gets called.
@@ -150,7 +150,7 @@ def test_macro_collect_fng_failure_does_not_regress_other_fields(monkeypatch):
         return (50.0, 1e12, 1.5)
 
     monkeypatch.setattr(macro_mod, "_fetch_coingecko", _fake_coingecko)
-    monkeypatch.setattr(macro_mod, "_fetch_tradfi", lambda: (None, None, None, None))
+    monkeypatch.setattr(macro_mod, "_fetch_one_tradfi_ticker", lambda _ticker: None)
     monkeypatch.delenv("FRED_API_KEY", raising=False)
 
     # F&G raises — must be caught, must not poison other fields.
