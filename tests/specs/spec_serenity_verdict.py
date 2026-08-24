@@ -187,7 +187,8 @@ def test_pipeline_persists_verdict():
 
     with patch("aletheia.storage.repositories.acquire_serenity_lock", return_value=True), \
          patch("aletheia.storage.repositories.release_serenity_lock"), \
-         patch("aletheia.agents.helpers.llm_complete", side_effect=_mock_llm_complete):
+         patch("aletheia.agents.helpers.llm_complete", side_effect=_mock_llm_complete), \
+         patch("aletheia.agents.research_worker._get_equity_context_block", return_value=""):
         try:
             repo.insert_serenity_research_run(run)
             asyncio.run(_run_pipeline_inner(run.id, run.model_dump()))
