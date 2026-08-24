@@ -63,8 +63,9 @@ third-party Action.
 
 ## Release SOP（正常自动，故障手动恢复）
 
-正常路径只保留一个显式发布意图动作：repository owner 在 GitHub Actions 运行
-`Prepare and tag releases` 并设置 `operational_need=true`。之后自动生成候选、
+正常路径只保留一个显式发布意图动作：repository admin 在 GitHub Actions 运行
+`Prepare and tag releases` 并设置 `operational_need=true`；workflow 会通过 GitHub API
+fail-closed 验证触发者的 repository admin 权限。之后自动生成候选、
 运行精确 SHA CI、解除候选 hold 并合并、创建不可变 Tag/Release；配置为
 Paper 角色的 Fedora auto-update timer 再自动部署正式 Tag。无需手动指定
 版本，也无需登录 Fedora 执行 `git pull`。资格运行时不参加这条自动部署链，
@@ -74,7 +75,7 @@ Paper 角色的 Fedora auto-update timer 再自动部署正式 Tag。无需手�
 状态损坏时可用同一入口重试。CLI 形式为：
 
 ```sh
-gh workflow run release-please.yml --repo iridite/aletheia --ref master \
+gh workflow run release-please.yml --repo iridyne/aletheia --ref master \
   -f operational_need=true
 ```
 
@@ -85,7 +86,7 @@ hand-edit a target version: the Conventional Commit history and
 policy, ordinary `feat`, `fix`, and `perf` release notes produce the next patch;
 an explicit breaking change produces the next minor version.
 
-The workflow rejects the release job for non-owner manual dispatches. A stale
+The workflow rejects the release job for manual dispatches by non-admins. A stale
 candidate caused by a later `master` merge is refreshed automatically while the
 candidate remains open; do not create a second release PR by hand.
 
@@ -97,7 +98,7 @@ rerunning that failed `repository_dispatch` workflow run in the Actions UI or
 with:
 
 ```sh
-gh run rerun <run-id> --repo iridite/aletheia
+gh run rerun <run-id> --repo iridyne/aletheia
 ```
 
 Do not bypass the candidate hold or exact-SHA CI, or tag the commit manually.
