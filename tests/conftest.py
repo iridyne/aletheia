@@ -408,6 +408,83 @@ def _fast_port_probe(monkeypatch):
     monkeypatch.setattr(_pf, "_PORT_PROBE_TIMEOUT", 0.001)
 
 
+_LOOPBACK_HOSTNAME_SUFFIXES = (".localhost",)
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    """Return True for a host a test can safely dial without touching the internet."""
+    import ipaddress
+
+    host = str(hostname or "").strip().lower()
+    if host in ("", "localhost"):
+        return True
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        pass
+    # hostname-encoded loopback (e.g. services named for the local machine)
+    return any(host.endswith(suffix) for suffix in _LOOPBACK_HOSTNAME_SUFFIXES)
+
+
+@pytest.fixture(autouse=True)
+def _deny_external_network(request, monkeypatch):
+    """Fail immediately, with a clear attempted-external-access error, when a test
+    would connect to a non-loopback host.
+
+    Phase 1 (#2167 §1.4): stale mocks and accidental real I/O must surface as an
+    immediate, clearly-labeled failure instead of a long connect timeout or, worse,
+    a real outbound request. The boundary applies only to ``tier_unit``; Runtime and
+    Integration lanes retain their correct connectivity behavior. It intercepts the
+    standard hostname/TCP seams used by http.client/urllib, requests, httpx/httpcore,
+    aiohttp/ccxt, and asyncio without interfering with ASGI transports.
+
+    Allowed without an opt-out:
+    - exact-loopback hosts (``localhost``, ``127.0.0.1``, ``::1``) and IP literals in
+      the loopback range — unit tests legitimately bind/connect ephemeral local test
+      servers, and ASGI TestClient/httpx ``transport=`` never dials the network at all;
+    - a test explicitly marked ``real_network`` (used only where intentional).
+
+    The raise is a ``socket.gaierror`` (an ``OSError``) so call paths that already
+    treat a host as unreachable (proxy probes, fallback logic) degrade exactly as
+    they do for a genuine DNS failure, while the message makes the attempted host
+    explicit for diagnosis.
+    """
+    if (
+        not request.node.get_closest_marker("tier_unit")
+        or request.node.get_closest_marker("real_network")
+    ):
+        return
+
+    import socket
+
+    real_getaddrinfo = socket.getaddrinfo
+    real_create_connection = socket.create_connection
+
+    def _blocked(host):
+        raise socket.gaierror(
+            -2,
+            f"attempted external network access to {host!r} from a unit test - mock "
+            "the HTTP/provider/client instead; mark @pytest.mark.real_network only "
+            "if intentional (see tests/conftest.py _deny_external_network)",
+        )
+
+    def _guarded_getaddrinfo(host, *args, **kwargs):
+        if _is_loopback_host(str(host or "")):
+            return real_getaddrinfo(host, *args, **kwargs)
+        _blocked(host)
+
+    def _guarded_create_connection(address, *args, **kwargs):
+        host = address[0] if isinstance(address, tuple) and address else address
+        if _is_loopback_host(str(host or "")):
+            return real_create_connection(address, *args, **kwargs)
+        _blocked(host)
+
+    monkeypatch.setattr(socket, "getaddrinfo", _guarded_getaddrinfo)
+    monkeypatch.setattr(socket, "create_connection", _guarded_create_connection)
+
+
 @pytest.fixture(autouse=True)
 def _no_network_market_data(request, monkeypatch):
     """Prevent CCXT/exchange network calls from blocking tests.

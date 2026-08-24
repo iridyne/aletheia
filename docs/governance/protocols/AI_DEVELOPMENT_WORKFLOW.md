@@ -39,8 +39,14 @@ Final report:
 
 1. Run focused tests, then broader tests appropriate to the changed surface.
 2. Review the diff and commit only intended source/documentation changes.
-3. Push the branch and use the PR as the durable review and handoff surface.
-4. Record long-lived decisions in
+3. Prepare the PR body from [`.github/PULL_REQUEST_TEMPLATE.md`](../../../.github/PULL_REQUEST_TEMPLATE.md)
+   and run `uv run --no-sync python scripts/ci_preflight.py --pr-body-file <path>`
+   before the first CI-triggering PR create/update and again before an exact-head
+   repair push. It must pass against the intended body and current branch/base diff.
+4. Push the branch and use the PR as the durable review and handoff surface. If only
+   Change Contract metadata needs repair, edit the PR body on the same head and wait
+   for `Verify Change Contract`; never create a no-op/retrigger source commit.
+5. Record long-lived decisions in
    [`Architecture Decision Log`](../decisions/DECISIONS.md) or the relevant
    design document. Do not commit external-orchestrator session state.
 

@@ -37,6 +37,17 @@ D1 — Contract Behavior Change
 - Old behavior Y → new semantics Z
 """
 
+VALID_D2_PR = """
+## SDD Depth
+
+D2 — Substantial Design Change
+
+## Contract Delta
+
+### ADDED
+- Approved design behavior X
+"""
+
 # Missing SDD Depth section
 MISSING_SDD_DEPTH = """
 ## Contract Delta
@@ -83,6 +94,11 @@ def test_valid_d1_pr_passes() -> None:
     assert not failures
 
 
+def test_valid_d2_pr_passes() -> None:
+    failures = check_pr_description(VALID_D2_PR, [])
+    assert not failures
+
+
 def test_missing_sdd_depth_fails() -> None:
     failures = check_pr_description(MISSING_SDD_DEPTH, [])
     assert failures
@@ -99,6 +115,18 @@ def test_invalid_sdd_depth_value_fails() -> None:
     failures = check_pr_description(INVALID_SDD_DEPTH_VALUE, [])
     assert failures
     assert any("D0" in f or "D1" in f or "D2" in f for f in failures)
+
+
+def test_structured_check_exposes_bounded_reason_codes_without_changing_messages() -> None:
+    failures = checker.structured_check_pr(MISSING_SDD_DEPTH, ["aletheia/core.py"])
+
+    assert failures == [{
+        "code": "missing_sdd_depth",
+        "message": "Missing required section: ## SDD Depth",
+    }]
+    assert check_pr_description(MISSING_SDD_DEPTH, ["aletheia/core.py"]) == [
+        failures[0]["message"],
+    ]
 
 
 def test_release_please_pr_is_exempt() -> None:

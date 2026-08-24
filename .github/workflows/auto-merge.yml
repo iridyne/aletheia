@@ -5,7 +5,9 @@ on:
     branches: [master]
     types: [opened, reopened, ready_for_review, edited, synchronize, labeled, unlabeled, closed]
   workflow_run:
-    workflows: [Aletheia CI]
+    # The isolated metadata gate is a first-class exact-head merge prerequisite;
+    # its successful same-head PR-body recovery must re-evaluate auto-merge.
+    workflows: [Aletheia CI, Aletheia Change Contract gate]
     types: [completed]
   repository_dispatch:
     types: [auto_merge_update, release_candidate_verified]
@@ -236,6 +238,7 @@ jobs:
       github.event.sender.login == 'github-actions[bot]' &&
       github.event.action == 'auto_merge_update'
     permissions:
+      checks: read
       contents: write
       issues: write
       pull-requests: write
@@ -262,6 +265,7 @@ jobs:
             const expectedHeadSha = process.env.EXPECTED_HEAD_SHA;
             const expectedBaseSha = process.env.EXPECTED_BASE_SHA;
             const releaseAfterMerge = process.env.RELEASE_AFTER_MERGE === 'true';
+            const changeContractCheckName = 'Verify Change Contract';
             if (!['enable', 'disable'].includes(operation)) {
               throw new Error(`unsupported auto-merge operation: ${operation}`);
             }
@@ -335,6 +339,41 @@ jobs:
               }
               pullRequest.closingIssuesReferences.nodes = closingIssues;
               return pullRequest;
+            };
+            const exactHeadChangeContractPassed = async () => {
+              try {
+                const {data} = await github.rest.checks.listForRef({
+                  ...context.repo,
+                  ref: expectedHeadSha,
+                  check_name: changeContractCheckName,
+                  filter: 'latest',
+                  per_page: 100,
+                });
+                const check = data.check_runs
+                  .filter((candidate) =>
+                    candidate.name === changeContractCheckName &&
+                    candidate.app?.slug === 'github-actions'
+                  )
+                  .sort((left, right) =>
+                    Date.parse(right.completed_at || right.started_at || 0) -
+                    Date.parse(left.completed_at || left.started_at || 0)
+                  )[0];
+                if (check?.status === 'completed' && check.conclusion === 'success') {
+                  return true;
+                }
+                core.info(
+                  `exact-head ${changeContractCheckName} is not successful ` +
+                  `(${check ? `${check.status}/${check.conclusion}` : 'missing'}); ` +
+                  'auto-merge remains disabled',
+                );
+                return false;
+              } catch (error) {
+                core.warning(
+                  `could not verify exact-head ${changeContractCheckName}; ` +
+                  `auto-merge remains disabled: ${error}`,
+                );
+                return false;
+              }
             };
             const closeLinkedIssues = async (pullRequest) => {
               const repositoryName = `${context.repo.owner}/${context.repo.repo}`;
@@ -483,6 +522,9 @@ jobs:
               await disableAutoMerge(pullRequest);
               if (pullRequest.labels.nodes.some(({name}) => name === 'do-not-auto-merge')) {
                 core.info('do-not-auto-merge holds this pull request');
+                return;
+              }
+              if (!(await exactHeadChangeContractPassed())) {
                 return;
               }
 
