@@ -31,6 +31,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import logging
+import time
 
 from aletheia.data.symbols import to_bitget
 from aletheia.storage import repositories as repo
@@ -112,6 +113,10 @@ STALE_PENDING_CLOSE_RELEASE_HOURS = 4.0
 # market close can appear on Bitget's open-order view; short enough that a
 # lost acknowledgement cannot block take-profit for hours.
 ABSENT_UNFILLED_RELEASE_HOURS = 0.25
+
+# Remote absence evidence is not transactional with SQLite. Refuse a recovery
+# rather than act on a snapshot delayed behind another writer transaction.
+ABSENT_CLOSE_EVIDENCE_MAX_AGE_SECONDS = 5.0
 
 _RECOVERABLE_ORDER_STATES = (
     "submitted",
@@ -281,16 +286,64 @@ def _uta_history_lookup(order: dict):
         return _HISTORY_FAILED
 
 
-def _eligible_absent_close_recovery(order: dict, position: dict) -> str | None:
+def _locally_eligible_absent_close_recovery(order: dict, position: dict) -> bool:
     if not _is_close_order(order):
-        return None
+        return False
     if str(order.get("status") or "") not in _RECOVERABLE_ORDER_STATES:
-        return None
+        return False
     if str(position.get("status") or "") != "open":
-        return None
+        return False
     if str(position.get("pending_close_order_id") or "") != str(order.get("id") or ""):
-        return None
+        return False
     if _local_fill_quantity(str(order["id"])) > 0:
+        return False
+
+    return True
+
+
+def _absent_close_recovery_age_is_eligible(order: dict, position: dict) -> bool:
+    age_hours = _age_hours(
+        position.get("pending_close_requested_at"),
+        order.get("created_at"),
+    )
+    return age_hours is not None and age_hours >= ABSENT_UNFILLED_RELEASE_HOURS
+
+
+def _absent_close_evidence_is_fresh(evidence_observed_at: float) -> bool:
+    age_seconds = time.monotonic() - evidence_observed_at
+    return 0 <= age_seconds <= ABSENT_CLOSE_EVIDENCE_MAX_AGE_SECONDS
+
+
+def _matches_absent_close_recovery_snapshot(
+    order: dict,
+    position: dict,
+    expected_order: dict,
+    expected_position: dict,
+    *,
+    require_age: bool,
+) -> bool:
+    return (
+        order == expected_order
+        and all(
+            position.get(field) == expected_position.get(field)
+            for field in (
+                "id",
+                "status",
+                "pending_close_order_id",
+                "pending_close_status",
+                "pending_close_requested_at",
+            )
+        )
+        and _locally_eligible_absent_close_recovery(order, position)
+        and (
+            not require_age
+            or _absent_close_recovery_age_is_eligible(order, position)
+        )
+    )
+
+
+def _eligible_absent_close_recovery(order: dict, position: dict) -> str | None:
+    if not _locally_eligible_absent_close_recovery(order, position):
         return None
 
     open_ids = _exchange_open_order_ids(order)
@@ -316,18 +369,22 @@ def _eligible_absent_close_recovery(order: dict, position: dict) -> str | None:
         if cancel_reason == TRADE_RATE_LIMIT_CANCEL_REASON:
             return TRADE_RATE_LIMIT_CANCEL_REASON
 
-    age_hours = _age_hours(
-        position.get("pending_close_requested_at"),
-        order.get("created_at"),
-    )
-    if age_hours is None or age_hours < ABSENT_UNFILLED_RELEASE_HOURS:
+    if not _absent_close_recovery_age_is_eligible(order, position):
         return None
     return "stale_close_order_absent_unfilled"
 
 
-def _apply_absent_close_recovery(order: dict, position: dict, reason_code: str) -> bool:
+def _apply_absent_close_recovery(
+    order: dict,
+    position: dict,
+    reason_code: str,
+    *,
+    evidence_observed_at: float,
+) -> bool:
     order_id = str(order["id"])
     position_id = str(position["id"])
+    if not _absent_close_evidence_is_fresh(evidence_observed_at):
+        return False
     with repo.transaction(immediate=True):
         db = get_db()
         fresh_order = db.execute(
@@ -340,7 +397,16 @@ def _apply_absent_close_recovery(order: dict, position: dict, reason_code: str) 
             return False
         order_row = dict(fresh_order)
         position_row = dict(fresh_position)
-        if _eligible_absent_close_recovery(order_row, position_row) != reason_code:
+        if (
+            not _absent_close_evidence_is_fresh(evidence_observed_at)
+            or not _matches_absent_close_recovery_snapshot(
+                order_row,
+                position_row,
+                order,
+                position,
+                require_age=True,
+            )
+        ):
             return False
         if reason_code == TRADE_RATE_LIMIT_CANCEL_REASON:
             raise RuntimeError("pending_close_recovery: rate-limited close must be parked, not released")
@@ -415,10 +481,17 @@ def _apply_absent_close_recovery(order: dict, position: dict, reason_code: str) 
     return True
 
 
-def _apply_park_rate_limited_close(order: dict, position: dict) -> bool:
+def _apply_park_rate_limited_close(
+    order: dict,
+    position: dict,
+    *,
+    evidence_observed_at: float,
+) -> bool:
     """Keep the pending-close claim; mark the order cancelled for 40725."""
     order_id = str(order["id"])
     position_id = str(position["id"])
+    if not _absent_close_evidence_is_fresh(evidence_observed_at):
+        return False
     with repo.transaction(immediate=True):
         db = get_db()
         fresh_order = db.execute(
@@ -431,7 +504,16 @@ def _apply_park_rate_limited_close(order: dict, position: dict) -> bool:
             return False
         order_row = dict(fresh_order)
         position_row = dict(fresh_position)
-        if _eligible_absent_close_recovery(order_row, position_row) != TRADE_RATE_LIMIT_CANCEL_REASON:
+        if (
+            not _absent_close_evidence_is_fresh(evidence_observed_at)
+            or not _matches_absent_close_recovery_snapshot(
+                order_row,
+                position_row,
+                order,
+                position,
+                require_age=False,
+            )
+        ):
             return False
 
         db.execute(
@@ -690,11 +772,19 @@ def recover_absent_stale_close_orders() -> dict:
         if reason is None:
             skipped += 1
             continue
+        evidence_observed_at = time.monotonic()
         try:
             if reason == TRADE_RATE_LIMIT_CANCEL_REASON:
-                applied = _apply_park_rate_limited_close(order, position)
+                applied = _apply_park_rate_limited_close(
+                    order, position, evidence_observed_at=evidence_observed_at
+                )
             else:
-                applied = _apply_absent_close_recovery(order, position, reason)
+                applied = _apply_absent_close_recovery(
+                    order,
+                    position,
+                    reason,
+                    evidence_observed_at=evidence_observed_at,
+                )
         except Exception as exc:
             errors.append(f"apply_failed:{order.get('id')}")
             logger.warning(

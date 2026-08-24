@@ -70,8 +70,23 @@ def test_xrp_stale_submitted_close_released_when_absent_on_exchange(monkeypatch)
         )
     )
 
-    monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
-    monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
+    remote_query_transaction_states: list[bool] = []
+
+    def absent_open_orders(order):
+        remote_query_transaction_states.append(repo.get_db().in_transaction)
+        return set()
+
+    def empty_fill_rows(order):
+        remote_query_transaction_states.append(repo.get_db().in_transaction)
+        return []
+
+    def skipped_history(order):
+        remote_query_transaction_states.append(repo.get_db().in_transaction)
+        return pcr._HISTORY_SKIP
+
+    monkeypatch.setattr(pcr, "_exchange_open_order_ids", absent_open_orders)
+    monkeypatch.setattr(pcr, "_exchange_fill_rows", empty_fill_rows)
+    monkeypatch.setattr(pcr, "_uta_history_lookup", skipped_history)
 
     summary = pcr.recover_absent_stale_close_orders()
     assert summary["released"] == 1
@@ -84,6 +99,7 @@ def test_xrp_stale_submitted_close_released_when_absent_on_exchange(monkeypatch)
     stored_position = repo._select_one("positions", "0da931113c25")
     assert stored_position["pending_close_order_id"] is None
     assert stored_position["pending_close_status"] is None
+    assert remote_query_transaction_states == [False, False, False]
 
 
 def test_uni_entry_limit_on_exchange_is_not_released(monkeypatch):
@@ -194,6 +210,50 @@ def test_absent_unfilled_close_released_after_ack_lag(monkeypatch):
     stored_position = repo._select_one("positions", "pos-ack-lost")
     assert stored_position["pending_close_order_id"] is None
     assert stored_position["pending_close_status"] is None
+
+
+def test_absent_close_recovery_refuses_state_changed_after_evidence(monkeypatch):
+    _seed_order(
+        Order(
+            id="close-snapshot",
+            client_order_id="close-pos-snapshot",
+            position_id="pos-snapshot",
+            close_reason="take_profit",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=9.0,
+            price=1.0,
+            execution_mode="bitget_demo",
+            status="submitted",
+            source="native",
+            exchange_order_id="ex-snapshot",
+            created_at=_iso(0.3),
+        )
+    )
+    repo.insert_position(
+        _position(
+            id="pos-snapshot",
+            pending_close_order_id="close-snapshot",
+            pending_close_status="submitted",
+            pending_close_requested_at=_iso(0.3),
+        )
+    )
+    monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
+
+    def empty_fills_after_state_transition(order):
+        repo._update("orders", "close-snapshot", {"status": "submission_unknown"})
+        return []
+
+    monkeypatch.setattr(pcr, "_exchange_fill_rows", empty_fills_after_state_transition)
+
+    summary = pcr.recover_absent_stale_close_orders()
+
+    assert summary["released"] == 0
+    assert repo.get_order("close-snapshot")["status"] == "submission_unknown"
+    stored_position = repo._select_one("positions", "pos-snapshot")
+    assert stored_position["pending_close_order_id"] == "close-snapshot"
 
 
 def test_close_with_local_fill_is_not_released(monkeypatch):
@@ -414,17 +474,31 @@ def test_uta_trade_rate_limit_parks_claim_instead_of_releasing(monkeypatch):
             pending_close_requested_at=_iso(0.08),
         )
     )
-    monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
-    monkeypatch.setattr(pcr, "_exchange_fill_rows", lambda order: [])
-    monkeypatch.setattr(
-        pcr,
-        "_uta_history_lookup",
-        lambda order: {
+    remote_query_transaction_states: list[bool] = []
+
+    def absent_open_orders(order):
+        remote_query_transaction_states.append(repo.get_db().in_transaction)
+        return set()
+
+    def empty_fill_rows(order):
+        remote_query_transaction_states.append(repo.get_db().in_transaction)
+        return []
+
+    def rate_limited_history(order):
+        remote_query_transaction_states.append(repo.get_db().in_transaction)
+        return {
             "orderId": "1471627178020290560",
             "orderStatus": "cancelled",
             "cancelReason": "trade_too_many_times_cancel",
             "cumExecQty": "0",
-        },
+        }
+
+    monkeypatch.setattr(pcr, "_exchange_open_order_ids", absent_open_orders)
+    monkeypatch.setattr(pcr, "_exchange_fill_rows", empty_fill_rows)
+    monkeypatch.setattr(
+        pcr,
+        "_uta_history_lookup",
+        rate_limited_history,
     )
 
     summary = pcr.recover_absent_stale_close_orders()
@@ -440,6 +514,7 @@ def test_uta_trade_rate_limit_parks_claim_instead_of_releasing(monkeypatch):
     stored_position = repo._select_one("positions", "0da931113c25")
     assert stored_position["pending_close_order_id"] == "b2bec540efe3"
     assert stored_position["pending_close_status"] == "venue_trade_rate_limited"
+    assert remote_query_transaction_states == [False, False, False]
 
 
 def test_owner_authorized_release_frees_parked_claim_for_close_retry():
