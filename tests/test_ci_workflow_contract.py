@@ -91,6 +91,7 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
     jobs = _workflow()["jobs"]
 
     assert set(jobs) == {
+        "change-contract-preflight",
         "review-core",
         "review-coverage",
         "review-node",
@@ -104,6 +105,7 @@ def test_ci_has_independent_review_regression_and_release_jobs() -> None:
         "release-candidate",
         "release-pr-ci",
     }
+    assert jobs["change-contract-preflight"]["name"] == "Change Contract preflight for deep CI"
     assert jobs["review-core"]["name"] == "Review core"
     assert jobs["review"]["name"] == "Review checks"
     assert jobs["unit"]["name"] == "Python unit"
@@ -182,6 +184,7 @@ def test_ci_runner_topology_and_minimum_permissions() -> None:
 
     # All CI tasks use the managed Fedora pool.
     for job_name in (
+        "change-contract-preflight",
         "review-core",
         "review-coverage",
         "review-node",
@@ -197,6 +200,7 @@ def test_ci_runner_topology_and_minimum_permissions() -> None:
     assert jobs["review"]["runs-on"] == SELF_HOSTED
 
     for job_name in (
+        "change-contract-preflight",
         "review-core",
         "review-coverage",
         "unit",
@@ -228,7 +232,8 @@ def test_review_optional_surfaces_are_job_gated_before_runner_allocation() -> No
     native = jobs["review-native"]
     gate = jobs["review"]
 
-    assert "needs" not in core
+    assert core["needs"] == ["change-contract-preflight"]
+    assert "needs.change-contract-preflight.result == 'success'" in core["if"]
     assert coverage["needs"] == "review-core"
     assert "needs.review-core.outputs.coverage == 'true'" in coverage["if"]
     assert node["needs"] == "review-core"
@@ -295,7 +300,18 @@ def test_change_contract_gate_is_cheap_isolated_and_recovers_on_pr_body_edit() -
     assert "preflight_metadata" in commands
     assert "upload-artifact" not in CHANGE_CONTRACT_WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    review_commands = _run_commands(_workflow()["jobs"]["review-core"])
+    workflow_jobs = _workflow()["jobs"]
+    deep_preflight = workflow_jobs["change-contract-preflight"]
+    assert deep_preflight["runs-on"] == SELF_HOSTED
+    assert deep_preflight["timeout-minutes"] == "5"
+    preflight_commands = _run_commands(deep_preflight)
+    assert "uv run --no-sync python scripts/check_change_contract.py" in preflight_commands
+    assert "uv sync" not in preflight_commands
+    assert workflow_jobs["review-core"]["needs"] == ["change-contract-preflight"]
+    assert workflow_jobs["unit"]["needs"] == ["change-contract-preflight"]
+    assert "needs.change-contract-preflight.result == 'success'" in workflow_jobs["unit"]["if"]
+
+    review_commands = _run_commands(workflow_jobs["review-core"])
     assert "check_change_contract.py" not in review_commands
     assert "ci-change-contract.yml" in WORKFLOW_PATH.read_text(encoding="utf-8")
 
@@ -585,8 +601,10 @@ def test_python_regression_reports_each_tier_and_isolates_runtime_state() -> Non
     spec_job = jobs["specifications"]
     e2e_job = jobs["end-to-end"]
 
-    assert "needs" not in review_core
-    assert "needs" not in unit_job
+    assert review_core["needs"] == ["change-contract-preflight"]
+    assert "needs.change-contract-preflight.result == 'success'" in review_core["if"]
+    assert unit_job["needs"] == ["change-contract-preflight"]
+    assert "needs.change-contract-preflight.result == 'success'" in unit_job["if"]
     assert review_job["needs"] == [
         "review-core",
         "review-coverage",
@@ -684,7 +702,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
         "closed",
     ]
     assert triggers["workflow_run"] == {
-        "workflows": ["Aletheia CI"],
+        "workflows": ["Aletheia CI", "Aletheia Change Contract gate"],
         "types": ["completed"],
     }
     assert triggers["repository_dispatch"]["types"] == [
@@ -768,6 +786,7 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "event.action == 'auto_merge_update'" in update["if"]
     assert "event.sender.login == 'github-actions[bot]'" in update["if"]
     assert update["permissions"] == {
+        "checks": "read",
         "contents": "write",
         "issues": "write",
         "pull-requests": "write",
@@ -805,6 +824,11 @@ def test_auto_merge_hands_off_pr_status_before_mutating_without_running_pr_code(
     assert "issues.addLabels" in update_script
     assert "expected_base_sha: expectedBaseSha" in update_script
     assert "event_type: 'release_candidate_merged'" in update_script
+    assert "github.rest.checks.listForRef" in update_script
+    assert "changeContractCheckName = 'Verify Change Contract'" in update_script
+    assert "candidate.app?.slug === 'github-actions'" in update_script
+    assert "check.conclusion === 'success'" in update_script
+    assert "exactHeadChangeContractPassed" in update_script
 
     assert "reviews(last: 100)" not in update_script
     assert "chatgpt-codex-connector" not in update_script
@@ -851,6 +875,7 @@ def test_auto_merge_clean_state_uses_exact_head_protected_squash() -> None:
     assert "baseRefOid" in update_script
     assert "pullRequest.headRefOid !== expectedHeadSha" in update_script
     assert "pullRequest.mergeStateStatus === 'CLEAN'" in update_script
+    assert "exactHeadChangeContractPassed" in update_script
     assert "pullRequest.mergeStateStatus === 'UNSTABLE' && !releaseAfterMerge" in update_script
     assert "releaseAfterMerge && pullRequest.mergeStateStatus === 'UNSTABLE'" in update_script
     assert "github.rest.pulls.merge" in update_script
@@ -914,7 +939,7 @@ def test_pr_runner_isolation_contract() -> None:
 
     # PR-executing jobs: these receive pull_request-controlled code.
     pr_jobs = [
-        "review-core", "review-coverage", "review-node", "review-native",
+        "change-contract-preflight", "review-core", "review-coverage", "review-node", "review-native",
         "unit", "runtime-state-tests", "integration", "specifications", "end-to-end",
     ]
 

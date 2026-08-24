@@ -56,6 +56,8 @@ def test_classifies_representative_failures_conservatively() -> None:
         ),
         ("Python integration", "Run integration regression tier", "assert x == y", "product_regression"),
         ("Review core", "Synchronize locked dependencies", "uv failed", "runner_or_ci_infra"),
+        ("Review core", "Scan secrets", "DNS resolution failed", "runner_or_ci_infra"),
+        ("Python integration", "Run integration regression tier", "DNS resolution failed", "unknown"),
         ("mystery", "odd", "no bounded evidence", "unknown"),
     ]
     for job, step, excerpt, expected in cases:

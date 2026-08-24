@@ -23,8 +23,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Scheduling gate for code-changing CI events. The separately named
+  # `Verify Change Contract` workflow handles pull_request `edited` recovery
+  # on the same head; this job never runs on that event and only prevents an
+  # invalid first submission from allocating Review/Unit/Stage 2 runners.
+  change-contract-preflight:
+    name: Change Contract preflight for deep CI
+    runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
+    timeout-minutes: 5
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.0"
+          python-version: "3.12"
+          enable-cache: false
+      - name: Verify Change Contract before deep CI (no dependency sync)
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: uv run --no-sync python scripts/check_change_contract.py
+
   review-core:
     name: Review core
+    needs: [change-contract-preflight]
+    if: ${{ !cancelled() && needs.change-contract-preflight.result == 'success' }}
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 10
     outputs:
@@ -401,6 +428,8 @@ jobs:
 
   unit:
     name: Python unit
+    needs: [change-contract-preflight]
+    if: ${{ !cancelled() && needs.change-contract-preflight.result == 'success' }}
     runs-on: [self-hosted, Linux, X64, ubuntu-24.04]
     timeout-minutes: 20
     steps:

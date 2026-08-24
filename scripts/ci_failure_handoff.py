@@ -124,13 +124,8 @@ _CONTRACT_TEST_SIGNALS = (
     "architecture and ci invariants",
     "test_architecture_fitness",
 )
-_EXTERNAL_IO_SIGNALS = (
-    "attempted external network access",
-    "real_network",
-    "connecttimeout",
-    "connect timeout",
-    "dns",
-)
+_UNIT_EXTERNAL_IO_SIGNAL = "attempted external network access"
+_NETWORK_INFRA_SIGNALS = ("connecttimeout", "connect timeout", "dns")
 
 # Stable fingerprint: hash of the bounded failure surface (no log content).
 _FINGERPRINT_SALT = "ci_failure_handoff.v1"
@@ -158,12 +153,21 @@ def classify(job_name: str, step_name: str, excerpt: str, explicit: str | None =
         return explicit
 
     needle = f"{job_name} {step_name} {excerpt}".lower()
+    job_needle = job_name.lower()
+    test_lane = any(
+        lane in job_needle
+        for lane in ("python unit", "python integration", "python specifications", "python end-to-end", "python runtime state")
+    )
     if any(s in needle for s in _DEFAULT_SIGNALS):
         return "preflight_metadata"
     if any(s in needle for s in _INFRA_SIGNALS):
         return "runner_or_ci_infra"
-    if any(s in needle for s in _EXTERNAL_IO_SIGNALS):
+    if _UNIT_EXTERNAL_IO_SIGNAL in needle and "python unit" in job_needle:
         return "external_io_in_unit"
+    if any(s in needle for s in _NETWORK_INFRA_SIGNALS):
+        # A DNS/connect failure outside a test lane is runner/CI infrastructure.
+        # Inside a non-unit test lane, ambiguity remains fail-closed as unknown.
+        return "unknown" if test_lane else "runner_or_ci_infra"
     if any(s in needle for s in _LINT_SIGNALS):
         return "lint_static"
     if any(s in needle for s in _CONTRACT_TEST_SIGNALS):
@@ -316,7 +320,9 @@ def selftest() -> int:
         ("Python unit", "Run unit regression tier", "attempted external network access to 'yahoo.com'", None, "external_io_in_unit", True),
         ("Python unit", "Run unit regression tier", "assert 1 == 2", None, "product_regression", True),
         ("Review core", "Check out source", "connection reset", None, "runner_or_ci_infra", False),
+        ("Review core", "Scan secrets", "DNS resolution failed", None, "runner_or_ci_infra", False),
         ("Python integration", "Synchronize locked dependencies", "uv sync network error", None, "runner_or_ci_infra", False),
+        ("Python integration", "Run integration regression tier", "DNS resolution failed", None, "unknown", False),
         ("Mystery job", "Odd step", "weird output", None, "unknown", False),
     ]
     failures = []

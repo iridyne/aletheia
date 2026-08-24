@@ -52,7 +52,10 @@ def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
     ]
     assert triggers["pull_request_review"]["types"] == ["submitted"]
     assert triggers["issue_comment"]["types"] == ["created"]
-    assert triggers["workflow_run"]["workflows"] == ["Aletheia CI"]
+    assert triggers["workflow_run"]["workflows"] == [
+        "Aletheia CI",
+        "Aletheia Change Contract gate",
+    ]
     assert triggers["workflow_run"]["types"] == ["completed"]
 
     assert workflow["permissions"] == {"contents": "read"}
@@ -271,7 +274,8 @@ def test_codex_shepherd_only_holds_latest_actionable_ci_failure() -> None:
     latest_ci_start = script.index("const latestCiRun")
     latest_ci_end = script.index("if (context.eventName === 'issue_comment')", latest_ci_start)
     latest_ci = script[latest_ci_start:latest_ci_end]
-    assert ".filter((run) => run.name === 'Aletheia CI')" in latest_ci
+    assert "const primaryCiWorkflow = 'Aletheia CI'" in script
+    assert ".filter((run) => run.name === primaryCiWorkflow)" in latest_ci
     assert "run.status === 'completed'" not in latest_ci
 
     workflow_handler = script[script.index("if (context.eventName === 'workflow_run')") :]

@@ -66,7 +66,8 @@ If only `SDD Depth` / `Contract Delta` metadata is invalid after a PR exists,
 fix the PR body on the **same head SHA**, rerun this command, and let `Verify
 Change Contract` re-run from the PR `edited` event. Never add a no-op,
 retrigger, or metadata-only source commit. The deep CI evidence for that head
-remains unchanged; the metadata check is a separate required status boundary.
+remains unchanged; auto-merge reads the metadata check as a separate exact-head
+gate.
 
 - Inspect first; add focused failure-path coverage for safety, lifecycle, audit,
   secrets, and trading changes; implement the smallest fix; broaden tests only

@@ -14,11 +14,12 @@
 # skipped/pass-through deep-run cannot satisfy or overwrite the required deep
 # checks for the same head, and editing the body cannot invalidate them.
 #
-# The job name "Verify Change Contract" must be added to the master branch
-# required status checks / repository ruleset so that auto-merge becomes
-# eligible only when BOTH this metadata check and the deep checks are valid for
-# the exact head (see docs/archive/legacy/plans/engineering/CI_RELIABILITY_IMPLEMENTATION_PLAN.md#CI-07:
-# required-check configuration is external and cannot be proven from YAML alone).
+# Add the job name "Verify Change Contract" to the master branch required
+# status checks / ruleset when the GitHub plan permits it. Independently,
+# `.github/workflows/auto-merge.yml` reads this exact GitHub Actions check on
+# the exact head and fails closed, so auto-merge is eligible only when BOTH this
+# metadata check and the deep checks are valid even where ruleset configuration
+# is unavailable (see docs/archive/legacy/plans/engineering/CI_RELIABILITY_IMPLEMENTATION_PLAN.md#CI-07).
 
 name: Aletheia Change Contract gate
 
