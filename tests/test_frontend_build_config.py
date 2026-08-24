@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import subprocess
 
 
 def test_vite_build_empties_output_dir():
@@ -11,6 +12,13 @@ def test_vite_build_empties_output_dir():
     """
     cfg = Path("frontend/vite.config.ts").read_text(encoding="utf-8")
     assert "emptyOutDir: true" in cfg
+
+
+def test_dashboard_build_artifacts_are_not_tracked():
+    tracked = subprocess.check_output(
+        ["git", "ls-files", "--", "aletheia/dashboard_static"], text=True
+    )
+    assert tracked == ""
 
 
 def test_worktree_dev_launcher_uses_vite_hmr_without_gateway_lifecycle():

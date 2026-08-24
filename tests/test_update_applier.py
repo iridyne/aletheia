@@ -81,6 +81,26 @@ def test_apply_update_rejects_wrong_interpreter(tmp_path, monkeypatch):
     assert result["reason"] == "update_wrong_interpreter"
 
 
+def test_managed_venv_accepts_external_python_launcher(tmp_path, monkeypatch):
+    from aletheia.update import applier
+
+    monkeypatch.setattr(applier, "_PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(applier.sys, "prefix", str(tmp_path / ".venv"))
+    monkeypatch.setattr(applier.sys, "executable", "/usr/bin/python3")
+
+    assert applier._is_managed_venv() is True
+
+
+def test_managed_venv_rejects_foreign_prefix(tmp_path, monkeypatch):
+    from aletheia.update import applier
+
+    monkeypatch.setattr(applier, "_PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(applier.sys, "prefix", str(tmp_path / "foreign-venv"))
+    monkeypatch.setattr(applier.sys, "executable", str(tmp_path / ".venv" / "bin" / "python"))
+
+    assert applier._is_managed_venv() is False
+
+
 # ── #1207: rollback completeness ─────────────────────────────────────────────
 
 def _stub_pull_to_smoke(monkeypatch, python_deps_changed=False):
