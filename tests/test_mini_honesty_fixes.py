@@ -102,7 +102,9 @@ async def test_trades_export_returns_closed_positions_with_pnl_columns(tmp_path,
     from aletheia.server.app import app
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        r = await client.get("/api/trades/export?fmt=csv")
+        # #1939: default export is scoped to the resolved execution_mode; the
+        # seeded row is bitget_demo so pass it explicitly.
+        r = await client.get("/api/trades/export?fmt=csv&execution_mode=bitget_demo")
 
     assert r.status_code == 200
     text = r.text

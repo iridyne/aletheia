@@ -2913,7 +2913,26 @@ def _probe_content_memo_quality(report: Report) -> None:
         return
     memo = None
     try:
-        memo = get_latest_memo()  # None if absent OR all expired
+        # #1939: the memo reader is mode-scoped. For the doctor probe we
+        # accept the newest memo regardless of the currently-selected mode so
+        # the diagnostic still fires when no config is loaded and so a memo
+        # for a different mode is still reported ("exists but for another
+        # cohort") rather than silently disappearing.
+        import json as _json
+        from aletheia.analytics.outcome_integrity import is_current_outcome_artifact
+        from datetime import timedelta as _td
+        items = list_knowledge_items(item_type="trading_memo", limit=5)
+        for item in items:
+            content = item.get("content") or ""
+            if not content:
+                continue
+            try:
+                candidate = _json.loads(content)
+            except (TypeError, ValueError):
+                continue
+            if is_current_outcome_artifact(candidate, max_age=_td(hours=72)):
+                memo = candidate
+                break
     except Exception:
         pass
     if memo:

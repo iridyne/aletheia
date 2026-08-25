@@ -178,7 +178,7 @@ function HoldDistSection({ rows }: { rows: HoldBucket[] }) {
 export default function TradeAnalyticsPanel() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['trade-stats'],
-    queryFn: api.getTradeStats,
+    queryFn: () => api.getTradeStats(),
     staleTime: 60_000,
   })
 

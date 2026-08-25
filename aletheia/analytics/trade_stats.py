@@ -10,24 +10,32 @@ from datetime import datetime, timedelta, timezone
 # binds a private copy that a test patching the source module cannot restore,
 # which under xdist can leak a stub into a later test (see test_outcome_consumers).
 from aletheia.analytics import outcome_integrity
+from aletheia.analytics.execution_mode import execution_mode_identity
 from aletheia.analytics.learning_window import outcome_window_metadata
 
 
-def compute_rolling_trade_stats(days: int = 7) -> dict:
+def compute_rolling_trade_stats(
+    days: int = 7, *, execution_mode: str | None = None,
+) -> dict:
     """Compute windowed trade stats for the last N days.
 
     Returns: {total_trades, wins, losses, win_rate, total_pnl, avg_pnl,
               best_win, worst_loss, per_symbol: [{symbol, trades, wins, pnl}]}
+    Scoped to a single ``execution_mode`` when provided (#1939).
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    recent = outcome_integrity.eligible_strategy_outcomes(closed_after=cutoff)
+    recent = outcome_integrity.eligible_strategy_outcomes(
+        closed_after=cutoff, execution_mode=execution_mode,
+    )
 
     if not recent:
         return {
             "days": days, "total_trades": 0, "wins": 0, "losses": 0,
             "win_rate": None, "total_pnl": None, "avg_pnl": None,
             "best_win": None, "worst_loss": None, "per_symbol": [],
-            "outcome_status": "insufficient", **outcome_window_metadata(),
+            "outcome_status": "insufficient",
+            **execution_mode_identity(execution_mode),
+            **outcome_window_metadata(),
         }
 
     wins = [p for p in recent if (p.get("realized_pnl") or 0) > 0]
@@ -59,6 +67,7 @@ def compute_rolling_trade_stats(days: int = 7) -> dict:
         "worst_loss": round(min(pnls), 2),
         "per_symbol": per_symbol,
         "outcome_status": "available",
+        **execution_mode_identity(execution_mode),
         **outcome_window_metadata(),
     }
 
@@ -110,15 +119,20 @@ def compute_order_stats(days: int = 7) -> dict:
     }
 
 
-def build_trade_stats() -> dict:
-    """Compute closed-position stats grouped by strategy source and scanner family."""
+def build_trade_stats(*, execution_mode: str | None = None) -> dict:
+    """Compute closed-position stats grouped by strategy source and scanner family.
+
+    Scoped to a single ``execution_mode`` when provided (#1939).
+    """
     from aletheia.analytics.family_scorecard import compute_family_scorecard
     from aletheia.storage import repositories as repo
     import json
 
     strategies = {str(row["id"]): row for row in repo.list_strategies(limit=10_000)}
     rows = []
-    for position in outcome_integrity.eligible_strategy_outcomes():
+    for position in outcome_integrity.eligible_strategy_outcomes(
+        execution_mode=execution_mode,
+    ):
         strategy = strategies.get(str(position.get("strategy_id") or ""), {})
         try:
             parameters = json.loads(strategy.get("parameters") or "{}")
@@ -173,7 +187,7 @@ def build_trade_stats() -> dict:
             "total_pnl": round(a["total_pnl"], 4) if tc else None,
         })
 
-    by_family = compute_family_scorecard()
+    by_family = compute_family_scorecard(execution_mode=execution_mode)
 
     hold_distribution = _bucket_hold_times(all_hold_hours)
     total_count = len(rows)
@@ -194,8 +208,9 @@ def build_trade_stats() -> dict:
         "hold_distribution": hold_distribution,
         "totals": totals,
         "outcome_status": "available" if total_count else "insufficient",
+        **execution_mode_identity(execution_mode),
         **outcome_window_metadata(),
-        **build_outcome_cohort_summary(),
+        **build_outcome_cohort_summary(execution_mode=execution_mode),
     }
 
 
@@ -237,13 +252,16 @@ def _bucket_hold_times(hours_list: list[float]) -> list[dict]:
     return result
 
 
-def build_strategy_kpis() -> dict[str, dict]:
+def build_strategy_kpis(*, execution_mode: str | None = None) -> dict[str, dict]:
     """Per-strategy KPI summary: trade_count, win_rate, total_pnl.
 
-    Returns a dict keyed by strategy_id.
+    Returns a dict keyed by strategy_id.  Scoped to a single ``execution_mode``
+    when provided (#1939).
     """
     grouped: dict[str, list[dict]] = {}
-    for row in outcome_integrity.eligible_strategy_outcomes():
+    for row in outcome_integrity.eligible_strategy_outcomes(
+        execution_mode=execution_mode,
+    ):
         strategy_id = row.get("strategy_id")
         if strategy_id:
             grouped.setdefault(str(strategy_id), []).append(row)
@@ -255,6 +273,7 @@ def build_strategy_kpis() -> dict[str, dict]:
             "trade_count": tc,
             "win_rate": round(sum(1 for pnl in pnls if pnl > 0) / tc * 100, 1),
             "total_pnl": round(sum(pnls), 2),
+            **execution_mode_identity(execution_mode),
             **outcome_window_metadata(),
         }
     return result

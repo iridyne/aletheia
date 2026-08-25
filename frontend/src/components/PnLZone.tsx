@@ -12,7 +12,7 @@ const PnLChart = lazy(() => import('../charts/PnLChart'))
 // const OVERVIEW_PNL_REFRESH_MS = 10_000
 // refetchInterval: OVERVIEW_PNL_REFRESH_MS
 
-function DeferredCurve({ days, kind }: { days?: number; kind: 'equity' | 'pnl' }) {
+function DeferredCurve({ days, kind, executionMode }: { days?: number; kind: 'equity' | 'pnl'; executionMode?: string }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(false)
   useEffect(() => {
@@ -31,7 +31,7 @@ function DeferredCurve({ days, kind }: { days?: number; kind: 'equity' | 'pnl' }
     <div ref={hostRef} style={{ minHeight: 220 }}>
       {visible
         ? <Suspense fallback={<div className="chart-placeholder" role="status">Chart loads…</div>}>
-            {kind === 'equity' ? <AccountEquityChart days={days} /> : <PnLChart days={days} />}
+            {kind === 'equity' ? <AccountEquityChart days={days} /> : <PnLChart days={days} executionMode={executionMode} />}
           </Suspense>
         : <div className="chart-placeholder" role="status">Chart loads when visible.</div>}
     </div>
@@ -414,7 +414,7 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
             ))}
           </div>
         </div>
-        <DeferredCurve days={rangeDays} kind={curveKind} />
+        <DeferredCurve days={rangeDays} kind={curveKind} executionMode={String((portfolio as any)?.execution_mode || '') || undefined} />
       </div>
     </div>
   )

@@ -444,7 +444,11 @@ def test_layer2_trade_analytics_collected(tmp_path, monkeypatch):
         "by_family": [{"family": "momentum", "trade_count": 2, "win_rate": 50.0, "total_pnl": 3.0}],
         "hold_distribution": [{"bucket": "1-4h", "count": 2, "pct": 50.0}],
     }
-    monkeypatch.setattr("aletheia.analytics.trade_stats.build_trade_stats", lambda: expected)
+    # #1939: build_trade_stats() now takes an execution_mode keyword.
+    monkeypatch.setattr(
+        "aletheia.analytics.trade_stats.build_trade_stats",
+        lambda *, execution_mode=None: expected,
+    )
 
     from aletheia.agent_shell.trading_context import _build_layer2_short_term
     layer2 = _build_layer2_short_term()

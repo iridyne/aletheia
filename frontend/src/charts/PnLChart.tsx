@@ -7,6 +7,9 @@ import { isoToEpochSeconds } from '../lib/format'
 
 interface Props {
   days?: number
+  // #1939: scope the curve to the selected execution_mode so the realized
+  // series never combines paper/demo/live populations under one label.
+  executionMode?: string
 }
 
 function toRows(points: ReadonlyArray<{ time: string; cumulative_pnl: number }>) {
@@ -16,11 +19,11 @@ function toRows(points: ReadonlyArray<{ time: string; cumulative_pnl: number }>)
     .map(r => ({ time: r.time as Time, value: r.value }))
 }
 
-export default function PnLChart({ days }: Props) {
+export default function PnLChart({ days, executionMode }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['equity-curve', days],
-    queryFn: () => api.getEquityCurve(days),
+    queryKey: ['equity-curve', days, executionMode ?? 'all'],
+    queryFn: () => api.getEquityCurve(days, executionMode),
     refetchInterval: 10_000,
   })
 

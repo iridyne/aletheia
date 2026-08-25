@@ -1985,9 +1985,14 @@ def _build_layer2_short_term() -> dict[str, Any]:
     except Exception:
         layer["reflection"] = None
 
-    # Recent closed positions — aggregate stats
+    # Recent closed positions — aggregate stats. Scoped to the current
+    # execution_mode so System Operator is never steered by another cohort (#1939).
     try:
-        recent = eligible_strategy_outcomes(closed_after=cutoff)
+        from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+        _ctx_mode = resolve_selected_execution_mode()
+        recent = eligible_strategy_outcomes(
+            closed_after=cutoff, execution_mode=_ctx_mode,
+        ) if _ctx_mode else []
 
         if recent:
             wins = [p for p in recent if (p.get("realized_pnl") or 0) > 0]
@@ -2044,7 +2049,11 @@ def _build_layer2_short_term() -> dict[str, Any]:
         # trade_count columns, so the System Operator saw None/'?' for every strategy. Real
         # KPIs come from build_strategy_kpis() (computed live from fills + positions).
         from aletheia.analytics.trade_stats import build_strategy_kpis
-        kpis = build_strategy_kpis()  # {strategy_id: {trade_count, win_rate, total_pnl}}
+        from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+        _kpi_mode = resolve_selected_execution_mode()
+        kpis = build_strategy_kpis(
+            execution_mode=_kpi_mode,
+        ) if _kpi_mode else {}  # {strategy_id: {trade_count, win_rate, total_pnl}}
         strat_perf: list[dict] = []
         for strat in active[:5]:
             sid = strat.get("id")
@@ -2063,7 +2072,13 @@ def _build_layer2_short_term() -> dict[str, Any]:
     # in the UI, compressed for System Operator consumption.
     try:
         from aletheia.analytics.trade_stats import build_trade_stats
-        trade_stats = build_trade_stats()
+        from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+        _ts_mode = resolve_selected_execution_mode()
+        trade_stats = build_trade_stats(execution_mode=_ts_mode) if _ts_mode else {
+            "outcome_status": "insufficient",
+            "execution_mode": None,
+            "execution_mode_status": "unavailable",
+        }
         layer["trade_analytics"] = {
             "outcome_status": trade_stats.get("outcome_status", "insufficient"),
             "outcome_semantics_version": trade_stats.get("outcome_semantics_version"),

@@ -88,7 +88,7 @@ def test_report_wires_streaks_section(monkeypatch):
 
     monkeypatch.setattr(
         "aletheia.analytics.outcome_integrity.eligible_strategy_outcomes",
-        lambda: fake,
+        lambda **_: fake,
     )
     rep = pr._collect()
     assert "streaks" in rep

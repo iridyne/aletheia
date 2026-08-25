@@ -9,6 +9,10 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+from aletheia.analytics.execution_mode import (
+    execution_mode_identity,
+    resolve_selected_execution_mode,
+)
 from aletheia.analytics.outcome_integrity import (
     eligible_strategy_outcomes,
     is_current_outcome_artifact,
@@ -31,11 +35,26 @@ _BUCKETS = [
 ]
 
 
-def build_calibration_report(window_days: int = CALIBRATION_WINDOW_DAYS) -> dict | None:
+def build_calibration_report(
+    window_days: int = CALIBRATION_WINDOW_DAYS,
+    *,
+    execution_mode: str | None = None,
+) -> dict | None:
     """Compute calibration from all closed positions linked to pi_decisions.
+
+    Scoped to a single ``execution_mode`` (#1939).  When the caller does not
+    provide one, the currently-selected mode is resolved from config; an
+    unresolvable config returns ``None`` (fail-closed, never an all-mode
+    aggregate).
 
     Returns CalibrationReport dict or None when insufficient data.
     """
+    if execution_mode is None:
+        execution_mode = resolve_selected_execution_mode()
+    if not execution_mode:
+        # Fail-closed: never persist an all-mode calibration under a
+        # current-mode identity.  #1939
+        return None
     try:
         from aletheia.storage.sqlite import get_db
         from aletheia.analytics.learning_window import clean_window_cutoff
@@ -46,7 +65,9 @@ def build_calibration_report(window_days: int = CALIBRATION_WINDOW_DAYS) -> dict
         )
 
         rows = []
-        for position in eligible_strategy_outcomes(closed_after=cutoff):
+        for position in eligible_strategy_outcomes(
+            closed_after=cutoff, execution_mode=execution_mode,
+        ):
             proposal_id = position.get("proposal_id")
             if not proposal_id:
                 continue
@@ -140,6 +161,7 @@ def build_calibration_report(window_days: int = CALIBRATION_WINDOW_DAYS) -> dict
             "overconfident_buckets": overconfident,
             "underconfident_buckets": underconfident,
             "calibration_summary": summary,
+            **execution_mode_identity(execution_mode),
             **outcome_window_metadata(),
         }
 
@@ -151,22 +173,37 @@ def build_calibration_report(window_days: int = CALIBRATION_WINDOW_DAYS) -> dict
         return None
 
 
-def get_latest_calibration_report() -> dict | None:
-    """Read most-recent calibration report from knowledge_items."""
+def get_latest_calibration_report(
+    *, execution_mode: str | None = None,
+) -> dict | None:
+    """Read most-recent calibration report for the selected execution mode.
+
+    A persisted report is only returned when its ``execution_mode`` matches
+    the resolved (or provided) selected mode (#1939).  Legacy mode-less
+    reports are ignored so a mode switch cannot reuse the previous cohort's
+    calibration under the new selected-mode identity.
+    """
+    if execution_mode is None:
+        execution_mode = resolve_selected_execution_mode()
+    if not execution_mode:
+        return None
     try:
         from aletheia.storage.repositories import list_knowledge_items
-        items = list_knowledge_items(item_type="calibration_report", limit=1)
+        items = list_knowledge_items(item_type="calibration_report", limit=5)
         for item in items:
             content = item.get("content")
-            if content:
-                try:
-                    report = json.loads(content)
-                    if is_current_outcome_artifact(
-                        report, max_age=MAX_ACTIVE_REPORT_AGE,
-                    ):
-                        return report
-                except (json.JSONDecodeError, TypeError):
-                    continue
+            if not content:
+                continue
+            try:
+                report = json.loads(content)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if report.get("execution_mode") != execution_mode:
+                continue
+            if is_current_outcome_artifact(
+                report, max_age=MAX_ACTIVE_REPORT_AGE,
+            ):
+                return report
         return None
     except Exception as e:
         logger.debug("get_latest_calibration_report failed: %s", e)

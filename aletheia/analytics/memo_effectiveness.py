@@ -24,6 +24,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from math import exp, log
 
+from aletheia.analytics.execution_mode import resolve_selected_execution_mode
 from aletheia.analytics.outcome_integrity import (
     eligible_strategy_outcomes,
     is_current_outcome_artifact,
@@ -61,7 +62,9 @@ def memo_half_life_weight(generated_at: str | None, *, now: datetime | None = No
     return round(exp(-log(2) * age_days / half_life_days), 4)
 
 
-def evaluate_prior_memo(*, for_rotation: bool = False) -> dict | None:
+def evaluate_prior_memo(
+    *, for_rotation: bool = False, execution_mode: str | None = None,
+) -> dict | None:
     """Score the most-recent persisted TradingMemo against subsequent outcomes.
 
     Returns a verdict dict ``{memo_id, accuracy_score, overturned_rules,
@@ -93,14 +96,21 @@ def evaluate_prior_memo(*, for_rotation: bool = False) -> dict | None:
         now_iso = datetime.now(timezone.utc).isoformat()
 
         # Trades the memo could have influenced: opened at/after it was formed.
-        # Only paper_internal trades; if a learning_manifest_json is available,
-        # verify the trade actually saw this memo (#1978).
+        # Scope the effectiveness join to the memo's own ``execution_mode`` so a
+        # memo formed under the selected cohort can never be overturned or
+        # confirmed by another cohort's outcomes (#1939).  Fallback to the
+        # currently-resolved selected mode when the caller passes nothing and
+        # the memo record itself has none (legacy artifact).
+        memo_execution_mode = (
+            execution_mode
+            or memo.get("execution_mode")
+            or resolve_selected_execution_mode()
+        )
+        if not memo_execution_mode:
+            return None
         rows = []
-        for row in eligible_strategy_outcomes():
+        for row in eligible_strategy_outcomes(execution_mode=memo_execution_mode):
             if str(row.get("opened_at") or "") < str(generated_at):
-                continue
-            # Only paper_internal trades where Learning was active
-            if row.get("execution_mode") and row.get("execution_mode") != "paper_internal":
                 continue
             # If a learning_manifest_json is available, verify memo exposure
             manifest_raw = row.get("learning_manifest_json") or row.get("decision_learning_manifest")

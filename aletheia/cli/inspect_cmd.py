@@ -818,11 +818,24 @@ def debate_impact(
 
 @inspect_app.command("scorecard")
 def scorecard(
+    execution_mode: str | None = typer.Option(
+        None, "--execution-mode", help="Override the selected execution_mode (#1939)",
+    ),
     json_output: bool = typer.Option(False, "--json"),
 ):
-    """Show trading performance by scanner family."""
+    """Show trading performance by scanner family, scoped to one execution_mode (#1939)."""
+    from aletheia.analytics.execution_mode import resolve_selected_execution_mode
     from aletheia.analytics.family_scorecard import compute_family_scorecard
-    rows = compute_family_scorecard()
+    mode = execution_mode or resolve_selected_execution_mode()
+    if not mode:
+        payload = [{
+            "status": "unavailable",
+            "unavailable_reason": "execution_mode_unresolved",
+        }]
+        _output(payload, json_output)
+        return
+    typer.echo(f"execution_mode: {mode}") if not json_output else None
+    rows = compute_family_scorecard(execution_mode=mode)
     _output(rows, json_output)
 
 
@@ -833,9 +846,16 @@ def scorecard(
 @inspect_app.command("status")
 def status(
     days: int = typer.Option(7, "--days", "-d", help="Lookback window for PnL/orders"),
+    execution_mode: str | None = typer.Option(
+        None, "--execution-mode", help="Override the selected execution_mode (#1939)",
+    ),
     json_output: bool = typer.Option(False, "--json"),
 ):
-    """One-shot system dashboard: portfolio, PnL, orders, universe, data quality."""
+    """One-shot system dashboard: portfolio, PnL, orders, universe, data quality.
+
+    Scoped to the resolved (or explicit) ``--execution-mode`` (#1939).
+    """
+    from aletheia.analytics.execution_mode import resolve_selected_execution_mode
     from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
     from aletheia.analytics.trade_stats import compute_order_stats, compute_rolling_trade_stats
     from aletheia.data.price_feed import cache_stats
@@ -846,9 +866,24 @@ def status(
         get_active_universe_snapshot,
     )
 
+    mode = execution_mode or resolve_selected_execution_mode()
+    if not mode:
+        payload = {
+            "status": "unavailable",
+            "unavailable_reason": "execution_mode_unresolved",
+        }
+        if json_output:
+            typer.echo(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        else:
+            typer.echo("execution_mode unavailable — refusing to print all-mode aggregate (#1939).")
+        return
+
     # Portfolio
     positions = mark_positions_to_market(persist=False)
-    open_pos = [p for p in positions if p.get("status") == "open"]
+    open_pos = [
+        p for p in positions
+        if p.get("status") == "open" and p.get("execution_mode") == mode
+    ]
 
     portfolio_section = {
         "open_positions": len(open_pos),
@@ -879,13 +914,18 @@ def status(
 
     # PnL
     today_start = datetime.now(timezone.utc).date().isoformat()
-    today_cohort = build_outcome_cohort_summary(closed_after=today_start)
+    today_cohort = build_outcome_cohort_summary(
+        closed_after=today_start, execution_mode=mode,
+    )
     today_pnl = today_cohort["eligible_realized_pnl"]
-    rolling = compute_rolling_trade_stats(days=days)
+    rolling = compute_rolling_trade_stats(days=days, execution_mode=mode)
     pnl_section = {
+        "execution_mode": mode,
+        "execution_mode_status": "resolved",
         "today_realized": round(today_pnl, 2) if today_pnl is not None else None,
         "cohort": build_outcome_cohort_summary(
-            closed_after=(datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+            closed_after=(datetime.now(timezone.utc) - timedelta(days=days)).isoformat(),
+            execution_mode=mode,
         ),
         "historical_accounting": historical_accounting_summary(),
         **{k: rolling[k] for k in (
@@ -978,9 +1018,18 @@ def status(
 @inspect_app.command("pnl")
 def pnl(
     days: int = typer.Option(7, "--days", "-d", help="Lookback window"),
+    execution_mode: str | None = typer.Option(
+        None, "--execution-mode", help="Override the selected execution_mode (#1939)",
+    ),
     json_output: bool = typer.Option(False, "--json"),
 ):
-    """Detailed PnL breakdown: today, rolling window, per-symbol, open positions."""
+    """Detailed PnL breakdown: today, rolling window, per-symbol, open positions.
+
+    Scoped to the resolved (or explicit) ``--execution-mode`` (#1939).  An
+    unresolvable configuration prints ``unavailable`` and exits without an
+    all-mode aggregate.
+    """
+    from aletheia.analytics.execution_mode import resolve_selected_execution_mode
     from aletheia.analytics.outcome_integrity import (
         build_outcome_cohort_summary,
         eligible_strategy_outcomes,
@@ -989,14 +1038,32 @@ def pnl(
     from aletheia.maintenance.historical_accounting import historical_accounting_summary
     from aletheia.portfolio.pnl import mark_positions_to_market
 
+    mode = execution_mode or resolve_selected_execution_mode()
+    if not mode:
+        payload = {
+            "status": "unavailable",
+            "unavailable_reason": "execution_mode_unresolved",
+            "execution_mode": None,
+            "execution_mode_status": "unavailable",
+        }
+        if json_output:
+            typer.echo(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+        else:
+            typer.echo("execution_mode unavailable — refusing to print all-mode aggregate (#1939).")
+        return
+
     # Today detail
     today_str = datetime.now(timezone.utc).date().isoformat()
-    closed = eligible_strategy_outcomes(closed_after=today_str, limit=200)
+    closed = eligible_strategy_outcomes(
+        closed_after=today_str, limit=200, execution_mode=mode,
+    )
     today_closed = [
         p for p in closed
         if (p.get("closed_at") or "")[:10] == today_str
     ]
-    today_cohort = build_outcome_cohort_summary(closed_after=today_str)
+    today_cohort = build_outcome_cohort_summary(
+        closed_after=today_str, execution_mode=mode,
+    )
     today_total = today_cohort["eligible_realized_pnl"]
     today_detail = [
         {
@@ -1008,7 +1075,7 @@ def pnl(
     ]
 
     # Rolling stats
-    rolling = compute_rolling_trade_stats(days=days)
+    rolling = compute_rolling_trade_stats(days=days, execution_mode=mode)
 
     # Open positions
     open_pos = mark_positions_to_market(persist=False)
@@ -1019,14 +1086,17 @@ def pnl(
             "unrealized_pnl": round(p.get("unrealized_pnl", 0), 4),
             "hold_hours": _hold_hours_since(p.get("opened_at")),
         }
-        for p in open_pos
+        for p in open_pos if p.get("execution_mode") == mode
     ]
 
     result = {
+        "execution_mode": mode,
+        "execution_mode_status": "resolved",
         "today": {"date": today_str, "realized": round(today_total, 2) if today_total is not None else None, "trades": today_detail},
         "rolling": rolling,
         "cohort": build_outcome_cohort_summary(
-            closed_after=(datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+            closed_after=(datetime.now(timezone.utc) - timedelta(days=days)).isoformat(),
+            execution_mode=mode,
         ),
         "historical_accounting": historical_accounting_summary(),
         "open_positions": positions_out,
@@ -1037,6 +1107,7 @@ def pnl(
         return
 
     # Human-readable
+    typer.echo(f"execution_mode: {mode}")
     typer.echo(f"=== Today ({today_str} UTC) ===")
     if today_total is None:
         typer.echo("  realized: unavailable (insufficient verified outcomes)")

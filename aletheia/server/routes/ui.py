@@ -221,7 +221,13 @@ def shell_bootstrap(response: Response):
 @router.get("/overview-bootstrap")
 def overview_bootstrap(response: Response):
     started = time.perf_counter()
-    portfolio = _safe("portfolio", lambda: __import__("aletheia.portfolio.pnl", fromlist=["compute_portfolio"]).compute_portfolio(execution_mode=None), {})
+    # #1939: never stamp Overview cards with a current-mode identity while
+    # pulling all-mode aggregates.  Resolve the selected mode once and thread
+    # it into compute_portfolio() so the realized/open cohort matches the
+    # `execution_mode` we then attach to the account payload.
+    from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+    _selected_mode = resolve_selected_execution_mode()
+    portfolio = _safe("portfolio", lambda: __import__("aletheia.portfolio.pnl", fromlist=["compute_portfolio"]).compute_portfolio(execution_mode=_selected_mode), {})
     summary = _safe("summary", _count_summary, {"pending_proposals": 0, "open_opportunities": 0, "runs_24h": 0})
     activity = _safe("activity", _compact_activity, [])
     cfg = _safe("config", lambda: load_config(persist_migrations=False), None)

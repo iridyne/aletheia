@@ -580,7 +580,7 @@ function ExitReasonBreakdown({ data }: { data: TradeInsights['by_exit_reason'] }
 function ConvictionCalibrationChart() {
   const { data, isLoading } = useQuery<CalibrationReport>({
     queryKey: ['confidence-calibration'],
-    queryFn: api.getConfidenceCalibration,
+    queryFn: () => api.getConfidenceCalibration(),
     staleTime: 300_000,
   })
 
@@ -692,7 +692,7 @@ function ConvictionCalibrationChart() {
 export default function TradeInsightsPanel() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['trade-insights'],
-    queryFn: api.getTradeInsights,
+    queryFn: () => api.getTradeInsights(),
     staleTime: 60_000,
   })
 

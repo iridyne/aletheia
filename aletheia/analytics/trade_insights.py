@@ -12,16 +12,22 @@ from datetime import datetime, timezone
 _SINCE_UTC = "2026-06-22"
 
 
-def build_trade_insights() -> dict:
+def build_trade_insights(*, execution_mode: str | None = None) -> dict:
+    """Insights payload scoped to a single ``execution_mode`` when provided (#1939)."""
+    from aletheia.analytics.execution_mode import execution_mode_identity
     from aletheia.analytics.outcome_integrity import (
         build_outcome_cohort_summary,
         eligible_strategy_outcomes,
         raw_account_events,
     )
 
-    rows = eligible_strategy_outcomes(closed_after=_SINCE_UTC)
-    raw_rows = raw_account_events(closed_after=_SINCE_UTC, limit=10_000)
-    
+    rows = eligible_strategy_outcomes(
+        closed_after=_SINCE_UTC, execution_mode=execution_mode,
+    )
+    raw_rows = raw_account_events(
+        closed_after=_SINCE_UTC, execution_mode=execution_mode, limit=10_000,
+    )
+
     # #1254: truncation metadata
     source_total = len(raw_rows)
     loaded_count = len(rows)
@@ -30,7 +36,10 @@ def build_trade_insights() -> dict:
     loaded_through = rows[-1]["closed_at"] if rows else None
 
     return {
-        **build_outcome_cohort_summary(closed_after=_SINCE_UTC),
+        **build_outcome_cohort_summary(
+            closed_after=_SINCE_UTC, execution_mode=execution_mode,
+        ),
+        **execution_mode_identity(execution_mode),
         "since":                  _SINCE_UTC,
         "trade_count":            loaded_count,
         "source_total_raw_events": source_total,
