@@ -91,7 +91,7 @@ def test_report_wires_temporal_section(monkeypatch):
 
     monkeypatch.setattr(
         "aletheia.analytics.outcome_integrity.eligible_strategy_outcomes",
-        lambda: fake,
+        lambda **_: fake,
     )
     rep = pr._collect()
     assert "temporal" in rep
