@@ -45,9 +45,9 @@ def test_memo_scoring_fades_with_age(monkeypatch):
 
     regime = MarketRegime(state="bull", confidence=0.8)
 
-    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda: _memo(0))
+    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda **_: _memo(0))
     fresh = ranker._memo_scoring("BTC/USDT", "long", regime)
-    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda: _memo(30))
+    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda **_: _memo(30))
     stale = ranker._memo_scoring("BTC/USDT", "long", regime)
 
     assert fresh > 5                    # fresh "strong" rule adds ~+12

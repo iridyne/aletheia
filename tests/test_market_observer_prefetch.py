@@ -510,7 +510,7 @@ async def test_prefetch_time_is_charged_to_same_serial_loop_deadline(tmp_path, m
     )
     monkeypatch.setattr(
         "aletheia.analytics.insight_synthesizer.get_latest_memo",
-        lambda: None,
+        lambda **_: None,
     )
     monkeypatch.setattr(
         "aletheia.learning.control.learning_influence_enabled",
@@ -815,7 +815,7 @@ async def test_loop_budget_exceeded_is_warning_not_error(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "aletheia.analytics.insight_synthesizer.get_latest_memo",
-        lambda: None,
+        lambda **_: None,
     )
     monkeypatch.setattr(
         "aletheia.learning.control.learning_influence_enabled",
@@ -903,7 +903,7 @@ async def test_prefetch_budget_exceeded_is_warning_not_error(tmp_path, monkeypat
     )
     monkeypatch.setattr(
         "aletheia.analytics.insight_synthesizer.get_latest_memo",
-        lambda: None,
+        lambda **_: None,
     )
     monkeypatch.setattr(
         "aletheia.learning.control.learning_influence_enabled",
@@ -1005,7 +1005,7 @@ async def test_llm_loop_runs_concurrently(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "_gather_prefetch_with_deadline", fake_gather)
     monkeypatch.setattr(mo, "_analyze_symbol", fake_analyze)
     monkeypatch.setattr("aletheia.knowledge.router.build_advisory_context", lambda **_: "")
-    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda: None)
+    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda **_: None)
     monkeypatch.setattr("aletheia.learning.control.learning_influence_enabled", lambda: False)
 
     t0 = time.monotonic()
@@ -1095,7 +1095,7 @@ async def test_llm_loop_concurrent_results_collected(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "_gather_prefetch_with_deadline", fake_gather)
     monkeypatch.setattr(mo, "_analyze_symbol", fake_analyze)
     monkeypatch.setattr("aletheia.knowledge.router.build_advisory_context", lambda **_: "")
-    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda: None)
+    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda **_: None)
     monkeypatch.setattr("aletheia.learning.control.learning_influence_enabled", lambda: False)
 
     result = await mo.run_market_observer(permission_mode="Observe", run_id="concurrent-results-test")
@@ -1191,7 +1191,7 @@ async def test_per_symbol_deadline_passed_to_llm_structured(tmp_path, monkeypatc
     monkeypatch.setattr(mo, "_gather_prefetch_with_deadline", fake_gather)
     monkeypatch.setattr(mo, "_analyze_symbol", fake_analyze)
     monkeypatch.setattr("aletheia.knowledge.router.build_advisory_context", lambda **_: "")
-    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda: None)
+    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda **_: None)
     monkeypatch.setattr("aletheia.learning.control.learning_influence_enabled", lambda: False)
 
     await mo.run_market_observer(permission_mode="Observe", run_id="deadline-test")
@@ -1285,7 +1285,7 @@ async def test_per_symbol_deadline_respects_remaining_budget(tmp_path, monkeypat
     monkeypatch.setattr(mo, "_gather_prefetch_with_deadline", fake_gather)
     monkeypatch.setattr(mo, "_analyze_symbol", fake_analyze)
     monkeypatch.setattr("aletheia.knowledge.router.build_advisory_context", lambda **_: "")
-    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda: None)
+    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda **_: None)
     monkeypatch.setattr("aletheia.learning.control.learning_influence_enabled", lambda: False)
 
     await mo.run_market_observer(permission_mode="Observe", run_id="tight-budget-test")
@@ -1399,7 +1399,7 @@ async def test_fair_budget_distributes_remaining_time_evenly(tmp_path, monkeypat
     monkeypatch.setattr(mo, "_gather_prefetch_with_deadline", fake_gather)
     monkeypatch.setattr(mo, "_analyze_symbol", fake_analyze)
     monkeypatch.setattr("aletheia.knowledge.router.build_advisory_context", lambda **_: "")
-    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda: None)
+    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda **_: None)
     monkeypatch.setattr("aletheia.learning.control.learning_influence_enabled", lambda: False)
 
     await mo.run_market_observer(permission_mode="Observe", run_id="fair-budget-test")
@@ -1496,7 +1496,7 @@ async def test_fair_budget_clamps_to_minimum_floor(tmp_path, monkeypatch):
     monkeypatch.setattr(mo, "_gather_prefetch_with_deadline", fake_gather)
     monkeypatch.setattr(mo, "_analyze_symbol", fake_analyze)
     monkeypatch.setattr("aletheia.knowledge.router.build_advisory_context", lambda **_: "")
-    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda: None)
+    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda **_: None)
     monkeypatch.setattr("aletheia.learning.control.learning_influence_enabled", lambda: False)
 
     await mo.run_market_observer(permission_mode="Observe", run_id="floor-budget-test")
@@ -1619,7 +1619,7 @@ async def test_pressure_skips_low_signal_symbols_when_budget_tight(tmp_path, mon
     monkeypatch.setattr(mo, "_gather_prefetch_with_deadline", fake_gather)
     monkeypatch.setattr(mo, "_analyze_symbol", fake_analyze)
     monkeypatch.setattr("aletheia.knowledge.router.build_advisory_context", lambda **_: "")
-    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda: None)
+    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda **_: None)
     monkeypatch.setattr("aletheia.learning.control.learning_influence_enabled", lambda: False)
 
     result = await mo.run_market_observer(permission_mode="Observe", run_id="pressure-skip-test")
@@ -1720,7 +1720,7 @@ async def test_pressure_does_not_skip_high_signal_symbols(tmp_path, monkeypatch)
     monkeypatch.setattr(mo, "_gather_prefetch_with_deadline", fake_gather)
     monkeypatch.setattr(mo, "_analyze_symbol", fake_analyze)
     monkeypatch.setattr("aletheia.knowledge.router.build_advisory_context", lambda **_: "")
-    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda: None)
+    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda **_: None)
     monkeypatch.setattr("aletheia.learning.control.learning_influence_enabled", lambda: False)
 
     result = await mo.run_market_observer(permission_mode="Observe", run_id="no-skip-high-signal")

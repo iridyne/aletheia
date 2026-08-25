@@ -167,7 +167,8 @@ class TestReasoningFeedbackRegimeTag:
                    return_value=outcomes), \
              patch("aletheia.analytics.learning_window.clean_window_cutoff",
                    return_value="2026-06-01T00:00:00Z"):
-            result = build_reasoning_feedback()
+            # #1939: build_reasoning_feedback requires an execution_mode.
+            result = build_reasoning_feedback(execution_mode="paper_internal")
 
         assert result is not None
         # The fix: rejected (3) and executed (7) proposals share the same regime="bull",

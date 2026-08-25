@@ -697,7 +697,7 @@ def test_insight_synthesizer_uses_owned_async_timeout_loop(monkeypatch):
     monkeypatch.setattr(scheduler, "_run_async_with_timeout", run_bounded)
     monkeypatch.setattr(scheduler, "_record_job_success", successes.append)
     monkeypatch.setattr(insight_synthesizer, "synthesize_trading_memo", synthesize)
-    monkeypatch.setattr(reasoning_feedback, "build_reasoning_feedback", lambda: None)
+    monkeypatch.setattr(reasoning_feedback, "build_reasoning_feedback", lambda **_: None)
 
     scheduler._run_insight_synthesizer()
 
@@ -732,7 +732,7 @@ def test_insight_synthesizer_preserves_timeout_failure_and_feedback(monkeypatch)
     monkeypatch.setattr(
         reasoning_feedback,
         "build_reasoning_feedback",
-        lambda: feedback_runs.append("ran"),
+        lambda **_: feedback_runs.append("ran"),
     )
 
     scheduler._run_insight_synthesizer()
