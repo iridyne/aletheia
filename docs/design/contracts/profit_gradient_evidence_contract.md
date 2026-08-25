@@ -1,6 +1,14 @@
 # Profit-gradient evidence compiler contract
 
-Status: implemented, read-only.  Contract: `profit_gradient_evidence/v1`.
+Status: implemented, read-only. Contract: `profit_gradient_evidence/v2`.
+
+## Authority boundary
+
+Profit Gradient provides data, attribution views, and profitability analysis only.
+It does not select, create, start, authorize, or activate an optimization
+experiment; it does not mutate trading, Risk, Execution, Holding, Exit, or
+Learning policy. The owner + ChatGPT decide the next optimization direction
+manually after inspecting the result.
 
 ## Producer
 
@@ -13,67 +21,93 @@ uv run aletheia inspect profit-gradient-evidence \
 ```
 
 `build_profit_gradient_evidence()` accepts only those three identity selectors.
-It does not accept layer samples.  It reads the registered
-`evidence_anchor:profit_loop_observability` epoch, fixed-horizon candidate facts,
-closed Position replays, and persisted cost-model identities.  It performs no
-writes, network calls, LLM calls, or trading actions.
+It reads the registered `evidence_anchor:profit_loop_observability` epoch,
+fixed-horizon candidate facts, closed Position replays, and persisted
+cost-model identities. It performs no writes, network calls, LLM calls, or
+trading actions. One SQLite read snapshot supplies totals, layer rows,
+metadata, and source hashes.
 
-The artifact always contains:
+The artifact contains:
 
 ```json
 {
-  "contract_version": "profit_gradient_evidence/v1",
+  "contract_version": "profit_gradient_evidence/v2",
   "registration": {},
   "evidence_context": {},
   "layer_samples": {},
   "exclusion_waterfall": {},
+  "source_status": {},
   "source_hashes": {},
+  "reconciliation": {},
+  "exploratory_evidence": {},
   "content_hash": "..."
 }
 ```
 
-The compiler bounds facts to the registered epoch and cutoff, requires exact
-exposure identity and producer provenance, requires an explicit one-treatment /
-one-control assignment-unit pair, emits one pair-level contrast (with separate arm
-counts), rejects duplicate units, and records the first exclusion reason.
-Missing evidence stays unavailable; it is never converted to zero. `content_hash` is an integrity check for the frozen artifact. Before
-`profit-gradient` adjudicates, the CLI rebuilds the source-bound artifact from
-its exact inputs and requires the rebuilt hash to match; static metadata alone
-cannot authorize hand-authored samples.
+`content_hash` covers the complete source-bound artifact. Before
+`profit-gradient` adjudicates it, the CLI rebuilds the exact inputs and requires
+the rebuilt hash to match; static metadata or hand-authored samples cannot
+authorize analysis.
 
-The compiler's paired contrasts declare `evidence_context.comparison_method` as
-`paired_same_unit`. The same context carries the singular `horizons`,
-`outcome_contract_versions`, `metric_versions`, `statistical_unit_versions`, and
-`stages` arrays consumed by the v3 selector. A missing or mixed outcome-contract
-or stage identity remains ineligible; the compiler never labels a precomputed
-pair contrast as a prospective randomized arm observation.
+## Cutoff and producer identity
 
-Candidate outcomes use one fixed `24h` net-return contract, a persisted
-`settled_at <= cutoff`, and the exact supplied cost-model version. Compressed
-candidate batches are unavailable when their declared count differs from the
-decoded rows, and deterministic exclusion records are part of the source hash.
-Position samples additionally require the replay's explicit cost-model identity
-`paper-execution-reference/v1`, exact order/fill/Position reconciliation,
-accounting agreement, and assignment before entry; they also require runtime
-commit/fingerprint provenance.
-Position economics use the verified accounting
-identity `net = gross - entry_fee - exit_fee - funding`; candidate costs are not
-deducted again from Position economics.
+All candidate, Position, economics, and OHLCV evidence is bounded by the exact
+UTC cutoff. Missing or malformed availability facts remain unavailable.
 
-The current durable contracts provide no confirmatory seven-layer path mapping;
-all layers remain unavailable until their own registered layer contracts and
-paired sources exist. They also do not provide a market-data epoch for this path.
-Those gates therefore remain unavailable until the source contract is extended. The fixed
-profit-loop counterfactual registry is emitted only under `exploratory_evidence`,
-marked `promotion_eligible: false`, and is excluded from `layer_samples`. This
-prevents exploratory evidence from becoming confirmatory evidence by operator
-recombination.
+- Candidate outcomes use one fixed `24h` net-return contract and the explicit
+  ex-ante `analysis_notional_quote` basis. Proposal/Position sizing is never a
+  fallback for filtered or skipped candidates; legacy outcomes without this
+  basis remain unavailable.
+- Candidate outcomes must carry recorded producer and settlement Runtime
+  Session, commit, and behavior-fingerprint identities matching the registered
+  behavior. Missing or cross-runtime identity remains unavailable.
+- Position economics are admitted only when the durable economics materialization
+  audit event and current fingerprint prove that the values were available by the
+  cutoff. A later funding/economics settlement or correction cannot rewrite an
+  older replay.
+- OHLCV rows used by an explicit historical replay require
+  `first_persisted_at` and `last_mutated_at` at or before the cutoff. A later
+  backfill or correction is unavailable because prior row versions are not
+  reconstructed.
+
+## Layer samples
+
+The selector consumes only compiler-produced samples. It requires exact units,
+identity-complete assignment pairs, valid ownership and stage windows, positive
+notional, finite cost-aware deltas, and executable reconciliation. Each paired
+contrast preserves both treatment and control source identities, evidence refs,
+baselines, and component metadata. Execution component loss must reconcile to
+the paired delta; avoidable Costs require a realizable baseline and cost-model
+identity.
+
+The seven layers remain:
+
+- Selection
+- Decision
+- Risk
+- Execution
+- Holding
+- Exit
+- Costs
+
+No confirmatory layer-path mapping is currently registered. Empty mappings are
+valid; the compiler does not invent Holding/Exit experiments or populate
+`_LAYER_PATH_IDS` speculatively. The fixed profit-loop counterfactual registry
+is emitted only under `exploratory_evidence` with `promotion_eligible: false` and
+is excluded from `layer_samples`.
+
+The evidence context declares the selector contract `profit_gradient/v3`,
+comparison method, singular horizons/outcome/metric/statistical-unit/stage
+identities, coverage, runtime/data identities, and reconciliation contract.
+Unavailable coverage is not converted to zero.
 
 ## Consumer
 
-`uv run aletheia inspect profit-gradient --evidence <FILE>` accepts only the
-outer compiler artifact `profit_gradient_evidence/v1`. It verifies the source
-bound `content_hash` before passing the frozen `layer_samples` and
-`evidence_context` to the selector, whose report contract is
-`profit_gradient/v3`. The selector's `automatic_behavior_change_authorized`
-result remains permanently `false`.
+`uv run aletheia inspect profit-gradient --evidence <FILE>` accepts the current
+outer compiler artifact `profit_gradient_evidence/v2`. It verifies the source
+bound `content_hash` before passing frozen `layer_samples` and
+`evidence_context` to the `profit_gradient/v3` selector. The selector's
+`automatic_behavior_change_authorized` result is permanently `false`.
+
+Historical v1 artifacts remain verifiable for archival integrity but are not
+accepted by the current Profit Gradient CLI and are not mixed with v2 evidence.

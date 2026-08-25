@@ -112,9 +112,32 @@ def _batch_facts(
                     }
                 )
                 continue
-        for sequence, raw in enumerate(raw_facts):
+        batch_invalid_reason: str | None = None
+        for raw in raw_facts:
             if not isinstance(raw, dict):
-                continue
+                batch_invalid_reason = "malformed_candidate_fact_row"
+                break
+            raw_evaluated_at = raw.get("evaluated_at")
+            if raw_evaluated_at not in (None, ""):
+                parsed_at = _utc(raw_evaluated_at)
+                if parsed_at is None:
+                    batch_invalid_reason = "malformed_candidate_fact_timestamp"
+                    break
+                if parsed_at > cutoff:
+                    batch_invalid_reason = "candidate_fact_after_cutoff"
+                    break
+        if batch_invalid_reason is not None:
+            exclusions.append(
+                {
+                    "source_table": "filter_decision_batches",
+                    "source_batch_id": batch.get("id"),
+                    "event_at": batch.get("evaluated_at"),
+                    "availability": "unavailable",
+                    "unavailable_reason": batch_invalid_reason,
+                }
+            )
+            continue
+        for sequence, raw in enumerate(raw_facts):
             fact = {
                 **raw,
                 "id": raw.get("id") or f"{batch['id']}:{sequence}",
@@ -478,7 +501,11 @@ def _build_candidate_facts_inner(
             risks = [row for row in risks if _visible(row, cutoff)]
             risk = risks[0] if len(risks) == 1 else None
         position = _one(source, "positions", (order or {}).get("position_id"))
-        if position is not None and not _visible(position, cutoff):
+        # A Position is a lifecycle transition, not an immutable row-existence
+        # fact. Missing/invalid opened_at cannot prove historical visibility.
+        if position is not None and (
+            not position.get("opened_at") or not _visible(position, cutoff)
+        ):
             position = None
         outcome = outcome_by_key.get(fact_id)
         terminal = _terminal(ordered, opportunity, decision, proposal, risk, order, position)

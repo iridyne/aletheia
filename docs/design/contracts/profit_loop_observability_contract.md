@@ -5,7 +5,12 @@
 Aletheia exposes read-only, versioned evidence for replaying one Position,
 rendering its deterministic lifecycle story, reconstructing the complete candidate
 denominator, evaluating a fixed exploratory counterfactual registry, and applying
-seven-layer unique-winner gates.
+seven-layer profitability-analysis gates.
+
+Profit Gradient is an analysis capability, not an optimization authority. It
+provides data, attribution views, and uncertainty; it does not automatically
+select, create, start, authorize, or activate an experiment or change trading
+policy. The owner + ChatGPT decide the next optimization direction manually.
 
 The current Position counterfactual is deliberately an early-path experiment. Its
 formal output always declares `counterfactual_scope = first_60_minutes` and
@@ -95,7 +100,9 @@ behavior owner imports these analytics modules.
 `candidate_fact` and `position_fact` are separate statistical populations:
 
 - Selection, Decision, and Risk use `outcome_candidate_key` and a fixed-horizon
-  net outcome;
+  net outcome. Candidate quote conversions use the frozen ex-ante analysis basis,
+  not downstream Proposal/Position capital, and are not claims about realized
+  account cash;
 - Execution, Holding, Exit, and Costs use exact `position_id` and verified
   settled net economics.
 
@@ -123,12 +130,12 @@ concentration, exclusions, and gate reasons. Its verdict is either
 ### Profit-gradient v3 comparison method
 
 The CLI accepts an outer compiler artifact with contract
-`profit_gradient_evidence/v1`; after source-bound verification, the selector
+`profit_gradient_evidence/v2`; after source-bound verification, the selector
 emits a `profit_gradient/v3` report with one `evidence_context.comparison_method`:
 
 ```json
 {
-  "contract_version": "profit_gradient_evidence/v1",
+  "contract_version": "profit_gradient_evidence/v2",
   "evidence_context": {
     "comparison_method":
     "prospective_randomized|paired_same_unit|deterministic_decomposition|directional_observational"
@@ -137,7 +144,8 @@ emits a `profit_gradient/v3` report with one `evidence_context.comparison_method
 ```
 
 The CLI rejects a missing or older compiler wrapper before evaluating samples;
-`profit_gradient/v3` identifies the selector result, not the input file.
+`profit_gradient/v3` identifies the selector result, not the input file. Historical
+v1 artifacts remain archival-only and are not pooled with v2 evidence.
 
 Version 3 also records the randomized estimand and cohort identity. Version 2 and
 older results are historical and are not pooled with version 3.

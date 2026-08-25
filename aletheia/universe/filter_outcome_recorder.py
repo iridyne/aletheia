@@ -26,6 +26,7 @@ _NETWORK_WAVE_ROWS = 32
 _SETTLED = "settled"
 _FAILED = "failed"
 _DEFERRED = "deferred"
+_ALREADY_TERMINAL = "already_terminal"
 
 
 async def settle_due_filter_outcomes(
@@ -242,7 +243,7 @@ async def settle_due_filter_outcomes(
             range_low=observation.get("range_low"),
             price_quality_ok=bool(observation.get("price_quality_ok")),
         )
-        repo.settle_filter_candidate_outcome(
+        won = repo.settle_filter_candidate_outcome(
             row["id"],
             exit_price=exit_price,
             settled_at=now_iso,
@@ -250,6 +251,10 @@ async def settle_due_filter_outcomes(
             settlement_price_source=observation.get("price_source"),
             settlement_lag_sec=observation.get("settlement_lag_sec"),
         )
+        if won is False:
+            return _ALREADY_TERMINAL
+        # The repository projects the linked 24h shadow in the same transaction;
+        # keep this idempotent call for legacy/custom repository implementations.
         if row.get("horizon") == "24h":
             repo.settle_linked_shadow_outcomes(row["outcome_candidate_key"])
         return _SETTLED

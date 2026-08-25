@@ -143,6 +143,53 @@ def test_cost_model_source_ignores_pre_floor_history_when_clean_source_exists():
     assert resolved["source_count"] == 1
 
 
+def test_candidate_provenance_requires_exposure_and_settlement_identity():
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    db.execute(
+        "CREATE TABLE runtime_sessions ("
+        "session_id TEXT PRIMARY KEY, boot_commit TEXT, behavior_fingerprint TEXT)"
+    )
+    registration = {"deploy_commit": "commit-a", "behavior_fingerprint": "behavior-a"}
+    outcome = {
+        "producer_runtime_session_id": "session-a",
+        "producer_commit": "commit-a",
+        "producer_behavior_fingerprint": "behavior-a",
+    }
+
+    assert evidence._candidate_provenance_reason(db, outcome, registration) == (
+        "runtime_session_not_recorded"
+    )
+    db.execute("INSERT INTO runtime_sessions VALUES (?,?,?)", ("session-a", "commit-a", "behavior-a"))
+    assert evidence._candidate_provenance_reason(db, outcome, registration) == (
+        "candidate_settlement_provenance_missing"
+    )
+    outcome.update({
+        "settlement_runtime_session_id": "session-b",
+        "settlement_producer_commit": "commit-a",
+        "settlement_behavior_fingerprint": "behavior-a",
+    })
+    assert evidence._candidate_provenance_reason(db, outcome, registration) == (
+        "runtime_session_not_recorded"
+    )
+    db.execute(
+        "INSERT INTO runtime_sessions VALUES (?,?,?)",
+        ("session-b", "commit-b", "behavior-b"),
+    )
+    assert evidence._candidate_provenance_reason(db, outcome, registration) == (
+        "candidate_producer_identity_mismatch"
+    )
+    outcome.update({
+        "settlement_producer_commit": "commit-a",
+        "settlement_behavior_fingerprint": "behavior-a",
+    })
+    db.execute(
+        "UPDATE runtime_sessions SET boot_commit=?, behavior_fingerprint=? WHERE session_id=?",
+        ("commit-a", "behavior-a", "session-b"),
+    )
+    assert evidence._candidate_provenance_reason(db, outcome, registration) is None
+
+
 def test_position_replay_cost_model_identity_is_explicit_and_resolvable():
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
@@ -625,6 +672,81 @@ def test_pairing_builds_cost_delta_from_both_arms_and_preserves_execution_metada
     assert execution_pair[0]["cost_applied_once"] is False
 
 
+def test_paired_execution_evidence_preserves_both_arms_and_reconciles_delta():
+    from aletheia.analytics import profit_gradient as gradient
+
+    common = {
+        "fact_unit": "position_fact",
+        "economic_unit": "verified_settled_net_economics",
+        "pair_id": "pair-execution",
+        "component": "execution_fill",
+        "outcome_contract_version": "v1",
+        "stage": "paper_10",
+        "notional_quote": 1000.0,
+        "stage_window": {
+            "start_at": "2026-08-13T00:00:00+00:00",
+            "end_at": "2026-08-13T00:01:00+00:00",
+        },
+        "ownership": {
+            "stage": "execution",
+            "decision": "exit_authorized",
+            "loss_component": "fill_or_execution",
+        },
+    }
+    treatment = {
+        **common,
+        "unit_id": "position-treatment",
+        "arm": "treatment",
+        "cluster_id": "pair-execution",
+        "occurred_at": "2026-08-13T00:02:00+00:00",
+        "position_id": "position-treatment",
+        "arm_net_delta_bp": 50.0,
+        "arm_net_delta_quote": 5.0,
+        "execution_evidence": {
+            "fees_excluded": True,
+            "funding_excluded": True,
+            "baseline_id": "baseline-treatment",
+            "incremental_fill_loss_quote": 5.0,
+        },
+        "evidence_refs": ["position_fact:treatment"],
+    }
+    control = {
+        **common,
+        "unit_id": "position-control",
+        "arm": "control",
+        "cluster_id": "pair-execution",
+        "occurred_at": "2026-08-13T00:02:00+00:00",
+        "position_id": "position-control",
+        "arm_net_delta_bp": 20.0,
+        "arm_net_delta_quote": 2.0,
+        "execution_evidence": {
+            "fees_excluded": True,
+            "funding_excluded": True,
+            "baseline_id": "baseline-control",
+            "incremental_fill_loss_quote": 2.0,
+        },
+        "evidence_refs": ["position_fact:control"],
+    }
+
+    paired, excluded = evidence._pair_confirmatory_samples([treatment, control])
+
+    assert excluded == []
+    assert paired[0]["arm_evidence"]["control"]["position_id"] == "position-control"
+    assert paired[0]["evidence_refs"] == ["position_fact:control", "position_fact:treatment"]
+    assert paired[0]["execution_evidence"]["incremental_fill_loss_quote"] == 3.0
+    normalized, exclusions, _ = gradient._normalized_samples("Execution", paired)
+    assert len(normalized) == 1
+    assert exclusions == []
+
+    tampered = dict(paired[0])
+    tampered["execution_evidence"] = {
+        **tampered["execution_evidence"],
+        "incremental_fill_loss_quote": 5.0,
+    }
+    _, exclusions, _ = gradient._normalized_samples("Execution", [tampered])
+    assert "execution_component_delta_mismatch" in exclusions
+
+
 def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_horizon_net_once():
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
@@ -668,6 +790,7 @@ def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_ho
             "net_return_pct": -1.0,
             "min_tradable_edge_pct": 0.05,
             "cost_model_version": "v1",
+            "analysis_notional_quote": 1.0,
         },
     }
 
@@ -683,8 +806,27 @@ def test_candidate_policy_value_requires_registered_assignment_and_uses_fixed_ho
 
     assert reason is None
     assert sample["paired_net_delta_bp"] == -100.0
-    assert sample["paired_net_delta_quote"] == -2.0
+    assert sample["paired_net_delta_quote"] == pytest.approx(-0.01)
     assert sample["cost_applied_once"] is True
+
+    legacy_fact = fact | {
+        "fixed_horizon_outcome": {
+            key: value
+            for key, value in fact["fixed_horizon_outcome"].items()
+            if key != "analysis_notional_quote"
+        }
+    }
+    legacy_sample, legacy_reason = evidence._candidate_sample(
+        db,
+        legacy_fact,
+        layer="Risk",
+        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cost_model_id="v1",
+        epoch_id="epoch-1",
+    )
+    assert legacy_sample is None
+    assert legacy_reason == "candidate_analysis_notional_unavailable"
 
     naive_settlement_fact = fact | {
         "fixed_horizon_outcome": fact["fixed_horizon_outcome"] | {

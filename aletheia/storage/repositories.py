@@ -301,12 +301,21 @@ def _select_one(table: str, id_val: str) -> dict | None:
     return dict(row) if row else None
 
 
-def _update(table: str, id_val: str, data: dict) -> None:
+def _update(table: str, id_val: str, data: dict):
     sets = ", ".join(f"{k} = ?" for k in data.keys())
-    execute_write(
+    return execute_write(
         f"UPDATE {table} SET {sets} WHERE id = ?",
         [*data.values(), id_val],
     )
+
+
+def _update_pending(table: str, id_val: str, data: dict) -> bool:
+    sets = ", ".join(f"{k} = ?" for k in data.keys())
+    result = execute_write(
+        f"UPDATE {table} SET {sets} WHERE id = ? AND status = 'pending'",
+        [*data.values(), id_val],
+    )
+    return bool(result.rowcount == 1)
 
 
 @contextmanager
@@ -6676,10 +6685,16 @@ def upsert_ohlcv_candles(
     effective_window = max(1, int(window if window is not None else _ohlcv_window()))
     db = get_db()
     was_in_tx = db.in_transaction
+    mutated_at = datetime.now(timezone.utc).isoformat()
     execute_many_write(
-        "INSERT OR REPLACE INTO market_ohlcv "
-        "(exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume, provider) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO market_ohlcv "
+        "(exchange, symbol, market_type, timeframe, ts, open, high, low, close, volume, provider, "
+        "first_persisted_at, last_mutated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(exchange, symbol, market_type, timeframe, ts) DO UPDATE SET "
+        "open=excluded.open, high=excluded.high, low=excluded.low, close=excluded.close, "
+        "volume=excluded.volume, provider=excluded.provider, "
+        "last_mutated_at=excluded.last_mutated_at",
         [
             (
                 effective_exchange,
@@ -6693,6 +6708,8 @@ def upsert_ohlcv_candles(
                 c.close,
                 c.volume,
                 provider,
+                mutated_at,
+                mutated_at,
             )
             for c in candles
         ],
@@ -6885,6 +6902,7 @@ def get_ohlcv_candles(
     before_ts: int | None = None,
     *,
     db: sqlite3.Connection | None = None,
+    include_provenance: bool = False,
 ) -> list[dict]:
     """Return up to `limit` most-recent OHLCV bars, oldest-first.
 
@@ -6900,9 +6918,18 @@ def get_ohlcv_candles(
     params: tuple = (scoped_exchange, symbol, scoped_market_type, timeframe)
     if before_ts is not None:
         params = (*params, int(before_ts))
+    columns = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(market_ohlcv)").fetchall()
+    }
+    provenance_sql = ""
+    if include_provenance:
+        first_seen_sql = "first_persisted_at" if "first_persisted_at" in columns else "NULL"
+        last_mutated_sql = "last_mutated_at" if "last_mutated_at" in columns else "NULL"
+        provenance_sql = f", {first_seen_sql} AS first_persisted_at, {last_mutated_sql} AS last_mutated_at"
     rows = db.execute(
-        "SELECT ts, open, high, low, close, volume, provider, exchange, market_type "
-        "FROM market_ohlcv WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=? "
+        "SELECT ts, open, high, low, close, volume, provider, exchange, market_type"
+        + provenance_sql
+        + " FROM market_ohlcv WHERE exchange=? AND symbol=? AND market_type=? AND timeframe=? "
         + before_clause
         + " ORDER BY ts DESC LIMIT ?",
         (*params, limit),
@@ -7975,6 +8002,19 @@ def _filter_outcome_insert_payload(outcome) -> dict:
         if not isinstance(venue, str) or not venue.strip():
             raise ValueError("pending filter outcome requires a nonblank venue")
         data["venue"] = venue.strip()
+    try:
+        from aletheia.agent_runtime.runtime_session import current_provenance
+
+        provenance = current_provenance()
+    except Exception:
+        provenance = {}
+    for field, source_field in (
+        ("producer_runtime_session_id", "runtime_session_id"),
+        ("producer_commit", "producer_commit"),
+        ("producer_behavior_fingerprint", "behavior_fingerprint"),
+    ):
+        if data.get(field) is None:
+            data[field] = provenance.get(source_field)
     return data
 
 
@@ -7984,28 +8024,47 @@ def _settle_outcome_with_exact_venue(
     updates: dict,
     *,
     kind: str,
-) -> None:
+) -> bool:
     with transaction(immediate=True):
         row = _select_one(table, outcome_id)
-        if row is not None:
-            venue = row.get("venue")
-            if not isinstance(venue, str) or not venue.strip():
-                raise ValueError(f"{kind} outcome requires a nonblank venue")
-            candidate = {**row, **updates}
-            if candidate.get("net_return_pct") is not None:
-                from aletheia.analytics.outcome_semantics import (
-                    valid_settlement_price_provenance,
-                )
+        if row is None or str(row.get("status") or "").lower() != "pending":
+            return False
+        venue = row.get("venue")
+        if not isinstance(venue, str) or not venue.strip():
+            raise ValueError(f"{kind} outcome requires a nonblank venue")
+        candidate = {**row, **updates}
+        if candidate.get("net_return_pct") is not None:
+            from aletheia.analytics.outcome_semantics import (
+                valid_settlement_price_provenance,
+            )
 
-                if (
-                    "settlement_price_source" not in updates
-                    or "settlement_lag_sec" not in updates
-                    or not valid_settlement_price_provenance(candidate)
-                ):
-                    raise ValueError(
-                        f"{kind} outcome requires decision-grade price provenance"
-                    )
-        _update(table, outcome_id, updates)
+            if (
+                "settlement_price_source" not in updates
+                or "settlement_lag_sec" not in updates
+                or not valid_settlement_price_provenance(candidate)
+            ):
+                raise ValueError(
+                    f"{kind} outcome requires decision-grade price provenance"
+                )
+        if table == "filter_candidate_outcomes":
+            try:
+                from aletheia.agent_runtime.runtime_session import current_provenance
+
+                provenance = current_provenance()
+            except Exception:
+                provenance = {}
+            updates = {
+                **updates,
+                "settlement_runtime_session_id": provenance.get("runtime_session_id"),
+                "settlement_producer_commit": provenance.get("producer_commit"),
+                "settlement_behavior_fingerprint": provenance.get("behavior_fingerprint"),
+            }
+        won = _update_pending(table, outcome_id, updates)
+        if won and table == "filter_candidate_outcomes" and row.get("horizon") == "24h":
+            # The canonical outcome and its decision-grade shadow projection share
+            # this existing transaction; a stale worker cannot split the pair.
+            settle_linked_shadow_outcomes(str(row.get("outcome_candidate_key") or ""))
+        return won
 
 
 def insert_forward_outcome(outcome) -> None:
@@ -8057,7 +8116,7 @@ def settle_forward_outcome(
     economics: dict | None = None,
     settlement_price_source: str | None = None,
     settlement_lag_sec: float | None = None,
-) -> None:
+) -> bool:
     updates = {
         "exit_price_usd": exit_price,
         "forward_return_pct": forward_return,
@@ -8070,7 +8129,7 @@ def settle_forward_outcome(
         updates["settlement_price_source"] = settlement_price_source
     if settlement_lag_sec is not None:
         updates["settlement_lag_sec"] = settlement_lag_sec
-    _settle_outcome_with_exact_venue(
+    return _settle_outcome_with_exact_venue(
         "universe_forward_outcomes",
         outcome_id,
         updates,
@@ -8084,7 +8143,7 @@ def fail_forward_outcome(
     *,
     exit_price: float | None = None,
     settlement_price_source: str | None = None,
-) -> None:
+) -> bool:
     """Record a terminal "not measurable" verdict for one forward row.
 
     Pass ``exit_price``/``settlement_price_source`` whenever the venue DID answer
@@ -8107,7 +8166,8 @@ def fail_forward_outcome(
         updates["exit_price_usd"] = exit_price
     if settlement_price_source is not None:
         updates["settlement_price_source"] = settlement_price_source
-    _update("universe_forward_outcomes", outcome_id, updates)
+    with transaction(immediate=True):
+        return _update_pending("universe_forward_outcomes", outcome_id, updates)
 
 
 def cancel_all_pending_forward_outcomes() -> int:
@@ -8408,7 +8468,7 @@ def settle_filter_candidate_outcome(
     economics: dict,
     settlement_price_source: str | None,
     settlement_lag_sec: float | None,
-) -> None:
+) -> bool:
     updates = {
         "exit_price_usd": exit_price,
         "settled_at": settled_at,
@@ -8419,7 +8479,7 @@ def settle_filter_candidate_outcome(
         updates["settlement_price_source"] = settlement_price_source
     if settlement_lag_sec is not None:
         updates["settlement_lag_sec"] = settlement_lag_sec
-    _settle_outcome_with_exact_venue(
+    return _settle_outcome_with_exact_venue(
         "filter_candidate_outcomes",
         outcome_id,
         updates,
@@ -8433,7 +8493,7 @@ def fail_filter_candidate_outcome(
     *,
     exit_price: float | None = None,
     settlement_price_source: str | None = None,
-) -> None:
+) -> bool:
     """Record a terminal "not measurable" verdict for one canonical row.
 
     See :func:`fail_forward_outcome` for why a rejected observation is recorded
@@ -8448,7 +8508,19 @@ def fail_filter_candidate_outcome(
         updates["exit_price_usd"] = exit_price
     if settlement_price_source is not None:
         updates["settlement_price_source"] = settlement_price_source
-    _update("filter_candidate_outcomes", outcome_id, updates)
+    try:
+        from aletheia.agent_runtime.runtime_session import current_provenance
+
+        provenance = current_provenance()
+    except Exception:
+        provenance = {}
+    updates.update({
+        "settlement_runtime_session_id": provenance.get("runtime_session_id"),
+        "settlement_producer_commit": provenance.get("producer_commit"),
+        "settlement_behavior_fingerprint": provenance.get("behavior_fingerprint"),
+    })
+    with transaction(immediate=True):
+        return _update_pending("filter_candidate_outcomes", outcome_id, updates)
 
 
 def settle_linked_shadow_outcomes(
@@ -9250,19 +9322,20 @@ def settle_perp_structure_shadow_outcome(
     settled_at: str,
     price_source: str | None,
     settlement_lag_sec: float | None,
-) -> None:
-    _update(
-        "perp_structure_shadow_outcomes",
-        outcome_id,
-        {
-            "exit_price_usd": exit_price,
-            "directional_return_pct": directional_return_pct,
-            "settled_at": settled_at,
-            "settlement_price_source": price_source,
-            "settlement_lag_sec": settlement_lag_sec,
-            "status": "settled",
-        },
-    )
+) -> bool:
+    with transaction(immediate=True):
+        return _update_pending(
+            "perp_structure_shadow_outcomes",
+            outcome_id,
+            {
+                "exit_price_usd": exit_price,
+                "directional_return_pct": directional_return_pct,
+                "settled_at": settled_at,
+                "settlement_price_source": price_source,
+                "settlement_lag_sec": settlement_lag_sec,
+                "status": "settled",
+            },
+        )
 
 
 def fail_perp_structure_shadow_outcome(
@@ -9271,7 +9344,7 @@ def fail_perp_structure_shadow_outcome(
     *,
     exit_price: float | None = None,
     settlement_price_source: str | None = None,
-) -> None:
+) -> bool:
     """Record a terminal "not measurable" verdict for one Position X shadow row.
 
     See :func:`fail_forward_outcome` for why a rejected observation is recorded
@@ -9285,7 +9358,8 @@ def fail_perp_structure_shadow_outcome(
         updates["exit_price_usd"] = exit_price
     if settlement_price_source is not None:
         updates["settlement_price_source"] = settlement_price_source
-    _update("perp_structure_shadow_outcomes", outcome_id, updates)
+    with transaction(immediate=True):
+        return _update_pending("perp_structure_shadow_outcomes", outcome_id, updates)
 
 
 def latest_perp_structure(symbol: str, source: str | None = None) -> dict | None:

@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 40)
+        f"aletheia-sqlite-v{version}" for version in range(2, 41)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v39"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v40"
     connection.close()
 
 
@@ -686,6 +686,11 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE positions (id TEXT PRIMARY KEY);
         CREATE TABLE filter_shadow_experiments (id TEXT PRIMARY KEY);
         CREATE TABLE trade_proposals (id TEXT PRIMARY KEY);
+        CREATE TABLE filter_candidate_outcomes (id TEXT PRIMARY KEY);
+        CREATE TABLE market_ohlcv (
+            exchange TEXT, symbol TEXT, market_type TEXT, timeframe TEXT, ts INTEGER,
+            PRIMARY KEY(exchange, symbol, market_type, timeframe, ts)
+        );
         INSERT INTO learning_experiments (experiment_id) VALUES ('legacy-experiment');
         INSERT INTO learning_contribution_verdicts
         VALUES ('legacy-positive', 'legacy-experiment');
@@ -731,8 +736,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260824_0038_agent_artifact_reference_v39",
-        "aletheia-sqlite-v39",
+        "20260824_0039_profit_gradient_data_boundaries_v40",
+        "aletheia-sqlite-v40",
     )
     order_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(orders)")
@@ -747,6 +752,40 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         "FROM learning_contribution_verdicts WHERE verdict_id='legacy-positive'"
     ).fetchone()
     assert tuple(legacy) == ("monitoring", 0)
+    connection.close()
+
+
+def test_profit_gradient_data_boundary_migration_is_additive_and_idempotent():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        """
+        CREATE TABLE filter_candidate_outcomes (id TEXT PRIMARY KEY);
+        CREATE TABLE market_ohlcv (
+            exchange TEXT, symbol TEXT, market_type TEXT, timeframe TEXT, ts INTEGER,
+            PRIMARY KEY(exchange, symbol, market_type, timeframe, ts)
+        );
+        """
+    )
+
+    migrations._apply_profit_gradient_data_boundaries_v40(connection)
+    migrations._apply_profit_gradient_data_boundaries_v40(connection)
+
+    candidate_columns = {
+        row[1] for row in connection.execute(
+            "PRAGMA table_info(filter_candidate_outcomes)"
+        )
+    }
+    assert {
+        "analysis_notional_quote",
+        "producer_runtime_session_id",
+        "settlement_behavior_fingerprint",
+    } <= candidate_columns
+    ohlcv_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(market_ohlcv)")
+    }
+    assert {"first_persisted_at", "last_mutated_at"} <= ohlcv_columns
     connection.close()
 
 

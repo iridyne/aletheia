@@ -30,6 +30,9 @@ _HORIZONS = {
     "24h": timedelta(hours=24),
 }
 _VALID_DIRECTIONS = {"long", "short"}
+# Candidate returns are pre-capital observations. Use one frozen analysis unit
+# rather than borrowing downstream Proposal sizing.
+CANDIDATE_ANALYSIS_NOTIONAL_QUOTE = 1.0
 _VALID_DECISIONS = {"passed", "passed_with_penalty", "rejected", "not_applicable", "error"}
 _DROP_SNAPSHOT_VALUE = object()
 HEAVY_BATCH_MIN_INTERVAL_SEC = 55 * 60
@@ -1235,6 +1238,7 @@ def build_candidate_outcomes(
             regime_tag=regime_tag,
             horizon=horizon,
             allocation_selected=allocation_selected,
+            analysis_notional_quote=CANDIDATE_ANALYSIS_NOTIONAL_QUOTE,
             entry_price_usd=entry_price_usd,
             entry_spread_bps=entry_spread_bps,
             funding_rate_at_entry=funding_rate_at_entry,

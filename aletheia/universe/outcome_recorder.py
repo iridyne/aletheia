@@ -438,7 +438,7 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
             )
             forward_return = economics["gross_return_pct"]
 
-            repo.settle_forward_outcome(
+            won = repo.settle_forward_outcome(
                 outcome_id=row["id"],
                 exit_price=price,
                 forward_return=forward_return,
@@ -447,15 +447,16 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
                 settlement_price_source=observation.get("price_source"),
                 settlement_lag_sec=observation.get("settlement_lag_sec"),
             )
-            total_settled += 1
+            if won is not False:
+                total_settled += 1
+                batch_settled_rows.append({
+                    **row,
+                    **economics,
+                    "forward_return_pct": forward_return,
+                    "settlement_price_source": observation.get("price_source"),
+                    "settlement_lag_sec": observation.get("settlement_lag_sec"),
+                })
             total_processed += 1
-            batch_settled_rows.append({
-                **row,
-                **economics,
-                "forward_return_pct": forward_return,
-                "settlement_price_source": observation.get("price_source"),
-                "settlement_lag_sec": observation.get("settlement_lag_sec"),
-            })
 
         if batch_settled_rows:
             logger.info(

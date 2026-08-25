@@ -276,6 +276,16 @@ class FilterCandidateOutcome(BaseModel):
     settlement_price_source: str | None = None
     settlement_lag_sec: float | None = None
     cost_model_version: str | None = None
+    # Fixed ex-ante basis for candidate-layer analysis. It is deliberately
+    # nullable so legacy rows remain unavailable instead of inheriting a later
+    # proposal's capital.
+    analysis_notional_quote: float | None = Field(default=None, gt=0)
+    producer_runtime_session_id: str | None = None
+    producer_commit: str | None = None
+    producer_behavior_fingerprint: str | None = None
+    settlement_runtime_session_id: str | None = None
+    settlement_producer_commit: str | None = None
+    settlement_behavior_fingerprint: str | None = None
     status: str = "pending"
     rsi_1h_at_entry: float | None = None
     rsi_15m_at_entry: float | None = None

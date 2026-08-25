@@ -12,7 +12,10 @@ import sqlite3
 import time
 
 
-MARKET_OHLCV_COLUMNS = "exchange,symbol,market_type,timeframe,ts,open,high,low,close,volume,provider"
+MARKET_OHLCV_COLUMNS = (
+    "exchange,symbol,market_type,timeframe,ts,open,high,low,close,volume,provider,"
+    "first_persisted_at,last_mutated_at"
+)
 MARKET_OHLCV_PRIMARY_KEY = (
     "exchange",
     "symbol",
@@ -33,6 +36,8 @@ CREATE TABLE {table_name} (
     close REAL NOT NULL,
     volume REAL NOT NULL,
     provider TEXT NOT NULL DEFAULT 'ccxt',
+    first_persisted_at TEXT,
+    last_mutated_at TEXT,
     PRIMARY KEY (exchange, symbol, market_type, timeframe, ts)
 ) WITHOUT ROWID
 """
