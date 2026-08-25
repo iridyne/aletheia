@@ -21,6 +21,8 @@ CREATE TABLE market_ohlcv (
     close REAL NOT NULL,
     volume REAL NOT NULL,
     provider TEXT NOT NULL DEFAULT 'ccxt',
+    first_persisted_at TEXT,
+    last_mutated_at TEXT,
     PRIMARY KEY (exchange, symbol, market_type, timeframe, ts)
 )
 """

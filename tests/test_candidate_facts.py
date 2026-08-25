@@ -437,6 +437,19 @@ def test_candidate_facts_scrubs_post_cutoff_fill_from_order():
     assert fact["funnel"]["position_reached"] is False
 
 
+def test_candidate_facts_missing_position_open_time_fails_closed():
+    db = _db()
+    db.execute("UPDATE positions SET opened_at=NULL WHERE id='position-traded'")
+
+    report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at="2026-08-14T12:00:00+00:00", db=db
+    )
+
+    traded = next(item for item in report["facts"] if item["fact_id"] == "outcome-traded")
+    assert traded["funnel"]["position_reached"] is False
+    assert traded["terminal_state"] != "traded"
+
+
 def test_candidate_facts_rejects_invalid_as_of_at():
     """#1250 — non-empty unparsable as_of_at raises ValueError."""
     db = _db()

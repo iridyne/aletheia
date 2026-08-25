@@ -72,6 +72,11 @@ def _database() -> sqlite3.Connection:
         CREATE TABLE runtime_sessions (
             session_id TEXT PRIMARY KEY, boot_commit TEXT, behavior_fingerprint TEXT
         );
+        CREATE TABLE audit_events (
+            id TEXT PRIMARY KEY, timestamp TEXT, actor TEXT, source TEXT,
+            event_type TEXT, entity_type TEXT, entity_id TEXT,
+            before_state TEXT, after_state TEXT, message TEXT
+        );
         """
     )
     db.execute("INSERT INTO universe_registry VALUES ('asset-1','bitget','BTC/USDT','perp')")
@@ -117,7 +122,7 @@ def _database() -> sqlite3.Connection:
         "('position-1','opp-1','proposal-1','entry-order','BTC/USDT','usdt_futures',"
         "'long',1.0,100.0,102.0,1.7,0.1,0.1,0.1,'local_simulation','closed',"
         "'paper_internal','2026-08-13T00:00:00+00:00','2026-08-13T00:02:00+00:00',"
-        "'settlement-1','{}','oi-v1','session-1','commit-a','behavior-a',"
+        "'settlement-1','{\"funding_economics_fingerprint\":\"sha256:test\"}','oi-v1','session-1','commit-a','behavior-a',"
         "'session-1','commit-a','behavior-a')"
     )
     db.execute(
@@ -133,6 +138,20 @@ def _database() -> sqlite3.Connection:
     db.execute("INSERT INTO position_exit_plan_versions VALUES ('position-1',1,'2026-08-13T00:00:30+00:00')")
     db.execute("INSERT INTO position_protection_state VALUES ('position-1','closed')")
     db.execute("INSERT INTO runtime_sessions VALUES ('session-1','commit-a','behavior-a')")
+    db.execute(
+        "INSERT INTO audit_events VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            "funding-event-1", "2026-08-13T00:03:00+00:00", "system",
+            "test", "paper_position_funding_settled", "position", "position-1",
+            "{}", json.dumps({
+                "realized_pnl": 1.7,
+                "funding_cost": 0.1,
+                "outcome_eligible": False,
+                "outcome_exclusion_reason": None,
+                "funding_economics_fingerprint": "sha256:test",
+            }), "test",
+        ),
+    )
     db.commit()
     return db
 
@@ -161,6 +180,8 @@ def _candles() -> list[dict]:
             "close": 100.5 + index,
             "volume": 10.0,
             "provider": "ccxt",
+            "first_persisted_at": "2026-08-13T00:00:00+00:00",
+            "last_mutated_at": "2026-08-13T00:00:00+00:00",
         }
         for index in range(2)
     ]
@@ -211,6 +232,64 @@ def test_replay_uses_exact_ids_cutoff_reconciled_economics_and_deterministic_has
     )
     assert first["producer"]["status"] == "available"
     assert first["producer"]["behavior_fingerprints"] == ["behavior-a"]
+
+
+def test_replay_does_not_backfill_post_cutoff_economics(monkeypatch):
+    db = _database()
+    db.execute(
+        "UPDATE positions SET realized_pnl=?, funding_cost=?, "
+        "reconciliation_evidence=? WHERE id='position-1'",
+        (2.7, 0.2, json.dumps({"funding_economics_fingerprint": "sha256:later"})),
+    )
+    db.execute(
+        "INSERT INTO audit_events VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            "funding-event-2", "2026-08-13T01:00:00+00:00", "system",
+            "test", "paper_position_economics_corrected", "position", "position-1",
+            "{}", json.dumps({
+                "realized_pnl": 2.7,
+                "funding_cost": 0.2,
+                "outcome_eligible": False,
+                "outcome_exclusion_reason": None,
+                "funding_economics_fingerprint": "sha256:later",
+            }), "test",
+        ),
+    )
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
+
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    assert replay["economics"]["availability"] == "unavailable"
+    assert replay["economics"]["unavailable_reason"] == "historical_economics_unavailable"
+    assert replay["stages"]["exit"]["position"]["realized_pnl"] is None
+
+
+def test_replay_does_not_admit_post_cutoff_ohlcv_mutation(monkeypatch):
+    db = _database()
+    candles = _candles()
+    candles[0]["last_mutated_at"] = "2026-08-13T00:11:00+00:00"
+    monkeypatch.setattr(
+        position_replay.trade_path_analytics,
+        "build_position_trade_path",
+        lambda position_id, *, db: _path(),
+    )
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: candles)
+
+    replay = position_replay.build_position_replay(
+        "position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db
+    )
+
+    assert replay["stages"]["holding"]["ohlcv"]["availability"] == "unavailable"
+    assert replay["stages"]["holding"]["ohlcv"]["unavailable_reason"] == "ohlcv_materialized_after_cutoff"
 
 
 def test_replay_exposes_exact_frozen_mandate_pair_without_current_config(monkeypatch):

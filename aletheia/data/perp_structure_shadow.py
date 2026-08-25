@@ -51,15 +51,15 @@ async def settle_due_perp_structure_outcomes(limit: int = 100) -> int:
             continue
         raw_return = (float(exit_price) - entry_price) / entry_price * 100.0
         directional_return = raw_return if row["direction"] == "long" else -raw_return
-        repo.settle_perp_structure_shadow_outcome(
+        if repo.settle_perp_structure_shadow_outcome(
             row["id"],
             exit_price=float(exit_price),
             directional_return_pct=directional_return,
             settled_at=now_iso,
             price_source=observation.get("price_source"),
             settlement_lag_sec=observation.get("settlement_lag_sec"),
-        )
-        settled += 1
+        ) is not False:
+            settled += 1
     return settled
 
 

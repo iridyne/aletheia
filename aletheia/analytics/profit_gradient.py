@@ -395,6 +395,20 @@ def _normalized_samples(
             if execution_reason is not None:
                 exclusions.append(execution_reason)
                 continue
+            execution_evidence = raw.get("execution_evidence")
+            impact = _finite(
+                execution_evidence.get("incremental_fill_loss_quote")
+                if isinstance(execution_evidence, Mapping)
+                else None
+            )
+            if impact is None or not math.isclose(
+                impact,
+                abs(delta_quote),
+                rel_tol=1e-9,
+                abs_tol=RECONCILIATION_TOLERANCE_QUOTE,
+            ):
+                exclusions.append("execution_component_delta_mismatch")
+                continue
         reconciliation, reconciliation_reason = _normalize_reconciliation(raw, delta_quote, delta_bp)
         if reconciliation_reason is not None:
             exclusions.append(reconciliation_reason)
@@ -443,6 +457,9 @@ def _normalized_samples(
                 "harm_event_id": harm_event_id,
                 "attribution_event_id": attribution_event_id,
                 "position_id": str(raw.get("position_id") or "").strip(),
+                "position_ids": list(raw.get("position_ids") or ()),
+                "source_outcome_key": raw.get("source_outcome_key"),
+                "source_outcome_keys": list(raw.get("source_outcome_keys") or ()),
                 "paired_net_delta_bp": delta_bp,
                 "paired_net_delta_quote": delta_quote,
                 "notional_quote": notional_quote,
@@ -453,6 +470,9 @@ def _normalized_samples(
                 "ownership": dict(raw.get("ownership") or {}),
                 "stage_window": dict(raw.get("stage_window") or {}),
                 "evidence_refs": list(raw.get("evidence_refs") or []),
+                "arm_evidence": dict(raw.get("arm_evidence") or {}),
+                "execution_evidence": dict(raw.get("execution_evidence") or {}),
+                "cost_evidence": dict(raw.get("cost_evidence") or {}) if isinstance(raw.get("cost_evidence"), Mapping) else None,
                 "reconciliation": reconciliation,
                 "cost_event_id": cost_event_id or None,
             }

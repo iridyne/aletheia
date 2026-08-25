@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v39"
+SCHEMA_VERSION = "aletheia-sqlite-v40"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3413,6 +3413,24 @@ _AGENT_ARTIFACT_REFERENCE_CHECKSUM = hashlib.sha256(
     (
         repr(_AGENT_ARTIFACT_REFERENCE_COLUMNS)
         + "\nadditive_agent_artifact_reference_v1"
+    ).encode("utf-8")
+).hexdigest()
+
+_PROFIT_GRADIENT_DATA_BOUNDARY_COLUMNS = (
+    ("analysis_notional_quote", "filter_candidate_outcomes", "REAL"),
+    ("producer_runtime_session_id", "filter_candidate_outcomes", "TEXT"),
+    ("producer_commit", "filter_candidate_outcomes", "TEXT"),
+    ("producer_behavior_fingerprint", "filter_candidate_outcomes", "TEXT"),
+    ("settlement_runtime_session_id", "filter_candidate_outcomes", "TEXT"),
+    ("settlement_producer_commit", "filter_candidate_outcomes", "TEXT"),
+    ("settlement_behavior_fingerprint", "filter_candidate_outcomes", "TEXT"),
+    ("first_persisted_at", "market_ohlcv", "TEXT"),
+    ("last_mutated_at", "market_ohlcv", "TEXT"),
+)
+_PROFIT_GRADIENT_DATA_BOUNDARY_CHECKSUM = hashlib.sha256(
+    (
+        repr(_PROFIT_GRADIENT_DATA_BOUNDARY_COLUMNS)
+        + "\nprofit_gradient_data_boundaries_v1"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -4985,6 +5003,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260824_0038_agent_artifact_reference_v39": (
         "durable agent-artifact reference version"
     ),
+    "20260824_0039_profit_gradient_data_boundaries_v40": (
+        "candidate and OHLCV evidence provenance boundaries"
+    ),
 }
 
 
@@ -5102,6 +5123,17 @@ def _apply_agent_artifact_reference_v39(db: sqlite3.Connection) -> None:
     """Mark pre-durable artifact links without rewriting retained evidence."""
 
     for column, table, column_type in _AGENT_ARTIFACT_REFERENCE_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
+def _apply_profit_gradient_data_boundaries_v40(db: sqlite3.Connection) -> None:
+    """Add nullable provenance without rewriting historical evidence."""
+
+    for column, table, column_type in _PROFIT_GRADIENT_DATA_BOUNDARY_COLUMNS:
         existing = {
             str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
         }
@@ -5885,6 +5917,12 @@ _MIGRATIONS = (
         checksum=_AGENT_ARTIFACT_REFERENCE_CHECKSUM,
         schema_version="aletheia-sqlite-v39",
         apply=_apply_agent_artifact_reference_v39,
+    ),
+    MigrationStep(
+        migration_id="20260824_0039_profit_gradient_data_boundaries_v40",
+        checksum=_PROFIT_GRADIENT_DATA_BOUNDARY_CHECKSUM,
+        schema_version="aletheia-sqlite-v40",
+        apply=_apply_profit_gradient_data_boundaries_v40,
     ),
 )
 

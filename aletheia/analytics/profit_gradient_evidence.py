@@ -87,6 +87,10 @@ _WATERFALL_ORDER = (
     "ambiguous_identity",
     "missing_identity",
     "epoch_mismatch",
+    "candidate_producer_provenance_missing",
+    "candidate_settlement_provenance_missing",
+    "candidate_producer_identity_mismatch",
+    "runtime_session_not_recorded",
     *CANDIDATE_OUTCOME_TEMPORAL_REASONS,
     "unverified_or_unsettled_outcome",
     "incomplete_path",
@@ -108,6 +112,10 @@ _WATERFALL_ORDER = (
     "stage_window_invalid",
     "attribution_identity_missing",
     "notional_basis_invalid",
+    "candidate_analysis_notional_unavailable",
+    "malformed_candidate_fact_row",
+    "malformed_candidate_fact_timestamp",
+    "candidate_fact_after_cutoff",
     "position_identity_missing",
     "execution_component_not_isolated",
     "execution_fees_not_excluded",
@@ -115,11 +123,13 @@ _WATERFALL_ORDER = (
     "execution_cost_event_overlap",
     "execution_baseline_identity_missing",
     "execution_fill_loss_invalid",
+    "execution_component_delta_mismatch",
     "cost_baseline_unavailable",
     "cost_event_identity_missing",
     "cost_not_avoidable",
     "cost_baseline_not_realizable",
     "cost_baseline_identity_missing",
+    "cost_baseline_identity_mismatch",
     "cost_model_identity_missing",
     "avoidable_cost_amount_invalid",
     "avoidable_cost_amount_mismatch",
@@ -676,7 +686,7 @@ def _lookup_assignment(
     fact_identity = fact.get("identity") if isinstance(fact.get("identity"), Mapping) else {}
     outcome = fact.get("fixed_horizon_outcome")
     expected_outcome_key = (
-        (outcome or {}).get("outcome_candidate_key")
+        outcome.get("outcome_candidate_key")
         if isinstance(outcome, Mapping)
         else fact_identity.get("outcome_candidate_key")
     )
@@ -824,29 +834,20 @@ def _lookup_assignment(
 
 
 def _candidate_notional(db: Any, fact: Mapping[str, Any]) -> float | None:
+    """Read the frozen pre-capital analysis basis only.
+
+    Candidate layers must not inherit a later Proposal's sizing: filtered and
+    skipped candidates have no Proposal by design, and Proposal sizing can vary
+    independently between paired arms. Legacy rows without the explicit basis
+    remain unavailable.
+    """
     for root in (fact, fact.get("fixed_horizon_outcome")):
         if not isinstance(root, Mapping):
             continue
-        for key in ("quote_notional", "notional_quote", "capital_quote"):
-            value = _finite(root.get(key), positive=True)
-            if value is not None:
-                return value
-    identity = fact.get("identity")
-    proposal_id = identity.get("proposal_id") if isinstance(identity, Mapping) else None
-    if not proposal_id or not _table_exists(db, "trade_proposals"):
-        return None
-    columns = _columns(db, "trade_proposals")
-    if not {"quantity", "price"} <= columns:
-        return None
-    try:
-        row = db.execute("SELECT quantity, price FROM trade_proposals WHERE id=?", (proposal_id,)).fetchone()
-    except (sqlite3.Error, OSError):
-        return None
-    if row is None:
-        return None
-    quantity = _finite(row[0], positive=True)
-    price = _finite(row[1], positive=True)
-    return quantity * price if quantity is not None and price is not None else None
+        value = _finite(root.get("analysis_notional_quote"), positive=True)
+        if value is not None:
+            return value
+    return None
 
 
 def _exclusive_reconciliation(group_id: str, quote: float, bp: float) -> dict[str, Any]:
@@ -908,12 +909,18 @@ def _candidate_sample(
         return None, "stale_evidence"
     if outcome.get("cost_model_version") != cost_model_id:
         return None, "cost_incomplete"
+    if registration is not None:
+        provenance_reason = _candidate_provenance_reason(db, outcome, registration)
+        if provenance_reason is not None:
+            return None, provenance_reason
     key = str(fact.get("fact_id") or "")
     if not key:
         return None, "missing_identity"
     net_pct = _finite(outcome.get("net_return_pct"))
     notional = _candidate_notional(db, fact)
-    if net_pct is None or notional is None:
+    if notional is None:
+        return None, "candidate_analysis_notional_unavailable"
+    if net_pct is None:
         return None, "nonfinite_delta"
     assignment_metadata: dict[str, str] = {}
     arm, cluster, pair_id, policy_epoch, producer_commit, assignment_reason = _lookup_assignment(
@@ -1030,6 +1037,46 @@ def _position_provenance_matches(fact: Mapping[str, Any], registration: Mapping[
         and commits == {expected_commit}
         and fingerprints == {expected_fingerprint}
     )
+
+
+def _candidate_provenance_reason(
+    db: Any,
+    outcome: Mapping[str, Any],
+    registration: Mapping[str, Any],
+) -> str | None:
+    """Require one recorded producer identity at exposure and settlement."""
+    expected_commit = str(registration.get("deploy_commit") or "")
+    expected_fingerprint = str(registration.get("behavior_fingerprint") or "")
+    if not expected_commit or not expected_fingerprint:
+        return "epoch_mismatch"
+    for role in ("producer", "settlement"):
+        commit_field = "producer_commit" if role == "producer" else "settlement_producer_commit"
+        fingerprint_field = (
+            "producer_behavior_fingerprint"
+            if role == "producer"
+            else "settlement_behavior_fingerprint"
+        )
+        session_id = str(outcome.get(f"{role}_runtime_session_id") or "").strip()
+        commit = str(outcome.get(commit_field) or "").strip()
+        fingerprint = str(outcome.get(fingerprint_field) or "").strip()
+        if not session_id or not commit or not fingerprint:
+            return f"candidate_{role}_provenance_missing"
+        if commit != expected_commit or fingerprint != expected_fingerprint:
+            return "candidate_producer_identity_mismatch"
+        if not _table_exists(db, "runtime_sessions"):
+            return "runtime_session_not_recorded"
+        try:
+            row = db.execute(
+                "SELECT boot_commit, behavior_fingerprint FROM runtime_sessions WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        except (sqlite3.Error, OSError):
+            return "source_unavailable"
+        if row is None:
+            return "runtime_session_not_recorded"
+        if str(row[0] or "") != commit or str(row[1] or "") != fingerprint:
+            return "candidate_producer_identity_mismatch"
+    return None
 
 
 def _position_assignment(
@@ -1298,10 +1345,46 @@ def _position_execution_sample(
     }, None
 
 
+def _pair_arm_evidence(raw: Mapping[str, Any]) -> dict[str, Any]:
+    evidence = {
+        "unit_id": raw.get("unit_id"),
+        "position_id": raw.get("position_id"),
+        "source_outcome_key": raw.get("source_outcome_key"),
+        "evidence_refs": sorted({str(ref) for ref in raw.get("evidence_refs") or ()}),
+        "stage_window": dict(raw.get("stage_window") or {}),
+    }
+    for field in ("cost_evidence", "execution_evidence"):
+        value = raw.get(field)
+        if isinstance(value, Mapping):
+            evidence[field] = dict(value)
+    return evidence
+
+
+def _paired_stage_window(
+    treatment: Mapping[str, Any], control: Mapping[str, Any]
+) -> dict[str, str] | None:
+    windows = [treatment.get("stage_window"), control.get("stage_window")]
+    starts = [
+        value
+        for window in windows
+        if isinstance(window, Mapping)
+        if (value := _time(window.get("start_at"))) is not None
+    ]
+    ends = [
+        value
+        for window in windows
+        if isinstance(window, Mapping)
+        if (value := _time(window.get("end_at"))) is not None
+    ]
+    if len(starts) != 2 or len(ends) != 2:
+        return None
+    return _stage_window(min(starts), max(ends))
+
+
 def _pair_confirmatory_samples(
     raw_samples: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[tuple[str, str]]]:
-    """Keep only explicit one-treatment/one-control assignment-unit pairs."""
+    """Keep explicit pairs and preserve both arms as one evidence object."""
     groups: dict[str, list[dict[str, Any]]] = {}
     excluded: list[tuple[str, str]] = []
     cohort_ids = {str(raw.get("cohort_id") or "") for raw in raw_samples if raw.get("cohort_id")}
@@ -1329,7 +1412,7 @@ def _pair_confirmatory_samples(
             any(values) and (not all(values) or len(set(values)) != 1)
             for values in (
                 [str(raw.get(field) or "").strip() for raw in (treatment, control)]
-                for field in ("outcome_contract_version", "stage")
+                for field in ("outcome_contract_version", "stage", "cost_model_id")
             )
         )
         if metadata_mismatch:
@@ -1347,6 +1430,14 @@ def _pair_confirmatory_samples(
         if None in (treatment_quote, control_quote, treatment_bp, control_bp, treatment_notional, control_notional):
             excluded.extend((str(raw.get("unit_id") or ""), "nonfinite_delta") for raw in group)
             continue
+        assert (
+            treatment_quote is not None
+            and control_quote is not None
+            and treatment_bp is not None
+            and control_bp is not None
+            and treatment_notional is not None
+            and control_notional is not None
+        )
         if not math.isclose(treatment_notional, control_notional, rel_tol=1e-9, abs_tol=1e-9):
             excluded.extend(
                 (str(raw.get("unit_id") or ""), "denominator_or_economic_unit_mismatch")
@@ -1358,46 +1449,122 @@ def _pair_confirmatory_samples(
         if not math.isfinite(delta_quote) or not math.isfinite(delta_bp):
             excluded.extend((str(raw.get("unit_id") or ""), "nonfinite_delta") for raw in group)
             continue
-        sample = dict(treatment)
-        sample.update(
-            {
-                "unit_id": pair_id,
-                "cluster_id": pair_id,
-                "pair_id": pair_id,
-                "treatment_unit_id": treatment.get("unit_id"),
-                "control_unit_id": control.get("unit_id"),
-                "arm": "paired",
-                "arm_counts": {"treatment": 1, "control": 1},
-                "paired_net_delta_bp": delta_bp,
-                "paired_net_delta_quote": delta_quote,
-                "pairing": "explicit_treatment_control_assignment_unit_pair",
-                "cost_applied_once": sample.get("cost_applied_once", True),
-                "harm_event_id": f"paired:{pair_id}:net",
-                "attribution_event_id": f"paired:{pair_id}:{str(sample.get('component') or 'layer')}",
-                "reconciliation": _exclusive_reconciliation(
-                    f"paired:{pair_id}:net", delta_quote, delta_bp
-                ),
-            }
-        )
-        if treatment.get("component") == "avoidable_extra_cost":
+        component = treatment.get("component")
+        if component != control.get("component"):
+            excluded.extend((str(raw.get("unit_id") or ""), "layer_component_mismatch") for raw in group)
+            continue
+        arm_evidence = {
+            "treatment": _pair_arm_evidence(treatment),
+            "control": _pair_arm_evidence(control),
+        }
+        refs = sorted({
+            ref
+            for arm in arm_evidence.values()
+            for ref in arm["evidence_refs"]
+        })
+        source_outcome_keys = sorted({
+            str(raw.get("source_outcome_key"))
+            for raw in (treatment, control)
+            if raw.get("source_outcome_key") not in (None, "")
+        })
+        position_ids = sorted({
+            str(raw.get("position_id"))
+            for raw in (treatment, control)
+            if raw.get("position_id") not in (None, "")
+        })
+        occurred_values = [
+            value
+            for raw in (treatment, control)
+            if (value := _time(raw.get("occurred_at"))) is not None
+        ]
+        sample = {
+            "fact_unit": treatment.get("fact_unit"),
+            "economic_unit": treatment.get("economic_unit"),
+            "unit_id": pair_id,
+            "cluster_id": pair_id,
+            "pair_id": pair_id,
+            "treatment_unit_id": treatment.get("unit_id"),
+            "control_unit_id": control.get("unit_id"),
+            "position_id": treatment.get("position_id"),
+            "position_ids": position_ids,
+            "source_outcome_key": source_outcome_keys[0] if len(source_outcome_keys) == 1 else None,
+            "source_outcome_keys": source_outcome_keys,
+            "cohort_id": treatment.get("cohort_id") or control.get("cohort_id"),
+            "policy_epoch": treatment.get("policy_epoch") or control.get("policy_epoch"),
+            "producer_commit": treatment.get("producer_commit") or control.get("producer_commit"),
+            "occurred_at": (
+                max(occurred_values).isoformat()
+                if occurred_values
+                else max(str(treatment.get("occurred_at") or ""), str(control.get("occurred_at") or ""))
+            ),
+            "arm": "paired",
+            "arm_counts": {"treatment": 1, "control": 1},
+            "paired_net_delta_bp": delta_bp,
+            "paired_net_delta_quote": delta_quote,
+            "notional_quote": treatment_notional,
+            "component": component,
+            "ownership": dict(treatment.get("ownership") or {}),
+            "cost_model_id": treatment.get("cost_model_id") or control.get("cost_model_id"),
+            "cost_applied_once": treatment.get("cost_applied_once", True),
+            "pairing": "explicit_treatment_control_assignment_unit_pair",
+            "harm_event_id": f"paired:{pair_id}:net",
+            "attribution_event_id": f"paired:{pair_id}:{str(component or 'layer')}",
+            "stage_window": _paired_stage_window(treatment, control) or dict(treatment.get("stage_window") or {}),
+            "evidence_refs": refs,
+            "arm_evidence": arm_evidence,
+            "outcome_contract_version": treatment.get("outcome_contract_version"),
+            "stage": treatment.get("stage"),
+            "reconciliation": _exclusive_reconciliation(
+                f"paired:{pair_id}:net", delta_quote, delta_bp
+            ),
+        }
+        treatment_execution = treatment.get("execution_evidence")
+        control_execution = control.get("execution_evidence")
+        if isinstance(treatment_execution, Mapping) and isinstance(control_execution, Mapping):
+            treatment_impact = _finite(treatment_execution.get("incremental_fill_loss_quote"), nonnegative=True)
+            control_impact = _finite(control_execution.get("incremental_fill_loss_quote"), nonnegative=True)
+            if treatment_impact is not None and control_impact is not None:
+                sample["execution_evidence"] = {
+                    "fees_excluded": treatment_execution.get("fees_excluded") is True and control_execution.get("fees_excluded") is True,
+                    "funding_excluded": treatment_execution.get("funding_excluded") is True and control_execution.get("funding_excluded") is True,
+                    "baseline_id": f"{treatment_execution.get('baseline_id')}|{control_execution.get('baseline_id')}",
+                    "baseline_ids": [treatment_execution.get("baseline_id"), control_execution.get("baseline_id")],
+                    "incremental_fill_loss_quote": abs(treatment_impact - control_impact),
+                    "arm_incremental_fill_loss_quote": {
+                        "treatment": treatment_impact,
+                        "control": control_impact,
+                    },
+                }
+        if component == "avoidable_extra_cost":
             treatment_cost = treatment.get("cost_evidence")
             control_cost = control.get("cost_evidence")
-            if isinstance(treatment_cost, Mapping) and isinstance(control_cost, Mapping):
+            if not isinstance(treatment_cost, Mapping) or not isinstance(control_cost, Mapping):
+                sample["cost_evidence"] = None
+            else:
+                treatment_model = str(treatment_cost.get("cost_model_id") or "")
+                control_model = str(control_cost.get("cost_model_id") or "")
+                treatment_kind = str(treatment_cost.get("baseline_kind") or "")
+                control_kind = str(control_cost.get("baseline_kind") or "")
+                if (treatment_model, treatment_kind) != (control_model, control_kind):
+                    excluded.extend((str(raw.get("unit_id") or ""), "cost_baseline_identity_mismatch") for raw in group)
+                    continue
                 treatment_extra = _finite(treatment_cost.get("avoidable_extra_cost_quote"), nonnegative=True)
                 control_extra = _finite(control_cost.get("avoidable_extra_cost_quote"), nonnegative=True)
-                if treatment_extra is not None and control_extra is not None:
-                    combined_cost = dict(treatment_cost)
+                if treatment_extra is None or control_extra is None:
+                    sample["cost_evidence"] = None
+                else:
                     treatment_event = str(treatment_cost.get("cost_event_id") or "")
                     control_event = str(control_cost.get("cost_event_id") or "")
-                    combined_cost.update(
-                        {
-                            "cost_event_id": f"{treatment_event}|{control_event}",
-                            "cost_event_ids": [treatment_event, control_event],
-                            "avoidable_extra_cost_quote": abs(treatment_extra - control_extra),
-                        }
-                    )
-                    sample["cost_evidence"] = combined_cost
-                    sample["cost_applied_once"] = treatment.get("cost_applied_once", True)
+                    treatment_baseline = str(treatment_cost.get("baseline_id") or "")
+                    control_baseline = str(control_cost.get("baseline_id") or "")
+                    sample["cost_evidence"] = {
+                        **dict(treatment_cost),
+                        "cost_event_id": f"{treatment_event}|{control_event}",
+                        "cost_event_ids": [treatment_event, control_event],
+                        "baseline_id": f"{treatment_baseline}|{control_baseline}",
+                        "baseline_ids": [treatment_baseline, control_baseline],
+                        "avoidable_extra_cost_quote": abs(treatment_extra - control_extra),
+                    }
         paired.append(sample)
     return paired, excluded
 
@@ -1570,6 +1737,10 @@ def _coverage_context(
     risk_reject_count = 0
     identity_values: dict[str, set[str]] = {
         "behavior_fingerprints": set(),
+        "producer_commits": set(),
+        "settlement_producer_commits": set(),
+        "candidate_runtime_session_ids": set(),
+        "candidate_settlement_runtime_session_ids": set(),
         "policy_epochs": set(),
         "market_data_epochs": set(),
         "cost_model_epochs": set(),
@@ -1601,6 +1772,18 @@ def _coverage_context(
                 identity_values[target].add(str(value))
         if isinstance(outcome, Mapping) and outcome.get("market_data_epoch"):
             identity_values["market_data_epochs"].add(str(outcome["market_data_epoch"]))
+        if isinstance(outcome, Mapping):
+            for field, target in (
+                ("producer_commit", "producer_commits"),
+                ("settlement_producer_commit", "settlement_producer_commits"),
+                ("producer_runtime_session_id", "candidate_runtime_session_ids"),
+                ("settlement_runtime_session_id", "candidate_settlement_runtime_session_ids"),
+            ):
+                if outcome.get(field):
+                    identity_values[target].add(str(outcome[field]))
+            for field in ("producer_behavior_fingerprint", "settlement_behavior_fingerprint"):
+                if outcome.get(field):
+                    identity_values["behavior_fingerprints"].add(str(outcome[field]))
 
     for sample_group in (layer_samples or {}).values():
         for sample in sample_group:
@@ -1623,6 +1806,9 @@ def _coverage_context(
             for value in producer.get("behavior_fingerprints") or ():
                 if value:
                     identity_values["behavior_fingerprints"].add(str(value))
+            for value in producer.get("producer_commits") or ():
+                if value:
+                    identity_values["producer_commits"].add(str(value))
         policy = fact.get("policy_identity")
         if isinstance(policy, Mapping) and policy.get("policy_epoch_id"):
             identity_values["policy_epochs"].add(str(policy["policy_epoch_id"]))
@@ -1654,9 +1840,11 @@ def _coverage_context(
         quantity = _finite(position.get("quantity"), positive=True)
         opened = _time(position.get("opened_at"))
         closed = _time(position.get("closed_at"))
-        if None in (notional, quantity, opened, closed) or closed <= opened:
+        if None in (notional, quantity, opened, closed):
             continue
         assert notional is not None and quantity is not None and opened is not None and closed is not None
+        if closed <= opened:
+            continue
         capital_days += notional * quantity * (closed - opened).total_seconds() / 86_400.0
         capital_day_count += 1
 
@@ -1696,6 +1884,10 @@ def _coverage_context(
         "risk_reject_count": risk_reject_count,
         "capital_days": capital_days if capital_day_count else None,
         "behavior_fingerprints": behavior,
+        "producer_commits": sorted(identity_values["producer_commits"]),
+        "settlement_producer_commits": sorted(identity_values["settlement_producer_commits"]),
+        "candidate_runtime_session_ids": sorted(identity_values["candidate_runtime_session_ids"]),
+        "candidate_settlement_runtime_session_ids": sorted(identity_values["candidate_settlement_runtime_session_ids"]),
         "policy_epochs": policy_epochs,
         "market_data_epochs": market_epochs,
         "cost_model_epochs": cost_epochs,

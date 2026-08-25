@@ -8,7 +8,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import math
-from typing import Any, Iterable
+import sqlite3
+from typing import Any, Iterable, Mapping
 
 from aletheia.analytics.outcome_integrity import assess_reportable_outcome
 from aletheia.analytics import trade_path as trade_path_analytics
@@ -157,6 +158,99 @@ def _runtime_identity(db: Any, rows: Iterable[dict[str, Any] | None]) -> dict[st
     }
 
 
+_ECONOMICS_AUDIT_EVENTS = frozenset({
+    "exchange_position_funding_settled",
+    "paper_position_funding_settled",
+    "paper_position_economics_repaired",
+    "paper_position_economics_corrected",
+})
+
+
+def _json_object(value: object) -> dict[str, Any] | None:
+    parsed = _json(value)
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _same_number(left: object, right: object) -> bool:
+    left_value = _finite(left)
+    right_value = _finite(right)
+    return (
+        left_value is not None
+        and right_value is not None
+        and math.isclose(left_value, right_value, rel_tol=0.0, abs_tol=1e-8)
+    )
+
+
+def _economics_visibility(
+    db: Any,
+    position: dict[str, Any],
+    *,
+    cutoff: datetime,
+    explicit_cutoff: bool,
+) -> tuple[bool, str | None, str | None]:
+    """Prove that mutable funding economics were materialized by ``cutoff``."""
+    if not explicit_cutoff or str(position.get("market_type") or "").lower() not in {
+        "perp", "swap", "future", "futures", "usdt_futures",
+    }:
+        return True, None, None
+    try:
+        rows = _rows(
+            db,
+            "SELECT timestamp, event_type, after_state FROM audit_events "
+            "WHERE entity_type='position' AND entity_id=? "
+            "AND event_type IN (?, ?, ?, ?) "
+            "ORDER BY datetime(timestamp), rowid",
+            (position.get("id"), *_ECONOMICS_AUDIT_EVENTS),
+        )
+    except (sqlite3.Error, OSError):
+        return False, "economics_provenance_unavailable", None
+    parsed_rows: list[tuple[datetime, dict[str, Any]]] = []
+    for row in rows:
+        timestamp = _utc(row.get("timestamp"))
+        after = _json_object(row.get("after_state"))
+        if timestamp is None or after is None:
+            return False, "economics_provenance_malformed", None
+        parsed_rows.append((timestamp, after))
+    visible = [(timestamp, after) for timestamp, after in parsed_rows if timestamp <= cutoff]
+    if not visible:
+        return False, "economics_materialized_after_cutoff", None
+    visible_at, visible_after = visible[-1]
+    current_evidence = _json_object(position.get("reconciliation_evidence")) or {}
+    current_fingerprint = current_evidence.get("funding_economics_fingerprint")
+    visible_fingerprint = visible_after.get("funding_economics_fingerprint")
+    if not current_fingerprint or current_fingerprint != visible_fingerprint:
+        return False, "historical_economics_unavailable", visible_at.isoformat()
+    for field in ("realized_pnl", "funding_cost"):
+        if not _same_number(position.get(field), visible_after.get(field)):
+            return False, "historical_economics_unavailable", visible_at.isoformat()
+    if bool(position.get("outcome_eligible")) != bool(visible_after.get("outcome_eligible")):
+        return False, "historical_economics_unavailable", visible_at.isoformat()
+    if position.get("outcome_exclusion_reason") != visible_after.get("outcome_exclusion_reason"):
+        return False, "historical_economics_unavailable", visible_at.isoformat()
+    latest_at, latest_after = parsed_rows[-1]
+    if latest_at > cutoff and latest_after != visible_after:
+        return False, "historical_economics_unavailable", visible_at.isoformat()
+    return True, None, visible_at.isoformat()
+
+
+def _unavailable_economics(reason: str) -> dict[str, Any]:
+    return {
+        "availability": "unavailable",
+        "unavailable_reason": reason,
+        "gross_pnl": None,
+        "entry_fee": None,
+        "exit_fee": None,
+        "funding_cost": None,
+        "net_pnl": None,
+        "expected_net_pnl": None,
+        "accounting_residual": None,
+        "accounting_tolerance": None,
+        "residual_within_tolerance": None,
+        "outcome_key": None,
+        "horizon": None,
+    }
+
+
 def _instrument(discovery: dict[str, Any] | None, position: dict[str, Any]) -> dict[str, Any]:
     market = str(position.get("market_type") or "").lower()
     physical = "perp" if market in {"perp", "swap", "future", "futures", "usdt_futures"} else market
@@ -177,6 +271,7 @@ def _ohlcv_evidence(
     position: dict[str, Any],
     path: dict[str, Any] | None,
     cutoff: datetime,
+    explicit_cutoff: bool,
 ) -> dict[str, Any]:
     base = {
         "availability": "unavailable",
@@ -193,6 +288,7 @@ def _ohlcv_evidence(
         "expected_row_count": None,
         "rows": [],
         "ohlcv_window_hash": None,
+        "availability_provenance": [],
     }
     if path is None or path.get("path_evidence_status") == "unavailable":
         base["unavailable_reason"] = (path or {}).get("path_evidence_reason") or base["unavailable_reason"]
@@ -227,8 +323,27 @@ def _ohlcv_evidence(
         market_type=str(market_type),
         before_ts=end,
         db=db,
+        include_provenance=True,
     )
-    canonical = tuple(_canonical_row(row) for row in candles if start <= int(row["ts"]) < end)
+    selected_candles = [row for row in candles if start <= int(row["ts"]) < end]
+    if explicit_cutoff:
+        availability: list[dict[str, Any]] = []
+        for row in selected_candles:
+            first_seen = _utc(row.get("first_persisted_at")) if isinstance(row, Mapping) else None
+            last_mutated = _utc(row.get("last_mutated_at")) if isinstance(row, Mapping) else None
+            if first_seen is None or last_mutated is None:
+                base["unavailable_reason"] = "ohlcv_availability_unproven"
+                return base
+            if first_seen > cutoff or last_mutated > cutoff:
+                base["unavailable_reason"] = "ohlcv_materialized_after_cutoff"
+                return base
+            availability.append({
+                "ts": int(row["ts"]),
+                "first_persisted_at": first_seen.isoformat(),
+                "last_mutated_at": last_mutated.isoformat(),
+            })
+        base["availability_provenance"] = availability
+    canonical = tuple(_canonical_row(row) for row in selected_candles)
     # #1272: require a contiguous, on-grid, duplicate-free window
     expected_ts_set = set(range(start, end, _BAR_MS))
     actual_ts_set = {int(row[0]) for row in canonical}  # first element of canonical tuple is ts
@@ -411,12 +526,18 @@ def build_position_replay(
                 "trading_mandate_fit": None,
             }
     source = db
+    explicit_cutoff = as_of_at not in (None, "")
     cutoff = _utc(as_of_at) or datetime.now(timezone.utc)
     started_txn = not getattr(source, "in_transaction", False)
     if started_txn:
         source.execute("BEGIN DEFERRED")
     try:
-        return _build_position_replay_inner(position_id, cutoff=cutoff, source=source)
+        return _build_position_replay_inner(
+            position_id,
+            cutoff=cutoff,
+            explicit_cutoff=explicit_cutoff,
+            source=source,
+        )
     finally:
         if started_txn:
             source.execute("ROLLBACK")
@@ -426,6 +547,7 @@ def _build_position_replay_inner(
     position_id: str,
     *,
     cutoff: datetime,
+    explicit_cutoff: bool,
     source: Any,
 ) -> dict[str, Any]:
     position = _row(source, "positions", position_id)
@@ -451,7 +573,7 @@ def _build_position_replay_inner(
         "trading_mandate_identity": None,
         "trading_mandate_fit": None,
     }
-    if position is None or not _at_or_before(position, cutoff):
+    if position is None or not position.get("opened_at") or not _at_or_before(position, cutoff):
         return base
     closed_at = _utc(position.get("closed_at"))
     if closed_at is not None and closed_at > cutoff:
@@ -459,16 +581,24 @@ def _build_position_replay_inner(
         return base
 
     proposal = _row(source, "trade_proposals", position.get("proposal_id"))
+    if proposal is not None and not _at_or_before(proposal, cutoff):
+        proposal = None
     entry_order = _row(source, "orders", position.get("order_id"))
+    if entry_order is not None and not _at_or_before(entry_order, cutoff):
+        entry_order = None
     opportunity = _row(source, "opportunities", position.get("opportunity_id"))
     if opportunity is None:
         opportunity = _row(source, "serenity_opportunities", position.get("opportunity_id"))
+    if opportunity is not None and not _at_or_before(opportunity, cutoff):
+        opportunity = None
     member = _row(source, "universe_members", (opportunity or {}).get("universe_member_id"))
     asset = _row(source, "universe_registry", (member or {}).get("asset_id"))
     pi_decision, pi_error = (
         _pi_decision(source, str(proposal["id"]), cutoff) if proposal is not None else (None, "proposal_not_recorded")
     )
     risk = _row(source, "risk_decisions", (entry_order or {}).get("risk_decision_id"))
+    if risk is not None and not _at_or_before(risk, cutoff):
+        risk = None
     # #1271: collect all entry legs — original order + scale-in orders for this position
     scale_in_orders = _rows(
         source,
@@ -516,7 +646,15 @@ def _build_position_replay_inner(
         "SELECT * FROM position_exit_plan_versions WHERE position_id=? ORDER BY version, datetime(effective_at), rowid",
         (position_id,),
     )
-    exit_plans = [row for row in exit_plans if (_utc(row.get("effective_at")) or cutoff) <= cutoff]
+    exit_plans = [
+        row
+        for row in exit_plans
+        if (
+            (effective_at := _utc(row.get("effective_at"))) is not None
+            and effective_at <= cutoff
+        )
+        or (not explicit_cutoff and row.get("effective_at") in (None, ""))
+    ]
     # #1270: apply cutoff to protection state
     protection_row = source.execute(
         "SELECT * FROM position_protection_state WHERE position_id=?",
@@ -526,7 +664,9 @@ def _build_position_replay_inner(
     if protection_row is not None:
         prot_raw = dict(protection_row)
         updated_at = _utc(prot_raw.get("updated_at"))
-        if updated_at is None or updated_at <= cutoff:
+        if updated_at is not None and updated_at <= cutoff:
+            protection = prot_raw
+        elif not explicit_cutoff and updated_at is None:
             protection = prot_raw
         else:
             activated_at = _utc(prot_raw.get("activated_at"))
@@ -537,7 +677,7 @@ def _build_position_replay_inner(
                     "activated_at": prot_raw.get("activated_at"),
                     "state_at_cutoff": "unavailable",
                 }
-            # else: activated after cutoff — omit entirely (protection stays None)
+            # else: activated after cutoff or timestamp provenance is missing — omit.
 
     causal_errors = []
     if proposal is None:
@@ -577,9 +717,53 @@ def _build_position_replay_inner(
         proposal,
         source_identities=mandate_source_identities,
     )
-    path = getattr(trade_path_analytics, "build_position_trade_path")(position_id, db=source)
-    ohlcv = _ohlcv_evidence(source, position=position, path=path, cutoff=cutoff)
-    economics = _economics(position, db=source)
+    economics_visible, economics_reason, economics_at = _economics_visibility(
+        source,
+        position,
+        cutoff=cutoff,
+        explicit_cutoff=explicit_cutoff,
+    )
+    path = None
+    if economics_visible:
+        path_builder = getattr(trade_path_analytics, "build_position_trade_path")
+        path_kwargs: dict[str, Any] = {"db": source}
+        if explicit_cutoff:
+            path_kwargs["as_of_at"] = cutoff
+        try:
+            path = path_builder(position_id, **path_kwargs)
+        except TypeError as exc:
+            if "unexpected keyword argument 'as_of_at'" not in str(exc):
+                raise
+            path = path_builder(position_id, db=source)
+    ohlcv = _ohlcv_evidence(
+        source,
+        position=position,
+        path=path,
+        cutoff=cutoff,
+        explicit_cutoff=explicit_cutoff,
+    )
+    economics = (
+        _economics(position, db=source)
+        if economics_visible
+        else _unavailable_economics(economics_reason or "economics_unavailable")
+    )
+    position_projection = dict(position)
+    if not economics_visible:
+        for field in (
+            "realized_pnl",
+            "current_price",
+            "exit_price",
+            "entry_fee",
+            "exit_fee",
+            "funding_cost",
+            "funding_source",
+            "outcome_eligible",
+            "outcome_exclusion_reason",
+            "reconciliation_identity",
+            "reconciliation_evidence",
+            "outcome_semantics_version",
+        ):
+            position_projection[field] = None
     provenance = _runtime_identity(
         source,
         [position, opportunity, proposal, pi_decision, risk, entry_order, *scale_in_orders, *entry_fills, *close_orders, *close_fills],
@@ -595,6 +779,7 @@ def _build_position_replay_inner(
             "trading_mandate_fit": mandate_provenance["fit"],
             "event_at": position.get("opened_at"),
             "evidence_available_at": position.get("closed_at") or cutoff.isoformat(),
+            "economic_evidence_available_at": economics_at,
             "identity": {
                 "position_id": position_id,
                 "opportunity_id": position.get("opportunity_id"),
@@ -627,7 +812,7 @@ def _build_position_replay_inner(
                 "exit_fee_sources": sorted(
                     {str(row.get("fee_source")) for row in close_fills if row.get("fee_source")}
                 ),
-                "funding_source": position.get("funding_source"),
+                "funding_source": position_projection.get("funding_source"),
             },
             "market_data_identity": market_identity,
             "stages": {
@@ -666,13 +851,13 @@ def _build_position_replay_inner(
                         if position.get("status") == "closed" and close_orders and close_fills
                         else "unavailable"
                     ),
-                    "position": position,
+                    "position": position_projection,
                     "close_orders": close_orders,
                     "close_fills": close_fills,
                     "settlement_identity": {
-                        "reconciliation_identity": position.get("reconciliation_identity"),
-                        "reconciliation_evidence": _json(position.get("reconciliation_evidence")),
-                        "outcome_semantics_version": position.get("outcome_semantics_version"),
+                        "reconciliation_identity": position_projection.get("reconciliation_identity"),
+                        "reconciliation_evidence": _json(position_projection.get("reconciliation_evidence")),
+                        "outcome_semantics_version": position_projection.get("outcome_semantics_version"),
                     },
                 },
             },

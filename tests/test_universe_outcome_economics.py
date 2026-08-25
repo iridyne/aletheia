@@ -172,6 +172,86 @@ def test_decision_grade_settlement_writers_require_price_provenance():
     assert repo._select_one("shadow_trades", shadow.id)["resolved_at"] is None
 
 
+def test_terminal_filter_settlement_is_first_writer_wins_and_projects_shadow_atomically():
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import FilterCandidateOutcome, ShadowTrade
+    from aletheia.universe.outcome_economics import estimate_outcome_economics
+
+    common = {
+        "outcome_candidate_key": "opportunity:cas-filter",
+        "venue": "okx",
+        "symbol": "BTC/USDT",
+        "market_type": "spot",
+        "direction": "long",
+        "horizon": "24h",
+        "entry_price_usd": 100.0,
+        "entry_ts": "2026-07-10T00:00:00+00:00",
+        "due_at": "2026-07-11T00:00:00+00:00",
+    }
+    outcome = FilterCandidateOutcome(**common)
+    shadow = ShadowTrade(
+        opportunity_id="cas-filter",
+        symbol="BTC/USDT",
+        venue="okx",
+        market_type="spot",
+        direction="long",
+        entry_price=100.0,
+        created_at=common["entry_ts"],
+        outcome_candidate_key=common["outcome_candidate_key"],
+    )
+    repo.insert_filter_candidate_outcomes_batch([outcome])
+    repo.insert_shadow_trade(shadow)
+    economics = estimate_outcome_economics(
+        entry_price=100.0,
+        exit_price=101.0,
+        direction="long",
+        market_type="spot",
+        hold_seconds=86400,
+        entry_spread_bps=0.0,
+        fallback_spread_bps=0.0,
+        funding_rate_at_entry=None,
+        execution_fee_pct=0.0,
+        slippage_bps=0.0,
+        price_quality_ok=True,
+    )
+
+    assert repo.settle_filter_candidate_outcome(
+        outcome.id,
+        exit_price=101.0,
+        settled_at="2026-07-11T00:00:00+00:00",
+        economics=economics,
+        settlement_price_source="horizon_ohlcv",
+        settlement_lag_sec=0.0,
+    ) is True
+    first = repo._select_one("filter_candidate_outcomes", outcome.id)
+    assert repo._select_one("shadow_trades", shadow.id)["resolved_at"] == first["settled_at"]
+
+    alternate = estimate_outcome_economics(
+        entry_price=100.0,
+        exit_price=99.0,
+        direction="long",
+        market_type="spot",
+        hold_seconds=86400,
+        entry_spread_bps=0.0,
+        fallback_spread_bps=0.0,
+        funding_rate_at_entry=None,
+        execution_fee_pct=0.0,
+        slippage_bps=0.0,
+        price_quality_ok=True,
+    )
+    assert repo.settle_filter_candidate_outcome(
+        outcome.id,
+        exit_price=99.0,
+        settled_at="2026-07-11T00:01:00+00:00",
+        economics=alternate,
+        settlement_price_source="horizon_ohlcv",
+        settlement_lag_sec=0.0,
+    ) is False
+    second = repo._select_one("filter_candidate_outcomes", outcome.id)
+    assert second["exit_price_usd"] == first["exit_price_usd"]
+    assert second["settled_at"] == first["settled_at"]
+
+
 def test_register_pending_carries_point_in_time_cost_inputs(monkeypatch):
     from aletheia.universe.outcome_recorder import register_pending
 

@@ -47,11 +47,15 @@ class _InstrumentIdentity:
 
 
 def build_position_trade_path(
-    position_id: str, *, db: Any = None
+    position_id: str, *, db: Any = None, as_of_at: str | datetime | None = None
 ) -> dict[str, Any] | None:
     """Build one exact Position path without cohort pagination."""
     attribution = build_trade_attribution_for_position(position_id, db=db)
-    return _analyze_path(attribution, 0, db=db) if attribution is not None else None
+    return (
+        _analyze_path(attribution, 0, db=db, as_of_at=as_of_at)
+        if attribution is not None
+        else None
+    )
 
 
 def build_trade_path_rows(
@@ -178,7 +182,13 @@ def build_post_exit_path_observation(
     return result
 
 
-def _analyze_path(row: dict, post_exit_bars: int, *, db: Any = None) -> dict:
+def _analyze_path(
+    row: dict,
+    post_exit_bars: int,
+    *,
+    db: Any = None,
+    as_of_at: str | datetime | None = None,
+) -> dict:
     """Analyze one closed trade without inventing identity, coverage, or order."""
     result = dict(row)
     _initialize_evidence_fields(result, post_exit_bars)
@@ -240,6 +250,8 @@ def _analyze_path(row: dict, post_exit_bars: int, *, db: Any = None) -> dict:
         }
         if db is not None:
             candle_kwargs["db"] = db
+        if as_of_at is not None:
+            candle_kwargs["include_provenance"] = True
         candles = repo.get_ohlcv_candles(
             symbol,
             _DEFAULT_TIMEFRAME,
@@ -249,6 +261,22 @@ def _analyze_path(row: dict, post_exit_bars: int, *, db: Any = None) -> dict:
         logger.debug("trade path OHLCV read failed: %s", type(exc).__name__)
         _set_insufficient(result, "ohlcv_read_unavailable")
         return result
+
+    if as_of_at is not None:
+        cutoff_ms = _iso_to_ms(str(as_of_at))
+        if cutoff_ms is None:
+            _set_insufficient(result, "ohlcv_cutoff_invalid")
+            return result
+        visible_candles = []
+        for candle in candles:
+            first_seen = _iso_to_ms(candle.get("first_persisted_at"))
+            last_mutated = _iso_to_ms(candle.get("last_mutated_at"))
+            if first_seen is None or last_mutated is None:
+                _set_insufficient(result, "ohlcv_availability_unproven")
+                return result
+            if first_seen <= cutoff_ms and last_mutated <= cutoff_ms:
+                visible_candles.append(candle)
+        candles = visible_candles
 
     candle_by_ts, candle_error = _validated_candle_map(
         candles,

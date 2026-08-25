@@ -1048,9 +1048,9 @@ def test_candidate_outcomes_can_select_one_declared_learning_horizon():
         entry_ts="2026-08-06T00:00:00+00:00",
     )
 
-    assert {row.horizon for row in build_candidate_outcomes(**common)} == {
-        "15m", "1h", "4h", "24h",
-    }
+    outcomes = build_candidate_outcomes(**common)
+    assert {row.horizon for row in outcomes} == {"15m", "1h", "4h", "24h"}
+    assert {row.analysis_notional_quote for row in outcomes} == {1.0}
     targeted = build_candidate_outcomes(**common, horizons=("4h",))
     assert [row.horizon for row in targeted] == ["4h"]
 
