@@ -87,8 +87,13 @@ def test_trade_stats_and_equity_curve_expose_matching_dual_cohorts(monkeypatch):
     from aletheia.server.routes.data import get_family_scorecard
 
     _insert_mixed_cohort()
+    # #1939: the resolver reads config.exchange.paper_execution_mode too, so
+    # the stub must supply it or every endpoint fails closed.
     monkeypatch.setattr("aletheia.config.loader.load_config", lambda: type(
-        "Config", (), {"app": type("App", (), {"equity_curve_mode": "full_cumulative"})()}
+        "Config", (), {
+            "app": type("App", (), {"equity_curve_mode": "full_cumulative"})(),
+            "exchange": type("Exchange", (), {"paper_execution_mode": "paper_internal"})(),
+        }
     )())
 
     stats = get_trade_stats()

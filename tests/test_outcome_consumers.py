@@ -263,6 +263,9 @@ def test_current_fresh_calibration_report_is_accepted():
     from aletheia.storage.models import KnowledgeItem
     from aletheia.storage.repositories import insert_knowledge_item
 
+    # #1939: a persisted calibration report is only returned when its
+    # execution_mode matches the resolved selected mode.  Stamp the fixture
+    # so it is accepted under the paper_internal identity.
     current = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
@@ -270,13 +273,15 @@ def test_current_fresh_calibration_report_is_accepted():
         "total_executed": 5,
         "ece": 0.1,
         "ece_grade": "fair",
+        "execution_mode": "paper_internal",
+        "execution_mode_status": "resolved",
     }
     insert_knowledge_item(KnowledgeItem(
         item_type="calibration_report",
         title="current calibration",
         content=json.dumps(current),
     ))
-    assert get_latest_calibration_report() == current
+    assert get_latest_calibration_report(execution_mode="paper_internal") == current
 
 
 def test_old_memo_and_reasoning_feedback_are_rejected():

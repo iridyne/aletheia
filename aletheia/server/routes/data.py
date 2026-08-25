@@ -1130,7 +1130,11 @@ def get_trades():
 
 
 @router.get("/trades/export")
-def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit: int = Query(default=5000, le=50000)):
+def export_trades(
+    fmt: str = Query(default="csv", pattern="^csv$"),
+    limit: int = Query(default=5000, le=50000),
+    execution_mode: str | None = Query(default=None),
+):
     """Export closed positions as CSV for tax/PnL reporting.
 
     #65 fix: previously exported OPEN orders — no realized PnL, no fills, no fees,
@@ -1140,6 +1144,12 @@ def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit: int =
     fees, realized PnL, close reason, and BTC benchmark — the fields a tax
     report actually needs. Still CSV, still under the same URL, only the
     columns change.
+
+    #1939: the default export is scoped to the selected ``execution_mode`` so a
+    tax/PnL file never silently combines paper, demo, and live closes.  An
+    explicit ``execution_mode=`` query overrides the resolved default; an
+    unresolvable config returns an empty CSV rather than an all-mode aggregate.
+    The resolved cohort is embedded in the download filename.
     """
     import csv
     import io
@@ -1147,14 +1157,28 @@ def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit: int =
     from fastapi.responses import StreamingResponse
 
     _ensure_db()
+    from aletheia.analytics.execution_mode import resolve_selected_execution_mode
     from aletheia.portfolio.pnl import position_realized_pnl_view
 
-    rows = [position_realized_pnl_view(row) for row in repo.list_positions(status="closed", limit=limit)]
+    mode = execution_mode or resolve_selected_execution_mode()
+    filename = (
+        f"trades_export_{mode}.csv" if mode else "trades_export_unavailable.csv"
+    )
+    if not mode:
+        return StreamingResponse(
+            iter(["execution_mode_unresolved\n"]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+
+    all_closed = repo.list_positions(status="closed", limit=limit)
+    scoped = [row for row in all_closed if (row.get("execution_mode") == mode)]
+    rows = [position_realized_pnl_view(row) for row in scoped]
     if not rows:
         return StreamingResponse(
-            iter(["no data\n"]),
+            iter([f"no data for execution_mode={mode}\n"]),
             media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=trades_export.csv"},
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
 
     columns = [
@@ -1215,7 +1239,10 @@ def export_trades(fmt: str = Query(default="csv", pattern="^csv$"), limit: int =
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=trades_export.csv"},
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "X-Aletheia-Execution-Mode": mode,
+        },
     )
 
 

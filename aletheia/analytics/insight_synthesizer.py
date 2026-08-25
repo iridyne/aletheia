@@ -16,6 +16,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, TypedDict
 
+from aletheia.analytics.execution_mode import (
+    execution_mode_identity,
+    resolve_selected_execution_mode,
+)
 from aletheia.analytics.outcome_integrity import (
     eligible_strategy_outcomes,
     is_current_outcome_artifact,
@@ -83,11 +87,23 @@ class TradingMemo(TypedDict):
     clean_window_anchor_iso: str
 
 
-def get_latest_memo() -> TradingMemo | None:
-    """Retrieve the most recent valid TradingMemo from knowledge store."""
+def get_latest_memo(
+    *, execution_mode: str | None = None,
+) -> TradingMemo | None:
+    """Retrieve the most recent valid TradingMemo for the selected mode.
+
+    Only returns a persisted memo whose ``execution_mode`` matches the
+    resolved (or provided) selected mode (#1939).  Legacy mode-less memos
+    are ignored so a mode switch never reuses the other cohort's Learning
+    output under the new selected-mode identity.
+    """
+    if execution_mode is None:
+        execution_mode = resolve_selected_execution_mode()
+    if not execution_mode:
+        return None
     try:
         from aletheia.storage.repositories import list_knowledge_items
-        items = list_knowledge_items(item_type="trading_memo", limit=5)
+        items = list_knowledge_items(item_type="trading_memo", limit=10)
         now = datetime.now(timezone.utc).isoformat()
         for item in items:
             # Check validity via tags JSON (contains valid_until)
@@ -104,21 +120,25 @@ def get_latest_memo() -> TradingMemo | None:
                 continue
             try:
                 memo = json.loads(content)
-                if is_current_outcome_artifact(
-                    memo, max_age=timedelta(hours=MAX_MEMO_AGE_HOURS),
-                ):
-                    return memo
             except (json.JSONDecodeError, TypeError):
                 continue
+            if memo.get("execution_mode") != execution_mode:
+                continue
+            if is_current_outcome_artifact(
+                memo, max_age=timedelta(hours=MAX_MEMO_AGE_HOURS),
+            ):
+                return memo
         return None
     except Exception as e:
         logger.debug("get_latest_memo failed: %s", e)
         return None
 
 
-def _should_skip_synthesis() -> bool:
+def _should_skip_synthesis(
+    *, execution_mode: str | None = None,
+) -> bool:
     """Rate-limit: don't re-synthesize if a recent memo exists."""
-    memo = get_latest_memo()
+    memo = get_latest_memo(execution_mode=execution_mode)
     if not memo:
         return False
     try:
@@ -131,12 +151,24 @@ def _should_skip_synthesis() -> bool:
         return False
 
 
-async def synthesize_trading_memo(window_days: int = 30) -> TradingMemo | None:
+async def synthesize_trading_memo(
+    window_days: int = 30,
+    *,
+    execution_mode: str | None = None,
+) -> TradingMemo | None:
     """Main entry: build context → LLM synthesis → persist memo.
+
+    Scoped to a single ``execution_mode`` (#1939).  When the caller does not
+    provide one, the currently-selected mode is resolved from config; an
+    unresolvable config returns ``None`` (fail-closed).
 
     Returns the memo dict or None on failure / insufficient data.
     """
-    if _should_skip_synthesis():
+    if execution_mode is None:
+        execution_mode = resolve_selected_execution_mode()
+    if not execution_mode:
+        return None
+    if _should_skip_synthesis(execution_mode=execution_mode):
         logger.info("Skipping synthesis — recent memo exists (< %dh)", MIN_SYNTHESIS_INTERVAL_HOURS)
         return None
 
@@ -152,13 +184,13 @@ async def synthesize_trading_memo(window_days: int = 30) -> TradingMemo | None:
     except Exception as e:
         logger.debug("prior memo evaluation skipped: %s", e)
 
-    stats = _gather_statistics(window_days)
+    stats = _gather_statistics(window_days, execution_mode=execution_mode)
     if not stats or stats["total_trades"] < MIN_TRADES_FOR_MEMO:
         logger.info("Insufficient trades for synthesis: %d < %d",
                     stats.get("total_trades", 0) if stats else 0, MIN_TRADES_FOR_MEMO)
         return None
 
-    memo = _build_deterministic_memo(stats)
+    memo = _build_deterministic_memo(stats, execution_mode=execution_mode)
     if prior_corrections:
         memo["prior_corrections"] = prior_corrections
 
@@ -174,7 +206,9 @@ async def synthesize_trading_memo(window_days: int = 30) -> TradingMemo | None:
     return memo
 
 
-def _gather_statistics(window_days: int) -> dict[str, Any] | None:
+def _gather_statistics(
+    window_days: int, *, execution_mode: str | None = None,
+) -> dict[str, Any] | None:
     """Gather all statistics needed for memo generation."""
     try:
         from aletheia.storage.repositories import get_latest_market_regime
@@ -184,7 +218,9 @@ def _gather_statistics(window_days: int) -> dict[str, Any] | None:
             (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
         )
 
-        rows = eligible_strategy_outcomes(closed_after=cutoff)
+        rows = eligible_strategy_outcomes(
+            closed_after=cutoff, execution_mode=execution_mode,
+        )
 
         if not rows:
             return None
@@ -202,7 +238,9 @@ def _gather_statistics(window_days: int) -> dict[str, Any] | None:
         return None
 
 
-def _build_deterministic_memo(stats: dict) -> TradingMemo:
+def _build_deterministic_memo(
+    stats: dict, *, execution_mode: str | None = None,
+) -> TradingMemo:
     """Build memo from pure statistics (no LLM needed for the structured parts)."""
     rows = stats["rows"]
     now = datetime.now(timezone.utc)
@@ -224,6 +262,7 @@ def _build_deterministic_memo(stats: dict) -> TradingMemo:
         "anti_patterns": anti_patterns,
         "direction_summary": direction_summary,
         "key_insight": "",
+        **execution_mode_identity(execution_mode),
         **outcome_window_metadata(),
     }
 

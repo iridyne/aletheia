@@ -12,22 +12,28 @@ import logging
 from datetime import datetime, timezone
 
 from aletheia.analytics import outcome_integrity
+from aletheia.analytics.execution_mode import execution_mode_identity
 from aletheia.analytics.learning_window import outcome_window_metadata
 
 logger = logging.getLogger("aletheia.analytics.family_scorecard")
 
 
-def compute_family_scorecard() -> list[dict]:
+def compute_family_scorecard(*, execution_mode: str | None = None) -> list[dict]:
     """Compute per-scanner_family performance statistics.
 
     Returns a list of dicts, one per family:
         {family, trade_count, win_rate, expectancy_pct, avg_hold_hours,
          shadow_count, alpha_vs_btc_pct}
+    Scoped to a single ``execution_mode`` when provided (#1939).
     """
-    return compute_family_scorecard_with_epoch()["families"]
+    return compute_family_scorecard_with_epoch(
+        execution_mode=execution_mode,
+    )["families"]
 
 
-def compute_family_scorecard_with_epoch() -> dict:
+def compute_family_scorecard_with_epoch(
+    *, execution_mode: str | None = None,
+) -> dict:
     """Same as compute_family_scorecard() but also returns shadow epoch metadata.
 
     Returns:
@@ -46,7 +52,9 @@ def compute_family_scorecard_with_epoch() -> dict:
 
     # Metadata joins do not decide eligibility; the central read model does.
     rows = []
-    for position in outcome_integrity.eligible_strategy_outcomes():
+    for position in outcome_integrity.eligible_strategy_outcomes(
+        execution_mode=execution_mode,
+    ):
         scanner_family = "unknown"
         proposal_id = position.get("proposal_id")
         if proposal_id:
@@ -128,12 +136,14 @@ def compute_family_scorecard_with_epoch() -> dict:
             "shadow_count": f["shadow_count"] if shadow_epoch_status != "mixed" else None,
             "alpha_vs_btc_pct": round(f["total_alpha_pct"] / f["alpha_count"], 2) if f["alpha_count"] > 0 else None,
             "outcome_status": "available" if tc else "insufficient",
+            **execution_mode_identity(execution_mode),
             **outcome_window_metadata(),
         })
     return {
         "families": result,
         "shadow_epoch_id": shadow_epoch_id,
         "shadow_epoch_status": shadow_epoch_status,
+        **execution_mode_identity(execution_mode),
     }
 
 

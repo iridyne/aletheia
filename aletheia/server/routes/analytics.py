@@ -155,18 +155,50 @@ def get_trade_paths():
 
 
 @router.get("/trade-stats")  # TODO: add response_model for OpenAPI schema (#1187)
-def get_trade_stats():
-    """Trade analytics: by-source and by-family aggregation for the Analytics panel."""
+def get_trade_stats(execution_mode: str | None = None):
+    """Trade analytics: by-source and by-family aggregation for the Analytics panel.
+
+    ``execution_mode`` scopes every metric to a single population.  When
+    omitted, the currently-selected mode is resolved from config; an
+    unresolvable config returns an unavailable payload (#1939).
+    """
+    from aletheia.analytics.execution_mode import (
+        execution_mode_identity,
+        resolve_selected_execution_mode,
+    )
     from aletheia.analytics.trade_stats import build_trade_stats
-    return build_trade_stats()
+    mode = (execution_mode or resolve_selected_execution_mode())
+    if not mode:
+        return {
+            "outcome_status": "unavailable",
+            "unavailable_reason": "execution_mode_unresolved",
+            **execution_mode_identity(None),
+        }
+    return build_trade_stats(execution_mode=mode)
 
 
 @router.get("/strategy-kpis")
-def get_strategy_kpis():
+def get_strategy_kpis(execution_mode: str | None = None):
     """Per-strategy KPI summary: trade_count, win_rate, total_pnl."""
+    from aletheia.analytics.execution_mode import (
+        execution_mode_identity,
+        resolve_selected_execution_mode,
+    )
     from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
     from aletheia.analytics.trade_stats import build_strategy_kpis
-    return {"strategies": build_strategy_kpis(), **build_outcome_cohort_summary()}
+    mode = (execution_mode or resolve_selected_execution_mode())
+    if not mode:
+        return {
+            "strategies": {},
+            "outcome_status": "unavailable",
+            "unavailable_reason": "execution_mode_unresolved",
+            **execution_mode_identity(None),
+        }
+    return {
+        "strategies": build_strategy_kpis(execution_mode=mode),
+        **execution_mode_identity(mode),
+        **build_outcome_cohort_summary(execution_mode=mode),
+    }
 
 
 @router.get("/equity-curve")
@@ -306,23 +338,51 @@ def get_equity_curve(
 
 
 @router.get("/trade-insights")  # TODO: add response_model for OpenAPI schema (#1187)
-def get_trade_insights():
-    """Comprehensive trade insights for charts: equity curve, drawdown, direction split, etc."""
+def get_trade_insights(execution_mode: str | None = None):
+    """Comprehensive trade insights for charts: equity curve, drawdown, direction split, etc.
+
+    Scoped to the resolved (or explicit) ``execution_mode`` (#1939).
+    """
+    from aletheia.analytics.execution_mode import (
+        execution_mode_identity,
+        resolve_selected_execution_mode,
+    )
     from aletheia.analytics.trade_insights import build_trade_insights
-    return build_trade_insights()
+    mode = (execution_mode or resolve_selected_execution_mode())
+    if not mode:
+        return {
+            "outcome_status": "unavailable",
+            "unavailable_reason": "execution_mode_unresolved",
+            **execution_mode_identity(None),
+        }
+    return build_trade_insights(execution_mode=mode)
 
 
 @router.get("/strategy-performance")
-def get_strategy_performance():
+def get_strategy_performance(execution_mode: str | None = None):
     """Per-strategy detailed performance KPIs. Backtest run summary removed with
     the rules engine (Position C 2026-07-02); latest_backtest kept as an empty
-    object for response-shape back-compat."""
+    object for response-shape back-compat. Scoped to the resolved execution_mode (#1939)."""
+    from aletheia.analytics.execution_mode import (
+        execution_mode_identity,
+        resolve_selected_execution_mode,
+    )
     from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
     from aletheia.analytics.trade_stats import build_strategy_kpis
+    mode = (execution_mode or resolve_selected_execution_mode())
+    if not mode:
+        return {
+            "strategies": {},
+            "latest_backtest": {},
+            "outcome_status": "unavailable",
+            "unavailable_reason": "execution_mode_unresolved",
+            **execution_mode_identity(None),
+        }
     return {
-        "strategies": build_strategy_kpis(),
+        "strategies": build_strategy_kpis(execution_mode=mode),
         "latest_backtest": {},
-        **build_outcome_cohort_summary(),
+        **execution_mode_identity(mode),
+        **build_outcome_cohort_summary(execution_mode=mode),
     }
 
 
@@ -334,13 +394,27 @@ def get_go_live_scorecard():
 
 
 @router.get("/cost-summary")
-def get_cost_summary():
-    """Verified outcome costs plus separately labelled raw recorded costs."""
+def get_cost_summary(execution_mode: str | None = None):
+    """Verified outcome costs plus separately labelled raw recorded costs.
+
+    Scoped to the resolved (or explicit) ``execution_mode`` (#1939).
+    """
+    from aletheia.analytics.execution_mode import (
+        execution_mode_identity,
+        resolve_selected_execution_mode,
+    )
     from aletheia.analytics.outcome_integrity import (
         build_outcome_cohort_summary,
         eligible_strategy_outcomes,
         raw_account_events,
     )
+    mode = (execution_mode or resolve_selected_execution_mode())
+    if not mode:
+        return {
+            "outcome_status": "unavailable",
+            "unavailable_reason": "execution_mode_unresolved",
+            **execution_mode_identity(None),
+        }
 
     def _costs(rows: list[dict]) -> dict[str, float | None]:
         if not rows or not any(
@@ -366,32 +440,69 @@ def get_cost_summary():
             "total_costs": round(entry + exit_ + slippage, 8),
         }
 
-    verified = _costs(eligible_strategy_outcomes())
-    raw = _costs(raw_account_events())
+    verified = _costs(eligible_strategy_outcomes(execution_mode=mode))
+    raw = _costs(raw_account_events(execution_mode=mode))
     return {
         **verified,
         "raw_recorded_costs": raw,
-        **build_outcome_cohort_summary(),
+        **execution_mode_identity(mode),
+        **build_outcome_cohort_summary(execution_mode=mode),
     }
 
 
 @router.get("/confidence-calibration")
-def get_confidence_calibration():
-    """Conviction calibration report — actual vs expected win rate per conviction bucket."""
+def get_confidence_calibration(execution_mode: str | None = None):
+    """Conviction calibration report — actual vs expected win rate per conviction bucket.
+    Scoped to the resolved (or explicit) ``execution_mode`` (#1939).
+    """
     from aletheia.analytics.confidence_calibration import get_latest_calibration_report, build_calibration_report
-    report = get_latest_calibration_report()
-    if not report:
-        report = build_calibration_report()
+    from aletheia.analytics.execution_mode import (
+        execution_mode_identity,
+        resolve_selected_execution_mode,
+    )
     from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
+    mode = (execution_mode or resolve_selected_execution_mode())
+    if not mode:
+        return {
+            "status": "unavailable",
+            "unavailable_reason": "execution_mode_unresolved",
+            "buckets": [],
+            "ece": None,
+            "ece_grade": "insufficient_data",
+            **execution_mode_identity(None),
+        }
+    report = get_latest_calibration_report(execution_mode=mode)
+    if not report:
+        report = build_calibration_report(execution_mode=mode)
     result = report or {"status": "no_data", "buckets": [], "ece": None, "ece_grade": "insufficient_data"}
-    return {**result, **build_outcome_cohort_summary()}
+    return {
+        **result,
+        **execution_mode_identity(mode),
+        **build_outcome_cohort_summary(execution_mode=mode),
+    }
 
 
 @router.get("/reasoning-feedback")
-def get_reasoning_feedback():
-    """Reasoning quality feedback — proposal rejection patterns and approval win rates."""
+def get_reasoning_feedback(execution_mode: str | None = None):
+    """Reasoning quality feedback — proposal rejection patterns and approval win rates.
+    Scoped to the resolved (or explicit) ``execution_mode`` (#1939).
+    """
+    from aletheia.analytics.execution_mode import (
+        execution_mode_identity,
+        resolve_selected_execution_mode,
+    )
     from aletheia.analytics.reasoning_feedback import get_latest_reasoning_feedback
-    return get_latest_reasoning_feedback() or {"status": "no_data"}
+    mode = (execution_mode or resolve_selected_execution_mode())
+    if not mode:
+        return {
+            "status": "unavailable",
+            "unavailable_reason": "execution_mode_unresolved",
+            **execution_mode_identity(None),
+        }
+    fb = get_latest_reasoning_feedback(execution_mode=mode)
+    if fb:
+        return fb
+    return {"status": "no_data", **execution_mode_identity(mode)}
 
 
 @router.get("/alpha-attribution")

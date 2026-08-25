@@ -10,6 +10,10 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+from aletheia.analytics.execution_mode import (
+    execution_mode_identity,
+    resolve_selected_execution_mode,
+)
 from aletheia.analytics.outcome_integrity import (
     eligible_strategy_outcomes,
     is_current_outcome_artifact,
@@ -25,11 +29,24 @@ FEEDBACK_WINDOW_DAYS = 30
 MAX_ACTIVE_FEEDBACK_AGE = timedelta(hours=24)
 
 
-def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | None:
+def build_reasoning_feedback(
+    window_days: int = FEEDBACK_WINDOW_DAYS,
+    *,
+    execution_mode: str | None = None,
+) -> dict | None:
     """Aggregate proposal rejection patterns and approval win rates.
+
+    Scoped to a single ``execution_mode`` (#1939).  When the caller does not
+    provide one, the currently-selected mode is resolved from config; an
+    unresolvable config returns ``None`` (fail-closed, never a merged all-mode
+    Learning artifact).
 
     Returns a dict or None when insufficient data.
     """
+    if execution_mode is None:
+        execution_mode = resolve_selected_execution_mode()
+    if not execution_mode:
+        return None
     try:
         from aletheia.storage.sqlite import get_db
         from aletheia.analytics.learning_window import clean_window_cutoff
@@ -47,6 +64,7 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
                 tp.agent_rationale,
                 tp.direction,
                 tp.opportunity_id,
+                tp.execution_mode AS proposal_execution_mode,
                 pd.conviction,
                 pd.reasoning AS pi_reasoning,
                 o.regime_tag AS proposal_regime_tag,
@@ -57,9 +75,10 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
             LEFT JOIN opportunities o
                 ON o.id = tp.opportunity_id
             WHERE tp.created_at >= ?
+              AND tp.execution_mode = ?
             ORDER BY tp.created_at DESC
             """,
-            (cutoff,),
+            (cutoff, execution_mode),
         ).fetchall()
 
         if not rows:
@@ -67,7 +86,9 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
 
         outcomes_by_proposal = {
             str(row["proposal_id"]): row
-            for row in eligible_strategy_outcomes(closed_after=cutoff)
+            for row in eligible_strategy_outcomes(
+                closed_after=cutoff, execution_mode=execution_mode,
+            )
             if row.get("proposal_id")
         }
         proposals = []
@@ -223,6 +244,7 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
             "recommended_pursue": recommended_pursue,
             "high_conviction_win_rate": _win_rate(high_conv),
             "low_conviction_win_rate": _win_rate(low_conv),
+            **execution_mode_identity(execution_mode),
             **outcome_window_metadata(),
         }
 
@@ -234,22 +256,37 @@ def build_reasoning_feedback(window_days: int = FEEDBACK_WINDOW_DAYS) -> dict | 
         return None
 
 
-def get_latest_reasoning_feedback() -> dict | None:
-    """Read most-recent reasoning feedback from knowledge_items store."""
+def get_latest_reasoning_feedback(
+    *, execution_mode: str | None = None,
+) -> dict | None:
+    """Read most-recent reasoning feedback for the selected execution mode.
+
+    Only returns a persisted artifact whose ``execution_mode`` matches the
+    resolved (or provided) selected mode (#1939).  Legacy mode-less artifacts
+    are ignored so a mode switch cannot silently reuse the other cohort's
+    Learning feedback.
+    """
+    if execution_mode is None:
+        execution_mode = resolve_selected_execution_mode()
+    if not execution_mode:
+        return None
     try:
         from aletheia.storage.repositories import list_knowledge_items
-        items = list_knowledge_items(item_type="reasoning_feedback", limit=1)
+        items = list_knowledge_items(item_type="reasoning_feedback", limit=5)
         for item in items:
             content = item.get("content")
-            if content:
-                try:
-                    feedback = json.loads(content)
-                    if is_current_outcome_artifact(
-                        feedback, max_age=MAX_ACTIVE_FEEDBACK_AGE,
-                    ):
-                        return feedback
-                except (json.JSONDecodeError, TypeError):
-                    continue
+            if not content:
+                continue
+            try:
+                feedback = json.loads(content)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if feedback.get("execution_mode") != execution_mode:
+                continue
+            if is_current_outcome_artifact(
+                feedback, max_age=MAX_ACTIVE_FEEDBACK_AGE,
+            ):
+                return feedback
         return None
     except Exception as e:
         logger.debug("get_latest_reasoning_feedback failed: %s", e)

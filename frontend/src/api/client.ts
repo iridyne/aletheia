@@ -957,6 +957,14 @@ export interface SerenityThemeOverview {
 	};
 }
 
+// #1939: append `?execution_mode=<mode>` to profitability endpoints so a
+// selected-mode UI panel is never combined with all-mode aggregates.
+function _withMode(path: string, execution_mode?: string): string {
+	if (!execution_mode) return path;
+	const sep = path.includes("?") ? "&" : "?";
+	return `${path}${sep}execution_mode=${encodeURIComponent(execution_mode)}`;
+}
+
 export const api = {
 	getHealth: () =>
 		fetchJson<{ status: string; issues: string[]; version: string }>("/health"),
@@ -2857,9 +2865,11 @@ export const api = {
 			"/settings/network/test",
 		),
 
-	// Trade Analytics panel
-	getTradeStats: () => fetchJson<TradeStats>("/analytics/trade-stats"),
-	getStrategyKpis: () =>
+	// Trade Analytics panel. Every request MUST scope to a single
+	// `execution_mode` so operator surfaces never combine populations (#1939).
+	getTradeStats: (execution_mode?: string) =>
+		fetchJson<TradeStats>(_withMode("/analytics/trade-stats", execution_mode)),
+	getStrategyKpis: (execution_mode?: string) =>
 		fetchJson<
 			OutcomeCohort & {
 				strategies: Record<
@@ -2867,9 +2877,13 @@ export const api = {
 					{ trade_count: number; win_rate: number; total_pnl: number }
 				>;
 			}
-		>("/analytics/strategy-kpis"),
-	getEquityCurve: (days?: number) =>
-		fetchJson<
+		>(_withMode("/analytics/strategy-kpis", execution_mode)),
+	getEquityCurve: (days?: number, execution_mode?: string) => {
+		const q = new URLSearchParams();
+		if (days != null) q.set("days", String(days));
+		if (execution_mode) q.set("execution_mode", execution_mode);
+		const qs = q.toString();
+		return fetchJson<
 			OutcomeCohort & {
 				default_curve: "genuine_verified";
 				raw_curve_label: string;
@@ -2887,8 +2901,10 @@ export const api = {
 				total_realized: number | null;
 				raw_total_recorded_realized: number | null;
 			}
-		>(`/analytics/equity-curve${days ? `?days=${days}` : ""}`),
-	getTradeInsights: () => fetchJson<TradeInsights>("/analytics/trade-insights"),
+		>(`/analytics/equity-curve${qs ? `?${qs}` : ""}`);
+	},
+	getTradeInsights: (execution_mode?: string) =>
+		fetchJson<TradeInsights>(_withMode("/analytics/trade-insights", execution_mode)),
 	getThesisLineage: (params: {
 		days?: number;
 		position_id?: string;
@@ -2939,14 +2955,19 @@ export const api = {
 			schedule: { enabled: boolean; observe_interval_hours: number };
 			empty_reason: "config_unavailable" | "controller_disabled" | "no_controller_runs" | "insufficient_run_history" | "no_persistent_signals" | null;
 		}>("/analytics/filter-controller/persistent"),
-	getCostSummary: () => fetchJson<CostSummary>("/analytics/cost-summary"),
-	getConfidenceCalibration: () =>
-		fetchJson<CalibrationReport>("/analytics/confidence-calibration"),
-	getReasoningFeedback: () =>
-		fetchJson<ReasoningFeedback>("/analytics/reasoning-feedback"),
+	getCostSummary: (execution_mode?: string) =>
+		fetchJson<CostSummary>(_withMode("/analytics/cost-summary", execution_mode)),
+	getConfidenceCalibration: (execution_mode?: string) =>
+		fetchJson<CalibrationReport>(
+			_withMode("/analytics/confidence-calibration", execution_mode),
+		),
+	getReasoningFeedback: (execution_mode?: string) =>
+		fetchJson<ReasoningFeedback>(
+			_withMode("/analytics/reasoning-feedback", execution_mode),
+		),
 
-	getStrategyPerformance: () =>
-		fetchJson<any>("/analytics/strategy-performance"),
+	getStrategyPerformance: (execution_mode?: string) =>
+		fetchJson<any>(_withMode("/analytics/strategy-performance", execution_mode)),
 	getSerenityPipeline: () => fetchJson<any>("/serenity/pipeline"),
 
 	// Generic helpers for pages that need simple get/post

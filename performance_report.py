@@ -31,9 +31,30 @@ def _now() -> str:
 
 def _collect() -> dict:
     """Pull each analytics section, isolating failures so one bad source does
-    not sink the whole report."""
+    not sink the whole report.
+
+    Scoped to the resolved selected ``execution_mode`` (#1939).  ``--execution-mode``
+    on the CLI (or ``REPORT_EXECUTION_MODE`` env) overrides the resolved default.
+    An unresolved config fails-closed: the report emits
+    ``execution_mode_status='unavailable'`` and no metrics.
+    """
+    from aletheia.analytics.execution_mode import (
+        execution_mode_identity,
+        resolve_selected_execution_mode,
+    )
+
     result: dict = {"sections": []}
     days = int(os.environ.get("REPORT_DAYS", os.environ.get("SNAPSHOT_WINDOW_HOURS", "7")))
+
+    override = os.environ.get("REPORT_EXECUTION_MODE") or _cli_execution_mode()
+    execution_mode = override or resolve_selected_execution_mode()
+    result["execution_mode"] = execution_mode
+    result["execution_mode_status"] = (
+        "resolved" if execution_mode else "unavailable"
+    )
+    if not execution_mode:
+        result["unavailable_reason"] = "execution_mode_unresolved"
+        return result
 
     # Rolling + full trade stats + order stats (all DB-backed).
     try:
@@ -42,8 +63,10 @@ def _collect() -> dict:
             compute_order_stats,
             compute_rolling_trade_stats,
         )
-        result["rolling"] = compute_rolling_trade_stats(days=days)
-        result["trade_stats"] = build_trade_stats()
+        result["rolling"] = compute_rolling_trade_stats(
+            days=days, execution_mode=execution_mode,
+        )
+        result["trade_stats"] = build_trade_stats(execution_mode=execution_mode)
         result["order_stats"] = compute_order_stats(days=days)
         result["sections"] += ["rolling", "trade_stats", "order_stats"]
     except Exception as e:  # pragma: no cover - depends on live DB/runtime
@@ -58,7 +81,7 @@ def _collect() -> dict:
             summarize,
         )
 
-        outcomes = eligible_strategy_outcomes()
+        outcomes = eligible_strategy_outcomes(execution_mode=execution_mode)
         if outcomes:
             outcomes = sorted(
                 outcomes,
@@ -107,6 +130,16 @@ def _render_human(rep: dict) -> str:
     out.append("=" * 64)
     out.append("aletheia bot 交易绩效报告 (只读)")
     out.append("生成时间(UTC): %s" % _now())
+    out.append("execution_mode: %s (%s)" % (
+        rep.get("execution_mode") or "—",
+        rep.get("execution_mode_status") or "unavailable",
+    ))
+    if rep.get("execution_mode_status") == "unavailable":
+        out.append(
+            "[fail-closed] execution_mode 无法解析,"
+            " 不展示混合口径 (#1939): %s"
+            % (rep.get("unavailable_reason") or "unknown")
+        )
     out.append("可用分块: %s" % (rep.get("sections") or []))
     out.append("=" * 64)
 
@@ -218,6 +251,17 @@ def _render_human(rep: dict) -> str:
 
     out.append("=" * 64)
     return "\n".join(out)
+
+
+def _cli_execution_mode() -> str | None:
+    """Return ``--execution-mode <value>`` from argv, if present."""
+    args = sys.argv[1:]
+    for i, arg in enumerate(args):
+        if arg == "--execution-mode" and i + 1 < len(args):
+            return args[i + 1].strip() or None
+        if arg.startswith("--execution-mode="):
+            return arg.split("=", 1)[1].strip() or None
+    return None
 
 
 def main() -> int:
