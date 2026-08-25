@@ -16,6 +16,7 @@ MARKET_OHLCV_COLUMNS = (
     "exchange,symbol,market_type,timeframe,ts,open,high,low,close,volume,provider,"
     "first_persisted_at,last_mutated_at"
 )
+_LEGACY_MARKET_OHLCV_COLUMNS = "exchange,symbol,market_type,timeframe,ts,open,high,low,close,volume,provider"
 MARKET_OHLCV_PRIMARY_KEY = (
     "exchange",
     "symbol",
@@ -38,6 +39,22 @@ CREATE TABLE {table_name} (
     provider TEXT NOT NULL DEFAULT 'ccxt',
     first_persisted_at TEXT,
     last_mutated_at TEXT,
+    PRIMARY KEY (exchange, symbol, market_type, timeframe, ts)
+) WITHOUT ROWID
+"""
+_LEGACY_MARKET_OHLCV_WITHOUT_ROWID_DDL = """
+CREATE TABLE {table_name} (
+    exchange TEXT NOT NULL DEFAULT 'legacy_unknown',
+    symbol TEXT NOT NULL,
+    market_type TEXT NOT NULL DEFAULT 'spot',
+    timeframe TEXT NOT NULL,
+    ts INTEGER NOT NULL,
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    volume REAL NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'ccxt',
     PRIMARY KEY (exchange, symbol, market_type, timeframe, ts)
 ) WITHOUT ROWID
 """
@@ -95,12 +112,16 @@ def market_ohlcv_storage_profile(db: sqlite3.Connection) -> dict:
     }
 
 
-def _assert_expected_market_ohlcv_shape(db: sqlite3.Connection) -> None:
+def _assert_expected_market_ohlcv_shape(db: sqlite3.Connection) -> tuple[str, str]:
     info = list(db.execute("PRAGMA table_info(market_ohlcv)"))
     columns = [str(row[1]) for row in info]
     primary_key = [str(row[1]) for row in sorted(info, key=lambda row: int(row[5])) if int(row[5])]
-    expected_columns = MARKET_OHLCV_COLUMNS.split(",")
-    if columns != expected_columns or primary_key != list(MARKET_OHLCV_PRIMARY_KEY):
+    source_columns = ",".join(columns)
+    rebuild_ddl = {
+        MARKET_OHLCV_COLUMNS: MARKET_OHLCV_WITHOUT_ROWID_DDL,
+        _LEGACY_MARKET_OHLCV_COLUMNS: _LEGACY_MARKET_OHLCV_WITHOUT_ROWID_DDL,
+    }.get(source_columns)
+    if rebuild_ddl is None or primary_key != list(MARKET_OHLCV_PRIMARY_KEY):
         raise RuntimeError("market_ohlcv has an unexpected logical schema; refusing physical rebuild")
     explicit_indexes = {
         str(row[0])
@@ -118,6 +139,7 @@ def _assert_expected_market_ohlcv_shape(db: sqlite3.Connection) -> None:
         (_REBUILD_TABLE,),
     ).fetchone():
         raise RuntimeError(f"temporary rebuild table {_REBUILD_TABLE!r} already exists; manual inspection required")
+    return source_columns, rebuild_ddl
 
 
 def rebuild_market_ohlcv_without_rowid(db: sqlite3.Connection) -> dict:
@@ -133,28 +155,42 @@ def rebuild_market_ohlcv_without_rowid(db: sqlite3.Connection) -> dict:
         return {"applied": False, "reason": "table_unavailable", "before": before}
     if before["without_rowid"]:
         return {"applied": False, "reason": "already_without_rowid", "before": before}
-    _assert_expected_market_ohlcv_shape(db)
+    source_columns, rebuild_ddl = _assert_expected_market_ohlcv_shape(db)
 
     started = time.perf_counter()
     db.execute("BEGIN IMMEDIATE")
     try:
-        db.execute(MARKET_OHLCV_WITHOUT_ROWID_DDL.format(table_name=_REBUILD_TABLE))
+        db.execute(rebuild_ddl.format(table_name=_REBUILD_TABLE))
         db.execute(
-            f"INSERT INTO {_REBUILD_TABLE} ({MARKET_OHLCV_COLUMNS}) "
-            f"SELECT {MARKET_OHLCV_COLUMNS} FROM market_ohlcv "
+            f"INSERT INTO {_REBUILD_TABLE} ({source_columns}) "
+            f"SELECT {source_columns} FROM market_ohlcv "
             "ORDER BY exchange,symbol,market_type,timeframe,ts"
         )
         copied = int(db.execute(f"SELECT COUNT(*) FROM {_REBUILD_TABLE}").fetchone()[0])
         if copied != int(before["row_count"]):
             raise RuntimeError(f"market_ohlcv rebuild count mismatch: before={before['row_count']} copied={copied}")
+        mismatch_columns = [
+            "new.open IS NOT old.open",
+            "new.high IS NOT old.high",
+            "new.low IS NOT old.low",
+            "new.close IS NOT old.close",
+            "new.volume IS NOT old.volume",
+            "new.provider IS NOT old.provider",
+        ]
+        if source_columns == MARKET_OHLCV_COLUMNS:
+            mismatch_columns.extend(
+                [
+                    "new.first_persisted_at IS NOT old.first_persisted_at",
+                    "new.last_mutated_at IS NOT old.last_mutated_at",
+                ]
+            )
         mismatch = db.execute(
             f"SELECT 1 FROM market_ohlcv AS old LEFT JOIN {_REBUILD_TABLE} AS new ON "
             "new.exchange=old.exchange AND new.symbol=old.symbol "
             "AND new.market_type=old.market_type AND new.timeframe=old.timeframe "
             "AND new.ts=old.ts WHERE "
-            "new.exchange IS NULL OR new.open IS NOT old.open OR new.high IS NOT old.high "
-            "OR new.low IS NOT old.low OR new.close IS NOT old.close "
-            "OR new.volume IS NOT old.volume OR new.provider IS NOT old.provider LIMIT 1"
+            + " OR ".join(["new.exchange IS NULL", *mismatch_columns])
+            + " LIMIT 1"
         ).fetchone()
         if mismatch is not None:
             raise RuntimeError("market_ohlcv rebuild value verification failed")
