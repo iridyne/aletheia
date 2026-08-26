@@ -115,6 +115,15 @@ administrative exclusion，不得进入 candidate skip、trace/seed 缺口或效
 事实不能替代 emitter 的 producer pass。Universe emitter 的该类失败不是可忽略分析错误：
 当前没有 snapshot/member 级独立重试队列，因此 `UniverseService.refresh` 必须把 scanner run 标为
 failed 并返回失败，禁止继续发布 completed。
+Momentum family 不在 emitter 阶段创建 Opportunity：它必须把 `UniverseSetup` 与
+`opportunity_emission/signal_emitter/passed/reason_code=momentum_setup_created|momentum_setup_reused`
+放在同一回滚边界。
+该 passed 事实只证明 Setup 结构已发布，不代表入场、Operator 授权、Opportunity 或 Proposal；后续
+`conditional_entry_authorized` 与 exact-venue T0 materialization 由 setup/authorization/market snapshot
+因果链独立审计，禁止把 setup pass 混入普通 `opportunity_emitted` cohort。
+其他 family 在拥有各自冻结的 entry trigger、entry zone、structural invalidation、same-venue
+cost snapshot 与 material fingerprint 之前，只能保留 `execution_eligible=false` 的 Candidate/
+观察载体；不得用统一 ATR 区间替不同策略伪造完整 Opportunity。
 进入队列后的 immutable producer admission 拒绝属于 queue lifecycle：写入唯一的 producer
 eligibility rejection，转为 `signal_queue_evicted` 并终结该 Opportunity。它不是 System Operator
 判断，不得创建 `operator_action_assessment`、outcome seed 或 B2 cohort 成员；暂时无法取得

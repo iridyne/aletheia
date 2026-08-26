@@ -18,6 +18,7 @@ from aletheia.universe.funding_units import (
 import json
 import logging
 
+from aletheia.storage import repositories as repo
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
     find_live_opportunity_by_symbol_direction,
@@ -428,6 +429,80 @@ def emit_deterministic_opportunities(
             regime=regime.state if regime else None,
         )
 
+        # Momentum candidates are structures, not entry instants. Persist an
+        # expiring Setup and let the conditional-authorization/fast-trigger path
+        # create the Opportunity only after an actual pullback reclaim.
+        if family == "momentum":
+            from aletheia.universe.fast_trigger import (
+                build_momentum_setup,
+                persist_momentum_setup,
+            )
+
+            try:
+                setup = build_momentum_setup(
+                    snapshot_id=snapshot_id,
+                    member_id=str(member_id),
+                    asset_id=str(feat.get("asset_id") or m.get("asset_id") or ""),
+                    venue=str(feat.get("venue") or m.get("venue") or ""),
+                    symbol=symbol,
+                    market_type=market_type,
+                    direction=direction,
+                    regime_tag=regime.state if regime else None,
+                    rank=int(m.get("rank") or member_index + 1),
+                    material_fingerprint=current_material_fingerprint,
+                    atr_15m_pct=float(feat.get("atr_15m_pct")),
+                    candles=list(feat.get("_closed_ohlcv_15m") or ()),
+                    motive_evidence={
+                        "universe_snapshot_id": snapshot_id,
+                        "universe_member_id": member_id,
+                        "feature_snapshot_id": feat.get("feature_snapshot_id"),
+                        "total_score": total_score,
+                        "reasons": [
+                            str(reason)[:160]
+                            for reason in (feat.get("reasons") or [])[:5]
+                        ],
+                        "regime": regime.state if regime else None,
+                    },
+                    funding_rate=feat.get("funding_rate"),
+                )
+            except (TypeError, ValueError) as exc:
+                _record_emission_decision(
+                    member=m,
+                    snapshot_id=snapshot_id,
+                    member_index=member_index,
+                    symbol=symbol,
+                    market_type=market_type,
+                    total_score=total_score,
+                    short_enabled=short_enabled,
+                    decision="rejected",
+                    reason_code=str(exc)[:160] or "momentum_setup_unavailable",
+                    direction=direction,
+                    regime_tag=regime.state if regime else None,
+                )
+                continue
+            with repo.transaction(immediate=True):
+                owner = persist_momentum_setup(setup)
+                setup_created = owner["id"] == setup.id
+                _record_emission_decision(
+                    member=m,
+                    snapshot_id=snapshot_id,
+                    member_index=member_index,
+                    symbol=symbol,
+                    market_type=market_type,
+                    total_score=total_score,
+                    short_enabled=short_enabled,
+                    decision="passed",
+                    reason_code=(
+                        "momentum_setup_created"
+                        if setup_created
+                        else "momentum_setup_reused"
+                    ),
+                    direction=direction,
+                    regime_tag=regime.state if regime else None,
+                    inputs={"setup_id": owner["id"], "setup_state": owner["state"]},
+                )
+            continue
+
         # Per-snapshot identity is authoritative before any cross-snapshot
         # suppression. A retry for the same selected member must reuse the
         # existing lifecycle row, regardless of another live carrier.
@@ -555,8 +630,11 @@ def emit_deterministic_opportunities(
         # Guard: only set execution_eligible if there is live price data within the
         # last 2 hours. Symbols with zero snapshots would otherwise reach the Trading Decision daemon as
         # tradeable but fail silently at proposal submission (price=0 → proposal_id=None).
-        _exec_eligible = has_fresh_market_snapshot(symbol, market_type)
-        if not _exec_eligible:
+        _has_fresh_snapshot = has_fresh_market_snapshot(symbol, market_type)
+        # A scanner score is a Candidate, not a complete entry generation.  Only
+        # the Fast Trigger path currently freezes entry/invalidation/cost facts.
+        _exec_eligible = False
+        if not _has_fresh_snapshot:
             logger.warning(
                 "no_live_price_for_symbol: %s — execution_eligible set to False", symbol
             )

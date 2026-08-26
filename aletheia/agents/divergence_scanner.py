@@ -556,7 +556,9 @@ async def run_divergence_scanner(
                 scanner_family="reversion",
                 linked_strategy_id=linked_strategy_id,
                 asset_class="crypto",
-                execution_eligible=True,
+                # Divergence remains a Candidate until a family-specific trigger
+                # can freeze entry, invalidation, cost, and exact venue evidence.
+                execution_eligible=False,
                 valid_until=valid_until,
                 metadata=json.dumps({
                     "trigger": "prediction_divergence",

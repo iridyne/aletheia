@@ -376,6 +376,80 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   )
 }
 
+function FastTriggerConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
+  const server = settings?.fast_trigger as any
+  const [mode, setMode] = useState<'off' | 'shadow' | 'execute'>('shadow')
+  const [maxSetups, setMaxSetups] = useState('10')
+  const [ttlMinutes, setTtlMinutes] = useState('60')
+  const [changed, setChanged] = useState(false)
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  useSettingsDraftLifecycle({
+    id: 'fast-trigger-config',
+    dirty: changed,
+    onDirty,
+    serverKey: settings,
+    adoptServer: () => {
+      if (!server) return
+      setMode(server.mode ?? 'shadow')
+      setMaxSetups(String(server.max_setups ?? 10))
+      setTtlMinutes(String(server.authorization_ttl_minutes ?? 60))
+    },
+  })
+
+  const mut = useMutation({
+    mutationFn: () => api.updateFastTriggerConfig({
+      mode,
+      max_setups: parseInt(maxSetups),
+      authorization_ttl_minutes: parseInt(ttlMinutes),
+    }),
+    onSuccess: (result: any) => {
+      const reason = result?.runtime_status?.reason
+      setMsg({ ok: !reason, text: reason ? `Saved; inactive: ${reason}` : '✓ saved and applied' })
+      setChanged(false)
+      qc.invalidateQueries({ queryKey: ['settings'] })
+    },
+    onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
+  })
+
+  if (!server) return null
+  const update = (fn: () => void) => { fn(); setChanged(true); setMsg(null) }
+  return (
+    <div className="card mt-3 mb-0">
+      <h3>Momentum Fast Trigger</h3>
+      <div className="settings-field-grid">
+        <label className="settings-field">
+          <span>Mode</span>
+          <select value={mode} onChange={e => update(() => setMode(e.target.value as typeof mode))}>
+            <option value="off">off</option>
+            <option value="shadow">shadow (default)</option>
+            <option value="execute">execute</option>
+          </select>
+        </label>
+        <label className="settings-field">
+          <span>Max watched setups</span>
+          <input type="number" min={1} max={10} value={maxSetups}
+            onChange={e => update(() => setMaxSetups(e.target.value))} />
+        </label>
+        <label className="settings-field">
+          <span>Authorization TTL (min)</span>
+          <input type="number" min={1} max={60} value={ttlMinutes}
+            onChange={e => update(() => setTtlMinutes(e.target.value))} />
+        </label>
+      </div>
+      <div className="flex items-center gap-2">
+        <button onClick={() => mut.mutate()} disabled={!changed || mut.isPending}>
+          {mut.isPending ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      <SaveMsg msg={msg} />
+      <p className="hint m-0">
+        Shadow never submits orders. Local Paper Execute uses only the configured public data stream and local broker; exchange Execute is limited to Bitget Demo. Live is always refused.
+      </p>
+    </div>
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // RISK & SYMBOLS TAB — allowed symbols, risk limits
 // ─────────────────────────────────────────────────────────────────────────────
@@ -387,6 +461,7 @@ export function RiskTab({ settings, qc, onDirty }: SettingsDirtyProps) {
     <div>
       <SettingsFeatureSection descriptor={UNIVERSE_SECTION}>
         <UniverseConfigCard settings={settings} qc={qc} onDirty={onDirty} />
+        <FastTriggerConfigCard settings={settings} qc={qc} onDirty={onDirty} />
       </SettingsFeatureSection>
 
       <SettingsFeatureSection descriptor={EVENT_TRIGGERS_SECTION}>

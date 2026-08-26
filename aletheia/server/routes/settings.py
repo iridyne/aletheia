@@ -14,6 +14,7 @@ from aletheia.config.schema import (
     EconomicsConfig,
     EventTriggerConfig,
     ExchangeConfig,
+    FastTriggerConfig,
     GuardConfig,
     HealthConfig,
     HistoricalDataConfig,
@@ -287,6 +288,7 @@ class SettingsResponse(BaseModel):
     webhook: SettingsWebhookResponse
     market_data: MarketDataConfig
     universe: UniverseConfig
+    fast_trigger: FastTriggerConfig
     guard: GuardConfig
     tunnel: SettingsTunnelResponse
     remote_control: RemoteControlConfig
@@ -397,6 +399,7 @@ def get_settings() -> SettingsResponse:
         "webhook": {k: v for k, v in cfg.webhook.model_dump(mode="json").items() if k != "secret"},
         "market_data": _redacted_market_data(cfg.market_data.model_dump(mode="json")),
         "universe": cfg.universe.model_dump(mode="json"),
+        "fast_trigger": cfg.fast_trigger.model_dump(mode="json"),
         "guard": cfg.guard.model_dump(mode="json"),
         "tunnel": {k: v for k, v in cfg.tunnel.model_dump(mode="json").items()
                    if k != "credentials_path"},
@@ -960,6 +963,53 @@ def update_app_config(req: AppConfigUpdate):
 # ---------------------------------------------------------------------------
 # PI Daemon config
 # ---------------------------------------------------------------------------
+
+class FastTriggerConfigUpdate(SettingsRequest):
+    mode: Optional[Literal["off", "shadow", "execute"]] = None
+    max_setups: Optional[int] = None
+    authorization_ttl_minutes: Optional[int] = None
+
+
+@router.post("/fast-trigger")
+async def update_fast_trigger_config(req: FastTriggerConfigUpdate):
+    """Persist bounded trigger authority and apply its watcher state immediately."""
+
+    cfg = load_config()
+    old = cfg.fast_trigger.model_dump(mode="json")
+    updates = req.model_dump(exclude_none=True)
+    cfg.fast_trigger = _validated_settings_section(
+        FastTriggerConfig,
+        old,
+        updates,
+        name="FastTriggerConfig",
+    )
+    save_config(cfg)
+    from aletheia.files.jsonl import write_audit
+
+    write_audit({
+        "actor": "human",
+        "source": "dashboard",
+        "event_type": "fast_trigger_config_changed",
+        "entity_type": "fast_trigger_config",
+        "before": old,
+        "after": cfg.fast_trigger.model_dump(mode="json"),
+        "message": f"Fast Trigger config updated: {list(updates.keys())}",
+    })
+    try:
+        from aletheia.agent_runtime.fast_trigger_watch import (
+            reconfigure_fast_trigger_watch,
+        )
+
+        runtime_status = await reconfigure_fast_trigger_watch(
+            cfg, asyncio.get_running_loop()
+        )
+    except Exception as exc:
+        runtime_status = {
+            "running": False,
+            "reason": f"fast_trigger_reconfigure_error:{type(exc).__name__}",
+            "configured_mode": cfg.fast_trigger.mode,
+        }
+    return {"updated": updates, "runtime_status": runtime_status}
 
 class PiDaemonConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None

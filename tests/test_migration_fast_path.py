@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 41)
+        f"aletheia-sqlite-v{version}" for version in range(2, 43)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v40"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v42"
     connection.close()
 
 
@@ -686,6 +686,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE positions (id TEXT PRIMARY KEY);
         CREATE TABLE filter_shadow_experiments (id TEXT PRIMARY KEY);
         CREATE TABLE trade_proposals (id TEXT PRIMARY KEY);
+        CREATE TABLE opportunities (id TEXT PRIMARY KEY);
+        CREATE TABLE pi_decisions (id TEXT PRIMARY KEY);
         CREATE TABLE filter_candidate_outcomes (id TEXT PRIMARY KEY);
         CREATE TABLE market_ohlcv (
             exchange TEXT, symbol TEXT, market_type TEXT, timeframe TEXT, ts INTEGER,
@@ -736,8 +738,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260824_0039_profit_gradient_data_boundaries_v40",
-        "aletheia-sqlite-v40",
+        "20260826_0041_opportunity_generation_v42",
+        "aletheia-sqlite-v42",
     )
     order_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(orders)")

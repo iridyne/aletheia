@@ -154,8 +154,8 @@ class TestEmitDeterministicOpportunities:
         return count, inserted
 
     def test_emits_for_eligible_member(self):
-        members = [_make_member("BTC/USDT", "momentum", 75)]
-        feats = [_make_feat("BTC/USDT")]
+        members = [_make_member("BTC/USDT", "mean_reversion", 75)]
+        feats = [_make_feat("BTC/USDT", rsi_14=25)]
         count, opps = self._run(members, feats)
         assert count == 1
         opp = opps[0]
@@ -166,8 +166,8 @@ class TestEmitDeterministicOpportunities:
         assert opp.confidence_score == 75
 
     def test_medium_confidence_below_threshold(self):
-        members = [_make_member("ETH/USDT", "momentum", 55)]
-        feats = [_make_feat("ETH/USDT")]
+        members = [_make_member("ETH/USDT", "mean_reversion", 55)]
+        feats = [_make_feat("ETH/USDT", rsi_14=25)]
         count, opps = self._run(members, feats)
         assert count == 1
         assert opps[0].confidence == "medium"
@@ -175,8 +175,8 @@ class TestEmitDeterministicOpportunities:
     def test_high_confidence_at_threshold(self):
         # 60 is the reachable "high" boundary (allocator ceiling ~68.5); a 70
         # threshold made "high" impossible. Score exactly at threshold → high.
-        members = [_make_member("BNB/USDT", "momentum", 60)]
-        feats = [_make_feat("BNB/USDT")]
+        members = [_make_member("BNB/USDT", "mean_reversion", 60)]
+        feats = [_make_feat("BNB/USDT", rsi_14=25)]
         count, opps = self._run(members, feats)
         assert count == 1
         assert opps[0].confidence == "high"
@@ -280,7 +280,7 @@ class TestEmitDeterministicOpportunities:
         assert [row["direction"] for row in outcomes] == ["long"]
 
     def test_dedup_skips_existing_opportunity(self):
-        members = [_make_member("BTC/USDT", "momentum", 75)]
+        members = [_make_member("BTC/USDT", "volatility", 75)]
         feats = [_make_feat("BTC/USDT")]
         existing = {"BTC/USDT": {"id": "existing-opp"}}
         count, opps = self._run(members, feats, existing=existing)
@@ -289,7 +289,7 @@ class TestEmitDeterministicOpportunities:
 
     def test_emits_multiple_members(self):
         members = [
-            _make_member("BTC/USDT", "momentum", 80),
+            _make_member("BTC/USDT", "volatility", 80),
             _make_member("ETH/USDT", "mean_reversion", 65),
         ]
         feats = [
@@ -315,14 +315,14 @@ class TestEmitDeterministicOpportunities:
         assert count == 0
 
     def test_valid_until_set_from_expires_at(self):
-        members = [_make_member("BTC/USDT", "momentum", 75, expires="2099-06-01T00:00:00")]
-        feats = [_make_feat("BTC/USDT")]
+        members = [_make_member("BTC/USDT", "mean_reversion", 75, expires="2099-06-01T00:00:00")]
+        feats = [_make_feat("BTC/USDT", rsi_14=25)]
         count, opps = self._run(members, feats)
         assert count == 1
         assert opps[0].valid_until == "2099-06-01T00:00:00"
 
     def test_perp_eligibility_never_uses_a_spot_snapshot(self):
-        members = [{**_make_member("BTC/USDT", "momentum", 75), "market_type": "perp"}]
+        members = [{**_make_member("BTC/USDT", "volatility", 75), "market_type": "perp"}]
         feats = [{**_make_feat("BTC/USDT"), "market_type": "perp"}]
         inserted = []
 
@@ -360,17 +360,17 @@ class TestEmitDeterministicOpportunities:
         assert opp.oi_delta_1h == 7.5
 
     def test_thesis_includes_reasons(self):
-        members = [_make_member("BTC/USDT", "momentum", 75)]
-        feats = [_make_feat("BTC/USDT", reasons=["1h +3.5%", "RSI 65 bullish"])]
+        members = [_make_member("BTC/USDT", "mean_reversion", 75)]
+        feats = [_make_feat("BTC/USDT", rsi_14=25, reasons=["RSI 25 oversold"])]
         count, opps = self._run(members, feats)
         assert count == 1
-        assert "1h +3.5%" in opps[0].thesis
-        assert "momentum" in opps[0].thesis
+        assert "RSI 25 oversold" in opps[0].thesis
+        assert "mean_reversion" in opps[0].thesis
 
     def test_insert_failure_is_non_fatal(self):
         members = [
-            _make_member("BTC/USDT", "momentum", 80),
-            _make_member("ETH/USDT", "momentum", 70),
+            _make_member("BTC/USDT", "volatility", 80),
+            _make_member("ETH/USDT", "volatility", 70),
         ]
         feats = [_make_feat("BTC/USDT"), _make_feat("ETH/USDT")]
         inserted = []
@@ -401,11 +401,11 @@ class TestEmitDeterministicOpportunities:
         members = [
             _make_member("LOW/USDT", "momentum", 30, member_id="member-low"),
             _make_member("MISSING/USDT", "momentum", 70, member_id="member-missing"),
-            _make_member("GOOD/USDT", "momentum", 70, member_id="member-good"),
+            _make_member("GOOD/USDT", "mean_reversion", 70, member_id="member-good"),
         ]
         feats = [
             _make_feat("LOW/USDT"),
-            _make_feat("GOOD/USDT"),
+            _make_feat("GOOD/USDT", rsi_14=25),
         ]
 
         with patch(
@@ -476,10 +476,10 @@ class TestEmitDeterministicOpportunities:
 
         members = [
             _make_member(
-                "BTC/USDT", "momentum", 70, member_id="member-emission-atomic"
+                "BTC/USDT", "mean_reversion", 70, member_id="member-emission-atomic"
             ),
         ]
-        feats = [_make_feat("BTC/USDT")]
+        feats = [_make_feat("BTC/USDT", rsi_14=25)]
         real_insert = filter_evidence.repo.insert_filter_decision
 
         def fail_only_emitted_fact(fact):
@@ -543,7 +543,7 @@ def _persist_emitter_snapshot(repo, snapshot_id: str, member_id: str) -> dict:
         market_type="spot",
         rank=1,
         total_score=75.0,
-        scanner_family="momentum",
+        scanner_family="mean_reversion",
         scanner_direction="long",
         expires_at="2099-01-01T00:00:00+00:00",
     )
@@ -569,7 +569,7 @@ def test_publication_replaces_open_generation_before_snapshot_cascade(
         "aletheia.universe.signal_emitter.lookup_factor_signal",
         lambda *_args, **_kwargs: {"status": "watch"},
     )
-    feature = _make_feat("BTC/USDT", market_type="spot")
+    feature = _make_feat("BTC/USDT", market_type="spot", rsi_14=25)
     first_member = _persist_emitter_snapshot(repo, "snap-integrity-1", "member-integrity-1")
     assert emit_deterministic_opportunities(
         [first_member], "snap-integrity-1", [feature]
@@ -610,7 +610,7 @@ def test_queued_material_identity_suppresses_unchanged_and_reopens_changed_setup
         lambda *_args, **_kwargs: {"status": "watch"},
     )
     first_member = _persist_emitter_snapshot(repo, "snap-material-1", "member-material-1")
-    feature = _make_feat("BTC/USDT", market_type="spot")
+    feature = _make_feat("BTC/USDT", market_type="spot", rsi_14=25)
     assert emit_deterministic_opportunities(
         [first_member], "snap-material-1", [feature]
     ) == 1
@@ -626,7 +626,7 @@ def test_queued_material_identity_suppresses_unchanged_and_reopens_changed_setup
     ) == 0
 
     changed_member = _persist_emitter_snapshot(repo, "snap-material-3", "member-material-3")
-    changed = _make_feat("BTC/USDT", market_type="spot", return_4h=9.0)
+    changed = _make_feat("BTC/USDT", market_type="spot", return_4h=9.0, rsi_14=20)
     assert emit_deterministic_opportunities(
         [changed_member], "snap-material-3", [changed]
     ) == 1

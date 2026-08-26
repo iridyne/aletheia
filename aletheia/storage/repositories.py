@@ -20,11 +20,15 @@ from aletheia.storage.models import (
     AgentRun,
     AgentRunArtifact,
     AuditEvent,
+    ConditionalEntryAuthorization,
     ExitBreakevenShadowAssignment,
     ExitBreakevenShadowOutcome,
     Fill,
+    FastTriggerMarketSnapshot,
     KnowledgeItem,
     Opportunity,
+    OpportunityEntryValidityAssessment,
+    OpportunityGenerationV2,
     Order,
     OutcomeHookJob,
     PaperAccountEvent,
@@ -45,6 +49,7 @@ from aletheia.storage.models import (
     SerenityTheme,
     StrategyRecord,
     TradeProposal,
+    UniverseSetup,
 )
 from aletheia.storage.sqlite import (
     SQLITE_PYTHON_STRIP_CHARS_SQL,
@@ -532,11 +537,247 @@ def get_agent_run(run_id: str) -> dict | None:
 
 
 def insert_opportunity(opp: Opportunity) -> None:
+    if (
+        opp.asset_class == "crypto"
+        and opp.execution_eligible
+        and opp.source_agent in {"fast_trigger", "universe_scanner", "divergence_scanner"}
+        and opp.generation_version != "opportunity-generation/v2"
+    ):
+        raise ValueError("execution-eligible Crypto producer requires OpportunityGenerationV2")
     _insert("opportunities", _stamp_provenance(opp.model_dump()))
+
+
+OPPORTUNITY_GENERATION_VERSION = "opportunity-generation/v2"
+
+
+def canonical_opportunity_generation(
+    generation: OpportunityGenerationV2,
+) -> tuple[str, str]:
+    """Return canonical JSON plus SHA-256 for one frozen generation."""
+
+    payload = json.dumps(
+        generation.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return payload, hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def insert_opportunity_generation(
+    opportunity: Opportunity,
+    generation: OpportunityGenerationV2,
+) -> Opportunity:
+    """Validate and insert one complete, immutable tradeable Crypto generation."""
+
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.trading.instruments import instrument_market_to_db_market
+
+    identity = generation.instrument_identity
+    instrument = InstrumentId.from_parts(
+        identity.venue, identity.symbol, identity.market_type
+    )
+    if opportunity.asset_class != "crypto" or not opportunity.execution_eligible:
+        raise ValueError("Opportunity generation requires execution-eligible Crypto")
+    if (
+        opportunity.symbol != instrument.symbol
+        or opportunity.market != instrument_market_to_db_market(instrument.market_type)
+        or opportunity.direction_bias != generation.direction
+        or opportunity.scanner_family != generation.family
+        or opportunity.valid_until != generation.valid_until
+    ):
+        raise ValueError("Opportunity generation projection mismatch")
+    try:
+        zone = tuple(float(value) for value in json.loads(opportunity.entry_zone or ""))
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("Opportunity generation entry zone is invalid") from exc
+    if zone != tuple(generation.entry_zone):
+        raise ValueError("Opportunity generation entry zone mismatch")
+    payload, digest = canonical_opportunity_generation(generation)
+    stored = opportunity.model_copy(
+        update={
+            "generation_version": OPPORTUNITY_GENERATION_VERSION,
+            "generation_json": payload,
+            "generation_hash": digest,
+        }
+    )
+    _insert("opportunities", _stamp_provenance(stored.model_dump()))
+    return stored
+
+
+def insert_opportunity_validity_assessment(
+    assessment: OpportunityEntryValidityAssessment,
+) -> bool:
+    """Append one immutable assessment; an exact replay is idempotent."""
+
+    try:
+        evidence = json.loads(assessment.evidence_json)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("Opportunity validity evidence is invalid") from exc
+    canonical = json.dumps(
+        evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
+    expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    if canonical != assessment.evidence_json or expected != assessment.evidence_hash:
+        raise ValueError("Opportunity validity evidence hash mismatch")
+    data = assessment.model_dump()
+    columns = ", ".join(data)
+    placeholders = ", ".join("?" for _ in data)
+    cursor = execute_write(
+        f"INSERT OR IGNORE INTO opportunity_entry_validity_assessments "
+        f"({columns}) VALUES ({placeholders})",
+        tuple(data.values()),
+    )
+    return cursor.rowcount == 1
+
+
+def list_opportunity_validity_assessments(opportunity_id: str) -> list[dict]:
+    return _select_all(
+        "opportunity_entry_validity_assessments",
+        where="opportunity_id=?",
+        params=(opportunity_id,),
+        order="observed_at ASC, rowid ASC",
+        limit=1_000,
+    )
 
 
 def list_opportunities(limit: int = 50) -> list[dict]:
     return _select_all("opportunities", limit=limit)
+
+
+def get_opportunity_by_setup(setup_id: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM opportunities WHERE setup_id=? LIMIT 1", (setup_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+# --- Universe Momentum setups / conditional entry authority ---
+
+
+def insert_universe_setup(setup: UniverseSetup) -> dict:
+    """Insert one material setup generation, returning its idempotent owner."""
+
+    data = _stamp_provenance(setup.model_dump())
+    db = get_db()
+    was_in_tx = db.in_transaction
+    columns = ", ".join(data)
+    placeholders = ", ".join("?" for _ in data)
+    execute_write(
+        f"INSERT OR IGNORE INTO universe_setups ({columns}) VALUES ({placeholders})",
+        tuple(data.values()),
+    )
+    row = db.execute(
+        "SELECT * FROM universe_setups WHERE venue=? AND symbol=? AND market_type=? "
+        "AND direction=? AND material_fingerprint=?",
+        (
+            setup.venue,
+            setup.symbol,
+            setup.market_type,
+            setup.direction,
+            setup.material_fingerprint,
+        ),
+    ).fetchone()
+    if not was_in_tx:
+        db.commit()
+    if row is None:
+        raise RuntimeError("universe setup insert did not persist")
+    return dict(row)
+
+
+def get_universe_setup(setup_id: str) -> dict | None:
+    return _select_one("universe_setups", setup_id)
+
+
+def list_watchable_universe_setups(limit: int = 10) -> list[dict]:
+    now = datetime.now(timezone.utc).isoformat()
+    return _select_all(
+        "universe_setups",
+        where="state IN ('armed','pullback_seen') AND valid_until>?",
+        params=(now,),
+        order="rank ASC, created_at ASC",
+        limit=limit,
+    )
+
+
+def list_pending_authorization_setups(limit: int = 1) -> list[dict]:
+    now = datetime.now(timezone.utc).isoformat()
+    return _select_all(
+        "universe_setups",
+        where="state='pending_authorization' AND valid_until>?",
+        params=(now,),
+        order="rank ASC, created_at ASC",
+        limit=limit,
+    )
+
+
+def expire_universe_setups(now: datetime | None = None) -> int:
+    """Terminalize expired, not-yet-claimed setup generations."""
+
+    instant = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    with transaction(immediate=True):
+        cur = execute_write(
+            "UPDATE universe_setups SET state='expired', updated_at=? "
+            "WHERE valid_until<=? AND state IN "
+            "('pending_authorization','armed','pullback_seen')",
+            (instant, instant),
+        )
+    return max(0, cur.rowcount or 0)
+
+
+def transition_universe_setup(
+    setup_id: str,
+    *,
+    expected_states: Sequence[str],
+    state: str,
+    **fields,
+) -> bool:
+    """Compare-and-swap one setup state without widening its authority."""
+
+    allowed = {
+        "pending_authorization", "armed", "pullback_seen", "triggering",
+        "executed", "refused", "expired", "invalidated",
+    }
+    expected = tuple(str(value) for value in expected_states)
+    if not expected or state not in allowed or any(value not in allowed for value in expected):
+        raise ValueError("invalid universe setup transition")
+    updates = {**fields, "state": state, "updated_at": datetime.now(timezone.utc).isoformat()}
+    sets = ", ".join(f"{column}=?" for column in updates)
+    placeholders = ",".join("?" for _ in expected)
+    result = execute_write(
+        f"UPDATE universe_setups SET {sets} WHERE id=? AND state IN ({placeholders})",
+        (*updates.values(), setup_id, *expected),
+    )
+    return result.rowcount == 1
+
+
+def insert_conditional_entry_authorization(
+    authorization: ConditionalEntryAuthorization,
+) -> None:
+    _insert(
+        "conditional_entry_authorizations",
+        _stamp_provenance(authorization.model_dump()),
+    )
+
+
+def get_conditional_entry_authorization(setup_id: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM conditional_entry_authorizations WHERE setup_id=? LIMIT 1",
+        (setup_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def insert_fast_trigger_market_snapshot(snapshot: FastTriggerMarketSnapshot) -> None:
+    _insert("fast_trigger_market_snapshots", snapshot.model_dump())
+
+
+def get_fast_trigger_market_snapshot(setup_id: str) -> dict | None:
+    row = get_db().execute(
+        "SELECT * FROM fast_trigger_market_snapshots WHERE setup_id=? LIMIT 1",
+        (setup_id,),
+    ).fetchone()
+    return dict(row) if row else None
 
 def list_opportunity_instruments() -> list[dict]:
     """Return one latest-state summary for each exact Opportunity instrument."""
@@ -602,7 +843,15 @@ def list_open_opportunities(limit: int = 50) -> list[dict]:
     )
 
 
-_OPEN_TRADE_ASSET_PREDICATE = "COALESCE(NULLIF(asset_class, ''), 'crypto') IN ('crypto', 'equity')"
+_OPEN_TRADE_ASSET_PREDICATE = """
+COALESCE(NULLIF(asset_class, ''), 'crypto') IN ('crypto', 'equity')
+AND COALESCE(execution_eligible, 1)=1
+AND NOT (
+    COALESCE(NULLIF(asset_class, ''), 'crypto')='crypto'
+    AND source_agent IN ('fast_trigger', 'universe_scanner', 'divergence_scanner')
+    AND COALESCE(generation_version, '')!='opportunity-generation/v2'
+)
+"""
 _OPEN_TRADE_UNRANKED_SQL = f"""
     SELECT * FROM opportunities
     INDEXED BY idx_opportunities_trade_unranked_rotation
@@ -7734,6 +7983,7 @@ def refresh_active_snapshot_ttls(snapshot_id: str, now: datetime) -> tuple[int, 
             cur_o = execute_write(
                 "UPDATE opportunities SET valid_until = ? "
                 "WHERE universe_member_id = ? AND status IN ('open','queued') "
+                "AND generation_version IS NULL "
                 "AND (valid_until IS NULL OR valid_until < ?)",
                 (new_expires, m["id"], new_expires),
             )

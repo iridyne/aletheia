@@ -24,6 +24,7 @@ def test_default_config_has_correct_values():
     assert cfg.exchange.symbol_list == []
     assert cfg.telegram.enabled is False
     assert cfg.controller.shadow_enabled is False
+    assert cfg.fast_trigger.mode == "shadow"
 
 
 @pytest.mark.parametrize("value", [0, -1])

@@ -60,6 +60,7 @@ def test_new_opportunity_t0_forces_this_computation_snapshot(monkeypatch):
         "return_4h": computed.return_4h,
         "rsi_14": computed.rsi_14,
         "funding_rate": None,
+        "scanner_direction": "long",
         "reasons": ["fresh move"],
         # The ordinary <30 minute refresh suppression reused this durable row.
         "feature_snapshot_id": "feature-previous",
@@ -70,7 +71,9 @@ def test_new_opportunity_t0_forces_this_computation_snapshot(monkeypatch):
         "id": "member-current",
         "symbol": "BTC/USDT",
         "market_type": "spot",
-        "scanner_family": "momentum",
+        # Momentum now produces a Setup.  This test exercises the unchanged
+        # non-Momentum Candidate evidence boundary.
+        "scanner_family": "volume",
         "total_score": 65,
         "expires_at": "2026-07-19T07:10:00+00:00",
     }

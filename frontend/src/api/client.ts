@@ -2792,6 +2792,13 @@ export const api = {
 			family_quota_by_regime: Record<string, Record<string, number>>;
 		}>,
 	) => post<any>("/settings/universe", body),
+	updateFastTriggerConfig: (
+		body: Partial<{
+			mode: "off" | "shadow" | "execute";
+			max_setups: number;
+			authorization_ttl_minutes: number;
+		}>,
+	) => post<any>("/settings/fast-trigger", body),
 
 	// Market data config
 	updateMarketDataConfig: (
