@@ -190,6 +190,43 @@ def test_invalid_exit_price_is_terminal_not_unsettled_funding(tmp_path, monkeypa
     )["realized_pnl"] is None
 
 
+def test_invalid_exit_without_cash_settlement_creates_no_reversal(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio.paper_account import (
+        INVALID_EXIT_PRICE_EVIDENCE,
+        get_paper_account,
+        invalidate_paper_position_economics,
+    )
+
+    position = Position(
+        symbol="ON/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=1.0,
+        current_price=1.0,
+        realized_pnl=None,
+        execution_mode="paper_internal",
+        status="closed",
+        outcome_eligible=False,
+        outcome_exclusion_reason=INVALID_EXIT_PRICE_EVIDENCE,
+    )
+    repo.insert_position(position)
+
+    first = invalidate_paper_position_economics(position.id)
+    replay = invalidate_paper_position_economics(position.id)
+
+    assert first["status"] == "already_invalidated"
+    assert replay["status"] == "already_invalidated"
+    assert get_paper_account()["cash_balance_usdt"] == pytest.approx(200.0)
+    count = repo.get_db().execute(
+        "SELECT COUNT(*) FROM paper_account_events "
+        "WHERE position_id=? AND action='position_economics_invalidated'",
+        (position.id,),
+    ).fetchone()[0]
+    assert count == 0
+
+
 def test_local_paper_available_balance_tightens_risk_without_affecting_external(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config

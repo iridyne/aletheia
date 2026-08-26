@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 41)
+        f"aletheia-sqlite-v{version}" for version in range(2, 42)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v40"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v41"
     connection.close()
 
 
@@ -736,8 +736,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260824_0039_profit_gradient_data_boundaries_v40",
-        "aletheia-sqlite-v40",
+        "20260826_0040_paper_account_invalidation_v41",
+        "aletheia-sqlite-v41",
     )
     order_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(orders)")
@@ -786,6 +786,56 @@ def test_profit_gradient_data_boundary_migration_is_additive_and_idempotent():
         row[1] for row in connection.execute("PRAGMA table_info(market_ohlcv)")
     }
     assert {"first_persisted_at", "last_mutated_at"} <= ohlcv_columns
+    connection.close()
+
+
+def test_paper_account_invalidation_migration_preserves_events_and_is_idempotent():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        """
+        CREATE TABLE paper_account_events (
+            id TEXT PRIMARY KEY,
+            action TEXT NOT NULL CHECK (action IN (
+                'initial_funding', 'manual_credit', 'manual_debit',
+                'manual_set_balance', 'position_opened', 'position_closed'
+            )),
+            amount_usdt REAL NOT NULL,
+            cash_balance_before_usdt REAL NOT NULL,
+            cash_balance_after_usdt REAL NOT NULL,
+            actor TEXT NOT NULL DEFAULT 'system',
+            source TEXT NOT NULL DEFAULT 'paper_account',
+            position_id TEXT,
+            note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(action, position_id)
+        );
+        CREATE INDEX idx_paper_account_events_created
+            ON paper_account_events(created_at DESC);
+        INSERT INTO paper_account_events (
+            id,action,amount_usdt,cash_balance_before_usdt,
+            cash_balance_after_usdt,position_id
+        ) VALUES ('close','position_closed',20,100,120,'position-1');
+        """
+    )
+
+    migrations._apply_paper_account_invalidation_v41(connection)
+    migrations._apply_paper_account_invalidation_v41(connection)
+    connection.execute(
+        "INSERT INTO paper_account_events ("
+        "id,action,amount_usdt,cash_balance_before_usdt,cash_balance_after_usdt,"
+        "position_id) VALUES ('reverse','position_economics_invalidated',-20,120,100,?)",
+        ("position-1",),
+    )
+
+    rows = connection.execute(
+        "SELECT id,action,amount_usdt FROM paper_account_events ORDER BY rowid"
+    ).fetchall()
+    assert rows == [
+        ("close", "position_closed", 20.0),
+        ("reverse", "position_economics_invalidated", -20.0),
+    ]
     connection.close()
 
 

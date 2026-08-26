@@ -103,7 +103,8 @@ def _reserved_margin_usdt(positions: list[dict]) -> float:
 
 
 def _write_event(*, action: str, amount_usdt: float, actor: str, source: str,
-                 position_id: str | None = None, note: str = "") -> PaperAccountEvent:
+                 position_id: str | None = None, note: str = "",
+                 allow_negative_balance: bool = False) -> PaperAccountEvent:
     if not math.isfinite(amount_usdt):
         raise ValueError("paper account event amount must be finite")
     # SQLite is the single serialization authority for the ledger.  This helper
@@ -116,12 +117,13 @@ def _write_event(*, action: str, amount_usdt: float, actor: str, source: str,
         after = round(before + amount_usdt, 8)
         if not math.isfinite(after):
             raise ValueError("paper account event balance must remain finite")
-        if after < -1e-8:
+        if after < -1e-8 and not allow_negative_balance:
             raise ValueError("paper account cash balance cannot be negative")
         event = PaperAccountEvent(
             action=action, amount_usdt=round(amount_usdt, 8),
             cash_balance_before_usdt=round(before, 8),
-            cash_balance_after_usdt=max(0.0, after), actor=actor, source=source,
+            cash_balance_after_usdt=after if allow_negative_balance else max(0.0, after),
+            actor=actor, source=source,
             position_id=position_id, note=note,
         )
         repo.insert_paper_account_event(event)
@@ -215,6 +217,169 @@ def settle_position_closed(position_id: str, realized_pnl: float) -> None:
             _write_event(action="position_closed", amount_usdt=realized_pnl, actor="system",
                          source="portfolio_pnl", position_id=position_id,
                          note="Local paper position realized PnL")
+
+
+def invalidate_paper_position_economics(
+    position_id: str,
+    *,
+    actor: str = "system",
+    source: str = "outcome_integrity",
+) -> dict:
+    """Atomically neutralize cash and outcome projections for invalid exit evidence."""
+    from aletheia.files.jsonl import write_audit
+    from aletheia.storage.models import AuditEvent
+    from aletheia.storage.sqlite import get_db
+
+    ensure_paper_account()
+    audit_payload: dict | None = None
+    reversal = 0.0
+    status = "invalidated"
+    with repo.transaction(immediate=True):
+        db = get_db()
+        current = repo._select_one("positions", position_id)
+        if current is None:
+            raise ValueError(f"position not found: {position_id}")
+        if (
+            current.get("status") != "closed"
+            or current.get("execution_mode") != "paper_internal"
+        ):
+            raise ValueError("economics invalidation requires a closed paper position")
+
+        cash_events = [dict(row) for row in db.execute(
+            "SELECT * FROM paper_account_events WHERE position_id=? AND action IN "
+            "('position_closed','manual_credit','manual_debit',"
+            "'position_economics_invalidated') ORDER BY rowid",
+            (position_id,),
+        ).fetchall()]
+        close_cash = [row for row in cash_events if row["action"] == "position_closed"]
+        invalidations = [
+            row for row in cash_events
+            if row["action"] == "position_economics_invalidated"
+        ]
+        full_close_events = [dict(row) for row in db.execute(
+            "SELECT * FROM position_close_events WHERE position_id=? "
+            "AND is_partial=0 ORDER BY rowid",
+            (position_id,),
+        ).fetchall()]
+
+        if len(close_cash) > 1 or len(invalidations) > 1:
+            raise ValueError("paper account close/invalidation event is not unique")
+        if close_cash and len(full_close_events) != 1:
+            raise ValueError("settled cash requires exactly one full close event")
+        if not close_cash and any(
+            row["action"] in {"manual_credit", "manual_debit"} for row in cash_events
+        ):
+            raise ValueError("paper cash adjustment exists without initial settlement")
+        if (
+            not close_cash
+            and not invalidations
+            and current.get("realized_pnl") is None
+            and not bool(current.get("outcome_eligible"))
+            and current.get("outcome_exclusion_reason")
+            == INVALID_EXIT_PRICE_EVIDENCE
+            and all(row.get("realized_pnl") is None for row in full_close_events)
+        ):
+            return {
+                "position_id": position_id,
+                "status": "already_invalidated",
+                "cash_reversal_usdt": 0.0,
+            }
+
+        pre_invalidation_total = round(sum(
+            float(row["amount_usdt"])
+            for row in cash_events
+            if row["action"] != "position_economics_invalidated"
+        ), 8)
+        cash_total = round(sum(float(row["amount_usdt"]) for row in cash_events), 8)
+        if invalidations:
+            if abs(cash_total) > 1e-8:
+                raise ValueError("existing economics invalidation does not neutralize cash")
+            if (
+                current.get("realized_pnl") is None
+                and not bool(current.get("outcome_eligible"))
+                and current.get("outcome_exclusion_reason")
+                == INVALID_EXIT_PRICE_EVIDENCE
+                and all(row.get("realized_pnl") is None for row in full_close_events)
+            ):
+                return {
+                    "position_id": position_id,
+                    "status": "already_invalidated",
+                    "cash_reversal_usdt": 0.0,
+                }
+            status = "already_invalidated"
+        elif close_cash:
+            reversal = round(-pre_invalidation_total, 8)
+            _write_event(
+                action="position_economics_invalidated",
+                amount_usdt=reversal,
+                actor=actor,
+                source=source,
+                position_id=position_id,
+                note="Neutralize cash from invalid exit-price evidence",
+                # A historical false profit may already have been consumed by later
+                # losses. The correction must expose the negative truth, not fail.
+                allow_negative_balance=True,
+            )
+
+        before = {
+            "realized_pnl": current.get("realized_pnl"),
+            "outcome_eligible": bool(current.get("outcome_eligible")),
+            "outcome_exclusion_reason": current.get("outcome_exclusion_reason"),
+            "cash_contribution_usdt": pre_invalidation_total,
+        }
+        repo.update_position(
+            position_id,
+            realized_pnl=None,
+            exit_price_source="unavailable",
+            exit_fill_verified=False,
+            outcome_eligible=False,
+            outcome_exclusion_reason=INVALID_EXIT_PRICE_EVIDENCE,
+        )
+        db.execute(
+            "UPDATE position_close_events SET realized_pnl=NULL "
+            "WHERE position_id=? AND is_partial=0",
+            (position_id,),
+        )
+        after = {
+            "realized_pnl": None,
+            "outcome_eligible": False,
+            "outcome_exclusion_reason": INVALID_EXIT_PRICE_EVIDENCE,
+            "cash_contribution_usdt": 0.0,
+            "cash_reversal_usdt": reversal,
+        }
+        repo.insert_audit_event(AuditEvent(
+            actor=actor,
+            source=source,
+            event_type="paper_position_economics_invalidated",
+            entity_type="position",
+            entity_id=position_id,
+            before_state=json.dumps(before, sort_keys=True),
+            after_state=json.dumps(after, sort_keys=True),
+            message=f"Invalidated paper Position economics for {position_id}",
+        ))
+        audit_payload = {
+            "actor": actor,
+            "source": source,
+            "event_type": "paper_position_economics_invalidated",
+            "entity_type": "position",
+            "entity_id": position_id,
+            "before": before,
+            "after": after,
+            "message": f"Invalidated paper Position economics for {position_id}",
+        }
+
+    if audit_payload is not None:
+        try:
+            write_audit(audit_payload, mirror_db=False)
+        except Exception as exc:
+            logger.error(
+                "paper invalidation JSONL audit sink failed (%s)", type(exc).__name__,
+            )
+    return {
+        "position_id": position_id,
+        "status": status,
+        "cash_reversal_usdt": reversal,
+    }
 
 
 def _economics_fingerprint(funding_evidence: dict) -> str:
