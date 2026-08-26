@@ -6,6 +6,8 @@ import json
 
 import pytest
 
+from tests.observer_admission_fixture import crypto_background
+
 
 @pytest.mark.asyncio
 async def test_observer_preserves_scanner_valid_until(tmp_path, monkeypatch):
@@ -34,9 +36,10 @@ async def test_observer_preserves_scanner_valid_until(tmp_path, monkeypatch):
         scanner_family="momentum",
         valid_until=expiry,
         metadata=json.dumps({
+            "instrument_background": crypto_background("BTC/USDT", "perp"),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
-                "policy_epoch": "opportunity_information_integrity/v2",
+                "policy_epoch": "opportunity_information_integrity/v3",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",

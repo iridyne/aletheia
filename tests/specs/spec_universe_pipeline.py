@@ -890,6 +890,68 @@ def test_okx_equity_contracts_are_excluded_from_crypto_registry():
 
 @spec_claim(
     SpecClaim(
+        "UP-28", "universe_pipeline", "§instrument background authority", "L2c",
+        "Every crypto candidate requires a complete instrument-background/v1; "
+        "exchange-declared equity products remain auditable but cannot emit a crypto "
+        "Opportunity.",
+        status="implemented",
+    ),
+)
+def test_universe_instrument_background_fails_closed_on_non_crypto_identity():
+    from aletheia.data.symbols import (
+        build_instrument_background,
+        instrument_background_rejection_reason,
+    )
+
+    equity = build_instrument_background(
+        symbol="SOXL/USDT:USDT",
+        venue="binance",
+        market_type="perp",
+        market_info={
+            "symbol": "SOXL/USDT:USDT", "base": "SOXL", "quote": "USDT",
+            "info": {
+                "contractType": "TRADIFI_PERPETUAL",
+                "underlyingType": "EQUITY",
+            },
+        },
+    )
+
+    assert equity["embedded_product"]["embedded_daily_multiplier"] == 3.0
+    assert instrument_background_rejection_reason(
+        equity, symbol="SOXL/USDT", market_type="perp"
+    ) == "unsupported_asset_class:equity"
+    crypto = build_instrument_background(
+        symbol="BTC/USDT:USDT",
+        venue="binance",
+        market_type="perp",
+        market_info={
+            "symbol": "BTC/USDT:USDT", "base": "BTC", "quote": "USDT",
+            "info": {"contractType": "PERPETUAL", "underlyingType": "COIN"},
+        },
+    )
+    assert instrument_background_rejection_reason(
+        crypto, symbol="BTC/USDT", market_type="perp"
+    ) is None
+    okx_crypto = build_instrument_background(
+        symbol="BTC/USDT:USDT",
+        venue="okx",
+        market_type="perp",
+        market_info={"info": {"instType": "SWAP", "instCategory": "1"}},
+    )
+    assert okx_crypto["asset_class"] == "crypto"
+    for venue, info in (("okx", {"instType": "SWAP"}), ("unknown", {})):
+        unresolved = build_instrument_background(
+            symbol="BTC/USDT",
+            venue=venue,
+            market_type="perp" if venue == "okx" else "spot",
+            market_info={"info": info},
+        )
+        assert unresolved["asset_class"] == "unknown"
+        assert unresolved["status"] == "partial"
+
+
+@spec_claim(
+    SpecClaim(
         "UP-23", "universe_pipeline", "§volume ranking consumption", "L2b",
         "Structured volume-ranking rows retain exchange and market_type when ordering "
         "registered universe assets; legacy plain-symbol snapshots remain spot-compatible.",
@@ -1054,6 +1116,17 @@ def test_live_duplicate_suppressed_when_active_opportunity_exists(tmp_path, monk
             "symbol": "SNDK/USDT",
             "venue": "binance",
             "market_type": "spot",
+            "instrument_background": {
+                "version": "instrument-background/v1",
+                "status": "complete",
+                "venue": "binance",
+                "symbol": "SNDK/USDT",
+                "market_type": "spot",
+                "asset_class": "crypto",
+                "product_kind": "crypto_spot",
+                "reference_asset": "SNDK",
+                "relationship": "direct_asset",
+            },
             "last_price": 50.0,
             "quote_volume_24h": 100_000_000.0,
             "spread_bps": 5.0,

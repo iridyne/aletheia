@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from aletheia.analytics.factor_feedback import lookup_factor_signal
 from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
 from aletheia.config.loader import load_config
-from aletheia.data.symbols import to_canonical
+from aletheia.data.symbols import instrument_background_from_metadata, to_canonical
 from aletheia.knowledge.guards import (
     ActiveGuardLoadError,
     GuardEvaluation,
@@ -1321,6 +1321,9 @@ def _make_candidate(
         "confidence_score": opp.get("confidence_score"),
         "source_agent": opp.get("source_agent"),
         "scanner_family": opp.get("scanner_family"),
+        "instrument_background": instrument_background_from_metadata(
+            opportunity_meta
+        ),
         "universe_member_id": opp.get("universe_member_id"),
         "universe_snapshot_id": opp.get("universe_snapshot_id"),
         "learning_candidate_key": opportunity_meta.get("learning_candidate_key"),

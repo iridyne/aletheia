@@ -18,6 +18,7 @@ from aletheia.universe.funding_units import (
 import json
 import logging
 
+from aletheia.data.symbols import instrument_background_rejection_reason
 from aletheia.storage.models import Opportunity
 from aletheia.storage.repositories import (
     find_live_opportunity_by_symbol_direction,
@@ -333,6 +334,36 @@ def emit_deterministic_opportunities(
             )
             continue
 
+        instrument_background = feat.get("instrument_background")
+        background_reason = instrument_background_rejection_reason(
+            instrument_background,
+            symbol=symbol,
+            market_type=market_type,
+        )
+        if background_reason:
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=total_score,
+                short_enabled=short_enabled,
+                decision="rejected",
+                reason_code=background_reason,
+                inputs={
+                    "background_status": (
+                        instrument_background.get("status")
+                        if isinstance(instrument_background, dict) else None
+                    ),
+                    "asset_class": (
+                        instrument_background.get("asset_class")
+                        if isinstance(instrument_background, dict) else None
+                    ),
+                },
+            )
+            continue
+
         # Prefer scanner-intrinsic direction; fallback to _infer_direction
         direction = feat.get("scanner_direction") or _infer_direction(family, feat)
         if direction is None:
@@ -570,8 +601,9 @@ def emit_deterministic_opportunities(
             confidence_score=int(round(total_score)),
             source_agent="universe_scanner",
             linked_strategy_id=linked_strategy_id,
-            asset_class="crypto",
+            asset_class=instrument_background["asset_class"],
             metadata=json.dumps({
+                "instrument_background": instrument_background,
                 "learning_candidate_key": m.get("learning_candidate_key"),
                 "learning_exposure_id": m.get("learning_exposure_id"),
                 "evidence_manifest": _trigger_evidence_manifest(

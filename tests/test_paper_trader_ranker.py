@@ -103,6 +103,16 @@ def test_neutral_bias_skipped():
     assert candidates[0]["skip_reason"] == "neutral_bias"
 
 
+@pytest.mark.parametrize(
+    "reason",
+    ["instrument_background_missing", "unsupported_asset_class:equity"],
+)
+def test_instrument_background_rejections_are_permanent(reason):
+    from aletheia.agents.paper_trader import _is_permanent_skip
+
+    assert _is_permanent_skip({"skip_reason": reason}) is True
+
+
 def test_low_confidence_skipped():
     from aletheia.agents.paper_trader_ranker import build_paper_candidates
 

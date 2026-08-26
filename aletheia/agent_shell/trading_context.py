@@ -23,6 +23,7 @@ from aletheia.analytics.outcome_integrity import (
     eligible_strategy_outcomes,
 )
 from aletheia.data.position_x import build_position_x_agent_context
+from aletheia.data.symbols import instrument_background_from_metadata
 
 logger = logging.getLogger("aletheia.agent_shell.trading_context")
 
@@ -335,12 +336,13 @@ def operator_decision_material_fingerprint(
     module comment above for what is included/excluded and why. (#321)
     """
     projection = {
-        "version": "operator-decision-material-v1",
+        "version": "operator-decision-material-v2",
         "symbol": str(symbol or ""),
         "direction": _normalize_direction(direction),
         "market_type": _normalize_market_type(market_type),
         "scanner_family": str(scanner_family or ""),
         "regime": None if regime is None else str(regime),
+        "instrument_background": (features or {}).get("instrument_background"),
         "features": {
             field: _material_feature_value(features or {}, field)
             for field in _MATERIAL_FP_FEATURE_FIELDS
@@ -385,6 +387,10 @@ def material_fingerprint_from_candidate_ctx(
         ) == want:
             features = feature
             break
+    features = {
+        **features,
+        "instrument_background": candidate.get("instrument_background"),
+    }
     return operator_decision_material_fingerprint(
         symbol=symbol,
         direction=candidate.get("direction") or candidate.get("direction_bias"),
@@ -1117,6 +1123,9 @@ def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str,
             "universe_rank": member.get("rank") if member else None,
             "universe_total_score": member.get("total_score") if member else None,
             "risk_flags": _json_list(member.get("risk_flags")) if member else [],
+            "instrument_background": instrument_background_from_metadata(
+                opportunity.get("metadata") if opportunity else None
+            ),
         },
         "b2_candidate_evidence": facts["b2"],
         "market_regime": facts["regime"],
@@ -1397,12 +1406,16 @@ def _hydrate_pending_candidate_context(
                 else (opportunity or {}).get("execution_eligible")
             ),
             "risk_flags": _json_list((member or {}).get("risk_flags")),
+            "instrument_background": instrument_background_from_metadata(
+                (opportunity or {}).get("metadata")
+            ),
         })
         for row in layer2.get("executable_candidates") or []:
             if row.get("opportunity_id") == opportunity_id:
                 for field in (
                     "universe_member_id", "universe_snapshot_id", "asset_id",
                     "venue", "execution_eligible", "risk_flags",
+                    "instrument_background",
                 ):
                     row[field] = candidate.get(field)
 
@@ -1446,6 +1459,9 @@ def _hydrate_pending_candidate_context(
                     opportunity.get("key_observations")
                 ),
                 "observer_assessment": _observer_assessment_from_metadata(
+                    opportunity.get("metadata")
+                ),
+                "instrument_background": instrument_background_from_metadata(
                     opportunity.get("metadata")
                 ),
                 "evidence_manifest": (
@@ -1820,6 +1836,9 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 # surfaced). Expose the top observations so the decision can cite them.
                 "key_observations": _top_observations(o.get("key_observations")),
                 "observer_assessment": _observer_assessment_from_metadata(
+                    o.get("metadata")
+                ),
+                "instrument_background": instrument_background_from_metadata(
                     o.get("metadata")
                 ),
                 "evidence_manifest": (

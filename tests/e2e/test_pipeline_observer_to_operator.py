@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -105,7 +106,32 @@ async def test_observer_ranker_pending_operator_defer_keeps_one_causal_identity(
         universe_member_id="observer-operator-member",
         scanner_family="momentum",
         valid_until=expires_at,
-        metadata='{"evidence_manifest":{"policy_epoch":"opportunity_information_integrity/v2","t0":{"direction":"long","market_type":"spot","status":"available","symbol":"BTC/USDT","trigger_type":"universe_scanner","universe_member_id":"observer-operator-member","universe_snapshot_id":"observer-operator-universe"},"version":"opportunity-information-integrity-v1"}}',
+        metadata=json.dumps({
+            "instrument_background": {
+                "version": "instrument-background/v1",
+                "status": "complete",
+                "venue": "fixture",
+                "symbol": "BTC/USDT",
+                "market_type": "spot",
+                "asset_class": "crypto",
+                "product_kind": "crypto_spot",
+                "reference_asset": "BTC",
+                "relationship": "direct_asset",
+            },
+            "evidence_manifest": {
+                "policy_epoch": "opportunity_information_integrity/v3",
+                "version": "opportunity-information-integrity-v1",
+                "t0": {
+                    "direction": "long",
+                    "market_type": "spot",
+                    "status": "available",
+                    "symbol": "BTC/USDT",
+                    "trigger_type": "universe_scanner",
+                    "universe_member_id": "observer-operator-member",
+                    "universe_snapshot_id": "observer-operator-universe",
+                },
+            },
+        }),
     )
     repo.insert_opportunity(scanner_opportunity)
     from aletheia.analytics.filter_evidence import record_filter_decision

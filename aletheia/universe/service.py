@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from aletheia.config.loader import load_config
+from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
     UniverseMember,
@@ -389,46 +390,46 @@ def _member_fingerprint(allocated: list[dict], regime_tag: str | None) -> str:
             int(item.get("ttl_sec") or 0),
             _risk_flags(item.get("risk_flags")),
             _entry_price(item),
+            json.dumps(
+                item.get("instrument_background"),
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
         ))
-    payload = json.dumps({"members": material, "regime": regime_tag}, sort_keys=True)
+    payload = json.dumps(
+        {
+            "information_policy_epoch": POLICY_EPOCH_LABEL,
+            "members": material,
+            "regime": regime_tag,
+        },
+        sort_keys=True,
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _previous_snapshot_fingerprint(
-    market_type: str, current_regime_tag: str | None,
+    market_type: str,
 ) -> tuple[str | None, str | None, float | None]:
     """Return (fingerprint, snapshot_id, age_seconds) of the newest active snapshot.
 
-    All three may be None if no active snapshot exists yet.
+    Legacy snapshots did not freeze their policy epoch and background-aware
+    fingerprint, so they deliberately cannot be reused.
     """
     prev = repo.get_active_universe_snapshot(market_type)
     if not prev:
         return None, None, None
-    prev_members = repo.list_universe_members(prev["id"], limit=1000)
-    venue_by_asset: dict[str, str] = {}
-    materialized = []
-    for m in sorted(prev_members, key=lambda row: row.get("rank") or 0):
-        asset_id = str(m.get("asset_id") or "")
-        if asset_id not in venue_by_asset:
-            asset = repo.get_universe_asset(asset_id) if asset_id else None
-            venue_by_asset[asset_id] = str((asset or {}).get("venue") or "")
-        materialized.append({
-            "symbol": m.get("symbol"),
-            "venue": venue_by_asset[asset_id],
-            "market_type": m.get("market_type"),
-            "scanner_family": m.get("scanner_family"),
-            "scanner_direction": m.get("scanner_direction"),
-            "execution_eligible": m.get("execution_eligible", True),
-            "ttl_sec": m.get("ttl_sec"),
-            "risk_flags": m.get("risk_flags"),
-            "entry_price_usd": m.get("entry_price_usd"),
-        })
-    prev_regime = None
-    for m in prev_members:
-        if m.get("regime_tag"):
-            prev_regime = m["regime_tag"]
-            break
-    fp = _member_fingerprint(materialized, prev_regime)
+    try:
+        summary = prev.get("summary") or {}
+        summary = json.loads(summary) if isinstance(summary, str) else summary
+    except (TypeError, ValueError, json.JSONDecodeError):
+        summary = {}
+    fp = None
+    if (
+        isinstance(summary, dict)
+        and summary.get("information_policy_epoch") == POLICY_EPOCH_LABEL
+        and isinstance(summary.get("member_fingerprint"), str)
+    ):
+        fp = summary["member_fingerprint"]
     age = None
     created_at = prev.get("created_at")
     if created_at:
@@ -890,7 +891,7 @@ class UniverseService:
             # 6 refreshes to a no-op when the top-N is stable.
             new_fp = _member_fingerprint(allocated, regime_tag_for_fp)
             prev_fp, prev_snapshot_id, prev_age_sec = _previous_snapshot_fingerprint(
-                market_type, regime_tag_for_fp,
+                market_type,
             )
             reuse_previous_snapshot = (
                 prev_snapshot_id is not None
@@ -989,6 +990,8 @@ class UniverseService:
                     "scanned": len(assets),
                     "filtered": len(scored),
                     "selected": len(allocated),
+                    "member_fingerprint": new_fp,
+                    "information_policy_epoch": POLICY_EPOCH_LABEL,
                 }),
             )
             attempted_snapshot_id = snap.id

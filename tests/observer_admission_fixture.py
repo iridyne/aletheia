@@ -10,6 +10,28 @@ from aletheia.storage.models import Opportunity
 from aletheia.trading.instruments import instrument_market_to_db_market
 
 
+def crypto_background(
+    symbol: str = "BTC/USDT",
+    market_type: str = "spot",
+    venue: str = "fixture",
+) -> dict:
+    return {
+        "version": "instrument-background/v1",
+        "status": "complete",
+        "venue": venue,
+        "symbol": symbol,
+        "market_type": market_type,
+        "asset_class": "crypto",
+        "product_kind": (
+            "crypto_perpetual" if market_type == "perp" else "crypto_spot"
+        ),
+        "reference_asset": symbol.split("/")[0],
+        "relationship": (
+            "tracks_reference_price" if market_type == "perp" else "direct_asset"
+        ),
+    }
+
+
 def admit_observer_instrument(
     monkeypatch,
     observer,
@@ -32,9 +54,10 @@ def admit_observer_instrument(
         universe_member_id=member_id,
         scanner_family="momentum",
         metadata=json.dumps({
+            "instrument_background": crypto_background(symbol, market_type),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
-                "policy_epoch": "opportunity_information_integrity/v2",
+                "policy_epoch": "opportunity_information_integrity/v3",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",

@@ -126,8 +126,24 @@ def _make_member(symbol, family, score, member_id=None, expires="2099-01-01T00:0
 
 
 def _make_feat(symbol, **kw):
+    market_type = kw.get("market_type", "spot")
     feat = {"symbol": symbol, "return_1h": 1.5, "return_4h": 3.0, "rsi_14": 60,
             "funding_rate": None, "reasons": [f"{symbol} 1h +1.5%"]}
+    feat["instrument_background"] = {
+        "version": "instrument-background/v1",
+        "status": "complete",
+        "venue": "fixture",
+        "symbol": symbol,
+        "market_type": market_type,
+        "asset_class": "crypto",
+        "product_kind": (
+            "crypto_perpetual" if market_type == "perp" else "crypto_spot"
+        ),
+        "reference_asset": symbol.split("/")[0],
+        "relationship": (
+            "tracks_reference_price" if market_type == "perp" else "direct_asset"
+        ),
+    }
     feat.update(kw)
     return feat
 
@@ -172,6 +188,17 @@ class TestEmitDeterministicOpportunities:
         assert count == 1
         assert opps[0].confidence == "medium"
 
+    def test_rejects_non_crypto_instrument_background(self):
+        members = [_make_member("SOXL/USDT", "momentum", 75)]
+        members[0]["market_type"] = "perp"
+        feature = _make_feat("SOXL/USDT", market_type="perp")
+        feature["instrument_background"]["asset_class"] = "equity"
+
+        count, opps = self._run(members, [feature])
+
+        assert count == 0
+        assert opps == []
+
     def test_high_confidence_at_threshold(self):
         # 60 is the reachable "high" boundary (allocator ceiling ~68.5); a 70
         # threshold made "high" impossible. Score exactly at threshold → high.
@@ -215,7 +242,7 @@ class TestEmitDeterministicOpportunities:
             return_value={"status": "watch"},
         ):
             assert emit_deterministic_opportunities(
-                [member], "snap-1", [{**_make_feat("BTC/USDT"), "market_type": "perp"}],
+                [member], "snap-1", [_make_feat("BTC/USDT", market_type="perp")],
                 regime=regime,
             ) == 0
 
@@ -254,12 +281,10 @@ class TestEmitDeterministicOpportunities:
         assert emit_deterministic_opportunities(
             [member],
             "snap-1",
-            [{
-                **_make_feat(
-                    "BTC/USDT", return_4h=3.0, rsi_14=60, funding_rate=0.02
-                ),
-                "market_type": "perp",
-            }],
+            [_make_feat(
+                "BTC/USDT", market_type="perp", return_4h=3.0,
+                rsi_14=60, funding_rate=0.02,
+            )],
         ) == 0
 
         from aletheia.storage.sqlite import get_db
@@ -323,7 +348,7 @@ class TestEmitDeterministicOpportunities:
 
     def test_perp_eligibility_never_uses_a_spot_snapshot(self):
         members = [{**_make_member("BTC/USDT", "momentum", 75), "market_type": "perp"}]
-        feats = [{**_make_feat("BTC/USDT"), "market_type": "perp"}]
+        feats = [_make_feat("BTC/USDT", market_type="perp")]
         inserted = []
 
         def _snapshots(*, symbol, market_type, limit):

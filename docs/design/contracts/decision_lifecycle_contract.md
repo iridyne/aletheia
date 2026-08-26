@@ -263,6 +263,7 @@ signal_pending 载体；`count_unresolved_signal_pending` 是此语义的唯一�
 - **DL-INV-27 Universe producer authority**:Universe-linked crypto Opportunity 只能由 deterministic `signal_emitter` 创建。Observer 仅分析同 snapshot/member/instrument 的 open carrier，且该 carrier 必须同时匹配 immutable T0 与 `filter_decisions(opportunity_emission, signal_emitter, passed)`；缺失、冲突、历史 `source_agent=market_observer` 均 fail closed。Ranker 执行主检查，Proposal preflight 对遗留 queued carrier 重查；其他独立 producer 不受此 Universe 契约扩张。
 - **DL-INV-28 Producer rejection 不是 Operator outcome**:queued carrier 的 immutable producer admission 已确定拒绝时，只写 producer eligibility rejection 并转为 `signal_queue_evicted`；不得生成 `operator_action_assessment`、outcome seed 或 B2 cohort 成员。producer attestation 暂时不可用时保持 typed unavailable 和可重试载体。
 - **DL-INV-29 Outcome 与 funding 符号固定**:B2 `qualified_negative` 表示同身份、同方向成熟 cohort 的净收益为负，不表示 bearish 方向，也不单独授权 trade/skip/veto。正 funding 是 longs pay shorts / long crowding，支持 contrarian short；负 funding 是 shorts pay longs / short crowding，支持 contrarian long 并反对 short。语义改变必须轮换 policy epoch。
+- **DL-INV-30 Universe instrument background**:每个进入 crypto feature/scanner 的 registry 标的必须携带完整的 `instrument-background/v1`；交易所声明的非 crypto 产品和无法确认类别的 Binance 衍生品只可留档并拉黑。`signal_emitter` 将同一 background 冻结进 Opportunity，Ranker、Observer 与 Proposal preflight 通过共享 producer admission 重查；缺失、冲突、未解析或非 crypto 均 fail closed。
 
 ---
 

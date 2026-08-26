@@ -12,6 +12,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
+from aletheia.data.symbols import (
+    instrument_background_from_metadata,
+    instrument_background_rejection_reason,
+)
 from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
@@ -243,6 +247,18 @@ def verify_signal_emitter_admission(opportunity: dict[str, Any]) -> tuple[bool, 
         )
     except (TypeError, ValueError):
         metadata = {}
+    background = instrument_background_from_metadata(metadata)
+    background_reason = instrument_background_rejection_reason(
+        background,
+        symbol=str(opportunity.get("symbol") or ""),
+        market_type=_normalize_market(
+            opportunity.get("market") or opportunity.get("market_type")
+        ),
+    )
+    if background_reason:
+        return False, background_reason
+    if opportunity.get("asset_class") != background.get("asset_class"):
+        return False, "instrument_background_identity_conflict"
     manifest = metadata.get("evidence_manifest") if isinstance(metadata, dict) else None
     t0 = manifest.get("t0") if isinstance(manifest, dict) else None
     if not isinstance(t0, dict) or t0.get("status") != "available":

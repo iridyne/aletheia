@@ -275,6 +275,11 @@ def test_change_suppression_fingerprint_covers_carrier_semantics():
         "ttl_sec": 1800,
         "risk_flags": ["crowded"],
         "last_price": 60_000.0,
+        "instrument_background": {
+            "version": "instrument-background/v1",
+            "status": "complete",
+            "asset_class": "crypto",
+        },
     }]
     baseline = _member_fingerprint(base, "risk_on")
     variants = {
@@ -284,6 +289,11 @@ def test_change_suppression_fingerprint_covers_carrier_semantics():
         "ttl_sec": 3600,
         "risk_flags": ["wide_spread"],
         "last_price": 60_001.0,
+        "instrument_background": {
+            "version": "instrument-background/v1",
+            "status": "complete",
+            "asset_class": "equity",
+        },
     }
 
     for field, value in variants.items():
@@ -292,7 +302,7 @@ def test_change_suppression_fingerprint_covers_carrier_semantics():
         assert _member_fingerprint(changed, "risk_on") != baseline, field
 
 
-def test_previous_snapshot_fingerprint_reconstructs_same_semantic_payload(monkeypatch):
+def test_previous_snapshot_fingerprint_reads_frozen_semantic_payload(monkeypatch):
     from aletheia.universe import service
 
     allocated = [{
@@ -306,30 +316,41 @@ def test_previous_snapshot_fingerprint_reconstructs_same_semantic_payload(monkey
         "ttl_sec": 1800,
         "risk_flags": ["crowded"],
         "last_price": 60_000.0,
+        "instrument_background": {
+            "version": "instrument-background/v1",
+            "status": "complete",
+            "asset_class": "crypto",
+        },
     }]
-    member = {
-        "asset_id": "asset-1",
-        "symbol": "BTC/USDT",
-        "market_type": "perp",
-        "rank": 1,
-        "scanner_family": "momentum",
-        "scanner_direction": "long",
-        "execution_eligible": 1,
-        "ttl_sec": 1800,
-        "risk_flags": '["crowded"]',
-        "entry_price_usd": 60_000.0,
-        "regime_tag": "risk_on",
-    }
+    expected = service._member_fingerprint(allocated, "risk_on")
     monkeypatch.setattr(service.repo, "get_active_universe_snapshot", lambda _: {
-        "id": "snap-1", "created_at": datetime.now(timezone.utc).isoformat(),
+        "id": "snap-1",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "summary": json.dumps({
+            "information_policy_epoch": service.POLICY_EPOCH_LABEL,
+            "member_fingerprint": expected,
+        }),
     })
-    monkeypatch.setattr(service.repo, "list_universe_members", lambda *_args, **_kwargs: [member])
-    monkeypatch.setattr(service.repo, "get_universe_asset", lambda _: {"venue": "binance"})
 
-    previous, snapshot_id, _ = service._previous_snapshot_fingerprint("crypto", "risk_on")
+    previous, snapshot_id, _ = service._previous_snapshot_fingerprint("crypto")
 
     assert snapshot_id == "snap-1"
-    assert previous == service._member_fingerprint(allocated, "risk_on")
+    assert previous == expected
+
+
+def test_pre_v3_snapshot_cannot_suppress_background_aware_publication(monkeypatch):
+    from aletheia.universe import service
+
+    monkeypatch.setattr(service.repo, "get_active_universe_snapshot", lambda _: {
+        "id": "legacy-snapshot",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "summary": json.dumps({"information_policy_epoch": "opportunity_information_integrity/v2"}),
+    })
+
+    previous, snapshot_id, _ = service._previous_snapshot_fingerprint("crypto")
+
+    assert snapshot_id == "legacy-snapshot"
+    assert previous is None
 
 
 def test_fallback_static_universe(svc, disabled_cfg):

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from aletheia.config.schema import AletheiaConfig
 from aletheia.data.freshness import fresh_row
+from aletheia.data.symbols import instrument_background_from_metadata
 from aletheia.storage.models import UniverseFeatureSnapshot
 from aletheia.storage import repositories as repo
 from aletheia.trading.indicators import rsi, atr, sma, bollinger, volume_sma_ratio
@@ -759,6 +760,9 @@ async def _fetch_single_feature(
         "symbol": symbol,
         "venue": asset.get("venue", ""),
         "market_type": asset.get("market_type", "spot"),
+        "instrument_background": instrument_background_from_metadata(
+            asset.get("metadata")
+        ),
         "quote_volume_24h": quote_volume_24h,
         "volume_1h": volume_1h,
         "spread_bps": spread,

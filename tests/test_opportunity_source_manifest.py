@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.observer_admission_fixture import crypto_background
+
 
 def _prepare_db(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
@@ -43,9 +45,10 @@ async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
         universe_member_id="scanner-member",
         scanner_family="mean_reversion",
         metadata=json.dumps({
+            "instrument_background": crypto_background("SLX/USDT", "perp"),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
-                "policy_epoch": "opportunity_information_integrity/v2",
+                "policy_epoch": "opportunity_information_integrity/v3",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",
@@ -250,9 +253,10 @@ def test_scanner_manifest_without_persisted_emitter_fact_fails_closed(
         universe_snapshot_id="snapshot-missing-fact",
         universe_member_id="member-missing-fact",
         metadata=json.dumps({
+            "instrument_background": crypto_background(),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
-                "policy_epoch": "opportunity_information_integrity/v2",
+                "policy_epoch": "opportunity_information_integrity/v3",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",
@@ -272,6 +276,32 @@ def test_scanner_manifest_without_persisted_emitter_fact_fails_closed(
     ) == (False, "producer_eligibility_fact_missing")
 
 
+def test_scanner_carrier_without_background_fails_closed_before_fact_lookup():
+    from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
+    from aletheia.storage.models import Opportunity
+
+    opportunity = Opportunity(
+        id="pre-background-carrier",
+        symbol="SOXL/USDT",
+        market="usdt_futures",
+        direction_bias="long",
+        source_agent="universe_scanner",
+        universe_snapshot_id="pre-background-snapshot",
+        universe_member_id="pre-background-member",
+        metadata=json.dumps({
+            "evidence_manifest": {
+                "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v3",
+                "t0": {"status": "available"},
+            },
+        }),
+    )
+
+    assert verify_signal_emitter_admission(
+        opportunity.model_dump()
+    ) == (False, "instrument_background_missing")
+
+
 def test_signal_emitter_attestation_db_failure_is_retryable(monkeypatch):
     from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
     from aletheia.storage.models import Opportunity
@@ -285,9 +315,10 @@ def test_signal_emitter_attestation_db_failure_is_retryable(monkeypatch):
         universe_snapshot_id="snapshot-attestation-unavailable",
         universe_member_id="member-attestation-unavailable",
         metadata=json.dumps({
+            "instrument_background": crypto_background(),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
-                "policy_epoch": "opportunity_information_integrity/v2",
+                "policy_epoch": "opportunity_information_integrity/v3",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",
@@ -325,6 +356,7 @@ def test_pre_v2_scanner_carrier_fails_closed_before_fact_lookup():
         universe_snapshot_id="pre-v2-snapshot",
         universe_member_id="pre-v2-member",
         metadata=json.dumps({
+            "instrument_background": crypto_background(),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
                 "policy_epoch": "opportunity_information_integrity/v1",
@@ -549,9 +581,10 @@ async def test_proposal_preflight_rejects_scanner_t0_direction_conflict(
         universe_member_id="corrupt-member",
         scanner_family="mean_reversion",
         metadata=json.dumps({
+            "instrument_background": crypto_background("SLX/USDT", "perp"),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
-                "policy_epoch": "opportunity_information_integrity/v2",
+                "policy_epoch": "opportunity_information_integrity/v3",
                 "t0": {
                         "status": "available",
                         "trigger_type": "universe_scanner",
@@ -613,6 +646,7 @@ def test_universe_opportunity_metadata_has_bounded_exact_t0_trigger():
     feature = {
         "symbol": "BTC/USDT",
         "market_type": "perp",
+        "instrument_background": crypto_background("BTC/USDT", "perp"),
         "feature_snapshot_id": "feature-1",
         "scanner_direction": "long",
         "return_1h": 2.0,
@@ -638,7 +672,9 @@ def test_universe_opportunity_metadata_has_bounded_exact_t0_trigger():
     ):
         assert emit_deterministic_opportunities([member], "snapshot-1", [feature]) == 1
 
-    manifest = json.loads(inserted[0].metadata)["evidence_manifest"]
+    metadata = json.loads(inserted[0].metadata)
+    manifest = metadata["evidence_manifest"]
+    assert metadata["instrument_background"]["reference_asset"] == "BTC"
     assert manifest["version"] == "opportunity-information-integrity-v1"
     assert manifest["t0"]["trigger_type"] == "universe_scanner"
     assert manifest["t0"]["universe_snapshot_id"] == "snapshot-1"

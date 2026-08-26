@@ -21,6 +21,7 @@ from aletheia.storage.models import (
 from aletheia.storage import repositories as repo
 from aletheia.agent_runtime.tool_registry import init_tool_registry
 from aletheia.agent_runtime.orchestrator import run_agent
+from tests.observer_admission_fixture import crypto_background
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -108,9 +109,12 @@ def _seed_admitted_opportunity(
         scanner_family="momentum",
         valid_until=expires_at,
         metadata=json.dumps({
+            "instrument_background": crypto_background(
+                symbol, market_type, cfg.market_data.ccxt_exchange
+            ),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
-                "policy_epoch": "opportunity_information_integrity/v2",
+                "policy_epoch": "opportunity_information_integrity/v3",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",
