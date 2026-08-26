@@ -5,10 +5,12 @@
 """
 
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import aletheia.portfolio.position_manager as pm
 from aletheia.agent_runtime.wake_events import ADVERSE_SIGNAL, THESIS_INVALIDATED
+from aletheia.storage.models import Opportunity
 
 
 def _decide_cfg(thesis_auto_close=True):
@@ -27,6 +29,59 @@ def _serenity_pos():
         "id": "s1", "symbol": "BTC/USDT", "direction": "long", "entry_price": 100.0,
         "trade_school": "serenity", "opportunity_id": "o1",
     }
+
+
+def _seed_market_signal_instrument(
+    db,
+    *,
+    asset_id: str,
+    member_id: str,
+    symbol: str = "BTC/USDT",
+    venue: str = "binance",
+    market_type: str = "perp",
+) -> None:
+    observed_at = datetime.now(timezone.utc).isoformat()
+    expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    db.execute(
+        "INSERT INTO universe_registry "
+        "(id, venue, market_type, symbol, status, first_seen_at, last_seen_at) "
+        "VALUES (?, ?, ?, ?, 'active', ?, ?)",
+        (asset_id, venue, market_type, symbol, observed_at, observed_at),
+    )
+    db.execute(
+        "INSERT INTO universe_members "
+        "(id, snapshot_id, asset_id, symbol, market_type, rank, total_score, "
+        "ttl_sec, expires_at) VALUES (?, ?, ?, ?, ?, 1, 90, 3600, ?)",
+        (member_id, f"snapshot-{member_id}", asset_id, symbol, market_type, expires),
+    )
+
+
+def _insert_market_signal(
+    *,
+    member_id: str,
+    symbol: str = "BTC/USDT",
+    market_type: str = "perp",
+    direction: str = "long",
+    score: int = 60,
+    created_at: datetime | None = None,
+) -> Opportunity:
+    created_at = created_at or datetime.now(timezone.utc)
+    opportunity = Opportunity(
+        symbol=symbol,
+        market="usdt_futures" if market_type == "perp" else market_type,
+        direction_bias=direction,
+        confidence="high" if score >= 75 else "medium",
+        confidence_score=score,
+        source_agent="market_observer",
+        asset_class="crypto",
+        universe_member_id=member_id,
+        created_at=created_at.isoformat(),
+        valid_until=(created_at + timedelta(hours=1)).isoformat(),
+    )
+    import aletheia.storage.repositories as repo
+
+    repo.insert_opportunity(opportunity)
+    return opportunity
 
 
 # ── _thesis_invalidated ──────────────────────────────────────────────────────
@@ -154,6 +209,64 @@ def test_market_aware_wakes_not_closes(monkeypatch):
     assert evidence["identity_status"] == "exact_match"
     assert evidence["delivery"] == "scheduled"
     assert evidence["signal"]["asset_id"] == "signal-asset"
+
+
+def test_future_market_signal_does_not_wake_or_persist_evidence(monkeypatch):
+    from aletheia.config.loader import load_config
+    from aletheia.storage.repositories import _select_one
+    from aletheia.storage.sqlite import get_db
+    import aletheia.agent_runtime.pi_daemon as pd
+
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    _seed_market_signal_instrument(
+        db,
+        asset_id="asset-future-wake",
+        member_id="member-future-wake",
+    )
+    _insert_market_signal(
+        member_id="member-future-wake",
+        direction="long",
+        score=55,
+        created_at=now - timedelta(minutes=3),
+    )
+    _insert_market_signal(
+        member_id="member-future-wake",
+        direction="short",
+        score=90,
+        created_at=now + timedelta(minutes=10),
+    )
+    db.execute(
+        "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
+        "execution_mode,status,opened_at,opportunity_id) VALUES "
+        "('mw-future','BTC/USDT','usdt_futures','long',1.0,100.0,"
+        "'paper_internal','open',?,NULL)",
+        ((now - timedelta(hours=2)).isoformat(),),
+    )
+
+    cfg = load_config()
+    cfg.trading.market_aware_exits.enabled = True
+    monkeypatch.setattr(pm, "load_config", lambda: cfg)
+    monkeypatch.setattr(pm, "protective_price_venue", lambda *args, **kwargs: "binance")
+    monkeypatch.setattr(
+        pm,
+        "get_fresh_price_for_protective_close",
+        lambda symbol, market_type, *, venue="": 100.0,
+    )
+    wakes = []
+    monkeypatch.setattr(
+        pd,
+        "notify_pi_daemon",
+        lambda source="unknown", event=None: wakes.append(event) or True,
+    )
+
+    result = pm.evaluate_open_positions()
+
+    assert result["market_signal_wakes"] == 0
+    assert [wake for wake in wakes if getattr(wake, "kind", None) == ADVERSE_SIGNAL] == []
+    persisted = _select_one("positions", "mw-future")
+    assert persisted["last_market_signal_action"] is None
+    assert persisted["last_market_signal_evidence"] is None
 
 
 def test_market_aware_reports_operator_wake_unavailable(monkeypatch):
