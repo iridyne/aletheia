@@ -3,6 +3,20 @@ from __future__ import annotations
 import json
 
 
+FAILED_AGENT_RUN_STATUSES = frozenset(
+    {
+        "failed",
+        "error",
+        "stale",
+        "timed_out",
+        "completed_with_errors",
+        "rejected_queue_full",
+        "cancelled",
+    }
+)
+SUCCESS_AGENT_RUN_STATUSES = frozenset({"completed", "success"})
+
+
 def parse_run_errors(raw: object) -> list[str]:
     if raw in (None, "", []):
         return []
@@ -22,6 +36,13 @@ def parse_run_errors(raw: object) -> list[str]:
 
 def summarize_run_errors(raw: object) -> str:
     return "; ".join(parse_run_errors(raw))
+
+
+def is_failed_agent_run(status: object, errors: object = None) -> bool:
+    normalized = str(status or "").strip().lower()
+    if normalized in FAILED_AGENT_RUN_STATUSES:
+        return True
+    return normalized in SUCCESS_AGENT_RUN_STATUSES and bool(parse_run_errors(errors))
 
 
 def finished_at(row: dict) -> str | None:

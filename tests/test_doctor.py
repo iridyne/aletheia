@@ -513,6 +513,96 @@ def test_recent_failures_excludes_completed_runs_with_empty_error_lists(tmp_path
     assert failures[0]["error"] == "startup reconciled incomplete run"
 
 
+def test_recent_failures_filters_active_rows_before_limit(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage.models import AgentRun
+    from aletheia.storage.repositories import insert_agent_run
+
+    active_statuses = ["queued", "running", "waiting_retry", "cancel_requested"]
+    for index in range(20):
+        insert_agent_run(
+            AgentRun(
+                id=f"active-{index}",
+                agent_name=f"active_{index}",
+                trigger_type="manual",
+                permission_mode="Observe",
+                status=active_statuses[index % len(active_statuses)],
+                started_at=_iso_ago(index + 1),
+                errors="[]",
+            )
+        )
+    for index, status in enumerate(["failed", "error", "stale", "timed_out"]):
+        insert_agent_run(
+            AgentRun(
+                id=f"failure-{status}",
+                agent_name=f"failed_{status}",
+                trigger_type="scheduled",
+                permission_mode="Observe",
+                status=status,
+                started_at=_iso_ago(50 + index),
+                ended_at=_iso_ago(49 + index),
+                errors=f'["{status} detail"]',
+            )
+        )
+    insert_agent_run(
+        AgentRun(
+            id="completed-with-errors",
+            agent_name="completed_with_errors",
+            trigger_type="scheduled",
+            permission_mode="Observe",
+            status="completed",
+            started_at=_iso_ago(60),
+            ended_at=_iso_ago(59),
+            errors='["tool warning"]',
+        )
+    )
+
+    failures = dx._recent_failures(limit=5)
+
+    assert {row["id"] for row in failures} == {
+        "failure-failed",
+        "failure-error",
+        "failure-stale",
+        "failure-timed_out",
+        "completed-with-errors",
+    }
+    assert {row["status"] for row in failures}.isdisjoint(active_statuses)
+    assert {row["error"] for row in failures} == {
+        "failed detail",
+        "error detail",
+        "stale detail",
+        "timed_out detail",
+        "tool warning",
+    }
+
+
+def test_human_deep_diagnostics_prints_only_corrected_recent_failures(capsys):
+    from aletheia.cli.doctor_cmd import _print_deep_diagnostics
+
+    _print_deep_diagnostics(
+        {
+            "attention": [],
+            "logs": {},
+            "recent_failures": [
+                {
+                    "agent_name": "paper_trader",
+                    "status": "failed",
+                    "started_at": "2026-08-26T00:00:00+00:00",
+                    "finished_at": "2026-08-26T00:01:00+00:00",
+                    "error": "provider timeout",
+                }
+            ],
+            "trading": {},
+        }
+    )
+
+    output = capsys.readouterr().out
+    assert "Recent failed agent runs:" in output
+    assert "paper_trader failed" in output
+    assert "queued" not in output
+    assert "running" not in output
+
+
 def _seed_pending_filter_outcomes(*, count: int, due_at: str) -> None:
     from aletheia.analytics.filter_evidence import record_filter_decision
     from aletheia.storage.sqlite import get_db
