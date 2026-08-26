@@ -117,6 +117,67 @@ def test_portfolio_snapshots_return_latest_window_in_ascending_order(tmp_path, m
     reset_db()
 
 
+def test_snapshot_day_windows_compare_iso_instants(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    fixed_now = datetime(2026, 8, 22, 15, 0, 0, tzinfo=timezone.utc)
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now if tz is not None else fixed_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(repo, "datetime", FixedDatetime)
+    before = fixed_now - timedelta(days=7, seconds=1)
+    cutoff = fixed_now - timedelta(days=7)
+    after_fractional = fixed_now - timedelta(days=7) + timedelta(microseconds=1)
+    for snapshot_at, value in (
+        (before.isoformat(), 1.0),
+        (cutoff.isoformat().replace("+00:00", "Z"), 2.0),
+        (after_fractional.isoformat(), 3.0),
+    ):
+        repo.insert_portfolio_snapshot(
+            PortfolioSnapshot(total_value_usdt=value, snapshot_at=snapshot_at)
+        )
+
+    rows = repo.list_portfolio_snapshots(days=7)
+
+    assert [row["total_value_usdt"] for row in rows] == [2.0, 3.0]
+    reset_db()
+
+
+def test_account_equity_day_windows_compare_iso_instants(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    fixed_now = datetime(2026, 8, 22, 15, 0, 0, tzinfo=timezone.utc)
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed_now if tz is not None else fixed_now.replace(tzinfo=None)
+
+    monkeypatch.setattr(repo, "datetime", FixedDatetime)
+    before = fixed_now - timedelta(days=7, seconds=1)
+    cutoff = fixed_now - timedelta(days=7)
+    after_fractional = fixed_now - timedelta(days=7) + timedelta(microseconds=1)
+    for snapshot_at, value in (
+        (before.isoformat(), 1.0),
+        (cutoff.isoformat().replace("+00:00", "Z"), 2.0),
+        (after_fractional.isoformat(), 3.0),
+    ):
+        repo.insert_portfolio_snapshot(
+            PortfolioSnapshot(
+                total_value_usdt=value,
+                account_equity_usdt=value,
+                execution_mode="paper_internal",
+                snapshot_at=snapshot_at,
+            )
+        )
+
+    rows = repo.list_account_equity_snapshots("paper_internal", days=7)
+
+    assert [row["account_equity_usdt"] for row in rows] == [2.0, 3.0]
+    reset_db()
+
+
 def test_today_pnl_includes_closed_pnl_only(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     repo.insert_position(Position(
