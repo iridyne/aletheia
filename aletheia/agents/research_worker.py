@@ -749,7 +749,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
             promotion_retry_ids.update(repo.insert_serenity_evidence(ev) or [])
             persisted_evidence_ids.append(ev.id)
         except Exception as e:
-            logger.warning("Failed to persist evidence: %s", e)
+            raise _ArtifactPersistenceError(f"Failed to persist evidence: {e}") from e
 
     # S1: emit lens synthesis event summarising cross-lens coverage.
     _emit_event(
@@ -800,7 +800,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
                 repo.insert_serenity_claim(claim)
                 persisted_claims.append(claim)
             except Exception as e:
-                logger.warning("Failed to persist claim: %s", e)
+                raise _ArtifactPersistenceError(f"Failed to persist claim: {e}") from e
 
     _emit_event(run_id, "stage.completed", stage="extract_claims",
                 message=f"Extracted {len(persisted_claims)} claims")
@@ -845,19 +845,16 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
             market_types=json.dumps(item.get("market_types", [])),
         )
         try:
-            repo.insert_serenity_theme(theme)
-            persisted_themes.append(theme.id)
-
             # Link claims to theme
             claim_indices = item.get("claim_indices", [])
             links = []
             for idx in claim_indices:
                 if 0 <= idx < len(persisted_claims):
                     links.append((theme.id, persisted_claims[idx].id, None))
-            if links:
-                repo.insert_serenity_theme_claims_bulk(links)
+            repo.insert_serenity_theme_with_claim_links(theme, links)
+            persisted_themes.append(theme.id)
         except Exception as e:
-            logger.warning("Failed to persist theme: %s", e)
+            raise _ArtifactPersistenceError(f"Failed to persist theme: {e}") from e
 
     _emit_event(run_id, "stage.completed", stage="cluster_themes",
                 message=f"Created {len(persisted_themes)} themes")
@@ -946,7 +943,7 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
                         repo.insert_serenity_opportunity(opp)
                         persisted_opps.append(opp.id)
                     except Exception as e:
-                        logger.warning("Failed to persist opportunity: %s", e)
+                        raise _ArtifactPersistenceError(f"Failed to persist opportunity: {e}") from e
 
     _emit_event(run_id, "stage.completed", stage="generate_opportunities",
                 message=f"Generated {len(persisted_opps)} opportunities")
@@ -979,9 +976,15 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
 
     now = datetime.now(timezone.utc).isoformat()
     final_status = "completed" if counts["themes"] > 0 else "completed_empty"
-    finished = repo.finish_serenity_research_run(
+    finished = repo.finish_serenity_research_run_with_event(
         run_id,
         final_status,
+        _terminal_event(
+            run_id,
+            f"run.{final_status}",
+            message=f"Run {final_status}: {counts['themes']} themes, {counts['evidence']} evidence, "
+                    f"{counts['claims']} claims, {counts['opportunities']} opportunities",
+        ),
         stage=None,
         finished_at=now,
         updated_at=now,
@@ -990,9 +993,6 @@ async def _run_pipeline_inner(run_id: str, run: dict) -> None:
     if not finished:
         _acknowledge_cancellation(run_id)
         return
-    _emit_event(run_id, f"run.{final_status}",
-                message=f"Run {final_status}: {counts['themes']} themes, {counts['evidence']} evidence, "
-                        f"{counts['claims']} claims, {counts['opportunities']} opportunities")
 
 
 def _parse_json_array(text: str | None, label: str) -> list[dict]:
@@ -1067,6 +1067,22 @@ def _emit_event(run_id: str, event_type: str, stage: str | None = None,
         logger.warning("Failed to emit event for run %s: %s", run_id, e)
 
 
+def _terminal_event(
+    run_id: str,
+    event_type: str,
+    *,
+    stage: str | None = None,
+    message: str | None = None,
+) -> SerenityRunEvent:
+    return SerenityRunEvent(
+        id=f"{run_id}:{event_type}",
+        run_id=run_id,
+        event_type=event_type,
+        stage=stage,
+        message=message,
+    )
+
+
 def _mark_failed(
     run_id: str,
     error_type: str,
@@ -1076,9 +1092,15 @@ def _mark_failed(
     allow_queued: bool = False,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
-    finished = repo.finish_serenity_research_run(
+    finished = repo.finish_serenity_research_run_with_event(
         run_id,
         "failed",
+        _terminal_event(
+            run_id,
+            "run.failed",
+            stage=error_stage,
+            message=f"{error_type}: {error_message[:200] if error_message else ''}",
+        ),
         error_type=error_type,
         error_message=error_message[:500] if error_message else None,
         error_stage=error_stage,
@@ -1096,8 +1118,6 @@ def _mark_failed(
     if not finished:
         _acknowledge_cancellation(run_id)
         return
-    _emit_event(run_id, "run.failed", stage=error_stage,
-                message=f"{error_type}: {error_message[:200] if error_message else ''}")
 
 
 def _handle_rate_limit(run_id: str, run: dict, error_message: str) -> None:
@@ -1116,9 +1136,15 @@ def _handle_rate_limit(run_id: str, run: dict, error_message: str) -> None:
         jitter = random.randint(0, delay // 4)
         next_retry_at = (now + timedelta(seconds=delay + jitter)).isoformat()
 
-    finished = repo.finish_serenity_research_run(
+    finished = repo.finish_serenity_research_run_with_event(
         run_id,
         "rate_limited",
+        _terminal_event(
+            run_id,
+            "run.rate_limited",
+            message=f"Rate limited: {error_message[:200]}"
+                    + (f" (next retry at {next_retry_at})" if next_retry_at else " (retries exhausted)"),
+        ),
         error_type="provider_rate_limit",
         error_message=error_message[:500],
         error_stage=run.get("stage"),
@@ -1129,9 +1155,6 @@ def _handle_rate_limit(run_id: str, run: dict, error_message: str) -> None:
     if not finished:
         _acknowledge_cancellation(run_id)
         return
-    _emit_event(run_id, "run.rate_limited",
-                message=f"Rate limited: {error_message[:200]}"
-                        + (f" (next retry at {next_retry_at})" if next_retry_at else " (retries exhausted)"))
 
     # Schedule automatic retry if retries remain
     if next_retry_at and retry_count < max_retries:
@@ -1179,6 +1202,8 @@ def _schedule_auto_retry(run_id: str, run: dict, retry_count: int) -> None:
 
 
 def _classify_error(e: Exception) -> str:
+    if isinstance(e, _ArtifactPersistenceError):
+        return "artifact_persistence_error"
     msg = _error_detail(e).lower()
     if "429" in msg or "rate" in msg:
         return "provider_rate_limit"
@@ -1200,6 +1225,10 @@ def _error_detail(e: Exception) -> str:
 
 
 class _RateLimitError(Exception):
+    pass
+
+
+class _ArtifactPersistenceError(Exception):
     pass
 
 
