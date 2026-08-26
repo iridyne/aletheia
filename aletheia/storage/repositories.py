@@ -9876,12 +9876,25 @@ def insert_coingecko_top_rows(rows: list[dict]) -> int:
 
 
 def latest_coingecko_top(top_n: int = 50) -> list[dict]:
-    """Return the most recent batch's top_n rows, all sharing one observed_at.
+    """Return the most recent batch's top_n rows.
 
-    Two-step read pins to MAX(observed_at) first — otherwise a top_n=50 read
-    could mix two adjacent batches if 100 rows landed in one tick (per spec MS-C04).
+    New rows are pinned by batch_id so mixed provider source times cannot split
+    one acquisition batch. Legacy rows fall back to the original observed_at pin.
     """
     db = get_db()
+    batch_row = db.execute(
+        "SELECT batch_id FROM coingecko_top_snapshots "
+        "WHERE batch_id IS NOT NULL AND batch_id != '' "
+        "ORDER BY acquired_at DESC, observed_at DESC, rowid DESC LIMIT 1"
+    ).fetchone()
+    if batch_row and batch_row["batch_id"]:
+        return _select_all(
+            "coingecko_top_snapshots",
+            where="batch_id = ?",
+            params=(batch_row["batch_id"],),
+            order="market_cap_rank ASC",
+            limit=top_n,
+        )
     latest_row = db.execute("SELECT MAX(observed_at) AS m FROM coingecko_top_snapshots").fetchone()
     if not latest_row or not latest_row["m"]:
         return []
