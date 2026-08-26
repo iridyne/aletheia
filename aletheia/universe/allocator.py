@@ -312,7 +312,9 @@ def compute_total_score(
     raw_opportunity = scanner_result.get("opportunity_score", 0)
     opportunity = raw_opportunity
     family = scanner_result.get("scanner_family", "momentum")
-    crypto_context = (feat.get("analysis_context") or {}).get("kind") == "crypto"
+    crypto_context = (
+        (feat.get("analysis_context") or {}).get("kind") != "stock_linked_perp"
+    )
     calibration_effective_multiplier = 1.0
     calibration_authority_applied = False
     calibration_assignment = "not_evaluated"
@@ -565,11 +567,11 @@ def allocate_universe(
 
     def quota_key(item: dict) -> tuple[str, str]:
         context = (item.get("analysis_context") or {}).get("kind")
-        return (str(context or "unsupported"), item.get("scanner_family", "momentum"))
+        return (str(context or "legacy_crypto"), item.get("scanner_family", "momentum"))
 
     def family_limit(item: dict) -> int:
         context, family = quota_key(item)
-        quota = regime_quota if context == "crypto" else static_quota
+        quota = static_quota if context == "stock_linked_perp" else regime_quota
         return max(1, int(max_total * quota.get(family, 0.3)))
 
     # Exploit selection: top by score, respecting quotas
