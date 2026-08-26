@@ -347,7 +347,7 @@ def test_classify_risk_regime_neutral():
     from aletheia.data.collectors.macro import _classify_risk_regime
 
     assert _classify_risk_regime(vix=20.0, cap_change=0.5) == "neutral"
-    assert _classify_risk_regime(vix=None, cap_change=None) == "neutral"
+    assert _classify_risk_regime(vix=None, cap_change=None) is None
 
 
 @pytest.mark.asyncio
@@ -505,6 +505,23 @@ def test_render_enriched_context_md_with_data():
     assert "Macro" in md
     assert "BTC/USDT" in md
     assert "neutral" in md
+
+
+def test_render_enriched_context_md_skips_unavailable_risk_regime():
+    from aletheia.data.context_builder import render_enriched_context_md
+    from aletheia.data.models import MacroSnapshot
+
+    macro = MacroSnapshot(
+        fng_value=15,
+        fng_classification="Extreme Fear",
+        risk_regime="unavailable",
+        observed_at="2026-06-14T00:00:00+00:00",
+    )
+
+    md = render_enriched_context_md(["BTC/USDT"], {}, {}, macro)
+
+    assert "**Risk regime**" not in md
+    assert "Fear & Greed: 15 (Extreme Fear)" in md
 
 
 def test_render_enriched_context_md_with_perp_structure():
