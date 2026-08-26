@@ -196,6 +196,97 @@ def test_absent_unfilled_close_released_after_ack_lag(monkeypatch):
     assert stored_position["pending_close_status"] is None
 
 
+def test_absent_recovery_collects_exchange_evidence_outside_writer_lock(monkeypatch):
+    _seed_order(
+        Order(
+            id="close-evidence-once",
+            client_order_id="close-pos-evidence-once",
+            position_id="pos-evidence-once",
+            close_reason="take_profit",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=9.0,
+            price=1.0,
+            execution_mode="bitget_demo",
+            status="submitted",
+            source="native",
+            exchange_order_id="ex-evidence-once",
+            created_at=_iso(0.3),
+        )
+    )
+    repo.insert_position(
+        _position(
+            id="pos-evidence-once",
+            pending_close_order_id="close-evidence-once",
+            pending_close_status="submitted",
+            pending_close_requested_at=_iso(0.3),
+        )
+    )
+    from aletheia.storage.sqlite import write_lock_held_by_current_thread
+
+    lock_states: list[bool] = []
+    monkeypatch.setattr(
+        pcr,
+        "_exchange_open_order_ids",
+        lambda order: (lock_states.append(write_lock_held_by_current_thread()), set())[1],
+    )
+    monkeypatch.setattr(
+        pcr,
+        "_exchange_fill_rows",
+        lambda order: (lock_states.append(write_lock_held_by_current_thread()), [])[1],
+    )
+
+    summary = pcr.recover_absent_stale_close_orders()
+    assert summary["released"] == 1
+    assert lock_states == [False, False]
+
+
+def test_absent_recovery_refuses_changed_local_claim_after_evidence(monkeypatch):
+    _seed_order(
+        Order(
+            id="close-claim-changed",
+            client_order_id="close-pos-claim-changed",
+            position_id="pos-claim-changed",
+            close_reason="take_profit",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=9.0,
+            price=1.0,
+            execution_mode="bitget_demo",
+            status="submitted",
+            source="native",
+            exchange_order_id="ex-claim-changed",
+            created_at=_iso(0.3),
+        )
+    )
+    repo.insert_position(
+        _position(
+            id="pos-claim-changed",
+            pending_close_order_id="close-claim-changed",
+            pending_close_status="submitted",
+            pending_close_requested_at=_iso(0.3),
+        )
+    )
+    monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
+
+    def mutate_claim(_order):
+        repo.update_position(
+            "pos-claim-changed", pending_close_status="replaced_by_owner"
+        )
+        return []
+
+    monkeypatch.setattr(pcr, "_exchange_fill_rows", mutate_claim)
+
+    summary = pcr.recover_absent_stale_close_orders()
+    assert summary["released"] == 0
+    assert repo.get_order("close-claim-changed")["status"] == "submitted"
+    assert repo.get_position("pos-claim-changed")["pending_close_status"] == "replaced_by_owner"
+
+
 def test_close_with_local_fill_is_not_released(monkeypatch):
     _seed_order(
         Order(
@@ -769,4 +860,3 @@ def test_legacy_submission_rejected_40725_is_still_not_released():
     stored = repo._select_one("positions", "pos-40725-legacy")
     assert stored["pending_close_order_id"] == "close-40725-legacy"
     assert stored["pending_close_status"] == "submission_rejected"
-
