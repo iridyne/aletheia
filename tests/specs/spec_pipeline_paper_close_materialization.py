@@ -223,8 +223,24 @@ def test_paper_close_uses_frozen_net_balance_cost_contract(tmp_path, monkeypatch
         status="implemented",
     )
 )
+@pytest.mark.parametrize(
+    "trailing",
+    [
+        {"cost_model_version": "paper-net-balance-v1", "exit_fee_rate": 0.001},
+        {
+            "cost_model_version": "paper-net-balance-v1",
+            "exit_fee_rate": 0.051,
+            "slippage_bps": 25.0,
+        },
+        {
+            "cost_model_version": "paper-net-balance-v1",
+            "exit_fee_rate": 0.001,
+            "slippage_bps": 201.0,
+        },
+    ],
+)
 def test_paper_close_rejects_incomplete_net_balance_cost_contract(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, trailing,
 ):
     conn = _setup_db(tmp_path, monkeypatch)
     _patch_config(monkeypatch)
@@ -237,10 +253,7 @@ def test_paper_close_rejects_incomplete_net_balance_cost_contract(
     )
     repo.update_position(
         position.id,
-        trailing_json=json.dumps({
-            "cost_model_version": "paper-net-balance-v1",
-            "exit_fee_rate": 0.001,
-        }),
+        trailing_json=json.dumps(trailing),
     )
 
     with pytest.raises(ValueError, match="paper_close_cost_contract_invalid"):

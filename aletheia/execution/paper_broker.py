@@ -43,14 +43,14 @@ def _paper_close_costs(position: dict, cfg) -> tuple[float, float]:
         slippage_bps = float(trailing["slippage_bps"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("paper_close_cost_contract_invalid") from exc
-    if (
-        not math.isfinite(fee_rate)
-        or not 0 <= fee_rate < 1
-        or not math.isfinite(slippage_bps)
-        or not 0 <= slippage_bps < 10_000
-    ):
-        raise ValueError("paper_close_cost_contract_invalid")
-    return fee_rate, slippage_bps
+    try:
+        fee_pct, slippage_bps, _ = validate_execution_costs(
+            execution_fee_pct=fee_rate * 100.0,
+            slippage_bps=slippage_bps,
+        )
+    except ValueError as exc:
+        raise ValueError("paper_close_cost_contract_invalid") from exc
+    return fee_pct / 100.0, slippage_bps
 
 
 def execute_paper_order(
