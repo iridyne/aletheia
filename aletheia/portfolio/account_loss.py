@@ -256,6 +256,19 @@ def _paper_ledger_snapshot(rows: list[dict], today_start: str) -> AccountLossSna
         "OR ABS(pae.amount_usdt - p.realized_pnl) > 1e-8"
         ") LIMIT 1"
     )
+    _unreconciled_invalidation_query = (
+        "SELECT pae.position_id FROM paper_account_events pae "
+        "JOIN positions p ON p.id=pae.position_id "
+        "WHERE p.status='closed' AND p.execution_mode='paper_internal' "
+        "AND p.outcome_exclusion_reason=? "
+        "AND pae.action IN ('position_closed','manual_credit','manual_debit',"
+        "'position_economics_invalidated') "
+        "GROUP BY pae.position_id "
+        "HAVING SUM(CASE WHEN pae.action='position_closed' THEN 1 ELSE 0 END) > 0 "
+        "AND (ABS(SUM(pae.amount_usdt)) > 1e-8 OR "
+        "SUM(CASE WHEN pae.action='position_economics_invalidated' THEN 1 ELSE 0 END) != 1) "
+        "LIMIT 1"
+    )
 
     def _read_ledger():
         return db.execute(
@@ -278,13 +291,17 @@ def _paper_ledger_snapshot(rows: list[dict], today_start: str) -> AccountLossSna
     try:
         ledger_rows = _read_ledger()
         has_new_invalid_event = _has_new_invalid_event()
+        has_unreconciled_invalidation = db.execute(
+            _unreconciled_invalidation_query,
+            (INVALID_EXIT_PRICE_EVIDENCE,),
+        ).fetchone() is not None
     except Exception:
         return _unavailable("paper_ledger_read_failed", event_count=len(rows))
 
     expected = {str(row["id"]): float(row["realized_pnl"]) for row in rows}
     actual = _build_actual(ledger_rows)
 
-    if has_new_invalid_event:
+    if has_new_invalid_event or has_unreconciled_invalidation:
         return _unavailable("paper_ledger_mismatch", event_count=len(rows))
 
     if set(actual) != set(expected):

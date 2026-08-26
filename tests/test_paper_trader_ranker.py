@@ -1,6 +1,7 @@
 """Unit tests for aletheia.agents.paper_trader_ranker."""
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,6 +12,9 @@ def _make_opp(
     oid="opp-1",
     symbol="BTC/USDT",
     asset_class="crypto",
+    asset_subclass="",
+    market="spot",
+    metadata="{}",
     status="open",
     direction_bias="long",
     confidence="high",
@@ -26,6 +30,9 @@ def _make_opp(
         "id": oid,
         "symbol": symbol,
         "asset_class": asset_class,
+        "asset_subclass": asset_subclass,
+        "market": market,
+        "metadata": metadata,
         "status": status,
         "direction_bias": direction_bias,
         "confidence": confidence,
@@ -39,19 +46,28 @@ def _make_opp(
     }
 
 
-def _mock_config():
+def _mock_config(execution_mode="paper_internal"):
     cfg = MagicMock()
     cfg.risk.symbol_filter_mode = "whitelist"
     cfg.trading.min_confidence_to_trade = "medium"
+    cfg.exchange.paper_execution_mode = execution_mode
     return cfg
 
 
-def _patch_deps(opps, strategies=None, universe_member=None, factor_status="watch"):
+def _patch_deps(
+    opps,
+    strategies=None,
+    universe_member=None,
+    factor_status="watch",
+    execution_mode="paper_internal",
+):
     """Return a context manager that patches all ranker dependencies."""
     patches = {}
     # Position C (2026-07-02): the ranker no longer resolves StrategyRecords, so
     # list_strategies / get_strategy are no longer module attributes to patch.
-    patches["aletheia.agents.paper_trader_ranker.load_config"] = MagicMock(return_value=_mock_config())
+    patches["aletheia.agents.paper_trader_ranker.load_config"] = MagicMock(
+        return_value=_mock_config(execution_mode)
+    )
     patches["aletheia.agents.paper_trader_ranker.list_open_trade_opportunities"] = MagicMock(return_value=opps)
     patches["aletheia.agents.paper_trader_ranker.get_universe_member"] = MagicMock(return_value=universe_member)
     patches["aletheia.agents.paper_trader_ranker.tradable_symbols_from_config"] = MagicMock(return_value=["BTC/USDT", "ETH/USDT"])
@@ -81,16 +97,155 @@ def _patch_deps(opps, strategies=None, universe_member=None, factor_status="watc
 # Filter tests
 # ---------------------------------------------------------------------------
 
-def test_equity_shadow_tracked():
-    """Equity opportunities are scored but not executed (equity_shadow_track skip_reason)."""
+@pytest.mark.parametrize(
+    ("asset_class", "expected_count"),
+    [("equity", 1), ("prediction", 0)],
+)
+def test_unrelated_non_crypto_paths_remain_non_executable(
+    asset_class, expected_count,
+):
+    """Only the exact supported subclass gains candidate admission."""
     from aletheia.agents.paper_trader_ranker import build_paper_candidates, select_best_candidate
 
-    opps = [_make_opp(asset_class="equity", direction_bias="long", confidence="high")]
+    opps = [_make_opp(
+        asset_class=asset_class, direction_bias="long", confidence="high",
+    )]
     with _patch_deps(opps):
         candidates = build_paper_candidates(limit=50)
-    assert len(candidates) == 1
-    assert candidates[0]["skip_reason"] == "equity_shadow_track"
+    assert len(candidates) == expected_count
+    if candidates:
+        assert candidates[0]["skip_reason"] == "equity_shadow_track"
     assert select_best_candidate(candidates) is None
+
+
+def test_supported_stock_linked_perp_reaches_ranker_without_crypto_regime():
+    from aletheia.agents.paper_trader_ranker import build_paper_candidates
+    from aletheia.data.symbols import (
+        build_instrument_background,
+        instrument_analysis_context,
+    )
+
+    background = build_instrument_background(
+        symbol="SOXL/USDT:USDT",
+        venue="binance",
+        market_type="perp",
+        market_info={
+            "symbol": "SOXL/USDT:USDT", "base": "SOXL", "quote": "USDT",
+            "info": {"underlyingType": "EQUITY"},
+        },
+    )
+    opp = _make_opp(
+        symbol="SOXL/USDT",
+        asset_class="equity",
+        asset_subclass="stock_linked_perp",
+        market="perp",
+        metadata=json.dumps({
+            "instrument_background": background,
+            "analysis_context": instrument_analysis_context(background),
+        }),
+    )
+
+    with _patch_deps([opp]), patch(
+        "aletheia.agents.paper_trader_ranker.tradable_symbols_from_config",
+        return_value=["SOXL/USDT"],
+    ), patch(
+        "aletheia.agents.paper_trader_ranker.get_current_regime",
+        side_effect=AssertionError("crypto regime must not be read"),
+    ):
+        candidates = build_paper_candidates(limit=50)
+
+    assert len(candidates) == 1
+    assert candidates[0]["skip_reason"] is None
+    assert candidates[0]["asset_class"] == "equity"
+    assert candidates[0]["asset_subclass"] == "stock_linked_perp"
+    assert candidates[0]["market_type"] == "usdt_futures"
+    assert candidates[0]["analysis_context"]["kind"] == "stock_linked_perp"
+
+
+def _okx_demo_candidate(opp, supported):
+    from aletheia.agents.paper_trader_ranker import build_paper_candidates
+
+    with _patch_deps([opp], execution_mode="okx_demo"), patch(
+        "aletheia.agents.paper_trader_ranker.tradable_symbols_from_config",
+        return_value=[opp["symbol"]],
+    ), patch(
+        "aletheia.execution.venue_capabilities.get_supported_symbols",
+        return_value=supported,
+    ):
+        return build_paper_candidates(limit=50)[0]
+
+
+def test_okx_demo_supported_spot_candidate_passes_capability_filter():
+    candidate = _okx_demo_candidate(
+        _make_opp(symbol="WLD/USDT", market="spot"),
+        frozenset({"WLD/USDT"}),
+    )
+
+    assert candidate["skip_reason"] is None
+    capability = [
+        step for step in candidate["filter_trace"]
+        if step["filter_name"] == "venue_symbol_capability"
+    ][-1]
+    assert capability["decision"] == "passed"
+    assert capability["reason_code"] == "venue_symbol_supported"
+    assert capability["inputs"]["market_type"] == "spot"
+
+
+def test_okx_demo_supported_usdt_futures_candidate_passes_capability_filter():
+    candidate = _okx_demo_candidate(
+        _make_opp(symbol="BTC/USDT", market="usdt_futures"),
+        frozenset({"BTC/USDT"}),
+    )
+
+    assert candidate["skip_reason"] is None
+    capability = [
+        step for step in candidate["filter_trace"]
+        if step["filter_name"] == "venue_symbol_capability"
+    ][-1]
+    assert capability["inputs"]["market_type"] == "usdt_futures"
+
+
+def test_okx_demo_wrong_physical_market_does_not_pass():
+    candidate = _okx_demo_candidate(
+        _make_opp(symbol="WLD/USDT", market="usdt_futures"),
+        frozenset(),
+    )
+
+    assert candidate["skip_reason"] == "okx_demo_symbol_not_supported"
+
+
+def test_okx_demo_unsupported_symbol_keeps_skip_reason_and_evidence():
+    candidate = _okx_demo_candidate(
+        _make_opp(symbol="BAD/USDT", market="spot"),
+        frozenset({"BTC/USDT"}),
+    )
+
+    assert candidate["skip_reason"] == "okx_demo_symbol_not_supported"
+    capability = [
+        step for step in candidate["filter_trace"]
+        if step["filter_name"] == "venue_symbol_capability"
+    ][-1]
+    assert capability["decision"] == "rejected"
+    assert capability["reason_code"] == "okx_demo_symbol_not_supported"
+
+
+def test_okx_demo_capability_unavailable_preserves_fail_open_candidate():
+    unavailable = _okx_demo_candidate(
+        _make_opp(symbol="BTC/USDT", market="spot"),
+        None,
+    )
+    supported = _okx_demo_candidate(
+        _make_opp(symbol="BTC/USDT", market="spot"),
+        frozenset({"BTC/USDT"}),
+    )
+
+    assert unavailable["skip_reason"] is None
+    assert unavailable["trade_score"] == supported["trade_score"]
+    capability = [
+        step for step in unavailable["filter_trace"]
+        if step["filter_name"] == "venue_symbol_capability"
+    ][-1]
+    assert capability["decision"] == "passed"
 
 
 def test_neutral_bias_skipped():
@@ -101,6 +256,19 @@ def test_neutral_bias_skipped():
         candidates = build_paper_candidates(limit=50)
     assert len(candidates) == 1
     assert candidates[0]["skip_reason"] == "neutral_bias"
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "instrument_background_missing",
+        "unsupported_analysis_context:tradifi_perpetual",
+    ],
+)
+def test_instrument_background_rejections_are_permanent(reason):
+    from aletheia.agents.paper_trader import _is_permanent_skip
+
+    assert _is_permanent_skip({"skip_reason": reason}) is True
 
 
 def test_low_confidence_skipped():

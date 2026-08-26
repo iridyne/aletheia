@@ -20,6 +20,7 @@ SHADOW_TRADES_HOOK = "shadow_trades"
 SERENITY_POST_MORTEM_HOOK = "serenity_post_mortem"
 EXIT_BREAKEVEN_SHADOW_HOOK = "exit_breakeven_shadow"
 EXIT_TRAILING_RECOVERY_HOOK = "exit_trailing_recovery"
+_INVALIDATION_FENCED_HOOKS = {SHADOW_TRADES_HOOK, SERENITY_POST_MORTEM_HOOK}
 
 
 def _trailing_recovery_due_at(position: dict) -> str | None:
@@ -127,11 +128,44 @@ def process_outcome_hook_jobs(
                 summary["skipped"] = int(summary["skipped"]) + 1
                 continue
 
-            _execute_hook(str(job["hook_type"]), position)
-            if not repo.mark_outcome_hook_job_completed(
-                str(job["id"]), claim_token, now=now
-            ):
-                raise RuntimeError("Outcome hook completion lost its lease")
+            if str(job["hook_type"]) in _INVALIDATION_FENCED_HOOKS:
+                hook_error: Exception | None = None
+                with repo.transaction(immediate=True):
+                    current_job = repo._select_one("outcome_hook_jobs", str(job["id"]))
+                    if (
+                        current_job is None
+                        or current_job.get("status") != "processing"
+                        or current_job.get("claim_token") != claim_token
+                    ):
+                        summary["skipped"] = int(summary["skipped"]) + 1
+                        continue
+                    current, exclusion = _load_eligible_position(str(job["position_id"]))
+                    if current is None:
+                        if not repo.mark_outcome_hook_job_skipped(
+                            str(job["id"]), claim_token, exclusion, now=now
+                        ):
+                            raise RuntimeError("Outcome hook skip lost its lease")
+                        summary["skipped"] = int(summary["skipped"]) + 1
+                        continue
+                    try:
+                        _execute_hook(str(job["hook_type"]), current)
+                    except Exception as exc:
+                        # Preserve the existing partial-shadow replay contract while
+                        # keeping the writer fence through every derived write.
+                        hook_error = exc
+                    else:
+                        if not repo.mark_outcome_hook_job_completed(
+                            str(job["id"]), claim_token, now=now
+                        ):
+                            raise RuntimeError("Outcome hook completion lost its lease")
+                if hook_error is not None:
+                    raise hook_error
+            else:
+                _execute_hook(str(job["hook_type"]), position)
+                if not repo.mark_outcome_hook_job_completed(
+                    str(job["id"]), claim_token, now=now
+                ):
+                    raise RuntimeError("Outcome hook completion lost its lease")
             summary["completed"] = int(summary["completed"]) + 1
         except Exception as exc:
             attempts = max(1, int(job.get("attempts") or 1))

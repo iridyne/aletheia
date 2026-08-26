@@ -9,10 +9,8 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
-from aletheia.analytics.execution_mode import (
-    execution_mode_identity,
-    resolve_selected_execution_mode,
-)
+import aletheia.analytics.execution_mode as _execution_mode
+from aletheia.analytics.execution_mode import execution_mode_identity
 from aletheia.analytics.outcome_integrity import (
     eligible_strategy_outcomes,
     is_current_outcome_artifact,
@@ -50,7 +48,7 @@ def build_calibration_report(
     Returns CalibrationReport dict or None when insufficient data.
     """
     if execution_mode is None:
-        execution_mode = resolve_selected_execution_mode()
+        execution_mode = _execution_mode.resolve_selected_execution_mode()
     if not execution_mode:
         # Fail-closed: never persist an all-mode calibration under a
         # current-mode identity.  #1939
@@ -184,7 +182,7 @@ def get_latest_calibration_report(
     calibration under the new selected-mode identity.
     """
     if execution_mode is None:
-        execution_mode = resolve_selected_execution_mode()
+        execution_mode = _execution_mode.resolve_selected_execution_mode()
     if not execution_mode:
         return None
     try:
@@ -256,7 +254,9 @@ def compute_calibration_score() -> float | None:
 def _persist_report(report: dict) -> None:
     """Persist report as a knowledge item (rate-limited to 6h)."""
     try:
-        existing = get_latest_calibration_report()
+        existing = get_latest_calibration_report(
+            execution_mode=report.get("execution_mode"),
+        )
         if existing:
             gen = datetime.fromisoformat(existing.get("generated_at", "2000-01-01"))
             if gen.tzinfo is None:

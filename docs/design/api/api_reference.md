@@ -243,6 +243,24 @@ Strategy KPI and family scorecard responses wrap their rows under `strategies` a
 same cohort metadata can be returned without hiding its scope. Missing
 or insufficient genuine data is not serialized as a zero return, zero win rate, or healthy state.
 
+### Current-account execution-mode identity（#2181）
+
+Current-account analytics, System Operator context, CLI reports, Overview, and
+tax/PnL export must carry one concrete `execution_mode` through the complete
+read. Composite builders resolve the selected mode once and pass it to every
+descendant; a failed resolution returns `availability=unavailable` with
+`reason=execution_mode_unresolved` before any unscoped aggregate is read.
+The selected mode is the effective account identity: a valid live unlock maps
+the configured broker to its `*_live_limited` mode; otherwise the configured
+paper/demo mode is retained.
+`compute_order_stats` and historical accounting apply the same mode predicate
+before aggregation, and export applies it before `LIMIT`. Persisted calibration
+and reasoning artifacts rate-limit against their own stamped mode. Dashboard
+analytics query keys include the mode, and Trades & Positions refreshes the
+overview identity every 15 seconds, so a mode switch cannot reuse another
+cohort's cached result. `inspect orders --stats` follows the same resolver and
+supports `--execution-mode` for an explicit diagnostic override.
+
 > Backtest endpoints (`/analytics/backtest/runs`, `/runs/{id}`, `/compare/{id}`,
 > `/backtest-paper-drift`) and `/analytics/strategy-evidence` were deleted with the
 > rules engine (Position C, 2026-07-02).

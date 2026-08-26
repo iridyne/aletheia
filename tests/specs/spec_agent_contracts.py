@@ -549,6 +549,54 @@ def test_paper_traders_no_model_provider_imports():
 
 @spec_claim(
     SpecClaim(
+        "AC-S15", "agent_contracts", "§3 exchange boundary", "L2a",
+        "Upper trading domains consume normalized capability facts and never import "
+        "concrete exchange clients or concrete execution brokers",
+    ),
+)
+def test_trading_domains_do_not_import_concrete_venue_implementations():
+    import ast
+
+    root = Path(__file__).parent.parent.parent
+    forbidden_brokers = {
+        "aletheia.execution.okx_broker",
+        "aletheia.execution.bitget_broker",
+        "aletheia.execution.binance_broker",
+    }
+    violations: list[str] = []
+    for domain in ("agents", "trading", "universe", "risk"):
+        for source in sorted((root / "aletheia" / domain).rglob("*.py")):
+            tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+            for node in ast.walk(tree):
+                imported: list[str] = []
+                if isinstance(node, ast.Import):
+                    imported = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    imported = [
+                        node.module,
+                        *(
+                            f"{node.module}.{alias.name}"
+                            for alias in node.names
+                            if node.module in {"aletheia.exchanges", "aletheia.execution"}
+                        ),
+                    ]
+                for dependency in imported:
+                    if (
+                        dependency.startswith("aletheia.exchanges.")
+                        or dependency in forbidden_brokers
+                    ):
+                        violations.append(
+                            f"{source.relative_to(root)}:{node.lineno} -> {dependency}"
+                        )
+
+    assert violations == [], (
+        "Upper trading domains must not import concrete venue implementations:\n"
+        + "\n".join(violations)
+    )
+
+
+@spec_claim(
+    SpecClaim(
         "AC-S13", "agent_contracts", "§3 paper_trader trigger", "L2a",
         "Every committed Ranker work source has an on-demand wake and the scheduled fallback remains.",
         status="implemented",

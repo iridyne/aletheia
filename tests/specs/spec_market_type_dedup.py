@@ -198,11 +198,13 @@ def test_universe_member_dedup_respects_preferred_market():
 )
 def test_market_observer_passes_market_filter():
     from aletheia.agents import market_observer
+    lookup_src = inspect.getsource(market_observer._find_universe_opportunity)
     src = inspect.getsource(market_observer._analyze_symbol)
-    assert "market=" in src and "find_opportunity_by_symbol_snapshot" in src, (
-        "market_observer._analyze_symbol must pass market= to "
+    assert "market=" in lookup_src and "find_opportunity_by_symbol_snapshot" in lookup_src, (
+        "market_observer lifecycle helper must pass market= to "
         "find_opportunity_by_symbol_snapshot"
     )
+    assert "_find_universe_opportunity(" in src
     terminal_guard = 'existing.get("status") != "open"'
     assert terminal_guard in src
     assert src.index(terminal_guard) < src.index("update_open_opportunity"), (

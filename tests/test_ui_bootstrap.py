@@ -106,6 +106,26 @@ def test_overview_bootstrap_projects_activity_and_account_only():
     assert "full_proposals" not in payload
 
 
+def test_overview_bootstrap_fails_closed_before_current_account_reads(monkeypatch):
+    import aletheia.analytics.execution_mode as execution_mode
+    import aletheia.portfolio.pnl as pnl
+    import aletheia.server.routes.ui as ui
+
+    monkeypatch.setattr(execution_mode, "resolve_selected_execution_mode", lambda: None)
+
+    def unexpected_portfolio_read(*_args, **_kwargs):
+        raise AssertionError("unresolved mode must not read an unscoped portfolio")
+
+    monkeypatch.setattr(pnl, "compute_portfolio", unexpected_portfolio_read)
+    response = Response()
+    payload = ui.overview_bootstrap(response)
+
+    assert payload["availability"] == "unavailable"
+    assert payload["reason"] == "execution_mode_unresolved"
+    assert payload["account"]["execution_mode_status"] == "unavailable"
+    assert response.headers["cache-control"] == "no-store"
+
+
 @pytest.mark.anyio
 async def test_app_bootstrap_uses_no_store_and_scoped_json_compression():
     from aletheia.server.app import app

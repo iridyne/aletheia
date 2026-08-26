@@ -122,11 +122,84 @@ class _FixtureCCXTProvider:
             change_pct_24h=3.5,
             high_24h=latest * 1.01,
             low_24h=latest * 0.99,
-            provider="fixture",
+            provider=instrument.exchange,
         )
 
     async def close(self):
         return None
+
+
+class _StockLinkedExchange(_FixtureExchange):
+    """Production-shaped Binance stock-linked perpetual metadata."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.id = "binance"
+        self.markets = {
+            "SOXL/USDT:USDT": {
+                "id": "SOXLUSDT",
+                "symbol": "SOXL/USDT:USDT",
+                "base": "SOXL",
+                "quote": "USDT",
+                "settle": "USDT",
+                "active": True,
+                "spot": False,
+                "swap": True,
+                "future": False,
+                "option": False,
+                "linear": True,
+                "limits": {"cost": {"min": 5.0}},
+                "precision": {"price": 0.001, "amount": 0.01},
+                "info": {"underlyingType": "EQUITY"},
+            },
+        }
+
+    async def fetch_tickers(self, symbols):
+        latest = _fixture_ohlcv("SOXL/USDT", "1h", 168)[-1][4]
+        return {
+            symbol: {
+                "symbol": symbol,
+                "last": latest,
+                "close": latest,
+                "bid": latest * 0.9999,
+                "ask": latest * 1.0001,
+                "quoteVolume": 100_000_000.0,
+            }
+            for symbol in symbols
+        }
+
+    async def fetch_ohlcv(self, symbol, timeframe="1h", since=None, limit=100):
+        del since
+        rows = _fixture_ohlcv(symbol, timeframe, limit)
+        if timeframe == "1h":
+            close = rows[-16][4]
+            balancing_returns = [-0.0066, 0.001] * 4 + [-0.0066]
+            momentum_returns = [0.009] * 5
+            for change, row in zip(
+                balancing_returns + momentum_returns, rows[-15:-1], strict=True,
+            ):
+                close *= 1 + change
+                row[1:5] = [close * 0.999, close * 1.001, close * 0.998, close]
+            for row in rows[-5:]:
+                row[5] = 50_000.0
+            rows[-1][1:5] = rows[-2][1:5]
+        return rows
+
+    async def fetch_funding_rate(self, _symbol):
+        return {"fundingRate": 0.0, "markPrice": 100.0}
+
+    async def fetch_open_interest(self, _symbol):
+        return {"openInterestValue": 12_000_000.0}
+
+    async def fapipublic_get_takerlongshortratio(self, _params):
+        return [{"buySellRatio": "1.5"}]
+
+
+class _StockLinkedCCXTProvider(_FixtureCCXTProvider):
+    def __init__(self, exchange: str, fallback_exchange: str | None = None) -> None:
+        self.exchange_name = exchange
+        self.fallback_exchange = fallback_exchange
+        self.exchange = _StockLinkedExchange()
 
 
 @pytest.mark.asyncio
@@ -146,11 +219,11 @@ async def test_real_universe_refresh_reaches_one_operator_defer(
     from aletheia.universe.service import UniverseService
 
     # The E2E database is session-scoped, but configuration is a file. Keep this
-    # scenario's fixture venue from leaking into whichever E2E test runs next.
+    # scenario's known venue from leaking into whichever E2E test runs next.
     monkeypatch.setattr(config_loader, "CONFIG_PATH", tmp_path / "config.yaml")
     cfg = load_config()
-    cfg.market_data.ccxt_exchange = "fixture"
-    cfg.market_data.ccxt_fallback = "fixture"
+    cfg.market_data.ccxt_exchange = "binance"
+    cfg.market_data.ccxt_fallback = "binance"
     cfg.market_data.enable_crypto_fallback = False
     cfg.market_data.observed_instruments = []
     cfg.market_data.observed_symbols = ["SOL/USDT"]
@@ -217,7 +290,7 @@ async def test_real_universe_refresh_reaches_one_operator_defer(
     # no MarketSnapshot or Opportunity is hand-inserted by the test.
     collected = await collect_market_snapshots()
     assert collected["errors"] == []
-    assert collected["collected"] == ["fixture:SOL/USDT:spot"]
+    assert collected["collected"] == ["binance:SOL/USDT:spot"]
 
     snapshot_id = await UniverseService().refresh()
     assert snapshot_id is not None
@@ -343,3 +416,130 @@ async def test_real_universe_refresh_reaches_one_operator_defer(
     assert {row["symbol"] for row in evidence} == {opportunity["symbol"]}
     assert {row["market_type"] for row in evidence} == {"spot"}
     assert {row["direction"] for row in evidence} == {"long"}
+
+
+@pytest.mark.asyncio
+async def test_stock_linked_perp_reaches_existing_operator_context(
+    e2e_db, monkeypatch, tmp_path,
+):
+    import json
+
+    import aletheia.config.loader as config_loader
+
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+    from aletheia.agent_shell.trading_context import (
+        build_enriched_trading_context,
+        scope_operator_context_to_candidate,
+    )
+    from aletheia.agent_shell.trading_decision import _build_assessment_prompt
+    from aletheia.agents.paper_trader import run_paper_trader
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.storage import repositories as repo
+    from aletheia.trading.market_data import collect_market_snapshots
+    from aletheia.universe.service import UniverseService
+
+    monkeypatch.setattr(config_loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    cfg = load_config()
+    cfg.market_data.ccxt_exchange = "binance"
+    cfg.market_data.ccxt_fallback = "binance"
+    cfg.market_data.enable_crypto_fallback = False
+    cfg.market_data.observed_instruments = ["binance:SOXL/USDT:perp"]
+    cfg.market_data.observed_symbols = []
+    cfg.market_data.observed_stock_tokens = []
+    cfg.market_data.observed_xstocks = []
+    cfg.exchange.enabled_markets = {"spot": False, "usdt_futures": True}
+    cfg.exchange.preferred_market_type = "usdt_futures"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.symbol_list = ["SOXL/USDT"]
+    cfg.risk.symbol_filter_mode = "whitelist"
+    cfg.agent.permission_mode = "Paper"
+    cfg.agent.autonomous_learning = False
+    cfg.universe.enabled = True
+    cfg.universe.max_candidates = 1
+    cfg.universe.explore_ratio = 0.0
+    cfg.universe.min_volume_24h_usdt = 1_000_000.0
+    cfg.universe.max_spread_bps = 30.0
+    cfg.universe.blacklist = []
+    cfg.regime.enabled = False
+    save_config(cfg)
+
+    init_tool_registry()
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.CCXTProvider", _StockLinkedCCXTProvider
+    )
+    monkeypatch.setattr(
+        "aletheia.agents.paper_trader_ranker.get_current_regime",
+        lambda: (_ for _ in ()).throw(AssertionError("crypto regime leaked")),
+    )
+
+    async def reject_crypto_committee(*_args, **_kwargs):
+        raise AssertionError("crypto committee context leaked")
+
+    monkeypatch.setattr(
+        "aletheia.agents.committee.integration.enrich_candidates_parallel",
+        reject_crypto_committee,
+    )
+
+    collected = await collect_market_snapshots()
+    assert collected["errors"] == []
+    assert collected["collected"] == ["binance:SOXL/USDT:perp"]
+    repo.insert_open_interest_snapshot({
+        "symbol": "SOXL/USDT",
+        "exchange": "binance",
+        "open_interest_usd": 12_000_000.0,
+        "oi_change_1h_pct": 6.0,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+    })
+    repo.insert_orderbook_snapshot({
+        "symbol": "SOXL/USDT",
+        "exchange": "binance",
+        "market_type": "perp",
+        "bid_price": 99.99,
+        "ask_price": 100.01,
+        "spread_bps": 2.0,
+        "bid_depth_10bps_usd": 1_500_000.0,
+        "ask_depth_10bps_usd": 1_500_000.0,
+        "total_depth_10bps_usd": 3_000_000.0,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    snapshot_id = await UniverseService().refresh()
+    assert snapshot_id is not None
+    opportunities = repo.list_opportunities(limit=10)
+    assert len(opportunities) == 1
+    opportunity = opportunities[0]
+    metadata = json.loads(opportunity["metadata"])
+    assert opportunity["symbol"] == "SOXL/USDT"
+    assert opportunity["market"] == "perp"
+    assert opportunity["asset_class"] == "equity"
+    assert opportunity["asset_subclass"] == "stock_linked_perp"
+    assert opportunity["execution_eligible"] == 1
+    assert metadata["instrument_background"]["physical_market_type"] == "perp"
+    assert metadata["analysis_context"]["kind"] == "stock_linked_perp"
+
+    ranker_result = await run_paper_trader(
+        permission_mode="Paper", run_id="stock-linked-to-operator-ranker"
+    )
+    assert ranker_result["errors"] == []
+    assert ranker_result["outputs"][-1] == "signals_pending:1"
+
+    context = build_enriched_trading_context(authorize_learning=False)
+    context["layer2"]["reflection"] = "SENTINEL_GLOBAL_CRYPTO_REFLECTION"
+    scoped = scope_operator_context_to_candidate(context, opportunity["id"])
+    candidate = scoped["layer2"]["pending_signals"][0]
+    feature = scoped["layer1"]["features"][0]
+    assert candidate["instrument_background"] == metadata["instrument_background"]
+    assert candidate["analysis_context"] == metadata["analysis_context"]
+    assert candidate["market_type"] == "usdt_futures"
+    assert candidate["b2_evidence"]["status"] == "not_applicable"
+    assert scoped["layer1"]["regime"] is None
+    assert scoped["layer2"]["reflection"] is None
+    assert feature["relative_strength_24h"] is None
+    assert feature["btc_beta"] is None
+
+    prompt = _build_assessment_prompt(scoped)
+    assert "SOXL/USDT is a Binance USDT perpetual" in prompt
+    assert "+3x DAILY exposure" in prompt
+    assert "ICESEMIT" in prompt
+    assert "RS24h=" not in prompt
+    assert "SENTINEL_GLOBAL_CRYPTO_REFLECTION" not in prompt

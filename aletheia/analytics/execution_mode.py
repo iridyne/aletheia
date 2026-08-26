@@ -25,18 +25,32 @@ from typing import Any
 
 
 def resolve_selected_execution_mode() -> str | None:
-    """Return the configured execution_mode, or ``None`` if unresolvable.
+    """Return the effective selected execution mode, or ``None`` if unresolvable.
 
-    A missing/unreadable config, or an empty ``paper_execution_mode``,
-    yields ``None`` so the caller can render an unavailable/fail-closed
-    response.  Never silently returns ``paper_internal``.
+    A valid live unlock selects the broker's ``*_live_limited`` identity so
+    current-account analytics follow the same authority as new Proposals.
+    Missing/unreadable config or an empty paper mode yields ``None``; invalid
+    live evidence falls back to the configured paper/demo mode.
     """
     try:
+        from aletheia.config.exchanges import live_execution_mode_for_exchange
         from aletheia.config.loader import load_config
-        mode = str(
-            getattr(load_config().exchange, "paper_execution_mode", "") or ""
+
+        cfg = load_config()
+        paper_mode = str(
+            getattr(cfg.exchange, "paper_execution_mode", "") or ""
         ).strip()
-        return mode or None
+        if (
+            str(getattr(cfg.exchange, "mode", "") or "").strip().lower() == "live"
+            and getattr(getattr(cfg, "live", None), "state", "") == "live_limited"
+        ):
+            from aletheia.trust.live_unlock import current_authorization_ref
+
+            if current_authorization_ref(cfg) is not None:
+                return live_execution_mode_for_exchange(
+                    getattr(cfg.exchange, "name", "") or ""
+                ) or paper_mode or None
+        return paper_mode or None
     except Exception:
         return None
 

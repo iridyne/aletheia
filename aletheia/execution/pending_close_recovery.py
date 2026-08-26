@@ -325,6 +325,53 @@ def _eligible_absent_close_recovery(order: dict, position: dict) -> str | None:
     return "stale_close_order_absent_unfilled"
 
 
+def _recovery_claim_is_unchanged(
+    expected_order: dict,
+    expected_position: dict,
+    fresh_order: dict,
+    fresh_position: dict,
+) -> bool:
+    """CAS the local claim after remote evidence was collected.
+
+    The remote evidence is intentionally not re-queried here: a SQLite writer
+    lock cannot make separate exchange requests atomic. Compare every local
+    field used to identify the evidence target and require the claim/fill state
+    to remain unchanged before applying the already-decided reason.
+    """
+    order_fields = (
+        "id",
+        "position_id",
+        "status",
+        "client_order_id",
+        "exchange_order_id",
+        "execution_mode",
+        "market_type",
+        "symbol",
+        "close_reason",
+        "error_reason",
+        "created_at",
+    )
+    position_fields = (
+        "id",
+        "status",
+        "pending_close_order_id",
+        "pending_close_status",
+        "pending_close_requested_at",
+    )
+    if any(
+        str(expected_order.get(field) or "") != str(fresh_order.get(field) or "")
+        for field in order_fields
+    ):
+        return False
+    if any(
+        str(expected_position.get(field) or "")
+        != str(fresh_position.get(field) or "")
+        for field in position_fields
+    ):
+        return False
+    return _local_fill_quantity(str(fresh_order["id"])) == 0
+
+
 def _apply_absent_close_recovery(order: dict, position: dict, reason_code: str) -> bool:
     order_id = str(order["id"])
     position_id = str(position["id"])
@@ -340,7 +387,9 @@ def _apply_absent_close_recovery(order: dict, position: dict, reason_code: str) 
             return False
         order_row = dict(fresh_order)
         position_row = dict(fresh_position)
-        if _eligible_absent_close_recovery(order_row, position_row) != reason_code:
+        if not _recovery_claim_is_unchanged(
+            order, position, order_row, position_row
+        ):
             return False
         if reason_code == TRADE_RATE_LIMIT_CANCEL_REASON:
             raise RuntimeError("pending_close_recovery: rate-limited close must be parked, not released")
@@ -431,7 +480,9 @@ def _apply_park_rate_limited_close(order: dict, position: dict) -> bool:
             return False
         order_row = dict(fresh_order)
         position_row = dict(fresh_position)
-        if _eligible_absent_close_recovery(order_row, position_row) != TRADE_RATE_LIMIT_CANCEL_REASON:
+        if not _recovery_claim_is_unchanged(
+            order, position, order_row, position_row
+        ):
             return False
 
         db.execute(

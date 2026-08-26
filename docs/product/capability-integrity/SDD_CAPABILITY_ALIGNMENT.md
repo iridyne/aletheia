@@ -25,7 +25,7 @@ product-support percentage.
 | Class | Capability examples | Finding |
 |---|---|---|
 | Correctly scoped local claims | Risk gates, paper execution, causal identity, persistence invariants | SDD is useful and prevents implementation drift. Ground Truth adds the product-level final-result and support-surface decision. |
-| Complete implementation outside support | EX-06, EX-12, EX-13 | Conforming claims are accurate, but external exchange execution is not part of `crypto-paper-mainline-v1`; the capabilities correctly remain `Implemented`. |
+| Complete implementation outside support | EX-06, EX-12, EX-13 | Conforming claims are accurate, but external exchange execution is not part of `crypto-stock-linked-paper-mainline-v2`; the capabilities correctly remain `Implemented`. |
 | Intentional experiments | Serenity, shadow trades, Learning experiments, live preparation | Conforming subpaths do not make the experiments Supported. This is a product-scope decision, not an SDD failure. |
 | Reference implementation without a product consumer | LN-17, EX-15 | Persona pyramid and scale-in helpers are explicitly Experimental and blocked from production mutation. |
 | Honest safety experiment | LN-16, LN-18 | `PS-S10` plus the #409 rollout state-machine claims prove exact prospective manifest cohorts, sample/market-day/stability gates, one-step progression, and distress/refreeze behavior; `PS-S13` proves the scheduler only rechecks that state and never mutates unrelated config. Both remain Experimental/default-off. |

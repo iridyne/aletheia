@@ -22,7 +22,12 @@ from aletheia.storage.models import (
     UniverseSetup,
 )
 from aletheia.analytics.factor_feedback import lookup_factor_signal
-from aletheia.data.symbols import MARKET_PERP, MARKET_SPOT
+from aletheia.data.symbols import (
+    MARKET_PERP,
+    MARKET_SPOT,
+    instrument_analysis_context,
+    instrument_background_rejection_reason,
+)
 from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
 from aletheia.trading.instruments import instrument_market_to_db_market
 from aletheia.universe.funding_units import (
@@ -70,6 +75,16 @@ def _physical_market_type(market_type: str | None) -> str | None:
     if normalized in {"perp", "swap", "futures", "usdt_futures", MARKET_PERP}:
         return MARKET_PERP
     return None
+
+
+def _opportunity_market_for_context(
+    market_type: str,
+    analysis_context: dict | None,
+) -> str:
+    physical_market = _physical_market_type(market_type) or market_type
+    if (analysis_context or {}).get("kind") == "stock_linked_perp":
+        return physical_market
+    return instrument_market_to_db_market(physical_market)
 
 
 def _parse_time(value: object) -> datetime | None:
@@ -249,6 +264,8 @@ def _materialize_trigger_opportunity(
     market_fact: dict,
     linked_strategy_id: str | None,
     total_score: float,
+    instrument_background: dict,
+    analysis_context: dict | None,
 ) -> Opportunity:
     from aletheia.universe.features import persist_feature_snapshot_for_emission
 
@@ -258,7 +275,7 @@ def _materialize_trigger_opportunity(
     detected_at = datetime.now(timezone.utc).isoformat()
     valid_until = setup.valid_until
     physical_market = _physical_market_type(setup.market_type) or setup.market_type
-    db_market = instrument_market_to_db_market(physical_market)
+    db_market = _opportunity_market_for_context(physical_market, analysis_context)
     family = setup.scanner_family
     reasons: list[str] = feature.get("reasons") or []
     thesis = (
@@ -338,8 +355,17 @@ def _materialize_trigger_opportunity(
         confidence_score=int(round(total_score)),
         source_agent="universe_scanner",
         linked_strategy_id=linked_strategy_id,
-        asset_class="crypto",
+        asset_class=str(instrument_background.get("asset_class") or "crypto"),
+        asset_subclass=(
+            "stock_linked_perp"
+            if (analysis_context or {}).get("kind") == "stock_linked_perp"
+            else ""
+        ),
         metadata=_json({
+            "instrument_background": instrument_background,
+            "analysis_context": analysis_context,
+            "learning_candidate_key": member.get("learning_candidate_key"),
+            "learning_exposure_id": member.get("learning_exposure_id"),
             "universe_snapshot_id": setup.snapshot_id,
             "universe_member_id": setup.member_id,
             "feature_snapshot_id": feature.get("feature_snapshot_id"),
@@ -369,13 +395,13 @@ def _active_defer_suppresses(
     *,
     symbol: str,
     direction: str,
-    market_type: str,
+    opportunity_market: str,
     material_fingerprint: str,
 ) -> dict | None:
     prior_skip = repo.latest_direct_skip_defer_for_setup(
         symbol,
         direction,
-        instrument_market_to_db_market(_physical_market_type(market_type) or market_type),
+        opportunity_market,
     )
     if prior_skip and prior_skip.get("material_fingerprint") == material_fingerprint:
         return prior_skip
@@ -605,6 +631,52 @@ def emit_deterministic_opportunities(
             )
             continue
 
+        instrument_background = feat.get("instrument_background")
+        background_reason = instrument_background_rejection_reason(
+            instrument_background,
+            symbol=symbol,
+            market_type=market_type,
+            venue=str(
+                feat.get("venue")
+                or m.get("venue")
+                or (instrument_background or {}).get("venue")
+                or ""
+            ),
+        )
+        if (
+            not background_reason
+            and m.get("instrument_background") is not None
+            and m.get("instrument_background") != instrument_background
+        ):
+            background_reason = "instrument_background_identity_conflict"
+        if background_reason:
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=total_score,
+                short_enabled=short_enabled,
+                decision="rejected",
+                reason_code=background_reason,
+                inputs={
+                    "background_status": (
+                        instrument_background.get("status")
+                        if isinstance(instrument_background, dict) else None
+                    ),
+                    "asset_class": (
+                        instrument_background.get("asset_class")
+                        if isinstance(instrument_background, dict) else None
+                    ),
+                },
+            )
+            continue
+        analysis_context = instrument_analysis_context(instrument_background)
+        applicable_regime = (
+            regime if (analysis_context or {}).get("kind") == "crypto" else None
+        )
+
         # Prefer scanner-intrinsic direction; fallback to _infer_direction
         direction = feat.get("scanner_direction") or _infer_direction(family, feat)
         if direction is None:
@@ -633,43 +705,51 @@ def emit_deterministic_opportunities(
             )
             continue
 
-        # Factor feedback gate: block signals from proven-bad factor combinations
-        try:
-            factor_sig = lookup_factor_signal({
-                "scanner_family": family,
-                "direction": direction,
-                "symbol": symbol,
-            })
-            if factor_sig.get("status") == "blocked_candidate":
-                logger.debug(
-                    "factor-blocked %s %s %s (wr=%.0f%% exp=%.4f)",
-                    family, direction, symbol,
-                    (factor_sig.get("win_rate") or 0) * 100,
-                    factor_sig.get("expectancy") or 0,
-                )
-                _record_emission_decision(
-                    member=m,
-                    snapshot_id=snapshot_id,
-                    member_index=member_index,
-                    symbol=symbol,
-                    market_type=market_type,
-                    total_score=total_score,
-                    short_enabled=short_enabled,
-                    decision="rejected",
-                    reason_code="factor_blocked",
-                    direction=direction,
-                    inputs={"factor_status": factor_sig.get("status")},
-                )
-                continue
-        except Exception:
-            pass
+        if (analysis_context or {}).get("kind") == "crypto":
+            # Factor feedback gate: block signals from proven-bad factor combinations
+            try:
+                factor_sig = lookup_factor_signal({
+                    "scanner_family": family,
+                    "direction": direction,
+                    "symbol": symbol,
+                })
+                if factor_sig.get("status") == "blocked_candidate":
+                    logger.debug(
+                        "factor-blocked %s %s %s (wr=%.0f%% exp=%.4f)",
+                        family, direction, symbol,
+                        (factor_sig.get("win_rate") or 0) * 100,
+                        factor_sig.get("expectancy") or 0,
+                    )
+                    _record_emission_decision(
+                        member=m,
+                        snapshot_id=snapshot_id,
+                        member_index=member_index,
+                        symbol=symbol,
+                        market_type=market_type,
+                        total_score=total_score,
+                        short_enabled=short_enabled,
+                        decision="rejected",
+                        reason_code="factor_blocked",
+                        direction=direction,
+                        inputs={"factor_status": factor_sig.get("status")},
+                    )
+                    continue
+            except Exception:
+                pass
 
         # Regime bias gate: filter signals that conflict with current regime
-        if regime is not None and not _passes_regime_gate(direction, total_score, regime, short_enabled):
+        if not _passes_regime_gate(
+            direction, total_score, applicable_regime, short_enabled
+        ):
+            reason_code = (
+                "short_disabled"
+                if direction == "short" and not short_enabled
+                else "regime_filtered"
+            )
             logger.debug(
-                "regime-filtered %s %s %s (regime=%s, bias=%.2f)",
-                family, direction, symbol, regime.state,
-                regime.short_bias if direction == "short" else regime.long_bias,
+                "regime-filtered %s %s %s (regime=%s)",
+                family, direction, symbol,
+                applicable_regime.state if applicable_regime else None,
             )
             _record_emission_decision(
                 member=m,
@@ -680,12 +760,15 @@ def emit_deterministic_opportunities(
                 total_score=total_score,
                 short_enabled=short_enabled,
                 decision="rejected",
-                reason_code="regime_filtered",
+                reason_code=reason_code,
                 direction=direction,
-                regime_tag=regime.state,
+                regime_tag=applicable_regime.state if applicable_regime else None,
                 inputs={
                     "direction_bias": (
-                        regime.short_bias if direction == "short" else regime.long_bias
+                        applicable_regime.short_bias
+                        if applicable_regime and direction == "short"
+                        else applicable_regime.long_bias
+                        if applicable_regime else None
                     ),
                 },
             )
@@ -697,7 +780,11 @@ def emit_deterministic_opportunities(
             market_type=market_type,
             scanner_family=family,
             features=feat,
-            regime=regime.state if regime else None,
+            regime=applicable_regime.state if applicable_regime else None,
+        )
+        opportunity_market = _opportunity_market_for_context(
+            market_type,
+            analysis_context,
         )
 
         try:
@@ -711,7 +798,7 @@ def emit_deterministic_opportunities(
                 family=family,
                 direction=direction,
                 material_fingerprint=current_material_fingerprint,
-                regime_tag=regime.state if regime else None,
+                regime_tag=applicable_regime.state if applicable_regime else None,
             )
         except ValueError as exc:
             _record_emission_decision(
@@ -725,7 +812,7 @@ def emit_deterministic_opportunities(
                 decision="rejected",
                 reason_code=str(exc)[:160] or "setup_unavailable",
                 direction=direction,
-                regime_tag=regime.state if regime else None,
+                regime_tag=applicable_regime.state if applicable_regime else None,
             )
             continue
         current = datetime.now(timezone.utc)
@@ -748,11 +835,8 @@ def emit_deterministic_opportunities(
         defer = _active_defer_suppresses(
             symbol=symbol,
             direction=direction,
-            market_type=market_type,
+            opportunity_market=opportunity_market,
             material_fingerprint=current_material_fingerprint,
-        )
-        opportunity_market = instrument_market_to_db_market(
-            _physical_market_type(market_type) or market_type
         )
         existing_snapshot_owner = repo.find_opportunity_by_symbol_snapshot(
             symbol, snapshot_id, market=opportunity_market,
@@ -789,8 +873,11 @@ def emit_deterministic_opportunities(
                     reason_code="existing_opportunity_reused",
                     direction=direction,
                     opportunity_id=existing_snapshot_owner.get("id"),
-                    regime_tag=regime.state if regime else None,
-                    inputs={"setup_id": setup_id, "existing_status": existing_snapshot_owner.get("status")},
+                    regime_tag=applicable_regime.state if applicable_regime else None,
+                    inputs={
+                        "setup_id": setup_id,
+                        "existing_status": existing_snapshot_owner.get("status"),
+                    },
                 )
                 continue
             if defer:
@@ -805,7 +892,7 @@ def emit_deterministic_opportunities(
                     decision="rejected",
                     reason_code="active_defer_suppressed",
                     direction=direction,
-                    regime_tag=regime.state if regime else None,
+                    regime_tag=applicable_regime.state if applicable_regime else None,
                     inputs={
                         "setup_id": setup_id,
                         "material_fingerprint": current_material_fingerprint,
@@ -825,7 +912,7 @@ def emit_deterministic_opportunities(
                     decision="rejected",
                     reason_code="live_duplicate_suppressed",
                     direction=direction,
-                    regime_tag=regime.state if regime else None,
+                    regime_tag=applicable_regime.state if applicable_regime else None,
                     inputs={
                         "setup_id": setup_id,
                         "live_opportunity_id": live_dup.get("id") if live_dup else None,
@@ -846,7 +933,7 @@ def emit_deterministic_opportunities(
                     decision="passed",
                     reason_code="setup_armed_entry_not_eligible",
                     direction=direction,
-                    regime_tag=regime.state if regime else None,
+                    regime_tag=applicable_regime.state if applicable_regime else None,
                     inputs={
                         "setup_id": setup_id,
                         "setup_state": owner_state,
@@ -869,7 +956,7 @@ def emit_deterministic_opportunities(
                     reason_code="triggered_opportunity_reused",
                     direction=direction,
                     opportunity_id=existing_for_setup.get("id"),
-                    regime_tag=regime.state if regime else None,
+                    regime_tag=applicable_regime.state if applicable_regime else None,
                     inputs={"setup_id": setup_id, "setup_state": owner_state},
                 )
                 continue
@@ -889,7 +976,7 @@ def emit_deterministic_opportunities(
                     decision="passed",
                     reason_code="trigger_transition_reused",
                     direction=direction,
-                    regime_tag=regime.state if regime else None,
+                    regime_tag=applicable_regime.state if applicable_regime else None,
                     inputs={"setup_id": setup_id, "setup_state": owner_state},
                 )
                 continue
@@ -900,6 +987,8 @@ def emit_deterministic_opportunities(
                 market_fact=market_fact,
                 linked_strategy_id=linked_strategy_id,
                 total_score=total_score,
+                instrument_background=instrument_background,
+                analysis_context=analysis_context,
             )
             if not repo.transition_universe_setup(
                 setup_id,
@@ -921,7 +1010,7 @@ def emit_deterministic_opportunities(
                 reason_code="triggered_opportunity_created",
                 direction=direction,
                 opportunity_id=opportunity.id,
-                regime_tag=regime.state if regime else None,
+                regime_tag=applicable_regime.state if applicable_regime else None,
                 inputs={
                     "setup_id": setup_id,
                     "trigger_behavior_version": ENTRY_TRIGGER_BEHAVIOR_VERSION,
@@ -953,6 +1042,8 @@ def _passes_regime_gate(direction: str, total_score: float, regime, short_enable
     """
     if direction == "short" and not short_enabled:
         return False
+    if regime is None:
+        return True
 
     bias = regime.long_bias if direction == "long" else regime.short_bias
 

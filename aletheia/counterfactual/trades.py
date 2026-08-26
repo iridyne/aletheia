@@ -244,6 +244,7 @@ def resolve_stale_shadows(
         " funding_rate_at_entry, market_type, created_at "
         "FROM shadow_trades "
         "WHERE resolved_at IS NULL AND exit_price IS NULL "
+        "AND invalidated_at IS NULL "
         "AND outcome_candidate_key IS NULL "
         "AND created_at < ? ORDER BY created_at ASC LIMIT ?",
         (cutoff_iso, limit),
@@ -724,7 +725,7 @@ def resolve_shadow_trades_for_position(position: dict) -> int:
     selected_rows = _select_all(
         "shadow_trades",
         where="opportunity_id = ? AND was_selected = 1 "
-              "AND outcome_candidate_key IS NULL",
+              "AND outcome_candidate_key IS NULL AND invalidated_at IS NULL",
         params=(opp_id,),
         limit=1,
     )
@@ -743,7 +744,7 @@ def resolve_shadow_trades_for_position(position: dict) -> int:
     batch_rows = _select_all(
         "shadow_trades",
         where="batch_id = ? AND resolved_at IS NULL "
-              "AND outcome_candidate_key IS NULL",
+              "AND outcome_candidate_key IS NULL AND invalidated_at IS NULL",
         params=(batch_id,),
         limit=50,
     )

@@ -1689,23 +1689,9 @@ def _configured_paper_execution_mode() -> str:
     stale expiry, or config drift silently keeps the paper mode instead of
     routing a new Proposal to live.
     """
-    cfg = config_loader.load_config()
-    paper_mode = str(cfg.exchange.paper_execution_mode)
-    if str(getattr(cfg.exchange, "mode", "") or "").strip().lower() != "live":
-        return paper_mode
-    if getattr(getattr(cfg, "live", None), "state", "") != "live_limited":
-        return paper_mode
-    try:
-        from aletheia.config.exchanges import live_execution_mode_for_exchange
-        from aletheia.trust.live_unlock import current_authorization_ref
-    except Exception:
-        return paper_mode
-    if current_authorization_ref(cfg) is None:
-        return paper_mode
-    live_mode = live_execution_mode_for_exchange(
-        getattr(cfg.exchange, "name", "") or ""
-    )
-    return live_mode or paper_mode
+    from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+
+    return resolve_selected_execution_mode() or "paper_internal"
 
 
 def _proposal_status_from_execution_result(execution_result: dict) -> str | None:

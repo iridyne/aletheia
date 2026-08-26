@@ -953,6 +953,7 @@ def test_momentum_emitter_persists_setup_not_opportunity(tmp_path, monkeypatch):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import UniverseMember, UniverseSnapshot
     from aletheia.storage.sqlite import get_db
+    from aletheia.data.symbols import build_instrument_background
     from aletheia.universe.signal_emitter import emit_deterministic_opportunities
 
     repo.insert_universe_snapshot(
@@ -970,6 +971,16 @@ def test_momentum_emitter_persists_setup_not_opportunity(tmp_path, monkeypatch):
         "market_type": "perp", "return_1h": 2.0, "return_4h": 3.0,
         "return_24h": 4.0, "rsi_14": 60.0, "funding_rate": 0.0,
         "atr_15m_pct": 1.0, "_closed_ohlcv_15m": _bars("long"), "reasons": [],
+        "instrument_background": build_instrument_background(
+            symbol="BTC/USDT",
+            venue="bitget",
+            market_type="perp",
+            market_info={
+                "symbol": "BTC/USDT",
+                "base": "BTC",
+                "quote": "USDT",
+            },
+        ),
     }
     monkeypatch.setattr(
         "aletheia.universe.signal_emitter.lookup_factor_signal",

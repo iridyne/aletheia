@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import patch
 
+from aletheia.data.symbols import build_instrument_background, instrument_analysis_context
 from aletheia.universe.signal_emitter import _infer_direction, emit_deterministic_opportunities
 
 
@@ -129,9 +130,26 @@ def _make_member(symbol, family, score, member_id=None, expires="2099-01-01T00:0
 
 
 def _make_feat(symbol, **kw):
-    feat = {"symbol": symbol, "asset_id": f"asset-{symbol}", "venue": "bitget",
-            "return_1h": 1.5, "return_4h": 3.0, "rsi_14": 60,
-            "funding_rate": None, "reasons": [f"{symbol} 1h +1.5%"]}
+    market_type = kw.get("market_type", "spot")
+    venue = kw.get("venue", "bitget")
+    market_info = kw.get("market_info") or {
+        "symbol": symbol,
+        "base": symbol.split("/")[0],
+        "quote": "USDT",
+        "info": {"instCategory": "1"} if venue == "okx" else {},
+    }
+    background = kw.get("instrument_background") or build_instrument_background(
+        symbol=symbol,
+        venue=venue,
+        market_type=market_type,
+        market_info=market_info,
+    )
+    feat = {"symbol": symbol, "asset_id": f"asset-{symbol}", "venue": venue,
+            "market_type": market_type, "return_1h": 1.5, "return_4h": 3.0,
+            "rsi_14": 60, "funding_rate": None,
+            "reasons": [f"{symbol} 1h +1.5%"],
+            "instrument_background": background,
+            "analysis_context": instrument_analysis_context(background)}
     feat.update(kw)
     return feat
 
@@ -146,14 +164,20 @@ def _momentum_bars() -> list[dict]:
     return rows
 
 
-def _insert_market_price(repo, symbol="BTC/USDT", market_type="spot", price=100.0):
+def _insert_market_price(
+    repo,
+    symbol="BTC/USDT",
+    market_type="spot",
+    price=100.0,
+    exchange="bitget",
+):
     from aletheia.storage.models import MarketSnapshot
 
     repo.insert_market_snapshot(
         MarketSnapshot(
             symbol=symbol,
             market_type=market_type,
-            exchange="bitget",
+            exchange=exchange,
             price=price,
         )
     )
@@ -276,6 +300,102 @@ class TestEmitDeterministicOpportunities:
             "scanner_family": "mean_reversion",
         }
 
+    def test_emits_supported_stock_linked_perp_without_crypto_regime(
+        self, tmp_path, monkeypatch
+    ):
+        from tests.test_entry_logic import setup_env
+
+        setup_env(tmp_path, monkeypatch)
+        from aletheia.storage import repositories as repo
+        from aletheia.storage.sqlite import get_db
+
+        background = build_instrument_background(
+            symbol="SOXL/USDT:USDT",
+            venue="binance",
+            market_type="perp",
+            market_info={
+                "symbol": "SOXL/USDT:USDT",
+                "base": "SOXL",
+                "quote": "USDT",
+                "info": {
+                    "contractType": "TRADIFI_PERPETUAL",
+                    "underlyingType": "EQUITY",
+                },
+            },
+        )
+        member = {
+            **_make_member(
+                "SOXL/USDT",
+                "momentum",
+                75,
+                member_id="member-stock-linked",
+            ),
+            "venue": "binance",
+            "market_type": "perp",
+        }
+        feature = _make_feat(
+            "SOXL/USDT",
+            market_type="perp",
+            venue="binance",
+            instrument_background=background,
+            analysis_context=instrument_analysis_context(background),
+        )
+        _insert_market_price(
+            repo,
+            symbol="SOXL/USDT",
+            market_type="perp",
+            price=100.0,
+            exchange="binance",
+        )
+
+        with patch(
+            "aletheia.universe.signal_emitter.lookup_factor_signal",
+            return_value={"status": "blocked_candidate"},
+        ):
+            count = emit_deterministic_opportunities(
+                [member],
+                "snap-1",
+                [feature],
+                regime=type("Regime", (), {
+                    "state": "bear",
+                    "confidence": 1.0,
+                    "long_bias": 0.0,
+                    "short_bias": 1.0,
+                })(),
+            )
+
+        assert count == 1
+        row = get_db().execute(
+            "SELECT market,asset_class,asset_subclass,execution_eligible,"
+            "setup_id,generation_version FROM opportunities "
+            "WHERE universe_member_id='member-stock-linked'"
+        ).fetchone()
+        assert dict(row) == {
+            "market": "perp",
+            "asset_class": "equity",
+            "asset_subclass": "stock_linked_perp",
+            "execution_eligible": 1,
+            "setup_id": row["setup_id"],
+            "generation_version": "opportunity-generation/v2",
+        }
+
+    def test_rejects_arbitrary_unsupported_equity_context(self):
+        members = [{
+            **_make_member("ACME/USDT", "momentum", 75),
+            "market_type": "perp",
+        }]
+        feature = _make_feat("ACME/USDT", market_type="perp")
+        feature["instrument_background"].update({
+            "asset_class": "equity",
+            "product_kind": "tradifi_perpetual",
+        })
+        feature["analysis_context"] = None
+
+        count, decisions = self._run(members, [feature])
+
+        assert count == 0
+        assert decisions[0]["reason_code"] == "unsupported_analysis_context:tradifi_perpetual"
+
     @pytest.mark.parametrize(
         ("family", "feature_overrides", "expected_direction"),
         [
@@ -360,7 +480,7 @@ class TestEmitDeterministicOpportunities:
             return_value={"status": "watch"},
         ):
             assert emit_deterministic_opportunities(
-                [member], "snap-1", [{**_make_feat("BTC/USDT"), "market_type": "perp"}],
+                [member], "snap-1", [_make_feat("BTC/USDT", market_type="perp", venue="okx")],
                 regime=regime,
             ) == 0
 
@@ -399,12 +519,14 @@ class TestEmitDeterministicOpportunities:
         assert emit_deterministic_opportunities(
             [member],
             "snap-1",
-            [{
-                **_make_feat(
-                    "BTC/USDT", return_4h=3.0, rsi_14=60, funding_rate=0.02
-                ),
-                "market_type": "perp",
-            }],
+            [_make_feat(
+                "BTC/USDT",
+                market_type="perp",
+                venue="okx",
+                return_4h=3.0,
+                rsi_14=60,
+                funding_rate=0.02,
+            )],
         ) == 0
 
         from aletheia.storage.sqlite import get_db
@@ -471,7 +593,7 @@ class TestEmitDeterministicOpportunities:
 
         _insert_market_price(repo, symbol="BTC/USDT", market_type="spot", price=100.0)
         members = [{**_make_member("BTC/USDT", "volatility", 75), "market_type": "perp"}]
-        feats = [{**_make_feat("BTC/USDT"), "market_type": "perp"}]
+        feats = [_make_feat("BTC/USDT", market_type="perp")]
 
         count, decisions = self._run(members, feats)
         assert count == 0

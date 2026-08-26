@@ -5,6 +5,7 @@ protective stop/TP so the position_manager can act on it. Causal chain unchanged
 """
 
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
@@ -56,14 +57,12 @@ def test_paper_order_stores_stop_and_tp(tmp_path, monkeypatch):
 def test_different_proposals_keep_entry_costs_separate(tmp_path, monkeypatch):
     """A same-symbol fill cannot merge fees into another Proposal's Position."""
     setup_env(tmp_path, monkeypatch)
-    import aletheia.config.loader as loader
-    class _T:
-        slippage_bps = 5
-        execution_fee_pct = 0.1
-        default_take_profit_pct = 4.0
-    class _C:
-        trading = _T()
-    monkeypatch.setattr(loader, "load_config", lambda: _C())
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.trading.slippage_bps = 5
+    cfg.trading.execution_fee_pct = 0.1
+    save_config(cfg)
 
     from aletheia.execution.paper_broker import execute_paper_order
     from tests.execution_authority import seed_order_authority
@@ -110,6 +109,114 @@ def test_different_proposals_keep_entry_costs_separate(tmp_path, monkeypatch):
     assert pos2["slippage_cost"] == pytest.approx(
         round(abs(fill2 - 110.0) * 2.0, 8)
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("execution_fee_pct", -0.01),
+        ("execution_fee_pct", float("nan")),
+        ("slippage_bps", -0.01),
+        ("slippage_bps", float("inf")),
+    ],
+)
+def test_invalid_cost_config_fails_before_paper_writes(
+    tmp_path, monkeypatch, field, value,
+):
+    setup_env(tmp_path, monkeypatch)
+    import aletheia.config.loader as loader
+    from aletheia.execution.paper_broker import execute_paper_order
+    from aletheia.storage.sqlite import get_db
+    from tests.execution_authority import seed_order_authority
+
+    trading = SimpleNamespace(slippage_bps=5.0, execution_fee_pct=0.06)
+    setattr(trading, field, value)
+    monkeypatch.setattr(
+        loader,
+        "load_config",
+        lambda: SimpleNamespace(trading=trading),
+    )
+    seed_order_authority(
+        proposal_id="invalid-cost-p1",
+        risk_decision_id="invalid-cost-r1",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=1.0,
+        price=100.0,
+        execution_mode="paper_internal",
+    )
+
+    with pytest.raises(ValueError, match=field):
+        execute_paper_order(
+            proposal_id="invalid-cost-p1",
+            risk_decision_id="invalid-cost-r1",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            order_type="market",
+            quantity=1.0,
+            price=100.0,
+            execution_mode="paper_internal",
+        )
+
+    counts = get_db().execute(
+        """SELECT
+            (SELECT COUNT(*) FROM orders),
+            (SELECT COUNT(*) FROM fills),
+            (SELECT COUNT(*) FROM positions),
+            (SELECT COUNT(*) FROM paper_account_events),
+            (SELECT COUNT(*) FROM position_exit_plan_versions)
+        """
+    ).fetchone()
+    assert tuple(counts) == (0, 0, 0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    ("direction", "expected_fill"),
+    [("long", 100.05), ("short", 99.95)],
+)
+def test_valid_paper_costs_are_adverse_and_nonnegative(
+    tmp_path, monkeypatch, direction, expected_fill,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.execution.paper_broker import execute_paper_order
+    from aletheia.storage import repositories as repo
+    from tests.execution_authority import seed_order_authority
+
+    cfg = load_config()
+    cfg.trading.slippage_bps = 5.0
+    cfg.trading.execution_fee_pct = 0.1
+    save_config(cfg)
+    seed_order_authority(
+        proposal_id=f"valid-cost-{direction}",
+        risk_decision_id=f"valid-cost-risk-{direction}",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction=direction,
+        order_type="market",
+        quantity=1.0,
+        price=100.0,
+        execution_mode="paper_internal",
+    )
+
+    result = execute_paper_order(
+        proposal_id=f"valid-cost-{direction}",
+        risk_decision_id=f"valid-cost-risk-{direction}",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction=direction,
+        order_type="market",
+        quantity=1.0,
+        price=100.0,
+        execution_mode="paper_internal",
+    )
+
+    fill = repo._select_one("fills", result["fill_id"])
+    assert result["fill_price"] == expected_fill
+    assert fill["fee"] >= 0.0
 
 
 def test_different_proposal_keeps_its_own_protective_stop(tmp_path, monkeypatch):

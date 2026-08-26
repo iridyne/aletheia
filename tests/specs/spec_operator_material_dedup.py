@@ -27,6 +27,7 @@ from aletheia.agent_shell import commands
 from aletheia.agent_shell.trading_context import (
     material_fingerprint_from_candidate_ctx,
     operator_decision_material_fingerprint,
+    scope_operator_context_to_candidate,
 )
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -176,6 +177,137 @@ def test_ctx_adapter_ignores_reasoning_and_rank():
 def test_ctx_adapter_fails_open_when_candidate_missing():
     ctx = {"layer1": {"feature_index": {}}, "layer2": {"pending_signals": []}}
     assert material_fingerprint_from_candidate_ctx(ctx, "nope") is None
+
+
+def test_stock_linked_context_excludes_crypto_priors_and_rotates_material_identity():
+    from aletheia.agent_shell.trading_decision import _build_assessment_prompt
+    from aletheia.data.symbols import (
+        build_instrument_background,
+        instrument_analysis_context,
+    )
+
+    background = build_instrument_background(
+        symbol="SOXL/USDT:USDT",
+        venue="binance",
+        market_type="perp",
+        market_info={
+            "symbol": "SOXL/USDT:USDT",
+            "base": "SOXL",
+            "quote": "USDT",
+            "info": {"underlyingType": "EQUITY"},
+        },
+    )
+    analysis_context = instrument_analysis_context(background)
+    candidate = {
+        "opportunity_id": "opp-soxl",
+        "signal_source": "market_observer",
+        "symbol": "SOXL/USDT",
+        "direction": "long",
+        "market_type": "usdt_futures",
+        "scanner_family": "momentum",
+        "asset_id": "asset-soxl",
+        "venue": "binance",
+        "asset_class": "equity",
+        "asset_subclass": "stock_linked_perp",
+        "instrument_background": background,
+        "analysis_context": analysis_context,
+        "b2_evidence": {"status": "preferred", "directional_verdict": "long"},
+    }
+    feature = {
+        "asset_id": "asset-soxl",
+        "symbol": "SOXL/USDT",
+        "market_type": "perp",
+        "rsi_14": 58.0,
+        "return_24h": 3.0,
+        "funding_rate": 0.0002,
+        "open_interest": 12_000_000.0,
+        "relative_strength_24h": 91.0,
+        "btc_beta": 4.0,
+    }
+    context = {
+        "layer1": {
+            "positions": [],
+            "positions_meta": {"total": 0, "prompt_visible_count": 0},
+            "regime": {
+                "state": "bull",
+                "confidence": 0.99,
+                "long_bias": 0.9,
+                "short_bias": 0.1,
+            },
+            "features": [feature.copy()],
+            "feature_index": {"binance:perp:SOXL/USDT": feature.copy()},
+            "opportunities": [{
+                "id": "opp-soxl",
+                "symbol": "SOXL/USDT",
+                "market": "usdt_futures",
+                "direction_bias": "long",
+                "scanner_family": "momentum",
+                "evidence_manifest": {},
+            }],
+        },
+        "layer2": {
+            "pending_signals": [candidate],
+            "executable_candidates": [candidate.copy()],
+            "outcome_stats": {"total_trades": 99},
+            "per_symbol": [{"symbol": "SOXL/USDT", "win_rate": 100}],
+            "factor_feedback": [{"status": "preferred"}],
+        },
+        "layer3": {
+            "lessons": [{"content": "old crypto lesson"}],
+            "ps_lessons": [{"content": "old crypto post-trade lesson"}],
+            "guard_candidates": [{"name": "old crypto guard"}],
+            "serenity_opportunities": [],
+        },
+    }
+
+    global_regime_fp = material_fingerprint_from_candidate_ctx(context, "opp-soxl")
+    context["layer1"]["regime"]["state"] = "bear"
+    assert material_fingerprint_from_candidate_ctx(
+        context, "opp-soxl"
+    ) == global_regime_fp
+
+    scoped = scope_operator_context_to_candidate(context, "opp-soxl")
+    scoped_feature = scoped["layer1"]["features"][0]
+    scoped_candidate = scoped["layer2"]["pending_signals"][0]
+    assert scoped["layer1"]["regime"] is None
+    assert scoped["layer1"]["regime_applicability"]["status"] == "not_applicable"
+    assert scoped_feature["relative_strength_24h"] is None
+    assert scoped_feature["btc_beta"] is None
+    assert scoped_candidate["b2_evidence"]["status"] == "not_applicable"
+    assert scoped["layer2"]["outcome_stats"] is None
+    assert scoped["layer3"]["lessons"] == []
+
+    prompt = _build_assessment_prompt(scoped)
+    assert "SOXL/USDT is a Binance USDT perpetual" in prompt
+    assert "+3x DAILY exposure" in prompt
+    assert "ICESEMIT" in prompt
+    assert "path-dependent" in prompt
+    assert background["embedded_product"]["source_refs"][0] in prompt
+    assert "RS24h=" not in prompt
+    assert "BULL (conf=" not in prompt
+    assert "BEAR (conf=" not in prompt
+
+    legacy = operator_decision_material_fingerprint(
+        symbol="SOXL/USDT",
+        direction="long",
+        market_type="perp",
+        scanner_family="momentum",
+        features=feature,
+        regime=None,
+    )
+    background_aware = operator_decision_material_fingerprint(
+        symbol="SOXL/USDT",
+        direction="long",
+        market_type="perp",
+        scanner_family="momentum",
+        features={
+            **feature,
+            "instrument_background": background,
+            "analysis_context": analysis_context,
+        },
+        regime=None,
+    )
+    assert background_aware != legacy
 
 
 @spec_claim(

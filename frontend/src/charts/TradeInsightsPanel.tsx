@@ -577,13 +577,15 @@ function ExitReasonBreakdown({ data }: { data: TradeInsights['by_exit_reason'] }
 }
 
 // ── 14. Conviction Calibration Chart ─────────────────────────────────────────
-function ConvictionCalibrationChart() {
+function ConvictionCalibrationChart({ executionMode }: { executionMode?: string }) {
   const { data, isLoading } = useQuery<CalibrationReport>({
-    queryKey: ['confidence-calibration'],
-    queryFn: () => api.getConfidenceCalibration(),
+    queryKey: ['confidence-calibration', executionMode ?? 'unavailable'],
+    queryFn: () => api.getConfidenceCalibration(executionMode),
+    enabled: Boolean(executionMode),
     staleTime: 300_000,
   })
 
+  if (!executionMode) return <Card><SectionLabel>Conviction Calibration</SectionLabel><p className="text-muted text-sm">Unavailable — execution mode unresolved.</p></Card>
   if (isLoading) return <Card><SectionLabel>Conviction Calibration</SectionLabel><p className="text-muted text-sm">Loading…</p></Card>
   if (!data || data.status === 'no_data' || !data.buckets?.length) {
     return (
@@ -689,13 +691,15 @@ function ConvictionCalibrationChart() {
 }
 
 // ── Main Panel ────────────────────────────────────────────────────────────────
-export default function TradeInsightsPanel() {
+export default function TradeInsightsPanel({ executionMode }: { executionMode?: string }) {
   const { data, isLoading, error } = useQuery({
-    queryKey: ['trade-insights'],
-    queryFn: () => api.getTradeInsights(),
+    queryKey: ['trade-insights', executionMode ?? 'unavailable'],
+    queryFn: () => api.getTradeInsights(executionMode),
+    enabled: Boolean(executionMode),
     staleTime: 60_000,
   })
 
+  if (!executionMode) return <Card><p className="text-muted text-sm">Insights unavailable — execution mode unresolved.</p></Card>
   if (error || !data) return <Card><p className="text-muted text-sm">Insights unavailable.</p></Card>
 
   // Runtime array guard: validate all array fields to prevent .map() crashes if backend
@@ -757,7 +761,7 @@ export default function TradeInsightsPanel() {
         <ExitReasonBreakdown data={data.by_exit_reason} />
       </div>
 
-      <ConvictionCalibrationChart />
+      <ConvictionCalibrationChart executionMode={executionMode} />
     </div>
   )
 }

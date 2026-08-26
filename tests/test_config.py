@@ -62,6 +62,29 @@ def test_config_roundtrip(tmp_path):
         assert loaded.app.dashboard_port == 8787
 
 
+@pytest.mark.parametrize(
+    ("field", "yaml_value"),
+    [
+        ("execution_fee_pct", "-1"),
+        ("slippage_bps", ".nan"),
+    ],
+)
+def test_restored_invalid_execution_cost_config_fails_closed(
+    tmp_path, field, yaml_value,
+):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        f"trading:\n  {field}: {yaml_value}\n",
+        encoding="utf-8",
+    )
+
+    with patch("aletheia.config.loader.DATA_DIR", tmp_path), patch(
+        "aletheia.config.loader.CONFIG_PATH", config_file
+    ):
+        with pytest.raises(ValidationError, match=field):
+            load_config()
+
+
 def test_bootstrap_creates_dirs(tmp_path):
     config_file = tmp_path / "config.yaml"
     data_dir = tmp_path

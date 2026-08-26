@@ -175,12 +175,17 @@ function HoldDistSection({ rows }: { rows: HoldBucket[] }) {
 
 // ── Main Panel ────────────────────────────────────────────────────────────────
 
-export default function TradeAnalyticsPanel() {
+export default function TradeAnalyticsPanel({ executionMode }: { executionMode?: string }) {
   const { data, isLoading, error } = useQuery({
-    queryKey: ['trade-stats'],
-    queryFn: () => api.getTradeStats(),
+    queryKey: ['trade-stats', executionMode ?? 'unavailable'],
+    queryFn: () => api.getTradeStats(executionMode),
+    enabled: Boolean(executionMode),
     staleTime: 60_000,
   })
+
+  if (!executionMode) {
+    return <Card><p className="text-muted text-sm">Analytics unavailable — execution mode unresolved.</p></Card>
+  }
 
   if (isLoading) {
     return <Card><p className="text-muted text-sm">Loading analytics…</p></Card>

@@ -7,7 +7,56 @@ not just API mutation time.
 import pytest  # pyright: ignore[reportMissingImports]
 from pydantic import ValidationError
 
-from aletheia.config.schema import HistoricalDataConfig, NewsConfig, PiDaemonConfig, HealthConfig
+from aletheia.config.schema import (
+    HealthConfig,
+    HistoricalDataConfig,
+    NewsConfig,
+    PiDaemonConfig,
+    TradingConfig,
+    UniverseConfig,
+)
+
+
+@pytest.mark.parametrize(
+    ("model", "field", "value"),
+    [
+        (TradingConfig, "execution_fee_pct", -0.01),
+        (TradingConfig, "execution_fee_pct", float("nan")),
+        (TradingConfig, "execution_fee_pct", float("inf")),
+        (TradingConfig, "execution_fee_pct", 5.01),
+        (TradingConfig, "slippage_bps", -0.01),
+        (TradingConfig, "slippage_bps", float("nan")),
+        (TradingConfig, "slippage_bps", float("inf")),
+        (TradingConfig, "slippage_bps", 200.01),
+        (UniverseConfig, "max_spread_bps", 0.99),
+        (UniverseConfig, "max_spread_bps", float("nan")),
+        (UniverseConfig, "max_spread_bps", float("inf")),
+        (UniverseConfig, "max_spread_bps", 200.01),
+    ],
+)
+def test_execution_cost_config_rejects_invalid_values(model, field, value):
+    with pytest.raises(ValidationError, match=field):
+        model(**{field: value})
+
+
+def test_execution_cost_config_accepts_documented_boundaries():
+    TradingConfig(execution_fee_pct=0.0, slippage_bps=0.0)
+    TradingConfig(execution_fee_pct=5.0, slippage_bps=200.0)
+    UniverseConfig(max_spread_bps=1.0)
+    UniverseConfig(max_spread_bps=200.0)
+
+
+@pytest.mark.parametrize(
+    ("config", "field", "value"),
+    [
+        (TradingConfig(), "execution_fee_pct", -0.01),
+        (TradingConfig(), "slippage_bps", float("nan")),
+        (UniverseConfig(), "max_spread_bps", float("inf")),
+    ],
+)
+def test_execution_cost_assignment_validates(config, field, value):
+    with pytest.raises(ValidationError, match=field):
+        setattr(config, field, value)
 
 
 # --- HistoricalDataConfig ---

@@ -988,9 +988,13 @@ def _counterfactual(db, opp: dict[str, Any], direction: str | None) -> dict[str,
     if _table_exists(db, "shadow_trades"):
         from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
 
-        keyed_authority = valid_keyed_shadow_projection_sql()
+        has_invalidation = _has_column(db, "shadow_trades", "invalidated_at")
+        keyed_authority = valid_keyed_shadow_projection_sql(
+            require_not_invalidated=has_invalidation,
+        )
+        invalidation_where = "AND invalidated_at IS NULL " if has_invalidation else ""
         row = db.execute(
-            "SELECT * FROM shadow_trades WHERE opportunity_id = ? "
+            f"SELECT * FROM shadow_trades WHERE opportunity_id = ? {invalidation_where}"
             "AND (NULLIF(TRIM(outcome_candidate_key), '') IS NULL "
             "OR (resolved_at IS NULL AND exit_price IS NULL AND pnl_pct IS NULL "
             "AND gross_return_pct IS NULL AND net_pnl_pct IS NULL) "

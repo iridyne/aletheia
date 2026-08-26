@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 43)
+        f"aletheia-sqlite-v{version}" for version in range(2, 44)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v42"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v43"
     connection.close()
 
 
@@ -683,7 +683,23 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE agent_shell_commands (id TEXT PRIMARY KEY);
         CREATE TABLE runtime_sessions (session_id TEXT PRIMARY KEY);
         CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
-        CREATE TABLE positions (id TEXT PRIMARY KEY);
+        CREATE TABLE positions (id TEXT PRIMARY KEY, status TEXT);
+        CREATE TABLE paper_account_events (
+            id TEXT PRIMARY KEY,
+            action TEXT NOT NULL CHECK (action IN (
+                'initial_funding', 'manual_credit', 'manual_debit',
+                'manual_set_balance', 'position_opened', 'position_closed'
+            )),
+            amount_usdt REAL NOT NULL,
+            cash_balance_before_usdt REAL NOT NULL,
+            cash_balance_after_usdt REAL NOT NULL,
+            actor TEXT NOT NULL DEFAULT 'system',
+            source TEXT NOT NULL DEFAULT 'paper_account',
+            position_id TEXT,
+            note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(action, position_id)
+        );
         CREATE TABLE filter_shadow_experiments (id TEXT PRIMARY KEY);
         CREATE TABLE trade_proposals (id TEXT PRIMARY KEY);
         CREATE TABLE opportunities (id TEXT PRIMARY KEY);
@@ -738,8 +754,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260826_0041_opportunity_generation_v42",
-        "aletheia-sqlite-v42",
+        "20260826_0042_opportunity_generation_v43",
+        "aletheia-sqlite-v43",
     )
     order_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(orders)")

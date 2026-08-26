@@ -10,10 +10,8 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
-from aletheia.analytics.execution_mode import (
-    execution_mode_identity,
-    resolve_selected_execution_mode,
-)
+import aletheia.analytics.execution_mode as _execution_mode
+from aletheia.analytics.execution_mode import execution_mode_identity
 from aletheia.analytics.outcome_integrity import (
     eligible_strategy_outcomes,
     is_current_outcome_artifact,
@@ -44,7 +42,7 @@ def build_reasoning_feedback(
     Returns a dict or None when insufficient data.
     """
     if execution_mode is None:
-        execution_mode = resolve_selected_execution_mode()
+        execution_mode = _execution_mode.resolve_selected_execution_mode()
     if not execution_mode:
         return None
     try:
@@ -267,7 +265,7 @@ def get_latest_reasoning_feedback(
     Learning feedback.
     """
     if execution_mode is None:
-        execution_mode = resolve_selected_execution_mode()
+        execution_mode = _execution_mode.resolve_selected_execution_mode()
     if not execution_mode:
         return None
     try:
@@ -329,7 +327,9 @@ def render_feedback_for_pi(fb: dict) -> str:
 def _persist_feedback(fb: dict) -> None:
     """Persist feedback as a knowledge item (rate-limited to 6h)."""
     try:
-        existing = get_latest_reasoning_feedback()
+        existing = get_latest_reasoning_feedback(
+            execution_mode=fb.get("execution_mode"),
+        )
         if existing:
             gen = datetime.fromisoformat(existing.get("generated_at", "2000-01-01"))
             if gen.tzinfo is None:

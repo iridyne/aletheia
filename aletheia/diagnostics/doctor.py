@@ -3078,7 +3078,9 @@ def _probe_content_shadow_trades(report: Report) -> None:
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
-        total = db.execute("SELECT COUNT(*) FROM shadow_trades").fetchone()[0]
+        total = db.execute(
+            "SELECT COUNT(*) FROM shadow_trades WHERE invalidated_at IS NULL"
+        ).fetchone()[0]
         if total == 0:
             report.add("content.shadow_trades", "info", "no shadow trades yet")
             return
@@ -3087,7 +3089,7 @@ def _probe_content_shadow_trades(report: Report) -> None:
             "SELECT COUNT(*) AS stale, "
             "SUM(CASE WHEN outcome_candidate_key IS NULL THEN 1 ELSE 0 END) AS orphaned "
             "FROM shadow_trades "
-            "WHERE resolved_at IS NULL AND created_at < ?",
+            "WHERE invalidated_at IS NULL AND resolved_at IS NULL AND created_at < ?",
             (cutoff,),
         ).fetchone()
         stale = int(row["stale"] or 0)

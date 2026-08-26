@@ -236,6 +236,7 @@ def _outcomes_for_candidate(db, opp: dict[str, Any], direction: str) -> dict[str
         row = db.execute(
             "SELECT pnl_pct, resolved_at, created_at, batch_id, rank FROM shadow_trades "
             "WHERE opportunity_id = ? AND pnl_pct IS NOT NULL "
+            "AND invalidated_at IS NULL "
             "AND (outcome_candidate_key IS NULL OR TRIM(outcome_candidate_key) = '' "
             f"OR {keyed_projection}) "
             "ORDER BY datetime(resolved_at) DESC, datetime(created_at) DESC LIMIT 1",

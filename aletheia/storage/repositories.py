@@ -538,12 +538,12 @@ def get_agent_run(run_id: str) -> dict | None:
 
 def insert_opportunity(opp: Opportunity) -> None:
     if (
-        opp.asset_class == "crypto"
+        (opp.asset_class == "crypto" or opp.asset_subclass == "stock_linked_perp")
         and opp.execution_eligible
         and opp.source_agent in {"fast_trigger", "universe_scanner"}
         and opp.generation_version != "opportunity-generation/v2"
     ):
-        raise ValueError("execution-eligible Crypto producer requires OpportunityGenerationV2")
+        raise ValueError("execution-eligible producer requires OpportunityGenerationV2")
     _insert("opportunities", _stamp_provenance(opp.model_dump()))
 
 
@@ -568,7 +568,7 @@ def insert_opportunity_generation(
     opportunity: Opportunity,
     generation: OpportunityGenerationV2,
 ) -> Opportunity:
-    """Validate and insert one complete, immutable tradeable Crypto generation."""
+    """Validate and insert one complete, immutable tradeable generation."""
 
     from aletheia.data.symbols import InstrumentId
     from aletheia.trading.instruments import instrument_market_to_db_market
@@ -577,11 +577,20 @@ def insert_opportunity_generation(
     instrument = InstrumentId.from_parts(
         identity.venue, identity.symbol, identity.market_type
     )
-    if opportunity.asset_class != "crypto" or not opportunity.execution_eligible:
-        raise ValueError("Opportunity generation requires execution-eligible Crypto")
+    stock_linked_perp = opportunity.asset_subclass == "stock_linked_perp"
+    if (
+        not opportunity.execution_eligible
+        or (opportunity.asset_class != "crypto" and not stock_linked_perp)
+    ):
+        raise ValueError("Opportunity generation requires execution-eligible asset")
+    expected_market = (
+        instrument.market_type
+        if stock_linked_perp
+        else instrument_market_to_db_market(instrument.market_type)
+    )
     if (
         opportunity.symbol != instrument.symbol
-        or opportunity.market != instrument_market_to_db_market(instrument.market_type)
+        or opportunity.market != expected_market
         or opportunity.direction_bias != generation.direction
         or opportunity.scanner_family != generation.family
         or opportunity.valid_until != generation.valid_until
@@ -3228,10 +3237,25 @@ def get_position(position_id: str) -> dict | None:
     return _select_one("positions", position_id)
 
 
-def list_positions(status: str | None = None, limit: int = 50) -> list[dict]:
+def list_positions(
+    status: str | None = None,
+    limit: int = 50,
+    execution_mode: str | None = None,
+) -> list[dict]:
+    clauses: list[str] = []
+    params: list[object] = []
     if status:
-        return _select_all("positions", where="status = ?", params=(status,), limit=limit)
-    return _select_all("positions", limit=limit)
+        clauses.append("status = ?")
+        params.append(status)
+    if execution_mode is not None:
+        clauses.append("execution_mode = ?")
+        params.append(execution_mode)
+    return _select_all(
+        "positions",
+        where=" AND ".join(clauses) if clauses else None,
+        params=tuple(params),
+        limit=limit,
+    )
 
 
 def list_all_open_positions() -> list[dict]:
@@ -5488,12 +5512,17 @@ def insert_serenity_post_mortem(p: SerenityPostMortem) -> bool:
 
 
 def list_serenity_post_mortems(opportunity_id: str | None = None, limit: int = 100) -> list[dict]:
-    where: str | None = None
+    conditions = ["invalidated_at IS NULL"]
     params: list = []
     if opportunity_id is not None:
-        where = "opportunity_id = ?"
+        conditions.append("opportunity_id = ?")
         params.append(opportunity_id)
-    return _select_all("serenity_post_mortems", where=where, params=tuple(params), limit=limit)
+    return _select_all(
+        "serenity_post_mortems",
+        where=" AND ".join(conditions),
+        params=tuple(params),
+        limit=limit,
+    )
 
 
 # --- Durable Outcome hook outbox ---
@@ -6949,7 +6978,13 @@ def upsert_ohlcv_candles(
         "ON CONFLICT(exchange, symbol, market_type, timeframe, ts) DO UPDATE SET "
         "open=excluded.open, high=excluded.high, low=excluded.low, close=excluded.close, "
         "volume=excluded.volume, provider=excluded.provider, "
-        "last_mutated_at=excluded.last_mutated_at",
+        "last_mutated_at=excluded.last_mutated_at "
+        "WHERE market_ohlcv.open IS NOT excluded.open "
+        "OR market_ohlcv.high IS NOT excluded.high "
+        "OR market_ohlcv.low IS NOT excluded.low "
+        "OR market_ohlcv.close IS NOT excluded.close "
+        "OR market_ohlcv.volume IS NOT excluded.volume "
+        "OR market_ohlcv.provider IS NOT excluded.provider",
         [
             (
                 effective_exchange,
@@ -8184,6 +8219,8 @@ def _shadow_candidate_identity_sql(
 
 def valid_keyed_shadow_projection_sql(
     shadow_alias: str = "shadow_trades",
+    *,
+    require_not_invalidated: bool = True,
 ) -> str:
     """Require one keyed shadow net to equal its canonical settled 24h outcome."""
     shadow = f"{shadow_alias}." if shadow_alias else ""
@@ -8204,7 +8241,8 @@ def valid_keyed_shadow_projection_sql(
         f"AND {shadow}{shadow_field} = {outcome}{outcome_field}"
         for shadow_field, outcome_field in numeric_pairs
     )
-    return (
+    invalidation = f"{shadow}invalidated_at IS NULL AND " if require_not_invalidated else ""
+    return invalidation + (
         "EXISTS (SELECT 1 FROM filter_candidate_outcomes AS canonical_outcome "
         f"WHERE {outcome}outcome_candidate_key = {shadow}outcome_candidate_key "
         f"AND {outcome}horizon = '24h' "
@@ -10854,7 +10892,7 @@ def list_shadow_trades(
     resolved: bool | None = None,
     limit: int = 200,
 ) -> list[dict]:
-    conditions: list[str] = []
+    conditions: list[str] = ["invalidated_at IS NULL"]
     params: list = []
     if batch_id is not None:
         conditions.append("batch_id = ?")

@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v42"
+SCHEMA_VERSION = "aletheia-sqlite-v43"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3434,6 +3434,49 @@ _PROFIT_GRADIENT_DATA_BOUNDARY_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+_PAPER_ACCOUNT_INVALIDATION_SQL = """
+CREATE TABLE paper_account_events_v41 (
+    id TEXT PRIMARY KEY,
+    action TEXT NOT NULL CHECK (action IN (
+        'initial_funding', 'manual_credit', 'manual_debit', 'manual_set_balance',
+        'position_opened', 'position_closed', 'position_economics_invalidated'
+    )),
+    amount_usdt REAL NOT NULL,
+    cash_balance_before_usdt REAL NOT NULL,
+    cash_balance_after_usdt REAL NOT NULL,
+    actor TEXT NOT NULL DEFAULT 'system',
+    source TEXT NOT NULL DEFAULT 'paper_account',
+    position_id TEXT,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(action, position_id)
+);
+INSERT INTO paper_account_events_v41 (
+    id, action, amount_usdt, cash_balance_before_usdt,
+    cash_balance_after_usdt, actor, source, position_id, note, created_at
+)
+SELECT
+    id, action, amount_usdt, cash_balance_before_usdt,
+    cash_balance_after_usdt, actor, source, position_id, note, created_at
+FROM paper_account_events;
+DROP TABLE paper_account_events;
+ALTER TABLE paper_account_events_v41 RENAME TO paper_account_events;
+CREATE INDEX idx_paper_account_events_created
+    ON paper_account_events(created_at DESC);
+"""
+_PAPER_ACCOUNT_DERIVED_INVALIDATION_COLUMNS = (
+    ("invalidated_at", "shadow_trades", "TEXT"),
+    ("invalidation_reason", "shadow_trades", "TEXT"),
+    ("invalidated_at", "serenity_post_mortems", "TEXT"),
+    ("invalidation_reason", "serenity_post_mortems", "TEXT"),
+)
+_PAPER_ACCOUNT_INVALIDATION_CHECKSUM = hashlib.sha256(
+    (
+        _PAPER_ACCOUNT_INVALIDATION_SQL
+        + repr(_PAPER_ACCOUNT_DERIVED_INVALIDATION_COLUMNS)
+    ).encode("utf-8")
+).hexdigest()
+
 _UNIVERSE_FAST_TRIGGER_COLUMNS = (
     ("setup_id", "opportunities", "TEXT"),
     ("signal_mark", "opportunities", "TEXT"),
@@ -3542,7 +3585,7 @@ _UNIVERSE_FAST_TRIGGER_CHECKSUM = hashlib.sha256(
     (
         repr(_UNIVERSE_FAST_TRIGGER_COLUMNS)
         + _UNIVERSE_FAST_TRIGGER_SQL
-        + "\nuniverse_fast_trigger_v1"
+        + "\nuniverse_fast_trigger_v2"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -3652,7 +3695,7 @@ _OPPORTUNITY_GENERATION_V2_CHECKSUM = hashlib.sha256(
     (
         repr(_OPPORTUNITY_GENERATION_V2_COLUMNS)
         + _OPPORTUNITY_GENERATION_V2_SQL
-        + "\nopportunity_generation_v2"
+        + "\nopportunity_generation_v3"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -5228,10 +5271,13 @@ _MIGRATION_DESCRIPTIONS = {
     "20260824_0039_profit_gradient_data_boundaries_v40": (
         "candidate and OHLCV evidence provenance boundaries"
     ),
-    "20260826_0040_universe_fast_trigger_v41": (
+    "20260826_0040_paper_account_invalidation_v41": (
+        "append-only paper-account economics invalidation"
+    ),
+    "20260826_0041_universe_fast_trigger_v42": (
         "Momentum setup, conditional authorization, and exact T0 trigger facts"
     ),
-    "20260826_0041_opportunity_generation_v42": (
+    "20260826_0042_opportunity_generation_v43": (
         "immutable Crypto Opportunity generations and entry-validity evidence"
     ),
 }
@@ -5367,6 +5413,61 @@ def _apply_profit_gradient_data_boundaries_v40(db: sqlite3.Connection) -> None:
         }
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
+def _apply_paper_account_invalidation_v41(db: sqlite3.Connection) -> None:
+    """Install cash reversal and derived-evidence invalidation atomically."""
+
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        table_sql = db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' "
+            "AND name='paper_account_events'"
+        ).fetchone()
+        staging_exists = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='paper_account_events_v41'"
+        ).fetchone() is not None
+        if table_sql is None:
+            if not staging_exists:
+                raise MigrationStateError("paper_account_events table is missing")
+            db.execute(
+                "ALTER TABLE paper_account_events_v41 RENAME TO paper_account_events"
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_paper_account_events_created "
+                "ON paper_account_events(created_at DESC)"
+            )
+        elif "position_economics_invalidated" not in str(table_sql[0] or ""):
+            if staging_exists:
+                raise MigrationStateError(
+                    "paper_account_events v41 staging table conflicts with source table"
+                )
+            for statement in (
+                _PAPER_ACCOUNT_INVALIDATION_SQL.strip().split(";\n")
+            ):
+                if statement.strip():
+                    db.execute(statement)
+
+        tables = {
+            str(row[0])
+            for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        for column, table, column_type in _PAPER_ACCOUNT_DERIVED_INVALIDATION_COLUMNS:
+            if table not in tables:
+                continue
+            existing = {
+                str(row[1])
+                for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            if column not in existing:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _apply_universe_fast_trigger_v41(db: sqlite3.Connection) -> None:
@@ -6177,15 +6278,21 @@ _MIGRATIONS = (
         apply=_apply_profit_gradient_data_boundaries_v40,
     ),
     MigrationStep(
-        migration_id="20260826_0040_universe_fast_trigger_v41",
-        checksum=_UNIVERSE_FAST_TRIGGER_CHECKSUM,
+        migration_id="20260826_0040_paper_account_invalidation_v41",
+        checksum=_PAPER_ACCOUNT_INVALIDATION_CHECKSUM,
         schema_version="aletheia-sqlite-v41",
+        apply=_apply_paper_account_invalidation_v41,
+    ),
+    MigrationStep(
+        migration_id="20260826_0041_universe_fast_trigger_v42",
+        checksum=_UNIVERSE_FAST_TRIGGER_CHECKSUM,
+        schema_version="aletheia-sqlite-v42",
         apply=_apply_universe_fast_trigger_v41,
     ),
     MigrationStep(
-        migration_id="20260826_0041_opportunity_generation_v42",
+        migration_id="20260826_0042_opportunity_generation_v43",
         checksum=_OPPORTUNITY_GENERATION_V2_CHECKSUM,
-        schema_version="aletheia-sqlite-v42",
+        schema_version="aletheia-sqlite-v43",
         apply=_apply_opportunity_generation_v42,
     ),
 )

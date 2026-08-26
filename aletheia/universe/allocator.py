@@ -312,11 +312,14 @@ def compute_total_score(
     raw_opportunity = scanner_result.get("opportunity_score", 0)
     opportunity = raw_opportunity
     family = scanner_result.get("scanner_family", "momentum")
+    crypto_context = (
+        (feat.get("analysis_context") or {}).get("kind") != "stock_linked_perp"
+    )
     calibration_effective_multiplier = 1.0
     calibration_authority_applied = False
     calibration_assignment = "not_evaluated"
     calibration_reason = "not_configured"
-    if calibration or restrict_calibration_learning_scope:
+    if crypto_context and (calibration or restrict_calibration_learning_scope):
         direction = scanner_result.get("scanner_direction") or scanner_result.get("direction") or "unknown"
         market_type = feat.get("market_type", "spot")
         exact_key = _calibration_key(family, direction, market_type)
@@ -432,7 +435,9 @@ def compute_total_score(
     # cfg.scanner_weights via _action_adjust_scanner_weight (OL-C09) and the UI
     # shows it, but scoring never consumed it — the manual bias was inert. Empty
     # dict (default) → 1.0 for every family, preserving current behavior.
-    operator_multiplier = cfg.scanner_weights.get(family, 1.0)
+    operator_multiplier = (
+        cfg.scanner_weights.get(family, 1.0) if crypto_context else 1.0
+    )
     opportunity *= operator_multiplier
     if scoring_audit_out is not None:
         scoring_audit_out.update({
@@ -557,20 +562,27 @@ def allocate_universe(
     explore_count = max_total - exploit_count
 
     # Family quota limits (absolute counts) — regime-aware (2A+.9)
-    quota = resolve_family_quota(cfg, regime_state)
-    family_limits: dict[str, int] = {}
-    for family, ratio in quota.items():
-        family_limits[family] = max(1, int(max_total * ratio))
+    regime_quota = resolve_family_quota(cfg, regime_state)
+    static_quota = resolve_family_quota(cfg, None)
+
+    def quota_key(item: dict) -> tuple[str, str]:
+        context = (item.get("analysis_context") or {}).get("kind")
+        return (str(context or "legacy_crypto"), item.get("scanner_family", "momentum"))
+
+    def family_limit(item: dict) -> int:
+        context, family = quota_key(item)
+        quota = static_quota if context == "stock_linked_perp" else regime_quota
+        return max(1, int(max_total * quota.get(family, 0.3)))
 
     # Exploit selection: top by score, respecting quotas
     exploit_selected: list[dict] = []
-    family_counts: dict[str, int] = {}
+    family_counts: dict[tuple[str, str], int] = {}
     remainder: list[dict] = []
 
     for item in scored:
-        family = item.get("scanner_family", "momentum")
-        current = family_counts.get(family, 0)
-        limit = family_limits.get(family, max(1, int(max_total * 0.3)))
+        key = quota_key(item)
+        current = family_counts.get(key, 0)
+        limit = family_limit(item)
 
         if len(exploit_selected) >= exploit_count:
             remainder.append(item)
@@ -578,7 +590,7 @@ def allocate_universe(
             remainder.append(item)
         else:
             exploit_selected.append(item)
-            family_counts[family] = current + 1
+            family_counts[key] = current + 1
 
     # Explore selection: random sample from remainder, but only families still
     # UNDER their quota (US-17). Historically explore random-sampled the whole
@@ -590,15 +602,13 @@ def allocate_universe(
     # families means exploration adds DIVERSITY, not more of the dominant family.
     explore_selected: list[dict] = []
     if remainder and explore_count > 0:
-        default_limit = max(1, int(max_total * 0.3))
         # US-13: don't let explore promote 0/low-score candidates into the executable
         # universe. Keep exploration, but require minimal viability first.
         # US-17: and only from families that have NOT already hit their quota.
         viable = [
             r for r in remainder
             if r.get("total_score", 0) >= _EXPLORE_MIN_SCORE
-            and family_counts.get(r.get("scanner_family", "momentum"), 0)
-            < family_limits.get(r.get("scanner_family", "momentum"), default_limit)
+            and family_counts.get(quota_key(r), 0) < family_limit(r)
         ]
         if viable:
             # Randomize the eligible remainder, then admit candidates one by one.
@@ -612,13 +622,13 @@ def allocate_universe(
             for r in randomized:
                 if len(explore_selected) >= explore_count:
                     break
-                fam = r.get("scanner_family", "momentum")
-                limit = family_limits.get(fam, default_limit)
-                current = family_counts.get(fam, 0)
+                key = quota_key(r)
+                limit = family_limit(r)
+                current = family_counts.get(key, 0)
                 if current >= limit:
                     continue
                 explore_selected.append(r)
-                family_counts[fam] = current + 1
+                family_counts[key] = current + 1
 
     # Combine and assign TTL + rank metadata
     final = exploit_selected + explore_selected

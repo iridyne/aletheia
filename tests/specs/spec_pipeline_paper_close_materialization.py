@@ -223,8 +223,24 @@ def test_paper_close_uses_frozen_net_balance_cost_contract(tmp_path, monkeypatch
         status="implemented",
     )
 )
+@pytest.mark.parametrize(
+    "trailing",
+    [
+        {"cost_model_version": "paper-net-balance-v1", "exit_fee_rate": 0.001},
+        {
+            "cost_model_version": "paper-net-balance-v1",
+            "exit_fee_rate": 0.051,
+            "slippage_bps": 25.0,
+        },
+        {
+            "cost_model_version": "paper-net-balance-v1",
+            "exit_fee_rate": 0.001,
+            "slippage_bps": 201.0,
+        },
+    ],
+)
 def test_paper_close_rejects_incomplete_net_balance_cost_contract(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, trailing,
 ):
     conn = _setup_db(tmp_path, monkeypatch)
     _patch_config(monkeypatch)
@@ -237,10 +253,7 @@ def test_paper_close_rejects_incomplete_net_balance_cost_contract(
     )
     repo.update_position(
         position.id,
-        trailing_json=json.dumps({
-            "cost_model_version": "paper-net-balance-v1",
-            "exit_fee_rate": 0.001,
-        }),
+        trailing_json=json.dumps(trailing),
     )
 
     with pytest.raises(ValueError, match="paper_close_cost_contract_invalid"):
@@ -1586,6 +1599,47 @@ def test_delayed_funding_materialization_converges_every_projection_once(
         (position_id,),
     ).fetchall()
     assert len(repairs) == 1
+
+
+def test_invalidated_position_cannot_be_rematerialized(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from datetime import timedelta
+    from aletheia.portfolio.paper_account import (
+        invalidate_paper_position_economics,
+        materialize_position_economics,
+    )
+
+    closed_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    position_id = "invalidated-materialization"
+    _seed_stuck_paper_close(
+        position_id=position_id,
+        symbol="BTC/USDT",
+        closed_at=closed_at,
+    )
+    _seed_null_close_event(position_id, closed_at.isoformat())
+    evidence = _complete_recovered_funding(position_id, cost=0.02)
+    materialize_position_economics(
+        position_id,
+        realized_pnl=0.36,
+        funding_cost=0.02,
+        funding_evidence=evidence,
+        outcome_eligible=True,
+        outcome_exclusion_reason="eligible",
+    )
+    invalidate_paper_position_economics(position_id)
+
+    with pytest.raises(ValueError, match="invalidated paper economics"):
+        materialize_position_economics(
+            position_id,
+            realized_pnl=0.36,
+            funding_cost=0.02,
+            funding_evidence=evidence,
+            outcome_eligible=True,
+            outcome_exclusion_reason="eligible",
+            allow_correction=True,
+        )
 
 
 @spec_claim(
