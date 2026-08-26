@@ -80,28 +80,45 @@ async def test_get_inference_broker_metrics_is_sanitized(client):
 
 
 @pytest.mark.anyio
-async def test_ping_model_accepts_reasoning_only_provider_completion(client, monkeypatch):
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "reasoning_content": "The probe asks for acknowledgement.",
+                        "thinking_blocks": [{"type": "thinking"}],
+                    },
+                    "finish_reason": "length",
+                }
+            ]
+        },
+        {
+            "id": "resp_123",
+            "status": "completed",
+            "output": [{"type": "reasoning", "summary": []}],
+        },
+        {
+            "id": "msg_123",
+            "content": [{"type": "thinking", "thinking": "acknowledged"}],
+            "stop_reason": "max_tokens",
+        },
+    ],
+)
+async def test_ping_model_accepts_reasoning_only_provider_completion(client, monkeypatch, raw):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     from aletheia.model_provider.base import ModelResponse
+    finished = []
     brokered_complete = AsyncMock(
         return_value=ModelResponse(
             content="",
             model="qwen35-122b-a10b",
             usage={"completion_tokens": 10},
-            raw={
-                "choices": [
-                    {
-                        "message": {
-                            "content": "",
-                            "reasoning_content": "The probe asks for acknowledgement.",
-                            "thinking_blocks": [{"type": "thinking"}],
-                        },
-                        "finish_reason": "length",
-                    }
-                ]
-            },
+            raw=raw,
         )
     )
     monkeypatch.setattr(
@@ -123,7 +140,7 @@ async def test_ping_model_accepts_reasoning_only_provider_completion(client, mon
     )
     monkeypatch.setattr(
         "aletheia.economics.inference_calls.record_inference_finished",
-        lambda _call, **_kwargs: True,
+        lambda _call, **kwargs: finished.append(kwargs) or True,
     )
 
     response = await client.post("/api/model/ping")
@@ -137,6 +154,7 @@ async def test_ping_model_accepts_reasoning_only_provider_completion(client, mon
     request = brokered_complete.await_args.args[2]
     assert request.max_tokens == 10
     assert request.allow_model_fallback is False
+    assert finished[0]["status"] == "success"
 
 
 def test_ping_model_does_not_accept_empty_response_without_completion_evidence():
@@ -145,6 +163,51 @@ def test_ping_model_does_not_accept_empty_response_without_completion_evidence()
     assert not _has_provider_completion_evidence(None)
     assert not _has_provider_completion_evidence({})
     assert not _has_provider_completion_evidence({"choices": [{"message": {}}]})
+    assert not _has_provider_completion_evidence({"choices": [{"finish_reason": ""}]})
+    assert not _has_provider_completion_evidence({"status": "in_progress"})
+    assert not _has_provider_completion_evidence({"status": "failed"})
+    assert not _has_provider_completion_evidence({"stop_reason": "pause_turn"})
+    assert not _has_provider_completion_evidence({"stop_reason": "refusal"})
+
+
+@pytest.mark.anyio
+async def test_ping_model_records_error_when_empty_completion_has_no_evidence(client, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from aletheia.model_provider.base import ModelResponse
+    finished = []
+    monkeypatch.setattr(
+        "aletheia.model_provider.router.get_provider_async",
+        AsyncMock(return_value=object()),
+    )
+    monkeypatch.setattr(
+        "aletheia.model_provider.broker.brokered_complete",
+        AsyncMock(return_value=ModelResponse(content="", model="empty-model", raw={})),
+    )
+    monkeypatch.setattr(
+        "aletheia.config.loader.load_config",
+        lambda: SimpleNamespace(
+            models=SimpleNamespace(default_provider="openai_compatible"),
+        ),
+    )
+    monkeypatch.setattr(
+        "aletheia.economics.inference_calls.record_inference_started",
+        lambda _call: True,
+    )
+    monkeypatch.setattr(
+        "aletheia.economics.inference_calls.record_inference_finished",
+        lambda _call, **kwargs: finished.append(kwargs) or True,
+    )
+
+    response = await client.post("/api/model/ping")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["error"] == "empty response"
+    assert payload["verified"] is False
+    assert finished == [{"status": "error", "error_type": "EmptyModelResponse"}]
 
 
 @pytest.mark.anyio
