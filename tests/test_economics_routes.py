@@ -215,6 +215,9 @@ async def test_usage_insights_projects_latest_litellm_price_without_rewriting_ev
     data = (await client.get("/api/economics/usage-insights?days=7")).json()
 
     assert data["pricing"]["estimated_cost_usd"] == pytest.approx(0.8)
+    assert data["pricing"]["known_event_count"] == 0
+    assert data["pricing"]["estimated_event_count"] == 1
+    assert data["pricing"]["unknown_event_count"] == 0
     assert data["pricing"]["pricing_coverage_pct"] == 100
     assert data["token_mix"]["total_tokens"] == 2_000_000
     event_day = next(row for row in data["trends"]["daily"] if row["llm_event_count"] == 1)

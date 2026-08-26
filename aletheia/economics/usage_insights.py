@@ -156,7 +156,7 @@ def _empty(days: int, end: datetime, reason: str) -> dict[str, Any]:
         "window": {"days": days, "started_at": start.isoformat(), "ended_at": end.isoformat(), "as_of": end.isoformat(), "timezone": "UTC"},
         "coverage": unavailable(axes=axes),
         "token_mix": unavailable(input_tokens=None, output_tokens=None, total_tokens=None, reasoning_tokens=None, cached_tokens=None, event_count=None),
-        "pricing": unavailable(known_cost_usd=None, estimated_cost_usd=None, unknown_event_count=None, pricing_coverage_pct=None, gaps=[]),
+        "pricing": unavailable(known_cost_usd=None, known_event_count=None, estimated_cost_usd=None, estimated_event_count=None, unknown_event_count=None, pricing_coverage_pct=None, gaps=[]),
         "attribution": unavailable(rows=[]),
         "tools": unavailable(rows=[], timing_coverage_pct=None, pricing_coverage_pct=None),
         "reliability": unavailable(
@@ -295,15 +295,17 @@ def _token_mix(llm_rows: list[dict[str, Any]]) -> tuple[dict[str, Any], int]:
 
 def _pricing(runtime_rows: list[dict[str, Any]]) -> tuple[dict[str, Any], int]:
     known = estimated = 0.0
-    priced = 0
+    priced = known_count = estimated_count = 0
     gaps: Counter[tuple[str, str, str]] = Counter()
     for row in runtime_rows:
         value = _number(row.get("estimated_cost_usd")) if _cost_priced(row) else 0.0
         if _cost_priced(row):
             priced += 1
             if row.get("cost_status") == "known":
+                known_count += 1
                 known += value
             else:
+                estimated_count += 1
                 estimated += value
         else:
             gaps[(str(row.get("event_type") or "not_available"), _text(row.get("provider")) or "not_available", _text(row.get("model_or_tool")) or "not_available")] += 1
@@ -315,7 +317,9 @@ def _pricing(runtime_rows: list[dict[str, Any]]) -> tuple[dict[str, Any], int]:
             status,
             reason,
             known_cost_usd=_number(known) if priced else None,
+            known_event_count=known_count if total else None,
             estimated_cost_usd=_number(estimated) if priced else None,
+            estimated_event_count=estimated_count if total else None,
             unknown_event_count=total - priced if total else None,
             pricing_coverage_pct=_pct(priced, total),
             gaps=[{"event_type": event_type, "provider": provider, "model_or_tool": model, "event_count": count} for (event_type, provider, model), count in sorted(gaps.items())],

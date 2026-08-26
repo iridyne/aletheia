@@ -15,7 +15,7 @@ const insights: UsageInsightsResponse = {
     ],
   },
   token_mix: { status: 'available', reason: null, input_tokens: 100, output_tokens: 50, total_tokens: 150, reasoning_tokens: 0, cached_tokens: 0, event_count: 1, field_coverage_pct: { input_tokens: 100, output_tokens: 100, reasoning_tokens: 100, cached_tokens: 100 } },
-  pricing: { status: 'available', reason: null, known_cost_usd: 0.1, estimated_cost_usd: 0, unknown_event_count: 0, pricing_coverage_pct: 100, gaps: [] },
+  pricing: { status: 'available', reason: null, known_cost_usd: 0.1, known_event_count: 1, estimated_cost_usd: 0, estimated_event_count: 0, unknown_event_count: 0, pricing_coverage_pct: 100, gaps: [] },
   attribution: { status: 'not_available', reason: 'No runs.', rows: [] },
   tools: { status: 'not_available', reason: 'No tools.', rows: [], timing_coverage_pct: null, pricing_coverage_pct: null },
   reliability: {
@@ -171,5 +171,53 @@ describe('Usage', () => {
     expect(html).toContain('No observations')
     expect(html).toContain('2023-11-14T22:13:20.000Z')
     expect(html).not.toContain('1,700,000,000')
+  })
+
+  it('renders usage counts without trading decimal formatting', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } })
+    const usageInsights: UsageInsightsResponse = {
+      ...insights,
+      token_mix: { ...insights.token_mix, event_count: 615 },
+      pricing: {
+        ...insights.pricing,
+        known_cost_usd: 0,
+        known_event_count: 0,
+        estimated_cost_usd: 0.5537,
+        estimated_event_count: 361,
+        unknown_event_count: 254,
+        gaps: [{ event_type: 'llm', provider: 'openai_compatible', model_or_tool: 'claude-sonnet-4-6', event_count: 254 }],
+      },
+      reliability: {
+        ...insights.reliability,
+        logical: { call_count: 601, retry_count: 14, error_count: 0, timing_coverage_pct: 100, p50_duration_ms: 5187.73 },
+        physical: { attempt_count: 615, failure_count: 0 },
+      },
+      tools: {
+        ...insights.tools,
+        status: 'available',
+        reason: null,
+        rows: [{ tool_name: 'accept_lesson', permitted_count: 1, denied_count: 0, known_cost_usd: 0, event_count: 1, pricing_coverage_pct: 100 }],
+      },
+    }
+    client.setQueryData(['usage-insights', 1, 'summary'], usageInsights)
+    client.setQueryData(['usage-insights', 1, 'operations'], usageInsights)
+    client.setQueryData(['usage-insights', 1, 'analysis'], usageInsights)
+
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <Usage />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    )
+
+    expect(html).toContain('<span>Known</span><strong>N/A</strong>')
+    expect(html).toContain('<span>Unknown events</span><strong>254</strong>')
+    expect(html).toContain('<td>601</td>')
+    expect(html).toContain('<td>14</td>')
+    expect(html).toContain('<td>0</td>')
+    expect(html).toContain('<td>100.0%</td>')
+    expect(html).not.toContain('601.00')
+    expect(html).not.toContain('254.00')
   })
 })

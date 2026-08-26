@@ -775,7 +775,9 @@ export interface UsageInsightsResponse {
 	};
 	pricing: UsageInsightsSection & {
 		known_cost_usd: number | null;
+		known_event_count: number | null;
 		estimated_cost_usd: number | null;
+		estimated_event_count: number | null;
 		unknown_event_count: number | null;
 		pricing_coverage_pct: number | null;
 		gaps: UsageInsightsRow[];

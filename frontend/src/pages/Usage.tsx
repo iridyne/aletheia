@@ -15,12 +15,18 @@ const C = { accent: '#22d3ee', green: '#2ee6a8', yellow: '#f5b942', border: '#23
 const tooltipProps = { contentStyle: { background: '#1a212a', border: `1px solid ${C.border}`, borderRadius: 5, fontSize: 11 }, labelStyle: { color: C.text }, itemStyle: { color: C.text } }
 
 const usd = (value: number | null | undefined) => value == null ? '—' : `$${fmtNum(value)}`
-const count = (value: number | null | undefined) => value == null ? '—' : fmtCompact(value)
+const wholeCount = (value: number | null | undefined) => value == null ? '—' : Math.round(value).toLocaleString()
+const count = (value: number | null | undefined) => value == null ? '—' : Math.abs(value) < 1000 ? wholeCount(value) : fmtCompact(value)
 const windowLabel = (days: number | undefined) => days === 1 ? 'last 24 hours' : `last ${days ?? 1} days`
 const humanize = (key: string) => key.replace(/_/g, ' ')
 const emptyUsageRows: UsageInsightsRow[] = []
 const availabilityLabel = (status: string) => ({ available: 'Available', partial: 'Partial', not_configured: 'Not configured', not_observed: 'No observations', not_available: 'N/A' } as Record<string, string>)[status] ?? status
 const availabilityTone = (status: string) => status === 'available' ? 'green' : status === 'partial' ? 'yellow' : status === 'not_configured' ? 'blue' : 'muted'
+const isCountKey = (key?: string) => !!key && (key.endsWith('_count') || key === 'event_count' || key === 'attempt_count')
+const isPctKey = (key?: string) => !!key && key.endsWith('_pct')
+const isUsdKey = (key?: string) => !!key && key.endsWith('_usd')
+const isDurationKey = (key?: string) => !!key && (key.endsWith('_duration_ms') || key === 'latency_ms')
+const trimNumber = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 2 })
 
 function valueText(value: unknown, key?: string): string {
   if (value == null) return 'N/A'
@@ -30,6 +36,10 @@ function valueText(value: unknown, key?: string): string {
       const timestamp = new Date(value * 1000)
       return Number.isNaN(timestamp.getTime()) ? 'N/A' : timestamp.toISOString()
     }
+    if (isCountKey(key)) return wholeCount(value)
+    if (isPctKey(key)) return fmtPct(value, { decimals: 1, scale: 'percent' })
+    if (isUsdKey(key)) return usd(value)
+    if (isDurationKey(key)) return trimNumber(value)
     return fmtNum(value)
   }
   if (typeof value === 'boolean') return value ? 'yes' : 'no'
@@ -149,7 +159,7 @@ export default function Usage() {
           </div>
           <div className="usage-token-band">
             <TokenComposition input={summary.token_mix!.input_tokens} output={summary.token_mix!.output_tokens} cached={summary.token_mix!.cached_tokens} reasoning={summary.token_mix!.reasoning_tokens} />
-            <Card className="usage-cost-provenance"><CardHeader title="Cost provenance" actions={<Button size="sm" variant="secondary" disabled={pricingRefresh?.status === 'running' || refreshPricing.isPending} onClick={() => refreshPricing.mutate()}>{pricingRefresh?.status === 'running' || refreshPricing.isPending ? 'Refreshing…' : 'Refresh pricing'}</Button>} /><div className="usage-provenance-grid"><div><span>Known</span><strong>{usd(summary.pricing!.known_cost_usd)}</strong></div><div><span>Estimated</span><strong>{usd(summary.pricing!.estimated_cost_usd)}</strong></div><div><span>Unknown events</span><strong>{count(summary.pricing!.unknown_event_count)}</strong></div></div>{pricingRefresh?.status === 'failed' && <div className="lever-err" role="alert">Pricing refresh failed: {pricingRefresh.error ?? 'unknown error'}</div>}{pricingRefresh?.last_success_at && <p className="hint">LiteLLM estimate refreshed {pricingRefresh.last_success_at}; {pricingRefresh.snapshots_created} snapshot(s) added.</p>}</Card>
+            <Card className="usage-cost-provenance"><CardHeader title="Cost provenance" actions={<Button size="sm" variant="secondary" disabled={pricingRefresh?.status === 'running' || refreshPricing.isPending} onClick={() => refreshPricing.mutate()}>{pricingRefresh?.status === 'running' || refreshPricing.isPending ? 'Refreshing…' : 'Refresh pricing'}</Button>} /><div className="usage-provenance-grid"><div><span>Known</span><strong>{summary.pricing!.known_event_count ? usd(summary.pricing!.known_cost_usd) : 'N/A'}</strong></div><div><span>Estimated</span><strong>{usd(summary.pricing!.estimated_cost_usd)}</strong></div><div><span>Unknown events</span><strong>{wholeCount(summary.pricing!.unknown_event_count)}</strong></div></div>{pricingRefresh?.status === 'failed' && <div className="lever-err" role="alert">Pricing refresh failed: {pricingRefresh.error ?? 'unknown error'}</div>}{pricingRefresh?.last_success_at && <p className="hint">LiteLLM estimate refreshed {pricingRefresh.last_success_at}; {pricingRefresh.snapshots_created} snapshot(s) added.</p>}</Card>
           </div>
         </Section>
       </>}

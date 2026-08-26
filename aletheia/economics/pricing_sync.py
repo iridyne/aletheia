@@ -51,16 +51,27 @@ def _build_price_index(
             continue
         if _rate(entry.get("input_cost_per_token")) is None or _rate(entry.get("output_cost_per_token")) is None:
             continue
-        names = [key.split("/")[-1]]
+        names = _catalog_names(key)
         aliases = entry.get("aliases")
         if isinstance(aliases, list):
-            names.extend(alias for alias in aliases if isinstance(alias, str))
+            for alias in aliases:
+                if isinstance(alias, str):
+                    names.extend(_catalog_names(alias))
         for name in names:
             bucket = index.setdefault(_normalize(name), [])
             candidate = (key, entry)
             if candidate not in bucket:
                 bucket.append(candidate)
     return index
+
+
+def _catalog_names(name: str) -> list[str]:
+    tail = name.split("/")[-1]
+    names = [tail]
+    parts = tail.split(".")
+    if len(parts) >= 3:
+        names.append(".".join(parts[2:]))
+    return names
 
 
 def _family_match(needle: str, stem: str) -> bool:
