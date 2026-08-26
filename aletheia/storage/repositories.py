@@ -7920,6 +7920,8 @@ def _shadow_candidate_identity_sql(
 
 def valid_keyed_shadow_projection_sql(
     shadow_alias: str = "shadow_trades",
+    *,
+    require_not_invalidated: bool = True,
 ) -> str:
     """Require one keyed shadow net to equal its canonical settled 24h outcome."""
     shadow = f"{shadow_alias}." if shadow_alias else ""
@@ -7940,8 +7942,8 @@ def valid_keyed_shadow_projection_sql(
         f"AND {shadow}{shadow_field} = {outcome}{outcome_field}"
         for shadow_field, outcome_field in numeric_pairs
     )
-    return (
-        f"{shadow}invalidated_at IS NULL AND "
+    invalidation = f"{shadow}invalidated_at IS NULL AND " if require_not_invalidated else ""
+    return invalidation + (
         "EXISTS (SELECT 1 FROM filter_candidate_outcomes AS canonical_outcome "
         f"WHERE {outcome}outcome_candidate_key = {shadow}outcome_candidate_key "
         f"AND {outcome}horizon = '24h' "

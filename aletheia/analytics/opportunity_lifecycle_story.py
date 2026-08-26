@@ -324,6 +324,9 @@ def _counterfactual(
     opportunity_id = str(opportunity.get("id"))
     shadow_where = "opportunity_id=?"
     shadow_params: tuple[Any, ...] = (opportunity_id,)
+    has_invalidation = _has_column(db, "shadow_trades", "invalidated_at")
+    if has_invalidation:
+        shadow_where += " AND invalidated_at IS NULL"
     if _has_column(db, "shadow_trades", "outcome_candidate_key"):
         # Keyed results are visible only when the canonical outcome projection
         # proves the exact identity and economics. Pending exposure remains
@@ -331,7 +334,9 @@ def _counterfactual(
         if _table_exists(db, "filter_candidate_outcomes"):
             from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
 
-            keyed_authority = valid_keyed_shadow_projection_sql()
+            keyed_authority = valid_keyed_shadow_projection_sql(
+                require_not_invalidated=has_invalidation,
+            )
         else:
             keyed_authority = "0"
         shadow_where += (
