@@ -5091,13 +5091,7 @@ def insert_knowledge_item_if_absent(
             if existing is not None:
                 return False, str(existing["id"]), "duplicate"
 
-        data = k.model_dump()
-        cols = ", ".join(data.keys())
-        placeholders = ", ".join("?" for _ in data)
-        db.execute(
-            f"INSERT INTO knowledge_items ({cols}) VALUES ({placeholders})",
-            tuple(data.values()),
-        )
+        _insert("knowledge_items", k.model_dump())
     return True, None, None
 
 
