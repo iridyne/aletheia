@@ -1,3 +1,5 @@
+import threading
+
 import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -71,6 +73,50 @@ class FakeProvider:
 
     async def list_models(self):
         return [{"slug": m, "display_name": m} for m in self.detected]
+
+
+class _TrackingLock:
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._local = threading.local()
+
+    def __enter__(self):
+        self._lock.acquire()
+        self._local.depth = getattr(self._local, "depth", 0) + 1
+        return self
+
+    def __exit__(self, *args):
+        self._local.depth -= 1
+        self._lock.release()
+
+    def held_by_current_thread(self):
+        return getattr(self._local, "depth", 0) > 0
+
+
+def _lock_checked_model_health_state(fallback, provider: str, model: str, lock):
+    guarded_fields = {
+        "provider",
+        "model",
+        "consecutive_failures",
+        "cooldown_until",
+        "last_error",
+        "last_failure_at",
+        "last_success_at",
+    }
+
+    class LockCheckedModelHealthState(fallback.ModelHealthState):
+        def __getattribute__(self, name):
+            if name in guarded_fields and not lock.held_by_current_thread():
+                raise AssertionError(f"{name} read outside model health lock")
+            return super().__getattribute__(name)
+
+        def __setattr__(self, name, value):
+            if name in guarded_fields and not lock.held_by_current_thread():
+                raise AssertionError(f"{name} mutated outside model health lock")
+            super().__setattr__(name, value)
+
+    with lock:
+        return LockCheckedModelHealthState(provider=provider, model=model)
 
 
 @pytest.mark.anyio
@@ -228,6 +274,81 @@ async def test_transient_failures_put_model_in_cooldown_and_skip_it(tmp_path, mo
     health = fallback.get_model_health_snapshot()
     primary = next(x for x in health if x["model"] == "claude-primary")
     assert primary["cooling_down"] is True
+
+
+def test_model_health_success_and_failure_transitions_hold_the_lock(monkeypatch):
+    from aletheia.model_provider import fallback
+
+    lock = _TrackingLock()
+    events = []
+    monkeypatch.setattr(fallback, "_MODEL_HEALTH_LOCK", lock)
+    monkeypatch.setattr(fallback, "_COOLDOWN_FAILURE_THRESHOLD", 2)
+    monkeypatch.setattr(fallback, "_COOLDOWN_SEC", 60)
+    monkeypatch.setattr(fallback, "emit_infra_event", lambda **event: events.append(event))
+    with lock:
+        fallback._MODEL_HEALTH.clear()
+        fallback._MODEL_HEALTH[("provider-a", "model-a")] = (
+            _lock_checked_model_health_state(fallback, "provider-a", "model-a", lock)
+        )
+
+    fallback._record_model_failure("provider-a", "model-a", RuntimeError("first"))
+    fallback._record_model_failure("provider-a", "model-a", RuntimeError("second"))
+    fallback._record_model_success("provider-a", "model-a")
+
+    codes = [event["code"] for event in events]
+    assert codes == ["llm_model_cooldown", "llm_model_recovered"]
+    [snapshot] = fallback.get_model_health_snapshot()
+    assert snapshot["consecutive_failures"] == 0
+    assert snapshot["cooling_down"] is False
+
+
+def test_model_health_snapshot_serializes_state_under_the_lock(monkeypatch):
+    from aletheia.model_provider import fallback
+
+    lock = _TrackingLock()
+    monkeypatch.setattr(fallback, "_MODEL_HEALTH_LOCK", lock)
+    with lock:
+        fallback._MODEL_HEALTH.clear()
+        state = _lock_checked_model_health_state(
+            fallback, "provider-a", "model-a", lock,
+        )
+        state.consecutive_failures = 2
+        state.cooldown_until = 9_999_999_999.0
+        fallback._MODEL_HEALTH[("provider-a", "model-a")] = state
+
+    [snapshot] = fallback.get_model_health_snapshot()
+    assert snapshot["provider"] == "provider-a"
+    assert snapshot["model"] == "model-a"
+    assert snapshot["consecutive_failures"] == 2
+    assert snapshot["cooling_down"] is True
+
+
+def test_concurrent_model_failures_are_counted_and_emit_one_cooldown(monkeypatch):
+    from aletheia.model_provider import fallback
+
+    fallback.reset_model_health()
+    events = []
+    monkeypatch.setattr(fallback, "_COOLDOWN_FAILURE_THRESHOLD", 2)
+    monkeypatch.setattr(fallback, "_COOLDOWN_SEC", 60)
+    monkeypatch.setattr(fallback, "emit_infra_event", lambda **event: events.append(event))
+    barrier = threading.Barrier(3)
+
+    def _fail(label):
+        barrier.wait(timeout=5)
+        fallback._record_model_failure("provider-a", "model-a", RuntimeError(label))
+
+    threads = [threading.Thread(target=_fail, args=(label,)) for label in ("a", "b")]
+    for thread in threads:
+        thread.start()
+    barrier.wait(timeout=5)
+    for thread in threads:
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    [snapshot] = fallback.get_model_health_snapshot()
+    assert snapshot["consecutive_failures"] == 2
+    assert snapshot["cooling_down"] is True
+    assert [event["code"] for event in events] == ["llm_model_cooldown"]
 
 
 @pytest.mark.anyio
