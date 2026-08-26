@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { useMutation, useQuery, type QueryClient } from "@tanstack/react-query";
-import { api } from "../../../api/client";
+import { api, type ModelRuntimeMutationResult } from "../../../api/client";
 import { Switch, useConfirm } from "../../../components/ui";
 import { SettingsFeatureSection } from "../SettingsFeatureSection";
 import { useSettingsDraftLifecycle } from "../draftLifecycle";
@@ -31,6 +31,15 @@ const ROLE_LABELS: Record<RoutingRole, string> = {
 
 function mutationMessage(error: unknown): string {
 	return error instanceof Error ? error.message : "Request failed";
+}
+
+function runtimeDegradedMessage(
+	result: ModelRuntimeMutationResult,
+	successLabel: string,
+): string | null {
+	if (result.state !== "degraded" && result.runtime_applied !== false) return null;
+	const reason = result.runtime_error || result.runtime_errors?.[0] || "runtime_reconciliation_failed";
+	return `${successLabel} Settings were refreshed, but runtime reconciliation is degraded (${reason}). Use Reconcile runtime instead of retrying the saved mutation.`;
 }
 
 function createModelInvalidator(qc: QueryClient) {
@@ -177,6 +186,7 @@ export function ApiProfileEditor({
 	providerTypes,
 	qc,
 	onClose,
+	onRuntimeResult,
 	onDirty,
 }: {
 	initial: ApiProfileDraft;
@@ -184,6 +194,7 @@ export function ApiProfileEditor({
 	providerTypes: ProviderTypeView[];
 	qc: QueryClient;
 	onClose: () => void;
+	onRuntimeResult?: (result: ModelRuntimeMutationResult, successLabel: string) => void;
 	onDirty?: (id: string, isDirty: boolean) => void;
 }) {
 	const [draft, setDraft] = useState(initial);
@@ -258,8 +269,9 @@ export function ApiProfileEditor({
 				? api.updateModelProfile(draft.profile_id, body)
 				: api.createModelProfile({ profile_id: draft.profile_id, ...body });
 		},
-		onSuccess: () => {
+		onSuccess: (result) => {
 			invalidate();
+			onRuntimeResult?.(result, "Profile saved.");
 			onClose();
 		},
 		onError: (error) => setMessage(mutationMessage(error)),
@@ -443,11 +455,21 @@ function ApiProfiles({
 	const confirm = useConfirm();
 	const [editing, setEditing] = useState<string | "new" | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [notice, setNotice] = useState<string | null>(null);
+	const [reconcileProvider, setReconcileProvider] = useState<string | null>(null);
 	const invalidate = createModelInvalidator(qc);
 	const profiles = Object.entries(model.providers).filter(
 		([, provider]) => provider.kind === "api",
 	);
 	const supportedTypes = apiTypes(types);
+	const reportRuntimeResult = (
+		result: ModelRuntimeMutationResult,
+		successLabel: string,
+	) => {
+		const message = runtimeDegradedMessage(result, successLabel);
+		setNotice(message);
+		setReconcileProvider(message ? result.provider : null);
+	};
 	const update = useMutation({
 		mutationFn: ({
 			providerId,
@@ -456,12 +478,36 @@ function ApiProfiles({
 			providerId: string;
 			enabled: boolean;
 		}) => api.updateModelProfile(providerId, { enabled }),
-		onSuccess: invalidate,
-		onError: (value) => setError(mutationMessage(value)),
+		onSuccess: (result) => {
+			invalidate();
+			reportRuntimeResult(result, "Profile updated.");
+		},
+		onError: (value) => {
+			setNotice(null);
+			setReconcileProvider(null);
+			setError(mutationMessage(value));
+		},
 	});
 	const remove = useMutation({
 		mutationFn: api.deleteModelProfile,
-		onSuccess: invalidate,
+		onSuccess: (result) => {
+			invalidate();
+			reportRuntimeResult(result, "Profile deleted.");
+		},
+		onError: (value) => {
+			setNotice(null);
+			setReconcileProvider(null);
+			setError(mutationMessage(value));
+		},
+	});
+	const reconcile = useMutation({
+		mutationFn: api.reconcileModelProfileRuntime,
+		onSuccess: (result) => {
+			invalidate();
+			setError(null);
+			setNotice(runtimeDegradedMessage(result, "Runtime reconcile completed."));
+			setReconcileProvider(result.state === "degraded" ? result.provider : null);
+		},
 		onError: (value) => setError(mutationMessage(value)),
 	});
 
@@ -485,8 +531,24 @@ function ApiProfiles({
 					providerTypes={supportedTypes}
 					qc={qc}
 					onClose={() => setEditing(null)}
+					onRuntimeResult={reportRuntimeResult}
 					onDirty={onDirty}
 				/>
+			)}
+			{notice && (
+				<div className="model-inline-message" role="status">
+					{notice}
+					{reconcileProvider && (
+						<button
+							type="button"
+							className="secondary"
+							onClick={() => reconcile.mutate(reconcileProvider)}
+							disabled={reconcile.isPending}
+						>
+							Reconcile runtime
+						</button>
+					)}
+				</div>
 			)}
 			{error && (
 				<div className="model-inline-message error" role="alert">
@@ -547,6 +609,14 @@ function ApiProfiles({
 									</button>
 									<button
 										type="button"
+										className="secondary"
+										onClick={() => reconcile.mutate(providerId)}
+										disabled={reconcile.isPending}
+									>
+										Reconcile runtime
+									</button>
+									<button
+										type="button"
 										className="secondary danger"
 										onClick={async () => {
 											const impact = roles.length
@@ -573,6 +643,7 @@ function ApiProfiles({
 									providerTypes={supportedTypes}
 									qc={qc}
 									onClose={() => setEditing(null)}
+									onRuntimeResult={reportRuntimeResult}
 									onDirty={onDirty}
 								/>
 							)}
@@ -668,6 +739,8 @@ function IntegrationCard({
 	const [modelValue, setModelValue] = useState(
 		config?.codex_model || config?.model || "",
 	);
+	const [notice, setNotice] = useState<string | null>(null);
+	const [reconcileProvider, setReconcileProvider] = useState<string | null>(null);
 	const invalidate = createModelInvalidator(qc);
 	const serverModelValue = config?.codex_model || config?.model || "";
 	const dirty = modelValue !== serverModelValue;
@@ -681,8 +754,22 @@ function IntegrationCard({
 	const update = useMutation({
 		mutationFn: (body: Record<string, unknown>) =>
 			api.updateModelIntegration(definition.id, body),
-		onSuccess: invalidate,
+		onSuccess: (result) => {
+			invalidate();
+			const message = runtimeDegradedMessage(result, `${definition.label} saved.`);
+			setNotice(message);
+			setReconcileProvider(message ? result.provider : null);
+		},
 		meta: { errorSurface: "inline" },
+	});
+	const reconcile = useMutation({
+		mutationFn: api.reconcileModelProfileRuntime,
+		onSuccess: (result) => {
+			invalidate();
+			const message = runtimeDegradedMessage(result, "Runtime reconcile completed.");
+			setNotice(message);
+			setReconcileProvider(result.state === "degraded" ? result.provider : null);
+		},
 	});
 	const roles = routingRoles(model, definition.id);
 	return (
@@ -734,6 +821,16 @@ function IntegrationCard({
 				>
 					Save model
 				</button>
+				{config && (
+					<button
+						type="button"
+						className="secondary"
+						onClick={() => reconcile.mutate(definition.id)}
+						disabled={reconcile.isPending}
+					>
+						Reconcile runtime
+					</button>
+				)}
 				{children}
 			</div>
 			{config && (
@@ -744,6 +841,26 @@ function IntegrationCard({
 			{update.isError && (
 				<div className="model-inline-message error">
 					{mutationMessage(update.error)}
+				</div>
+			)}
+			{reconcile.isError && (
+				<div className="model-inline-message error">
+					{mutationMessage(reconcile.error)}
+				</div>
+			)}
+			{notice && (
+				<div className="model-inline-message" role="status">
+					{notice}
+					{reconcileProvider && (
+						<button
+							type="button"
+							className="secondary"
+							onClick={() => reconcile.mutate(reconcileProvider)}
+							disabled={reconcile.isPending}
+						>
+							Reconcile runtime
+						</button>
+					)}
 				</div>
 			)}
 		</article>

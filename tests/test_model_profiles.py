@@ -128,6 +128,66 @@ async def test_profile_creation_trusts_inference_when_catalogue_is_unavailable(
 
 
 @pytest.mark.anyio
+async def test_profile_create_reports_degraded_after_persisted_cache_failure(client, monkeypatch):
+    http, _ = client
+
+    async def fail_cache():
+        raise RuntimeError("raw transport detail must not leak")
+
+    monkeypatch.setattr("aletheia.server.routes.model.clear_cache_async", fail_cache)
+
+    response = await http.post(
+        "/api/settings/model-profiles",
+        json={
+            "profile_id": "cache-degraded-api",
+            "display_name": "Cache Degraded API",
+            "type": "openai_compatible",
+            "base_url": "https://cache-degraded.example/v1",
+            "model": "test-model",
+            "api_key": "persisted-secret",
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["persisted"] is True
+    assert body["runtime_applied"] is False
+    assert body["state"] == "degraded"
+    assert body["runtime_error"] == "provider_cache_reconciliation_failed"
+    assert "raw transport detail" not in response.text
+    assert "cache-degraded-api" in (await http.get("/api/model")).json()["providers"]
+    assert get_secret("model.profile.cache-degraded-api.api_key") == "persisted-secret"
+
+
+@pytest.mark.anyio
+async def test_integration_update_reports_degraded_after_persisted_broker_failure(client, monkeypatch):
+    import aletheia.model_provider.broker as broker
+
+    http, _ = client
+
+    async def fail_broker(_provider_id):
+        raise RuntimeError("raw broker detail must not leak")
+
+    monkeypatch.setattr(broker.inference_broker, "invalidate_provider", fail_broker)
+
+    response = await http.patch(
+        "/api/settings/model-integrations/codex_cli",
+        json={"enabled": True, "codex_model": "gpt-5.5"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["persisted"] is True
+    assert body["runtime_applied"] is False
+    assert body["state"] == "degraded"
+    assert body["runtime_error"] == "inference_broker_reconciliation_failed"
+    assert "raw broker detail" not in response.text
+    model = (await http.get("/api/model")).json()
+    assert model["providers"]["codex_cli"]["enabled"] is True
+    assert model["providers"]["codex_cli"]["codex_model"] == "gpt-5.5"
+
+
+@pytest.mark.anyio
 async def test_profile_create_rolls_back_secret_when_config_save_fails(client, monkeypatch):
     def fail_save(_cfg):
         raise RuntimeError("simulated config write failure")
@@ -385,6 +445,83 @@ async def test_confirmed_delete_clears_roles_and_provider_owned_secret(client):
     assert model["fast_provider"] is None
     assert get_secret(secret_ref) is None
     assert secret not in deleted.text
+
+
+@pytest.mark.anyio
+async def test_profile_delete_reports_degraded_after_persisted_broker_failure(client, monkeypatch):
+    import aletheia.model_provider.broker as broker
+
+    http, _ = client
+    await http.post(
+        "/api/settings/model-profiles",
+        json={
+            "profile_id": "delete-degraded-api",
+            "display_name": "Delete Degraded API",
+            "type": "openai_compatible",
+            "base_url": "https://delete-degraded.example/v1",
+            "model": "delete-model",
+            "api_key": "delete-secret",
+        },
+    )
+
+    async def fail_broker(_provider_id):
+        raise RuntimeError("raw delete detail must not leak")
+
+    monkeypatch.setattr(broker.inference_broker, "invalidate_provider", fail_broker)
+    deleted = await http.delete(
+        "/api/settings/model-profiles/delete-degraded-api",
+        params={"confirm": "true"},
+    )
+
+    assert deleted.status_code == 200
+    body = deleted.json()
+    assert body["deleted"] is True
+    assert body["persisted"] is True
+    assert body["runtime_applied"] is False
+    assert body["state"] == "degraded"
+    assert body["runtime_error"] == "inference_broker_reconciliation_failed"
+    assert "raw delete detail" not in deleted.text
+    assert "delete-degraded-api" not in (await http.get("/api/model")).json()["providers"]
+    assert get_secret("model.profile.delete-degraded-api.api_key") is None
+
+
+@pytest.mark.anyio
+async def test_profile_runtime_reconcile_does_not_replay_config_mutation(client, monkeypatch):
+    import aletheia.model_provider.broker as broker
+
+    from aletheia.config.loader import load_config
+
+    http, _ = client
+    await http.post(
+        "/api/settings/model-profiles",
+        json={
+            "profile_id": "runtime-only-api",
+            "display_name": "Runtime Only API",
+            "type": "openai_compatible",
+            "base_url": "https://runtime-only.example/v1",
+            "model": "runtime-model",
+            "api_key": "runtime-secret",
+        },
+    )
+    before = load_config().models.providers["runtime-only-api"].model
+    invalidated: list[str] = []
+
+    async def record_broker(provider_id):
+        invalidated.append(provider_id)
+
+    monkeypatch.setattr(broker.inference_broker, "invalidate_provider", record_broker)
+
+    response = await http.post("/api/settings/model-profiles/runtime-only-api/reconcile-runtime")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "provider": "runtime-only-api",
+        "persisted": False,
+        "runtime_applied": True,
+        "state": "applied",
+    }
+    assert invalidated == ["runtime-only-api"]
+    assert load_config().models.providers["runtime-only-api"].model == before
 
 
 @pytest.mark.anyio

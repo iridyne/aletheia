@@ -459,6 +459,15 @@ export interface KeyStatus {
 	last4: string | null;
 }
 
+export interface ModelRuntimeMutationResult {
+	provider: string;
+	persisted: boolean;
+	runtime_applied: boolean;
+	state: "applied" | "degraded";
+	runtime_error?: string;
+	runtime_errors?: string[];
+}
+
 export interface OhlcvCandle {
 	time: number;
 	open: number;
@@ -1309,31 +1318,38 @@ export const api = {
 			verification_identity?: string | null;
 			verification_persisted?: boolean;
 		}>("/model/ping"),
-	createModelProfile: (body: Record<string, unknown>) =>
-		post("/settings/model-profiles", body),
-	updateModelProfile: (profileId: string, body: Record<string, unknown>) =>
-		fetchJson(`/settings/model-profiles/${encodeURIComponent(profileId)}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(body),
-		}),
-	deleteModelProfile: (profileId: string) =>
-		fetchJson(
-			`/settings/model-profiles/${encodeURIComponent(profileId)}?confirm=true`,
-			{
-				method: "DELETE",
-			},
-		),
-	updateModelIntegration: (
-		integrationId: string,
-		body: Record<string, unknown>,
-	) =>
-		fetchJson(
-			`/settings/model-integrations/${encodeURIComponent(integrationId)}`,
-			{
-				method: "PATCH",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(body),
+		createModelProfile: (body: Record<string, unknown>) =>
+			post<ModelRuntimeMutationResult>("/settings/model-profiles", body),
+		updateModelProfile: (profileId: string, body: Record<string, unknown>) =>
+			fetchJson<ModelRuntimeMutationResult>(
+				`/settings/model-profiles/${encodeURIComponent(profileId)}`,
+				{
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(body),
+				},
+			),
+		deleteModelProfile: (profileId: string) =>
+			fetchJson<ModelRuntimeMutationResult & { deleted: boolean; cleared_roles: string[] }>(
+				`/settings/model-profiles/${encodeURIComponent(profileId)}?confirm=true`,
+				{
+					method: "DELETE",
+				},
+			),
+		reconcileModelProfileRuntime: (profileId: string) =>
+			post<ModelRuntimeMutationResult>(
+				`/settings/model-profiles/${encodeURIComponent(profileId)}/reconcile-runtime`,
+			),
+		updateModelIntegration: (
+			integrationId: string,
+			body: Record<string, unknown>,
+		) =>
+			fetchJson<ModelRuntimeMutationResult>(
+				`/settings/model-integrations/${encodeURIComponent(integrationId)}`,
+				{
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(body),
 			},
 		),
 	updateModelRouting: (body: {

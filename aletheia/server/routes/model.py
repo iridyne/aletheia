@@ -1077,12 +1077,58 @@ def _apply_model_config_sync(req: ModelConfigRequest, verification: dict | None 
     return cfg, pcfg
 
 
+def _model_runtime_result(*, provider_id: str, persisted: bool, errors: list[str]) -> dict:
+    result = {
+        "provider": provider_id,
+        "persisted": persisted,
+        "runtime_applied": not errors,
+        "state": "degraded" if errors else "applied",
+    }
+    if errors:
+        result["runtime_error"] = errors[0]
+        result["runtime_errors"] = errors
+    return result
+
+
+async def _reconcile_model_runtime(
+    provider_id: str,
+    *,
+    action: str,
+    persisted: bool = True,
+) -> dict:
+    errors: list[str] = []
+    try:
+        await clear_cache_async()
+    except Exception:
+        errors.append("provider_cache_reconciliation_failed")
+
+    try:
+        from aletheia.model_provider.broker import inference_broker
+
+        await inference_broker.invalidate_provider(provider_id)
+    except Exception:
+        errors.append("inference_broker_reconciliation_failed")
+
+    if errors:
+        event = {
+            "actor": "human",
+            "source": "dashboard",
+            "event_type": "model_provider_runtime_degraded",
+            "entity_type": "model_provider",
+            "entity_id": provider_id,
+            "message": f"Model provider '{provider_id}' runtime reconciliation degraded",
+            "after": {"action": action, "runtime_errors": errors},
+        }
+        try:
+            await asyncio.to_thread(write_audit, event)
+        except Exception:
+            pass
+    return _model_runtime_result(provider_id=provider_id, persisted=persisted, errors=errors)
+
+
 async def _apply_model_config(req: ModelConfigRequest, verification: dict | None = None) -> dict:
     cfg, pcfg = await asyncio.to_thread(_apply_model_config_sync, req, verification)
-    await clear_cache_async()
-    from aletheia.model_provider.broker import inference_broker
-
-    await inference_broker.invalidate_provider(req.provider)
+    runtime = await _reconcile_model_runtime(req.provider, action="apply")
     key_status = await asyncio.to_thread(_key_status, pcfg.api_key_secret_ref)
     return {
         "provider": req.provider,
@@ -1096,6 +1142,7 @@ async def _apply_model_config(req: ModelConfigRequest, verification: dict | None
             "verification_identity": pcfg.verification_identity,
             "source": pcfg.verification_source,
         },
+        **runtime,
     }
 
 
@@ -1305,11 +1352,13 @@ async def delete_model_profile(profile_id: str, confirm: bool = False):
     if not confirm:
         raise HTTPException(409, "Deleting a model profile requires confirm=true")
     result = await asyncio.to_thread(_delete_model_profile_sync, profile_id)
-    await clear_cache_async()
-    from aletheia.model_provider.broker import inference_broker
-
-    await inference_broker.invalidate_provider(profile_id)
+    result.update(await _reconcile_model_runtime(profile_id, action="delete"))
     return result
+
+
+@router.post("/settings/model-profiles/{profile_id}/reconcile-runtime")
+async def reconcile_model_profile_runtime(profile_id: str):
+    return await _reconcile_model_runtime(profile_id, action="manual_reconcile", persisted=False)
 
 
 # --- OpenAI subscription OAuth ---
