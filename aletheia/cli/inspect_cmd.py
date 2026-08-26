@@ -1200,6 +1200,9 @@ def regime(
     from aletheia.storage.repositories import list_market_regimes
     rows = list_market_regimes(limit=history)
     if not rows:
+        if json_output:
+            _output([], True)
+            return
         typer.echo("(no regime data)")
         return
     result = []
@@ -1297,6 +1300,9 @@ def calibration(
 
     stats = calibration_stats(cost_model_version=COST_MODEL_VERSION)
     if not stats:
+        if json_output:
+            _output([], True)
+            return
         typer.echo("(no calibration data)")
         return
     if json_output:
@@ -1561,6 +1567,13 @@ def reflection(
     from aletheia.agent_shell.reflection import get_last_reflection
     ref = get_last_reflection()
     if not ref:
+        if json_output:
+            _output({
+                "available": False,
+                "status": "not_run",
+                "reason": "no_reflection_state",
+            }, True)
+            return
         typer.echo("(no reflection state — System Operator hasn't made a decision yet)")
         return
     if json_output:
@@ -1982,6 +1995,13 @@ def agent_status(
     from aletheia.agent_shell.operator_store import get_latest_heartbeat
     hb = get_latest_heartbeat()
     if not hb:
+        if json_output:
+            _output({
+                "available": False,
+                "status": "not_run",
+                "reason": "no_operator_heartbeat",
+            }, True)
+            return
         typer.echo("(no heartbeat — operator agent has not run yet)")
         return
     display = {

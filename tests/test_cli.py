@@ -176,6 +176,49 @@ def test_inspect_status_json(cli_db):
     assert "orders" in data
 
 
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        (["regime", "--json"], []),
+        (["calibration", "--json"], []),
+        (["reflection", "--json"], {
+            "available": False,
+            "status": "not_run",
+            "reason": "no_reflection_state",
+        }),
+        (["agent-status", "--json"], {
+            "available": False,
+            "status": "not_run",
+            "reason": "no_operator_heartbeat",
+        }),
+    ],
+)
+def test_inspect_empty_states_stay_json(cli_db, command, expected):
+    import json as json_mod
+
+    result = runner.invoke(app, ["inspect", *command])
+
+    assert result.exit_code == 0, result.output
+    assert json_mod.loads(result.output) == expected
+    assert "(no " not in result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "message"),
+    [
+        (["regime"], "(no regime data)"),
+        (["calibration"], "(no calibration data)"),
+        (["reflection"], "(no reflection state"),
+        (["agent-status"], "(no heartbeat"),
+    ],
+)
+def test_inspect_empty_states_keep_human_messages(cli_db, command, message):
+    result = runner.invoke(app, ["inspect", *command])
+
+    assert result.exit_code == 0, result.output
+    assert message in result.output
+
+
 def test_inspect_agent_runs_uses_current_agent_run_fields(cli_db):
     import json as json_mod
 
