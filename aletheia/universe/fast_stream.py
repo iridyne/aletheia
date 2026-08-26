@@ -329,7 +329,7 @@ def fast_market_data_venue_for_config(cfg) -> str:
     """Resolve the venue supplying trigger data, including local-paper mode."""
 
     if cfg.exchange.paper_execution_mode == "paper_internal":
-        return str(cfg.market_data.ccxt_exchange or "").strip().lower() or "unknown"
+        return "bitget"
     return execution_venue_for_mode(cfg.exchange.paper_execution_mode)
 
 

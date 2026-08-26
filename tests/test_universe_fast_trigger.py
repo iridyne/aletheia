@@ -566,21 +566,21 @@ def test_frame_to_gateway_p95_is_within_local_budget(tmp_path, monkeypatch):
     assert p95 <= 250.0
 
 
-def test_local_paper_requires_an_available_exact_data_stream():
+def test_default_local_paper_uses_bitget_public_fast_stream():
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.fast_trigger import validate_fast_trigger_execution
+    from aletheia.universe.fast_stream import fast_market_data_venue_for_config
 
     cfg = AletheiaConfig()
     cfg.fast_trigger.mode = "shadow"
     cfg.exchange.paper_execution_mode = "paper_internal"
     cfg.market_data.ccxt_exchange = "binance"
 
-    assert validate_fast_trigger_execution(cfg) == (
-        "fast_trigger_stream_unavailable:binance"
-    )
+    assert fast_market_data_venue_for_config(cfg) == "bitget"
+    assert validate_fast_trigger_execution(cfg) is None
 
 
-def test_local_paper_selects_the_configured_public_data_adapter():
+def test_local_paper_selects_bitget_public_data_adapter():
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.fast_stream import (
         BitgetFastMarketStream,
@@ -591,7 +591,7 @@ def test_local_paper_selects_the_configured_public_data_adapter():
     cfg = AletheiaConfig()
     cfg.fast_trigger.mode = "shadow"
     cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.market_data.ccxt_exchange = "bitget"
+    cfg.market_data.ccxt_exchange = "binance"
 
     stream = fast_market_stream_for_config(cfg)
 

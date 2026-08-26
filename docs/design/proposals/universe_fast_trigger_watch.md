@@ -128,8 +128,8 @@ TradeProposal. Risk and broker I/O occur only after commit through
 
 `fast_trigger.mode` is `off`, `shadow`, or `execute`; the shipped default is
 `shadow`, which observes and prewarms without Gateway order authority. In
-`paper_internal`, `execute` uses the configured exact public market-data venue for the local paper
-account and local paper broker; it never submits an exchange order. For
+`paper_internal`, `execute` defaults to the Bitget public fast-data venue for trigger evidence,
+then uses the local paper account and local paper broker; it never submits an exchange order. For
 exchange-backed execution, the first executable mode is `bitget_demo` only;
 Live modes are always refused. Shadow persists the same trigger facts but does
 not call the Gateway.

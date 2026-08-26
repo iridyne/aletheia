@@ -445,7 +445,7 @@ function FastTriggerConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       </div>
       <SaveMsg msg={msg} />
       <p className="hint m-0">
-        Shadow never submits orders. Local Paper Execute uses only the configured public data stream and local broker; exchange Execute is limited to Bitget Demo. Live is always refused.
+        Shadow never submits orders. Local Paper Execute uses Bitget public fast data and the local broker; exchange Execute is limited to Bitget Demo. Live is always refused.
       </p>
     </div>
   )

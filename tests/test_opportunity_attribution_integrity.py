@@ -45,6 +45,7 @@ def test_new_opportunity_t0_forces_this_computation_snapshot(monkeypatch):
     from aletheia.storage.models import UniverseFeatureSnapshot
     from aletheia.universe import features, signal_emitter
 
+    valid_until = "2099-12-31T07:10:00+00:00"
     computed = UniverseFeatureSnapshot(
         id="feature-current",
         asset_id="asset-btc-spot",
@@ -78,6 +79,7 @@ def test_new_opportunity_t0_forces_this_computation_snapshot(monkeypatch):
         "rsi_14": computed.rsi_14,
         "funding_rate": None,
         "scanner_direction": "long",
+        "last_price": 100.0,
         "reasons": ["fresh move"],
         # The ordinary <30 minute refresh suppression reused this durable row.
         "feature_snapshot_id": "feature-previous",
@@ -95,7 +97,8 @@ def test_new_opportunity_t0_forces_this_computation_snapshot(monkeypatch):
         "venue": "fixture",
         "instrument_background": background,
         "analysis_context": instrument_analysis_context(background),
-        "expires_at": "2026-07-19T07:10:00+00:00",
+        "expires_at": valid_until,
+        "entry_price_usd": 100.0,
     }
     persisted = []
     opportunities = []
@@ -105,13 +108,15 @@ def test_new_opportunity_t0_forces_this_computation_snapshot(monkeypatch):
         lambda: "epoch",
     )
 
-    with patch.object(signal_emitter, "find_opportunity_by_symbol_snapshot", return_value=None), patch.object(
-        signal_emitter,
-        "insert_opportunity_once_by_snapshot",
-        side_effect=lambda opportunity: (
-            opportunities.append(opportunity) or opportunity.model_dump(),
-            True,
-        ),
+    with patch.object(
+        signal_emitter.repo,
+        "find_opportunity_by_symbol_snapshot",
+        return_value=None,
+    ), patch.object(
+        signal_emitter.repo,
+        "insert_opportunity_generation",
+        side_effect=lambda opportunity, _generation: opportunities.append(opportunity)
+        or opportunity,
     ), patch.object(signal_emitter, "_record_emission_decision"), patch.object(
         signal_emitter, "has_fresh_market_snapshot", return_value=True
     ), patch.object(
