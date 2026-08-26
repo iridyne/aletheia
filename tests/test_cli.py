@@ -176,6 +176,113 @@ def test_inspect_status_json(cli_db):
     assert "orders" in data
 
 
+def test_inspect_status_json_reports_fresh_zero_exchange_account(cli_db, monkeypatch):
+    """Zero equity is a real value, not a missing exchange-account fact."""
+    import json as json_mod
+
+    import aletheia.portfolio.exchange_sync as exchange_sync
+
+    monkeypatch.setattr(
+        exchange_sync,
+        "get_cached_state",
+        lambda: {"equity_usdt": 0.0, "age_seconds": 3.0},
+    )
+    monkeypatch.setattr(exchange_sync, "status_for", lambda _state: "ok")
+    monkeypatch.setattr(exchange_sync, "active_broker_view_complete", lambda: (True, "okx_demo connected"))
+
+    result = runner.invoke(app, ["inspect", "status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json_mod.loads(result.output)
+    assert data["availability"] == "available"
+    assert data["portfolio"]["equity_usdt"] == 0.0
+    assert data["portfolio"]["exchange_account"] == {
+        "status": "ok",
+        "equity_usdt": 0.0,
+        "age_sec": 3.0,
+        "complete": True,
+        "completeness_reason": "okx_demo connected",
+        "reason": None,
+    }
+
+
+def test_inspect_status_labels_stale_exchange_account(cli_db, monkeypatch):
+    import json as json_mod
+
+    import aletheia.portfolio.exchange_sync as exchange_sync
+
+    monkeypatch.setattr(
+        exchange_sync,
+        "get_cached_state",
+        lambda: {"total_equity_usdt": 123.45, "age_seconds": 999.0},
+    )
+    monkeypatch.setattr(exchange_sync, "status_for", lambda _state: "stale")
+    monkeypatch.setattr(exchange_sync, "active_broker_view_complete", lambda: (True, "okx_demo connected"))
+
+    result = runner.invoke(app, ["inspect", "status", "--json"])
+    human = runner.invoke(app, ["inspect", "status"])
+
+    assert result.exit_code == 0, result.output
+    data = json_mod.loads(result.output)
+    assert data["availability"] == "partial"
+    assert data["portfolio"]["equity_usdt"] == 123.45
+    assert data["portfolio"]["exchange_account"]["status"] == "stale"
+    assert data["portfolio"]["exchange_account"]["reason"] == "cache_stale"
+    assert human.exit_code == 0, human.output
+    assert "[exchange_account: stale]" in human.output
+    assert "exchange_account: cache_stale" in human.output
+
+
+def test_inspect_status_reports_exchange_account_read_failure(cli_db, monkeypatch):
+    import json as json_mod
+
+    import aletheia.portfolio.exchange_sync as exchange_sync
+
+    def fail_read():
+        raise RuntimeError("secret backend path leaked")
+
+    monkeypatch.setattr(exchange_sync, "get_cached_state", fail_read)
+
+    result = runner.invoke(app, ["inspect", "status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json_mod.loads(result.output)
+    assert data["availability"] == "partial"
+    account = data["portfolio"]["exchange_account"]
+    assert account["status"] == "error"
+    assert account["reason"] == "read_failed"
+    assert "secret backend path leaked" not in result.output
+
+
+def test_inspect_status_marks_incomplete_active_broker_view_partial(cli_db, monkeypatch):
+    import json as json_mod
+
+    import aletheia.portfolio.exchange_sync as exchange_sync
+
+    monkeypatch.setattr(
+        exchange_sync,
+        "get_cached_state",
+        lambda: {"equity_usdt": 1000.0, "age_seconds": 1.0},
+    )
+    monkeypatch.setattr(exchange_sync, "status_for", lambda _state: "ok")
+    monkeypatch.setattr(
+        exchange_sync,
+        "active_broker_view_complete",
+        lambda: (False, "okx_demo not connected (have ['bitget_demo'])"),
+    )
+
+    result = runner.invoke(app, ["inspect", "status", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json_mod.loads(result.output)
+    assert data["availability"] == "partial"
+    account = data["portfolio"]["exchange_account"]
+    assert account["status"] == "ok"
+    assert account["complete"] is False
+    assert account["reason"] == "active_broker_view_incomplete"
+    assert account["completeness_reason"] == "okx_demo not connected (have ['bitget_demo'])"
+
+
 def test_inspect_agent_runs_uses_current_agent_run_fields(cli_db):
     import json as json_mod
 
