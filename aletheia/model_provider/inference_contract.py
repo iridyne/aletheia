@@ -232,10 +232,21 @@ class InferenceCall:
     max_tokens: int
     allow_model_fallback: bool
     evaluation: dict[str, str] = field(default_factory=dict)
+    resolved_provider: str | None = field(default=None, init=False)
+    last_attempted_model: str | None = field(default=None, init=False)
     _attempt_index: int = field(default=0, init=False, repr=False)
     _attempt_lock: threading.Lock = field(
         default_factory=threading.Lock, init=False, repr=False
     )
+
+    def set_resolved_provider(self, provider: str | None) -> None:
+        with self._attempt_lock:
+            self.resolved_provider = _bounded(provider)
+
+    def record_attempt_identity(self, provider: str | None, model: str | None) -> None:
+        with self._attempt_lock:
+            self.resolved_provider = _bounded(provider) or self.resolved_provider
+            self.last_attempted_model = _bounded(model)
 
     def claim_attempt_index(self) -> int:
         with self._attempt_lock:

@@ -11,6 +11,7 @@ async def _make_async_provider(provider):
 import asyncio
 import json
 import sqlite3
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -41,9 +42,44 @@ class _RepairProvider(ModelProvider):
         )
 
 
+class _FailingProvider(ModelProvider):
+    name = "harness_failing"
+
+    def __init__(self, provider_name: str, model: str) -> None:
+        self.model = model
+        self._aletheia_provider_name = provider_name
+
+    async def complete(self, _request):
+        raise RuntimeError("429 transient failure")
+
+
 async def _physical_complete(request, *, provider=None, provider_name=None):
     assert provider is not None
     return await provider.complete(request)
+
+
+async def _direct_brokered_complete(_provider_name, provider, request, **_kwargs):
+    return await provider.complete(request)
+
+
+def _fallback_cfg(default_provider: str, fallback_models: list[str]):
+    return SimpleNamespace(
+        economics=SimpleNamespace(
+            enabled=False,
+            budgets_shadow_enabled=False,
+            prompt_guardrail_detection_enabled=False,
+            enforcement_mode="warn_only",
+        ),
+        models=SimpleNamespace(
+            default_provider=default_provider,
+            providers={
+                default_provider: SimpleNamespace(
+                    model_fallback_enabled=True,
+                    fallback_models=fallback_models,
+                )
+            },
+        ),
+    )
 
 
 @pytest.mark.asyncio
@@ -88,6 +124,153 @@ async def test_structured_repair_attempts_share_one_logical_call():
         (logical["logical_call_id"],),
     ).fetchall()
     assert [tuple(row) for row in outcomes] == [(0, "schema_invalid"), (1, "accepted")]
+
+
+@pytest.mark.asyncio
+async def test_default_provider_failure_keeps_final_attempt_identity():
+    from aletheia.agents import helpers
+    from aletheia.model_provider import fallback
+
+    provider = _FailingProvider("default-api", "primary-model")
+    cfg = _fallback_cfg("default-api", [])
+    with (
+        patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(provider)),
+        patch.object(fallback, "load_config", lambda: cfg),
+        patch.object(fallback, "brokered_complete", _direct_brokered_complete),
+    ):
+        content, error = await helpers.llm_complete(
+            "system",
+            "user",
+            caller="research_worker.lens",
+            allow_model_fallback=False,
+        )
+
+    assert content is None
+    assert error is not None
+    db = get_db()
+    logical = db.execute(
+        "SELECT logical_call_id,status,attempt_count,final_provider,final_model,error_type "
+        "FROM llm_inference_calls WHERE caller='research_worker.lens' "
+        "ORDER BY started_at DESC LIMIT 1"
+    ).fetchone()
+    assert logical is not None
+    assert dict(logical) == {
+        "logical_call_id": logical["logical_call_id"],
+        "status": "error",
+        "attempt_count": 1,
+        "final_provider": "default-api",
+        "final_model": "primary-model",
+        "error_type": "RuntimeError",
+    }
+    physical = db.execute(
+        "SELECT provider,model_or_tool,status FROM runtime_cost_events WHERE call_id=?",
+        (logical["logical_call_id"],),
+    ).fetchone()
+    assert dict(physical) == {
+        "provider": "default-api",
+        "model_or_tool": "primary-model",
+        "status": "error",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.real_llm
+async def test_exhausted_model_fallback_keeps_last_attempted_model():
+    from aletheia.economics.inference_calls import (
+        record_inference_finished,
+        record_inference_started,
+    )
+    from aletheia.model_provider import fallback
+    from aletheia.model_provider.base import ModelRequest
+    from aletheia.model_provider.inference_contract import build_inference_call
+
+    provider = _FailingProvider("default-api", "primary-model")
+    cfg = _fallback_cfg("default-api", ["fallback-a", "fallback-b"])
+    call = build_inference_call(
+        caller="research_worker.claims",
+        system="system",
+        messages=[{"role": "user", "content": "user"}],
+        context_adapter_id="none",
+    )
+    assert record_inference_started(call)
+    with (
+        patch.object(fallback, "load_config", lambda: cfg),
+        patch.object(fallback, "brokered_complete", _direct_brokered_complete),
+        patch.object(fallback, "emit_infra_event", lambda **_kwargs: True),
+    ):
+        with pytest.raises(RuntimeError):
+            await fallback.complete_with_fallback(
+                ModelRequest(
+                    messages=[{"role": "user", "content": "user"}],
+                    system="system",
+                    inference=call,
+                ),
+                provider=provider,
+                provider_name=None,
+            )
+    assert record_inference_finished(
+        call,
+        status="error",
+        error_type="RuntimeError",
+    )
+
+    db = get_db()
+    logical = db.execute(
+        "SELECT logical_call_id,status,attempt_count,final_provider,final_model,error_type "
+        "FROM llm_inference_calls WHERE logical_call_id=?",
+        (call.logical_call_id,),
+    ).fetchone()
+    assert logical is not None
+    assert dict(logical) == {
+        "logical_call_id": logical["logical_call_id"],
+        "status": "error",
+        "attempt_count": 3,
+        "final_provider": "default-api",
+        "final_model": "fallback-b",
+        "error_type": "RuntimeError",
+    }
+    attempts = db.execute(
+        "SELECT model_or_tool,status FROM runtime_cost_events WHERE call_id=? ORDER BY attempt_index",
+        (logical["logical_call_id"],),
+    ).fetchall()
+    assert [tuple(row) for row in attempts] == [
+        ("primary-model", "error"),
+        ("fallback-a", "error"),
+        ("fallback-b", "error"),
+    ]
+
+
+def test_pre_provider_denial_does_not_fabricate_final_model():
+    from aletheia.economics.inference_calls import (
+        record_inference_finished,
+        record_inference_started,
+    )
+    from aletheia.model_provider.inference_contract import build_inference_call
+
+    call = build_inference_call(
+        caller="research_worker.themes",
+        system="system",
+        messages=[{"role": "user", "content": "user"}],
+        context_adapter_id="none",
+    )
+    call.set_resolved_provider("default-api")
+    assert record_inference_started(call)
+    assert record_inference_finished(
+        call, status="error", error_type="llm_budget_exhausted"
+    )
+
+    logical = get_db().execute(
+        "SELECT status,attempt_count,final_provider,final_model,error_type "
+        "FROM llm_inference_calls WHERE logical_call_id=?",
+        (call.logical_call_id,),
+    ).fetchone()
+    assert dict(logical) == {
+        "status": "error",
+        "attempt_count": 0,
+        "final_provider": "default-api",
+        "final_model": None,
+        "error_type": "llm_budget_exhausted",
+    }
 
 
 @pytest.mark.asyncio
