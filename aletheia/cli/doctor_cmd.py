@@ -182,6 +182,22 @@ def _write_bundle(path: Path, report, diagnostics: dict, fix_actions=None) -> Pa
     return path
 
 
+def _format_fix_action(action) -> str:
+    if not isinstance(action, dict):
+        return str(action)
+    name = action.get("action", "fix")
+    status = action.get("status", "unknown")
+    reason = action.get("reason") or action.get("detail") or action.get("error_type")
+    return f"{name}: {status}" + (f" ({reason})" if reason else "")
+
+
+def _fix_actions_failed(fix_actions) -> bool:
+    return any(
+        isinstance(action, dict) and action.get("status") == "failed"
+        for action in fix_actions or []
+    )
+
+
 @doctor_app.callback(invoke_without_command=True)
 def doctor(
     fix: bool = typer.Option(False, "--fix", help="Apply conservative infra repairs (start gateway, clear orphans). Never clears kill switch."),
@@ -236,7 +252,7 @@ def doctor(
         if fix_actions is not None:
             out["fix_actions"] = fix_actions
         typer.echo(json.dumps(out, ensure_ascii=False, indent=2))
-        raise typer.Exit(1 if report.blockers else 0)
+        raise typer.Exit(1 if report.blockers or _fix_actions_failed(fix_actions) else 0)
 
     _print_report(report)
     diagnostics = None
@@ -249,7 +265,7 @@ def doctor(
         typer.echo("\nApplying fixes (--fix)...")
         fix_actions = dx.apply_fixes()
         for action in fix_actions:
-            typer.echo(f"  - {action}")
+            typer.echo(f"  - {_format_fix_action(action)}")
         typer.echo("\nRe-probing after fixes:")
         report = dx.build_report()
         _print_report(report)
@@ -262,4 +278,4 @@ def doctor(
         written = _write_bundle(bundle, report, diagnostics, fix_actions=fix_actions)
         typer.echo(f"\nDiagnostic bundle written: {written}")
 
-    raise typer.Exit(1 if report.blockers else 0)
+    raise typer.Exit(1 if report.blockers or _fix_actions_failed(fix_actions) else 0)

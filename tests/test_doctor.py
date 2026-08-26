@@ -819,6 +819,84 @@ def test_doctor_cli_bundle_writes_redacted_diagnostic_file(tmp_path, monkeypatch
     assert "[REDACTED]" in text
 
 
+def test_apply_fixes_suppresses_lifecycle_stdout_and_structures_typer_exit(monkeypatch, capsys):
+    import typer
+
+    import aletheia.gateway.git_hooks as git_hooks
+    import aletheia.gateway.lifecycle as lifecycle
+    import aletheia.gateway.pidfile as pidfile
+
+    monkeypatch.setattr(git_hooks, "remove_managed_git_hooks", lambda: [])
+    monkeypatch.setattr(pidfile, "is_running", lambda: False)
+
+    def fake_start(*, no_browser: bool, foreground: bool):
+        assert no_browser is True
+        assert foreground is False
+        typer.echo("Port 8787 is still in use by a foreign process.")
+        raise typer.Exit(1)
+
+    monkeypatch.setattr(lifecycle, "do_start", fake_start)
+
+    actions = dx.apply_fixes()
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+    assert actions == [
+        {
+            "action": "gateway_start",
+            "status": "failed",
+            "reason": "foreign_port_holder",
+            "exit_code": 1,
+        }
+    ]
+
+
+def test_doctor_json_fix_bundle_remains_machine_readable_after_start_exit(tmp_path, monkeypatch):
+    import json
+    import typer
+    from typer.testing import CliRunner
+
+    import aletheia.gateway.git_hooks as git_hooks
+    import aletheia.gateway.lifecycle as lifecycle
+    import aletheia.gateway.pidfile as pidfile
+    from aletheia.main import app
+
+    setup_env(tmp_path, monkeypatch)
+    reports = iter([dx.Report(generated_at="before"), dx.Report(generated_at="after")])
+    monkeypatch.setattr(dx, "build_report", lambda **_kwargs: next(reports))
+    monkeypatch.setattr(
+        dx,
+        "build_deep_diagnostics",
+        lambda report: {"post_fix_report_generated_at": report.generated_at},
+    )
+    monkeypatch.setattr(git_hooks, "remove_managed_git_hooks", lambda: [])
+    monkeypatch.setattr(pidfile, "is_running", lambda: False)
+
+    def fake_start(*, no_browser: bool, foreground: bool):
+        typer.echo("Starting Aletheia gateway on http://127.0.0.1:8787 (background)...")
+        raise typer.Exit(1)
+
+    monkeypatch.setattr(lifecycle, "do_start", fake_start)
+    bundle_path = tmp_path / "doctor.json"
+
+    result = CliRunner().invoke(
+        app,
+        ["doctor", "--json", "--fix", "--bundle", str(bundle_path)],
+    )
+
+    assert result.exit_code == 1
+    assert "Starting Aletheia gateway" not in result.stdout
+    payload = json.loads(result.stdout)
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    assert payload["generated_at"] == "after"
+    assert bundle["generated_at"] == "after"
+    assert payload["diagnostics"] == bundle["diagnostics"]
+    assert payload["fix_actions"] == bundle["fix_actions"]
+    assert payload["fix_actions"][0]["status"] == "failed"
+    assert payload["fix_actions"][0]["reason"] == "gateway_start_exited"
+
+
 # --- end-to-end: probes must never raise, even on a fresh/empty environment ---
 
 def test_build_report_runs_and_covers_all_dimensions():
