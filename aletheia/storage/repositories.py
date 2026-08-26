@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from aletheia.data.symbols import to_canonical
 from aletheia.storage.models import (
@@ -2383,6 +2383,25 @@ def _compute_proposal_hash(p: TradeProposal) -> str:
 
     payload = p.model_dump(exclude=_PROPOSAL_HASH_EXCLUDES)
     return sha256_json(payload)[:16]
+
+
+def validate_trade_proposal_commit_hash(
+    proposal: TradeProposal | Mapping[str, object],
+) -> str:
+    """Return the stored Proposal hash only if immutable content still matches it."""
+    try:
+        stored = (
+            proposal
+            if isinstance(proposal, TradeProposal)
+            else TradeProposal.model_validate(proposal)
+        )
+    except ValidationError as exc:
+        raise ValueError("stored proposal content cannot be validated") from exc
+    if stored.commit_hash is None:
+        raise ValueError("stored proposal has no commit hash")
+    if _compute_proposal_hash(stored) != stored.commit_hash:
+        raise ValueError("stored proposal content does not match commit hash")
+    return stored.commit_hash
 
 
 def insert_trade_proposal(

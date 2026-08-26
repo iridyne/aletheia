@@ -33,6 +33,7 @@ from aletheia.storage.repositories import (
     list_unresolved_native_entry_orders_for_risk,
     transaction,
     update_trade_proposal,
+    validate_trade_proposal_commit_hash,
 )
 from aletheia.trading.entry_plan import (
     RISK_REWARD_OUTSIDE_ENVELOPE,
@@ -1411,12 +1412,10 @@ def _verified_original_proposal_commit_hash(
     row = get_trade_proposal(proposal.id)
     if row is not None:
         stored = TradeProposal.model_validate(row)
-        if stored.commit_hash is None:
-            raise ProposalIntegrityError("stored proposal has no commit hash")
-        if _compute_proposal_hash(stored) != stored.commit_hash:
-            raise ProposalIntegrityError(
-                "stored proposal content does not match commit hash"
-            )
+        try:
+            validate_trade_proposal_commit_hash(stored)
+        except ValueError as exc:
+            raise ProposalIntegrityError(str(exc)) from exc
         if require_evaluated_snapshot_match:
             # Venue preparation may normalize quantity, but every other field
             # covered by the original Proposal hash must remain identical. Put
