@@ -1190,9 +1190,9 @@ def test_concurrent_replay_workers_invoke_hook_once(tmp_path, monkeypatch):
             outcome_hooks.process_outcome_hook_jobs,
             position_id=position.id,
         )
-        second_result = second.result(timeout=10)
         release.set()
         first_result = first.result(timeout=10)
+        second_result = second.result(timeout=10)
 
     [job] = repo.list_outcome_hook_jobs(position_id=position.id)
     assert sorted([first_result["claimed"], second_result["claimed"]]) == [0, 1]

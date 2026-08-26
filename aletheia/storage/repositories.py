@@ -5233,12 +5233,17 @@ def insert_serenity_post_mortem(p: SerenityPostMortem) -> bool:
 
 
 def list_serenity_post_mortems(opportunity_id: str | None = None, limit: int = 100) -> list[dict]:
-    where: str | None = None
+    conditions = ["invalidated_at IS NULL"]
     params: list = []
     if opportunity_id is not None:
-        where = "opportunity_id = ?"
+        conditions.append("opportunity_id = ?")
         params.append(opportunity_id)
-    return _select_all("serenity_post_mortems", where=where, params=tuple(params), limit=limit)
+    return _select_all(
+        "serenity_post_mortems",
+        where=" AND ".join(conditions),
+        params=tuple(params),
+        limit=limit,
+    )
 
 
 # --- Durable Outcome hook outbox ---
@@ -7915,6 +7920,8 @@ def _shadow_candidate_identity_sql(
 
 def valid_keyed_shadow_projection_sql(
     shadow_alias: str = "shadow_trades",
+    *,
+    require_not_invalidated: bool = True,
 ) -> str:
     """Require one keyed shadow net to equal its canonical settled 24h outcome."""
     shadow = f"{shadow_alias}." if shadow_alias else ""
@@ -7935,7 +7942,8 @@ def valid_keyed_shadow_projection_sql(
         f"AND {shadow}{shadow_field} = {outcome}{outcome_field}"
         for shadow_field, outcome_field in numeric_pairs
     )
-    return (
+    invalidation = f"{shadow}invalidated_at IS NULL AND " if require_not_invalidated else ""
+    return invalidation + (
         "EXISTS (SELECT 1 FROM filter_candidate_outcomes AS canonical_outcome "
         f"WHERE {outcome}outcome_candidate_key = {shadow}outcome_candidate_key "
         f"AND {outcome}horizon = '24h' "
@@ -10585,7 +10593,7 @@ def list_shadow_trades(
     resolved: bool | None = None,
     limit: int = 200,
 ) -> list[dict]:
-    conditions: list[str] = []
+    conditions: list[str] = ["invalidated_at IS NULL"]
     params: list = []
     if batch_id is not None:
         conditions.append("batch_id = ?")

@@ -1588,6 +1588,47 @@ def test_delayed_funding_materialization_converges_every_projection_once(
     assert len(repairs) == 1
 
 
+def test_invalidated_position_cannot_be_rematerialized(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    from datetime import timedelta
+    from aletheia.portfolio.paper_account import (
+        invalidate_paper_position_economics,
+        materialize_position_economics,
+    )
+
+    closed_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    position_id = "invalidated-materialization"
+    _seed_stuck_paper_close(
+        position_id=position_id,
+        symbol="BTC/USDT",
+        closed_at=closed_at,
+    )
+    _seed_null_close_event(position_id, closed_at.isoformat())
+    evidence = _complete_recovered_funding(position_id, cost=0.02)
+    materialize_position_economics(
+        position_id,
+        realized_pnl=0.36,
+        funding_cost=0.02,
+        funding_evidence=evidence,
+        outcome_eligible=True,
+        outcome_exclusion_reason="eligible",
+    )
+    invalidate_paper_position_economics(position_id)
+
+    with pytest.raises(ValueError, match="invalidated paper economics"):
+        materialize_position_economics(
+            position_id,
+            realized_pnl=0.36,
+            funding_cost=0.02,
+            funding_evidence=evidence,
+            outcome_eligible=True,
+            outcome_exclusion_reason="eligible",
+            allow_correction=True,
+        )
+
+
 @spec_claim(
     SpecClaim(
         "PFA-MAT-02",

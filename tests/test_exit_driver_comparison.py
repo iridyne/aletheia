@@ -65,6 +65,18 @@ def test_empty():
     assert "no closed positions" in format_comparison({})
 
 
+def test_unavailable_or_non_finite_economics_are_not_zero_return_samples():
+    stats = compare_exit_outcomes([
+        _row("stop_loss", None),
+        _row("take_profit", float("nan")),
+        _row("take_profit", 5.0),
+    ])
+
+    assert stats["rule"].count == 1
+    assert stats["rule"].total_pnl == 5.0
+    assert stats["rule"].win_rate == 1.0
+
+
 def test_format_smoke():
     stats = compare_exit_outcomes([_row("operator_close", 10.0), _row("stop_loss", -5.0)])
     out = format_comparison(stats)
