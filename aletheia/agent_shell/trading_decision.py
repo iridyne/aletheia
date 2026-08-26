@@ -1836,24 +1836,9 @@ async def submit_decision_as_proposal(decision: TradingDecision, execution_mode:
     if proposal is None:
         return prepared
 
-    from aletheia.execution.paper_tools import create_paper_proposal
+    from aletheia.execution.paper_tools import submit_prepared_paper_proposal
 
-    return create_paper_proposal(
-        symbol=proposal.symbol,
-        market_type=proposal.market_type,
-        direction=proposal.direction,
-        order_type=proposal.order_type,
-        quantity=proposal.quantity,
-        price=proposal.price,
-        leverage=proposal.leverage,
-        stop_price=proposal.stop_price,
-        take_profit=proposal.take_profit,
-        risk_reward=proposal.risk_reward,
-        execution_mode=proposal.execution_mode,
-        opportunity_id=proposal.opportunity_id,
-        agent_rationale=proposal.agent_rationale,
-        trade_school=proposal.trade_school,
-    )
+    return submit_prepared_paper_proposal(proposal)
 
 
 _ENTRY_PARAMETER_KEYS = (
