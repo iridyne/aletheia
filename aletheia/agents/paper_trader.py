@@ -55,7 +55,8 @@ _PERMANENT_SKIP_PREFIXES = (
     "equity_shadow_track", "execution_eligible=False", "universe_not_eligible",
     "ttl_expired", "ttl_invalid", "factor_hard_blocked", "okx_demo_symbol_not_supported",
     "symbol_not_allowed:", "producer_not_authorized", "producer_eligibility_",
-    "instrument_background_", "unsupported_asset_class:",
+    "instrument_background_", "instrument_analysis_context_",
+    "unsupported_analysis_context:",
     "regime_confidence_standdown", "regime_sideways_standdown",
     "family_not_demo_eligible", "reverse_after_stop",
     "committee_direction_conflict",
@@ -493,7 +494,12 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             enrich_candidates_parallel,
         )
 
-        _candidates_to_enrich = [c for c in candidates if not c.get("skip_reason")]
+        _candidates_to_enrich = [
+            c for c in candidates
+            if not c.get("skip_reason")
+            and (c.get("analysis_context") or {}).get("kind")
+            != "stock_linked_perp"
+        ]
         if _candidates_to_enrich:
             _enriched_llm = await enrich_candidates_parallel(
                 _candidates_to_enrich, max_concurrency=8, total_timeout=240.0,

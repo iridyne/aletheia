@@ -3,6 +3,10 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
+from aletheia.data.symbols import (
+    build_instrument_background,
+    instrument_analysis_context,
+)
 from aletheia.universe.signal_emitter import _infer_direction, emit_deterministic_opportunities
 
 
@@ -127,14 +131,16 @@ def _make_member(symbol, family, score, member_id=None, expires="2099-01-01T00:0
 
 def _make_feat(symbol, **kw):
     market_type = kw.get("market_type", "spot")
-    feat = {"symbol": symbol, "return_1h": 1.5, "return_4h": 3.0, "rsi_14": 60,
+    venue = kw.get("venue", "fixture")
+    feat = {"symbol": symbol, "venue": venue, "return_1h": 1.5, "return_4h": 3.0, "rsi_14": 60,
             "funding_rate": None, "reasons": [f"{symbol} 1h +1.5%"]}
     feat["instrument_background"] = {
         "version": "instrument-background/v1",
         "status": "complete",
-        "venue": "fixture",
+        "venue": venue,
         "symbol": symbol,
         "market_type": market_type,
+        "physical_market_type": market_type,
         "asset_class": "crypto",
         "product_kind": (
             "crypto_perpetual" if market_type == "perp" else "crypto_spot"
@@ -143,13 +149,17 @@ def _make_feat(symbol, **kw):
         "relationship": (
             "tracks_reference_price" if market_type == "perp" else "direct_asset"
         ),
+        "classification": {"source": "test_fixture"},
     }
+    feat["analysis_context"] = instrument_analysis_context(
+        feat["instrument_background"]
+    )
     feat.update(kw)
     return feat
 
 
 class TestEmitDeterministicOpportunities:
-    def _run(self, members, feats, existing=None, inserted=None):
+    def _run(self, members, feats, existing=None, inserted=None, regime=None):
         if inserted is None:
             inserted = []
 
@@ -160,12 +170,29 @@ class TestEmitDeterministicOpportunities:
             inserted.append(opp)
             return opp.model_dump(), True
 
+        by_key = {
+            (feat["symbol"], feat.get("market_type", "spot")): feat
+            for feat in feats
+        }
+        for member in members:
+            feature = by_key.get((member["symbol"], member.get("market_type", "spot")))
+            if feature:
+                member.setdefault("venue", feature.get("venue", "fixture"))
+                member.setdefault(
+                    "instrument_background", feature.get("instrument_background")
+                )
+                member.setdefault("analysis_context", feature.get("analysis_context"))
+
         with patch("aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot",
                    side_effect=_fake_find), \
              patch("aletheia.universe.signal_emitter.insert_opportunity_once_by_snapshot",
                    side_effect=_fake_insert), \
+             patch("aletheia.universe.signal_emitter.has_fresh_market_snapshot",
+                   return_value=True), \
              patch("aletheia.universe.signal_emitter._record_emission_decision"):
-            count = emit_deterministic_opportunities(members, "snap-1", feats)
+            count = emit_deterministic_opportunities(
+                members, "snap-1", feats, regime=regime
+            )
 
         return count, inserted
 
@@ -188,11 +215,58 @@ class TestEmitDeterministicOpportunities:
         assert count == 1
         assert opps[0].confidence == "medium"
 
-    def test_rejects_non_crypto_instrument_background(self):
+    def test_emits_supported_stock_linked_perp_without_crypto_regime(self):
         members = [_make_member("SOXL/USDT", "momentum", 75)]
         members[0]["market_type"] = "perp"
-        feature = _make_feat("SOXL/USDT", market_type="perp")
-        feature["instrument_background"]["asset_class"] = "equity"
+        background = build_instrument_background(
+            symbol="SOXL/USDT:USDT",
+            venue="binance",
+            market_type="perp",
+            market_info={
+                "symbol": "SOXL/USDT:USDT",
+                "base": "SOXL",
+                "quote": "USDT",
+                "info": {
+                    "contractType": "TRADIFI_PERPETUAL",
+                    "underlyingType": "EQUITY",
+                },
+            },
+        )
+        feature = _make_feat(
+            "SOXL/USDT", market_type="perp", venue="binance",
+            instrument_background=background,
+            analysis_context=instrument_analysis_context(background),
+        )
+
+        count, opps = self._run(
+            members,
+            [feature],
+            inserted=[],
+            regime=type("Regime", (), {
+                "state": "bear", "confidence": 1.0,
+                "long_bias": 0.0, "short_bias": 1.0,
+            })(),
+        )
+
+        assert count == 1
+        assert opps[0].asset_class == "equity"
+        assert opps[0].asset_subclass == "stock_linked_perp"
+        assert opps[0].market == "perp"
+        assert opps[0].execution_eligible is True
+        assert opps[0].regime_tag is None
+        metadata = __import__("json").loads(opps[0].metadata)
+        assert metadata["instrument_background"] == background
+        assert metadata["analysis_context"]["kind"] == "stock_linked_perp"
+
+    def test_rejects_arbitrary_unsupported_equity_context(self):
+        members = [_make_member("ACME/USDT", "momentum", 75)]
+        members[0]["market_type"] = "perp"
+        feature = _make_feat("ACME/USDT", market_type="perp")
+        feature["instrument_background"].update({
+            "asset_class": "equity",
+            "product_kind": "tradifi_perpetual",
+        })
+        feature["analysis_context"] = None
 
         count, opps = self._run(members, [feature])
 
@@ -242,7 +316,9 @@ class TestEmitDeterministicOpportunities:
             return_value={"status": "watch"},
         ):
             assert emit_deterministic_opportunities(
-                [member], "snap-1", [_make_feat("BTC/USDT", market_type="perp")],
+                [member], "snap-1", [
+                    _make_feat("BTC/USDT", market_type="perp", venue="okx")
+                ],
                 regime=regime,
             ) == 0
 
@@ -282,7 +358,7 @@ class TestEmitDeterministicOpportunities:
             [member],
             "snap-1",
             [_make_feat(
-                "BTC/USDT", market_type="perp", return_4h=3.0,
+                "BTC/USDT", market_type="perp", venue="okx", return_4h=3.0,
                 rsi_14=60, funding_rate=0.02,
             )],
         ) == 0

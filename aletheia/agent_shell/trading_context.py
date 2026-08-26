@@ -23,7 +23,10 @@ from aletheia.analytics.outcome_integrity import (
     eligible_strategy_outcomes,
 )
 from aletheia.data.position_x import build_position_x_agent_context
-from aletheia.data.symbols import instrument_background_from_metadata
+from aletheia.data.symbols import (
+    instrument_analysis_context_from_metadata,
+    instrument_background_from_metadata,
+)
 
 logger = logging.getLogger("aletheia.agent_shell.trading_context")
 
@@ -104,6 +107,10 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
                 item.get("market_type") or item.get("market")
             ),
             "scanner_family": item.get("scanner_family"),
+            "asset_class": item.get("asset_class"),
+            "asset_subclass": item.get("asset_subclass"),
+            "instrument_background": item.get("instrument_background"),
+            "analysis_context": item.get("analysis_context"),
             "asset_id": item.get("asset_id"),
             "rank_priority": _score(item.get("trade_score")),
             "reasoning": " ".join(str(item.get("reasoning") or "").split()).lower(),
@@ -171,7 +178,8 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
     material_feature_fields = (
         "rsi_15m", "return_15m", "last_candle_range_atr_15m",
         "return_1h", "return_4h", "return_24h", "funding_rate",
-        "oi_delta_1h", "taker_buy_ratio", "vol_ratio",
+        "open_interest", "oi_delta_1h", "spread_bps", "depth_10bps_usd",
+        "quote_volume_24h", "taker_buy_ratio", "vol_ratio",
         "relative_strength_24h", "oi_price_divergence", "rsi_4h",
         "bb_width_4h", "vol_ratio_4h", "bb_squeeze", "crowding_signal",
     )
@@ -220,6 +228,7 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
         },
         "wake_context": ctx.get("wake_context"),
         "regime": layer1.get("regime") or layer1.get("market_regime"),
+        "regime_applicability": layer1.get("regime_applicability"),
         "pending": sorted(pending, key=key),
         "executable": sorted(executable, key=key),
         "entry_mark": _entry_mark(layer2.get("entry_mark")),
@@ -274,7 +283,8 @@ def operator_decision_context_fingerprint(ctx: dict[str, Any]) -> str:
 _MATERIAL_FP_FEATURE_FIELDS: tuple[str, ...] = (
     "rsi_15m", "return_15m", "last_candle_range_atr_15m",
     "return_1h", "return_4h", "return_24h", "funding_rate",
-    "oi_delta_1h", "taker_buy_ratio", "vol_ratio",
+    "open_interest", "oi_delta_1h", "spread_bps", "depth_10bps_usd",
+    "quote_volume_24h", "taker_buy_ratio", "vol_ratio",
     "relative_strength_24h", "oi_price_divergence", "rsi_4h",
     "bb_width_4h", "vol_ratio_4h", "bb_squeeze",
     "technical_algorithm_version", "technical_1h_input_fingerprint",
@@ -336,13 +346,14 @@ def operator_decision_material_fingerprint(
     module comment above for what is included/excluded and why. (#321)
     """
     projection = {
-        "version": "operator-decision-material-v2",
+        "version": "operator-decision-material-v3",
         "symbol": str(symbol or ""),
         "direction": _normalize_direction(direction),
         "market_type": _normalize_market_type(market_type),
         "scanner_family": str(scanner_family or ""),
         "regime": None if regime is None else str(regime),
         "instrument_background": (features or {}).get("instrument_background"),
+        "analysis_context": (features or {}).get("analysis_context"),
         "features": {
             field: _material_feature_value(features or {}, field)
             for field in _MATERIAL_FP_FEATURE_FIELDS
@@ -390,6 +401,7 @@ def material_fingerprint_from_candidate_ctx(
     features = {
         **features,
         "instrument_background": candidate.get("instrument_background"),
+        "analysis_context": candidate.get("analysis_context"),
     }
     return operator_decision_material_fingerprint(
         symbol=symbol,
@@ -397,7 +409,12 @@ def material_fingerprint_from_candidate_ctx(
         market_type=market_type,
         scanner_family=candidate.get("scanner_family"),
         features=features,
-        regime=layer1.get("regime") or layer1.get("market_regime"),
+        regime=(
+            None
+            if (candidate.get("analysis_context") or {}).get("kind")
+            == "stock_linked_perp"
+            else layer1.get("regime") or layer1.get("market_regime")
+        ),
     )
 
 
@@ -450,6 +467,33 @@ def scope_operator_context_to_candidate(
     symbol = selected.get("symbol")
     market_type = _normalize_market_type(selected.get("market_type"))
     asset_id = selected.get("asset_id")
+    analysis_context = selected.get("analysis_context") or {}
+    stock_linked = analysis_context.get("kind") == "stock_linked_perp"
+
+    if stock_linked:
+        layer1["regime"] = None
+        layer1["market_regime"] = None
+        layer1["regime_applicability"] = {
+            "status": "not_applicable",
+            "reason": "stock_linked_perp_uses_instrument_local_context",
+        }
+        layer1["factor_feedback"] = []
+        for key, empty in (
+            ("outcome_stats", None), ("per_symbol", []),
+            ("trade_analytics", None), ("strategies", []),
+            ("trading_memo", None), ("reasoning_feedback", None),
+            ("calibration_feedback", None), ("reflection", None),
+        ):
+            layer2[key] = empty
+        selected["b2_evidence"] = {
+            "status": "not_applicable",
+            "reason": "pre_policy_crypto_family_prior_excluded",
+        }
+        layer3 = scoped.get("layer3") or {}
+        layer3["lessons"] = []
+        layer3["ps_lessons"] = []
+        layer3["guard_candidates"] = []
+        scoped["layer3"] = layer3
 
     def _same_instrument(row: dict[str, Any]) -> bool:
         if asset_id:
@@ -476,6 +520,10 @@ def scope_operator_context_to_candidate(
         "market_type": selected.get("market_type"),
         "asset_id": asset_id,
         "venue": selected.get("venue"),
+        "asset_class": selected.get("asset_class"),
+        "asset_subclass": selected.get("asset_subclass"),
+        "instrument_background": selected.get("instrument_background"),
+        "analysis_context": analysis_context,
     }
 
     layer1["features"] = [
@@ -486,10 +534,30 @@ def scope_operator_context_to_candidate(
         for key, row in (layer1.get("feature_index") or {}).items()
         if _same_instrument(row)
     }
+    if stock_linked:
+        for row in layer1["features"] + list(layer1["feature_index"].values()):
+            for field in (
+                "relative_strength_24h", "relative_strength_4h",
+                "btc_beta", "rs_beta_adj_24h",
+            ):
+                row[field] = None
+            row["analysis_context"] = analysis_context
     layer1["opportunities"] = [
         row for row in (layer1.get("opportunities") or [])
         if row.get("id") == opportunity_id
     ]
+    if stock_linked:
+        for row in layer1["opportunities"]:
+            row["observer_assessment"] = {
+                "status": "not_applicable",
+                "reason": "mixed_crypto_observer_context_excluded",
+            }
+            manifest = row.get("evidence_manifest")
+            if isinstance(manifest, dict):
+                manifest["t1"] = {
+                    "status": "not_applicable",
+                    "reason": "stock_linked_perp_uses_instrument_local_context",
+                }
     layer3 = scoped.get("layer3") or {}
     layer3["serenity_opportunities"] = [
         row for row in (layer3.get("serenity_opportunities") or [])
@@ -906,7 +974,13 @@ def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str,
     )
     venue = feature.get("venue") if feature else None
     facts = candidate_fact_bundle(ctx, opportunity_id=opportunity_id)
-
+    instrument_background = instrument_background_from_metadata(
+        opportunity.get("metadata") if opportunity else None
+    )
+    analysis_context = instrument_analysis_context_from_metadata(
+        opportunity.get("metadata") if opportunity else None
+    )
+    stock_linked = (analysis_context or {}).get("kind") == "stock_linked_perp"
     unavailable = {"status": "unavailable"}
     serenity_context = next(
         (
@@ -975,6 +1049,11 @@ def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str,
             if opportunity_evidence and isinstance(opportunity_evidence.get("t1"), dict)
             else unavailable
         )
+    if stock_linked:
+        opportunity_t1 = {
+            "status": "not_applicable",
+            "reason": "stock_linked_perp_uses_instrument_local_context",
+        }
 
     rendered_opportunity = next(
         (
@@ -1123,13 +1202,30 @@ def build_decision_evidence_manifest(ctx: dict[str, Any], decision) -> dict[str,
             "universe_rank": member.get("rank") if member else None,
             "universe_total_score": member.get("total_score") if member else None,
             "risk_flags": _json_list(member.get("risk_flags")) if member else [],
-            "instrument_background": instrument_background_from_metadata(
-                opportunity.get("metadata") if opportunity else None
-            ),
+            "instrument_background": instrument_background,
+            "analysis_context": analysis_context,
         },
-        "b2_candidate_evidence": facts["b2"],
-        "market_regime": facts["regime"],
-        "recent_performance": facts["recent_performance"],
+        "b2_candidate_evidence": (
+            {
+                "status": "not_applicable",
+                "reason": "pre_policy_crypto_family_prior_excluded",
+            }
+            if stock_linked else facts["b2"]
+        ),
+        "market_regime": (
+            {
+                "status": "not_applicable",
+                "reason": "stock_linked_perp_uses_instrument_local_context",
+            }
+            if stock_linked else facts["regime"]
+        ),
+        "recent_performance": (
+            {
+                "status": "not_applicable",
+                "reason": "pre_policy_crypto_outcomes_excluded",
+            }
+            if stock_linked else facts["recent_performance"]
+        ),
         "account_context": facts["account"],
         "hyperliquid": ({
             "status": "not_directly_rendered",
@@ -1283,7 +1379,11 @@ def _feature_context_row(snapshot: dict[str, Any]) -> dict[str, Any]:
         "return_4h": snapshot.get("return_4h"),
         "return_24h": snapshot.get("return_24h"),
         "funding_rate": fr,
+        "open_interest": snapshot.get("open_interest"),
         "oi_delta_1h": oi_delta,
+        "spread_bps": snapshot.get("spread_bps"),
+        "depth_10bps_usd": snapshot.get("depth_10bps_usd"),
+        "quote_volume_24h": snapshot.get("quote_volume_24h"),
         "btc_beta": snapshot.get("btc_beta"),
         "volume_24h": snapshot.get("quote_volume_24h"),
         "taker_buy_ratio": snapshot.get("taker_buy_ratio"),
@@ -1409,6 +1509,11 @@ def _hydrate_pending_candidate_context(
             "instrument_background": instrument_background_from_metadata(
                 (opportunity or {}).get("metadata")
             ),
+            "analysis_context": instrument_analysis_context_from_metadata(
+                (opportunity or {}).get("metadata")
+            ),
+            "asset_class": (opportunity or {}).get("asset_class"),
+            "asset_subclass": (opportunity or {}).get("asset_subclass"),
         })
         for row in layer2.get("executable_candidates") or []:
             if row.get("opportunity_id") == opportunity_id:
@@ -1416,6 +1521,7 @@ def _hydrate_pending_candidate_context(
                     "universe_member_id", "universe_snapshot_id", "asset_id",
                     "venue", "execution_eligible", "risk_flags",
                     "instrument_background",
+                    "analysis_context", "asset_class", "asset_subclass",
                 ):
                     row[field] = candidate.get(field)
 
@@ -1462,6 +1568,9 @@ def _hydrate_pending_candidate_context(
                     opportunity.get("metadata")
                 ),
                 "instrument_background": instrument_background_from_metadata(
+                    opportunity.get("metadata")
+                ),
+                "analysis_context": instrument_analysis_context_from_metadata(
                     opportunity.get("metadata")
                 ),
                 "evidence_manifest": (
@@ -1513,7 +1622,7 @@ def _serenity_context_row(opportunity: dict[str, Any]) -> dict[str, Any]:
         verdict = json.loads(opportunity.get("verdict_json") or "{}")
     except (TypeError, ValueError, json.JSONDecodeError):
         verdict = {}
-    asset_class = opportunity.get("asset_class") or "crypto"
+    asset_class = opportunity.get("asset_class") or "unknown"
     thesis = opportunity.get("thesis") or ""
     key_evidence = "; ".join(references)
     key_evidence_display, rendered_evidence_ids = _serenity_evidence_display(evidence)
@@ -1830,6 +1939,8 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 "confidence": o.get("confidence"),
                 "confidence_score": o.get("confidence_score"),
                 "scanner_family": o.get("scanner_family"),
+                "asset_class": o.get("asset_class"),
+                "asset_subclass": o.get("asset_subclass"),
                 "thesis": (o.get("thesis") or "")[:220],
                 # market_observer's LLM writes its most specific, data-cited output
                 # here; the PI was previously blind to it (only the truncated thesis
@@ -1839,6 +1950,9 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                     o.get("metadata")
                 ),
                 "instrument_background": instrument_background_from_metadata(
+                    o.get("metadata")
+                ),
+                "analysis_context": instrument_analysis_context_from_metadata(
                     o.get("metadata")
                 ),
                 "evidence_manifest": (

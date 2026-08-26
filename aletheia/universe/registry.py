@@ -11,7 +11,10 @@ import logging
 from datetime import datetime, timezone
 
 from aletheia.config.schema import AletheiaConfig
-from aletheia.data.symbols import build_instrument_background
+from aletheia.data.symbols import (
+    build_instrument_background,
+    instrument_background_rejection_reason,
+)
 from aletheia.storage.models import UniverseAsset
 from aletheia.storage import repositories as repo
 
@@ -168,9 +171,8 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
                 market_info=info,
             )
             asset_class = background["asset_class"]
-            # Keep unsupported instruments visible with an honest background,
-            # but do not admit them to the crypto scanner. Ordinary exclusions
-            # (test symbols, leveraged crypto tokens) remain absent altogether.
+            # Keep unsupported products visible with an honest background.
+            # Ordinary crypto exclusions remain absent altogether.
             if _is_excluded(info) and asset_class == "crypto":
                 continue
 
@@ -191,12 +193,18 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
             amount_prec = precision.get("amount")
 
             config_blacklisted = canonical in cfg.universe.blacklist
-            blacklisted = config_blacklisted or asset_class != "crypto"
+            support_reason = instrument_background_rejection_reason(
+                background,
+                symbol=canonical,
+                market_type=market_type,
+                venue=venue,
+            )
+            blacklisted = config_blacklisted or support_reason is not None
             blacklist_reason = None
             if config_blacklisted:
                 blacklist_reason = "config_blacklist"
-            elif asset_class != "crypto":
-                blacklist_reason = f"unsupported_asset_class:{asset_class}"
+            elif support_reason:
+                blacklist_reason = support_reason
 
             asset = UniverseAsset(
                 venue=venue,

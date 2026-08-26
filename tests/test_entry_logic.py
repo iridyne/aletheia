@@ -96,6 +96,10 @@ def _seed_admitted_opportunity(
         expires_at=expires_at,
         entry_price_usd=60_000.0,
     ))
+    from aletheia.data.symbols import instrument_analysis_context
+    background = crypto_background(
+        symbol, market_type, cfg.market_data.ccxt_exchange
+    )
     opportunity = Opportunity(
         id=f"entry-logic-opportunity-{market_type}",
         symbol=symbol,
@@ -109,12 +113,11 @@ def _seed_admitted_opportunity(
         scanner_family="momentum",
         valid_until=expires_at,
         metadata=json.dumps({
-            "instrument_background": crypto_background(
-                symbol, market_type, cfg.market_data.ccxt_exchange
-            ),
+            "instrument_background": background,
+            "analysis_context": instrument_analysis_context(background),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
-                "policy_epoch": "opportunity_information_integrity/v3",
+                "policy_epoch": "opportunity_information_integrity/v4",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",
@@ -122,6 +125,7 @@ def _seed_admitted_opportunity(
                     "universe_member_id": member_id,
                     "symbol": symbol,
                     "market_type": market_type,
+                    "venue": cfg.market_data.ccxt_exchange,
                     "direction": direction,
                 },
             },
@@ -137,6 +141,7 @@ def _seed_admitted_opportunity(
         reason_code="opportunity_emitted",
         symbol=symbol,
         market_type=market_type,
+        venue=cfg.market_data.ccxt_exchange,
         direction=direction,
         opportunity_id=opportunity.id,
         universe_snapshot_id=snapshot_id,

@@ -2633,6 +2633,12 @@ def _fmt_feature_line(f: dict) -> str:
         extras.append(f"RS24h={rs:+.1f}%")
     if vr is not None:
         extras.append(f"vol_r={vr:.1f}x")
+    if f.get("spread_bps") is not None:
+        extras.append(f"spread={float(f['spread_bps']):.1f}bps")
+    if f.get("depth_10bps_usd") is not None:
+        extras.append(f"depth10bps=${float(f['depth_10bps_usd']):.0f}")
+    if f.get("open_interest") is not None:
+        extras.append(f"OI=${float(f['open_interest']):.0f}")
     if tkr is not None:
         extras.append(f"taker={tkr:.2f}")
     if div and div != 0:
@@ -2645,6 +2651,31 @@ def _fmt_feature_line(f: dict) -> str:
     if crowding:
         extras.append("CROWDED")
     return base + (" [" + " ".join(x for x in extras if x) + "]" if extras else "")
+
+
+def _fmt_instrument_decision_context(candidate: dict | None) -> str:
+    """Render structural facts that materially change how one product is read."""
+    candidate = candidate or {}
+    context = candidate.get("analysis_context") or {}
+    if context.get("kind") != "stock_linked_perp":
+        return "  Standard crypto context applies."
+    background = candidate.get("instrument_background") or {}
+    embedded = background.get("embedded_product") or {}
+    multiplier = embedded.get("embedded_daily_multiplier")
+    multiplier_text = f"{float(multiplier):+g}x" if multiplier is not None else "unknown"
+    sources = ", ".join(str(value) for value in embedded.get("source_refs") or [])
+    return (
+        f"  {background.get('symbol')} is a {str(background.get('venue') or '').title()} "
+        f"USDT perpetual that tracks the {background.get('reference_asset')} ETF. "
+        f"That ETF provides {multiplier_text} DAILY exposure to benchmark "
+        f"{embedded.get('benchmark_id')} and resets every {embedded.get('reset_horizon')}; "
+        "multi-day returns are path-dependent. The embedded multiplier describes the "
+        "reference product and does not rescale order notional.\n"
+        f"  Applicable evidence: {', '.join(context.get('applicable_evidence') or [])}.\n"
+        f"  Not applicable: {', '.join(context.get('inapplicable_evidence') or [])}.\n"
+        f"  Unavailable: {', '.join(context.get('unavailable_evidence') or [])}. "
+        f"Source provenance: {sources or 'unavailable'}."
+    )
 
 
 _SIGNAL_RULES = """\
@@ -2707,6 +2738,7 @@ def _build_assessment_prompt(ctx: dict) -> str:
     pnl_line = f"  Today realized: ${today_pnl:+.2f}" if today_pnl is not None else "  (no trades today)"
 
     regime = layer1.get("regime")
+    regime_applicability = layer1.get("regime_applicability") or {}
     # "long_bias=25%, short_bias=75%" read like directional VETOES to the LLM
     # (i.e. "never go long"); they are probability weights. Renamed to *_weight
     # with an explicit note so the LLM treats them as priors, not prohibitions.
@@ -2714,8 +2746,13 @@ def _build_assessment_prompt(ctx: dict) -> str:
         f"  {regime['state'].upper()} (conf={regime['confidence']:.0%}, "
         f"long_weight={regime['long_bias']:.0%}, short_weight={regime['short_bias']:.0%}) "
         f"[probability weights, not vetoes]"
-        if regime else "  (unknown)"
+        if regime
+        else "  Not applicable to this stock-linked perpetual; use instrument-local evidence."
+        if regime_applicability.get("status") == "not_applicable"
+        else "  (unknown)"
     )
+    selected_instrument = next(iter(layer2.get("pending_signals") or []), None)
+    instrument_context = _fmt_instrument_decision_context(selected_instrument)
 
     features = layer1.get("features", [])
     feature_lines = "\n".join(
@@ -2848,6 +2885,9 @@ def _build_assessment_prompt(ctx: dict) -> str:
         "## Account",
         balance_line,
         pnl_line,
+        "",
+        "## Instrument Background and Applicable Evidence",
+        instrument_context,
         "",
         "## Market Regime",
         regime_line,
@@ -3291,7 +3331,9 @@ def _build_bull_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
     regime_str = f"Regime: {regime['state']} (conf={regime['confidence']:.0%})" if regime else ""
 
     oi_div = snap.get("oi_price_divergence")
-    deriv_extras = f" OI_Δ={snap.get('oi_delta_1h', '?')} taker={snap.get('taker_buy_ratio', '?')} RS24h={snap.get('relative_strength_24h', '?')}%"
+    deriv_extras = f" OI_Δ={snap.get('oi_delta_1h', '?')} taker={snap.get('taker_buy_ratio', '?')}"
+    if snap.get("relative_strength_24h") is not None:
+        deriv_extras += f" RS24h={snap['relative_strength_24h']}%"
     div_note = f" [{_OI_DIV_LABEL[oi_div]}]" if oi_div else ""
     _dir = direction or "long"
     if _dir == "short":
@@ -3299,10 +3341,14 @@ def _build_bull_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
     else:
         note = "Note: FR<-0.01% = crowded shorts → bullish; taker>1.2 = buyer aggression; OI_div=hidden_acc = potential reversal long."
     evidence = _render_b2_evidence_for(symbol, _dir, ctx)
+    instrument = _fmt_instrument_decision_context(
+        next(iter((ctx.get("layer2") or {}).get("pending_signals") or []), None)
+    )
     return f"""You are a bull analyst. Make the STRONGEST case for {symbol} {_dir} RIGHT NOW.
 
 Data: RSI={snap.get('rsi_14', '?')} ATR={snap.get('atr_pct', '?')}% 1h={snap.get('return_1h', '?')}% 4h={snap.get('return_4h', '?')}% 24h={snap.get('return_24h', '?')}% FR={_fmt_funding(snap.get('funding_rate'))}{deriv_extras}{div_note}
 {regime_str}
+{instrument}
 {note}
 {evidence}
 
@@ -3316,7 +3362,9 @@ def _build_bear_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
     regime_str = f"Regime: {regime['state']} (conf={regime['confidence']:.0%})" if regime else ""
 
     oi_div = snap.get("oi_price_divergence")
-    deriv_extras = f" OI_Δ={snap.get('oi_delta_1h', '?')} taker={snap.get('taker_buy_ratio', '?')} RS24h={snap.get('relative_strength_24h', '?')}%"
+    deriv_extras = f" OI_Δ={snap.get('oi_delta_1h', '?')} taker={snap.get('taker_buy_ratio', '?')}"
+    if snap.get("relative_strength_24h") is not None:
+        deriv_extras += f" RS24h={snap['relative_strength_24h']}%"
     div_note = f" [{_OI_DIV_LABEL[oi_div]}]" if oi_div else ""
     _dir = direction or "long"
     if _dir == "short":
@@ -3324,10 +3372,14 @@ def _build_bear_prompt(symbol: str, direction: str | None, ctx: dict) -> str:
     else:
         note = "Note: FR>+0.01% = crowded longs → bearish; taker<0.8 = seller aggression; OI_div=weak_rally = distribution risk."
     evidence = _render_b2_evidence_for(symbol, _dir, ctx)
+    instrument = _fmt_instrument_decision_context(
+        next(iter((ctx.get("layer2") or {}).get("pending_signals") or []), None)
+    )
     return f"""You are a bear analyst. Find every reason why {symbol} {_dir} RIGHT NOW is a BAD idea.
 
 Data: RSI={snap.get('rsi_14', '?')} ATR={snap.get('atr_pct', '?')}% 1h={snap.get('return_1h', '?')}% 4h={snap.get('return_4h', '?')}% 24h={snap.get('return_24h', '?')}% FR={_fmt_funding(snap.get('funding_rate'))}{deriv_extras}{div_note}
 {regime_str}
+{instrument}
 {note}
 {evidence}
 

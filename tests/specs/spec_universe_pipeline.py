@@ -285,7 +285,12 @@ def test_scanner_weights_scale_opportunity_score():
     from aletheia.universe.allocator import compute_total_score
     from aletheia.config.schema import UniverseConfig
 
-    feat = {"tradability_score": 50.0, "quote_volume_24h": 1e12, "spread_bps": 2.0}
+    feat = {
+        "tradability_score": 50.0,
+        "quote_volume_24h": 1e12,
+        "spread_bps": 2.0,
+        "analysis_context": {"kind": "crypto"},
+    }
     sr = {"opportunity_score": 50.0, "scanner_family": "momentum"}
 
     base = compute_total_score(dict(feat), sr, UniverseConfig())  # weights={} → 1.0
@@ -685,8 +690,9 @@ def test_allocate_universe_regime_aware_quota():
     # 3. 端到端:20 个 momentum 候选。static quota momentum=0.30(→6 席),
     #    bear quota momentum=0.10(→2 席)——bear 应放行更少的 long-only momentum。
     scored = [
-        {"symbol": f"C{i}/USDT", "scanner_family": "momentum",
-         "total_score": 90.0 - i, "tradability_score": 50.0}
+            {"symbol": f"C{i}/USDT", "scanner_family": "momentum",
+             "total_score": 90.0 - i, "tradability_score": 50.0,
+             "analysis_context": {"kind": "crypto"}}
         for i in range(20)
     ]
     bear_sel = allocate_universe([dict(s) for s in scored], cfg, regime_state="bear")
@@ -891,15 +897,16 @@ def test_okx_equity_contracts_are_excluded_from_crypto_registry():
 @spec_claim(
     SpecClaim(
         "UP-28", "universe_pipeline", "§instrument background authority", "L2c",
-        "Every crypto candidate requires a complete instrument-background/v1; "
-        "exchange-declared equity products remain auditable but cannot emit a crypto "
-        "Opportunity.",
+        "Every executable candidate requires a complete instrument-background/v1; "
+        "verified stock-linked perps use a bounded non-crypto context while unknown "
+        "products fail closed.",
         status="implemented",
     ),
 )
-def test_universe_instrument_background_fails_closed_on_non_crypto_identity():
+def test_universe_instrument_background_routes_supported_context_only():
     from aletheia.data.symbols import (
         build_instrument_background,
+        instrument_analysis_context,
         instrument_background_rejection_reason,
     )
 
@@ -918,20 +925,36 @@ def test_universe_instrument_background_fails_closed_on_non_crypto_identity():
 
     assert equity["embedded_product"]["embedded_daily_multiplier"] == 3.0
     assert instrument_background_rejection_reason(
-        equity, symbol="SOXL/USDT", market_type="perp"
-    ) == "unsupported_asset_class:equity"
-    crypto = build_instrument_background(
-        symbol="BTC/USDT:USDT",
+        equity, symbol="SOXL/USDT", market_type="perp", venue="binance"
+    ) is None
+    assert instrument_analysis_context(equity)["kind"] == "stock_linked_perp"
+    for base in ("BTC", "ETH"):
+        crypto = build_instrument_background(
+            symbol=f"{base}/USDT:USDT",
+            venue="binance",
+            market_type="perp",
+            market_info={
+                "symbol": f"{base}/USDT:USDT", "base": base, "quote": "USDT",
+                "info": {"contractType": "PERPETUAL", "underlyingType": "COIN"},
+            },
+        )
+        assert crypto["asset_class"] == "crypto"
+        assert instrument_analysis_context(crypto)["kind"] == "crypto"
+        assert instrument_background_rejection_reason(
+            crypto, symbol=f"{base}/USDT", market_type="perp", venue="binance"
+        ) is None
+    unsupported = build_instrument_background(
+        symbol="GOLD/USDT:USDT",
         venue="binance",
         market_type="perp",
         market_info={
-            "symbol": "BTC/USDT:USDT", "base": "BTC", "quote": "USDT",
-            "info": {"contractType": "PERPETUAL", "underlyingType": "COIN"},
+            "symbol": "GOLD/USDT:USDT", "base": "GOLD", "quote": "USDT",
+            "info": {"underlyingType": "COMMODITY"},
         },
     )
     assert instrument_background_rejection_reason(
-        crypto, symbol="BTC/USDT", market_type="perp"
-    ) is None
+        unsupported, symbol="GOLD/USDT", market_type="perp", venue="binance"
+    ) == "unsupported_analysis_context:tradifi_perpetual"
     okx_crypto = build_instrument_background(
         symbol="BTC/USDT:USDT",
         venue="okx",
@@ -1122,10 +1145,23 @@ def test_live_duplicate_suppressed_when_active_opportunity_exists(tmp_path, monk
                 "venue": "binance",
                 "symbol": "SNDK/USDT",
                 "market_type": "spot",
+                "physical_market_type": "spot",
                 "asset_class": "crypto",
                 "product_kind": "crypto_spot",
                 "reference_asset": "SNDK",
                 "relationship": "direct_asset",
+                "classification": {"source": "test_fixture"},
+            },
+            "analysis_context": {
+                "version": "instrument-analysis-context/v1",
+                "status": "supported",
+                "kind": "crypto",
+                "applicable_evidence": [
+                    "instrument_market_data", "btc_relative_strength",
+                    "global_crypto_regime", "crypto_family_prior",
+                ],
+                "inapplicable_evidence": [],
+                "unavailable_evidence": [],
             },
             "last_price": 50.0,
             "quote_volume_24h": 100_000_000.0,
@@ -1138,7 +1174,13 @@ def test_live_duplicate_suppressed_when_active_opportunity_exists(tmp_path, monk
             "return_4h": -4.0,
             "relative_strength_24h": -6.0,
         }
-        return [member.model_dump()], [feat]
+        member_row = member.model_dump()
+        member_row.update({
+            "venue": "binance",
+            "instrument_background": feat["instrument_background"],
+            "analysis_context": feat["analysis_context"],
+        })
+        return [member_row], [feat]
 
     monkeypatch.setattr(
         "aletheia.universe.signal_emitter.lookup_factor_signal", lambda _: {}

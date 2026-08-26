@@ -23,10 +23,12 @@ issue-ready findings live under
 - `Core` means candidate for the first supported profile. It does not mean the
   capability is already supported.
 
-The active product scope is `crypto-paper-mainline-v1`: crypto spot/perpetual,
-`paper_internal`, System Operator as the sole strategy decision authority, Risk
-Engine as the approval authority, and measured Paper Learning capability enabled
-by default while experiment authority remains owner-gated.
+The active product scope is `crypto-stock-linked-paper-mainline-v2`: crypto
+spot/perpetual plus verified exchange-listed stock-linked perpetuals,
+`paper_internal`, System Operator as the sole strategy decision authority, and
+Risk Engine as the approval authority. It does not declare broad equity support.
+Measured Paper Learning remains enabled by default while experiment authority is
+owner-gated.
 
 Table IDs are audit-only stable references, not Aletheia product terminology.
 Outside these canonical tables, use the full capability name.
@@ -270,7 +272,7 @@ Three `Implemented` exchange-lifecycle rows were then reviewed as one existing
 recovery chain. EX-06, EX-12, and EX-13 all retain complete static consumers
 and focused executable recovery/failure paths (156 passing assertions). They
 remain `Implemented`, rather than `Supported`, solely because no external
-exchange execution mode belongs to `crypto-paper-mainline-v1`. No additional
+exchange execution mode belongs to `crypto-stock-linked-paper-mainline-v2`. No additional
 product-integrity issue was found in this pass.
 
 Exchange credential verification is the fourth `Implemented` capability.

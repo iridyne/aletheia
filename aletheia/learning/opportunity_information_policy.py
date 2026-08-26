@@ -6,10 +6,10 @@ from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_e
 from aletheia.trading.trade_motivation import TRADE_MOTIVATION_VERSION
 
 
-POLICY_EPOCH_LABEL = "opportunity_information_integrity/v3"
+POLICY_EPOCH_LABEL = "opportunity_information_integrity/v4"
 _EPOCH_KIND = "opportunity_information_integrity"
 _EFFECTIVE_VALUES = {
-    "version": "v3",
+    "version": "v4",
     "observer_prefilter": "structured_1h_rsi_atr_pct",
     "oi_baseline_minutes": 60,
     "oi_baseline_band_minutes": [45, 75],
@@ -26,7 +26,9 @@ _EFFECTIVE_VALUES = {
     "opportunity_evidence_manifest": "opportunity-information-integrity-v1",
     "universe_opportunity_producer": "universe_scanner_only",
     "instrument_background": "instrument-background/v1",
-    "crypto_candidate_identity": "complete-background-required",
+    "candidate_identity": "complete-background-required",
+    "supported_analysis_contexts": ["crypto", "stock_linked_perp"],
+    "stock_linked_context": "instrument-local-no-crypto-priors",
     "market_observer": "advisory_enrichment_only",
     "ranker_requires_signal_emitter_fact": True,
     "universe_unavailable_entry_behavior": "fail_closed",

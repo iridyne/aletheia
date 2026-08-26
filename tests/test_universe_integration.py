@@ -39,8 +39,8 @@ def _make_cfg():
 
 
 @pytest.mark.asyncio
-async def test_registry_keeps_instrument_background_and_blocks_equity_perps(monkeypatch):
-    """Exchange-declared equity perps stay known, but never enter crypto scans."""
+async def test_registry_routes_reviewed_stock_linked_perps_and_blocks_unknowns(monkeypatch):
+    """Reviewed products are supported narrowly; unknown products stay closed."""
     def market(base, *, contract_type, underlying_type, subtype):
         return {
             "id": f"{base}USDT",
@@ -126,10 +126,11 @@ async def test_registry_keeps_instrument_background_and_blocks_equity_perps(monk
     for symbol, multiple in (("SOXL/USDT", 3.0), ("SOXS/USDT", -3.0)):
         asset = assets[symbol]
         background = json.loads(asset.metadata)["instrument_background"]
-        assert asset.is_blacklisted is True
-        assert asset.blacklist_reason == "unsupported_asset_class:equity"
+        assert asset.is_blacklisted is False
+        assert asset.blacklist_reason is None
         assert background["asset_class"] == "equity"
-        assert background["product_kind"] == "tradifi_perpetual"
+        assert background["product_kind"] == "stock_linked_perp"
+        assert background["physical_market_type"] == "perp"
         assert background["reference_asset"] == symbol.split("/")[0]
         assert background["embedded_product"] == {
             "kind": "leveraged_etf",
@@ -144,13 +145,13 @@ async def test_registry_keeps_instrument_background_and_blocks_equity_perps(monk
         }
 
     assert assets["GOLD/USDT"].blacklist_reason == (
-        "unsupported_asset_class:commodity"
+        "unsupported_analysis_context:tradifi_perpetual"
     )
     assert json.loads(assets["GOLD/USDT"].metadata)["instrument_background"][
         "reference_asset"
     ] == "GOLD"
     assert assets["MYSTERY/USDT"].blacklist_reason == (
-        "unsupported_asset_class:unknown"
+        "instrument_background_unresolved"
     )
 
 

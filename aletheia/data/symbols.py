@@ -268,6 +268,7 @@ _SEMICONDUCTOR_3X_SOURCE = (
     "https://www.direxion.com/product/daily-semiconductor-bull-bear-3x-etfs"
 )
 INSTRUMENT_BACKGROUND_VERSION = "instrument-background/v1"
+INSTRUMENT_ANALYSIS_CONTEXT_VERSION = "instrument-analysis-context/v1"
 # These exchange/product pairs expose crypto instruments without a separate
 # asset-class field. Every other missing classification stays unresolved.
 _DEFAULT_CRYPTO_MARKETS = {
@@ -277,16 +278,87 @@ _DEFAULT_CRYPTO_MARKETS = {
 }
 
 
-def instrument_background_from_metadata(value: object) -> dict | None:
-    """Read the versioned background from a registry or Opportunity JSON value."""
+def _metadata_dict(value: object) -> dict | None:
     try:
         metadata = json.loads(value) if isinstance(value, str) else value
     except (TypeError, ValueError, json.JSONDecodeError):
         return None
-    if not isinstance(metadata, dict):
+    return metadata if isinstance(metadata, dict) else None
+
+
+def instrument_background_from_metadata(value: object) -> dict | None:
+    """Read the versioned background from a registry or Opportunity JSON value."""
+    metadata = _metadata_dict(value)
+    if metadata is None:
         return None
     background = metadata.get("instrument_background")
     return background if isinstance(background, dict) else None
+
+
+def instrument_analysis_context_from_metadata(value: object) -> dict | None:
+    """Read the frozen analysis applicability from an Opportunity JSON value."""
+    metadata = _metadata_dict(value)
+    if metadata is None:
+        return None
+    context = metadata.get("analysis_context")
+    return context if isinstance(context, dict) else None
+
+
+def instrument_analysis_context(background: object) -> dict | None:
+    """Resolve the one supported decision context for a complete background."""
+    if not isinstance(background, dict):
+        return None
+    asset_class = str(background.get("asset_class") or "").lower()
+    product_kind = str(background.get("product_kind") or "").lower()
+    if asset_class == "crypto" and product_kind in {
+        "crypto_spot", "crypto_perpetual",
+    }:
+        return {
+            "version": INSTRUMENT_ANALYSIS_CONTEXT_VERSION,
+            "status": "supported",
+            "kind": "crypto",
+            "applicable_evidence": [
+                "instrument_market_data", "btc_relative_strength",
+                "global_crypto_regime", "crypto_family_prior",
+            ],
+            "inapplicable_evidence": [],
+            "unavailable_evidence": [],
+        }
+
+    reference_asset = str(background.get("reference_asset") or "").upper()
+    embedded = background.get("embedded_product")
+    if (
+        asset_class == "equity"
+        and product_kind == "stock_linked_perp"
+        and background.get("venue") == "binance"
+        and background.get("market_type") == MARKET_PERP
+        and reference_asset in _SEMICONDUCTOR_3X_ETFS
+        and isinstance(embedded, dict)
+        and embedded.get("kind") == "leveraged_etf"
+        and embedded.get("benchmark_id") == "ICESEMIT"
+        and embedded.get("embedded_daily_multiplier")
+        == _SEMICONDUCTOR_3X_ETFS[reference_asset]
+        and embedded.get("reset_horizon") == "1d"
+        and isinstance(embedded.get("source_refs"), list)
+        and bool(embedded["source_refs"])
+    ):
+        return {
+            "version": INSTRUMENT_ANALYSIS_CONTEXT_VERSION,
+            "status": "supported",
+            "kind": "stock_linked_perp",
+            "applicable_evidence": [
+                "instrument_ohlcv", "instrument_price_path", "spread",
+                "liquidity", "order_book", "funding", "open_interest",
+                "volatility", "instrument_momentum", "cost_tradability",
+                "product_background",
+            ],
+            "inapplicable_evidence": [
+                "btc_relative_strength", "btc_beta", "global_crypto_regime",
+                "crypto_family_prior", "crypto_sector_relationships",
+            ],
+            "unavailable_evidence": ["live_benchmark_market_data"],
+        }
+    return None
 
 
 def instrument_background_rejection_reason(
@@ -294,22 +366,47 @@ def instrument_background_rejection_reason(
     *,
     symbol: str,
     market_type: str,
+    venue: str | None = None,
 ) -> str | None:
-    """Return why a background cannot enter the crypto mainline, or ``None``."""
+    """Return why identity/context cannot enter the unified mainline."""
     if not isinstance(background, dict):
         return "instrument_background_missing"
     if background.get("version") != INSTRUMENT_BACKGROUND_VERSION:
         return "instrument_background_version_mismatch"
     if background.get("status") != "complete":
         return "instrument_background_unresolved"
+    required = (
+        "venue", "symbol", "market_type", "physical_market_type",
+        "asset_class", "product_kind", "reference_asset", "relationship",
+    )
+    if any(not background.get(field) for field in required) or not isinstance(
+        background.get("classification"), dict
+    ) or not background["classification"].get("source"):
+        return "instrument_background_identity_incomplete"
     if (
         to_canonical(str(background.get("symbol") or "")) != to_canonical(symbol)
         or background.get("market_type") != market_type
+        or background.get("physical_market_type") != market_type
+        or (
+            venue is not None
+            and str(background.get("venue") or "").lower()
+            != str(venue).lower()
+        )
     ):
         return "instrument_background_identity_conflict"
-    asset_class = str(background.get("asset_class") or "unknown").lower()
-    if asset_class != "crypto":
-        return f"unsupported_asset_class:{asset_class}"
+    relationship = background.get("relationship")
+    if relationship not in {
+        "direct_asset", "tracks_reference_price",
+        "perpetual_tracks_etf_reference",
+    }:
+        return "instrument_background_relationship_malformed"
+    if background.get("product_kind") == "stock_linked_perp":
+        embedded = background.get("embedded_product")
+        if not isinstance(embedded, dict) or not instrument_analysis_context(background):
+            return "instrument_background_relationship_malformed"
+    if instrument_analysis_context(background) is None:
+        product_kind = str(background.get("product_kind") or "unknown").lower()
+        return f"unsupported_analysis_context:{product_kind}"
     return None
 
 
@@ -358,11 +455,14 @@ def build_instrument_background(
     )
     if linked_multiple is not None:
         product_kind = (
-            "tradifi_perpetual" if market_type == MARKET_PERP
+            "stock_linked_perp" if market_type == MARKET_PERP
             else "tokenized_equity"
         )
         reference_asset = base
-        relationship = "tracks_reference_price"
+        relationship = (
+            "perpetual_tracks_etf_reference"
+            if market_type == MARKET_PERP else "tracks_reference_price"
+        )
         background_status = "complete"
     elif asset_class == "crypto":
         product_kind = "crypto_perpetual" if market_type == MARKET_PERP else "crypto_spot"
@@ -393,6 +493,7 @@ def build_instrument_background(
         "venue": venue,
         "symbol": canonical,
         "market_type": market_type,
+        "physical_market_type": market_type,
         "asset_class": asset_class,
         "product_kind": product_kind,
         "reference_asset": reference_asset,

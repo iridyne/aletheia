@@ -21,7 +21,9 @@ async def test_observer_preserves_scanner_valid_until(tmp_path, monkeypatch):
     from aletheia.storage.repositories import get_opportunity, insert_opportunity
 
     init_tool_registry()
+    from aletheia.data.symbols import instrument_analysis_context
     expiry = "2026-07-22T23:00:00+00:00"
+    background = crypto_background("BTC/USDT", "perp")
     opportunity = Opportunity(
         id="scanner-expiry-owner",
         symbol="BTC/USDT",
@@ -36,10 +38,11 @@ async def test_observer_preserves_scanner_valid_until(tmp_path, monkeypatch):
         scanner_family="momentum",
         valid_until=expiry,
         metadata=json.dumps({
-            "instrument_background": crypto_background("BTC/USDT", "perp"),
+            "instrument_background": background,
+            "analysis_context": instrument_analysis_context(background),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
-                "policy_epoch": "opportunity_information_integrity/v3",
+                "policy_epoch": "opportunity_information_integrity/v4",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",
@@ -47,6 +50,7 @@ async def test_observer_preserves_scanner_valid_until(tmp_path, monkeypatch):
                     "universe_member_id": "member-expiry",
                     "symbol": "BTC/USDT",
                     "market_type": "perp",
+                    "venue": "fixture",
                     "direction": "long",
                 },
             },
@@ -62,6 +66,7 @@ async def test_observer_preserves_scanner_valid_until(tmp_path, monkeypatch):
         reason_code="opportunity_emitted",
         symbol=opportunity.symbol,
         market_type="perp",
+        venue="fixture",
         direction="long",
         opportunity_id=opportunity.id,
         universe_snapshot_id=opportunity.universe_snapshot_id,
@@ -119,3 +124,109 @@ async def test_observer_preserves_scanner_valid_until(tmp_path, monkeypatch):
     assert error is None
     assert opportunity_id == opportunity.id
     assert get_opportunity(opportunity.id)["valid_until"] == expiry
+
+
+@pytest.mark.asyncio
+async def test_stock_linked_owner_skips_crypto_observer_context(tmp_path, monkeypatch):
+    from tests.test_opportunity_source_manifest import _prepare_db
+
+    _prepare_db(tmp_path, monkeypatch)
+    from aletheia.agents import market_observer as observer
+    from aletheia.analytics.filter_evidence import record_filter_decision
+    from aletheia.data.symbols import (
+        build_instrument_background,
+        instrument_analysis_context,
+    )
+    from aletheia.storage.models import Opportunity
+    from aletheia.storage.repositories import get_opportunity, insert_opportunity
+
+    background = build_instrument_background(
+        symbol="SOXL/USDT:USDT",
+        venue="binance",
+        market_type="perp",
+        market_info={
+            "symbol": "SOXL/USDT:USDT",
+            "base": "SOXL",
+            "quote": "USDT",
+            "info": {"underlyingType": "EQUITY"},
+        },
+    )
+    metadata = json.dumps({
+        "instrument_background": background,
+        "analysis_context": instrument_analysis_context(background),
+        "evidence_manifest": {
+            "version": "opportunity-information-integrity-v1",
+            "policy_epoch": "opportunity_information_integrity/v4",
+            "t0": {
+                "status": "available",
+                "trigger_type": "universe_scanner",
+                "universe_snapshot_id": "snapshot-soxl",
+                "universe_member_id": "member-soxl",
+                "symbol": "SOXL/USDT",
+                "market_type": "perp",
+                "venue": "binance",
+                "direction": "long",
+            },
+        },
+    })
+    opportunity = Opportunity(
+        id="scanner-soxl-owner",
+        symbol="SOXL/USDT",
+        market="perp",
+        direction_bias="long",
+        source_agent="universe_scanner",
+        universe_snapshot_id="snapshot-soxl",
+        universe_member_id="member-soxl",
+        scanner_family="momentum",
+        asset_class="equity",
+        asset_subclass="stock_linked_perp",
+        execution_eligible=True,
+        metadata=metadata,
+    )
+    insert_opportunity(opportunity)
+    record_filter_decision(
+        candidate_key="universe_member:member-soxl",
+        candidate_kind="universe_member",
+        filter_name="opportunity_emission",
+        stage="signal_emitter",
+        decision="passed",
+        reason_code="opportunity_emitted",
+        symbol=opportunity.symbol,
+        market_type="perp",
+        venue="binance",
+        direction="long",
+        opportunity_id=opportunity.id,
+        universe_snapshot_id=opportunity.universe_snapshot_id,
+        universe_member_id=opportunity.universe_member_id,
+    )
+    steps = []
+    monkeypatch.setattr(
+        observer,
+        "llm_structured",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("mixed crypto Observer context must not run")
+        ),
+    )
+    monkeypatch.setattr(
+        observer,
+        "record_step",
+        lambda *_args, **kwargs: steps.append(kwargs.get("output_data")),
+    )
+
+    opportunity_id, error = await observer._analyze_symbol(
+        symbol=opportunity.symbol,
+        market_type="perp",
+        permission_mode="Observe",
+        run_id="observer-soxl",
+        linked_strategy_id=None,
+        memory_block="",
+        universe_snapshot_id=opportunity.universe_snapshot_id,
+        universe_member_id=opportunity.universe_member_id,
+        scanner_family=opportunity.scanner_family,
+        scanner_direction="long",
+    )
+
+    assert error is None
+    assert opportunity_id == opportunity.id
+    assert steps == ["stock_linked_perp_uses_operator_instrument_context"]
+    assert get_opportunity(opportunity.id)["metadata"] == metadata

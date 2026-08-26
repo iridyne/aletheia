@@ -1,12 +1,23 @@
 ---
 schema_version: 1
-scope_id: crypto-paper-mainline-v1
+scope_id: crypto-stock-linked-paper-mainline-v2
 status: active
-asset_classes:
-  - crypto
-market_types:
-  - spot
-  - perp
+instrument_profiles:
+  crypto:
+    asset_class: crypto
+    market_types:
+      - spot
+      - perp
+  verified_stock_linked_perp:
+    asset_class: equity
+    asset_subclass: stock_linked_perp
+    venue: binance
+    reference_assets:
+      - SOXL
+      - SOXS
+    market_types:
+      - perp
+    identity_status: complete
 execution_modes:
   - paper_internal
 decision_authority: aletheia.agent_shell.trading_decision.evaluate_trading_opportunity
@@ -35,7 +46,11 @@ allowed to count as the active MVP mainline. It narrows the broader product map;
 it does not describe every research, observation, reconciliation, or historical
 compatibility path in the repository.
 
-The active asset class is crypto. Spot and perpetual instruments share one
+The active instruments are crypto spot/perpetuals plus the narrowly verified
+exchange-listed `stock_linked_perp` profile. For the latter, a complete
+`instrument-background/v1` and supported analysis context are mandatory; this
+does not declare ordinary equities, indices, commodities, prediction markets, or
+arbitrary exchange derivatives executable. All admitted instruments share one
 System Operator, one Risk Engine, and one Execution Gateway. The active execution
 mode is the local `paper_internal` simulator. Exchange demo modes remain supported
 adapters, but are not part of this active-scope proof until an owner-selected demo

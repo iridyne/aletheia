@@ -1,6 +1,7 @@
 """Unit tests for aletheia.agents.paper_trader_ranker."""
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,6 +12,9 @@ def _make_opp(
     oid="opp-1",
     symbol="BTC/USDT",
     asset_class="crypto",
+    asset_subclass="",
+    market="spot",
+    metadata="{}",
     status="open",
     direction_bias="long",
     confidence="high",
@@ -26,6 +30,9 @@ def _make_opp(
         "id": oid,
         "symbol": symbol,
         "asset_class": asset_class,
+        "asset_subclass": asset_subclass,
+        "market": market,
+        "metadata": metadata,
         "status": status,
         "direction_bias": direction_bias,
         "confidence": confidence,
@@ -81,16 +88,69 @@ def _patch_deps(opps, strategies=None, universe_member=None, factor_status="watc
 # Filter tests
 # ---------------------------------------------------------------------------
 
-def test_equity_shadow_tracked():
-    """Equity opportunities are scored but not executed (equity_shadow_track skip_reason)."""
+@pytest.mark.parametrize(
+    ("asset_class", "expected_count"),
+    [("equity", 1), ("prediction", 0)],
+)
+def test_unrelated_non_crypto_paths_remain_non_executable(
+    asset_class, expected_count,
+):
+    """Only the exact supported subclass gains candidate admission."""
     from aletheia.agents.paper_trader_ranker import build_paper_candidates, select_best_candidate
 
-    opps = [_make_opp(asset_class="equity", direction_bias="long", confidence="high")]
+    opps = [_make_opp(
+        asset_class=asset_class, direction_bias="long", confidence="high",
+    )]
     with _patch_deps(opps):
         candidates = build_paper_candidates(limit=50)
-    assert len(candidates) == 1
-    assert candidates[0]["skip_reason"] == "equity_shadow_track"
+    assert len(candidates) == expected_count
+    if candidates:
+        assert candidates[0]["skip_reason"] == "equity_shadow_track"
     assert select_best_candidate(candidates) is None
+
+
+def test_supported_stock_linked_perp_reaches_ranker_without_crypto_regime():
+    from aletheia.agents.paper_trader_ranker import build_paper_candidates
+    from aletheia.data.symbols import (
+        build_instrument_background,
+        instrument_analysis_context,
+    )
+
+    background = build_instrument_background(
+        symbol="SOXL/USDT:USDT",
+        venue="binance",
+        market_type="perp",
+        market_info={
+            "symbol": "SOXL/USDT:USDT", "base": "SOXL", "quote": "USDT",
+            "info": {"underlyingType": "EQUITY"},
+        },
+    )
+    opp = _make_opp(
+        symbol="SOXL/USDT",
+        asset_class="equity",
+        asset_subclass="stock_linked_perp",
+        market="perp",
+        metadata=json.dumps({
+            "instrument_background": background,
+            "analysis_context": instrument_analysis_context(background),
+        }),
+    )
+
+    with _patch_deps([opp]), patch(
+        "aletheia.agents.paper_trader_ranker.tradable_symbols_from_config",
+        return_value=["SOXL/USDT"],
+    ), patch(
+        "aletheia.agents.paper_trader_ranker.get_current_regime",
+        side_effect=AssertionError("crypto regime must not be read"),
+    ):
+        candidates = build_paper_candidates(limit=50)
+
+    assert len(candidates) == 1
+    assert candidates[0]["skip_reason"] is None
+    assert candidates[0]["asset_class"] == "equity"
+    assert candidates[0]["asset_subclass"] == "stock_linked_perp"
+    assert candidates[0]["market_type"] == "usdt_futures"
+    assert candidates[0]["analysis_context"]["kind"] == "stock_linked_perp"
 
 
 def test_neutral_bias_skipped():
@@ -105,7 +165,10 @@ def test_neutral_bias_skipped():
 
 @pytest.mark.parametrize(
     "reason",
-    ["instrument_background_missing", "unsupported_asset_class:equity"],
+    [
+        "instrument_background_missing",
+        "unsupported_analysis_context:tradifi_perpetual",
+    ],
 )
 def test_instrument_background_rejections_are_permanent(reason):
     from aletheia.agents.paper_trader import _is_permanent_skip

@@ -651,6 +651,11 @@ def run_all_scanners(feat: dict) -> dict:
         "event": score_event(feat),
         "short_bias": score_short_bias(feat),
     }
+    # short_bias is explicitly coupled to the global crypto regime. The
+    # stock-linked profile keeps the same instrument-local scanners and simply
+    # marks that one family inapplicable.
+    if (feat.get("analysis_context") or {}).get("kind") == "stock_linked_perp":
+        results["short_bias"] = (0.0, [], None)
 
     # Prefer scanners with direction
     valid = {k: v for k, v in results.items() if v[2] is not None}

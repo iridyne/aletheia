@@ -4,7 +4,7 @@ import json
 
 from aletheia.analytics.filter_evidence import record_filter_decision
 from aletheia.config.loader import load_config
-from aletheia.data.symbols import InstrumentId
+from aletheia.data.symbols import InstrumentId, instrument_analysis_context
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import Opportunity
 from aletheia.trading.instruments import instrument_market_to_db_market
@@ -21,6 +21,7 @@ def crypto_background(
         "venue": venue,
         "symbol": symbol,
         "market_type": market_type,
+        "physical_market_type": market_type,
         "asset_class": "crypto",
         "product_kind": (
             "crypto_perpetual" if market_type == "perp" else "crypto_spot"
@@ -29,6 +30,7 @@ def crypto_background(
         "relationship": (
             "tracks_reference_price" if market_type == "perp" else "direct_asset"
         ),
+        "classification": {"source": "test_fixture"},
     }
 
 
@@ -54,10 +56,13 @@ def admit_observer_instrument(
         universe_member_id=member_id,
         scanner_family="momentum",
         metadata=json.dumps({
-            "instrument_background": crypto_background(symbol, market_type),
+            "instrument_background": (
+                background := crypto_background(symbol, market_type)
+            ),
+            "analysis_context": instrument_analysis_context(background),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
-                "policy_epoch": "opportunity_information_integrity/v3",
+                "policy_epoch": "opportunity_information_integrity/v4",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",
@@ -65,6 +70,7 @@ def admit_observer_instrument(
                     "universe_member_id": member_id,
                     "symbol": symbol,
                     "market_type": market_type,
+                    "venue": "fixture",
                     "direction": "long",
                 },
             },
@@ -80,6 +86,7 @@ def admit_observer_instrument(
         reason_code="opportunity_emitted",
         symbol=symbol,
         market_type=market_type,
+        venue="fixture",
         direction="long",
         opportunity_id=opportunity.id,
         universe_snapshot_id=snapshot_id,

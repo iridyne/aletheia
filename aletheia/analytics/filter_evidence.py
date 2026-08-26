@@ -13,6 +13,8 @@ from typing import Any
 from uuid import uuid4
 
 from aletheia.data.symbols import (
+    instrument_analysis_context,
+    instrument_analysis_context_from_metadata,
     instrument_background_from_metadata,
     instrument_background_rejection_reason,
 )
@@ -254,11 +256,24 @@ def verify_signal_emitter_admission(opportunity: dict[str, Any]) -> tuple[bool, 
         market_type=_normalize_market(
             opportunity.get("market") or opportunity.get("market_type")
         ),
+        venue=(background or {}).get("venue") if isinstance(background, dict) else None,
     )
     if background_reason:
         return False, background_reason
     if opportunity.get("asset_class") != background.get("asset_class"):
         return False, "instrument_background_identity_conflict"
+    expected_subclass = (
+        "stock_linked_perp"
+        if (instrument_analysis_context(background) or {}).get("kind")
+        == "stock_linked_perp"
+        else ""
+    )
+    if str(opportunity.get("asset_subclass") or "") != expected_subclass:
+        return False, "instrument_background_identity_conflict"
+    if instrument_analysis_context_from_metadata(metadata) != instrument_analysis_context(
+        background
+    ):
+        return False, "instrument_analysis_context_conflict"
     manifest = metadata.get("evidence_manifest") if isinstance(metadata, dict) else None
     t0 = manifest.get("t0") if isinstance(manifest, dict) else None
     if not isinstance(t0, dict) or t0.get("status") != "available":
@@ -275,6 +290,8 @@ def verify_signal_emitter_admission(opportunity: dict[str, Any]) -> tuple[bool, 
         and str(t0.get("universe_member_id") or "") == member_id
         and str(t0.get("symbol") or "") == symbol
         and _normalize_market(t0.get("market_type")) == market
+        and _normalize_venue(t0.get("venue"))
+        == _normalize_venue(background.get("venue"))
         and str(t0.get("direction") or "").strip().lower() == direction
     )
     if not manifest_matches:
@@ -284,7 +301,7 @@ def verify_signal_emitter_admission(opportunity: dict[str, Any]) -> tuple[bool, 
 
     try:
         rows = get_db().execute(
-            "SELECT opportunity_id, universe_snapshot_id, universe_member_id, symbol, "
+            "SELECT opportunity_id, universe_snapshot_id, universe_member_id, venue, symbol, "
             "market_type, direction FROM filter_decisions "
             "WHERE opportunity_id=? AND filter_name='opportunity_emission' "
             "AND stage='signal_emitter' AND decision='passed'",
@@ -306,6 +323,8 @@ def verify_signal_emitter_admission(opportunity: dict[str, Any]) -> tuple[bool, 
             and str(fact.get("universe_member_id") or "") == member_id
             and str(fact.get("symbol") or "") == symbol
             and _normalize_market(fact.get("market_type")) == market
+            and _normalize_venue(fact.get("venue"))
+            == _normalize_venue(background.get("venue"))
             and str(fact.get("direction") or "").strip().lower() == direction
         ):
             return True, "signal_emitter_admission_verified"

@@ -10,7 +10,10 @@ from datetime import datetime, timezone
 
 from aletheia.config.schema import AletheiaConfig
 from aletheia.data.freshness import fresh_row
-from aletheia.data.symbols import instrument_background_from_metadata
+from aletheia.data.symbols import (
+    instrument_analysis_context,
+    instrument_background_from_metadata,
+)
 from aletheia.storage.models import UniverseFeatureSnapshot
 from aletheia.storage import repositories as repo
 from aletheia.trading.indicators import rsi, atr, sma, bollinger, volume_sma_ratio
@@ -645,16 +648,25 @@ async def _fetch_single_feature(
                         bb_width_pct, historical_widths,
                     )
 
+    instrument_background = instrument_background_from_metadata(asset.get("metadata"))
+    analysis_context = instrument_analysis_context(instrument_background)
+    crypto_context = (analysis_context or {}).get("kind") == "crypto"
+
     relative_strength_24h = None
     relative_strength_4h = None
-    if return_24h is not None and btc_return_24h is not None:
+    if crypto_context and return_24h is not None and btc_return_24h is not None:
         relative_strength_24h = return_24h - btc_return_24h
-    if return_4h is not None and btc_return_4h is not None:
+    if crypto_context and return_4h is not None and btc_return_4h is not None:
         relative_strength_4h = return_4h - btc_return_4h
 
     # Beta coefficient vs BTC (P3: for beta-adjusted RS)
     btc_beta = None
-    if btc_closes_1h and len(closes_1h) >= 72 and len(btc_closes_1h) >= 72:
+    if (
+        crypto_context
+        and btc_closes_1h
+        and len(closes_1h) >= 72
+        and len(btc_closes_1h) >= 72
+    ):
         btc_beta = _compute_beta(closes_1h[-72:], btc_closes_1h[-72:])
 
     # Beta-adjusted relative strength
@@ -760,9 +772,8 @@ async def _fetch_single_feature(
         "symbol": symbol,
         "venue": asset.get("venue", ""),
         "market_type": asset.get("market_type", "spot"),
-        "instrument_background": instrument_background_from_metadata(
-            asset.get("metadata")
-        ),
+        "instrument_background": instrument_background,
+        "analysis_context": analysis_context,
         "quote_volume_24h": quote_volume_24h,
         "volume_1h": volume_1h,
         "spread_bps": spread,
@@ -965,21 +976,30 @@ async def collect_features(
             len(candidates), len(assets), min_vol,
         )
 
-        # --- BTC baseline for relative strength + beta ---
+        # --- BTC baseline for crypto-relative features only ---
         btc_return_24h = None
         btc_return_4h = None
         btc_closes_1h: list[float] = []
-        try:
-            btc_ohlcv = await asyncio.wait_for(
-                exchange.fetch_ohlcv("BTC/USDT", timeframe="1h", limit=_OHLCV_1H_LIMIT),
-                timeout=_OHLCV_TIMEOUT,
-            )
-            if btc_ohlcv:
-                btc_closes_1h = [float(c[4]) for c in btc_ohlcv]
-                btc_return_24h = _pct_return(btc_closes_1h, 24)
-                btc_return_4h = _pct_return(btc_closes_1h, 4)
-        except Exception as e:
-            logger.warning("BTC baseline fetch failed: %s", e)
+        needs_btc_context = any(
+            (instrument_analysis_context(instrument_background_from_metadata(
+                asset.get("metadata")
+            )) or {}).get("kind") == "crypto"
+            for asset, _ticker in candidates
+        )
+        if needs_btc_context:
+            try:
+                btc_ohlcv = await asyncio.wait_for(
+                    exchange.fetch_ohlcv(
+                        "BTC/USDT", timeframe="1h", limit=_OHLCV_1H_LIMIT
+                    ),
+                    timeout=_OHLCV_TIMEOUT,
+                )
+                if btc_ohlcv:
+                    btc_closes_1h = [float(c[4]) for c in btc_ohlcv]
+                    btc_return_24h = _pct_return(btc_closes_1h, 24)
+                    btc_return_4h = _pct_return(btc_closes_1h, 4)
+            except Exception as e:
+                logger.warning("BTC baseline fetch failed: %s", e)
 
         # --- Phase B: concurrent OHLCV fetch ---
         now = datetime.now(timezone.utc)

@@ -36,7 +36,10 @@ def test_information_integrity_policy_epoch_is_durable_and_idempotent():
     first = ensure_opportunity_information_policy_epoch()
     second = ensure_opportunity_information_policy_epoch()
 
-    assert POLICY_EPOCH_LABEL == "opportunity_information_integrity/v3"
+    assert POLICY_EPOCH_LABEL == "opportunity_information_integrity/v4"
+    assert opportunity_information_policy_context()["supported_analysis_contexts"] == [
+        "crypto", "stock_linked_perp",
+    ]
     assert first == second
     assert opportunity_information_policy_context()["operator_evidence_manifest"] == (
         "operator-candidate-v3"

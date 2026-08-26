@@ -395,6 +395,16 @@ def _member_fingerprint(allocated: list[dict], regime_tag: str | None) -> str:
                 sort_keys=True,
                 separators=(",", ":"),
             ),
+            json.dumps(
+                item.get("analysis_context"),
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            (
+                regime_tag
+                if (item.get("analysis_context") or {}).get("kind") == "crypto"
+                else None
+            ),
         ))
     payload = json.dumps(
         {
@@ -998,10 +1008,15 @@ class UniverseService:
             # Precompute every member object and JSON payload before acquiring
             # SQLite's single writer slot. The transaction below should spend
             # its time executing SQL, not serializing Python structures.
-            regime_tag = current_regime.state if current_regime else None
+            global_regime_tag = current_regime.state if current_regime else None
             member_models: list[UniverseMember] = []
             inserted_members: list[dict] = []
             for rank, item in enumerate(allocated, 1):
+                regime_tag = (
+                    global_regime_tag
+                    if (item.get("analysis_context") or {}).get("kind") == "crypto"
+                    else None
+                )
                 ttl_sec = min(item.get("ttl_sec", 3600), snapshot_ttl_sec)
                 member_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
                 entry_price = item.get("last_price")
@@ -1052,6 +1067,8 @@ class UniverseService:
                     "total_score": item["total_score"],
                     "learning_candidate_key": item.get("learning_candidate_key"),
                     "learning_exposure_id": item.get("learning_exposure_id"),
+                    "instrument_background": item.get("instrument_background"),
+                    "analysis_context": item.get("analysis_context"),
                     "expires_at": member_expires,
                 })
             pending_outcomes = build_pending(inserted_members, entry_ts=entry_ts)
