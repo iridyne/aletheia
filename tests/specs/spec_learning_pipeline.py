@@ -633,6 +633,44 @@ async def test_lesson_reviewer_reuses_policy_after_partial_apply_failure():
     assert len(policies.list_versions("lesson_policy")) == 1
 
 
+async def test_lesson_reviewer_recovers_applied_lesson_missing_draft_skill(monkeypatch):
+    import aletheia.agents.lesson_reviewer as lr
+    from aletheia.learning.lessons import LessonStore
+    from aletheia.learning.skills import SkillStore
+    from aletheia.policies.store import PolicyStore
+
+    store = LessonStore()
+    lesson = store.create("recover draft", "trade_case_study", "case-recover")
+    store.accept(lesson.lesson_id)
+    policies = PolicyStore()
+    version = policies.create_version(
+        "lesson_policy",
+        {"accepted_lesson_ids": [lesson.lesson_id]},
+        created_by="lesson_reviewer",
+    )
+    store.mark_applied(lesson.lesson_id, version.policy_version_id)
+    assert SkillStore().get_by_source_lesson_id(lesson.lesson_id) is None
+
+    monkeypatch.setattr(
+        lr,
+        "_fetch_evidence",
+        lambda _lesson: {
+            "aggregate": {"total": 0, "win_rate": 0.0, "avg_return": 0.0},
+            "exact_scope": {"total": 0, "win_rate": 0.0, "avg_return": 0.0},
+        },
+    )
+
+    result = await lr.run_lesson_reviewer(run_id="test")
+
+    skill = SkillStore().get_by_source_lesson_id(lesson.lesson_id)
+    assert skill is not None
+    assert skill.status == "draft"
+    assert skill.source_lesson_id == lesson.lesson_id
+    assert store.get(lesson.lesson_id).status == "applied"
+    assert len(policies.list_versions("lesson_policy")) == 1
+    assert any(item.startswith("recovered_draft_skill:") for item in result["outputs"])
+
+
 # ---------------------------------------------------------------------------
 # LP-S12 — Ranker routes proposed memo/case deltas through its authority boundary;
 #           they must NOT reach risk_engine or sizing (§8.1 invariant)

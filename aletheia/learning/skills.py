@@ -43,6 +43,7 @@ class SkillStore:
         inputs: list[str] | None = None,
         outputs: list[str] | None = None,
         risk_level: str = "low",
+        source_lesson_id: str | None = None,
     ) -> PSSkill:
         """Create a new skill. Raises SkillPermissionError if targeting forbidden layers."""
         targets = allowed_layers or []
@@ -67,6 +68,7 @@ class SkillStore:
             risk_level=risk_level,
             allowed_layers_json=json.dumps(targets, ensure_ascii=False),
             forbidden_layers_json=json.dumps(list(FORBIDDEN_LAYERS), ensure_ascii=False),
+            source_lesson_id=source_lesson_id,
             status="draft",
             created_at=now,
         )
@@ -74,11 +76,13 @@ class SkillStore:
         db.execute(
             "INSERT INTO ps_skills (skill_id, name, scope, description, "
             "inputs_json, outputs_json, risk_level, allowed_layers_json, "
-            "forbidden_layers_json, version, status, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "forbidden_layers_json, created_from_lessons_json, source_lesson_id, "
+            "version, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (skill_id, name, scope, description,
              skill.inputs_json, skill.outputs_json, risk_level,
-             skill.allowed_layers_json, skill.forbidden_layers_json, 1, "draft", now),
+             skill.allowed_layers_json, skill.forbidden_layers_json,
+             skill.created_from_lessons_json, source_lesson_id, 1, "draft", now),
         )
         if not was_in_tx:
             db.commit()
@@ -100,12 +104,6 @@ class SkillStore:
         lesson_id = getattr(lesson, "lesson_id", None)
         if not lesson_id:
             return None
-        existing = db.execute(
-            "SELECT * FROM ps_skills WHERE name = ? LIMIT 1",
-            (f"lesson:{lesson_id}",),
-        ).fetchone()
-        if existing:
-            return PSSkill(**dict(existing))
 
         evidence = {}
         recommendation = {}
@@ -138,15 +136,55 @@ class SkillStore:
         if policy_version_id:
             description += f" (policy_version={policy_version_id})"
 
-        return self.create(
-            name=f"lesson:{lesson_id}",
-            scope="learning_advisory",
-            description=description,
-            allowed_layers=["knowledge", "prompt_context", "ranking_advisory"],
-            inputs=inputs,
-            outputs=outputs,
-            risk_level="low",
-        )
+        from aletheia.storage.repositories import transaction
+
+        now = _utcnow()
+        skill_id = new_id()
+        name = f"lesson:{lesson_id}"
+        allowed_layers = ["knowledge", "prompt_context", "ranking_advisory"]
+        allowed_json = json.dumps(allowed_layers, ensure_ascii=False)
+        forbidden_json = json.dumps(list(FORBIDDEN_LAYERS), ensure_ascii=False)
+        lineage_json = json.dumps([lesson_id], ensure_ascii=False)
+        inserted = False
+        with transaction(immediate=True, savepoint=True):
+            cursor = db.execute(
+                "INSERT OR IGNORE INTO ps_skills ("
+                "skill_id, name, scope, description, inputs_json, outputs_json, "
+                "risk_level, allowed_layers_json, forbidden_layers_json, "
+                "created_from_lessons_json, source_lesson_id, version, artifact_path, "
+                "created_at, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    skill_id, name, "learning_advisory", description,
+                    json.dumps(inputs, ensure_ascii=False),
+                    json.dumps(outputs, ensure_ascii=False),
+                    "low", allowed_json, forbidden_json, lineage_json, lesson_id,
+                    1, None, now, "draft",
+                ),
+            )
+            inserted = cursor.rowcount == 1
+            row = db.execute(
+                "SELECT * FROM ps_skills WHERE source_lesson_id = ? LIMIT 1",
+                (lesson_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        skill = PSSkill(**dict(row))
+        if inserted:
+            get_event_store().append(make_event(
+                "SKILL_CREATED", "skill", skill.skill_id,
+                payload={"name": name, "scope": "learning_advisory", "targets": allowed_layers},
+            ))
+        return skill
+
+    def get_by_source_lesson_id(self, lesson_id: str) -> PSSkill | None:
+        row = get_db().execute(
+            "SELECT * FROM ps_skills WHERE source_lesson_id = ? LIMIT 1",
+            (lesson_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return PSSkill(**dict(row))
 
     def get(self, skill_id: str) -> PSSkill | None:
         db = get_db()

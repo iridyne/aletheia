@@ -3699,6 +3699,18 @@ _OPPORTUNITY_GENERATION_V2_CHECKSUM = hashlib.sha256(
     ).encode("utf-8")
 ).hexdigest()
 
+_LEARNING_DRAFT_SKILL_LINEAGE_SQL = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ps_skills_source_lesson_unique
+ON ps_skills(source_lesson_id)
+WHERE source_lesson_id IS NOT NULL;
+"""
+_LEARNING_DRAFT_SKILL_LINEAGE_CHECKSUM = hashlib.sha256(
+    (
+        _LEARNING_DRAFT_SKILL_LINEAGE_SQL
+        + "\nlearning_draft_skill_lineage_v1"
+    ).encode("utf-8")
+).hexdigest()
+
 _LESSON_REVIEWER_ATTEMPTS_SQL = """
 CREATE TABLE IF NOT EXISTS learning_lesson_reviewer_attempts (
     attempt_id TEXT PRIMARY KEY,
@@ -5494,6 +5506,61 @@ def _apply_opportunity_generation_v42(db: sqlite3.Connection) -> None:
     db.executescript(_OPPORTUNITY_GENERATION_V2_SQL)
 
 
+def _apply_learning_draft_skill_lineage_v44(db: sqlite3.Connection) -> None:
+    """Add typed lesson lineage and enforce one generated draft skill per lesson."""
+
+    columns = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(ps_skills)").fetchall()
+    }
+    if "source_lesson_id" not in columns:
+        db.execute(
+            "ALTER TABLE ps_skills ADD COLUMN source_lesson_id "
+            "TEXT REFERENCES ps_lessons(lesson_id)"
+        )
+
+    ambiguous = db.execute(
+        "SELECT substr(s.name, 8) AS lesson_id, COUNT(*) AS count "
+        "FROM ps_skills s "
+        "JOIN ps_lessons l ON l.lesson_id = substr(s.name, 8) "
+        "WHERE s.source_lesson_id IS NULL AND s.name LIKE 'lesson:%' "
+        "GROUP BY substr(s.name, 8) HAVING COUNT(*) > 1"
+    ).fetchall()
+    if ambiguous:
+        ids = ", ".join(f"{row['lesson_id']}({row['count']})" for row in ambiguous[:10])
+        raise sqlite3.IntegrityError(
+            f"ambiguous lesson-generated skill lineage for lesson ids: {ids}"
+        )
+
+    rows = db.execute(
+        "SELECT s.skill_id, substr(s.name, 8) AS lesson_id "
+        "FROM ps_skills s "
+        "JOIN ps_lessons l ON l.lesson_id = substr(s.name, 8) "
+        "WHERE s.source_lesson_id IS NULL AND s.name LIKE 'lesson:%'"
+    ).fetchall()
+    for row in rows:
+        lesson_id = str(row["lesson_id"])
+        db.execute(
+            "UPDATE ps_skills SET source_lesson_id = ?, "
+            "created_from_lessons_json = COALESCE(created_from_lessons_json, ?) "
+            "WHERE skill_id = ?",
+            (lesson_id, f'["{lesson_id}"]', row["skill_id"]),
+        )
+
+    existing_duplicates = db.execute(
+        "SELECT source_lesson_id, COUNT(*) AS count FROM ps_skills "
+        "WHERE source_lesson_id IS NOT NULL "
+        "GROUP BY source_lesson_id HAVING COUNT(*) > 1"
+    ).fetchall()
+    if existing_duplicates:
+        ids = ", ".join(f"{row['source_lesson_id']}({row['count']})" for row in existing_duplicates[:10])
+        raise sqlite3.IntegrityError(
+            f"duplicate source_lesson_id rows in ps_skills: {ids}"
+        )
+
+    db.executescript(_LEARNING_DRAFT_SKILL_LINEAGE_SQL)
+    db.execute("PRAGMA optimize")
+
+
 def _apply_lesson_reviewer_attempts_v21(db: sqlite3.Connection) -> None:
     """Add append-only execution history for the mutating lesson reviewer."""
 
@@ -6294,6 +6361,12 @@ _MIGRATIONS = (
         checksum=_OPPORTUNITY_GENERATION_V2_CHECKSUM,
         schema_version="aletheia-sqlite-v43",
         apply=_apply_opportunity_generation_v42,
+    ),
+    MigrationStep(
+        migration_id="20260827_0043_learning_draft_skill_lineage_v44",
+        checksum=_LEARNING_DRAFT_SKILL_LINEAGE_CHECKSUM,
+        schema_version="aletheia-sqlite-v44",
+        apply=_apply_learning_draft_skill_lineage_v44,
     ),
 )
 

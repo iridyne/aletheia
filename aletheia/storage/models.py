@@ -1370,6 +1370,7 @@ class PSSkill(BaseModel):
     allowed_layers_json: str = "[]"
     forbidden_layers_json: str = "[]"
     created_from_lessons_json: str | None = None
+    source_lesson_id: str | None = None
     version: int = 1
     artifact_path: str | None = None
     created_at: str = Field(default_factory=_utcnow)

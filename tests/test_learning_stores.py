@@ -42,6 +42,103 @@ def _teardown():
     sq._db_conn = None
 
 
+def _setup_legacy_skill_db(tmp_path, monkeypatch) -> sqlite3.Connection:
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
+    sq.reset_db()
+    conn = sqlite3.connect(str(tmp_path / "legacy.db"), check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    sq._db_conn = conn
+    conn.executescript(
+        """
+        CREATE TABLE ps_lessons (
+            lesson_id TEXT PRIMARY KEY,
+            source_type TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            category TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            evidence_json TEXT NOT NULL,
+            recommendation_json TEXT,
+            status TEXT NOT NULL,
+            artifact_path TEXT,
+            created_at TEXT NOT NULL,
+            applied_policy_version TEXT,
+            activated_at TEXT,
+            dry_run_until TEXT,
+            expires_at TEXT
+        );
+        CREATE TABLE ps_skills (
+            skill_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            description TEXT NOT NULL,
+            inputs_json TEXT NOT NULL,
+            outputs_json TEXT NOT NULL,
+            risk_level TEXT NOT NULL,
+            allowed_layers_json TEXT NOT NULL,
+            forbidden_layers_json TEXT NOT NULL,
+            created_from_lessons_json TEXT,
+            version INTEGER NOT NULL,
+            artifact_path TEXT,
+            created_at TEXT NOT NULL,
+            status TEXT NOT NULL
+        );
+        """
+    )
+    return conn
+
+
+def test_skill_lineage_migration_backfills_unambiguous_legacy_rows(tmp_path, monkeypatch):
+    conn = _setup_legacy_skill_db(tmp_path, monkeypatch)
+    conn.execute(
+        "INSERT INTO ps_lessons (lesson_id, source_type, source_id, category, severity, "
+        "summary, evidence_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("lesson-1", "trade_case_study", "case-1", "general", "info", "summary", "{}", "applied", "2026-08-27"),
+    )
+    conn.execute(
+        "INSERT INTO ps_skills (skill_id, name, scope, description, inputs_json, outputs_json, "
+        "risk_level, allowed_layers_json, forbidden_layers_json, created_from_lessons_json, "
+        "version, artifact_path, created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("skill-1", "lesson:lesson-1", "learning_advisory", "desc", "[]", "[]", "low", "[]", "[]", None, 1, None, "2026-08-27", "draft"),
+    )
+    conn.commit()
+
+    run_migrations()
+
+    row = conn.execute("SELECT source_lesson_id, created_from_lessons_json FROM ps_skills").fetchone()
+    assert row["source_lesson_id"] == "lesson-1"
+    assert json.loads(row["created_from_lessons_json"]) == ["lesson-1"]
+    index = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_ps_skills_source_lesson_unique'"
+    ).fetchone()
+    assert index is not None
+    _teardown()
+
+
+def test_skill_lineage_migration_refuses_ambiguous_legacy_rows(tmp_path, monkeypatch):
+    conn = _setup_legacy_skill_db(tmp_path, monkeypatch)
+    conn.execute(
+        "INSERT INTO ps_lessons (lesson_id, source_type, source_id, category, severity, "
+        "summary, evidence_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("lesson-dup", "trade_case_study", "case-1", "general", "info", "summary", "{}", "applied", "2026-08-27"),
+    )
+    for skill_id in ("skill-a", "skill-b"):
+        conn.execute(
+            "INSERT INTO ps_skills (skill_id, name, scope, description, inputs_json, outputs_json, "
+            "risk_level, allowed_layers_json, forbidden_layers_json, created_from_lessons_json, "
+            "version, artifact_path, created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (skill_id, "lesson:lesson-dup", "learning_advisory", "desc", "[]", "[]", "low", "[]", "[]", None, 1, None, "2026-08-27", "draft"),
+        )
+    conn.commit()
+
+    with pytest.raises(sqlite3.IntegrityError, match="ambiguous lesson-generated skill lineage"):
+        run_migrations()
+    _teardown()
+
+
 # ---------------------------------------------------------------------------
 # LessonStore — create
 # ---------------------------------------------------------------------------
@@ -282,12 +379,44 @@ class TestSkillStoreCreate:
         assert skill is not None
         assert again.skill_id == skill.skill_id
         assert skill.name == f"lesson:{lesson.lesson_id}"
+        assert skill.source_lesson_id == lesson.lesson_id
+        assert json.loads(skill.created_from_lessons_json) == [lesson.lesson_id]
         assert skill.status == "draft"
         assert skill.scope == "learning_advisory"
         assert "risk_limits" not in json.loads(skill.allowed_layers_json)
         assert "execution_gateway" not in json.loads(skill.allowed_layers_json)
         assert "BTC/USDT" in applied.evidence_json
         assert len(skill_store.list_all()) == 1
+        _teardown()
+
+    def test_create_from_lesson_uses_typed_lineage_not_name(self, tmp_path, monkeypatch):
+        _setup_test_db(tmp_path, monkeypatch)
+        lesson_store = LessonStore()
+        skill_store = SkillStore()
+        lesson = lesson_store.create("Name collision", "trade_case_study", "case-2")
+        lesson_store.accept(lesson.lesson_id)
+        lesson_store.mark_applied(lesson.lesson_id, "pv-2")
+
+        manual = skill_store.create(
+            name=f"lesson:{lesson.lesson_id}",
+            scope="research",
+            description="Manual row with a colliding display name",
+        )
+        generated = skill_store.create_from_lesson(
+            lesson_store.get(lesson.lesson_id),
+            policy_version_id="pv-2",
+        )
+        again = skill_store.create_from_lesson(
+            lesson_store.get(lesson.lesson_id),
+            policy_version_id="pv-2",
+        )
+
+        assert manual.source_lesson_id is None
+        assert generated is not None
+        assert generated.skill_id == again.skill_id
+        assert generated.skill_id != manual.skill_id
+        assert generated.source_lesson_id == lesson.lesson_id
+        assert len(skill_store.list_all()) == 2
         _teardown()
 
 
