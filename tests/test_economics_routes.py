@@ -57,6 +57,29 @@ async def client(tmp_path, monkeypatch):
     reset_model_health()
 
 
+def _reset_pricing_refresh_state() -> None:
+    from aletheia.economics import pricing_sync
+
+    with pricing_sync._state_lock:
+        pricing_sync._worker = None
+        pricing_sync._state.clear()
+        pricing_sync._state.update(
+            {
+                "status": "idle",
+                "started_at": None,
+                "completed_at": None,
+                "last_success_at": None,
+                "error": None,
+                "source_url": pricing_sync.LITELLM_PRICE_MAP_URL,
+                "version": None,
+                "fetched_model_count": None,
+                "matched_model_count": 0,
+                "snapshots_created": 0,
+                "unmatched_models": [],
+            }
+        )
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -1116,6 +1139,34 @@ async def test_pricing_empty(client):
     data = resp.json()
     assert data["models"] == []
     assert data["tools"] == []
+
+
+@pytest.mark.anyio
+async def test_pricing_refresh_start_failure_returns_typed_503(client, monkeypatch):
+    from aletheia.economics import pricing_sync
+
+    _reset_pricing_refresh_state()
+
+    class FailingThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def is_alive(self):
+            return False
+
+        def start(self):
+            raise RuntimeError("raw thread detail")
+
+    monkeypatch.setattr(pricing_sync.threading, "Thread", FailingThread)
+
+    resp = await client.post("/api/economics/pricing/refresh")
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["code"] == "pricing_refresh_worker_start_failed"
+    status = await client.get("/api/economics/pricing/refresh-status")
+    assert status.json()["status"] == "failed"
+    assert status.json()["error"] == "worker_start_failed"
+    assert "raw thread detail" not in status.text
 
 
 # ── /api/economics/budgets ───────────────────────────────────────────────────
