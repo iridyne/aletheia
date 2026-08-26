@@ -26,6 +26,7 @@ the two modules are candidates for a future merge.
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -102,11 +103,17 @@ def compare_exit_outcomes(rows: list[dict[str, Any]]) -> dict[str, ExitOutcomeSt
     """Group closed positions by exit driver and compute realized-outcome stats. Pure."""
     buckets: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
+        try:
+            pnl = float(row["realized_pnl"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not math.isfinite(pnl):
+            continue
         buckets[exit_driver(row.get("close_reason"))].append(row)
 
     out: dict[str, ExitOutcomeStats] = {}
     for driver, group in buckets.items():
-        pnls = [float(r.get("realized_pnl") or 0.0) for r in group]
+        pnls = [float(r["realized_pnl"]) for r in group]
         holds = [h for h in (_hold_hours(r) for r in group) if h is not None]
         wins = sum(1 for p in pnls if p > 0)
         total = sum(pnls)

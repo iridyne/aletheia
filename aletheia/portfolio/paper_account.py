@@ -118,11 +118,17 @@ def _write_event(*, action: str, amount_usdt: float, actor: str, source: str,
         if not math.isfinite(after):
             raise ValueError("paper account event balance must remain finite")
         if after < -1e-8 and not allow_negative_balance:
-            raise ValueError("paper account cash balance cannot be negative")
+            continuing_position = (
+                before < -1e-8
+                and action in {"position_opened", "position_closed"}
+            )
+            restoring_cash = before < -1e-8 and amount_usdt > 0
+            if not continuing_position and not restoring_cash:
+                raise ValueError("paper account cash balance cannot be negative")
         event = PaperAccountEvent(
             action=action, amount_usdt=round(amount_usdt, 8),
             cash_balance_before_usdt=round(before, 8),
-            cash_balance_after_usdt=after if allow_negative_balance else max(0.0, after),
+            cash_balance_after_usdt=after,
             actor=actor, source=source,
             position_id=position_id, note=note,
         )

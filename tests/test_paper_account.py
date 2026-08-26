@@ -386,6 +386,49 @@ def test_invalidation_fences_an_already_claimed_outcome_hook(tmp_path, monkeypat
     assert job["last_error"] == "invalid_exit_price_evidence"
 
 
+def test_position_ledger_continues_after_correction_makes_cash_negative(
+    tmp_path, monkeypatch,
+):
+    _setup_env(tmp_path, monkeypatch)
+    from datetime import datetime, timezone
+    from aletheia.portfolio.paper_account import (
+        adjust_cash,
+        get_paper_account,
+        invalidate_paper_position_economics,
+        record_position_opened,
+        settle_position_closed,
+    )
+
+    position = Position(
+        id="consumed-false-profit",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=400.0,
+        execution_mode="paper_internal",
+        status="closed",
+        realized_pnl=300.0,
+        outcome_eligible=True,
+        closed_at=datetime.now(timezone.utc).isoformat(),
+    )
+    repo.insert_position(position)
+    settle_position_closed(position.id, 300.0)
+    adjust_cash(-450.0, note="consume false profit before correction")
+    invalidate_paper_position_economics(position.id)
+    assert get_paper_account()["cash_balance_usdt"] == pytest.approx(-250.0)
+
+    record_position_opened("already-open-position")
+    settle_position_closed("later-loss", -10.0)
+    settle_position_closed("later-small-profit", 5.0)
+    adjust_cash(1.0, note="partial restoration")
+
+    assert get_paper_account()["cash_balance_usdt"] == pytest.approx(-254.0)
+    with pytest.raises(ValueError, match="cannot be negative"):
+        adjust_cash(-1.0, note="do not deepen deficit manually")
+
+
 def test_local_paper_available_balance_tightens_risk_without_affecting_external(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
