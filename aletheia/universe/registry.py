@@ -6,11 +6,15 @@ symbols actually supported on the demo environment — no wasted scanning.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 
 from aletheia.config.schema import AletheiaConfig
-from aletheia.data.symbols import to_canonical
+from aletheia.data.symbols import (
+    build_instrument_background,
+    instrument_background_rejection_reason,
+)
 from aletheia.storage.models import UniverseAsset
 from aletheia.storage import repositories as repo
 
@@ -145,8 +149,6 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
             quote = (info.get("quote") or "").upper()
             if quote != "USDT":
                 continue
-            if _is_excluded(info):
-                continue
 
             base = (info.get("base") or "").upper()
             if not base:
@@ -161,6 +163,18 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
             if info.get("option"):
                 continue
             market_type = "perp" if is_perp else "spot"
+
+            background = build_instrument_background(
+                symbol=str(info.get("symbol") or symbol_key),
+                venue=venue,
+                market_type=market_type,
+                market_info=info,
+            )
+            asset_class = background["asset_class"]
+            # Keep unsupported products visible with an honest background.
+            # Ordinary crypto exclusions remain absent altogether.
+            if _is_excluded(info) and asset_class == "crypto":
+                continue
 
             # Demo whitelist filter: skip symbols not executable on demo
             if demo_whitelist is not None and canonical not in demo_whitelist:
@@ -178,7 +192,19 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
             price_prec = precision.get("price")
             amount_prec = precision.get("amount")
 
-            blacklisted = canonical in cfg.universe.blacklist
+            config_blacklisted = canonical in cfg.universe.blacklist
+            support_reason = instrument_background_rejection_reason(
+                background,
+                symbol=canonical,
+                market_type=market_type,
+                venue=venue,
+            )
+            blacklisted = config_blacklisted or support_reason is not None
+            blacklist_reason = None
+            if config_blacklisted:
+                blacklist_reason = "config_blacklist"
+            elif support_reason:
+                blacklist_reason = support_reason
 
             asset = UniverseAsset(
                 venue=venue,
@@ -193,7 +219,10 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
                 first_seen_at=now,
                 last_seen_at=now,
                 is_blacklisted=blacklisted,
-                blacklist_reason="config_blacklist" if blacklisted else None,
+                blacklist_reason=blacklist_reason,
+                metadata=json.dumps(
+                    {"instrument_background": background}, sort_keys=True
+                ),
             )
             assets.append(asset)
 

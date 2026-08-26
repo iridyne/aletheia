@@ -46,17 +46,30 @@ def _call_names(relative_path: str) -> set[str]:
 
 @spec_claim(SpecClaim(
     "AR-S01", "active_runtime_scope", "frontmatter declaration", "L2a",
-    "The active crypto paper mainline names exactly one decision, risk, execution, "
+    "The active instrument-aware paper mainline names exact crypto and verified "
+    "stock-linked profiles plus one decision, risk, execution, "
     "outcome, and Learning authority boundary.",
 ))
 def test_active_runtime_scope_is_complete_and_narrow():
     scope = _scope()
     assert scope == {
         "schema_version": 1,
-        "scope_id": "crypto-paper-mainline-v1",
+        "scope_id": "crypto-stock-linked-paper-mainline-v2",
         "status": "active",
-        "asset_classes": ["crypto"],
-        "market_types": ["spot", "perp"],
+        "instrument_profiles": {
+            "crypto": {
+                "asset_class": "crypto",
+                "market_types": ["spot", "perp"],
+            },
+            "verified_stock_linked_perp": {
+                "asset_class": "equity",
+                "asset_subclass": "stock_linked_perp",
+                "venue": "binance",
+                "reference_assets": ["SOXL", "SOXS"],
+                "market_types": ["perp"],
+                "identity_status": "complete",
+            },
+        },
         "execution_modes": ["paper_internal"],
         "decision_authority": (
             "aletheia.agent_shell.trading_decision.evaluate_trading_opportunity"

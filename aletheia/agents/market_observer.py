@@ -103,6 +103,20 @@ class _SymbolPrefetch:
     context_duration_ms: int | None = None
 
 
+def _find_universe_opportunity(
+    symbol: str, snapshot_id: str, market_type: str,
+) -> dict | None:
+    """Find a physical-market Opportunity while retaining legacy DB aliases."""
+    markets = dict.fromkeys((market_type, instrument_market_to_db_market(market_type)))
+    for market in markets:
+        existing = find_opportunity_by_symbol_snapshot(
+            symbol, snapshot_id, market=market,
+        )
+        if existing is not None:
+            return existing
+    return None
+
+
 def _admitted_observer_workset(
     cfg,
 ) -> tuple[list, dict[str, dict], str | None, list[str]]:
@@ -129,11 +143,7 @@ def _admitted_observer_workset(
         market_type = member.get("market_type", "spot") or MARKET_SPOT
         if not symbol:
             continue
-        existing = find_opportunity_by_symbol_snapshot(
-            symbol,
-            snapshot_id,
-            market=instrument_market_to_db_market(market_type),
-        )
+        existing = _find_universe_opportunity(symbol, snapshot_id, market_type)
         if not existing or existing.get("status") != "open":
             continue
         if existing.get("universe_member_id") != member.get("id"):
@@ -639,6 +649,7 @@ def _bounded_t0(value: dict) -> dict:
         "universe_member_id",
         "feature_snapshot_id",
         "pre_filter_evidence_id",
+        "venue",
         "symbol",
         "market_type",
         "scanner_family",
@@ -1063,17 +1074,15 @@ async def _analyze_symbol(
     _t_start = _time.monotonic()
     _step_times: dict[str, float] = {}
 
-    # Market Observer is advisory for Universe-linked crypto. It may analyze
+    # Market Observer is advisory for Universe-linked instruments. It may analyze
     # only the exact open Opportunity already admitted by the deterministic
     # signal emitter; absence or conflicting lineage is an authoritative skip.
     existing_opportunity: dict | None = None
-    if asset_class == "crypto":
+    if universe_snapshot_id or universe_member_id:
         if not universe_snapshot_id or not universe_member_id:
             return None, None
-        existing_opportunity = find_opportunity_by_symbol_snapshot(
-            symbol,
-            universe_snapshot_id,
-            market=instrument_market_to_db_market(market_type),
+        existing_opportunity = _find_universe_opportunity(
+            symbol, universe_snapshot_id, market_type,
         )
         if (
             not existing_opportunity
@@ -1092,6 +1101,24 @@ async def _analyze_symbol(
                 output_data=reason,
             )
             return None, None
+        asset_class = str(existing_opportunity.get("asset_class") or "unknown")
+        from aletheia.data.symbols import instrument_analysis_context_from_metadata
+
+        analysis_context = instrument_analysis_context_from_metadata(
+            existing_opportunity.get("metadata")
+        )
+        if (analysis_context or {}).get("kind") == "stock_linked_perp":
+            # The current Observer prompt mixes global crypto inputs. The exact
+            # stock-linked candidate already has instrument-local features and a
+            # complete background for the System Operator, so keep its causal
+            # owner and omit this inapplicable enrichment instead of relabelling it.
+            record_step(
+                run_id,
+                f"observer_context_not_applicable:{symbol}",
+                input_data=f"opportunity_id={existing_opportunity.get('id')}",
+                output_data="stock_linked_perp_uses_operator_instrument_context",
+            )
+            return existing_opportunity["id"], None
 
     # Derivatives state for the Opportunity row (perp only; stays None for spot).
     funding_rate_val: float | None = None
@@ -1766,10 +1793,8 @@ async def _analyze_symbol(
     if existing_opportunity:
         return _reuse_existing_opportunity(existing_opportunity)
     if universe_snapshot_id:
-        existing_opportunity = find_opportunity_by_symbol_snapshot(
-            symbol,
-            universe_snapshot_id,
-            market=instrument_market_to_db_market(market_type),
+        existing_opportunity = _find_universe_opportunity(
+            symbol, universe_snapshot_id, market_type,
         )
         if existing_opportunity:
             return _reuse_existing_opportunity(existing_opportunity)

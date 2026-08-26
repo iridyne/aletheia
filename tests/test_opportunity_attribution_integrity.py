@@ -41,6 +41,7 @@ def _decision(**overrides):
 
 
 def test_new_opportunity_t0_forces_this_computation_snapshot(monkeypatch):
+    from aletheia.data.symbols import instrument_analysis_context
     from aletheia.storage.models import UniverseFeatureSnapshot
     from aletheia.universe import features, signal_emitter
 
@@ -52,10 +53,26 @@ def test_new_opportunity_t0_forces_this_computation_snapshot(monkeypatch):
         return_1h=2.5,
         return_4h=4.0,
     )
+    background = {
+        "version": "instrument-background/v1",
+        "status": "complete",
+        "venue": "fixture",
+        "symbol": "BTC/USDT",
+        "market_type": "spot",
+        "physical_market_type": "spot",
+        "asset_class": "crypto",
+        "product_kind": "crypto_spot",
+        "reference_asset": "BTC",
+        "relationship": "direct_asset",
+        "classification": {"source": "test_fixture"},
+    }
     feature = {
         "asset_id": computed.asset_id,
         "symbol": "BTC/USDT",
         "market_type": "spot",
+        "venue": "fixture",
+        "instrument_background": background,
+        "analysis_context": instrument_analysis_context(background),
         "return_1h": computed.return_1h,
         "return_4h": computed.return_4h,
         "rsi_14": computed.rsi_14,
@@ -72,6 +89,9 @@ def test_new_opportunity_t0_forces_this_computation_snapshot(monkeypatch):
         "market_type": "spot",
         "scanner_family": "momentum",
         "total_score": 65,
+        "venue": "fixture",
+        "instrument_background": background,
+        "analysis_context": instrument_analysis_context(background),
         "expires_at": "2026-07-19T07:10:00+00:00",
     }
     persisted = []

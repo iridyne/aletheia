@@ -50,6 +50,22 @@ _ATR_TARGET_PCT = 1.5  # legacy fallback; prefer cfg.trading.vol_target_pct
 _RECENT_SIGNAL_COOLDOWN_MINUTES = 30
 _PENDING_SIGNAL_MAX_AGE_MINUTES = 30
 _PENDING_SIGNAL_QUEUE_CAPACITY = 5
+_PERMANENT_SKIP_PREFIXES = (
+    "neutral_bias", "confidence_below_", "paused_strategy:", "blocked_factor:",
+    "equity_shadow_track", "execution_eligible=False", "universe_not_eligible",
+    "ttl_expired", "ttl_invalid", "factor_hard_blocked", "okx_demo_symbol_not_supported",
+    "symbol_not_allowed:", "producer_not_authorized", "producer_eligibility_",
+    "instrument_background_", "instrument_analysis_context_",
+    "unsupported_analysis_context:",
+    "regime_confidence_standdown", "regime_sideways_standdown",
+    "family_not_demo_eligible", "reverse_after_stop",
+    "committee_direction_conflict",
+)
+
+
+def _is_permanent_skip(candidate: dict) -> bool:
+    reason = str(candidate.get("skip_reason") or "")
+    return bool(reason and reason.startswith(_PERMANENT_SKIP_PREFIXES))
 
 
 def _market_identity(value: object) -> str:
@@ -478,7 +494,12 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
             enrich_candidates_parallel,
         )
 
-        _candidates_to_enrich = [c for c in candidates if not c.get("skip_reason")]
+        _candidates_to_enrich = [
+            c for c in candidates
+            if not c.get("skip_reason")
+            and (c.get("analysis_context") or {}).get("kind")
+            != "stock_linked_perp"
+        ]
         if _candidates_to_enrich:
             _enriched_llm = await enrich_candidates_parallel(
                 _candidates_to_enrich, max_concurrency=8, total_timeout=240.0,
@@ -496,24 +517,6 @@ async def run_paper_trader(permission_mode: str = "Observe", run_id: str | None 
     except Exception as exc:
         logger.warning("LLM Committee enrichment skipped: %s", exc)
 
-
-    _PERMANENT_SKIP_PREFIXES = (
-        "neutral_bias", "confidence_below_", "paused_strategy:", "blocked_factor:",
-        "equity_shadow_track", "execution_eligible=False", "universe_not_eligible",
-        "ttl_expired", "ttl_invalid", "factor_hard_blocked", "okx_demo_symbol_not_supported",
-        "symbol_not_allowed:", "producer_not_authorized", "producer_eligibility_",
-        "regime_confidence_standdown", "regime_sideways_standdown",
-        "family_not_demo_eligible", "reverse_after_stop",
-        "committee_direction_conflict",
-    )
-    def _is_permanent_skip(candidate: dict) -> bool:
-        return bool(
-            candidate.get("skip_reason")
-            and any(
-                str(candidate.get("skip_reason") or "").startswith(prefix)
-                for prefix in _PERMANENT_SKIP_PREFIXES
-            )
-        )
 
     def _settle_permanent_skips(batch: list[dict]) -> set[str]:
         """Return stale/failed ids whose rejection facts must not leak onward."""

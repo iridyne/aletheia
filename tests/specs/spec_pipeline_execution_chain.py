@@ -128,6 +128,108 @@ def test_execution_chain_happy_path(tmp_path, monkeypatch):
     assert pos_row["order_id"] == order_id
 
 
+def test_stock_linked_perp_reuses_risk_and_paper_internal_chain(tmp_path, monkeypatch):
+    """A supported product changes context, not execution authority or sizing."""
+    _setup_db(tmp_path, monkeypatch)
+
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.data.symbols import (
+        build_instrument_background,
+        instrument_analysis_context,
+    )
+    from aletheia.execution.gateway import submit_proposal
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import MarketSnapshot, Opportunity
+    from aletheia.storage.sqlite import get_db
+
+    cfg = load_config()
+    cfg.exchange.enabled_markets["usdt_futures"] = True
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.symbol_list = ["SOXL/USDT"]
+    cfg.risk.symbol_filter_mode = "whitelist"
+    save_config(cfg)
+
+    background = build_instrument_background(
+        symbol="SOXL/USDT:USDT",
+        venue="binance",
+        market_type="perp",
+        market_info={
+            "symbol": "SOXL/USDT:USDT",
+            "base": "SOXL",
+            "quote": "USDT",
+            "info": {"underlyingType": "EQUITY"},
+        },
+    )
+    opportunity = Opportunity(
+        id="execution-chain-opportunity-soxl",
+        symbol="SOXL/USDT",
+        market="perp",
+        direction_bias="long",
+        status="queued",
+        asset_class="equity",
+        asset_subclass="stock_linked_perp",
+        execution_eligible=True,
+        metadata=json.dumps({
+            "instrument_background": background,
+            "analysis_context": instrument_analysis_context(background),
+        }),
+    )
+    repo.insert_opportunity(opportunity)
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol="SOXL/USDT",
+        market_type="perp",
+        exchange="binance",
+        price=100.0,
+        snapshot_at=datetime.now(timezone.utc).isoformat(),
+    ))
+    repo.insert_funding_rate_snapshot({
+        "symbol": "SOXL/USDT",
+        "exchange": "binance",
+        "funding_rate": 0.0001,
+        "funding_rate_annualized": 0.1095,
+        "next_funding_time": (
+            datetime.now(timezone.utc) + timedelta(hours=4)
+        ).isoformat(),
+        "mark_price": 100.0,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    result = submit_proposal(
+        symbol="SOXL/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.1,
+        price=100.0,
+        leverage=1,
+        stop_price=95.0,
+        take_profit=110.0,
+        risk_reward=2.0,
+        execution_mode="paper_internal",
+        opportunity_id=opportunity.id,
+    )
+    assert result["status"] == "executed", result
+
+    db = get_db()
+    decision = db.execute(
+        "SELECT approved,allowed_execution_mode FROM risk_decisions WHERE proposal_id=?",
+        (result["proposal_id"],),
+    ).fetchone()
+    position = db.execute(
+        "SELECT market_type,execution_mode,quantity FROM positions WHERE id=?",
+        (result["position_id"],),
+    ).fetchone()
+    assert dict(decision) == {
+        "approved": 1,
+        "allowed_execution_mode": "paper_internal",
+    }
+    assert position["market_type"] == "usdt_futures"
+    assert position["execution_mode"] == "paper_internal"
+    assert position["quantity"] == pytest.approx(0.1)
+
+
 # ---------------------------------------------------------------------------
 # PL-EC-02  L2c  causal_integrity: FK invariant scan over all rows
 # ---------------------------------------------------------------------------

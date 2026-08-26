@@ -45,6 +45,13 @@ def attach_b2_candidate_evidence(ctx: dict, *, policy_epoch_id: str) -> None:
     """Attach one cohort summary to each queued candidate, without changing gates."""
     layer2 = ctx.get("layer2") or {}
     for candidate in layer2.get("pending_signals") or []:
+        if (candidate.get("analysis_context") or {}).get("kind") == "stock_linked_perp":
+            candidate["b2_evidence"] = {
+                "status": "not_applicable",
+                "reason": "pre_policy_crypto_family_prior_excluded",
+                "policy_epoch_id": policy_epoch_id,
+            }
+            continue
         candidate["b2_evidence"] = build_b2_evidence_summary(
             candidate, policy_epoch_id=policy_epoch_id,
         )

@@ -5,6 +5,9 @@ from unittest.mock import patch
 
 import pytest
 
+from aletheia.data.symbols import instrument_analysis_context
+from tests.observer_admission_fixture import crypto_background
+
 
 def _prepare_db(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
@@ -43,9 +46,13 @@ async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
         universe_member_id="scanner-member",
         scanner_family="mean_reversion",
         metadata=json.dumps({
+            "instrument_background": crypto_background("SLX/USDT", "perp"),
+            "analysis_context": instrument_analysis_context(
+                crypto_background("SLX/USDT", "perp")
+            ),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
-                "policy_epoch": "opportunity_information_integrity/v2",
+                "policy_epoch": "opportunity_information_integrity/v4",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",
@@ -53,6 +60,7 @@ async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
                     "universe_member_id": "scanner-member",
                     "symbol": "SLX/USDT",
                     "market_type": "perp",
+                    "venue": "fixture",
                     "direction": "short",
                     "total_score": 49.105,
                 },
@@ -70,6 +78,7 @@ async def test_observer_cannot_rewrite_scanner_direction_or_score_semantics(
         reason_code="opportunity_emitted",
         symbol=original.symbol,
         market_type="perp",
+        venue="fixture",
         direction="short",
         opportunity_id=original.id,
         universe_snapshot_id=original.universe_snapshot_id,
@@ -250,9 +259,11 @@ def test_scanner_manifest_without_persisted_emitter_fact_fails_closed(
         universe_snapshot_id="snapshot-missing-fact",
         universe_member_id="member-missing-fact",
         metadata=json.dumps({
+            "instrument_background": crypto_background(),
+            "analysis_context": instrument_analysis_context(crypto_background()),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
-                "policy_epoch": "opportunity_information_integrity/v2",
+                "policy_epoch": "opportunity_information_integrity/v4",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",
@@ -260,6 +271,7 @@ def test_scanner_manifest_without_persisted_emitter_fact_fails_closed(
                     "universe_member_id": "member-missing-fact",
                     "symbol": "BTC/USDT",
                     "market_type": "spot",
+                    "venue": "fixture",
                     "direction": "long",
                 },
             },
@@ -270,6 +282,32 @@ def test_scanner_manifest_without_persisted_emitter_fact_fails_closed(
     assert verify_signal_emitter_admission(
         opportunity.model_dump()
     ) == (False, "producer_eligibility_fact_missing")
+
+
+def test_scanner_carrier_without_background_fails_closed_before_fact_lookup():
+    from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
+    from aletheia.storage.models import Opportunity
+
+    opportunity = Opportunity(
+        id="pre-background-carrier",
+        symbol="SOXL/USDT",
+        market="usdt_futures",
+        direction_bias="long",
+        source_agent="universe_scanner",
+        universe_snapshot_id="pre-background-snapshot",
+        universe_member_id="pre-background-member",
+        metadata=json.dumps({
+            "evidence_manifest": {
+                "version": "opportunity-information-integrity-v1",
+                "policy_epoch": "opportunity_information_integrity/v3",
+                "t0": {"status": "available"},
+            },
+        }),
+    )
+
+    assert verify_signal_emitter_admission(
+        opportunity.model_dump()
+    ) == (False, "instrument_background_missing")
 
 
 def test_signal_emitter_attestation_db_failure_is_retryable(monkeypatch):
@@ -285,9 +323,11 @@ def test_signal_emitter_attestation_db_failure_is_retryable(monkeypatch):
         universe_snapshot_id="snapshot-attestation-unavailable",
         universe_member_id="member-attestation-unavailable",
         metadata=json.dumps({
+            "instrument_background": crypto_background(),
+            "analysis_context": instrument_analysis_context(crypto_background()),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
-                "policy_epoch": "opportunity_information_integrity/v2",
+                "policy_epoch": "opportunity_information_integrity/v4",
                 "t0": {
                     "status": "available",
                     "trigger_type": "universe_scanner",
@@ -295,6 +335,7 @@ def test_signal_emitter_attestation_db_failure_is_retryable(monkeypatch):
                     "universe_member_id": "member-attestation-unavailable",
                     "symbol": "BTC/USDT",
                     "market_type": "spot",
+                    "venue": "fixture",
                     "direction": "long",
                 },
             },
@@ -325,6 +366,8 @@ def test_pre_v2_scanner_carrier_fails_closed_before_fact_lookup():
         universe_snapshot_id="pre-v2-snapshot",
         universe_member_id="pre-v2-member",
         metadata=json.dumps({
+            "instrument_background": crypto_background(),
+            "analysis_context": instrument_analysis_context(crypto_background()),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
                 "policy_epoch": "opportunity_information_integrity/v1",
@@ -335,6 +378,7 @@ def test_pre_v2_scanner_carrier_fails_closed_before_fact_lookup():
                     "universe_member_id": "pre-v2-member",
                     "symbol": "BTC/USDT",
                     "market_type": "spot",
+                    "venue": "fixture",
                     "direction": "long",
                 },
             },
@@ -369,6 +413,8 @@ def test_observer_workset_keeps_spot_and_perp_owners_distinct(monkeypatch):
     )
 
     def existing(_symbol, _snapshot_id, *, market):
+        if market == "perp":
+            return None
         return {
             "id": f"opportunity-{market}",
             "status": "open",
@@ -549,9 +595,13 @@ async def test_proposal_preflight_rejects_scanner_t0_direction_conflict(
         universe_member_id="corrupt-member",
         scanner_family="mean_reversion",
         metadata=json.dumps({
+            "instrument_background": crypto_background("SLX/USDT", "perp"),
+            "analysis_context": instrument_analysis_context(
+                crypto_background("SLX/USDT", "perp")
+            ),
             "evidence_manifest": {
                 "version": "opportunity-information-integrity-v1",
-                "policy_epoch": "opportunity_information_integrity/v2",
+                "policy_epoch": "opportunity_information_integrity/v4",
                 "t0": {
                         "status": "available",
                         "trigger_type": "universe_scanner",
@@ -559,6 +609,7 @@ async def test_proposal_preflight_rejects_scanner_t0_direction_conflict(
                         "universe_member_id": "corrupt-member",
                         "symbol": "SLX/USDT",
                         "market_type": "perp",
+                        "venue": "fixture",
                         "direction": "short",
                 },
             },
@@ -608,11 +659,18 @@ def test_universe_opportunity_metadata_has_bounded_exact_t0_trigger():
         "market_type": "perp",
         "scanner_family": "momentum",
         "total_score": 70,
+        "venue": "fixture",
         "expires_at": "2026-07-19T01:00:00Z",
     }
+    background = crypto_background("BTC/USDT", "perp")
+    member["instrument_background"] = background
+    member["analysis_context"] = instrument_analysis_context(background)
     feature = {
         "symbol": "BTC/USDT",
+        "venue": "fixture",
         "market_type": "perp",
+        "instrument_background": background,
+        "analysis_context": instrument_analysis_context(background),
         "feature_snapshot_id": "feature-1",
         "scanner_direction": "long",
         "return_1h": 2.0,
@@ -638,7 +696,9 @@ def test_universe_opportunity_metadata_has_bounded_exact_t0_trigger():
     ):
         assert emit_deterministic_opportunities([member], "snapshot-1", [feature]) == 1
 
-    manifest = json.loads(inserted[0].metadata)["evidence_manifest"]
+    metadata = json.loads(inserted[0].metadata)
+    manifest = metadata["evidence_manifest"]
+    assert metadata["instrument_background"]["reference_asset"] == "BTC"
     assert manifest["version"] == "opportunity-information-integrity-v1"
     assert manifest["t0"]["trigger_type"] == "universe_scanner"
     assert manifest["t0"]["universe_snapshot_id"] == "snapshot-1"

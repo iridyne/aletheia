@@ -13,6 +13,7 @@ the same symbol on different exchanges / market types never collides in the DB.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 # Market type constants.
@@ -258,6 +259,274 @@ def ticker_to_stock_tokens(ticker: str) -> list[str]:
         if sym_ticker == t and sym not in results:
             results.append(sym)
     return results
+
+
+# Durable product facts only. Exchange metadata remains the authority for asset
+# classification; this catalog explains the relationship that metadata cannot.
+_SEMICONDUCTOR_3X_ETFS = {"SOXL": 3.0, "SOXS": -3.0}
+_SEMICONDUCTOR_3X_SOURCE = (
+    "https://www.direxion.com/product/daily-semiconductor-bull-bear-3x-etfs"
+)
+INSTRUMENT_BACKGROUND_VERSION = "instrument-background/v1"
+INSTRUMENT_ANALYSIS_CONTEXT_VERSION = "instrument-analysis-context/v1"
+# These exchange/product pairs expose crypto instruments without a separate
+# asset-class field. Every other missing classification stays unresolved.
+_DEFAULT_CRYPTO_MARKETS = {
+    ("binance", MARKET_SPOT),
+    ("bitget", MARKET_SPOT),
+    ("bitget", MARKET_PERP),
+}
+
+
+def _metadata_dict(value: object) -> dict | None:
+    try:
+        metadata = json.loads(value) if isinstance(value, str) else value
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return metadata if isinstance(metadata, dict) else None
+
+
+def instrument_background_from_metadata(value: object) -> dict | None:
+    """Read the versioned background from a registry or Opportunity JSON value."""
+    metadata = _metadata_dict(value)
+    if metadata is None:
+        return None
+    background = metadata.get("instrument_background")
+    return background if isinstance(background, dict) else None
+
+
+def instrument_analysis_context_from_metadata(value: object) -> dict | None:
+    """Read the frozen analysis applicability from an Opportunity JSON value."""
+    metadata = _metadata_dict(value)
+    if metadata is None:
+        return None
+    context = metadata.get("analysis_context")
+    return context if isinstance(context, dict) else None
+
+
+def instrument_analysis_context(background: object) -> dict | None:
+    """Resolve the one supported decision context for a complete background."""
+    if not isinstance(background, dict):
+        return None
+    asset_class = str(background.get("asset_class") or "").lower()
+    product_kind = str(background.get("product_kind") or "").lower()
+    if asset_class == "crypto" and product_kind in {
+        "crypto_spot", "crypto_perpetual",
+    }:
+        return {
+            "version": INSTRUMENT_ANALYSIS_CONTEXT_VERSION,
+            "status": "supported",
+            "kind": "crypto",
+            "applicable_evidence": [
+                "instrument_market_data", "btc_relative_strength",
+                "global_crypto_regime", "crypto_family_prior",
+            ],
+            "inapplicable_evidence": [],
+            "unavailable_evidence": [],
+        }
+
+    reference_asset = str(background.get("reference_asset") or "").upper()
+    embedded = background.get("embedded_product")
+    if (
+        asset_class == "equity"
+        and product_kind == "stock_linked_perp"
+        and background.get("venue") == "binance"
+        and background.get("market_type") == MARKET_PERP
+        and reference_asset in _SEMICONDUCTOR_3X_ETFS
+        and isinstance(embedded, dict)
+        and embedded.get("kind") == "leveraged_etf"
+        and embedded.get("benchmark_id") == "ICESEMIT"
+        and embedded.get("embedded_daily_multiplier")
+        == _SEMICONDUCTOR_3X_ETFS[reference_asset]
+        and embedded.get("reset_horizon") == "1d"
+        and isinstance(embedded.get("source_refs"), list)
+        and bool(embedded["source_refs"])
+    ):
+        return {
+            "version": INSTRUMENT_ANALYSIS_CONTEXT_VERSION,
+            "status": "supported",
+            "kind": "stock_linked_perp",
+            "applicable_evidence": [
+                "instrument_ohlcv", "instrument_price_path", "spread",
+                "liquidity", "order_book", "funding", "open_interest",
+                "volatility", "instrument_momentum", "cost_tradability",
+                "product_background",
+            ],
+            "inapplicable_evidence": [
+                "btc_relative_strength", "btc_beta", "global_crypto_regime",
+                "crypto_family_prior", "crypto_sector_relationships",
+            ],
+            "unavailable_evidence": ["live_benchmark_market_data"],
+        }
+    return None
+
+
+def instrument_background_rejection_reason(
+    background: object,
+    *,
+    symbol: str,
+    market_type: str,
+    venue: str | None = None,
+) -> str | None:
+    """Return why identity/context cannot enter the unified mainline."""
+    if not isinstance(background, dict):
+        return "instrument_background_missing"
+    if background.get("version") != INSTRUMENT_BACKGROUND_VERSION:
+        return "instrument_background_version_mismatch"
+    if background.get("status") != "complete":
+        return "instrument_background_unresolved"
+    required = (
+        "venue", "symbol", "market_type", "physical_market_type",
+        "asset_class", "product_kind", "reference_asset", "relationship",
+    )
+    if any(not background.get(field) for field in required) or not isinstance(
+        background.get("classification"), dict
+    ) or not background["classification"].get("source"):
+        return "instrument_background_identity_incomplete"
+    if (
+        to_canonical(str(background.get("symbol") or "")) != to_canonical(symbol)
+        or background.get("market_type") != market_type
+        or background.get("physical_market_type") != market_type
+        or (
+            venue is not None
+            and str(background.get("venue") or "").lower()
+            != str(venue).lower()
+        )
+    ):
+        return "instrument_background_identity_conflict"
+    relationship = background.get("relationship")
+    if relationship not in {
+        "direct_asset", "tracks_reference_price",
+        "perpetual_tracks_etf_reference",
+    }:
+        return "instrument_background_relationship_malformed"
+    if background.get("product_kind") == "stock_linked_perp":
+        embedded = background.get("embedded_product")
+        if not isinstance(embedded, dict) or not instrument_analysis_context(background):
+            return "instrument_background_relationship_malformed"
+    if instrument_analysis_context(background) is None:
+        product_kind = str(background.get("product_kind") or "unknown").lower()
+        return f"unsupported_analysis_context:{product_kind}"
+    return None
+
+
+def build_instrument_background(
+    *,
+    symbol: str,
+    venue: str,
+    market_type: str,
+    market_info: dict,
+) -> dict:
+    """Describe one exchange instrument without granting it trading authority."""
+    canonical = to_canonical(symbol)
+    base = canonical.partition("/")[0]
+    raw = market_info.get("info") or {}
+    venue = venue.strip().lower()
+    underlying_type = str(raw.get("underlyingType") or "").upper()
+    contract_type = str(
+        raw.get("contractType") or raw.get("symbolType") or raw.get("instType") or ""
+    ).upper()
+    underlying_subtypes = raw.get("underlyingSubType") or []
+    if not isinstance(underlying_subtypes, list):
+        underlying_subtypes = [underlying_subtypes]
+    underlying_subtypes = [str(value) for value in underlying_subtypes]
+
+    raw_base = str(raw.get("baseCoin") or market_info.get("base") or base)
+    raw_quote = str(market_info.get("quote") or canonical.partition("/")[2])
+    raw_symbol = f"{raw_base}/{raw_quote}"
+    stock_ticker = stock_token_to_ticker(raw_symbol)
+    okx_category = str(raw.get("instCategory") or "")
+    is_exchange_equity = underlying_type.endswith("EQUITY") or okx_category == "3"
+    if stock_ticker or is_exchange_equity:
+        asset_class = "equity"
+    elif underlying_type in {"COMMODITY", "INDEX"}:
+        asset_class = underlying_type.lower()
+    elif underlying_type:
+        asset_class = "crypto" if underlying_type == "COIN" else "unknown"
+    elif venue == "okx":
+        asset_class = "crypto" if okx_category == "1" else "unknown"
+    elif (venue, market_type) in _DEFAULT_CRYPTO_MARKETS:
+        asset_class = "crypto"
+    else:
+        asset_class = "unknown"
+
+    linked_multiple = (
+        _SEMICONDUCTOR_3X_ETFS.get(base) if asset_class == "equity" else None
+    )
+    if linked_multiple is not None:
+        product_kind = (
+            "stock_linked_perp" if market_type == MARKET_PERP
+            else "tokenized_equity"
+        )
+        reference_asset = base
+        relationship = (
+            "perpetual_tracks_etf_reference"
+            if market_type == MARKET_PERP else "tracks_reference_price"
+        )
+        background_status = "complete"
+    elif asset_class == "crypto":
+        product_kind = "crypto_perpetual" if market_type == MARKET_PERP else "crypto_spot"
+        reference_asset = base
+        relationship = (
+            "tracks_reference_price" if market_type == MARKET_PERP else "direct_asset"
+        )
+        background_status = "complete"
+    elif asset_class in {"equity", "commodity", "index"}:
+        product_kind = (
+            "tradifi_perpetual" if market_type == MARKET_PERP
+            else f"tokenized_{asset_class}"
+        )
+        reference_asset = stock_ticker or (
+            base if underlying_type else None
+        )
+        relationship = "tracks_reference_price" if reference_asset else "unknown"
+        background_status = "complete" if reference_asset else "partial"
+    else:
+        product_kind = "unknown_exchange_product"
+        reference_asset = None
+        relationship = "unknown"
+        background_status = "partial"
+
+    background = {
+        "version": INSTRUMENT_BACKGROUND_VERSION,
+        "status": background_status,
+        "venue": venue,
+        "symbol": canonical,
+        "market_type": market_type,
+        "physical_market_type": market_type,
+        "asset_class": asset_class,
+        "product_kind": product_kind,
+        "reference_asset": reference_asset,
+        "relationship": relationship,
+        "classification": {
+            "source": (
+                "exchange_metadata"
+                if (
+                    underlying_type
+                    or stock_ticker
+                    or raw.get("instCategory") is not None
+                )
+                else (
+                    "supported_market_default"
+                    if (venue, market_type) in _DEFAULT_CRYPTO_MARKETS
+                    else "unresolved"
+                )
+            ),
+            "underlying_type": underlying_type or None,
+            "contract_type": contract_type or None,
+            "underlying_subtypes": underlying_subtypes,
+        },
+    }
+    if linked_multiple is not None:
+        background["embedded_product"] = {
+            "kind": "leveraged_etf",
+            "benchmark_name": "NYSE Semiconductor Index",
+            "benchmark_id": "ICESEMIT",
+            "embedded_daily_multiplier": linked_multiple,
+            "reset_horizon": "1d",
+            "source_refs": [_SEMICONDUCTOR_3X_SOURCE],
+        }
+    return background
 
 
 # ---------------------------------------------------------------------------

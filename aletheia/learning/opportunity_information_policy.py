@@ -6,10 +6,10 @@ from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_e
 from aletheia.trading.trade_motivation import TRADE_MOTIVATION_VERSION
 
 
-POLICY_EPOCH_LABEL = "opportunity_information_integrity/v2"
+POLICY_EPOCH_LABEL = "opportunity_information_integrity/v4"
 _EPOCH_KIND = "opportunity_information_integrity"
 _EFFECTIVE_VALUES = {
-    "version": "v2",
+    "version": "v4",
     "observer_prefilter": "structured_1h_rsi_atr_pct",
     "oi_baseline_minutes": 60,
     "oi_baseline_band_minutes": [45, 75],
@@ -25,6 +25,10 @@ _EFFECTIVE_VALUES = {
     "news_publication_time": "known-not-future",
     "opportunity_evidence_manifest": "opportunity-information-integrity-v1",
     "universe_opportunity_producer": "universe_scanner_only",
+    "instrument_background": "instrument-background/v1",
+    "candidate_identity": "complete-background-required",
+    "supported_analysis_contexts": ["crypto", "stock_linked_perp"],
+    "stock_linked_context": "instrument-local-no-crypto-priors",
     "market_observer": "advisory_enrichment_only",
     "ranker_requires_signal_emitter_fact": True,
     "universe_unavailable_entry_behavior": "fail_closed",
@@ -45,6 +49,7 @@ _AFFECTED_PATHS = (
     "news_evidence_quality",
     "opportunity_source_manifest",
     "universe_opportunity_producer",
+    "instrument_background",
     "operator_decision_evidence_manifest",
     "structured_trade_motivation",
     "serenity_pending_context",

@@ -26,6 +26,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 )
 def test_universe_refresh_post_fix_distribution(tmp_path, monkeypatch):
     import asyncio
+    import json
     import sqlite3
 
     import aletheia.config.loader as loader
@@ -34,6 +35,10 @@ def test_universe_refresh_post_fix_distribution(tmp_path, monkeypatch):
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage.models import UniverseAsset
     from aletheia.storage import repositories as repo
+    from aletheia.data.symbols import (
+        build_instrument_background,
+        instrument_analysis_context,
+    )
     from aletheia.universe.service import UniverseService
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -69,14 +74,30 @@ def test_universe_refresh_post_fix_distribution(tmp_path, monkeypatch):
             UniverseAsset(venue="okx", market_type="perp", symbol="ADA/USDT"),
         ]
         for asset in assets:
+            background = build_instrument_background(
+                symbol=asset.symbol,
+                venue="okx",
+                market_type=asset.market_type,
+                market_info={
+                    "symbol": asset.symbol,
+                    "base": asset.symbol.split("/")[0],
+                    "quote": "USDT",
+                    "info": {"instCategory": "1"},
+                },
+            )
+            asset.metadata = json.dumps({"instrument_background": background})
             repo.upsert_universe_asset(asset)
         return len(assets)
 
     def _feature(asset: dict, family: str, opp_score: float, direction: str) -> dict:
+        background = json.loads(asset["metadata"])["instrument_background"]
         return {
             "asset_id": asset["id"],
             "symbol": asset["symbol"],
             "market_type": asset["market_type"],
+            "venue": asset["venue"],
+            "instrument_background": background,
+            "analysis_context": instrument_analysis_context(background),
             "quote_volume_24h": 100_000_000.0,
             "spread_bps": 2.0,
             "data_freshness_sec": 60,

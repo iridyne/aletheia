@@ -187,6 +187,89 @@ async def test_feature_collector_fetches_and_persists_15m_1h_4h(tmp_path, monkey
 
 
 @pytest.mark.asyncio
+async def test_stock_linked_feature_keeps_local_data_and_omits_btc_context(
+    tmp_path, monkeypatch,
+):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.data.symbols import (
+        build_instrument_background,
+        instrument_analysis_context,
+    )
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.features import _fetch_single_feature
+
+    now = datetime.now(timezone.utc)
+    background = build_instrument_background(
+        symbol="SOXL/USDT:USDT",
+        venue="binance",
+        market_type="perp",
+        market_info={
+            "symbol": "SOXL/USDT:USDT", "base": "SOXL", "quote": "USDT",
+            "info": {"underlyingType": "EQUITY"},
+        },
+    )
+
+    class FakeExchange:
+        id = "binance"
+
+        async def fetch_ohlcv(self, _symbol, timeframe, limit):
+            count = {"15m": 100, "1h": 168, "4h": 50}[timeframe]
+            step = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000}[timeframe]
+            end = int(now.timestamp() * 1000)
+            return [
+                [
+                    end - (count - 1 - index) * step,
+                    99.9 + index / 100,
+                    100.2 + index / 100,
+                    99.7 + index / 100,
+                    100.0 + index / 100,
+                    1000.0 + index,
+                ]
+                for index in range(count)
+            ]
+
+        async def fetch_funding_rate(self, _symbol):
+            return {"fundingRate": 0.0002, "markPrice": 101.0}
+
+        async def fetch_open_interest(self, _symbol):
+            return {"openInterestValue": 12_000_000.0}
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO universe_registry (id, venue, market_type, symbol, metadata) "
+        "VALUES ('asset-soxl', 'binance', 'perp', 'SOXL/USDT', ?)",
+        (json.dumps({"instrument_background": background}),),
+    )
+    db.commit()
+    feature = await _fetch_single_feature(
+        FakeExchange(),
+        {
+            "id": "asset-soxl", "venue": "binance", "market_type": "perp",
+            "symbol": "SOXL/USDT",
+            "metadata": json.dumps({"instrument_background": background}),
+        },
+        {"quoteVolume": 20_000_000.0, "bid": 101.0, "ask": 101.1},
+        now,
+        lambda symbol: f"{symbol}:USDT",
+        btc_return_24h=20.0,
+        btc_return_4h=10.0,
+        btc_closes_1h=[float(index) for index in range(1, 169)],
+    )
+
+    assert feature is not None
+    assert feature["analysis_context"] == instrument_analysis_context(background)
+    assert feature["return_24h"] is not None
+    assert feature["funding_rate"] == 0.0002
+    assert feature["open_interest"] == 12_000_000.0
+    assert feature["relative_strength_24h"] is None
+    assert feature["relative_strength_4h"] is None
+    assert feature["btc_beta"] is None
+    assert feature["rs_beta_adj_24h"] is None
+
+
+@pytest.mark.asyncio
 async def test_pending_feature_refresh_bypasses_recent_row_suppression(
     tmp_path, monkeypatch,
 ):

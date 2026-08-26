@@ -17,7 +17,13 @@ from datetime import datetime, timezone
 from aletheia.analytics.factor_feedback import lookup_factor_signal
 from aletheia.analytics.filter_evidence import verify_signal_emitter_admission
 from aletheia.config.loader import load_config
-from aletheia.data.symbols import to_canonical
+from aletheia.data.symbols import (
+    instrument_analysis_context,
+    instrument_analysis_context_from_metadata,
+    instrument_background_from_metadata,
+    instrument_background_rejection_reason,
+    to_canonical,
+)
 from aletheia.knowledge.guards import (
     ActiveGuardLoadError,
     GuardEvaluation,
@@ -193,9 +199,35 @@ def _evaluate_candidate(
     """
     filter_trace: list[dict] = []
 
-    # Hard filter: asset class
-    ac = opp.get("asset_class") or "crypto"
-    if ac == "equity":
+    # Hard filter: one existing crypto path plus the exact supported stock-linked
+    # profile. Missing identity never becomes crypto by default.
+    ac = str(opp.get("asset_class") or "unknown").lower()
+    subclass = str(opp.get("asset_subclass") or "")
+    try:
+        opportunity_meta = _json.loads(opp.get("metadata") or "{}")
+    except (TypeError, ValueError):
+        opportunity_meta = {}
+    background = instrument_background_from_metadata(opportunity_meta)
+    analysis_context = instrument_analysis_context(background)
+    stock_linked_supported = (
+        ac == "equity"
+        and subclass == "stock_linked_perp"
+        and (analysis_context or {}).get("kind") == "stock_linked_perp"
+        and instrument_analysis_context_from_metadata(opportunity_meta)
+        == analysis_context
+        and instrument_background_rejection_reason(
+            background,
+            symbol=str(opp.get("symbol") or ""),
+            market_type=(
+                "perp"
+                if str(opp.get("market") or opp.get("market_type") or "").lower()
+                in {"perp", "swap", "futures", "usdt_futures"}
+                else "spot"
+            ),
+            venue=(background or {}).get("venue") if isinstance(background, dict) else None,
+        ) is None
+    )
+    if ac == "equity" and not stock_linked_supported:
         # Exclude closed/non-open equity opps entirely (same guard as crypto path below).
         # Without this, closed equity opps stay status='open' indefinitely (equity_shadow_track
         # is a permanent skip, so paper_trader marks them reviewed — but only after they reach
@@ -215,7 +247,7 @@ def _evaluate_candidate(
             opp, skip_reason="equity_shadow_track", direction=direction,
             trade_score=score, filter_trace=filter_trace,
         )
-    if ac != "crypto":
+    if ac not in {"crypto", "equity"}:
         return None
 
     symbol = opp.get("symbol", "")
@@ -522,10 +554,7 @@ def _evaluate_candidate(
             pass
 
     # Factor feedback lookup
-    try:
-        _opportunity_meta = _json.loads(opp.get("metadata") or "{}")
-    except (TypeError, ValueError):
-        _opportunity_meta = {}
+    _opportunity_meta = opportunity_meta
     candidate_for_factor = {
         "opportunity_id": opp.get("id"),
         "universe_member_id": opp.get("universe_member_id"),
@@ -537,7 +566,20 @@ def _evaluate_candidate(
         "confidence": confidence,
         "late_entry_penalty": universe_member.get("late_entry_penalty") if universe_member else None,
     }
-    factor_signal = lookup_factor_signal(candidate_for_factor)
+    factor_signal = (
+        {
+            "factor_key": "not_applicable:stock_linked_perp",
+            "status": "not_applicable",
+            "observed_status": "not_applicable",
+            "authority_applied": False,
+            "score_delta": 0.0,
+            "expectancy": None,
+            "win_rate": None,
+            "trade_count": 0,
+        }
+        if stock_linked_supported
+        else lookup_factor_signal(candidate_for_factor)
+    )
 
     # P1-4: hard_blocked can reject only through the central behavior inventory;
     # historical status or an inline ranker condition is never authority by itself.
@@ -562,7 +604,13 @@ def _evaluate_candidate(
             filter_trace=filter_trace,
         )
     _filter_step(
-        filter_trace, "factor_hard_block", "passed", "factor_not_hard_blocked",
+        filter_trace,
+        "factor_hard_block",
+        "not_applicable" if stock_linked_supported else "passed",
+        (
+            "stock_linked_crypto_prior_not_applicable"
+            if stock_linked_supported else "factor_not_hard_blocked"
+        ),
         inputs={"factor_key": factor_signal.get("factor_key"),
                 "factor_status": factor_signal.get("status")},
         parameters={"blocked_status": "hard_blocked"},
@@ -756,14 +804,19 @@ def _compute_trade_score(
     }
     _TREND_FAMILIES = {"breakout", "momentum", "ma_crossover", "trend", "short_bias"}
 
-    regime = get_current_regime()
-    if regime.state in ("bear", "bull"):
+    stock_linked = (
+        instrument_analysis_context(
+            instrument_background_from_metadata(opp.get("metadata"))
+        ) or {}
+    ).get("kind") == "stock_linked_perp"
+    regime = None if stock_linked else get_current_regime()
+    if regime and regime.state in ("bear", "bull"):
         delta = _BASE_REGIME_DELTA.get((regime.state, direction), 0)
         weight = regime.confidence ** 1.5  # smooth: avoids hard cliff at 0.5
         score += delta * weight
-    elif regime.state == "volatile":
+    elif regime and regime.state == "volatile":
         score -= _srs["volatile_penalty"] * (regime.confidence ** 1.5)
-    elif regime.state == "sideways" and regime.confidence > 0.6:
+    elif regime and regime.state == "sideways" and regime.confidence > 0.6:
         scanner = (opp.get("scanner_family") or "").lower()
         if any(t in scanner for t in _TREND_FAMILIES):
             score -= _srs["sideways_trend_penalty"]  # trend-following worst in sideways
@@ -776,24 +829,27 @@ def _compute_trade_score(
     # Historical case/memo statistics are proposed treatments, not authority. They
     # remain at the static zero-delta baseline until a prospective paper experiment
     # has enough causally linked treatment/control outcomes and a positive verdict.
-    case_delta = _lesson_penalty(opp.get("symbol"), direction, opp.get("scanner_family"))
-    score += _authorized_ranker_delta(
-        path_id="ranker_case_score",
-        proposed_delta=case_delta,
-        opp=opp,
-        direction=direction,
-        scope={
-            "symbol": opp.get("symbol"),
-            "direction": direction,
-            "scanner_family": opp.get("scanner_family"),
-        },
-        source_cohort="trade_case_study:v1",
-        learning_trace=learning_trace,
-        entry_spread_bps=(
-            universe_member.get("spread_bps") if universe_member else None
-        ),
-        funding_rate_at_entry=opp.get("funding_rate"),
-    )
+    if not stock_linked:
+        case_delta = _lesson_penalty(
+            opp.get("symbol"), direction, opp.get("scanner_family")
+        )
+        score += _authorized_ranker_delta(
+            path_id="ranker_case_score",
+            proposed_delta=case_delta,
+            opp=opp,
+            direction=direction,
+            scope={
+                "symbol": opp.get("symbol"),
+                "direction": direction,
+                "scanner_family": opp.get("scanner_family"),
+            },
+            source_cohort="trade_case_study:v1",
+            learning_trace=learning_trace,
+            entry_spread_bps=(
+                universe_member.get("spread_bps") if universe_member else None
+            ),
+            funding_rate_at_entry=opp.get("funding_rate"),
+        )
 
     # Risk flag penalties
     risk_flags = []
@@ -815,20 +871,21 @@ def _compute_trade_score(
             continue
         score -= 5
 
-    memo_delta = _memo_scoring(opp.get("symbol"), direction, regime)
-    score += _authorized_ranker_delta(
-        path_id="ranker_memo_score",
-        proposed_delta=memo_delta,
-        opp=opp,
-        direction=direction,
-        scope={
-            "symbol": opp.get("symbol"),
-            "direction": direction,
-            "regime": regime.state,
-        },
-        source_cohort="latest_trading_memo:v1",
-        learning_trace=learning_trace,
-    )
+    if regime is not None:
+        memo_delta = _memo_scoring(opp.get("symbol"), direction, regime)
+        score += _authorized_ranker_delta(
+            path_id="ranker_memo_score",
+            proposed_delta=memo_delta,
+            opp=opp,
+            direction=direction,
+            scope={
+                "symbol": opp.get("symbol"),
+                "direction": direction,
+                "regime": regime.state,
+            },
+            source_cohort="latest_trading_memo:v1",
+            learning_trace=learning_trace,
+        )
 
     return round(score, 2)
 
@@ -1235,7 +1292,7 @@ def _evaluate_guards_safe(
 
         ctx = {
             "symbol": opp.get("symbol"),
-            "asset_class": "crypto",
+            "asset_class": opp.get("asset_class") or "unknown",
             "direction": direction,
             "scanner_family": opp.get("scanner_family"),
             "market_type": opp.get("market") or opp.get("market_type") or "spot",
@@ -1308,19 +1365,30 @@ def _make_candidate(
         opportunity_meta = _json.loads(opp.get("metadata") or "{}")
     except (TypeError, ValueError):
         opportunity_meta = {}
+    raw_market_type = opp.get("market") or opp.get("market_type")
+    from aletheia.trading.instruments import instrument_market_to_db_market
+
+    candidate_market_type = instrument_market_to_db_market(raw_market_type)
     return {
         # Opportunity fields
         "opportunity_id": opp.get("id"),
         "symbol": opp.get("symbol"),
-        "asset_class": opp.get("asset_class") or "crypto",
+        "asset_class": opp.get("asset_class") or "unknown",
+        "asset_subclass": opp.get("asset_subclass") or "",
         # #9: carry the instrument type so trading_decision can distinguish the
         # same symbol on spot vs perp. opportunities store it under "market".
-        "market_type": opp.get("market") or opp.get("market_type"),
+        "market_type": candidate_market_type,
         "direction_bias": opp.get("direction_bias"),
         "confidence": opp.get("confidence"),
         "confidence_score": opp.get("confidence_score"),
         "source_agent": opp.get("source_agent"),
         "scanner_family": opp.get("scanner_family"),
+        "instrument_background": instrument_background_from_metadata(
+            opportunity_meta
+        ),
+        "analysis_context": instrument_analysis_context_from_metadata(
+            opportunity_meta
+        ),
         "universe_member_id": opp.get("universe_member_id"),
         "universe_snapshot_id": opp.get("universe_snapshot_id"),
         "learning_candidate_key": opportunity_meta.get("learning_candidate_key"),
