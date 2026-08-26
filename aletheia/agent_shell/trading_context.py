@@ -1337,6 +1337,8 @@ def _observer_assessment_from_metadata(value: Any) -> dict | None:
         ],
         "scanner_direction": assessment.get("scanner_direction"),
         "direction_conflict": bool(assessment.get("direction_conflict")),
+        "inference_call_id": assessment.get("inference_call_id"),
+        "technical_context": assessment.get("technical_context"),
     }
 
 

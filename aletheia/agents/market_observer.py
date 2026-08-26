@@ -11,7 +11,13 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from aletheia.agents import register_agent
-from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool, record_step
+from aletheia.agents.helpers import (
+    current_inference_call_id,
+    elapsed_ms,
+    llm_structured,
+    log_tool,
+    record_step,
+)
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.data.freshness import fresh_row
 from aletheia.model_provider.router import get_provider_for_tier
@@ -536,6 +542,7 @@ _T1_SOURCE_KINDS = (
     "hyperliquid",
     "position_x",
     "options_structure",
+    "technical_context",
 )
 
 
@@ -600,6 +607,46 @@ def _record_observer_context_artifacts(
     return artifacts
 
 
+def _technical_context_source(context_debug: dict) -> dict | None:
+    technical = (
+        context_debug.get("technical_context")
+        if isinstance(context_debug, dict)
+        else None
+    )
+    artifacts = technical.get("artifacts") if isinstance(technical, dict) else []
+    for item in artifacts or []:
+        if not isinstance(item, dict):
+            continue
+        stable_id = item.get("stable_id")
+        if not stable_id:
+            continue
+        source = {
+            "id": stable_id,
+            "stable_id": stable_id,
+            "adapter_id": item.get("adapter_id") or "technical-context-v1",
+            "source": item.get("source"),
+            "observed_at": item.get("observed_at"),
+            "quality_state": item.get("quality_state"),
+            "timeframes": item.get("timeframes"),
+        }
+        if isinstance(stable_id, str) and ":" in stable_id:
+            source["fingerprint"] = stable_id.rsplit(":", 1)[-1]
+        return {key: value for key, value in source.items() if value is not None}
+    return None
+
+
+def _technical_context_status(source: dict | None) -> dict:
+    if not source:
+        return {"status": "unavailable"}
+    return {
+        "status": "available",
+        "source_id": source.get("id"),
+        "stable_id": source.get("stable_id"),
+        "quality_state": source.get("quality_state"),
+        "observed_at": source.get("observed_at"),
+    }
+
+
 def _options_structure_sources(structures: dict[str, dict]) -> list[dict]:
     return [
         {
@@ -623,6 +670,7 @@ def _bounded_rendered_sources(sources: dict[str, list[dict]]) -> dict[str, list[
         "hyperliquid": 3,
         "position_x": 1,
         "options_structure": 2,
+        "technical_context": 1,
     }
     bounded: dict[str, list[dict]] = {}
     for kind in _T1_SOURCE_KINDS:
@@ -748,13 +796,19 @@ def _opportunity_evidence_manifest(
             "atr_pct": pre_filter.get("atr_pct"),
         }
     )
+    bounded_sources = _bounded_rendered_sources(rendered_sources)
+    technical_sources = bounded_sources.get("technical_context") or []
+    technical_context = _technical_context_status(
+        technical_sources[0] if technical_sources else None
+    )
     return {
         "version": "opportunity-information-integrity-v1",
         "policy_epoch": producer_epoch,
         "t0": t0,
         "t1": {
             "status": "available",
-            "sources": _bounded_rendered_sources(rendered_sources),
+            "sources": bounded_sources,
+            "technical_context": technical_context,
         },
     }
 
@@ -970,6 +1024,9 @@ async def _prefetch_symbol(
         ]
         context += "\n\n## Recent News\n" + "\n".join(news_lines)
         rendered_sources["news"] = [_news_rendered_source(row) for row in news_rows]
+    technical_source = _technical_context_source(ctx_debug)
+    if technical_source:
+        rendered_sources["technical_context"] = [technical_source]
 
     # Phase E: pre-filter scoring
     pf = _evaluate_pre_filter(ctx_debug)
@@ -1396,6 +1453,10 @@ async def _analyze_symbol(
         except Exception:
             pass
 
+    technical_source = _technical_context_source(ctx_debug)
+    if technical_source:
+        rendered_sources["technical_context"] = [technical_source]
+
     # P1-7: deterministic pre-filter — skip LLM for symbols with no actionable signal.
     # MO-14: force_full is passed in (computed once per run). load_config() has no
     # cache, so calling it per-symbol was a file read + YAML parse every iteration.
@@ -1431,6 +1492,9 @@ async def _analyze_symbol(
                 "keyword_hits": pre_filter["keyword_hits"],
                 "matched_rules": pre_filter["matched_rules"],
                 "force_full": force_full,
+                "technical_context": (
+                    technical_source or {"status": "unavailable"}
+                ),
             },
             parameters={
                 "rsi_deviation": _PREFILTER_RSI_DEVIATION,
@@ -1574,6 +1638,7 @@ async def _analyze_symbol(
     )
     _llm_duration = _time.monotonic() - _t0
     _step_times["llm_structured"] = _llm_duration
+    assessment_inference_call_id = current_inference_call_id()
     log_tool(run_id, "llm_structured", "observe", True)
 
     direction = "neutral"
@@ -1714,6 +1779,8 @@ async def _analyze_symbol(
                 "key_observations": observations,
                 "scanner_direction": source_direction or None,
                 "direction_conflict": direction_conflict,
+                "inference_call_id": assessment_inference_call_id,
+                "technical_context": _technical_context_status(technical_source),
             }
             if direction_conflict:
                 record_step(
