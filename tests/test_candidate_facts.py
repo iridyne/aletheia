@@ -167,6 +167,42 @@ def test_candidate_facts_preserve_traded_skip_reject_and_filtered_units():
     assert report["outcome_coverage"] == 0.75
 
 
+@pytest.mark.real_db
+def test_default_candidate_facts_never_enters_the_writer_lane(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+    import aletheia.storage.sqlite as sqlite_store
+
+    source = _db()
+    target = sqlite3.connect(tmp_path / "app.db")
+    try:
+        source.backup(target)
+    finally:
+        source.close()
+        target.close()
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    sqlite_store.reset_db()
+
+    def fail_if_writer_lock_requested(**_kwargs):
+        raise AssertionError("read-only candidate facts entered the writer lane")
+
+    monkeypatch.setattr(
+        sqlite_store,
+        "acquire_write_lock",
+        fail_if_writer_lock_requested,
+    )
+    try:
+        report = candidate_facts.build_candidate_facts(
+            horizon="24h",
+            as_of_at="2026-08-14T12:00:00+00:00",
+        )
+    finally:
+        sqlite_store.reset_db()
+
+    assert report["candidate_count"] == 4
+    assert report["read_only"] is True
+
+
 @pytest.mark.parametrize(
     ("column", "value", "reason"),
     [

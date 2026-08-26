@@ -327,7 +327,16 @@ def build_candidate_facts(
         raise ValueError(f"unsupported fixed horizon: {horizon}")
     if isinstance(as_of_at, str) and as_of_at != "" and _utc(as_of_at) is None:
         raise ValueError("invalid as_of_at")
-    source = db or repo.get_db()
+    if db is None:
+        from aletheia.storage.sqlite import readonly_db
+
+        with readonly_db() as read_db:
+            return build_candidate_facts(
+                horizon=horizon,
+                as_of_at=as_of_at,
+                db=read_db,
+            )
+    source = db
     explicit_cutoff = _utc(as_of_at) is not None
     cutoff = _utc(as_of_at) or datetime.now(timezone.utc)
     started_txn = not getattr(source, "in_transaction", False)
