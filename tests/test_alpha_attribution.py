@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 def _freeze_alpha_audit_clock(monkeypatch):
     """Keep fixed evidence timestamps inside the audit window."""
 
-    audit_now = datetime.fromisoformat("2026-07-13T07:10:01+00:00")
+    audit_now = datetime.fromisoformat("2026-07-13T09:10:01+00:00")
     monkeypatch.setattr("aletheia.analytics.alpha_attribution._utcnow", lambda: audit_now)
 
 
@@ -52,7 +52,11 @@ def _insert_shadow(
     policy_epoch: str = "epoch-test",
     hours_after: int = 0,
 ) -> None:
-    entry = _iso(days_ago=1, hours_after=hours_after)
+    entry = (
+        datetime.fromisoformat("2026-07-12T07:10:01+00:00")
+        + timedelta(hours=hours_after)
+    ).isoformat()
+    due_at = (datetime.fromisoformat(entry) + timedelta(hours=24)).isoformat()
     outcome_key = f"opportunity:{opp}"
     db.execute(
         "INSERT INTO shadow_trades "
@@ -91,8 +95,8 @@ def _insert_shadow(
             outcome_key,
             100.0 * (1.0 + (pnl + 0.2) / 100.0),
             entry,
-            _iso(hours_after=24),
-            _iso(),
+            due_at,
+            due_at,
             pnl + 0.2,
             pnl,
         ),
@@ -110,7 +114,11 @@ def _insert_operator_candidate(
 ) -> None:
     decision_id = f"operator-{decision}-{idx}"
     key = f"pi_decision:{decision_id}"
-    entry = _iso(days_ago=1, hours_after=hours_after)
+    entry = (
+        datetime.fromisoformat("2026-07-12T07:10:01+00:00")
+        + timedelta(hours=hours_after)
+    ).isoformat()
+    due_at = (datetime.fromisoformat(entry) + timedelta(hours=24)).isoformat()
     db.execute(
         "INSERT INTO pi_decisions "
         "(id, created_at, symbol, direction, market_type, action, opportunity_id, "
@@ -148,7 +156,7 @@ def _insert_operator_candidate(
         (
             f"fco-operator-{decision}-{idx}", key,
             100.0 * (1.0 + (pnl + 0.2) / 100.0), entry,
-            _iso(hours_after=24), _iso(), pnl + 0.2, pnl,
+            due_at, due_at, pnl + 0.2, pnl,
         ),
     )
 
@@ -294,6 +302,30 @@ def test_ranker_alpha_uses_canonical_fixed_horizon_outcome_not_shadow_lifecycle_
     assert ranker["observed"] == -2.0
     assert ranker["baseline"] == 2.0
     assert ranker["details"]["source_table"] == "filter_candidate_outcomes"
+
+
+def test_ranker_alpha_excludes_temporally_invalid_candidate_outcomes():
+    from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    for i in range(5):
+        batch = f"future-{i}"
+        _insert_shadow(db, batch, f"future-r1-{i}", 1, -2.0, selected=1)
+        _insert_shadow(db, batch, f"future-r2-{i}", 2, 2.0)
+    db.execute(
+        "UPDATE filter_candidate_outcomes SET settled_at='2999-01-01T00:00:00+00:00' "
+        "WHERE outcome_candidate_key LIKE 'opportunity:future-r1-%'",
+    )
+    db.commit()
+
+    ranker = build_alpha_attribution_audit(days=30)["verdicts"]["ranker"]
+
+    assert ranker["verdict"] == "insufficient_data"
+    assert ranker["sample_size"] == 0
+    assert ranker["details"]["candidate_outcome_exclusion_counts"] == {
+        "settlement_after_as_of": 5,
+    }
 
 
 def test_ranker_alpha_does_not_mix_policy_epochs():
