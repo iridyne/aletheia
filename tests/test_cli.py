@@ -29,7 +29,7 @@ def test_gateway_status(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     result = runner.invoke(app, ["gateway", "status"])
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     assert "stopped" in result.output
 
 
@@ -45,7 +45,7 @@ def test_gateway_status_labels_local_paper_without_an_exchange(tmp_path, monkeyp
 
     result = runner.invoke(app, ["gateway", "status"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     assert "Exchange: Local paper (no external exchange)" in result.output
     assert "Exchange: okx" not in result.output
 
