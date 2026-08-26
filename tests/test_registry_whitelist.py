@@ -15,7 +15,7 @@ async def test_load_demo_whitelist_returns_merged_frozenset():
         "spot": frozenset(["BTC/USDT", "ETH/USDT", "SOL/USDT", "WLD/USDT"]),
     }
     with patch(
-        "aletheia.exchanges.okx.client.OKXClient.load_demo_markets",
+        "aletheia.execution.venue_capabilities.fetch_venue_capabilities",
         new_callable=AsyncMock,
         return_value=okx_demo_markets,
     ):
@@ -38,12 +38,22 @@ async def test_load_demo_whitelist_non_okx_returns_none():
 @pytest.mark.asyncio
 async def test_load_demo_whitelist_empty_markets():
     with patch(
-        "aletheia.exchanges.okx.client.OKXClient.load_demo_markets",
+        "aletheia.execution.venue_capabilities.fetch_venue_capabilities",
         new_callable=AsyncMock,
         return_value={"swap": frozenset(), "spot": frozenset()},
     ):
         result = await _load_demo_whitelist("okx_demo")
     assert result == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_load_demo_whitelist_unavailable_stays_unknown():
+    with patch(
+        "aletheia.execution.venue_capabilities.fetch_venue_capabilities",
+        new_callable=AsyncMock,
+        return_value=None,
+    ):
+        assert await _load_demo_whitelist("okx_demo") is None
 
 
 def test_dict_vs_frozenset_membership():

@@ -72,12 +72,14 @@ async def _load_demo_whitelist(paper_execution_mode: str) -> frozenset | None:
 
     Returns None if no demo filtering is needed (live mode or full-access demos).
 
-    OKXClient.load_demo_markets() returns {"swap": frozenset, "spot": frozenset}.
-    Collapse to a single frozenset so callers can do `symbol in whitelist`.
+    The shared execution capability seam returns {"swap": frozenset,
+    "spot": frozenset}. Collapse to a single frozenset so callers can do
+    `symbol in whitelist`.
     """
     if paper_execution_mode == "okx_demo":
-        from aletheia.exchanges.okx.client import OKXClient
-        markets = await OKXClient.load_demo_markets()
+        from aletheia.execution.venue_capabilities import fetch_venue_capabilities
+
+        markets = await fetch_venue_capabilities(paper_execution_mode)
         if markets is None:
             return None
         return markets.get("swap", frozenset()) | markets.get("spot", frozenset())

@@ -148,8 +148,9 @@ def refresh_okx_demo_symbols() -> int:
     global _okx_demo_symbols, _okx_demo_symbols_loaded_at
 
     async def _load():
-        from aletheia.exchanges.okx.client import OKXClient
-        return await OKXClient.load_demo_markets()
+        from aletheia.execution.venue_capabilities import fetch_venue_capabilities
+
+        return await fetch_venue_capabilities("okx_demo")
 
     with _symbols_lock:
         try:

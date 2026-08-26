@@ -110,15 +110,20 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 
 | 模式 | 标的来源 | 缓存 TTL |
 |------|---------|---------|
-| `okx_demo` | `okx_broker._get_demo_symbols()`（sandbox CCXT，OKX demo 专属列表） | 4h |
+| `okx_demo` | `execution.venue_capabilities.load_venue_capabilities()`（复用 OKX broker 的 sandbox CCXT 专属列表） | 4h |
 | `okx_live_limited` | `universe_registry`（venue=`"okx"`） | 4h |
 | `bitget_demo` / `bitget_live_limited` | `universe_registry`（venue=`"bitget"`） | 4h |
 | `binance_testnet` / `binance_live_limited` | `universe_registry`（venue=`"binance"`） | 4h |
 
 **Fail-open**：缓存未就绪或 registry 为空时返回 `None`，不阻塞下单（避免首次启动 / registry 未同步时误伤）。
 
+上层 `agents/`、`universe/`、`trading/`、`risk/` 只消费
+`execution.venue_capabilities` 提供的 canonical capability facts，不导入具体
+exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查；
+`portfolio/uta/` 仍只负责 exchange account/position 的归一化只读聚合。
+
 **新交易所接入方式**（e.g. Hyperliquid）：
-1. 往 `_EXECUTION_MODE_TO_VENUE` 加 `"hyperliquid_demo": "hyperliquid"`
+1. 往 `execution.venue_capabilities.EXECUTION_MODE_TO_VENUE` 加 `"hyperliquid_demo": "hyperliquid"`
 2. 确保 `sync_universe_registry()` 已写入 `venue="hyperliquid"` 行
 
 **Spec claims**：`EX-S07`（结构）/ `EX-B10`（paper_internal 免检）/ `EX-B11`（OKX demo）/ `EX-B12`（registry 模式 + fail-open）。`gateway.py:85-165`。

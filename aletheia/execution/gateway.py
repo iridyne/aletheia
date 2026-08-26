@@ -2,8 +2,6 @@
 
 import json
 import logging
-import threading
-import time
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -11,6 +9,7 @@ from aletheia.config.loader import is_preview_mode, load_config
 from aletheia.risk.engine import ProposalIntegrityError, evaluate_proposal
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.execution.paper_broker import execute_paper_order
+from aletheia.execution import venue_capabilities as _venue_capabilities
 from aletheia.execution.post_commit_audit import (
     write_post_commit_audit as _write_best_effort_post_commit_audit,
 )
@@ -407,64 +406,15 @@ def execute_existing_proposal(proposal_id: str, execution_mode: str = "paper_int
             )
 
 
-# ---------------------------------------------------------------------------
-# Symbol availability pre-check — covers all real exchange execution modes.
-# paper_internal is excluded (virtual fills, exchange symbol list irrelevant).
-#
-# OKX demo:  uses OKX broker's sandbox-CCXT frozenset (curated limited set).
-# All others: query universe_registry DB (loaded once per venue, TTL 4h).
-#             Fail-open when the registry is empty/unsynced.
-#
-# To add a new exchange (e.g. Hyperliquid):
-#   1. Add  "hyperliquid_demo": "hyperliquid"  to _EXECUTION_MODE_TO_VENUE.
-#   2. Ensure sync_universe_registry() populates venue="hyperliquid".
-# ---------------------------------------------------------------------------
-
-_EXECUTION_MODE_TO_VENUE: dict[str, str] = {
-    "okx_live_limited": "okx",
-    "bitget_demo": "bitget",
-    "bitget_live_limited": "bitget",
-    "binance_testnet": "binance",
-    "binance_live_limited": "binance",
-}
-
-_registry_symbol_cache: dict[str, tuple[dict, float]] = {}
-_registry_cache_ttl = 14400  # 4h — same cadence as OKX broker cache
-_registry_cache_lock = threading.Lock()
+_EXECUTION_MODE_TO_VENUE = _venue_capabilities.EXECUTION_MODE_TO_VENUE
+# Compatibility alias retained for existing execution specs that clear the
+# authoritative shared cache between cases.
+_registry_symbol_cache = _venue_capabilities._registry_symbol_cache
 
 
 def _load_registry_symbols(venue: str) -> dict | None:
-    """Return cached {market_type: frozenset} of canonical symbols for a venue.
-
-    Returns None on cache miss + DB failure (fail-open).
-    """
-    with _registry_cache_lock:
-        cached = _registry_symbol_cache.get(venue)
-        if cached is not None and (time.time() - cached[1]) < _registry_cache_ttl:
-            return cached[0]
-
-    try:
-        from aletheia.storage.repositories import list_universe_assets
-        # This cache is execution authority, not a paginated UI feed. A bounded
-        # page would turn every valid symbol after the cutoff into a false
-        # "unavailable" rejection.
-        assets = list_universe_assets(venue=venue, active_only=True, limit=None)
-        if not assets:
-            return None  # registry not yet synced — fail-open
-        by_type: dict[str, set] = {}
-        for row in assets:
-            mtype = row.get("market_type") or "usdt_futures"
-            by_type.setdefault(mtype, set()).add(row["symbol"])
-        result = {k: frozenset(v) for k, v in by_type.items()}
-        with _registry_cache_lock:
-            _registry_symbol_cache[venue] = (result, time.time())
-        total = sum(len(v) for v in result.values())
-        logger.debug("Symbol cache loaded: %d symbols (%s) for venue=%s",
-                     total, list(result.keys()), venue)
-        return result
-    except Exception as exc:
-        logger.warning("Failed to load registry symbols for venue=%s: %s", venue, exc)
-        return None
+    """Compatibility wrapper for the shared read-only capability seam."""
+    return _venue_capabilities.load_registry_symbols(venue)
 
 
 def _check_symbol_availability(symbol: str, execution_mode: str, market_type: str = "usdt_futures") -> str | None:
@@ -481,10 +431,12 @@ def _check_symbol_availability(symbol: str, execution_mode: str, market_type: st
     from aletheia.data.symbols import to_canonical
     canonical = to_canonical(symbol)
 
-    # OKX demo uses a dedicated CCXT sandbox market load (subset of live OKX).
+    # OKX demo uses the shared normalized capability seam backed by its
+    # dedicated CCXT sandbox market load (subset of live OKX).
     if execution_mode == "okx_demo":
-        from aletheia.execution.okx_broker import _get_demo_symbols
-        supported = _get_demo_symbols(market_type)
+        capabilities = _venue_capabilities.load_venue_capabilities(execution_mode)
+        key = "spot" if market_type == "spot" else "swap"
+        supported = None if capabilities is None else capabilities.get(key, frozenset())
         if supported is not None and canonical not in supported:
             return f"{symbol} not available on OKX demo ({market_type})"
         return None

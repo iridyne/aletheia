@@ -1,0 +1,117 @@
+"""Read-only venue capability boundary shared by execution-domain callers."""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+
+logger = logging.getLogger("aletheia.execution.venue_capabilities")
+
+# Execution modes are policy names; this map only identifies the physical venue
+# whose already-persisted listing is authoritative for the final pre-order check.
+EXECUTION_MODE_TO_VENUE: dict[str, str] = {
+    "okx_live_limited": "okx",
+    "bitget_demo": "bitget",
+    "bitget_live_limited": "bitget",
+    "binance_testnet": "binance",
+    "binance_live_limited": "binance",
+}
+
+_REGISTRY_CACHE_TTL = 14400  # 4h — same cadence as the OKX demo capability cache
+_registry_symbol_cache: dict[str, tuple[dict, float]] = {}
+_registry_cache_lock = threading.Lock()
+
+
+def load_registry_symbols(venue: str) -> dict | None:
+    """Return cached ``{market_type: frozenset}`` symbols for one venue.
+
+    ``None`` means the registry is unavailable or has not been synchronized yet;
+    callers preserve the existing fail-open pre-order behavior in that case.
+    """
+    with _registry_cache_lock:
+        cached = _registry_symbol_cache.get(venue)
+        if cached is not None and (time.time() - cached[1]) < _REGISTRY_CACHE_TTL:
+            return cached[0]
+
+    try:
+        from aletheia.storage.repositories import list_universe_assets
+
+        # This cache is execution authority, not a paginated UI feed. A bounded
+        # page would turn every valid symbol after the cutoff into a false
+        # "unavailable" rejection.
+        assets = list_universe_assets(venue=venue, active_only=True, limit=None)
+        if not assets:
+            return None  # registry not yet synced — preserve fail-open semantics
+        by_type: dict[str, set] = {}
+        for row in assets:
+            market_type = row.get("market_type") or "usdt_futures"
+            by_type.setdefault(market_type, set()).add(row["symbol"])
+        result = {key: frozenset(value) for key, value in by_type.items()}
+        with _registry_cache_lock:
+            _registry_symbol_cache[venue] = (result, time.time())
+        total = sum(len(symbols) for symbols in result.values())
+        logger.debug(
+            "Symbol cache loaded: %d symbols (%s) for venue=%s",
+            total,
+            list(result.keys()),
+            venue,
+        )
+        return result
+    except Exception as exc:
+        logger.warning("Failed to load registry symbols for venue=%s: %s", venue, exc)
+        return None
+
+
+def load_venue_capabilities(execution_mode: str) -> dict | None:
+    """Return normalized read-only capability facts for an execution mode.
+
+    OKX demo keeps the existing broker cache/source semantics. Other exchange
+    modes use the existing ``universe_registry`` truth. ``None`` is unknown or
+    unavailable; an empty set inside a loaded mapping remains known unavailable.
+    """
+    if execution_mode == "okx_demo":
+        # The concrete broker owns the existing sandbox cache and refresh policy;
+        # this seam is the only upper-layer access to that implementation detail.
+        from aletheia.execution.okx_broker import _get_demo_symbols
+
+        swap = _get_demo_symbols("usdt_futures")
+        spot = _get_demo_symbols("spot")
+        if swap is None or spot is None:
+            return None
+        return {"swap": swap, "spot": spot}
+
+    venue = EXECUTION_MODE_TO_VENUE.get(execution_mode)
+    if venue is None:
+        return None
+    return load_registry_symbols(venue)
+
+
+async def fetch_venue_capabilities(execution_mode: str) -> dict | None:
+    """Fetch fresh read-only capability facts when a caller owns a refresh.
+
+    Universe synchronization historically fetched the OKX sandbox list on every
+    sync. Keep that freshness contract while routing the concrete client through
+    this same boundary; cached execution checks continue using
+    :func:`load_venue_capabilities`.
+    """
+    if execution_mode == "okx_demo":
+        from aletheia.exchanges.okx.client import OKXClient
+
+        return await OKXClient.load_demo_markets()
+    return load_venue_capabilities(execution_mode)
+
+
+def get_supported_symbols(
+    execution_mode: str,
+    market_type: str = "usdt_futures",
+) -> frozenset | None:
+    """Return canonical symbols known for ``execution_mode`` and market type."""
+    capabilities = load_venue_capabilities(execution_mode)
+    if capabilities is None:
+        return None
+    if execution_mode == "okx_demo":
+        key = "spot" if market_type == "spot" else "swap"
+    else:
+        key = market_type
+    return capabilities.get(key, frozenset())
