@@ -310,6 +310,7 @@ def _operator_incremental_cohort(
         selected = db.execute(
             f"""SELECT * FROM shadow_trades
                WHERE opportunity_id=? AND was_selected=1 AND batch_id IS NOT NULL
+                 AND invalidated_at IS NULL
                  AND resolved_at IS NOT NULL AND net_pnl_pct IS NOT NULL
                  AND (outcome_candidate_key IS NULL OR ({keyed_authority}))
                  AND replace(created_at,' ','T') <= replace(?,' ','T')
@@ -342,6 +343,7 @@ def _operator_incremental_cohort(
         controls = db.execute(
             f"""SELECT * FROM shadow_trades
                WHERE batch_id=? AND opportunity_id<>? AND was_selected=0
+                 AND invalidated_at IS NULL
                  AND resolved_at IS NOT NULL AND net_pnl_pct IS NOT NULL
                  AND (outcome_candidate_key IS NULL OR ({keyed_authority}))
                  AND market_type=? AND direction=?

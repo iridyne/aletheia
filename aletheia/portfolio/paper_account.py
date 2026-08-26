@@ -264,20 +264,68 @@ def invalidate_paper_position_economics(
 
         if len(close_cash) > 1 or len(invalidations) > 1:
             raise ValueError("paper account close/invalidation event is not unique")
-        if close_cash and len(full_close_events) != 1:
-            raise ValueError("settled cash requires exactly one full close event")
+        if len(full_close_events) > 1:
+            raise ValueError("paper account full close event is not unique")
         if not close_cash and any(
             row["action"] in {"manual_credit", "manual_debit"} for row in cash_events
         ):
             raise ValueError("paper cash adjustment exists without initial settlement")
-        if (
-            not close_cash
-            and not invalidations
-            and current.get("realized_pnl") is None
+
+        invalidated_at = datetime.now(timezone.utc).isoformat()
+        invalidated_mortems = db.execute(
+            "UPDATE serenity_post_mortems SET invalidated_at=?, invalidation_reason=? "
+            "WHERE position_id=? AND invalidated_at IS NULL",
+            (invalidated_at, INVALID_EXIT_PRICE_EVIDENCE, position_id),
+        ).rowcount
+        legacy_batch_ids = [
+            str(row[0])
+            for row in db.execute(
+                "SELECT DISTINCT batch_id FROM shadow_trades "
+                "WHERE opportunity_id=? AND was_selected=1 "
+                "AND outcome_candidate_key IS NULL AND resolved_at IS NOT NULL "
+                "AND batch_id IS NOT NULL",
+                (current.get("opportunity_id"),),
+            ).fetchall()
+        ] if current.get("opportunity_id") else []
+        invalidated_shadows = 0
+        if legacy_batch_ids:
+            placeholders = ",".join("?" for _ in legacy_batch_ids)
+            invalidated_shadows = db.execute(
+                "UPDATE shadow_trades SET invalidated_at=?, invalidation_reason=? "
+                f"WHERE batch_id IN ({placeholders}) AND invalidated_at IS NULL",
+                (
+                    invalidated_at,
+                    INVALID_EXIT_PRICE_EVIDENCE,
+                    *legacy_batch_ids,
+                ),
+            ).rowcount
+        skipped_hooks = db.execute(
+            "UPDATE outcome_hook_jobs SET status='skipped', completed_at=?, "
+            "updated_at=?, locked_at=NULL, claim_token=NULL, last_error=? "
+            "WHERE position_id=? AND status IN ('pending','failed')",
+            (
+                invalidated_at,
+                invalidated_at,
+                INVALID_EXIT_PRICE_EVIDENCE,
+                position_id,
+            ),
+        ).rowcount
+        projections_current = (
+            current.get("realized_pnl") is None
             and not bool(current.get("outcome_eligible"))
             and current.get("outcome_exclusion_reason")
             == INVALID_EXIT_PRICE_EVIDENCE
             and all(row.get("realized_pnl") is None for row in full_close_events)
+        )
+        if (
+            projections_current
+            and invalidated_mortems == 0
+            and invalidated_shadows == 0
+            and skipped_hooks == 0
+            and (not invalidations or abs(sum(
+                float(row["amount_usdt"]) for row in cash_events
+            )) <= 1e-8)
+            and (not close_cash or bool(invalidations))
         ):
             return {
                 "position_id": position_id,
@@ -294,18 +342,6 @@ def invalidate_paper_position_economics(
         if invalidations:
             if abs(cash_total) > 1e-8:
                 raise ValueError("existing economics invalidation does not neutralize cash")
-            if (
-                current.get("realized_pnl") is None
-                and not bool(current.get("outcome_eligible"))
-                and current.get("outcome_exclusion_reason")
-                == INVALID_EXIT_PRICE_EVIDENCE
-                and all(row.get("realized_pnl") is None for row in full_close_events)
-            ):
-                return {
-                    "position_id": position_id,
-                    "status": "already_invalidated",
-                    "cash_reversal_usdt": 0.0,
-                }
             status = "already_invalidated"
         elif close_cash:
             reversal = round(-pre_invalidation_total, 8)
@@ -326,6 +362,8 @@ def invalidate_paper_position_economics(
             "outcome_eligible": bool(current.get("outcome_eligible")),
             "outcome_exclusion_reason": current.get("outcome_exclusion_reason"),
             "cash_contribution_usdt": pre_invalidation_total,
+            "invalidated_shadow_rows": invalidated_shadows,
+            "invalidated_serenity_post_mortems": invalidated_mortems,
         }
         repo.update_position(
             position_id,
@@ -346,6 +384,8 @@ def invalidate_paper_position_economics(
             "outcome_exclusion_reason": INVALID_EXIT_PRICE_EVIDENCE,
             "cash_contribution_usdt": 0.0,
             "cash_reversal_usdt": reversal,
+            "invalidated_shadow_rows": invalidated_shadows,
+            "invalidated_serenity_post_mortems": invalidated_mortems,
         }
         repo.insert_audit_event(AuditEvent(
             actor=actor,
@@ -435,6 +475,10 @@ def materialize_position_economics(
             or current.get("market_type") != "usdt_futures"
         ):
             raise ValueError("economics materialization requires a closed paper future")
+        if repo.has_paper_account_position_event(
+            "position_economics_invalidated", position_id
+        ):
+            raise ValueError("invalidated paper economics cannot be materialized")
 
         evidence_root: dict = {}
         raw_evidence = current.get("reconciliation_evidence")

@@ -227,6 +227,85 @@ def test_invalid_exit_without_cash_settlement_creates_no_reversal(tmp_path, monk
     assert count == 0
 
 
+def test_invalidation_retracts_completed_derived_outcomes(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    from datetime import datetime, timezone
+    from aletheia.portfolio.paper_account import (
+        invalidate_paper_position_economics,
+        settle_position_closed,
+    )
+    from aletheia.storage.models import (
+        SerenityOpportunity,
+        SerenityPostMortem,
+        ShadowTrade,
+    )
+
+    opportunity = SerenityOpportunity(
+        id="invalidated-opportunity",
+        theme_id="theme",
+        symbol="BTC/USDT",
+        direction="long",
+    )
+    repo.insert_serenity_opportunity(opportunity)
+    position = Position(
+        id="invalidated-derived-position",
+        opportunity_id=opportunity.id,
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=110.0,
+        execution_mode="paper_internal",
+        status="closed",
+        realized_pnl=10.0,
+        outcome_eligible=True,
+        closed_at=datetime.now(timezone.utc).isoformat(),
+    )
+    repo.insert_position(position)
+    settle_position_closed(position.id, 10.0)
+    for opportunity_id, selected in ((opportunity.id, True), ("control", False)):
+        repo.insert_shadow_trade(ShadowTrade(
+            batch_id="invalidated-batch",
+            opportunity_id=opportunity_id,
+            symbol="BTC/USDT",
+            direction="long",
+            was_selected=selected,
+            exit_price=110.0,
+            pnl_pct=10.0,
+            resolved_at=datetime.now(timezone.utc).isoformat(),
+        ))
+    repo.insert_serenity_post_mortem(SerenityPostMortem(
+        position_id=position.id,
+        opportunity_id=opportunity.id,
+        outcome="win",
+        summary="derived from invalid exit evidence",
+    ))
+    repo.enqueue_outcome_hook_job(position.id, "shadow_trades")
+
+    invalidate_paper_position_economics(position.id)
+
+    raw_shadows = repo.get_db().execute(
+        "SELECT invalidated_at,invalidation_reason FROM shadow_trades "
+        "WHERE batch_id=?",
+        ("invalidated-batch",),
+    ).fetchall()
+    raw_mortem = repo.get_db().execute(
+        "SELECT invalidated_at,invalidation_reason FROM serenity_post_mortems "
+        "WHERE position_id=?",
+        (position.id,),
+    ).fetchone()
+    hook = repo.list_outcome_hook_jobs(position_id=position.id)[0]
+    assert len(raw_shadows) == 2
+    assert all(row["invalidated_at"] for row in raw_shadows)
+    assert all(row["invalidation_reason"] == "invalid_exit_price_evidence" for row in raw_shadows)
+    assert raw_mortem["invalidated_at"]
+    assert raw_mortem["invalidation_reason"] == "invalid_exit_price_evidence"
+    assert repo.list_shadow_trades(batch_id="invalidated-batch") == []
+    assert repo.list_serenity_post_mortems(opportunity.id) == []
+    assert hook["status"] == "skipped"
+
+
 def test_local_paper_available_balance_tightens_risk_without_affecting_external(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config

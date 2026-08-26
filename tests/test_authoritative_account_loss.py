@@ -513,6 +513,38 @@ def test_invalidated_settled_close_is_atomically_neutralized(realized_pnl):
     ]
 
 
+def test_invalidation_accepts_legacy_cash_close_without_close_event():
+    from aletheia.portfolio.paper_account import (
+        get_paper_account,
+        invalidate_paper_position_economics,
+        settle_position_closed,
+    )
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+
+    repo.insert_position(Position(
+        id="legacy-cash-close",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=112.0,
+        execution_mode="paper_internal",
+        status="closed",
+        realized_pnl=12.0,
+        outcome_eligible=True,
+        closed_at=datetime.now(timezone.utc).isoformat(),
+    ))
+    settle_position_closed("legacy-cash-close", 12.0)
+
+    result = invalidate_paper_position_economics("legacy-cash-close")
+
+    assert result["cash_reversal_usdt"] == pytest.approx(-12.0)
+    assert get_paper_account()["cash_balance_usdt"] == pytest.approx(200.0)
+    assert repo._select_one("positions", "legacy-cash-close")["realized_pnl"] is None
+
+
 def test_invalidation_rolls_back_cash_and_position_when_db_audit_fails(monkeypatch):
     from aletheia.portfolio.paper_account import (
         get_paper_account,

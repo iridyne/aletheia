@@ -740,6 +740,7 @@ def _compute_missed_opportunity(
         keyed_authority = valid_keyed_shadow_projection_sql()
         shadow = db.execute(
             "SELECT * FROM shadow_trades WHERE opportunity_id=? AND resolved_at IS NOT NULL "
+            "AND invalidated_at IS NULL "
             f"AND (outcome_candidate_key IS NULL OR ({keyed_authority})) "
             "ORDER BY resolved_at DESC LIMIT 1",
             (opportunity_id,),
