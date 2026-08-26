@@ -5512,7 +5512,13 @@ def _apply_opportunity_generation_v42(db: sqlite3.Connection) -> None:
 def _apply_coingecko_source_time_v44(db: sqlite3.Connection) -> None:
     """Add provider source-time provenance without rewriting legacy rows."""
 
+    tables = {
+        str(row[0])
+        for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
     for column, table, column_type in _COINGECKO_SOURCE_TIME_COLUMNS:
+        if table not in tables:
+            continue
         existing = {
             str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
         }
