@@ -282,11 +282,14 @@ def invalidate_paper_position_economics(
             for row in db.execute(
                 "SELECT DISTINCT batch_id FROM shadow_trades "
                 "WHERE opportunity_id=? AND was_selected=1 "
-                "AND outcome_candidate_key IS NULL AND resolved_at IS NOT NULL "
+                "AND outcome_candidate_key IS NULL AND resolved_at=? "
+                "AND invalidated_at IS NULL "
                 "AND batch_id IS NOT NULL",
-                (current.get("opportunity_id"),),
+                (current.get("opportunity_id"), current.get("closed_at")),
             ).fetchall()
-        ] if current.get("opportunity_id") else []
+        ] if current.get("opportunity_id") and current.get("closed_at") else []
+        if len(legacy_batch_ids) > 1:
+            raise ValueError("paper Position close maps to multiple legacy shadow batches")
         invalidated_shadows = 0
         if legacy_batch_ids:
             placeholders = ",".join("?" for _ in legacy_batch_ids)
@@ -302,7 +305,7 @@ def invalidate_paper_position_economics(
         skipped_hooks = db.execute(
             "UPDATE outcome_hook_jobs SET status='skipped', completed_at=?, "
             "updated_at=?, locked_at=NULL, claim_token=NULL, last_error=? "
-            "WHERE position_id=? AND status IN ('pending','failed')",
+            "WHERE position_id=? AND status IN ('pending','failed','processing')",
             (
                 invalidated_at,
                 invalidated_at,

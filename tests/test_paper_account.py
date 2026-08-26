@@ -229,7 +229,7 @@ def test_invalid_exit_without_cash_settlement_creates_no_reversal(tmp_path, monk
 
 def test_invalidation_retracts_completed_derived_outcomes(tmp_path, monkeypatch):
     _setup_env(tmp_path, monkeypatch)
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
     from aletheia.portfolio.paper_account import (
         invalidate_paper_position_economics,
         settle_position_closed,
@@ -247,6 +247,7 @@ def test_invalidation_retracts_completed_derived_outcomes(tmp_path, monkeypatch)
         direction="long",
     )
     repo.insert_serenity_opportunity(opportunity)
+    closed_at = datetime.now(timezone.utc)
     position = Position(
         id="invalidated-derived-position",
         opportunity_id=opportunity.id,
@@ -260,7 +261,7 @@ def test_invalidation_retracts_completed_derived_outcomes(tmp_path, monkeypatch)
         status="closed",
         realized_pnl=10.0,
         outcome_eligible=True,
-        closed_at=datetime.now(timezone.utc).isoformat(),
+        closed_at=closed_at.isoformat(),
     )
     repo.insert_position(position)
     settle_position_closed(position.id, 10.0)
@@ -273,8 +274,20 @@ def test_invalidation_retracts_completed_derived_outcomes(tmp_path, monkeypatch)
             was_selected=selected,
             exit_price=110.0,
             pnl_pct=10.0,
-            resolved_at=datetime.now(timezone.utc).isoformat(),
+            settlement_price_source="position_close",
+            resolved_at=closed_at.isoformat(),
         ))
+    repo.insert_shadow_trade(ShadowTrade(
+        batch_id="independent-batch",
+        opportunity_id=opportunity.id,
+        symbol="BTC/USDT",
+        direction="long",
+        was_selected=True,
+        exit_price=105.0,
+        pnl_pct=5.0,
+        settlement_price_source="stale_forward_ohlcv",
+        resolved_at=(closed_at + timedelta(hours=24)).isoformat(),
+    ))
     repo.insert_serenity_post_mortem(SerenityPostMortem(
         position_id=position.id,
         opportunity_id=opportunity.id,
@@ -302,8 +315,75 @@ def test_invalidation_retracts_completed_derived_outcomes(tmp_path, monkeypatch)
     assert raw_mortem["invalidated_at"]
     assert raw_mortem["invalidation_reason"] == "invalid_exit_price_evidence"
     assert repo.list_shadow_trades(batch_id="invalidated-batch") == []
+    assert len(repo.list_shadow_trades(batch_id="independent-batch")) == 1
     assert repo.list_serenity_post_mortems(opportunity.id) == []
     assert hook["status"] == "skipped"
+
+
+def test_invalidation_fences_an_already_claimed_outcome_hook(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    from datetime import datetime, timezone
+    from aletheia.portfolio import outcome_hooks
+    from aletheia.portfolio.paper_account import (
+        invalidate_paper_position_economics,
+        settle_position_closed,
+    )
+
+    position = Position(
+        id="claimed-hook-invalidation",
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=110.0,
+        execution_mode="paper_internal",
+        status="closed",
+        realized_pnl=10.0,
+        outcome_eligible=True,
+        closed_at=datetime.now(timezone.utc).isoformat(),
+    )
+    repo.insert_position(position)
+    settle_position_closed(position.id, 10.0)
+    repo.enqueue_outcome_hook_job(position.id, "shadow_trades")
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+    real_load = outcome_hooks._load_eligible_position
+    first_load = True
+
+    def load_with_claim_gap(position_id):
+        nonlocal first_load
+        if first_load:
+            first_load = False
+            stale = dict(repo._select_one("positions", position_id))
+            entered.set()
+            assert release.wait(timeout=10)
+            return stale, "eligible"
+        return real_load(position_id)
+
+    monkeypatch.setattr(outcome_hooks, "_load_eligible_position", load_with_claim_gap)
+    monkeypatch.setattr(
+        outcome_hooks,
+        "_execute_hook",
+        lambda _hook_type, row: calls.append(str(row["id"])),
+    )
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        worker = executor.submit(
+            outcome_hooks.process_outcome_hook_jobs,
+            position_id=position.id,
+        )
+        assert entered.wait(timeout=10)
+        invalidate_paper_position_economics(position.id)
+        release.set()
+        summary = worker.result(timeout=10)
+
+    [job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    assert summary["skipped"] == 1
+    assert summary["completed"] == 0
+    assert calls == []
+    assert job["status"] == "skipped"
+    assert job["last_error"] == "invalid_exit_price_evidence"
 
 
 def test_local_paper_available_balance_tightens_risk_without_affecting_external(tmp_path, monkeypatch):

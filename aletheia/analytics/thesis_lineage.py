@@ -401,6 +401,9 @@ def _build_context(db, market_roots: list[dict], serenity_roots: list[dict], cut
         shadow_where = (
             "opportunity_id IN ({}) AND datetime(created_at) >= datetime(?)"
         )
+        has_invalidation = "invalidated_at" in _table_columns(db, "shadow_trades")
+        if has_invalidation:
+            shadow_where += " AND invalidated_at IS NULL"
         # Legacy unkeyed rows and keyed exposures without any result remain
         # visible. A keyed result-bearing row must be the exact canonical
         # projection; a missing canonical table is unavailable, not authority.
@@ -410,7 +413,10 @@ def _build_context(db, market_roots: list[dict], serenity_roots: list[dict], cut
             "OR net_pnl_pct IS NOT NULL OR resolved_at IS NOT NULL)"
         )
         keyed_authority = (
-            valid_keyed_shadow_projection_sql("shadow_trades")
+            valid_keyed_shadow_projection_sql(
+                "shadow_trades",
+                require_not_invalidated=has_invalidation,
+            )
             if _table_exists(db, "filter_candidate_outcomes")
             else "0"
         )
