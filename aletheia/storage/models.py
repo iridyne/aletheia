@@ -1,5 +1,6 @@
 """Pydantic models for storage entities."""
 
+import math
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -13,6 +14,28 @@ def new_id() -> str:
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+EXIT_INTENT_STOP_SOURCES = frozenset({"operator", "default"})
+
+
+def exit_intent_violations(
+    *,
+    expected_horizon_hours: object = None,
+    stop_source: object = None,
+) -> list[str]:
+    violations: list[str] = []
+    if expected_horizon_hours is not None:
+        try:
+            horizon = float(expected_horizon_hours)
+        except (TypeError, ValueError):
+            horizon = math.nan
+        if not math.isfinite(horizon) or horizon <= 0:
+            violations.append("invalid_expected_horizon_hours")
+    if stop_source is not None:
+        if not isinstance(stop_source, str) or stop_source not in EXIT_INTENT_STOP_SOURCES:
+            violations.append("invalid_stop_source")
+    return violations
 
 
 class _Provenanced(BaseModel):
