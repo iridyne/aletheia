@@ -6714,7 +6714,13 @@ def upsert_ohlcv_candles(
         "ON CONFLICT(exchange, symbol, market_type, timeframe, ts) DO UPDATE SET "
         "open=excluded.open, high=excluded.high, low=excluded.low, close=excluded.close, "
         "volume=excluded.volume, provider=excluded.provider, "
-        "last_mutated_at=excluded.last_mutated_at",
+        "last_mutated_at=excluded.last_mutated_at "
+        "WHERE market_ohlcv.open IS NOT excluded.open "
+        "OR market_ohlcv.high IS NOT excluded.high "
+        "OR market_ohlcv.low IS NOT excluded.low "
+        "OR market_ohlcv.close IS NOT excluded.close "
+        "OR market_ohlcv.volume IS NOT excluded.volume "
+        "OR market_ohlcv.provider IS NOT excluded.provider",
         [
             (
                 effective_exchange,
