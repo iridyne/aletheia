@@ -8,6 +8,12 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, PrivateAttr, field_validator, model_validator
 
+from aletheia.config.execution_costs import (
+    EXECUTION_FEE_PCT_BOUNDS,
+    FALLBACK_SPREAD_BPS_BOUNDS,
+    SLIPPAGE_BPS_BOUNDS,
+)
+
 _logger = logging.getLogger("aletheia.config")
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -1319,14 +1325,24 @@ def _default_personas() -> dict:
 
 
 class TradingConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     # Paper position exit rules used by the position_manager. Non-zero defaults so
     # the autonomous loop actually closes positions and realizes PnL.
     default_stop_loss_pct: float = 2.0
     default_take_profit_pct: float = 4.0
     max_position_hold_hours: float = 72.0
     # Edge Lab: realistic paper fill simulation
-    slippage_bps: float = 5.0        # basis points of adverse slippage on paper fills
-    execution_fee_pct: float = 0.06  # % fee per side — Bitget taker (0.06%); change to match your live exchange
+    slippage_bps: FiniteFloat = Field(
+        default=5.0,
+        ge=SLIPPAGE_BPS_BOUNDS[0],
+        le=SLIPPAGE_BPS_BOUNDS[1],
+    )  # basis points of adverse slippage on paper fills
+    execution_fee_pct: FiniteFloat = Field(
+        default=0.06,
+        ge=EXECUTION_FEE_PCT_BOUNDS[0],
+        le=EXECUTION_FEE_PCT_BOUNDS[1],
+    )  # % fee per side — Bitget taker (0.06%); change to match your live exchange
     # Minimum LLM confidence for paper_trader to open a position
     # (high | medium | speculative). Below this, the opportunity is recorded but
     # not traded.
@@ -1428,13 +1444,19 @@ class EmitDedupConfig(BaseModel):
 
 
 class UniverseConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     enabled: bool = True
     refresh_interval_min: int = 10
     market_type: str = "crypto"
     max_candidates: int = 30
     core_pool_size: int = 10
     min_volume_24h_usdt: float = 5_000_000
-    max_spread_bps: float = 25.0
+    max_spread_bps: FiniteFloat = Field(
+        default=25.0,
+        ge=FALLBACK_SPREAD_BPS_BOUNDS[0],
+        le=FALLBACK_SPREAD_BPS_BOUNDS[1],
+    )
     min_depth_10bps_usd: float = 25_000
     explore_ratio: float = 0.2
     # Static family quota — ACTIVE whenever regime detection returns no state

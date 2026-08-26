@@ -7,6 +7,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, ValidationError, field_validator
 
 from aletheia.config.loader import load_config, save_config, mutate_config, config_file_hash
+from aletheia.config.execution_costs import (
+    EXECUTION_FEE_PCT_BOUNDS,
+    FALLBACK_SPREAD_BPS_BOUNDS,
+    SLIPPAGE_BPS_BOUNDS,
+)
 from aletheia.config.schema import (
     AgentConfig,
     AppConfig,
@@ -2155,8 +2160,8 @@ _TRADING_BOUNDS: dict[str, tuple[float, float]] = {
     "default_stop_loss_pct": (0.1, 50.0),
     "default_take_profit_pct": (0.1, 100.0),
     "max_position_hold_hours": (1.0, 8760.0),
-    "slippage_bps": (0.0, 200.0),
-    "execution_fee_pct": (0.0, 5.0),
+    "slippage_bps": SLIPPAGE_BPS_BOUNDS,
+    "execution_fee_pct": EXECUTION_FEE_PCT_BOUNDS,
     "default_notional_usdt": (0.01, 100_000.0),
     "vol_target_risk_usdt": (0.01, 100_000.0),
     "vol_target_pct": (0.1, 100.0),
@@ -2384,7 +2389,7 @@ _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
     "max_candidates": (5, 100),
     "core_pool_size": (1, 50),
     "min_volume_24h_usdt": (100_000, 500_000_000),
-    "max_spread_bps": (1, 200),
+    "max_spread_bps": FALLBACK_SPREAD_BPS_BOUNDS,
     "min_depth_10bps_usd": (1_000, 10_000_000),
     "explore_ratio": (0.0, 0.5),
     "snapshot_ttl_hours": (1, 72),

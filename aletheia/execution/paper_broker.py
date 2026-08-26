@@ -5,6 +5,7 @@ import json
 import math
 from datetime import datetime, timezone
 
+from aletheia.config.execution_costs import validate_execution_costs
 from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
     find_compatible_open_position,
@@ -27,14 +28,16 @@ def _apply_slippage(price: float, direction: str, slippage_bps: float) -> float:
 
 def _paper_close_costs(position: dict, cfg) -> tuple[float, float]:
     """Resolve legacy config costs or the Position's frozen net-balance contract."""
-    fee_rate = float(cfg.trading.execution_fee_pct) / 100.0
-    slippage_bps = float(cfg.trading.slippage_bps)
     try:
         trailing = json.loads(position.get("trailing_json") or "null")
     except (TypeError, json.JSONDecodeError):
         trailing = None
     if not isinstance(trailing, dict) or trailing.get("cost_model_version") != "paper-net-balance-v1":
-        return fee_rate, slippage_bps
+        fee_pct, slippage_bps, _ = validate_execution_costs(
+            execution_fee_pct=cfg.trading.execution_fee_pct,
+            slippage_bps=cfg.trading.slippage_bps,
+        )
+        return fee_pct / 100.0, slippage_bps
     try:
         fee_rate = float(trailing["exit_fee_rate"])
         slippage_bps = float(trailing["slippage_bps"])
@@ -80,8 +83,11 @@ def execute_paper_order(
 
     from aletheia.config.loader import load_config
     cfg = load_config()
-    slippage_bps = cfg.trading.slippage_bps
-    fee_rate = cfg.trading.execution_fee_pct / 100.0
+    fee_pct, slippage_bps, _ = validate_execution_costs(
+        execution_fee_pct=cfg.trading.execution_fee_pct,
+        slippage_bps=cfg.trading.slippage_bps,
+    )
+    fee_rate = fee_pct / 100.0
 
     fill_price = _apply_slippage(price, direction, slippage_bps)
     filled_at = datetime.now(timezone.utc).isoformat()

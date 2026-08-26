@@ -6,8 +6,10 @@ Positive ``estimated_funding_pct`` is a cost; negative is a credit.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
+from aletheia.config.execution_costs import validate_execution_costs
 from aletheia.data.symbols import MARKET_FUTURES, MARKET_PERP, MARKET_SPOT
 
 
@@ -51,13 +53,21 @@ def estimate_outcome_economics(
     gross = (exit_ - entry) / entry * 100.0
     directional = _directional(gross, side)
 
-    fee_pct = max(0.0, float(execution_fee_pct or 0.0)) * 2.0
-    spread_bps = (
-        max(0.0, float(entry_spread_bps))
-        if entry_spread_bps is not None
-        else max(0.0, float(fallback_spread_bps or 0.0))
+    fee_per_side, slip_bps, fallback = validate_execution_costs(
+        execution_fee_pct=execution_fee_pct,
+        slippage_bps=slippage_bps,
+        fallback_spread_bps=(
+            fallback_spread_bps if entry_spread_bps is None else None
+        ),
     )
-    slip_bps = max(0.0, float(slippage_bps or 0.0))
+    fee_pct = fee_per_side * 2.0
+    if entry_spread_bps is None:
+        assert fallback is not None
+        spread_bps = fallback
+    else:
+        spread_bps = float(entry_spread_bps)
+        if not math.isfinite(spread_bps) or spread_bps < 0:
+            raise ValueError("entry_spread_bps must be finite and non-negative")
     spread_slippage_pct = (spread_bps + 2.0 * slip_bps) / 100.0
     min_edge_pct = max(_MIN_EDGE_FLOOR_PCT, slip_bps / 100.0)
 
