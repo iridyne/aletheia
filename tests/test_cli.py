@@ -164,6 +164,120 @@ def test_inspect_orders_stats(cli_db):
     assert "fill_rate" in result.output
 
 
+def test_inspect_filtered_proposals_apply_filter_before_limit(cli_db):
+    import json as json_mod
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
+
+    repo.insert_trade_proposal(
+        TradeProposal(
+            id="old-pending-proposal",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            status="pending",
+        )
+    )
+    for idx in range(25):
+        repo.insert_trade_proposal(
+            TradeProposal(
+                id=f"new-approved-proposal-{idx}",
+                symbol="ETH/USDT",
+                market_type="spot",
+                direction="short",
+                status="approved",
+            )
+        )
+
+    filtered = runner.invoke(app, ["inspect", "proposals", "--status", "pending", "--limit", "2", "--json"])
+    unfiltered = runner.invoke(app, ["inspect", "proposals", "--status", "all", "--limit", "1", "--json"])
+
+    assert filtered.exit_code == 0
+    assert [row["id"] for row in json_mod.loads(filtered.output)] == ["old-pending-proposal"]
+    assert json_mod.loads(unfiltered.output)[0]["id"].startswith("new-approved-proposal-")
+
+
+def test_inspect_rejected_risk_applies_filter_before_limit(cli_db):
+    import json as json_mod
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import RiskDecision
+
+    repo.insert_risk_decision(RiskDecision(id="old-rejected-risk", proposal_id="proposal-old", approved=False))
+    for idx in range(25):
+        repo.insert_risk_decision(
+            RiskDecision(id=f"new-approved-risk-{idx}", proposal_id=f"proposal-{idx}", approved=True)
+        )
+
+    result = runner.invoke(app, ["inspect", "risk", "--rejected-only", "--limit", "2", "--json"])
+
+    assert result.exit_code == 0
+    rows = json_mod.loads(result.output)
+    assert [row["id"] for row in rows] == ["old-rejected-risk"]
+    assert all(not row["approved"] for row in rows)
+
+
+def test_inspect_filtered_orders_apply_filter_before_limit(cli_db):
+    import json as json_mod
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Order
+
+    repo.insert_order(
+        Order(
+            id="old-failed-order",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            order_type="market",
+            quantity=1,
+            execution_mode="paper_internal",
+            status="failed",
+            source="adopted",
+        )
+    )
+    for idx in range(25):
+        repo.insert_order(
+            Order(
+                id=f"new-filled-order-{idx}",
+                symbol="ETH/USDT",
+                market_type="spot",
+                direction="short",
+                order_type="market",
+                quantity=1,
+                execution_mode="paper_internal",
+                status="filled",
+                source="adopted",
+            )
+        )
+
+    result = runner.invoke(app, ["inspect", "orders", "--status", "failed", "--limit", "2", "--json"])
+
+    assert result.exit_code == 0
+    rows = json_mod.loads(result.output)
+    assert [row["id"] for row in rows] == ["old-failed-order"]
+    assert all(row["status"] == "failed" for row in rows)
+
+
+def test_inspect_filtered_fills_apply_filter_before_limit(cli_db):
+    import json as json_mod
+
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Fill
+
+    repo.insert_fill(Fill(id="old-target-fill", order_id="target-order", fill_price=100, fill_quantity=1))
+    for idx in range(25):
+        repo.insert_fill(Fill(id=f"new-other-fill-{idx}", order_id=f"other-order-{idx}", fill_price=100, fill_quantity=1))
+
+    result = runner.invoke(app, ["inspect", "fills", "--order-id", "target-order", "--limit", "2", "--json"])
+
+    assert result.exit_code == 0
+    rows = json_mod.loads(result.output)
+    assert [row["id"] for row in rows] == ["old-target-fill"]
+    assert all(row["order_id"] == "target-order" for row in rows)
+
+
 def test_inspect_status_json(cli_db):
     """inspect status --json outputs valid JSON."""
     import json as json_mod
