@@ -155,3 +155,63 @@ def test_relative_rank_persists_isolated_cluster_and_outcome():
     assert report["complete_cluster_n"] == 1
     assert report["verdict"] == "insufficient_data"
     assert report["promotion_eligible"] is False
+
+
+def test_relative_rank_excludes_temporally_invalid_settled_outcomes():
+    from aletheia.universe.continuous_scoring import ContinuousScoringPolicy
+    from aletheia.universe.relative_rank_experiment import (
+        build_prospective_relative_rank_bundle,
+    )
+    from aletheia.universe.relative_rank_shadow import build_relative_rank_batch
+
+    inputs = [_input(index, score=5.0 + index) for index in range(20)]
+    batch = build_relative_rank_batch(inputs, scanner_run_id="run-temporal")
+    batch = replace(
+        batch,
+        records=tuple(
+            replace(
+                record,
+                authority_selected=index == 0,
+                relative_selected=index == 0,
+            )
+            for index, record in enumerate(batch.records)
+        ),
+    )
+    bundle = build_prospective_relative_rank_bundle(
+        batch,
+        inputs,
+        authority_snapshot_id="snapshot-temporal",
+        policy=ContinuousScoringPolicy(),
+        universe_config=UniverseConfig(),
+        enabled_markets={"spot": True, "perp": True},
+        preferred_market_type="perp",
+        family_tolerances={},
+        provider_id="ccxt:binance",
+        outcome_venue="binance",
+        regime_state="sideways",
+        captured_at="2026-08-10T00:00:00+00:00",
+    )
+    repo.insert_relative_rank_shadow_bundle(
+        bundle.batch,
+        outcomes=bundle.outcomes,
+        min_interval_sec=0,
+    )
+    repo.get_db().execute(
+        "UPDATE filter_candidate_outcomes SET status='settled', "
+        "directional_return_pct=1.45, exit_price_usd=entry_price_usd * 1.0145, "
+        "estimated_fee_pct=0.1, estimated_spread_slippage_pct=0.1, "
+        "estimated_funding_pct=0, net_return_pct=1.25, min_tradable_edge_pct=0.05, "
+        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+        "cost_model_version='test-v1', settled_at='2999-01-01T00:00:00+00:00' "
+        "WHERE id=?",
+        (bundle.outcomes[0].id,),
+    )
+
+    from aletheia.universe.relative_rank_evaluation import (
+        evaluate_relative_rank_shadow_epoch,
+    )
+
+    report = evaluate_relative_rank_shadow_epoch(bundle.batch.policy_epoch_id)
+    assert report["complete_cluster_n"] == 0
+    assert report["outcome_exclusion_counts"] == {"settlement_after_as_of": 1}
+    assert "fixed_horizon_outcomes_incomplete" in report["blocking_reasons"]
