@@ -5,6 +5,7 @@ import { positionFreshness, positionKeys } from '../lib/queryKeys'
 import type { Order, Position, TradeProposal } from '../types'
 import { fmtSymbol } from '../lib/format'
 import { parseDecisionRationale } from '../lib/decisionReasoning'
+import { orderIntent, orderIntentLabel } from '../lib/orderIntent'
 
 /**
  * Causal-chain inspector (WEBUI_PAGE_MAP.md — cross-cutting, lives in Trades & Positions).
@@ -160,12 +161,15 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
   })
   const risk = riskData?.decision
 
+  const anchorOrderIntent = anchor.kind === 'order' ? orderIntent(anchor.order) : null
   const resolvedOrder: Order | null = anchor.kind === 'position' && anchor.position.order_id
     ? (orders as Order[]).find(o => o.id === anchor.position.order_id) ?? null
     : null
   const resolvedPosition: Position | null = anchor.kind === 'position'
     ? anchor.position
-    : (positions as Position[]).find(p => p.order_id === anchor.order.id) ?? null
+    : anchorOrderIntent === 'close' && anchor.order.position_id
+      ? (positions as Position[]).find(p => p.id === anchor.order.position_id) ?? null
+      : (positions as Position[]).find(p => p.order_id === anchor.order.id) ?? null
 
   const strategyId = anchor.kind === 'order'
     ? proposal?.strategy_id ?? null
@@ -201,11 +205,11 @@ export default function CausalChain({ anchor }: { anchor: Anchor }) {
         : <CausalNode stage="Entry Reasoning" state={proposalId ? 'missing' : 'empty'} note={proposalId ? 'proposal not available' : undefined} />}
 
       {risk
-        ? <CausalNode stage="Risk Decision" state="present" facts={<>{anchor.kind === 'order' && anchor.order.risk_decision_id && <div className="mono cc-id">{anchor.order.risk_decision_id}</div>}<div>{(risk.approved === true || risk.approved === 1 || risk.decision === 'approved') ? 'approved' : 'flagged'}{risk.risk_score != null && <span className="mono"> · score {risk.risk_score}</span>}{risk.message && <div className="text-muted text-sm">{risk.message}</div>}</div></>} onOpen={() => navigate('/risk')} />
+        ? <CausalNode stage="Risk Decision" state="present" facts={<>{anchor.kind === 'order' && anchor.order.risk_decision_id && <div className="mono cc-id">{anchor.order.risk_decision_id}</div>}<div>{(risk.approved === true || risk.approved === 1 || risk.decision === 'approved') ? (anchorOrderIntent === 'close' ? 'entry approval (not close authorization)' : 'approved') : 'flagged'}{risk.risk_score != null && <span className="mono"> · score {risk.risk_score}</span>}{risk.message && <div className="text-muted text-sm">{risk.message}</div>}</div></>} onOpen={() => navigate('/risk')} />
         : <CausalNode stage="Risk Decision" state="empty" />}
 
       {anchor.kind === 'order'
-        ? <CausalNode stage="Order" state="present" facts={<><div className="mono cc-id">{anchor.order.id}</div><div>{anchor.order.direction?.toUpperCase()} {anchor.order.quantity} {fmtSymbol(anchor.order.symbol, anchor.order.market_type)} @ {anchor.order.price ?? 'mkt'} · {anchor.order.status}</div></>} />
+        ? <CausalNode stage="Order" state="present" facts={<><div className="mono cc-id">{anchor.order.id}</div><div>{orderIntentLabel(anchorOrderIntent ?? 'entry')} · {anchor.order.direction?.toUpperCase()} {anchor.order.quantity} {fmtSymbol(anchor.order.symbol, anchor.order.market_type)} @ {anchor.order.price ?? 'mkt'} · {anchor.order.status}</div></>} />
         : anchor.position.order_id
           ? <CausalNode stage="Order" state="present" facts={resolvedOrder ? <><div className="mono cc-id">{anchor.position.order_id}</div><div>{resolvedOrder.direction?.toUpperCase()} {resolvedOrder.quantity} {fmtSymbol(resolvedOrder.symbol, resolvedOrder.market_type)} @ {resolvedOrder.price ?? 'mkt'} · {resolvedOrder.status}</div></> : <><div className="mono cc-id">{anchor.position.order_id}</div><div className="text-muted text-sm">(order detail not in recent list)</div></>} />
           : <CausalNode stage="Order" state="empty" />}
