@@ -487,6 +487,9 @@ def sync_all_exchanges() -> Optional[dict]:
 
     try:
         unified = get_unified_state_sync()
+        connected_brokers = getattr(unified, "connected_brokers", None) or [
+            acct.get("broker_id") for acct in unified.accounts if acct.get("broker_id")
+        ]
         payload = {
             "total_equity_usdt": unified.total_equity_usdt,
             "total_available_usdt": unified.total_available_usdt,
@@ -494,7 +497,7 @@ def sync_all_exchanges() -> Optional[dict]:
             "accounts": unified.accounts,
             "positions": unified.positions,
             "errors": unified.errors,
-            "connected_brokers": unified.connected_brokers,
+            "connected_brokers": connected_brokers,
             "fetched_at": unified.fetched_at,
         }
         payload["sync_status"] = _unified_sync_status(payload)
