@@ -1976,6 +1976,128 @@ def test_paper_funding_settler_revives_terminal_row_once_backfill_lands(
 
 @spec_claim(
     SpecClaim(
+        "PL-PCM-18",
+        "pipeline_paper_close_materialization",
+        "§4 terminal funding revival scheduling fairness",
+        "L2c",
+        "paper_funding_settler uses a durable bounded cursor for terminal "
+        "funding revival, so an unchanged oldest prefix cannot permanently "
+        "starve later recoverable paper_internal futures closes.",
+        status="implemented",
+    )
+)
+def test_paper_funding_revival_cursor_reaches_recoverable_row_after_restart(
+    tmp_path, monkeypatch,
+):
+    _setup_db(tmp_path, monkeypatch)
+    _patch_config(monkeypatch)
+
+    import asyncio
+    import aletheia.storage.sqlite as sq
+    from datetime import timedelta
+    from aletheia.portfolio import paper_account as pa
+    from aletheia.portfolio.local_funding import LocalFundingResult
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    close_time = datetime.now(timezone.utc) - timedelta(hours=30)
+    for index in range(50):
+        _seed_stuck_paper_close(
+            position_id=f"pos-revival-stuck-{index:02d}",
+            symbol="FIL/USDT",
+            closed_at=close_time,
+            outcome_exclusion_reason="funding_permanently_unrecoverable",
+        )
+    _seed_stuck_paper_close(
+        position_id="pos-revival-target",
+        symbol="FIL/USDT",
+        closed_at=close_time,
+        outcome_exclusion_reason="funding_permanently_unrecoverable",
+    )
+    _seed_null_close_event("pos-revival-target", close_time.isoformat())
+
+    calls: list[str] = []
+
+    def _fake_funding(row, *_args, **_kwargs):
+        position_id = str(row.get("id"))
+        calls.append(position_id)
+        if position_id == "pos-revival-target":
+            return LocalFundingResult(
+                complete=True,
+                funding_cost=0.02,
+                funding_source="local_simulation",
+                evidence=_complete_recovered_funding(position_id, cost=0.02),
+            )
+        return LocalFundingResult(
+            complete=False,
+            funding_cost=None,
+            funding_source="unavailable",
+            evidence={"reason": "invalid_direction"},
+        )
+
+    monkeypatch.setattr(
+        "aletheia.portfolio.local_funding.compute_local_funding",
+        _fake_funding,
+    )
+
+    result1 = asyncio.run(pa.settle_unsettled_paper_closes())
+
+    assert result1["revived"] == 0
+    assert len(calls) == 50
+    assert "pos-revival-target" not in calls
+    assert repo._select_one("positions", "pos-revival-target")["realized_pnl"] is None
+    cursor1 = get_db().execute(
+        "SELECT last_position_rowid FROM paper_funding_revival_cursor WHERE scope=?",
+        ("paper_funding_terminal_revival",),
+    ).fetchone()
+    assert cursor1 is not None
+    assert int(cursor1["last_position_rowid"]) > 0
+
+    get_db().close()
+    conn = sqlite3.connect(
+        str(tmp_path / "app.db"),
+        check_same_thread=False,
+        isolation_level=None,
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=30000")
+    sq._db_conn = conn
+
+    calls.clear()
+    result2 = asyncio.run(pa.settle_unsettled_paper_closes())
+
+    assert "pos-revival-target" in calls
+    assert len(calls) <= 50
+    assert result2["revived"] == 1
+    revived = repo._select_one("positions", "pos-revival-target")
+    assert revived["realized_pnl"] == pytest.approx(0.36)
+    assert revived["funding_cost"] == pytest.approx(0.02)
+    assert revived["outcome_exclusion_reason"] != "funding_permanently_unrecoverable"
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM paper_account_events "
+        "WHERE action='position_closed' AND position_id='pos-revival-target'"
+    ).fetchone()[0] == 1
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM audit_events WHERE entity_id='pos-revival-target' "
+        "AND event_type='paper_position_funding_revived'"
+    ).fetchone()[0] == 1
+
+    result3 = asyncio.run(pa.settle_unsettled_paper_closes())
+    assert result3["revived"] == 0
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM paper_account_events "
+        "WHERE action='position_closed' AND position_id='pos-revival-target'"
+    ).fetchone()[0] == 1
+    assert get_db().execute(
+        "SELECT COUNT(*) FROM positions WHERE realized_pnl IS NULL "
+        "AND outcome_exclusion_reason='funding_permanently_unrecoverable'"
+    ).fetchone()[0] == 50
+
+
+@spec_claim(
+    SpecClaim(
         "PL-PCM-17",
         "pipeline_paper_close_materialization",
         "§4 hero unblocks once all unsettled are terminal",

@@ -54,8 +54,66 @@ _TERMINAL_ECONOMICS_EXCLUSIONS = frozenset({
     FUNDING_PERMANENTLY_UNRECOVERABLE,
     INVALID_EXIT_PRICE_EVIDENCE,
 })
+_FUNDING_REVIVAL_CURSOR_SCOPE = "paper_funding_terminal_revival"
+_FUNDING_REVIVAL_BATCH_LIMIT = 50
 
 INITIAL_PAPER_CASH_USDT = 200.0
+
+
+def _funding_revival_cursor() -> int:
+    row = repo.get_db().execute(
+        "SELECT last_position_rowid FROM paper_funding_revival_cursor WHERE scope=?",
+        (_FUNDING_REVIVAL_CURSOR_SCOPE,),
+    ).fetchone()
+    if row is None:
+        return 0
+    try:
+        return max(0, int(row["last_position_rowid"]))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _advance_funding_revival_cursor(last_position_rowid: int) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    db = repo.get_db()
+    was_in_tx = db.in_transaction
+    db.execute(
+        "INSERT INTO paper_funding_revival_cursor "
+        "(scope, last_position_rowid, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(scope) DO UPDATE SET "
+        "last_position_rowid=excluded.last_position_rowid, "
+        "updated_at=excluded.updated_at",
+        (_FUNDING_REVIVAL_CURSOR_SCOPE, int(last_position_rowid), now),
+    )
+    if not was_in_tx:
+        db.commit()
+
+
+def _terminal_funding_revival_rows(limit: int = _FUNDING_REVIVAL_BATCH_LIMIT) -> list[dict]:
+    db = repo.get_db()
+    cursor = _funding_revival_cursor()
+    params = (FUNDING_PERMANENTLY_UNRECOVERABLE,)
+
+    def _select(rowid_clause: str, rowid_param: int, row_limit: int) -> list[dict]:
+        return [
+            dict(r) for r in db.execute(
+                f"""SELECT rowid AS _revival_rowid, * FROM positions
+                   WHERE status='closed' AND execution_mode='paper_internal'
+                     AND market_type='usdt_futures' AND realized_pnl IS NULL
+                     AND outcome_exclusion_reason = ?
+                     AND rowid {rowid_clause} ?
+                   ORDER BY rowid ASC LIMIT ?""",
+                (*params, rowid_param, row_limit),
+            ).fetchall()
+        ]
+
+    rows = _select(">", cursor, limit)
+    if len(rows) < limit and cursor > 0:
+        seen = {str(row.get("id") or "") for row in rows}
+        for row in _select("<=", cursor, limit - len(rows)):
+            if str(row.get("id") or "") not in seen:
+                rows.append(row)
+    return rows
 
 
 def _open_local_positions() -> list[dict]:
@@ -966,16 +1024,7 @@ async def settle_unsettled_paper_closes() -> dict:
     # untouched (no audit, no state change) so a genuinely lost row stays
     # churn-free — the give-up state is sticky against absence, reversible only
     # against real data.
-    terminal_rows = [
-        dict(r) for r in get_db().execute(
-            """SELECT * FROM positions
-               WHERE status='closed' AND execution_mode='paper_internal'
-                 AND market_type='usdt_futures' AND realized_pnl IS NULL
-                 AND outcome_exclusion_reason = ?
-               ORDER BY rowid ASC LIMIT 50""",
-            (FUNDING_PERMANENTLY_UNRECOVERABLE,),
-        ).fetchall()
-    ]
+    terminal_rows = _terminal_funding_revival_rows()
     for row in terminal_rows:
         position_id = str(row.get("id") or "")
         sym = str(row.get("symbol") or "")
@@ -1027,6 +1076,8 @@ async def settle_unsettled_paper_closes() -> dict:
                 sym, position_id, exc,
             )
             errors.append(f"{position_id}:revive: {exc}")
+    if terminal_rows:
+        _advance_funding_revival_cursor(int(terminal_rows[-1]["_revival_rowid"]))
 
     # Second pass: positions where realized_pnl IS already set but the cash ledger
     # has no matching position_closed entry.  This happens when funding_cost is written

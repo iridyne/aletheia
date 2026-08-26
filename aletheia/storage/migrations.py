@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v42"
+SCHEMA_VERSION = "aletheia-sqlite-v43"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3311,6 +3311,14 @@ CREATE TABLE IF NOT EXISTS aletheia_schema_migrations (
     schema_version TEXT NOT NULL,
     applied_at TEXT NOT NULL,
     duration_ms REAL NOT NULL CHECK (duration_ms >= 0)
+);
+"""
+
+_PAPER_FUNDING_REVIVAL_CURSOR_DDL = """
+CREATE TABLE IF NOT EXISTS paper_funding_revival_cursor (
+    scope TEXT PRIMARY KEY,
+    last_position_rowid INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
 );
 """
 
@@ -3472,6 +3480,12 @@ _CONTROLLER_RECOMMENDATION_COST_MODEL_CHECKSUM = hashlib.sha256(
     (
         repr(_CONTROLLER_RECOMMENDATION_COST_MODEL_COLUMNS)
         + "\ncontroller_recommendation_cost_model_v1"
+    ).encode("utf-8")
+).hexdigest()
+_PAPER_FUNDING_REVIVAL_CURSOR_CHECKSUM = hashlib.sha256(
+    (
+        _PAPER_FUNDING_REVIVAL_CURSOR_DDL
+        + "\npaper_funding_revival_cursor_v1"
     ).encode("utf-8")
 ).hexdigest()
 _PAPER_ACCOUNT_DERIVED_INVALIDATION_COLUMNS = (
@@ -5065,6 +5079,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260826_0041_controller_recommendation_cost_model_v42": (
         "controller recommendation cost-model evidence identity"
     ),
+    "20260826_0042_paper_funding_revival_cursor_v43": (
+        "durable paper funding revival scheduler cursor"
+    ),
 }
 
 
@@ -5264,6 +5281,12 @@ def _apply_controller_recommendation_cost_model_v42(db: sqlite3.Connection) -> N
         }
         if column not in existing:
             db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
+def _apply_paper_funding_revival_cursor_v43(db: sqlite3.Connection) -> None:
+    """Persist bounded round-robin progress for terminal funding revival."""
+
+    db.executescript(_PAPER_FUNDING_REVIVAL_CURSOR_DDL)
 
 
 def _apply_lesson_reviewer_attempts_v21(db: sqlite3.Connection) -> None:
@@ -6060,6 +6083,12 @@ _MIGRATIONS = (
         checksum=_CONTROLLER_RECOMMENDATION_COST_MODEL_CHECKSUM,
         schema_version="aletheia-sqlite-v42",
         apply=_apply_controller_recommendation_cost_model_v42,
+    ),
+    MigrationStep(
+        migration_id="20260826_0042_paper_funding_revival_cursor_v43",
+        checksum=_PAPER_FUNDING_REVIVAL_CURSOR_CHECKSUM,
+        schema_version="aletheia-sqlite-v43",
+        apply=_apply_paper_funding_revival_cursor_v43,
     ),
 )
 
