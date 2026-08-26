@@ -58,7 +58,7 @@ _SCHEDULE_KEYS: dict[str, str] = {
     "guard_promotion": "cron:04:00:Asia/Shanghai",
     "filter_controller_observe": "config:controller.observe_interval_hours",
     "persona_rollout": "interval:8h",
-    "learning_startup_catchup": "startup:once",
+    "learning_startup_catchup": "startup:retry",
     "learning_contribution_evaluator": "interval:config.learning.evaluation_interval_minutes",
     "learning_lifecycle_controller": "interval:config.learning.evaluation_interval_minutes",
     "learning_lifecycle_audit_reconciler": "interval:5m",
@@ -393,6 +393,10 @@ def record_learning_job_success(job_id: str, *, attempt_id: str | None = None) -
     window = current_daily_window(job_id, now=now)
     if window is not None:
         updates["input_watermark"] = window
+    if health.failed_input_watermark is not None and (
+        window is None or health.failed_input_watermark == updates.get("input_watermark")
+    ):
+        updates["failed_input_watermark"] = None
     if job_id == "lesson_reviewer" and attempt_id is not None:
         attempt = get_record("learning_lesson_reviewer_attempts", attempt_id)
         if attempt is None:
@@ -425,6 +429,7 @@ def record_learning_job_failure(
     if job_id in {"dreaming_daily", "lesson_reviewer"}:
         count, oldest = _job_backlog(job_id)
     message = str(error)[:1000]
+    failed_window = current_daily_window(job_id, now=now)
     with transaction():
         upsert_job_health(health.model_copy(update={
             "backlog_count": count,
@@ -434,6 +439,7 @@ def record_learning_job_failure(
             "last_error": message,
             "last_failed_at": now.isoformat(),
             "last_failure_reason": message,
+            "failed_input_watermark": failed_window or health.failed_input_watermark,
             "updated_at": now.isoformat(),
         }))
         if job_id == "lesson_reviewer" and attempt_id is not None:

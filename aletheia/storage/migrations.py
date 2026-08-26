@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v43"
+SCHEMA_VERSION = "aletheia-sqlite-v44"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3696,6 +3696,16 @@ _OPPORTUNITY_GENERATION_V2_CHECKSUM = hashlib.sha256(
         repr(_OPPORTUNITY_GENERATION_V2_COLUMNS)
         + _OPPORTUNITY_GENERATION_V2_SQL
         + "\nopportunity_generation_v3"
+    ).encode("utf-8")
+).hexdigest()
+
+_LEARNING_FAILED_WINDOW_COLUMNS = (
+    ("failed_input_watermark", "learning_job_health", "TEXT"),
+)
+_LEARNING_FAILED_WINDOW_CHECKSUM = hashlib.sha256(
+    (
+        repr(_LEARNING_FAILED_WINDOW_COLUMNS)
+        + "\nlearning_failed_window_v1"
     ).encode("utf-8")
 ).hexdigest()
 
@@ -5494,6 +5504,17 @@ def _apply_opportunity_generation_v42(db: sqlite3.Connection) -> None:
     db.executescript(_OPPORTUNITY_GENERATION_V2_SQL)
 
 
+def _apply_learning_failed_window_v43(db: sqlite3.Connection) -> None:
+    """Persist the daily Learning window that failed before a later retry/success."""
+
+    for column, table, column_type in _LEARNING_FAILED_WINDOW_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
+
+
 def _apply_lesson_reviewer_attempts_v21(db: sqlite3.Connection) -> None:
     """Add append-only execution history for the mutating lesson reviewer."""
 
@@ -6294,6 +6315,12 @@ _MIGRATIONS = (
         checksum=_OPPORTUNITY_GENERATION_V2_CHECKSUM,
         schema_version="aletheia-sqlite-v43",
         apply=_apply_opportunity_generation_v42,
+    ),
+    MigrationStep(
+        migration_id="20260827_0043_learning_failed_window_v44",
+        checksum=_LEARNING_FAILED_WINDOW_CHECKSUM,
+        schema_version="aletheia-sqlite-v44",
+        apply=_apply_learning_failed_window_v43,
     ),
 )
 
