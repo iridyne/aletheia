@@ -13,6 +13,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from aletheia.config.execution_costs import validate_execution_costs
 from aletheia.data.symbols import InstrumentId, to_canonical
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
@@ -139,6 +140,10 @@ def _activate_paper_position(
     ):
         qualification = _trailing_qualification_assignment(position_id)
         treatment = qualification["arm"] == "treatment"
+        fee_pct, slippage_bps, _ = validate_execution_costs(
+            execution_fee_pct=cfg.trading.execution_fee_pct,
+            slippage_bps=cfg.trading.slippage_bps,
+        )
         resolved.trailing = {
             "enabled": treatment,
             "mode": "atr" if treatment else "off",
@@ -149,8 +154,8 @@ def _activate_paper_position(
             "floor_mode": "net_balance",
             "observation": "completed_1m",
             "cost_model_version": "paper-net-balance-v1",
-            "exit_fee_rate": float(cfg.trading.execution_fee_pct) / 100.0,
-            "slippage_bps": float(cfg.trading.slippage_bps),
+            "exit_fee_rate": fee_pct / 100.0,
+            "slippage_bps": slippage_bps,
             "qualification": qualification,
         }
     if resolved.stop_price is None and resolved.target_price is None:

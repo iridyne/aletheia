@@ -82,6 +82,10 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 
 ### 3.0 `paper_internal` 入场真实性
 
+- `trading.execution_fee_pct` 只接受有限的 `0..5` 百分点，`trading.slippage_bps`
+  只接受有限的 `0..200` bps。canonical config load、Settings mutation 与 Paper
+  broker 使用同一范围；非法 restored/manual config 必须在 Order、Fill、Position、
+  cash event 或 ExitPlan 写入前失败，不能生成 favorable slippage、负 fee 或乐观零成本。
 - 本地纸面入场只允许 `order_type='market'`。Proposal builder、paper tool 和 broker 三层都拒绝
   `limit`，不得把“按报价立即模拟成交”伪装成有挂单/等待成交语义的限价单；交易所 demo/testnet
   仍可按各自 adapter 能力使用 limit。

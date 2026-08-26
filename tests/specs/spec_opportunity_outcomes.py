@@ -108,6 +108,47 @@ def test_missing_perp_funding_keeps_net_unknown():
 
 @spec_claim(
     SpecClaim(
+        "OO-B07", _CONTRACT, "§4 canonical cost domain", "L2b",
+        "Invalid fee, slippage or consumed spread evidence fails before it can become optimistic zero-cost economics.",
+        status="implemented",
+    )
+)
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("execution_fee_pct", -0.01),
+        ("execution_fee_pct", float("nan")),
+        ("slippage_bps", -0.01),
+        ("slippage_bps", float("inf")),
+        ("fallback_spread_bps", 0.0),
+        ("fallback_spread_bps", float("inf")),
+        ("entry_spread_bps", -0.01),
+        ("entry_spread_bps", float("nan")),
+    ],
+)
+def test_invalid_cost_inputs_never_become_optimistic_zero(field, value):
+    from aletheia.universe.outcome_economics import estimate_outcome_economics
+
+    inputs = {
+        "entry_price": 100.0,
+        "exit_price": 101.0,
+        "direction": "long",
+        "market_type": "spot",
+        "hold_seconds": 3600,
+        "entry_spread_bps": None if field == "fallback_spread_bps" else 5.0,
+        "fallback_spread_bps": 25.0,
+        "funding_rate_at_entry": None,
+        "execution_fee_pct": 0.06,
+        "slippage_bps": 5.0,
+    }
+    inputs[field] = value
+
+    with pytest.raises(ValueError, match=field):
+        estimate_outcome_economics(**inputs)
+
+
+@spec_claim(
+    SpecClaim(
         "OO-B06", _CONTRACT, "§2 instrument identity", "L2b",
         "An unknown market identity cannot become funding-free, cost-complete spot economics.",
         status="implemented",
