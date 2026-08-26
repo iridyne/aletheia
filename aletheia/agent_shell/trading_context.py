@@ -1820,12 +1820,16 @@ def _build_layer1_snapshot() -> dict[str, Any]:
                 if event["action"].startswith("manual_")
             ]
         else:
-            from aletheia.portfolio.exchange_sync import get_cached_state
+            from aletheia.portfolio.exchange_sync import (
+                account_available_value,
+                account_equity_value,
+                get_cached_state,
+            )
             state = get_cached_state()
             if state and state.get("age_seconds", 999) < 300:
                 layer["balance"] = {
-                    "equity_usdt": state.get("equity_usdt") or state.get("total_equity_usdt"),
-                    "available_usdt": state.get("available_usdt") or state.get("total_available_usdt"),
+                    "equity_usdt": account_equity_value(state),
+                    "available_usdt": account_available_value(state),
                 }
             else:
                 layer["balance"] = None

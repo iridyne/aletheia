@@ -1461,7 +1461,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
                 # cache, which uses total_equity_usdt instead of the Bitget-specific
                 # equity_usdt. Fall back so exchange_equity_usdt isn't null on non-Bitget
                 # accounts (mirrors trading_context.py:64-65).
-                exchange_equity_usdt = cached.get("equity_usdt") or cached.get("total_equity_usdt")
+                exchange_equity_usdt = exchange_sync.account_equity_value(cached)
                 exchange_state_age_sec = cached.get("age_seconds")
                 # Real account equity is the authoritative total value when present.
                 if exchange_equity_usdt is not None:
@@ -1517,8 +1517,8 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
                 uta_age = unified.get("age_seconds")
                 if uta_age is not None and uta_age < 600 and unified.get("sync_status") == "ok":
                     # When unified state is available and has data, use as hero number
-                    uta_equity = unified.get("total_equity_usdt")
-                    if uta_equity and uta_equity > 0:
+                    uta_equity = exchange_sync.account_equity_value(unified)
+                    if uta_equity is not None:
                         final_total_value = float(uta_equity)
                         account_equity_usdt = final_total_value
                     # UTA uPnL is the authoritative cross-broker unrealized PnL. The
@@ -1630,8 +1630,14 @@ def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> Portfo
     uta_state = summary.get("uta_state")
     uta_equity = None
     if uta_state:
-        uta_equity = uta_state.get("total_equity_usdt")
-    exchange_equity = uta_equity or summary.get("exchange_equity_usdt")
+        from aletheia.portfolio.exchange_sync import account_equity_value
+
+        uta_equity = account_equity_value(uta_state)
+    exchange_equity = (
+        uta_equity
+        if uta_equity is not None
+        else summary.get("exchange_equity_usdt")
+    )
     # View-completeness gate (P0, 2026-07-02): the UNIFIED total (uta_equity) is a
     # multi-broker SUM. When the ACTIVE broker is missing from the unified view
     # (e.g. OKX API 50001 → the sum is only the idle bitget $167, not the real

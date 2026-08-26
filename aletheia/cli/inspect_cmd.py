@@ -918,13 +918,17 @@ def status(
 
     # Exchange equity (best-effort)
     try:
-        from aletheia.portfolio.exchange_sync import get_cached_state, status_for
+        from aletheia.portfolio.exchange_sync import (
+            account_equity_value,
+            get_cached_state,
+            status_for,
+        )
         cached = get_cached_state()
         if cached and status_for(cached) in ("ok", "stale"):
             # get_cached_state may return the unified (multi-broker) cache, which
             # uses total_equity_usdt instead of the Bitget-specific equity_usdt —
             # fall back so non-Bitget paper accounts show real equity, not None.
-            portfolio_section["equity_usdt"] = cached.get("equity_usdt") or cached.get("total_equity_usdt")
+            portfolio_section["equity_usdt"] = account_equity_value(cached)
             portfolio_section["exchange_age_sec"] = cached.get("age_seconds")
     except Exception:
         pass
@@ -988,7 +992,8 @@ def status(
     # Human-readable output
     typer.echo("=== Portfolio ===")
     eq = portfolio_section.get("equity_usdt")
-    typer.echo(f"  equity: {eq or '?'} USDT  |  open_positions: {portfolio_section['open_positions']}")
+    equity_label = eq if eq is not None else "?"
+    typer.echo(f"  equity: {equity_label} USDT  |  open_positions: {portfolio_section['open_positions']}")
     for p in portfolio_section["positions"]:
         typer.echo(f"  {p['symbol']} {p['direction']} qty={p['quantity']} entry={p['entry_price']} uPnL={p['unrealized_pnl']}")
 

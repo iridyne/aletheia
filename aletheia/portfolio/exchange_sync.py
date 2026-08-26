@@ -22,6 +22,7 @@ Governance:
 
 import json
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -111,6 +112,30 @@ def _age_seconds(fetched_at: str) -> Optional[float]:
         return None
 
 
+def _numeric_account_value(state: Optional[dict], *keys: str) -> float | None:
+    if not isinstance(state, dict):
+        return None
+    for key in keys:
+        if key not in state or state.get(key) is None:
+            continue
+        try:
+            value = float(state[key])
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+    return None
+
+
+def account_equity_value(state: Optional[dict]) -> float | None:
+    """Return explicit cached equity, preserving zero as a known value."""
+    return _numeric_account_value(state, "equity_usdt", "total_equity_usdt")
+
+
+def account_available_value(state: Optional[dict]) -> float | None:
+    """Return explicit cached available balance, preserving zero as a known value."""
+    return _numeric_account_value(state, "available_usdt", "total_available_usdt")
+
+
 def get_cached_state(mode: Optional[str] = None) -> Optional[dict]:
     """Return the cached state for `mode` (defaults to current cfg.exchange.mode).
 
@@ -137,7 +162,7 @@ def get_cached_state(mode: Optional[str] = None) -> Optional[dict]:
         # which carries the true total equity across all brokers.
         if not explicit_mode and not (cfg.exchange.paper_execution_mode or "").startswith("bitget"):
             unified = get_unified_cached_state()
-            if unified is not None and (unified.get("total_equity_usdt") or 0) > 0:
+            if unified is not None and account_equity_value(unified) is not None:
                 return unified
     raw = _read_raw(mode)
     if raw is None:
