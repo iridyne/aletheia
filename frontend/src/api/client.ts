@@ -31,6 +31,34 @@ export interface SoftwareUpdateStatus {
 	branch?: string;
 }
 
+export interface SoftwareUpdateProgress {
+	mode?: string;
+	operation_id?: string | null;
+	phase?: string;
+	status?: string;
+	progress?: number | null;
+	current_release?: string | null;
+	previous_release?: string | null;
+	target_release?: string | null;
+	message?: string | null;
+	error?: string | null;
+	resume_warning?: string | null;
+	updated_at?: string | null;
+}
+
+export interface SoftwareUpdateApplyResult {
+	accepted?: boolean;
+	applied: boolean;
+	reason?: string;
+	old_commit?: string;
+	new_commit?: string;
+	deps_reinstalled?: boolean;
+	restart_required?: boolean;
+	message?: string;
+	operation_id?: string | null;
+	state?: SoftwareUpdateProgress | null;
+}
+
 function setRemoteControlToken(token: string): RemoteControlTokenStorageResult {
 	try {
 		const normalized = token.trim();
@@ -2253,18 +2281,12 @@ export const api = {
 	// Self-upgrade (on-demand code update)
 	getUpdateStatus: () =>
 		fetchJson<SoftwareUpdateStatus>("/update/status"),
+	getUpdateProgress: () =>
+		fetchJson<SoftwareUpdateProgress>("/update/progress"),
 	checkForUpdate: () =>
 		post<SoftwareUpdateStatus>("/update/check"),
 	applyUpdate: () =>
-		post<{
-			applied: boolean;
-			reason?: string;
-			old_commit?: string;
-			new_commit?: string;
-			deps_reinstalled?: boolean;
-			restart_required?: boolean;
-			message?: string;
-		}>("/update/apply"),
+		post<SoftwareUpdateApplyResult>("/update/apply"),
 
 	// Data
 	getAgentRuns: () => fetchJson<any[]>("/agent-runs"),

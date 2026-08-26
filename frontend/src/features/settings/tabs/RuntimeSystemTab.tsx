@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { api } from '../../../api/client'
+import { api, type SoftwareUpdateApplyResult } from '../../../api/client'
 import {
   CollapsibleSection as Collapsible,
   NumberFieldGrid as NumGrid,
@@ -377,6 +377,11 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const [cfgMsg, setCfgMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const { data, isLoading } = useQuery({ queryKey: ['update-status'], queryFn: api.getUpdateStatus })
+  const { data: progress } = useQuery({
+    queryKey: ['update-progress'],
+    queryFn: api.getUpdateProgress,
+    enabled: data?.mode === 'packaged',
+  })
   const [applyMsg, setApplyMsg] = useState('')
 
   const check = useMutation({
@@ -404,10 +409,16 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   const apply = useMutation({
     mutationFn: api.applyUpdate,
-    onSuccess: (r) => {
-      setApplyMsg(r.applied
+    onSuccess: (r: SoftwareUpdateApplyResult) => {
+      if (r.state) qc.setQueryData(['update-progress'], r.state)
+      const operationId = r.operation_id || r.state?.operation_id || ''
+      const phase = r.state?.phase ? ` · ${r.state.phase}` : ''
+      setApplyMsg(r.accepted
+        ? `${r.message || 'Update started in the background.'}${operationId ? ` Operation ${operationId}${phase}.` : ''}`
+        : r.applied
         ? `Updated to ${r.new_commit?.slice(0, 8)} (deps reinstalled: ${r.deps_reinstalled}).`
         : `Not applied: ${r.reason}`)
+      qc.invalidateQueries({ queryKey: ['update-progress'] })
       qc.invalidateQueries({ queryKey: ['update-status'] })
     },
   })
@@ -436,6 +447,11 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
           >Apply update</button>
         )}
       </div>
+      {progress?.mode === 'packaged' && progress.phase && (
+        <p className="hint mb-3">
+          Packaged update progress: {progress.phase}{progress.operation_id ? ` · ${progress.operation_id}` : ''}{progress.message ? ` · ${progress.message}` : ''}
+        </p>
+      )}
       {applyMsg && <p className="hint mb-3">{applyMsg}</p>}
 
       {/* Config */}
