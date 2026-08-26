@@ -596,6 +596,12 @@ def _apply_block(verdict: dict, cfg) -> None:
                 stop_pi_daemon()
         except Exception as e:
             logger.warning("startup gate: stop_pi_daemon failed: %s", e)
+        try:
+            from aletheia.agent_runtime.fast_trigger_watch import stop_fast_trigger_watch
+
+            stop_fast_trigger_watch()
+        except Exception as e:
+            logger.warning("startup gate: stop_fast_trigger_watch failed: %s", e)
 
     write_gate_state({
         "paused_by_gate": paused_by_gate,
@@ -649,6 +655,26 @@ def _maybe_start_pi_daemon() -> None:
         logger.debug("startup gate: pi_daemon (re)start skipped: %s", e)
 
 
+def _maybe_start_fast_trigger_watch() -> None:
+    """Apply current Fast Trigger config after the startup gate resumes."""
+
+    try:
+        from aletheia.agent_runtime.fast_trigger_watch import (
+            reconfigure_fast_trigger_watch,
+        )
+        from aletheia.config.loader import load_config
+
+        loop = _uvicorn_loop
+        if loop is None or not getattr(loop, "is_running", lambda: False)():
+            return
+        cfg = load_config()
+        asyncio.run_coroutine_threadsafe(
+            reconfigure_fast_trigger_watch(cfg, loop), loop
+        )
+    except Exception as e:
+        logger.debug("startup gate: fast trigger (re)start skipped: %s", e)
+
+
 def _resume_from_gate(cause: str, *, generation: str | None = None):
     release = _persist_paused(False, generation=generation)
     if release is None:
@@ -675,6 +701,7 @@ def _resume_from_gate(cause: str, *, generation: str | None = None):
     _notify("Aletheia Startup Gate — trading resumed",
             "Startup checks passed; AI decisions and paper trading resumed.")
     _maybe_start_pi_daemon()
+    _maybe_start_fast_trigger_watch()
     return release
 
 

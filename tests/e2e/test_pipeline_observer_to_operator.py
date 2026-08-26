@@ -32,6 +32,7 @@ async def test_observer_ranker_pending_operator_defer_keeps_one_causal_identity(
         UniverseMember,
         UniverseSnapshot,
     )
+    from tests.observer_admission_fixture import insert_universe_opportunity_generation
 
     # Keep configuration/audit files local to this test while the e2e fixture
     # provides the temporary, migrated SQLite connection.
@@ -139,7 +140,12 @@ async def test_observer_ranker_pending_operator_defer_keeps_one_causal_identity(
             },
         }),
     )
-    repo.insert_opportunity(scanner_opportunity)
+    insert_universe_opportunity_generation(
+        scanner_opportunity,
+        venue="fixture",
+        market_type="spot",
+        signal_mark=60_000.0,
+    )
     from aletheia.analytics.filter_evidence import record_filter_decision
 
     record_filter_decision(

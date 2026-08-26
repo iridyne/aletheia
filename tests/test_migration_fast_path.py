@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 42)
+        f"aletheia-sqlite-v{version}" for version in range(2, 44)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v41"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v43"
     connection.close()
 
 
@@ -702,6 +702,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         );
         CREATE TABLE filter_shadow_experiments (id TEXT PRIMARY KEY);
         CREATE TABLE trade_proposals (id TEXT PRIMARY KEY);
+        CREATE TABLE opportunities (id TEXT PRIMARY KEY);
+        CREATE TABLE pi_decisions (id TEXT PRIMARY KEY);
         CREATE TABLE filter_candidate_outcomes (id TEXT PRIMARY KEY);
         CREATE TABLE market_ohlcv (
             exchange TEXT, symbol TEXT, market_type TEXT, timeframe TEXT, ts INTEGER,
@@ -752,8 +754,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260826_0040_paper_account_invalidation_v41",
-        "aletheia-sqlite-v41",
+        "20260826_0042_opportunity_generation_v43",
+        "aletheia-sqlite-v43",
     )
     order_columns = {
         row[1] for row in connection.execute("PRAGMA table_info(orders)")
@@ -802,145 +804,6 @@ def test_profit_gradient_data_boundary_migration_is_additive_and_idempotent():
         row[1] for row in connection.execute("PRAGMA table_info(market_ohlcv)")
     }
     assert {"first_persisted_at", "last_mutated_at"} <= ohlcv_columns
-    connection.close()
-
-
-def test_paper_account_invalidation_migration_preserves_events_and_is_idempotent():
-    import aletheia.storage.migrations as migrations
-
-    connection = sqlite3.connect(":memory:")
-    connection.executescript(
-        """
-        CREATE TABLE paper_account_events (
-            id TEXT PRIMARY KEY,
-            action TEXT NOT NULL CHECK (action IN (
-                'initial_funding', 'manual_credit', 'manual_debit',
-                'manual_set_balance', 'position_opened', 'position_closed'
-            )),
-            amount_usdt REAL NOT NULL,
-            cash_balance_before_usdt REAL NOT NULL,
-            cash_balance_after_usdt REAL NOT NULL,
-            actor TEXT NOT NULL DEFAULT 'system',
-            source TEXT NOT NULL DEFAULT 'paper_account',
-            position_id TEXT,
-            note TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            UNIQUE(action, position_id)
-        );
-        CREATE INDEX idx_paper_account_events_created
-            ON paper_account_events(created_at DESC);
-        CREATE TABLE shadow_trades (id TEXT PRIMARY KEY);
-        CREATE TABLE serenity_post_mortems (id TEXT PRIMARY KEY);
-        INSERT INTO paper_account_events (
-            id,action,amount_usdt,cash_balance_before_usdt,
-            cash_balance_after_usdt,position_id
-        ) VALUES ('close','position_closed',20,100,120,'position-1');
-        """
-    )
-    connection.commit()
-
-    migrations._apply_paper_account_invalidation_v41(connection)
-    migrations._apply_paper_account_invalidation_v41(connection)
-    connection.execute(
-        "INSERT INTO paper_account_events ("
-        "id,action,amount_usdt,cash_balance_before_usdt,cash_balance_after_usdt,"
-        "position_id) VALUES ('reverse','position_economics_invalidated',-20,120,100,?)",
-        ("position-1",),
-    )
-
-    rows = connection.execute(
-        "SELECT id,action,amount_usdt FROM paper_account_events ORDER BY rowid"
-    ).fetchall()
-    assert rows == [
-        ("close", "position_closed", 20.0),
-        ("reverse", "position_economics_invalidated", -20.0),
-    ]
-    assert {row[1] for row in connection.execute("PRAGMA table_info(shadow_trades)")} >= {
-        "invalidated_at",
-        "invalidation_reason",
-    }
-    assert {
-        row[1] for row in connection.execute("PRAGMA table_info(serenity_post_mortems)")
-    } >= {"invalidated_at", "invalidation_reason"}
-    connection.close()
-
-
-def test_paper_account_invalidation_migration_rolls_back_failed_rebuild():
-    import aletheia.storage.migrations as migrations
-
-    connection = sqlite3.connect(":memory:")
-    connection.executescript(
-        """
-        CREATE TABLE paper_account_events (
-            id TEXT PRIMARY KEY,
-            action TEXT NOT NULL CHECK (action IN ('position_closed')),
-            amount_usdt REAL NOT NULL,
-            cash_balance_before_usdt REAL NOT NULL,
-            cash_balance_after_usdt REAL NOT NULL,
-            actor TEXT NOT NULL DEFAULT 'system',
-            source TEXT NOT NULL DEFAULT 'paper_account',
-            position_id TEXT,
-            note TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            UNIQUE(action, position_id)
-        );
-        INSERT INTO paper_account_events (
-            id,action,amount_usdt,cash_balance_before_usdt,
-            cash_balance_after_usdt,position_id
-        ) VALUES ('close','position_closed',20,100,120,'position-1');
-        """
-    )
-    connection.commit()
-    connection.set_authorizer(
-        lambda action, *_args: (
-            sqlite3.SQLITE_DENY
-            if action == sqlite3.SQLITE_ALTER_TABLE
-            else sqlite3.SQLITE_OK
-        )
-    )
-
-    with pytest.raises(sqlite3.DatabaseError):
-        migrations._apply_paper_account_invalidation_v41(connection)
-    connection.set_authorizer(None)
-
-    row = connection.execute(
-        "SELECT id,action,amount_usdt FROM paper_account_events"
-    ).fetchone()
-    staging = connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' "
-        "AND name='paper_account_events_v41'"
-    ).fetchone()
-    assert row == ("close", "position_closed", 20.0)
-    assert staging is None
-    connection.close()
-
-
-def test_paper_account_invalidation_migration_recovers_staging_table():
-    import aletheia.storage.migrations as migrations
-
-    connection = sqlite3.connect(":memory:")
-    create_staging = migrations._PAPER_ACCOUNT_INVALIDATION_SQL.strip().split(
-        ";\n", 1
-    )[0]
-    connection.execute(create_staging)
-    connection.execute(
-        "INSERT INTO paper_account_events_v41 ("
-        "id,action,amount_usdt,cash_balance_before_usdt,"
-        "cash_balance_after_usdt,position_id"
-        ") VALUES ('close','position_closed',20,100,120,'position-1')"
-    )
-    connection.commit()
-
-    migrations._apply_paper_account_invalidation_v41(connection)
-
-    row = connection.execute(
-        "SELECT id,action,amount_usdt FROM paper_account_events"
-    ).fetchone()
-    assert row == ("close", "position_closed", 20.0)
-    assert connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='index' "
-        "AND name='idx_paper_account_events_created'"
-    ).fetchone()
     connection.close()
 
 

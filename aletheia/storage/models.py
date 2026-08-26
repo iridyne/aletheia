@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from uuid import uuid4
 
 
@@ -104,6 +104,74 @@ class AgentRunArtifact(AgentArtifactRef):
     run_id: str
 
 
+class OpportunityInstrumentIdentity(BaseModel):
+    """Exact venue identity frozen into a tradeable Opportunity generation."""
+
+    model_config = ConfigDict(frozen=True)
+
+    venue: str = Field(min_length=1)
+    symbol: str = Field(min_length=1)
+    market_type: Literal["spot", "perp"]
+
+
+class OpportunityGenerationV2(BaseModel):
+    """Immutable point-in-time facts that make one Crypto Opportunity real."""
+
+    model_config = ConfigDict(frozen=True)
+
+    instrument_identity: OpportunityInstrumentIdentity
+    family: str = Field(min_length=1)
+    archetype: Literal[
+        "continuation", "reversal", "breakout", "squeeze", "event", "convergence"
+    ]
+    direction: Literal["long", "short"]
+    detected_at: str = Field(min_length=1)
+    signal_mark: float = Field(gt=0)
+    motive_evidence: dict
+    entry_trigger: dict
+    entry_zone: tuple[float, float]
+    invalidation: dict
+    horizon_hours: float = Field(gt=0, le=48)
+    cost_snapshot: dict
+    material_fingerprint: str = Field(min_length=64, max_length=64)
+    valid_until: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_generation_geometry(self):
+        low, high = self.entry_zone
+        if low <= 0 or high < low or not low <= self.signal_mark <= high:
+            raise ValueError("Opportunity generation entry geometry is invalid")
+        invalidation_price = self.invalidation.get("price")
+        if invalidation_price is not None:
+            try:
+                invalidation_price = float(invalidation_price)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Opportunity generation invalidation is invalid") from exc
+            if invalidation_price <= 0 or (
+                self.direction == "long" and invalidation_price >= self.signal_mark
+            ) or (
+                self.direction == "short" and invalidation_price <= self.signal_mark
+            ):
+                raise ValueError("Opportunity generation invalidation is invalid")
+        if not self.invalidation:
+            raise ValueError("Opportunity generation invalidation is required")
+        if not self.motive_evidence or not self.entry_trigger:
+            raise ValueError("Opportunity generation motive and trigger are required")
+        if any(character not in "0123456789abcdef" for character in self.material_fingerprint):
+            raise ValueError("Opportunity generation fingerprint is invalid")
+        detected = datetime.fromisoformat(self.detected_at.replace("Z", "+00:00"))
+        deadline = datetime.fromisoformat(self.valid_until.replace("Z", "+00:00"))
+        if detected.tzinfo is None or deadline.tzinfo is None or deadline <= detected:
+            raise ValueError("Opportunity generation validity interval is invalid")
+        required_costs = {
+            "cost_model_version", "spread_bps", "estimated_slippage_bps",
+            "funding", "depth_10bps_usd", "target_notional_usd", "capacity_ratio",
+        }
+        if not required_costs.issubset(self.cost_snapshot):
+            raise ValueError("Opportunity generation cost snapshot is incomplete")
+        return self
+
+
 class Opportunity(_Provenanced):
     id: str = Field(default_factory=new_id)
     symbol: str
@@ -153,6 +221,16 @@ class Opportunity(_Provenanced):
     funding_rate: float | None = None
     open_interest: float | None = None
     oi_delta_1h: float | None = None
+    # Fast Trigger facts. NULL keeps every non-trigger/legacy Opportunity valid.
+    setup_id: str | None = None
+    signal_mark: str | None = None
+    trigger_behavior_version: str | None = None
+    # Canonical OpportunityGenerationV2 JSON and its SHA-256.  NULL is retained
+    # for legacy and observation-only rows; execution-eligible production Crypto
+    # paths use insert_opportunity_generation(), which requires all three.
+    generation_version: str | None = None
+    generation_json: str | None = None
+    generation_hash: str | None = None
 
 
 class ShadowTrade(BaseModel):
@@ -355,6 +433,10 @@ class TradeProposal(_Provenanced):
     # docs/research/agents-learning/OPENALICE_TAG_DEEP_DIVE_2026-06-29.md.
     commit_hash: str | None = None
     parent_hash: str | None = None
+    # Exact conditional authority used by Fast Trigger. These fields are part of
+    # immutable Proposal identity and therefore hash-covered when present.
+    setup_id: str | None = None
+    authorization_id: str | None = None
 
 
 class RiskDecision(_Provenanced):
@@ -1390,6 +1472,13 @@ class UniverseSnapshot(BaseModel):
 
 
 class UniverseMember(BaseModel):
+    """Durable Universe Candidate.
+
+    The physical SQLite table remains ``universe_members`` for compatibility;
+    semantically each row is a Candidate selected by Universe refresh, not an
+    Opportunity.
+    """
+
     id: str = Field(default_factory=new_id)
     snapshot_id: str
     asset_id: str
@@ -1419,6 +1508,120 @@ class UniverseMember(BaseModel):
     execution_eligible: bool = True
     entry_price_usd: float | None = None
     learning_candidate_key: str | None = None
+
+
+Candidate = UniverseMember
+
+
+class UniverseSetup(_Provenanced):
+    """One exact family setup generation waiting for EntryEligibility."""
+
+    id: str = Field(default_factory=new_id)
+    snapshot_id: str
+    member_id: str
+    asset_id: str
+    venue: str
+    symbol: str
+    market_type: str
+    direction: Literal["long", "short"]
+    rank: int = Field(ge=1)
+    material_fingerprint: str
+    trigger_spec_hash: str
+    trigger_spec_version: str = "universe-entry-eligibility/v1"
+    scanner_family: str = "momentum"
+    motive_evidence: str = "{}"
+    funding_rate: float | None = None
+    funding_observed_at: str | None = None
+    regime_tag: str | None = None
+    breakout_level: float | None = Field(default=None, gt=0)
+    atr: float | None = Field(default=None, gt=0)
+    pullback_band: str | None = None
+    entry_zone: str | None = None
+    invalidation_price: float | None = Field(default=None, gt=0)
+    state: Literal[
+        "pending_authorization",
+        "armed",
+        "pullback_seen",
+        "triggering",
+        "executed",
+        "refused",
+        "expired",
+        "invalidated",
+    ] = "pending_authorization"
+    opportunity_id: str | None = None
+    proposal_id: str | None = None
+    created_at: str = Field(default_factory=_utcnow)
+    updated_at: str = Field(default_factory=_utcnow)
+    valid_until: str
+
+
+class ConditionalEntryAuthorization(_Provenanced):
+    """System Operator's expiring formula authority, never a future order."""
+
+    id: str = Field(default_factory=new_id)
+    setup_id: str
+    operator_decision_id: str
+    authorized_mode: Literal["shadow", "execute"]
+    trigger_spec_hash: str
+    direction: Literal["long", "short"]
+    entry_zone: str
+    invalidation_price: float = Field(gt=0)
+    max_spread_bps: float = Field(gt=0)
+    min_depth_10bps_usd: float = Field(gt=0)
+    max_risk_pct: float = Field(gt=0)
+    max_leverage: int = Field(ge=1)
+    target_risk_reward: Literal[2.0] = 2.0
+    expected_horizon_hours: float = Field(gt=0, le=48)
+    authorized_at: str = Field(default_factory=_utcnow)
+    valid_until: str
+
+
+class FastTriggerMarketSnapshot(BaseModel):
+    """Immutable same-venue T0 evidence captured before Risk/Gateway I/O."""
+
+    id: str = Field(default_factory=new_id)
+    setup_id: str
+    authorization_id: str
+    opportunity_id: str
+    proposal_id: str
+    venue: str
+    symbol: str
+    market_type: str
+    observed_at: str
+    bid: float = Field(gt=0)
+    ask: float = Field(gt=0)
+    spread_bps: float = Field(ge=0)
+    depth_10bps_usd: float = Field(ge=0)
+    taker_buy_ratio: float = Field(ge=0, le=1)
+    quote_exchange_timestamp_ms: int = Field(ge=0)
+    quote_received_timestamp_ms: int = Field(ge=0)
+    trade_exchange_timestamp_ms: int = Field(ge=0)
+    trade_received_timestamp_ms: int = Field(ge=0)
+    depth_exchange_timestamp_ms: int = Field(ge=0)
+    depth_received_timestamp_ms: int = Field(ge=0)
+    quote_sequence: int = Field(ge=0)
+    trade_sequence: int = Field(ge=0)
+    depth_sequence: int = Field(ge=0)
+    created_at: str = Field(default_factory=_utcnow)
+
+
+class OpportunityEntryValidityAssessment(BaseModel):
+    """Append-only hard or counterfactual entry-validity evidence."""
+
+    id: str = Field(default_factory=new_id)
+    opportunity_id: str
+    setup_id: str | None = None
+    venue: str
+    symbol: str
+    market_type: Literal["spot", "perp"]
+    check_type: Literal["entry_zone", "structural_price", "market_structure"]
+    authority: Literal["hard", "shadow"]
+    verdict: Literal["allow", "block", "unavailable"]
+    observed_at: str
+    algorithm_version: str
+    evidence_json: str
+    evidence_hash: str = Field(min_length=64, max_length=64)
+    created_at: str = Field(default_factory=_utcnow)
 
 
 class UniverseForwardOutcome(BaseModel):
@@ -1620,6 +1823,9 @@ class PiDecision(_Provenanced):
     # Compact source identities used for this decision. Never stores prompts or
     # raw external payloads.
     evidence_manifest_json: str = "{}"
+    # Conditional-entry decisions do not point at an Opportunity because an
+    # Opportunity does not exist until T0 materialization.
+    setup_id: str | None = None
 
 
 class OperatorEvaluationEvent(BaseModel):

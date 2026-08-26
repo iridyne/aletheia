@@ -789,7 +789,7 @@ export interface RuntimeStatus {
 
 // Universe Generator types
 
-export interface UniverseMember {
+export interface Candidate {
   id: string
   snapshot_id: string
   asset_id: string
@@ -811,7 +811,11 @@ export interface UniverseMember {
   risk_flags: string
   execution_eligible: number
   stale?: boolean
+  setup_state?: string | null
+  triggered_opportunity_id?: string | null
 }
+
+export type UniverseMember = Candidate
 
 export interface UniverseSnapshot {
   id: string
