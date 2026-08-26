@@ -6107,6 +6107,10 @@ def insert_portfolio_snapshot(snap) -> None:
     _insert("portfolio_snapshots", snap.model_dump())
 
 
+def _snapshot_cutoff_us(days: int) -> int:
+    return iso_instant_us((datetime.now(timezone.utc) - timedelta(days=days)).isoformat()) or 0
+
+
 def list_portfolio_snapshots(limit: int | None = None, days: int | None = None) -> list[dict]:
     """Return the latest snapshot window in chronological order.
 
@@ -6119,30 +6123,32 @@ def list_portfolio_snapshots(limit: int | None = None, days: int | None = None) 
     from the newest end of the full series (default 100 rows).
     """
     db = get_db()
+    register_instant_us(db)
     if days is not None and days > 0:
+        cutoff_us = _snapshot_cutoff_us(days)
         if limit and limit > 0:
             rows = db.execute(
                 """
                 SELECT * FROM (
                     SELECT *
                     FROM portfolio_snapshots
-                    WHERE snapshot_at >= datetime('now', ?)
-                    ORDER BY snapshot_at DESC, id DESC
+                    WHERE aletheia_instant_us(snapshot_at) >= ?
+                    ORDER BY aletheia_instant_us(snapshot_at) DESC, id DESC
                     LIMIT ?
                 )
-                ORDER BY snapshot_at ASC, id ASC
+                ORDER BY aletheia_instant_us(snapshot_at) ASC, id ASC
                 """,
-                (f"-{days} days", limit),
+                (cutoff_us, limit),
             ).fetchall()
         else:
             rows = db.execute(
                 """
                 SELECT *
                 FROM portfolio_snapshots
-                WHERE snapshot_at >= datetime('now', ?)
-                ORDER BY snapshot_at ASC, id ASC
+                WHERE aletheia_instant_us(snapshot_at) >= ?
+                ORDER BY aletheia_instant_us(snapshot_at) ASC, id ASC
                 """,
-                (f"-{days} days",),
+                (cutoff_us,),
             ).fetchall()
     else:
         cap = limit if (limit and limit > 0) else 100
@@ -6152,10 +6158,10 @@ def list_portfolio_snapshots(limit: int | None = None, days: int | None = None) 
             FROM (
                 SELECT *
                 FROM portfolio_snapshots
-                ORDER BY snapshot_at DESC, id DESC
+                ORDER BY aletheia_instant_us(snapshot_at) DESC, id DESC
                 LIMIT ?
             )
-            ORDER BY snapshot_at ASC, id ASC
+            ORDER BY aletheia_instant_us(snapshot_at) ASC, id ASC
             """,
             (cap,),
         ).fetchall()
@@ -6181,21 +6187,22 @@ def list_account_equity_snapshots(
     the oldest. The default is None (no cap) so all range selectors remain distinct.
     """
     db = get_db()
+    register_instant_us(db)
     params: list[object] = [execution_mode]
     where = "execution_mode = ? AND account_equity_usdt IS NOT NULL"
     if days is not None and days > 0:
-        where += " AND snapshot_at >= datetime('now', ?)"
-        params.append(f"-{days} days")
+        where += " AND aletheia_instant_us(snapshot_at) >= ?"
+        params.append(_snapshot_cutoff_us(days))
     if limit and limit > 0:
         rows = db.execute(
             f"""
             SELECT * FROM (
                 SELECT * FROM portfolio_snapshots
                 WHERE {where}
-                ORDER BY snapshot_at DESC, id DESC
+                ORDER BY aletheia_instant_us(snapshot_at) DESC, id DESC
                 LIMIT ?
             )
-            ORDER BY snapshot_at ASC, id ASC
+            ORDER BY aletheia_instant_us(snapshot_at) ASC, id ASC
             """,
             (*params, limit),
         ).fetchall()
@@ -6204,7 +6211,7 @@ def list_account_equity_snapshots(
             f"""
             SELECT * FROM portfolio_snapshots
             WHERE {where}
-            ORDER BY snapshot_at ASC, id ASC
+            ORDER BY aletheia_instant_us(snapshot_at) ASC, id ASC
             """,
             params,
         ).fetchall()
