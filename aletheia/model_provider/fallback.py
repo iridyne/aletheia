@@ -644,7 +644,7 @@ metadata={
         candidate = cand_provider if md == str(getattr(cand_provider, "model", "") or "") else _clone_provider_with_model(cand_provider, md)
         try:
             response = await brokered_complete(
-                resolved_provider_name,
+                pn,
                 candidate,
                 request,
             )
