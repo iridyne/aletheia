@@ -1377,10 +1377,10 @@ def today_pnl_by_symbol(
     result: dict[str, float | None] = {}
     for symbol, rows in grouped.items():
         total, unavailable = _complete_realized_total(rows)
-        # Return None when ALL closes for this symbol are unavailable so the
-        # tooltip can show '—' rather than a misleading 0.00.  The portfolio
-        # aggregate uses the partial sum instead (with a completeness flag).
-        result[symbol] = None if unavailable == len(rows) else round(total, 4)
+        # Per-symbol projection has no sibling completeness fields, so a
+        # partial subtotal would look final. The aggregate keeps partial +
+        # explicit unavailable count instead.
+        result[symbol] = None if unavailable > 0 else round(total, 4)
     return result
 
 
