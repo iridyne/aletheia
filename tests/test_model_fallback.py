@@ -92,6 +92,57 @@ async def test_complete_with_fallback_tries_configured_model_on_429(tmp_path, mo
 
 
 @pytest.mark.anyio
+async def test_cross_provider_fallback_uses_target_broker_lane(tmp_path, monkeypatch):
+    _setup_config(tmp_path, monkeypatch, fallback_models=["@provider_b:model-b"])
+    from aletheia.model_provider import broker as broker_module
+    from aletheia.model_provider import fallback
+    from aletheia.model_provider.broker import InferenceBroker, ProviderPolicy
+
+    source = FakeProvider(fail_models={"claude-primary": "429 Too Many Requests"})
+    target = FakeProvider(model="model-b")
+    providers = {"provider_b": target}
+    monkeypatch.setattr(
+        fallback.provider_router,
+        "get_provider",
+        lambda name: providers[name],
+    )
+    policies = {
+        "anthropic_compatible": ProviderPolicy(
+            max_concurrency=2,
+            queue_capacity=4,
+            reserved_high_priority_slots=0,
+            timeout_sec=1.0,
+            rate_window_sec=0.05,
+        ),
+        "provider_b": ProviderPolicy(
+            max_concurrency=1,
+            queue_capacity=4,
+            reserved_high_priority_slots=0,
+            timeout_sec=1.0,
+            rate_window_sec=0.05,
+        ),
+    }
+    test_broker = InferenceBroker(policy_loader=lambda name: policies[name])
+    monkeypatch.setattr(broker_module, "inference_broker", test_broker)
+
+    try:
+        response = await fallback.complete_with_fallback(
+            ModelRequest(messages=[{"role": "user", "content": "x"}]),
+            provider=source,
+        )
+        assert response.content == "ok:model-b"
+        metadata = response.raw["aletheia_model_fallback"]
+        assert metadata["provider"] == "anthropic_compatible"
+        assert metadata["requested_model"] == "anthropic_compatible/claude-primary"
+
+        snapshot = await test_broker.snapshot()
+        assert snapshot["providers"]["provider_b"]["metrics"]["completed"] == 1
+        assert snapshot["providers"]["anthropic_compatible"]["metrics"]["failed"] == 1
+    finally:
+        await test_broker.aclose()
+
+
+@pytest.mark.anyio
 async def test_complete_with_fallback_uses_detected_models_when_config_list_empty(tmp_path, monkeypatch):
     _setup_config(tmp_path, monkeypatch, fallback_models=[])
     from aletheia.model_provider import fallback
