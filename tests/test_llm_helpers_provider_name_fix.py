@@ -40,7 +40,7 @@ async def test_llm_complete_threads_provider_name_to_complete_with_fallback():
     async def fake_complete_with_fallback(request, *, provider=None, provider_name=None):
         captured["provider_name"] = provider_name
         captured["provider_object"] = provider
-        return ModelResponse(content="ok", raw={})
+        return ModelResponse(content=" ok ", raw={})
 
     with patch.object(helpers, "complete_with_fallback", fake_complete_with_fallback):
         with patch.object(helpers, "get_provider_async", lambda n: _make_async_provider(object())):
@@ -49,7 +49,7 @@ async def test_llm_complete_threads_provider_name_to_complete_with_fallback():
             )
 
     assert err is None
-    assert content == "ok"
+    assert content == " ok "
     assert captured["provider_name"] == "deep_provider_xyz", (
         f"helpers must forward the tier provider name; got {captured['provider_name']!r}"
     )
@@ -90,6 +90,34 @@ async def test_llm_complete_preserves_empty_exception_type():
 
     assert content is None
     assert err == "llm_unavailable: TimeoutError"
+
+
+@pytest.mark.asyncio
+async def test_llm_complete_rejects_empty_text_response():
+    from aletheia.agents import helpers
+    from aletheia.model_provider.base import ModelResponse
+
+    finished = []
+    health = []
+
+    async def empty_complete(*_args, **_kwargs):
+        return ModelResponse(content="", model="reasoning-only", raw={})
+
+    with (
+        patch.object(helpers, "complete_with_fallback", empty_complete),
+        patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(object())),
+        patch.object(helpers, "_record_call_finished", lambda *args, **kwargs: finished.append(kwargs)),
+        patch.object(helpers, "_record_llm", lambda success: health.append(success)),
+    ):
+        content, err = await helpers.llm_complete("sys", "user")
+
+    assert content is None
+    assert err == "llm_unavailable: empty_response"
+    assert len(finished) == 1
+    assert finished[0]["status"] == "error"
+    assert finished[0]["response"].model == "reasoning-only"
+    assert finished[0]["error_type"] == "empty_response"
+    assert health == [False]
 
 
 @pytest.mark.asyncio
