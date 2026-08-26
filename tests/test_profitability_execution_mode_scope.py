@@ -87,6 +87,23 @@ def _seed_two_mode_ledger() -> None:
     )
 
 
+def test_selected_execution_mode_uses_authorized_live_identity(monkeypatch):
+    import aletheia.analytics.execution_mode as execution_mode
+    import aletheia.config.loader as loader
+    import aletheia.trust.live_unlock as trust
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    cfg.exchange.name = "okx"
+    cfg.exchange.mode = "live"
+    cfg.exchange.paper_execution_mode = "okx_demo"
+    cfg.live.state = "live_limited"
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(trust, "current_authorization_ref", lambda _cfg: "ref")
+
+    assert execution_mode.resolve_selected_execution_mode() == "okx_live_limited"
+
+
 # ---------------------------------------------------------------------------
 # Producer-level: each metric layer must accept and honor execution_mode.
 # ---------------------------------------------------------------------------

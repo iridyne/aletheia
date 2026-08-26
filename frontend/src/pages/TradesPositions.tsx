@@ -42,6 +42,7 @@ import {
 	isPerpMarket,
 } from "../lib/format";
 import { positionFreshness, positionKeys } from "../lib/queryKeys";
+import { bootApi } from "../api/boot";
 import TradeAnalyticsPanel from "../charts/TradeAnalyticsPanel";
 const TradeInsightsPanel = lazy(() => import("../charts/TradeInsightsPanel"));
 
@@ -352,11 +353,15 @@ export default function TradesPositions() {
 		queryKey: positionKeys.reconciliation,
 		queryFn: api.getPositionsReconciliation,
 	});
-	const { data: settings } = useQuery({
-		queryKey: ["settings"],
-		queryFn: api.getSettings,
+	const { data: overviewBootstrap } = useQuery({
+		queryKey: ["ui-overview-bootstrap"],
+		queryFn: ({ signal }) => bootApi.getOverviewBootstrap({ signal }),
+		staleTime: 5_000,
+		refetchInterval: 15_000,
 	});
-	const executionMode = settings?.exchange?.paper_execution_mode;
+	const executionMode = typeof overviewBootstrap?.account?.execution_mode === "string"
+		? overviewBootstrap.account.execution_mode
+		: undefined;
 
 	const positionsArray = positions ?? []
 	const ordersArray = orders ?? []

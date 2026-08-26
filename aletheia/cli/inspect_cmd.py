@@ -426,17 +426,34 @@ def orders(
     status: str = typer.Option("all", help="Filter: pending | filled | cancelled | failed | all"),
     stats: bool = typer.Option(False, "--stats", help="Show aggregate fill rate + error breakdown"),
     days: int = typer.Option(7, "--days", "-d", help="Lookback window for --stats mode"),
+    execution_mode: str | None = typer.Option(
+        None, "--execution-mode", help="Override the selected execution_mode (#2181)",
+    ),
     limit: int = typer.Option(20, "--limit", "-n"),
     json_output: bool = typer.Option(False, "--json"),
 ):
     """List orders with execution details. Use --stats for aggregated view."""
     if stats:
+        from aletheia.analytics.execution_mode import resolve_selected_execution_mode
         from aletheia.analytics.trade_stats import compute_order_stats
-        result = compute_order_stats(days=days)
+        mode = execution_mode or resolve_selected_execution_mode()
+        if not mode:
+            payload = {
+                "status": "unavailable",
+                "unavailable_reason": "execution_mode_unresolved",
+                "execution_mode": None,
+                "execution_mode_status": "unavailable",
+            }
+            if json_output:
+                typer.echo(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+            else:
+                typer.echo("execution_mode unavailable — refusing to print all-mode aggregate (#2181).")
+            return
+        result = compute_order_stats(days=days, execution_mode=mode)
         if json_output:
             typer.echo(json.dumps(result, indent=2, ensure_ascii=False, default=str))
             return
-        typer.echo(f"=== {days}-Day Order Stats ===")
+        typer.echo(f"=== {days}-Day Order Stats ({mode}) ===")
         typer.echo(f"  total: {result['total']}  filled: {result['filled']}  errors: {result['errors']}  fill_rate: {result['fill_rate_pct']}%")
         if result["error_breakdown"]:
             typer.echo("")
