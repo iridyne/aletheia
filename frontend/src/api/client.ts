@@ -3014,6 +3014,8 @@ export interface TradeStatsSource {
 	trade_count: number;
 	win_rate: number | null;
 	avg_hold_hours: number | null;
+	hold_time_available_count?: number;
+	hold_time_unavailable_count?: number;
 	expectancy_pct: number | null;
 	total_pnl: number | null;
 }
@@ -3023,6 +3025,8 @@ export interface TradeStatsFamily {
 	trade_count: number;
 	win_rate: number | null;
 	avg_hold_hours: number | null;
+	hold_time_available_count?: number;
+	hold_time_unavailable_count?: number;
 	expectancy_pct: number | null;
 }
 
@@ -3055,6 +3059,8 @@ export interface TradeStats extends OutcomeCohort {
 		win_rate: number | null;
 		avg_hold_hours: number | null;
 		median_hold_hours: number | null;
+		hold_time_available_count?: number;
+		hold_time_unavailable_count?: number;
 		total_pnl: number | null;
 	};
 }
@@ -3115,7 +3121,9 @@ export interface DirectionStats {
 	win_rate: number;
 	total_pnl: number;
 	avg_pnl_pct: number;
-	avg_hold_hours: number;
+	avg_hold_hours: number | null;
+	hold_time_available_count?: number;
+	hold_time_unavailable_count?: number;
 }
 
 export interface ProfitFactorData {
