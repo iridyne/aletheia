@@ -1290,6 +1290,10 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
             )
 
         item = current_paper[0]
+        monitoring_unavailable_reason = _learning_monitoring_unavailable_reason(
+            projection,
+            item,
+        )
         measurement = item.get("measurement") or {}
         samples = item.get("samples") or {}
         integrity = item.get("integrity") or {}
@@ -1309,6 +1313,8 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
         )
         if state_has_delta and not window_compatible:
             status = "insufficient_data"
+        if monitoring_unavailable_reason is not None:
+            status = "insufficient_data"
         sample_size = min(
             int(samples.get("treatment_assignment_units") or 0),
             int(samples.get("control_assignment_units") or 0),
@@ -1322,7 +1328,9 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
             measurement.get("delta") if status != "insufficient_data" else None,
             _confidence_label(sample_size, min_sample_size),
             (
-                "Current Paper Learning monitoring window is unavailable or outside the audit window."
+                "Current Paper Learning monitoring evidence is not currently available."
+                if monitoring_unavailable_reason is not None
+                else "Current Paper Learning monitoring window is unavailable or outside the audit window."
                 if state_has_delta and not window_compatible
                 else f"Current Paper Learning monitoring verdict is {state}, but only a consumed "
                 "confirmatory verdict can establish contribution."
@@ -1331,6 +1339,23 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
                 "path_id": item.get("path_id"),
                 "experiment_id": item.get("experiment_id"),
                 "stage": item.get("stage"),
+                "projection_availability": projection.get("availability"),
+                "projection_unavailable_reason": projection.get("unavailable_reason"),
+                "operations_availability": (projection.get("operations") or {}).get(
+                    "availability"
+                ) if isinstance(projection.get("operations"), dict) else None,
+                "evaluator_status": (
+                    ((projection.get("operations") or {}).get("evaluator") or {}).get(
+                        "current_status"
+                    )
+                    if isinstance((projection.get("operations") or {}).get("evaluator"), dict)
+                    else None
+                ),
+                "item_availability": item.get("availability"),
+                "item_freshness": (item.get("data_freshness") or {}).get("state")
+                if isinstance(item.get("data_freshness"), dict)
+                else None,
+                "monitoring_unavailable_reason": monitoring_unavailable_reason,
                 "allocation_pct": item.get("allocation_pct"),
                 "measurement_reason": measurement.get("reason"),
                 "measurement_authority_eligible": bool(measurement.get("authority_eligible")),
@@ -1414,6 +1439,31 @@ def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | N
         evidence_type="dedicated_learning_contribution_verdict",
         causal_grade="strong_prospective_control",
     )
+
+
+def _learning_monitoring_unavailable_reason(projection: dict, item: dict) -> str | None:
+    if projection.get("availability") == "unavailable":
+        return str(projection.get("unavailable_reason") or "projection_unavailable")
+    operations = projection.get("operations")
+    if not isinstance(operations, dict) or operations.get("availability") != "available":
+        return "operations_unavailable"
+    evaluator = operations.get("evaluator")
+    if not isinstance(evaluator, dict):
+        return "evaluator_unavailable"
+    if evaluator.get("current_status") != "healthy":
+        return "evaluator_unhealthy"
+    if int(evaluator.get("consecutive_failures") or 0) > 0:
+        return "evaluator_unhealthy"
+    if bool(evaluator.get("overdue")) or bool(evaluator.get("catchup_due")):
+        return "evaluator_stale"
+    if item.get("availability") != "available":
+        return str(item.get("availability") or "item_unavailable")
+    freshness = item.get("data_freshness")
+    if not isinstance(freshness, dict):
+        return "item_stale"
+    if freshness.get("state") != "fresh":
+        return str(freshness.get("state") or "item_stale")
+    return None
 
 
 def _learning_alpha(db, cutoff: str, days: int, min_sample_size: int) -> dict:

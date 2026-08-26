@@ -800,6 +800,8 @@ def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monk
         "path_id": hypothesis.path_id,
         "experiment_id": experiment.experiment_id,
         "stage": "paper_10",
+        "availability": "available",
+        "data_freshness": {"state": "fresh"},
         "allocation_pct": 0.1,
         "current_identity": {"policy_epoch": "epoch-a", "matches_running_cohort": True},
         "measurement": {
@@ -832,20 +834,36 @@ def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monk
         },
         "inference": {"status": "collecting"},
     }
+    projection = {
+        "availability": "partial",
+        "unavailable_reason": None,
+        "data_freshness": {"state": "fresh"},
+        "operations": {
+            "availability": "available",
+            "query_errors": {},
+            "evaluator": {
+                "current_status": "healthy",
+                "consecutive_failures": 0,
+                "overdue": False,
+                "catchup_due": False,
+            },
+        },
+        "items": [
+            {
+                "path_id": hypothesis.path_id,
+                "experiment_id": "newer-shadow-experiment",
+                "stage": "shadow",
+                "availability": "partial",
+                "data_freshness": {"state": "stale"},
+            },
+            item,
+        ],
+    }
     requested_limits = []
     monkeypatch.setattr(
         learning_read_models,
         "build_learning_contribution_projection",
-        lambda *, limit: requested_limits.append(limit) or {
-            "items": [
-                {
-                    "path_id": hypothesis.path_id,
-                    "experiment_id": "newer-shadow-experiment",
-                    "stage": "shadow",
-                },
-                item,
-            ]
-        },
+        lambda *, limit: requested_limits.append(limit) or projection,
     )
 
     learning = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
@@ -882,6 +900,43 @@ def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monk
     assert monitoring_positive["verdict"] == "positive"
     assert monitoring_positive["contribution_verdict"] == "insufficient_data"
     assert monitoring_positive["measurement_status"] == "directional_evidence_only"
+    assert monitoring_positive["details"]["projection_availability"] == "partial"
+    assert monitoring_positive["details"]["monitoring_unavailable_reason"] is None
+
+    projection["availability"] = "unavailable"
+    projection["unavailable_reason"] = "projection_unavailable"
+    unavailable_envelope = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+    assert unavailable_envelope["verdict"] == "insufficient_data"
+    assert unavailable_envelope["measurement_status"] == "not_measured"
+    assert unavailable_envelope["details"]["monitoring_unavailable_reason"] == "projection_unavailable"
+    projection["availability"] = "partial"
+    projection["unavailable_reason"] = None
+
+    projection["operations"]["availability"] = "partial"
+    partial_operations = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+    assert partial_operations["verdict"] == "insufficient_data"
+    assert partial_operations["measurement_status"] == "not_measured"
+    assert partial_operations["delta"] is None
+    assert partial_operations["details"]["monitoring_unavailable_reason"] == "operations_unavailable"
+    projection["operations"]["availability"] = "available"
+
+    projection["operations"]["evaluator"]["current_status"] = "overdue"
+    overdue_evaluator = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+    assert overdue_evaluator["verdict"] == "insufficient_data"
+    assert overdue_evaluator["details"]["monitoring_unavailable_reason"] == "evaluator_unhealthy"
+    projection["operations"]["evaluator"]["current_status"] = "healthy"
+
+    item["availability"] = "partial"
+    partial_item = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+    assert partial_item["verdict"] == "insufficient_data"
+    assert partial_item["details"]["monitoring_unavailable_reason"] == "partial"
+    item["availability"] = "available"
+
+    item["data_freshness"]["state"] = "stale"
+    stale_item = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+    assert stale_item["verdict"] == "insufficient_data"
+    assert stale_item["details"]["monitoring_unavailable_reason"] == "stale"
+    item["data_freshness"]["state"] = "fresh"
 
     item["measurement"]["window_start"] = None
     missing_window = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
