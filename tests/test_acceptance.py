@@ -95,6 +95,31 @@ async def test_ac05_dashboard_data_endpoints(client):
 
 
 @pytest.mark.anyio
+async def test_exact_opportunity_endpoint_returns_selected_row_or_404(client):
+    c, _ = client
+    from aletheia.storage.models import Opportunity
+
+    repo.insert_opportunity(
+        Opportunity(
+            id="opp-exact",
+            symbol="BTC/USDT",
+            market="perp",
+            direction_bias="long",
+            thesis="selected opportunity",
+        )
+    )
+
+    response = await c.get("/api/opportunities/opp-exact")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "opp-exact"
+    assert response.json()["thesis"] == "selected opportunity"
+
+    missing = await c.get("/api/opportunities/missing")
+    assert missing.status_code == 404
+
+
+@pytest.mark.anyio
 async def test_strategy_summary_endpoint_supports_operator_shell(client):
     c, _ = client
     from aletheia.storage.models import StrategyRecord

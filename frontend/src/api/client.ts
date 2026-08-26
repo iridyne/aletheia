@@ -1,6 +1,6 @@
 import type { InfraEvent, KnowledgeItem, SystemStatus, ThesisLineageRecord } from "../types";
 import type { GuardRow } from "../lib/guards";
-import type { MarketSnapshot, Opportunity, Position } from "../types";
+import type { AgentRun, MarketSnapshot, Opportunity, Position } from "../types";
 import type { SettingsResponse } from "./settings";
 import { safeErrorText } from "../lib/mutationErrors";
 
@@ -2268,6 +2268,8 @@ export const api = {
 
 	// Data
 	getAgentRuns: () => fetchJson<any[]>("/agent-runs"),
+	getAgentRun: (runId: string) =>
+		fetchJson<AgentRun>(`/agent-runs/${encodeURIComponent(runId)}`),
 	getAgentRunsInWindow: (days: number, limit = 5_000) => {
 		const qs = new URLSearchParams();
 		qs.set("days", String(days));
@@ -2289,6 +2291,8 @@ export const api = {
 	getDreamingSummary: () =>
 		fetchJson<DreamingSummary>("/dreaming/summary"),
 	getOpportunities: () => fetchJson<Opportunity[]>("/opportunities"),
+	getOpportunity: (id: string) =>
+		fetchJson<Opportunity>(`/opportunities/${encodeURIComponent(id)}`),
 	getMarketOpportunityInstruments: () =>
 		fetchJson<MarketOpportunityInstrument[]>("/market/opportunity-instruments"),
 	getMarketOpportunities: (symbol: string, marketType: string, limit = 500) => {

@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import SRC from './Blotter.tsx?raw'
 
 type QueryMode = 'error' | 'success' | 'stale'
 
@@ -68,5 +69,16 @@ describe('Blotter query state honesty', () => {
     const html = renderToStaticMarkup(<CandidateLedger />)
     expect(html).toContain('No terminal decisions')
     expect(html).not.toContain('unavailable')
+  })
+})
+
+describe('Blotter proposal exact-link routing', () => {
+  it('hydrates proposal_id from the URL without substituting a pending row', () => {
+    expect(SRC).toContain("const selectedProposalId = searchParams.get('proposal_id')")
+    expect(SRC).toContain("queryKey: ['proposal', selectedProposalId]")
+    expect(SRC).toContain('api.getProposal(selectedProposalId!)')
+    expect(SRC).toContain("selectedProposalQuery.data ?? (data as any[]).find(p => p.id === selectedProposalId) ?? null")
+    expect(SRC).toContain("Proposal <span className=\"mono\">{selectedProposalId}</span> is unavailable.")
+    expect(SRC).not.toContain('selectedProposal ?? pending[0]')
   })
 })

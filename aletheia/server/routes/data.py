@@ -297,7 +297,10 @@ def get_agent_runs(
 @router.get("/agent-runs/{run_id}")
 def get_agent_run(run_id: str):
     _ensure_db()
-    return _with_agent_run_output_events(repo.get_agent_run(run_id))
+    row = repo.get_agent_run(run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="agent run not found")
+    return _with_agent_run_output_events(row)
 
 
 @router.get("/agent-runs/{run_id}/tool-calls")
@@ -551,6 +554,15 @@ def get_opportunities(asset_class: str | None = None):
     if asset_class:
         return repo.list_opportunities_by_asset_class(asset_class, limit=25)
     return repo.list_opportunities(limit=25)
+
+
+@router.get("/opportunities/{opportunity_id}")
+def get_opportunity(opportunity_id: str):
+    _ensure_db()
+    row = repo.get_opportunity(opportunity_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="opportunity not found")
+    return row
 
 
 @router.get("/market/opportunity-instruments")

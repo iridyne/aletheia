@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { createColumnHelper } from '@tanstack/react-table'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, StatusText, useConfirm } from '../components/ui'
 import { DataTable } from '../components/DataTable'
+import { DetailDrawer, DrawerField, DrawerSection } from '../components/DetailDrawer'
 import { DecisionTraceDrawer } from '../components/DecisionTraceDrawer'
+import { ProposalRationaleDetail } from '../components/ProposalRationaleDetail'
 import { humanize, fmtSymbol, fmtAge, fmtTimestamp } from '../lib/format'
 import { positionKeys } from '../lib/queryKeys'
 
@@ -374,8 +377,18 @@ function parseConviction(rationale: string | null | undefined): number | null {
 function SignoffPanel() {
   const qc = useQueryClient()
   const confirm = useConfirm()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedProposalId = searchParams.get('proposal_id')?.trim() || null
   const { data = [] } = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
+  const selectedProposalQuery = useQuery({
+    queryKey: ['proposal', selectedProposalId],
+    queryFn: () => api.getProposal(selectedProposalId!),
+    enabled: !!selectedProposalId,
+  })
   const pending = (data as any[]).filter(p => p.status === 'pending')
+  const selectedProposal = selectedProposalId
+    ? selectedProposalQuery.data ?? (data as any[]).find(p => p.id === selectedProposalId) ?? null
+    : null
   const [busyId, setBusyId] = useState<string | null>(null)
   const [errById, setErrById] = useState<Record<string, string>>({})
   const [selectedOppId, setSelectedOppId] = useState<string | null>(null)
@@ -504,6 +517,36 @@ function SignoffPanel() {
         opportunityId={selectedOppId}
         onClose={() => setSelectedOppId(null)}
       />
+      <DetailDrawer
+        open={!!selectedProposalId}
+        onClose={() => setSearchParams({})}
+        title="Proposal Detail"
+      >
+        {!selectedProposal && selectedProposalId && !selectedProposalQuery.isError && (
+          <p className="text-muted text-sm">Loading proposal <span className="mono">{selectedProposalId}</span>…</p>
+        )}
+        {!selectedProposal && selectedProposalId && selectedProposalQuery.isError && (
+          <p className="text-muted text-sm" role="alert">Proposal <span className="mono">{selectedProposalId}</span> is unavailable.</p>
+        )}
+        {selectedProposal && (
+          <>
+            <DrawerSection label="Proposal">
+              <DrawerField label="ID" value={selectedProposal.id} mono />
+              <DrawerField label="Symbol" value={fmtSymbol(selectedProposal.symbol, selectedProposal.market_type)} mono />
+              <DrawerField label="Direction" value={selectedProposal.direction} />
+              <DrawerField label="Mode" value={humanize(selectedProposal.execution_mode)} />
+              <DrawerField label="Status" value={selectedProposal.status} />
+              <DrawerField label="Opportunity" value={selectedProposal.opportunity_id} mono />
+              <DrawerField label="Created" value={fmtTimestamp(selectedProposal.created_at)} mono />
+            </DrawerSection>
+            <DrawerSection label="Agent Rationale">
+              {selectedProposal.agent_rationale
+                ? <ProposalRationaleDetail rationale={selectedProposal.agent_rationale} />
+                : <p className="feed-thesis">No rationale recorded.</p>}
+            </DrawerSection>
+          </>
+        )}
+      </DetailDrawer>
     </Card>
   )
 }

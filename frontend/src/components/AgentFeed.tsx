@@ -35,6 +35,7 @@ const FAILURE_STATUSES = new Set<string>([
 ])
 
 type CompactAgentRun = {
+  id: string | null
   agent_name: string | null
   trigger_type: string | null
   status: string | null
@@ -46,6 +47,7 @@ type CompactAgentRun = {
 }
 
 type CompactOpportunity = {
+  id: string | null
   symbol: string | null
   market: string | null
   direction_bias: string | null
@@ -57,6 +59,7 @@ type CompactOpportunity = {
 }
 
 type CompactTradeProposal = {
+  id: string | null
   symbol: string | null
   market_type: string | null
   direction: string | null
@@ -207,6 +210,7 @@ export default function AgentFeed({ bootstrap }: { bootstrap?: OverviewBootstrap
         status: r.status,
         headline: r.headline || `${r.agent || 'agent'} ${r.status || ''}`,
         run: {
+          id: r.id || null,
           agent_name: r.agent_name || r.agent || null,
           trigger_type: r.trigger_type || null,
           status: r.status || null,
@@ -235,6 +239,7 @@ export default function AgentFeed({ bootstrap }: { bootstrap?: OverviewBootstrap
         headline: o.headline || `${o.agent || 'Agent'} found ${o.direction_bias || 'unknown'} opportunity on ${fmtSymbol(o.symbol, o.market)}${score}`,
         detail: o.excerpt || undefined,
         opportunity: {
+          id: o.id || null,
           symbol: o.symbol || null,
           market: o.market || null,
           direction_bias: o.direction_bias || null,
@@ -258,6 +263,7 @@ export default function AgentFeed({ bootstrap }: { bootstrap?: OverviewBootstrap
         headline: p.headline || `Proposal: ${p.direction || 'unknown'} ${fmtSymbol(p.symbol, p.market_type)} (${p.execution_mode || 'unknown'})`,
         detail: p.excerpt || undefined,
         proposal: {
+          id: p.id || null,
           symbol: p.symbol || null,
           market_type: p.market_type || null,
           direction: p.direction || null,
@@ -347,7 +353,7 @@ function FeedDrawer({ item, onClose, navigate }: { item: FeedItem | null; onClos
             <DrawerField label="Duration" value={durationOf(item.run) || null} mono />
           </DrawerSection>
           <div className="flex gap-2 mt-3">
-            <button className="btn-control secondary" onClick={() => { onClose(); navigate('/agent-activity') }}>Open in Agent Activity →</button>
+            <button className="btn-control secondary" onClick={() => { onClose(); navigate(`/agent-activity?tab=runs&run_id=${encodeURIComponent(item.run?.id || '')}`) }}>Open in Agent Activity →</button>
           </div>
         </>
       )}
@@ -371,7 +377,7 @@ function FeedDrawer({ item, onClose, navigate }: { item: FeedItem | null; onClos
               : <p className="feed-thesis">No thesis recorded.</p>}
           </DrawerSection>
           <div className="flex gap-2 mt-3">
-            <button className="btn-control secondary" onClick={() => { onClose(); navigate('/agent-activity') }}>Open in Agent Activity →</button>
+            <button className="btn-control secondary" onClick={() => { onClose(); navigate(`/agent-activity?tab=opps&opportunity_id=${encodeURIComponent(item.opportunity?.id || '')}`) }}>Open in Agent Activity →</button>
           </div>
         </>
       )}
@@ -389,7 +395,7 @@ function FeedDrawer({ item, onClose, navigate }: { item: FeedItem | null; onClos
               : <p className="feed-thesis">No rationale recorded.</p>}
           </DrawerSection>
           <div className="flex gap-2 mt-3">
-            <button className="btn-control" onClick={() => { onClose(); navigate('/blotter') }}>Review in Blotter →</button>
+            <button className="btn-control" onClick={() => { onClose(); navigate(`/blotter?proposal_id=${encodeURIComponent(item.proposal?.id || '')}`) }}>Review in Blotter →</button>
           </div>
         </>
       )}

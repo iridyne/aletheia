@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createColumnHelper } from '@tanstack/react-table'
 import { api } from '../api/client'
 import type { AgentRun, Opportunity } from '../types'
@@ -76,12 +76,32 @@ const oppColumns = [
 ]
 
 export default function AgentActivity() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const { data: runs, isPending: runsPending, isError: runsError } = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns })
   const { data: opps, isPending: oppsPending, isError: oppsError } = useQuery({ queryKey: ['opportunities'], queryFn: api.getOpportunities })
 
   const runRows = (runs ?? []) as AgentRun[]
   const oppRows = (opps ?? []) as Opportunity[]
+  const runId = searchParams.get('run_id')?.trim() || null
+  const opportunityId = searchParams.get('opportunity_id')?.trim() || null
+  const activeTab = searchParams.get('tab') === 'opps' || (opportunityId && searchParams.get('tab') !== 'runs') ? 'opps' : 'runs'
+  const selectedRunQuery = useQuery({
+    queryKey: ['agent-run', runId],
+    queryFn: () => api.getAgentRun(runId!),
+    enabled: !!runId,
+  })
+  const selectedOpportunityQuery = useQuery({
+    queryKey: ['opportunity', opportunityId],
+    queryFn: () => api.getOpportunity(opportunityId!),
+    enabled: !!opportunityId,
+  })
+  const selectedRun = runId ? (selectedRunQuery.data ?? runRows.find(r => r.id === runId) ?? null) as AgentRun | null : null
+  const selectedOpportunity = opportunityId ? (selectedOpportunityQuery.data ?? oppRows.find(o => o.id === opportunityId) ?? null) as Opportunity | null : null
   const openOpps = oppRows.filter(o => o.status === 'open' || o.status === 'pending').length
+  const selectRun = (id: string) => setSearchParams({ tab: 'runs', run_id: id })
+  const selectOpportunity = (id: string) => setSearchParams({ tab: 'opps', opportunity_id: id })
+  const clearSelection = () => setSearchParams({ tab: activeTab })
+  const changeTab = (tab: string) => setSearchParams({ tab })
 
   const runsState = runsPending && runRows.length === 0
     ? 'loading'
@@ -105,19 +125,66 @@ export default function AgentActivity() {
         role="Decide · agent transparency. Every agent run with its tool-call trace, and the opportunities those runs produced (each with its thesis). The reasoning behind what the system proposes."
       />
       <Tabs
+        value={activeTab}
+        onChange={changeTab}
         tabs={[
-          { id: 'runs', label: 'Runs', badge: runRows.length || undefined, render: () => <RunsTab runs={runRows} state={runsState} /> },
-          { id: 'opps', label: 'Opportunities', badge: openOpps > 0 ? openOpps : undefined, render: () => <OpportunitiesTab opps={oppRows} state={oppsState} /> },
+          {
+            id: 'runs',
+            label: 'Runs',
+            badge: runRows.length || undefined,
+            render: () => (
+              <RunsTab
+                runs={runRows}
+                state={runsState}
+                selected={selectedRun}
+                selectedId={runId}
+                selectionState={runId && !selectedRun ? selectedRunQuery.isError ? 'unavailable' : 'loading' : undefined}
+                onSelect={selectRun}
+                onClose={clearSelection}
+              />
+            ),
+          },
+          {
+            id: 'opps',
+            label: 'Opportunities',
+            badge: openOpps > 0 ? openOpps : undefined,
+            render: () => (
+              <OpportunitiesTab
+                opps={oppRows}
+                state={oppsState}
+                selected={selectedOpportunity}
+                selectedId={opportunityId}
+                selectionState={opportunityId && !selectedOpportunity ? selectedOpportunityQuery.isError ? 'unavailable' : 'loading' : undefined}
+                onSelect={selectOpportunity}
+                onClose={clearSelection}
+              />
+            ),
+          },
         ]}
       />
     </div>
   )
 }
 
-function RunsTab({ runs, state }: { runs: AgentRun[], state?: DataState }) {
+function RunsTab({
+  runs,
+  state,
+  selected,
+  selectedId,
+  selectionState,
+  onSelect,
+  onClose,
+}: {
+  runs: AgentRun[]
+  state?: DataState
+  selected: AgentRun | null
+  selectedId: string | null
+  selectionState?: 'loading' | 'unavailable'
+  onSelect: (id: string) => void
+  onClose: () => void
+}) {
   const qc = useQueryClient()
   const { toast } = useToast()
-  const [selected, setSelected] = useState<AgentRun | null>(null)
   const { data: catalog } = useQuery({ queryKey: ['agent-catalog'], queryFn: api.getAgentCatalog })
   const agents = catalog?.agents ?? []
   const run = useMutation({
@@ -147,9 +214,15 @@ function RunsTab({ runs, state }: { runs: AgentRun[], state?: DataState }) {
         </div>
       </Card>
       <Card>
-        <DataTable data={runs} columns={runColumns} onRowClick={setSelected} state={state} emptyMessage="No agent runs yet." />
+        <DataTable data={runs} columns={runColumns} onRowClick={(row) => onSelect(row.id)} state={state} emptyMessage="No agent runs yet." />
       </Card>
-      <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="Agent Run Detail">
+      <DetailDrawer open={!!selectedId} onClose={onClose} title="Agent Run Detail">
+        {!selected && selectedId && selectionState === 'loading' && (
+          <p className="text-muted text-sm">Loading agent run <span className="mono">{selectedId}</span>…</p>
+        )}
+        {!selected && selectedId && selectionState === 'unavailable' && (
+          <p className="text-muted text-sm" role="alert">Agent run <span className="mono">{selectedId}</span> is unavailable.</p>
+        )}
         {selected && (
           <>
             <DrawerSection label="Run Info">
@@ -186,9 +259,24 @@ function RunsTab({ runs, state }: { runs: AgentRun[], state?: DataState }) {
   )
 }
 
-function OpportunitiesTab({ opps, state }: { opps: Opportunity[], state?: DataState }) {
+function OpportunitiesTab({
+  opps,
+  state,
+  selected,
+  selectedId,
+  selectionState,
+  onSelect,
+  onClose,
+}: {
+  opps: Opportunity[]
+  state?: DataState
+  selected: Opportunity | null
+  selectedId: string | null
+  selectionState?: 'loading' | 'unavailable'
+  onSelect: (id: string) => void
+  onClose: () => void
+}) {
   const navigate = useNavigate()
-  const [selected, setSelected] = useState<Opportunity | null>(null)
   const [filter, setFilter] = useState<'all' | 'crypto' | 'equity' | 'prediction'>('all')
 
   const filtered = filter === 'all' ? opps : opps.filter(o => (o.asset_class || 'crypto') === filter)
@@ -219,10 +307,16 @@ function OpportunitiesTab({ opps, state }: { opps: Opportunity[], state?: DataSt
             </Button>
           )}
         </div>
-        <DataTable data={filtered} columns={oppColumns} onRowClick={setSelected} state={state} emptyMessage="No opportunities yet." />
+        <DataTable data={filtered} columns={oppColumns} onRowClick={(row) => onSelect(row.id)} state={state} emptyMessage="No opportunities yet." />
       </Card>
 
-      <DetailDrawer open={!!selected} onClose={() => setSelected(null)} title="Opportunity Detail">
+      <DetailDrawer open={!!selectedId} onClose={onClose} title="Opportunity Detail">
+        {!selected && selectedId && selectionState === 'loading' && (
+          <p className="text-muted text-sm">Loading opportunity <span className="mono">{selectedId}</span>…</p>
+        )}
+        {!selected && selectedId && selectionState === 'unavailable' && (
+          <p className="text-muted text-sm" role="alert">Opportunity <span className="mono">{selectedId}</span> is unavailable.</p>
+        )}
         {selected && (
           <>
             <DrawerSection label="Market Signal">
