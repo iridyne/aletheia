@@ -72,18 +72,27 @@ def compute_rolling_trade_stats(
     }
 
 
-def compute_order_stats(days: int = 7) -> dict:
+def compute_order_stats(
+    days: int = 7, *, execution_mode: str | None = None,
+) -> dict:
     """Compute order fill rate and error breakdown for the last N days.
 
     Returns: {total, filled, errors, fill_rate_pct, error_breakdown: [{pattern, count, symbols}]}
+    Scoped to a single ``execution_mode`` when provided (#2181).
     """
     from aletheia.storage.sqlite import get_db
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     db = get_db()
+    clauses = ["created_at > ?"]
+    params: list[object] = [cutoff]
+    if execution_mode is not None:
+        clauses.append("execution_mode = ?")
+        params.append(execution_mode)
     rows = db.execute(
-        "SELECT symbol, status, error_reason FROM orders WHERE created_at > ?",
-        (cutoff,),
+        "SELECT symbol, status, error_reason FROM orders WHERE "
+        + " AND ".join(clauses),
+        tuple(params),
     ).fetchall()
 
     filled = sum(1 for r in rows if r["status"] == "filled")
@@ -116,6 +125,7 @@ def compute_order_stats(days: int = 7) -> dict:
         "errors": len(errored),
         "fill_rate_pct": round(filled / total * 100, 1) if total else 0.0,
         "error_breakdown": breakdown[:5],
+        **execution_mode_identity(execution_mode),
     }
 
 

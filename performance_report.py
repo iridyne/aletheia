@@ -67,7 +67,9 @@ def _collect() -> dict:
             days=days, execution_mode=execution_mode,
         )
         result["trade_stats"] = build_trade_stats(execution_mode=execution_mode)
-        result["order_stats"] = compute_order_stats(days=days)
+        result["order_stats"] = compute_order_stats(
+            days=days, execution_mode=execution_mode,
+        )
         result["sections"] += ["rolling", "trade_stats", "order_stats"]
     except Exception as e:  # pragma: no cover - depends on live DB/runtime
         result["trade_stats_error"] = f"{type(e).__name__}: {e}"

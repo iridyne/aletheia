@@ -2110,6 +2110,11 @@ def _build_layer2_short_term() -> dict[str, Any]:
     """Recent trade outcomes + pattern performance (7-day sliding window)."""
     layer: dict[str, Any] = {}
     cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    # Resolve once for this composite context; descendants must use this
+    # immutable identity even if settings change during assembly (#2181).
+    from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+
+    execution_mode = resolve_selected_execution_mode()
 
     # Reflection: last decision outcome
     try:
@@ -2121,11 +2126,9 @@ def _build_layer2_short_term() -> dict[str, Any]:
     # Recent closed positions — aggregate stats. Scoped to the current
     # execution_mode so System Operator is never steered by another cohort (#1939).
     try:
-        from aletheia.analytics.execution_mode import resolve_selected_execution_mode
-        _ctx_mode = resolve_selected_execution_mode()
         recent = eligible_strategy_outcomes(
-            closed_after=cutoff, execution_mode=_ctx_mode,
-        ) if _ctx_mode else []
+            closed_after=cutoff, execution_mode=execution_mode,
+        ) if execution_mode else []
 
         if recent:
             wins = [p for p in recent if (p.get("realized_pnl") or 0) > 0]
@@ -2182,11 +2185,9 @@ def _build_layer2_short_term() -> dict[str, Any]:
         # trade_count columns, so the System Operator saw None/'?' for every strategy. Real
         # KPIs come from build_strategy_kpis() (computed live from fills + positions).
         from aletheia.analytics.trade_stats import build_strategy_kpis
-        from aletheia.analytics.execution_mode import resolve_selected_execution_mode
-        _kpi_mode = resolve_selected_execution_mode()
         kpis = build_strategy_kpis(
-            execution_mode=_kpi_mode,
-        ) if _kpi_mode else {}  # {strategy_id: {trade_count, win_rate, total_pnl}}
+            execution_mode=execution_mode,
+        ) if execution_mode else {}  # {strategy_id: {trade_count, win_rate, total_pnl}}
         strat_perf: list[dict] = []
         for strat in active[:5]:
             sid = strat.get("id")
@@ -2205,9 +2206,7 @@ def _build_layer2_short_term() -> dict[str, Any]:
     # in the UI, compressed for System Operator consumption.
     try:
         from aletheia.analytics.trade_stats import build_trade_stats
-        from aletheia.analytics.execution_mode import resolve_selected_execution_mode
-        _ts_mode = resolve_selected_execution_mode()
-        trade_stats = build_trade_stats(execution_mode=_ts_mode) if _ts_mode else {
+        trade_stats = build_trade_stats(execution_mode=execution_mode) if execution_mode else {
             "outcome_status": "insufficient",
             "execution_mode": None,
             "execution_mode_status": "unavailable",
@@ -2232,7 +2231,7 @@ def _build_layer2_short_term() -> dict[str, Any]:
     # advisory memo with time decay and contradiction handling.
     try:
         from aletheia.analytics.insight_synthesizer import get_latest_memo, render_memo_for_observer
-        memo = get_latest_memo()
+        memo = get_latest_memo(execution_mode=execution_mode) if execution_mode else None
         if memo:
             layer["trading_memo"] = {
                 "generated_at": memo.get("generated_at"),
@@ -2251,7 +2250,7 @@ def _build_layer2_short_term() -> dict[str, Any]:
     # Reasoning quality feedback — rolling pattern win rates from historical proposals
     try:
         from aletheia.analytics.reasoning_feedback import get_latest_reasoning_feedback, render_feedback_for_pi
-        fb = get_latest_reasoning_feedback()
+        fb = get_latest_reasoning_feedback(execution_mode=execution_mode) if execution_mode else None
         layer["reasoning_feedback"] = render_feedback_for_pi(fb) if fb else None
     except Exception:
         layer["reasoning_feedback"] = None
@@ -2259,7 +2258,7 @@ def _build_layer2_short_term() -> dict[str, Any]:
     # Conviction calibration — actual vs expected win rate per conviction bucket
     try:
         from aletheia.analytics.confidence_calibration import get_latest_calibration_report, render_calibration_for_pi
-        cal = get_latest_calibration_report()
+        cal = get_latest_calibration_report(execution_mode=execution_mode) if execution_mode else None
         layer["calibration_feedback"] = render_calibration_for_pi(cal) if cal else None
     except Exception:
         layer["calibration_feedback"] = None
