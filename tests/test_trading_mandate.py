@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
@@ -171,13 +171,53 @@ def test_frozen_identity_requires_complete_contract_shape():
             )
 
 
-def test_open_position_duration_uses_report_timestamp():
+def _frozen_mandate_snapshot() -> str:
+    opportunity, decision, proposal = _facts()
+    evidence = build_trading_mandate_provenance(
+        configured=_mandate(),
+        opportunity=opportunity,
+        decision=decision,
+        proposal=proposal,
+    )
+    return json.dumps(evidence)
+
+
+def test_completed_position_duration_requires_genuine_close():
     from aletheia.analytics.trading_mandate_compliance import _duration
 
-    assert _duration(
-        {"opened_at": "2026-01-01T00:00:00+00:00", "closed_at": None},
-        as_of=datetime(2026, 1, 1, 6, tzinfo=timezone.utc),
-    ) == 6.0
+    assert _duration({"opened_at": "2026-01-01T00:00:00+00:00", "closed_at": None}) is None
+    assert _duration({
+        "opened_at": "2026-01-01T00:00:00+00:00",
+        "closed_at": "2026-01-01T06:00:00+00:00",
+    }) == 6.0
+
+
+def test_aggregate_window_bounds_are_inclusive():
+    from aletheia.analytics.trading_mandate_compliance import (
+        _event_window_exclusion,
+    )
+
+    cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    window_to = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+    assert _event_window_exclusion(
+        cutoff.isoformat(),
+        cutoff=cutoff,
+        window_to=window_to,
+        field="created_at",
+    ) is None
+    assert _event_window_exclusion(
+        window_to.isoformat(),
+        cutoff=cutoff,
+        window_to=window_to,
+        field="created_at",
+    ) is None
+    assert _event_window_exclusion(
+        (window_to + timedelta(microseconds=1)).isoformat(),
+        cutoff=cutoff,
+        window_to=window_to,
+        field="created_at",
+    ) == "created_at_future"
 
 
 def test_enabled_mandate_round_trips_through_yaml_without_activation_drift(tmp_path, monkeypatch):
@@ -375,4 +415,114 @@ def test_compliance_aggregate_is_read_only_and_keeps_denominators(tmp_path, monk
     assert report["read_only"] is True
     assert report["counts"]["proposals_by_fit_status"]["not_recorded"] == 0
     assert report["denominators"]["proposal_fit_status_denominator"] == 0
+    sqlite_store.reset_db()
+
+
+def test_compliance_aggregate_uses_completed_event_time_cohort(tmp_path, monkeypatch):
+    from aletheia.config import loader
+    from aletheia.storage import sqlite as sqlite_store
+    from aletheia.storage.migrations import apply_migrations
+    import aletheia.analytics.trading_mandate_compliance as compliance
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            current = datetime(2026, 1, 2, 12, tzinfo=timezone.utc)
+            return current if tz is not None else current.replace(tzinfo=None)
+
+    sqlite_store.reset_db()
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(compliance, "datetime", FixedDatetime)
+    loader._invalidate_config_cache()
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    sqlite_store._db_conn = db
+    apply_migrations()
+    now = FixedDatetime.now(timezone.utc)
+    snapshot = _frozen_mandate_snapshot()
+    for proposal_id, created_at in (
+        ("proposal-current", now - timedelta(hours=3)),
+        ("proposal-cutoff", now - timedelta(hours=24)),
+        ("proposal-window-end", now),
+        ("proposal-future", now + timedelta(minutes=1)),
+    ):
+        db.execute(
+            "INSERT INTO trade_proposals "
+            "(id,symbol,market_type,direction,execution_mode,attribution_snapshot,created_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (
+                proposal_id,
+                "BTC/USDT",
+                "spot",
+                "long",
+                "paper_internal",
+                snapshot,
+                created_at.isoformat(),
+            ),
+        )
+    for position_id, opened_at, closed_at, status in (
+        ("position-closed", now - timedelta(hours=3), now - timedelta(hours=1), "closed"),
+        ("position-open", now - timedelta(hours=20), None, "open"),
+        ("position-future-open", now + timedelta(minutes=1), None, "open"),
+        (
+            "position-future-close",
+            now - timedelta(hours=2),
+            now + timedelta(minutes=1),
+            "closed",
+        ),
+        (
+            "position-bad-close",
+            now - timedelta(hours=2),
+            now - timedelta(hours=3),
+            "closed",
+        ),
+    ):
+        db.execute(
+            "INSERT INTO positions "
+            "(id,symbol,market_type,direction,quantity,entry_price,execution_mode,"
+            "proposal_id,status,opened_at,closed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                position_id,
+                "BTC/USDT",
+                "spot",
+                "long",
+                1.0,
+                100.0,
+                "paper_internal",
+                "proposal-current",
+                status,
+                opened_at.isoformat(),
+                closed_at.isoformat() if closed_at else None,
+            ),
+        )
+    db.commit()
+
+    report = compliance.build_mandate_compliance_report(hours=24, db=db)
+
+    assert report["counts"]["proposals_total"] == 3
+    assert report["counts"]["positions_total"] == 4
+    assert report["denominators"]["proposal_fit_status_denominator"] == 3
+    assert report["denominators"]["position_fit_status_denominator"] == 4
+    assert report["exclusions"]["cohort_by_reason"] == {
+        "position_opened_at_future": 1,
+        "proposal_created_at_future": 1,
+    }
+    duration = report["holding_duration_compatibility"]
+    assert duration["declared_horizon_positions"] == 4
+    assert duration["measurable_duration_positions"] == 1
+    assert duration["compatible_count"] == 1
+    assert duration["incompatible_count"] == 0
+    assert duration["not_available_count"] == 3
+    assert duration["not_measurable_by_reason"] == {
+        "closed_at_future": 1,
+        "closed_before_open": 1,
+        "position_open": 1,
+    }
+    overrun = report["horizon_overrun"]
+    assert overrun["declared_max_horizon_positions"] == 4
+    assert overrun["measurable_count"] == 1
+    assert overrun["overrun_count"] == 0
+    assert overrun["not_measurable_count"] == 3
+    assert overrun["not_measurable_by_reason"] == duration["not_measurable_by_reason"]
     sqlite_store.reset_db()
