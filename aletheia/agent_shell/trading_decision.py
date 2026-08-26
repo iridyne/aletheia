@@ -32,6 +32,7 @@ from aletheia.trading.entry_plan import (
     entry_plan_risk_reward_is_plausible,
     stop_distance_below_min_floor,
 )
+from aletheia.storage.models import exit_intent_violations
 
 logger = logging.getLogger("aletheia.agent_shell.trading_decision")
 
@@ -3427,6 +3428,14 @@ def _parse_decision(raw: dict) -> TradingDecision:
         except (TypeError, ValueError):
             return None
 
+    def _expected_horizon(v):
+        if exit_intent_violations(expected_horizon_hours=v):
+            raise DecisionUnavailable(
+                "invalid_expected_horizon_hours",
+                stage="operator_output_validation",
+            )
+        return _num(v)
+
     def _conviction(v):
         # Invalid model output is evaluation unavailability. Normalizing it to
         # zero used to manufacture a terminal skip and consume a real candidate.
@@ -3511,7 +3520,11 @@ def _parse_decision(raw: dict) -> TradingDecision:
         leverage=leverage,
         stop_price=stop_price,
         take_profit=take_profit,
-        expected_horizon_hours=_num(raw.get("expected_horizon_hours")),
+        expected_horizon_hours=(
+            _expected_horizon(raw.get("expected_horizon_hours"))
+            if raw_action == "trade"
+            else None
+        ),
         order_type=raw.get("order_type"),
         limit_price=_num(raw.get("limit_price")),
         risk_factors=raw.get("risk_factors", []),

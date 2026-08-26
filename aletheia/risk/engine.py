@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import to_canonical
 from aletheia.portfolio.account_loss import authoritative_account_realized_loss
-from aletheia.storage.models import RiskDecision, TradeProposal
+from aletheia.storage.models import RiskDecision, TradeProposal, exit_intent_violations
 from aletheia.storage.repositories import (
     _RISK_DECISION_PREFIX,
     _RISK_PROPOSAL_PREFIX,
@@ -1399,6 +1399,12 @@ def _native_input_violations(proposal: TradeProposal) -> list[str]:
             violations.append("invalid_leverage")
     if proposal.execution_mode not in _NATIVE_EXECUTION_MODES:
         violations.append("invalid_execution_mode")
+    violations.extend(
+        exit_intent_violations(
+            expected_horizon_hours=proposal.expected_horizon_hours,
+            stop_source=proposal.stop_source,
+        )
+    )
     return violations
 
 
