@@ -620,7 +620,25 @@ def emit_deterministic_opportunities(
         # Guard: only set execution_eligible if there is live price data within the
         # last 2 hours. Symbols with zero snapshots would otherwise reach the Trading Decision daemon as
         # tradeable but fail silently at proposal submission (price=0 → proposal_id=None).
-        _exec_eligible = has_fresh_market_snapshot(symbol, market_type)
+        instrument_background = (
+            m.get("instrument_background")
+            if isinstance(m.get("instrument_background"), dict)
+            else feat.get("instrument_background")
+        )
+        venue = (
+            m.get("venue")
+            or (
+                instrument_background.get("venue")
+                if isinstance(instrument_background, dict)
+                else None
+            )
+            or feat.get("venue")
+        )
+        _exec_eligible = has_fresh_market_snapshot(
+            symbol,
+            market_type,
+            exchange=venue,
+        )
         if not _exec_eligible:
             logger.warning(
                 "no_live_price_for_symbol: %s — execution_eligible set to False", symbol

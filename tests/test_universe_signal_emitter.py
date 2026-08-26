@@ -423,12 +423,17 @@ class TestEmitDeterministicOpportunities:
         assert opps[0].valid_until == "2099-06-01T00:00:00"
 
     def test_perp_eligibility_never_uses_a_spot_snapshot(self):
-        members = [{**_make_member("BTC/USDT", "momentum", 75), "market_type": "perp"}]
-        feats = [_make_feat("BTC/USDT", market_type="perp")]
+        members = [{
+            **_make_member("BTC/USDT", "momentum", 75),
+            "market_type": "perp",
+            "venue": "binance",
+        }]
+        feats = [_make_feat("BTC/USDT", market_type="perp", venue="binance")]
         inserted = []
 
-        def _snapshots(*, symbol, market_type, limit):
+        def _snapshots(*, symbol, exchange, market_type, limit):
             assert symbol == "BTC/USDT"
+            assert exchange == "binance"
             assert market_type == "perp"
             return []
 
