@@ -168,6 +168,63 @@ def test_batches_stream_counted_with_exclusions():
     assert counts["unavailable_units"] == 2
 
 
+def test_candidate_facts_epoch_start_excludes_pre_epoch_malformed_batches():
+    db = sq.get_db()
+    _batch(db, "old-bad", "2026-07-20T00:00:00+00:00", "{not-json")
+    _batch(
+        db,
+        "boundary-good",
+        LOWER.isoformat(),
+        [
+            {
+                "candidate_key": "cand-boundary",
+                "outcome_candidate_key": "cand-boundary",
+                "evaluated_at": LOWER.isoformat(),
+                "decision": "passed",
+            }
+        ],
+    )
+    _outcome(
+        db,
+        "outcome-boundary",
+        "cand-boundary",
+        entry_ts="2026-08-01T00:30:00+00:00",
+        settled_at="2026-08-02T00:30:00+00:00",
+    )
+    db.commit()
+
+    epoch_report = candidate_facts.build_candidate_facts(
+        horizon="24h",
+        as_of_at=UPPER.isoformat(),
+        epoch_start_at=LOWER.isoformat(),
+        db=db,
+    )
+    assert epoch_report["epoch_start_at"] == LOWER.isoformat()
+    assert epoch_report["unavailable_count"] == 0
+    assert [fact["fact_id"] for fact in epoch_report["facts"]] == ["cand-boundary"]
+    assert epoch_report["settled_outcome_count"] == 1
+
+    forensic_report = candidate_facts.build_candidate_facts(
+        horizon="24h", as_of_at=UPPER.isoformat(), db=db
+    )
+    assert forensic_report["unavailable_count"] == 1
+    assert forensic_report["exclusions"][0]["source_batch_id"] == "old-bad"
+
+    db.execute(
+        "UPDATE filter_decision_batches SET evaluated_at=? WHERE id='old-bad'",
+        (LOWER.isoformat(),),
+    )
+    db.commit()
+    contaminated = candidate_facts.build_candidate_facts(
+        horizon="24h",
+        as_of_at=UPPER.isoformat(),
+        epoch_start_at=LOWER.isoformat(),
+        db=db,
+    )
+    assert contaminated["unavailable_count"] == 1
+    assert contaminated["exclusions"][0]["source_batch_id"] == "old-bad"
+
+
 def test_settled_outcome_intersection():
     db = sq.get_db()
     _decision(db, "a1", "2026-08-02T00:00:00+00:00", outcome_key="cand-a")

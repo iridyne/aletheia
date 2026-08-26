@@ -68,15 +68,29 @@ def _parsed(value: object, expected: type) -> object:
 def _batch_facts(
     db: Any,
     cutoff: datetime,
+    epoch_start: datetime | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     facts: list[dict[str, Any]] = []
     exclusions: list[dict[str, Any]] = []
+    if epoch_start is None:
+        batch_sql = (
+            "SELECT * FROM filter_decision_batches"
+            " WHERE datetime(evaluated_at) <= datetime(?)"
+            " ORDER BY datetime(evaluated_at), rowid"
+        )
+        batch_params = (cutoff.isoformat(),)
+    else:
+        batch_sql = (
+            "SELECT * FROM filter_decision_batches"
+            " WHERE datetime(evaluated_at) >= datetime(?)"
+            " AND datetime(evaluated_at) <= datetime(?)"
+            " ORDER BY datetime(evaluated_at), rowid"
+        )
+        batch_params = (epoch_start.isoformat(), cutoff.isoformat())
     for batch in _rows(
         db,
-        "SELECT * FROM filter_decision_batches"
-        " WHERE datetime(evaluated_at) <= datetime(?)"
-        " ORDER BY datetime(evaluated_at), rowid",
-        (cutoff.isoformat(),),
+        batch_sql,
+        batch_params,
     ):
         if not _visible(batch, cutoff):
             continue
@@ -138,6 +152,9 @@ def _batch_facts(
             )
             continue
         for sequence, raw in enumerate(raw_facts):
+            raw_at = _utc(raw.get("evaluated_at")) or _utc(batch.get("evaluated_at"))
+            if epoch_start is not None and raw_at is not None and raw_at < epoch_start:
+                continue
             fact = {
                 **raw,
                 "id": raw.get("id") or f"{batch['id']}:{sequence}",
@@ -320,6 +337,7 @@ def build_candidate_facts(
     *,
     horizon: str = "24h",
     as_of_at: str | datetime | None = None,
+    epoch_start_at: str | datetime | None = None,
     db: Any = None,
 ) -> dict[str, Any]:
     """Build first-exposure facts for every durable candidate, including rejects."""
@@ -327,6 +345,12 @@ def build_candidate_facts(
         raise ValueError(f"unsupported fixed horizon: {horizon}")
     if isinstance(as_of_at, str) and as_of_at != "" and _utc(as_of_at) is None:
         raise ValueError("invalid as_of_at")
+    if (
+        isinstance(epoch_start_at, str)
+        and epoch_start_at != ""
+        and _utc(epoch_start_at) is None
+    ):
+        raise ValueError("invalid epoch_start_at")
     if db is None:
         from aletheia.storage.sqlite import readonly_db
 
@@ -334,16 +358,24 @@ def build_candidate_facts(
             return build_candidate_facts(
                 horizon=horizon,
                 as_of_at=as_of_at,
+                epoch_start_at=epoch_start_at,
                 db=read_db,
             )
     source = db
     explicit_cutoff = _utc(as_of_at) is not None
     cutoff = _utc(as_of_at) or datetime.now(timezone.utc)
+    epoch_start = _utc(epoch_start_at)
     started_txn = not getattr(source, "in_transaction", False)
     if started_txn:
         source.execute("BEGIN DEFERRED")
     try:
-        return _build_candidate_facts_inner(horizon=horizon, cutoff=cutoff, explicit_cutoff=explicit_cutoff, source=source)
+        return _build_candidate_facts_inner(
+            horizon=horizon,
+            cutoff=cutoff,
+            explicit_cutoff=explicit_cutoff,
+            epoch_start=epoch_start,
+            source=source,
+        )
     finally:
         if started_txn:
             source.execute("ROLLBACK")
@@ -354,17 +386,27 @@ def _build_candidate_facts_inner(
     horizon: str,
     cutoff: datetime,
     explicit_cutoff: bool,
+    epoch_start: datetime | None,
     source: Any,
 ) -> dict[str, Any]:
-    explicit = _rows(
-        source,
-        "SELECT * FROM filter_decisions"
-        " WHERE datetime(evaluated_at) <= datetime(?)"
-        " ORDER BY datetime(evaluated_at), sequence_no, rowid",
-        (cutoff.isoformat(),),
-    )
+    if epoch_start is None:
+        explicit_sql = (
+            "SELECT * FROM filter_decisions"
+            " WHERE datetime(evaluated_at) <= datetime(?)"
+            " ORDER BY datetime(evaluated_at), sequence_no, rowid"
+        )
+        explicit_params = (cutoff.isoformat(),)
+    else:
+        explicit_sql = (
+            "SELECT * FROM filter_decisions"
+            " WHERE datetime(evaluated_at) >= datetime(?)"
+            " AND datetime(evaluated_at) <= datetime(?)"
+            " ORDER BY datetime(evaluated_at), sequence_no, rowid"
+        )
+        explicit_params = (epoch_start.isoformat(), cutoff.isoformat())
+    explicit = _rows(source, explicit_sql, explicit_params)
     filter_rows = [{**row, "source_table": "filter_decisions"} for row in explicit if _visible(row, cutoff)]
-    batch_rows, batch_exclusions = _batch_facts(source, cutoff)
+    batch_rows, batch_exclusions = _batch_facts(source, cutoff, epoch_start)
     filter_rows.extend(batch_rows)
 
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -578,6 +620,7 @@ def _build_candidate_facts_inner(
     return {
         "contract_version": FACT_CONTRACT_VERSION,
         "fact_unit": "candidate_fact",
+        "epoch_start_at": epoch_start.isoformat() if epoch_start is not None else None,
         "as_of_at": cutoff.isoformat(),
         "fixed_horizon": horizon,
         "read_only": True,
