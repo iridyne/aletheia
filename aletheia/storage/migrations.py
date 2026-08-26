@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v43"
+SCHEMA_VERSION = "aletheia-sqlite-v44"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -5508,6 +5508,16 @@ def _apply_opportunity_generation_v42(db: sqlite3.Connection) -> None:
 
 def _apply_learning_draft_skill_lineage_v44(db: sqlite3.Connection) -> None:
     """Add typed lesson lineage and enforce one generated draft skill per lesson."""
+
+    tables = {
+        str(row["name"])
+        for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('ps_skills', 'ps_lessons')"
+        ).fetchall()
+    }
+    if {"ps_skills", "ps_lessons"} - tables:
+        return
 
     columns = {
         str(row[1]) for row in db.execute("PRAGMA table_info(ps_skills)").fetchall()
