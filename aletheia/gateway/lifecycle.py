@@ -101,8 +101,19 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> bool | No
                 message += f" — {result['detail']}"
             _echo_safe(message)
             raise typer.Exit(1)
-        _echo_stdout_safe("Gateway machine service start requested; use `gateway status` to confirm readiness.")
-        return False
+        _echo_stdout_safe("Gateway machine service start accepted; verifying readiness...")
+        cfg = load_config()
+        ready = _verify_started(cfg)
+        if ready is True:
+            _auto_start_tunnel(cfg)
+            _echo_stdout_safe("Gateway machine service readiness verified.")
+            return True
+        _echo_safe(
+            "Gateway machine service start was accepted, but readiness was not "
+            "confirmed within the bounded startup window. Run `gateway status` "
+            "before further mutation."
+        )
+        raise typer.Exit(2)
     from aletheia.gateway.preflight import run_preflight_checks, assert_preflight_or_exit
 
     try:
