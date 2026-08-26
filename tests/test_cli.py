@@ -176,6 +176,71 @@ def test_inspect_status_json(cli_db):
     assert "orders" in data
 
 
+def test_inspect_strategies_marks_malformed_parameters_partial(cli_db):
+    import json as json_mod
+
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO strategy_records (id, name, state, parameters) VALUES (?, ?, ?, ?)",
+        ("valid-strategy", "Valid Strategy", "draft", '{"symbol":"BTC/USDT","ruleset":{"entry":"x"}}'),
+    )
+    db.execute(
+        "INSERT INTO strategy_records (id, name, state, parameters) VALUES (?, ?, ?, ?)",
+        ("empty-strategy", "Empty Strategy", "draft", "{}"),
+    )
+    db.execute(
+        "INSERT INTO strategy_records (id, name, state, parameters) VALUES (?, ?, ?, ?)",
+        ("bad-strategy", "Bad Strategy", "draft", "{broken"),
+    )
+    db.execute(
+        "INSERT INTO strategy_records (id, name, state, parameters) VALUES (?, ?, ?, ?)",
+        ("non-object-strategy", "Non Object Strategy", "draft", "[]"),
+    )
+    db.commit()
+
+    result = runner.invoke(app, ["inspect", "strategies", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json_mod.loads(result.output)
+    assert payload["availability"] == "partial"
+    assert payload["invalid_parameters_count"] == 2
+    rows = {row["id"]: row for row in payload["rows"]}
+    assert rows["valid-strategy"]["parameters_status"] == "available"
+    assert rows["valid-strategy"]["symbol"] == "BTC/USDT"
+    assert rows["valid-strategy"]["has_ruleset"] is True
+    assert rows["empty-strategy"]["parameters_status"] == "available"
+    assert rows["empty-strategy"]["has_ruleset"] is False
+    assert rows["bad-strategy"]["parameters_status"] == "invalid"
+    assert rows["bad-strategy"]["parameters_error"] == "invalid_json"
+    assert rows["bad-strategy"]["has_ruleset"] is None
+    assert rows["non-object-strategy"]["parameters_error"] == "not_json_object"
+
+    human = runner.invoke(app, ["inspect", "strategies"])
+    assert human.exit_code == 0, human.output
+    assert "id=bad-strategy" in human.output
+    assert "parameters_status=invalid" in human.output
+    assert "{broken" not in human.output
+
+
+def test_strategy_parameters_write_path_requires_json_object(cli_db):
+    from pydantic import ValidationError
+
+    from aletheia.storage.models import StrategyParametersInvalid, StrategyRecord
+    from aletheia.storage.repositories import insert_strategy, update_strategy
+
+    with pytest.raises(ValidationError):
+        StrategyRecord(name="Malformed", parameters="{broken")
+
+    strategy = StrategyRecord(id="strategy-1", name="Valid", parameters="{}")
+    insert_strategy(strategy)
+
+    with pytest.raises(StrategyParametersInvalid) as exc:
+        update_strategy("strategy-1", parameters='["not", "an", "object"]')
+    assert exc.value.reason == "not_json_object"
+
+
 def test_inspect_agent_runs_uses_current_agent_run_fields(cli_db):
     import json as json_mod
 
