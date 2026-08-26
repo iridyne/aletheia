@@ -12,7 +12,7 @@
 | # | Job ID | Interval | Executor | Description |
 |---|--------|----------|----------|-------------|
 | 1 | market_data | 5min | io | Collect market snapshots (price, volume, OHLCV) |
-| 2 | market_observer | 10min | observer | Scan structured, exact-instrument facts for trading opportunities |
+| 2 | market_observer | 10min | observer | Add advisory structured facts to existing triggered opportunities |
 | 3 | equity_observer | cron 工作日 14-21UTC /30min | agents | xStocks/equity market scan (replaces stock_observer) |
 | 4 | prediction_observer | 30min | agents | Prediction market scan |
 | 5 | paper_trader | 3min + on-demand | agents | Collect signals → signal_pending PiDecisions (System Operator submits proposals — Phase 4a). `scheduler.notify_paper_trader(source)` coalesces committed Opportunity, eligibility-config, Guard-set, Universe refresh/TTL-slide, and Operator queue-slot-release events into an immediate run. The source list is persisted in `AgentRun.trigger_type`; 3min remains the safety fallback. |
@@ -130,9 +130,10 @@ durably queued and independently retried by `outcome_hook_replay`.
   derivatives/macro/on-chain data, and successfully analyzed, relevance-qualified,
   exact-entity news
 - **LLM**: Yes (analysis of market conditions)
-- **Outputs**: namespaced `metadata.observer_assessment` on an existing open,
-  deterministic `universe_scanner` Opportunity; producer-owned direction, confidence,
-  thesis, identity and expiry remain unchanged
+- **Outputs**: namespaced `metadata.observer_assessment` on an existing open
+  Opportunity; producer-owned direction, confidence, thesis, identity and expiry
+  remain unchanged. Legacy `universe_scanner` Opportunity rows remain audit-only
+  unless they carry setup-linked V2 trigger evidence.
 - **Side effects**: Enriches only the exact snapshot/member/instrument carrier whose
   `signal_emitter` pass fact is durable. It does not create an Opportunity or gate the
   scanner → Ranker handoff.

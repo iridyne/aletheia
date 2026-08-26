@@ -1,107 +1,34 @@
-"""Universe Signal Emitter — deterministic opportunity generation from universe members.
+"""Universe Candidate handoff — deterministic setup generation from candidates.
 
-Converts high-scoring universe members into Opportunity rows without requiring LLM.
-This decouples market sensing from LLM availability:
-  - LLM up:   market_observer enriches the existing opportunity with language/context
-  - LLM down: universe_scanner opportunities still flow to paper_trader ranker
+Universe refresh selects Candidates. Momentum candidates may become
+UniverseSetup rows awaiting bounded conditional authorization. Opportunity rows
+are reserved for actual T0 trigger materialization.
 
 Called at the end of every universe refresh cycle (source_agent="universe_scanner").
 """
 
 from __future__ import annotations
 
+import logging
+
+from aletheia.storage import repositories as repo
+from aletheia.analytics.factor_feedback import lookup_factor_signal
 from aletheia.universe.funding_units import (
     CROWDED_FUNDING_RATE,
     ELEVATED_FUNDING_RATE,
 )
 
-import json
-import logging
-
-from aletheia.storage import repositories as repo
-from aletheia.storage.models import Opportunity
-from aletheia.storage.repositories import (
-    find_live_opportunity_by_symbol_direction,
-    find_opportunity_by_symbol_snapshot,
-    insert_opportunity_once_by_snapshot,
-)
-from aletheia.trading.instruments import instrument_market_to_db_market
-from aletheia.analytics.factor_feedback import lookup_factor_signal
-from aletheia.analytics.filter_evidence import atomic_opportunity_evidence
-from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
-from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
-
 logger = logging.getLogger("aletheia.universe.signal_emitter")
 
 
-def _opportunity_material_fingerprint(opportunity: dict) -> str | None:
-    """Read the durable setup identity written by the emitter.
-
-    Legacy rows have no fingerprint. Treating those as an unknown material setup
-    keeps the duplicate guard fail-closed until a fresh generation carries the
-    explicit identity.
-    """
-    raw_metadata = opportunity.get("metadata")
-    if not raw_metadata:
-        return None
-    try:
-        metadata = json.loads(raw_metadata) if isinstance(raw_metadata, str) else raw_metadata
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return None
-    value = metadata.get("material_fingerprint") if isinstance(metadata, dict) else None
-    if value:
-        return str(value)
-    manifest = metadata.get("evidence_manifest") if isinstance(metadata, dict) else None
-    t0 = manifest.get("t0") if isinstance(manifest, dict) else None
-    return str(t0.get("material_fingerprint")) if isinstance(t0, dict) and t0.get("material_fingerprint") else None
-
-
-# Only emit for members that scored high enough to be worth trading
+# Only arm setup handoff for members that scored high enough to be worth review.
 _MIN_SCORE = 45.0
-# total_score threshold for "high" vs "medium" confidence label.
-# The allocator's score ceiling is ~68.5 (opportunity 0.35×100 + tradability
-# 0.25×100 + liquidity 0.15×90 − min cost 5.0), so a 70 threshold made "high"
-# unreachable — every emitted opportunity was forced to "medium". 60 keeps a
-# meaningful split: medium = [45, 60), high = [60, ceiling].
+# Score threshold used by the existing regime-bias override.
 _HIGH_CONF_THRESHOLD = 60.0
 
 # Regime bias threshold: if the direction's bias < this value, skip signal
 # unless score compensates (higher score can override weak regime alignment).
 _REGIME_BIAS_THRESHOLD = 0.30
-_OPPORTUNITY_EVIDENCE_VERSION = "opportunity-information-integrity-v1"
-
-
-def _trigger_evidence_manifest(
-    *,
-    member: dict,
-    feature: dict,
-    snapshot_id: str,
-    direction: str,
-    material_fingerprint: str | None = None,
-) -> dict:
-    """Capture the bounded scanner trigger before any Observer enrichment."""
-    reasons = [str(reason)[:160] for reason in (feature.get("reasons") or [])[:5]]
-    return {
-        "version": _OPPORTUNITY_EVIDENCE_VERSION,
-        "policy_epoch": POLICY_EPOCH_LABEL,
-        "t0": {
-            "status": "available",
-            "trigger_type": "universe_scanner",
-            "universe_snapshot_id": snapshot_id,
-            "universe_member_id": member.get("id"),
-            "feature_snapshot_id": feature.get("feature_snapshot_id"),
-            "symbol": member.get("symbol"),
-            "market_type": member.get("market_type"),
-            "scanner_family": member.get("scanner_family"),
-            "direction": direction,
-            "material_fingerprint": material_fingerprint,
-            "total_score": member.get("total_score"),
-            "entry_price_usd": member.get("entry_price_usd"),
-            "valid_until": member.get("expires_at"),
-            "reasons": reasons,
-        },
-        "t1": {"status": "unavailable"},
-    }
 
 
 class EmissionEvidenceError(RuntimeError):
@@ -203,7 +130,7 @@ def emit_deterministic_opportunities(
     short_enabled: bool = True,
     allow_open_replacement: bool = False,
 ) -> int:
-    """Generate one deterministic Opportunity per eligible high-scoring universe member.
+    """Publish derived handoff facts for selected Universe Candidates.
 
     Args:
         members: inserted_members list from service.refresh() — each has id, symbol,
@@ -211,16 +138,18 @@ def emit_deterministic_opportunities(
         snapshot_id: active universe snapshot id.
         scored_features: the `scored` list from refresh — carries scanner reasons +
                          raw feature values (return_1h, rsi_14, funding_rate, …).
-        linked_strategy_id: optional strategy to attach.
         regime: MarketRegime instance (or None). When provided, signals whose
                 direction conflicts with regime bias are filtered out.
-        allow_open_replacement: publication callers may replace an open
-                analytical generation while its parent snapshot is still active.
+        linked_strategy_id: compatibility argument; Universe refresh no longer
+                attaches strategies directly to an Opportunity.
+        allow_open_replacement: compatibility argument retained for old callers.
                 Queued carriers remain protected; standalone callers retain the
                 cross-snapshot anti-flood guard.
 
     Returns:
-        Number of opportunities created.
+        Number of Opportunity rows created. Universe refresh no longer creates
+        Opportunities directly; Momentum writes Setup rows and other families
+        remain Candidate-only until they have a TriggerSpec.
     """
     from aletheia.learning.opportunity_information_policy import (
         ensure_opportunity_information_policy_epoch,
@@ -234,31 +163,6 @@ def emit_deterministic_opportunities(
         (f["symbol"], f.get("market_type", "spot")): f for f in scored_features
     }
     created = 0
-
-    # #321 emit-source active-defer suppression (flag-gated; helpers hoisted once
-    # so the per-member loop pays nothing when the flag is off). If the latest
-    # Operator judgment for a setup was a direct_skip defer at the SAME material
-    # fingerprint, universe refresh must not mint yet another fresh-id carrier
-    # that re-burns an LLM re-eval. A real market move flips the fingerprint and
-    # this gate falls through to normal emission (DL-INV-23).
-    _emit_defer_suppression = False
-    try:
-        from aletheia.agent_shell.skip_policy import skip_policy_context
-
-        _emit_defer_suppression = bool(
-            skip_policy_context().get("emit_active_defer_suppression")
-        )
-    except Exception:
-        _emit_defer_suppression = False
-    if _emit_defer_suppression:
-        from aletheia.agent_shell.trading_context import (
-            material_fingerprint_from_features as _emit_material_fp,
-            _normalize_direction as _emit_norm_dir,
-            _normalize_market_type as _emit_norm_mkt,
-        )
-        from aletheia.storage.repositories import (
-            latest_direct_skip_defer_for_setup as _emit_latest_skip,
-        )
 
     from aletheia.agent_shell.trading_context import (
         material_fingerprint_from_features as _material_fingerprint,
@@ -503,237 +407,20 @@ def emit_deterministic_opportunities(
                 )
             continue
 
-        # Per-snapshot identity is authoritative before any cross-snapshot
-        # suppression. A retry for the same selected member must reuse the
-        # existing lifecycle row, regardless of another live carrier.
-        db_market = instrument_market_to_db_market(market_type)
-        existing = find_opportunity_by_symbol_snapshot(
-            symbol, snapshot_id,
-            market=db_market,
-        )
-        if existing:
-            _record_emission_decision(
-                member=m,
-                snapshot_id=snapshot_id,
-                member_index=member_index,
-                symbol=symbol,
-                market_type=market_type,
-                total_score=total_score,
-                short_enabled=short_enabled,
-                decision="passed",
-                reason_code="existing_opportunity_reused",
-                direction=direction,
-                opportunity_id=existing.get("id"),
-                regime_tag=regime.state if regime else None,
-                inputs={"existing_status": existing.get("status")},
-            )
-            continue
-
-        # Cross-snapshot live-duplicate guard (#326). An open row may be replaced
-        # only inside the atomic publication that is about to supersede its parent
-        # snapshot; otherwise it remains the anti-flood owner. Queued carriers are
-        # always protected for an unchanged material setup, while a material change
-        # gets a new generation without mutating the older queue carrier.
-        live_dup = find_live_opportunity_by_symbol_direction(
-            symbol, direction, market=db_market,
-        )
-        if live_dup:
-            live_material_fingerprint = _opportunity_material_fingerprint(live_dup)
-            same_material = (
-                not live_material_fingerprint
-                or live_material_fingerprint == current_material_fingerprint
-            )
-            live_status = str(live_dup.get("status") or "")
-            suppress_live_duplicate = (
-                same_material
-                and not (live_status == "open" and allow_open_replacement)
-            )
-            if suppress_live_duplicate:
-                _record_emission_decision(
-                    member=m,
-                    snapshot_id=snapshot_id,
-                    member_index=member_index,
-                    symbol=symbol,
-                    market_type=market_type,
-                    total_score=total_score,
-                    short_enabled=short_enabled,
-                    decision="rejected",
-                    reason_code="live_duplicate_suppressed",
-                    direction=direction,
-                    regime_tag=regime.state if regime else None,
-                    inputs={
-                        "live_opportunity_id": live_dup.get("id"),
-                        "live_opportunity_status": live_status,
-                        "live_valid_until": live_dup.get("valid_until"),
-                        "material_fingerprint": current_material_fingerprint,
-                        "live_material_fingerprint": live_material_fingerprint,
-                        "material_match": same_material,
-                    },
-                )
-                continue
-
-        # Emit-source active-defer suppression (#321). See the hoisted setup above.
-        if _emit_defer_suppression:
-            _norm_dir = _emit_norm_dir(direction)
-            _norm_mkt = _emit_norm_mkt(market_type)
-            prior_skip = _emit_latest_skip(symbol, _norm_dir, _norm_mkt)
-            stored_fp = (prior_skip or {}).get("material_fingerprint")
-            if stored_fp:
-                current_fp = _emit_material_fp(
-                    symbol=symbol,
-                    direction=direction,
-                    market_type=market_type,
-                    scanner_family=family,
-                    features=feat,
-                    regime=regime.state if regime else None,
-                )
-                if current_fp == stored_fp:
-                    _record_emission_decision(
-                        member=m,
-                        snapshot_id=snapshot_id,
-                        member_index=member_index,
-                        symbol=symbol,
-                        market_type=market_type,
-                        total_score=total_score,
-                        short_enabled=short_enabled,
-                        decision="rejected",
-                        reason_code="active_defer_suppressed",
-                        direction=direction,
-                        regime_tag=regime.state if regime else None,
-                        inputs={
-                            "material_fingerprint": current_fp,
-                            "prior_defer_opportunity_id": (
-                                (prior_skip or {}).get("opportunity_id")
-                            ),
-                        },
-                    )
-                    continue
-
-        # Feature retention may reuse a <30-minute row during ordinary refreshes.
-        # A newly emitted Opportunity is a new evidence boundary, so its T0 must
-        # reference the exact calculation that selected this member.
-        from aletheia.universe.features import persist_feature_snapshot_for_emission
-
-        persist_feature_snapshot_for_emission(feat)
-
-        confidence = "high" if total_score >= _HIGH_CONF_THRESHOLD else "medium"
-        # Proxy derivatives signals (RSI fallback, no funding/OI data) are weaker —
-        # cap at medium to avoid triggering strategy_designer high-conf events.
-        if family == "derivatives" and feat.get("is_proxy"):
-            confidence = "medium"
-        reasons: list[str] = feat.get("reasons") or []
-        thesis = (
-            f"[{family}] {'; '.join(reasons)}" if reasons
-            else f"[{family}] score={total_score:.0f}"
-        )
-
-        # Guard: only set execution_eligible if there is live price data within the
-        # last 2 hours. Symbols with zero snapshots would otherwise reach the Trading Decision daemon as
-        # tradeable but fail silently at proposal submission (price=0 → proposal_id=None).
-        _has_fresh_snapshot = has_fresh_market_snapshot(symbol, market_type)
-        # A scanner score is a Candidate, not a complete entry generation.  Only
-        # the Fast Trigger path currently freezes entry/invalidation/cost facts.
-        _exec_eligible = False
-        if not _has_fresh_snapshot:
-            logger.warning(
-                "no_live_price_for_symbol: %s — execution_eligible set to False", symbol
-            )
-
-        opp = Opportunity(
+        _record_emission_decision(
+            member=m,
+            snapshot_id=snapshot_id,
+            member_index=member_index,
             symbol=symbol,
-            market=db_market,
-            direction_bias=direction,
-            thesis=thesis,
-            confidence=confidence,
-            confidence_score=int(round(total_score)),
-            source_agent="universe_scanner",
-            linked_strategy_id=linked_strategy_id,
-            asset_class="crypto",
-            metadata=json.dumps({
-                "learning_candidate_key": m.get("learning_candidate_key"),
-                "learning_exposure_id": m.get("learning_exposure_id"),
-                "evidence_manifest": _trigger_evidence_manifest(
-                    member=m,
-                    feature=feat,
-                    snapshot_id=snapshot_id,
-                    direction=direction,
-                    material_fingerprint=current_material_fingerprint,
-                ),
-                "material_fingerprint": current_material_fingerprint,
-            }, sort_keys=True),
-            execution_eligible=_exec_eligible,
-            universe_snapshot_id=snapshot_id,
-            universe_member_id=member_id,
-            scanner_family=family,
-            valid_until=m.get("expires_at"),
+            market_type=market_type,
+            total_score=total_score,
+            short_enabled=short_enabled,
+            decision="passed",
+            reason_code="candidate_only_no_trigger_spec",
+            direction=direction,
             regime_tag=regime.state if regime else None,
-            funding_rate=feat.get("funding_rate"),
-            open_interest=feat.get("open_interest"),
-            oi_delta_1h=feat.get("oi_delta_1h"),
+            inputs={"material_fingerprint": current_material_fingerprint},
         )
-        try:
-            # A new lifecycle row without its emitted fact is an unaccounted input,
-            # not a partial success. Keep both writes inside one rollback boundary
-            # and increment the caller-visible count only after commit succeeds.
-            with atomic_opportunity_evidence():
-                owner, owner_created = insert_opportunity_once_by_snapshot(opp)
-                if not owner_created:
-                    _record_emission_decision(
-                        member=m,
-                        snapshot_id=snapshot_id,
-                        member_index=member_index,
-                        symbol=symbol,
-                        market_type=market_type,
-                        total_score=total_score,
-                        short_enabled=short_enabled,
-                        decision="passed",
-                        reason_code="existing_opportunity_reused",
-                        direction=direction,
-                        opportunity_id=owner.get("id"),
-                        regime_tag=regime.state if regime else None,
-                        inputs={"existing_status": owner.get("status")},
-                    )
-                else:
-                    _record_emission_decision(
-                        member=m,
-                        snapshot_id=snapshot_id,
-                        member_index=member_index,
-                        symbol=symbol,
-                        market_type=market_type,
-                        total_score=total_score,
-                        short_enabled=short_enabled,
-                        decision="passed",
-                        reason_code="opportunity_emitted",
-                        direction=direction,
-                        opportunity_id=opp.id,
-                        regime_tag=regime.state if regime else None,
-                        inputs={"execution_eligible": _exec_eligible},
-                    )
-            if not owner_created:
-                continue
-            created += 1
-            logger.debug("emitted %s %s %s score=%.0f", family, direction, symbol, total_score)
-        except EmissionEvidenceError:
-            # The source Universe member remains durable and retryable. Do not
-            # relabel an evidence outage as an Opportunity insert failure.
-            raise
-        except Exception as e:
-            logger.warning("Failed to emit opportunity for %s: %s", symbol, e)
-            _record_emission_decision(
-                member=m,
-                snapshot_id=snapshot_id,
-                member_index=member_index,
-                symbol=symbol,
-                market_type=market_type,
-                total_score=total_score,
-                short_enabled=short_enabled,
-                decision="error",
-                reason_code="opportunity_insert_error",
-                direction=direction,
-                opportunity_id=opp.id,
-                regime_tag=regime.state if regime else None,
-                reason_detail=type(e).__name__,
-            )
 
     if created:
         logger.info(
@@ -750,7 +437,7 @@ def _passes_regime_gate(direction: str, total_score: float, regime, short_enable
     Logic:
       - Get the bias for this direction (long_bias or short_bias)
       - If bias >= threshold, always pass
-      - If bias < threshold, only pass if score is exceptionally high (top 20% above _HIGH_CONF_THRESHOLD)
+      - If bias < threshold, only pass if score is exceptionally high
         This allows strong contrarian signals to survive even in hostile regimes.
 
     US-9: short_enabled=False is a HARD operator switch — no score may override it.

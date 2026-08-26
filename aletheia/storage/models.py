@@ -1469,6 +1469,13 @@ class UniverseSnapshot(BaseModel):
 
 
 class UniverseMember(BaseModel):
+    """Durable Universe Candidate.
+
+    The physical SQLite table remains ``universe_members`` for compatibility;
+    semantically each row is a Candidate selected by Universe refresh, not an
+    Opportunity.
+    """
+
     id: str = Field(default_factory=new_id)
     snapshot_id: str
     asset_id: str
@@ -1498,6 +1505,9 @@ class UniverseMember(BaseModel):
     execution_eligible: bool = True
     entry_price_usd: float | None = None
     learning_candidate_key: str | None = None
+
+
+Candidate = UniverseMember
 
 
 class UniverseSetup(_Provenanced):

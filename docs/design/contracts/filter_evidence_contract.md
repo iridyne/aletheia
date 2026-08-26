@@ -109,9 +109,10 @@ administrative exclusion，不得进入 candidate skip、trace/seed 缺口或效
 
 生产者在拒绝输入时，该原因是唯一解释事实：Universe emitter、Divergence scanner
 若无法写入终态记录，必须返回可重试错误，不能以“零 Opportunity、零原因”的成功结束。
-生产者放行并新建 Opportunity 时也必须留下精确的 `opportunity_emitted` 事实；Universe emitter
-把新 Opportunity 与该事实放在同一回滚边界内，证据失败不得留下孤儿 Opportunity，也不得增加
-本轮成功创建数。Market Observer 不是 Universe Opportunity producer；其 pre-filter 或 assessment
+生产者放行并新建 Opportunity 时也必须留下精确的 `opportunity_emitted` 事实。Universe emitter
+现在只发布 Candidate/Setup handoff 事实，不直接新建 Opportunity；历史 `universe_scanner`
+Opportunity 只保留为 legacy/observation carrier，默认不得进入新 Ranker/API 可执行路径。
+Market Observer 不是 Universe Opportunity producer；其 pre-filter 或 assessment
 事实不能替代 emitter 的 producer pass。Universe emitter 的该类失败不是可忽略分析错误：
 当前没有 snapshot/member 级独立重试队列，因此 `UniverseService.refresh` 必须把 scanner run 标为
 failed 并返回失败，禁止继续发布 completed。
@@ -122,8 +123,8 @@ Momentum family 不在 emitter 阶段创建 Opportunity：它必须把 `Universe
 `conditional_entry_authorized` 与 exact-venue T0 materialization 由 setup/authorization/market snapshot
 因果链独立审计，禁止把 setup pass 混入普通 `opportunity_emitted` cohort。
 其他 family 在拥有各自冻结的 entry trigger、entry zone、structural invalidation、same-venue
-cost snapshot 与 material fingerprint 之前，只能保留 `execution_eligible=false` 的 Candidate/
-观察载体；不得用统一 ATR 区间替不同策略伪造完整 Opportunity。
+cost snapshot 与 material fingerprint 之前，只能保留 Candidate；不得用统一 ATR 区间替不同策略
+伪造完整 Opportunity。
 进入队列后的 immutable producer admission 拒绝属于 queue lifecycle：写入唯一的 producer
 eligibility rejection，转为 `signal_queue_evicted` 并终结该 Opportunity。它不是 System Operator
 判断，不得创建 `operator_action_assessment`、outcome seed 或 B2 cohort 成员；暂时无法取得
@@ -151,11 +152,13 @@ Ranker 层的 `family_ttl` 关卡走**软过滤**语义：`valid_until` 到期�
 `UniverseService.refresh` 的 change-suppression 分支（fingerprint 未变且
 `_SNAPSHOT_HEARTBEAT_SEC` 未到）在复用旧 snapshot 时，必须调用
 `repositories.refresh_active_snapshot_ttls` **前滑**该 snapshot 的
-`universe_members.expires_at` 和其 open/queued `opportunities.valid_until`（
+`universe_members.expires_at`，并只为 legacy NULL-generation carrier 兼容前滑
+open/queued `opportunities.valid_until`（
 `WHERE expires_at < new_expires`，只前滑不回退）。这是把 "reuse snapshot"
 真正做成 no-op 的必要一步：没有这条前滑，第一次分配后 30–60 分钟内 fingerprint
 稳定的家族全部会在 Ranker 扫时集体 `ttl_expired`，与"依然被推荐"这个复用
-判定相矛盾。前滑写属于 idempotent 前进操作，允许非事务性失败（降级为软过滤
+判定相矛盾。触发后的 V2 Opportunity 继续由自身 `valid_until` 控制，不跟随 Candidate TTL。
+前滑写属于 idempotent 前进操作，允许非事务性失败（降级为软过滤
 兜底），但成功时必须在日志留下 `members=N opps=M` 计数便于回放。
 Change-suppression fingerprint 必须覆盖会改变载体语义的字段：venue、market、rank、
 scanner family/direction、execution eligibility、family TTL、risk flags 与精确入场证据价；

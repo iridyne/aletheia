@@ -848,8 +848,11 @@ COALESCE(NULLIF(asset_class, ''), 'crypto') IN ('crypto', 'equity')
 AND COALESCE(execution_eligible, 1)=1
 AND NOT (
     COALESCE(NULLIF(asset_class, ''), 'crypto')='crypto'
-    AND source_agent IN ('fast_trigger', 'universe_scanner', 'divergence_scanner')
-    AND COALESCE(generation_version, '')!='opportunity-generation/v2'
+    AND COALESCE(source_agent, '') IN ('fast_trigger', 'universe_scanner', 'divergence_scanner')
+    AND (
+        COALESCE(generation_version, '')!='opportunity-generation/v2'
+        OR setup_id IS NULL
+    )
 )
 """
 _OPEN_TRADE_UNRANKED_SQL = f"""
@@ -7918,6 +7921,9 @@ def insert_universe_member(member: UniverseMember) -> None:
     _insert("universe_members", member.model_dump())
 
 
+insert_candidate = insert_universe_member
+
+
 def insert_universe_members_batch(members: list[UniverseMember]) -> int:
     if not members:
         return 0
@@ -7937,20 +7943,23 @@ def list_universe_members(snapshot_id: str, limit: int = 50) -> list[dict]:
     )
 
 
+list_candidates = list_universe_members
+
+
 def refresh_active_snapshot_ttls(snapshot_id: str, now: datetime) -> tuple[int, int]:
-    """Slide expires_at forward on every member of a reused snapshot, and mirror
-    onto linked open or queued opportunities' valid_until.
+    """Slide Candidate expires_at forward on every reused snapshot member.
 
     Used by universe refresh's change-suppression branch (service._atomic_universe_publication
     is skipped when the allocation fingerprint is unchanged). Without this slide,
-    the members' original expiry — `member.created_at + ttl_sec` — lapses even
+    the Candidates' original expiry — `member.created_at + ttl_sec` — lapses even
     though the allocation is still confirmed valid. The subsequent ranker scan
-    then hard-rejects every carrier with skip_reason=ttl_expired.
+    then hard-rejects every Candidate-derived carrier with skip_reason=ttl_expired.
 
     Only slides forward (`WHERE expires_at < new_expires_at`) so a legitimate
-    longer expiry set elsewhere is never shortened. Queued rows are included
-    because reuse of the same active source snapshot is explicit revalidation;
-    expired/reviewed rows remain terminal.
+    longer expiry set elsewhere is never shortened. For backward compatibility,
+    only legacy NULL-generation Opportunity carriers linked to the same member
+    receive a mirrored valid_until slide; triggered V2 Opportunities keep their
+    own lease.
 
     Returns (members_updated, opportunities_updated).
     """
@@ -8003,6 +8012,9 @@ def get_universe_member(member_id: str) -> dict | None:
     return _select_one("universe_members", member_id)
 
 
+get_candidate = get_universe_member
+
+
 def get_active_universe_members(limit: int = 20) -> list[dict]:
     """Return top-ranked members from the currently active universe snapshot."""
     snap = get_active_universe_snapshot()
@@ -8023,7 +8035,11 @@ def get_latest_feature_snapshot(asset_id: str) -> dict | None:
 def list_opportunities_by_member(member_id: str, limit: int = 5) -> list[dict]:
     return _select_all(
         "opportunities",
-        where="universe_member_id = ?",
+        where=(
+            "universe_member_id = ? "
+            "AND setup_id IS NOT NULL "
+            "AND generation_version='opportunity-generation/v2'"
+        ),
         params=(member_id,),
         order="created_at DESC",
         limit=limit,

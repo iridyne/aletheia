@@ -1,7 +1,7 @@
 """Tests for universe signal_emitter — deterministic direction inference + opportunity emission."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from aletheia.universe.signal_emitter import _infer_direction, emit_deterministic_opportunities
 
@@ -118,7 +118,10 @@ def _make_member(symbol, family, score, member_id=None, expires="2099-01-01T00:0
     return {
         "id": member_id or f"m-{symbol}",
         "snapshot_id": "snap-1",
+        "asset_id": f"asset-{symbol}",
+        "venue": "bitget",
         "symbol": symbol,
+        "market_type": "spot",
         "scanner_family": family,
         "total_score": score,
         "expires_at": expires,
@@ -126,60 +129,100 @@ def _make_member(symbol, family, score, member_id=None, expires="2099-01-01T00:0
 
 
 def _make_feat(symbol, **kw):
-    feat = {"symbol": symbol, "return_1h": 1.5, "return_4h": 3.0, "rsi_14": 60,
+    feat = {"symbol": symbol, "asset_id": f"asset-{symbol}", "venue": "bitget",
+            "return_1h": 1.5, "return_4h": 3.0, "rsi_14": 60,
             "funding_rate": None, "reasons": [f"{symbol} 1h +1.5%"]}
     feat.update(kw)
     return feat
 
 
+def _momentum_bars() -> list[dict]:
+    rows = [
+        {"ts": i * 900_000, "open": 100.0, "high": 109.0, "low": 91.0, "close": 100.0, "volume": 10.0}
+        for i in range(20)
+    ]
+    rows[-1]["high"] = 110.0
+    rows.append({"ts": 20 * 900_000, "open": 100.0, "high": 112.0, "low": 98.0, "close": 111.0, "volume": 20.0})
+    return rows
+
+
 class TestEmitDeterministicOpportunities:
-    def _run(self, members, feats, existing=None, inserted=None):
-        if inserted is None:
-            inserted = []
+    def _run(self, members, feats):
+        decisions = []
 
-        def _fake_find(symbol, snapshot_id, market=None):
-            return existing.get(symbol) if existing else None
+        def _record(**kwargs):
+            decisions.append(kwargs)
 
-        def _fake_insert(opp):
-            inserted.append(opp)
-            return opp.model_dump(), True
-
-        with patch("aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot",
-                   side_effect=_fake_find), \
-             patch("aletheia.universe.signal_emitter.insert_opportunity_once_by_snapshot",
-                   side_effect=_fake_insert), \
-             patch("aletheia.universe.signal_emitter._record_emission_decision"):
+        with patch(
+            "aletheia.universe.signal_emitter._record_emission_decision",
+            side_effect=_record,
+        ), patch(
+            "aletheia.universe.signal_emitter.lookup_factor_signal",
+            return_value={"status": "watch"},
+        ):
             count = emit_deterministic_opportunities(members, "snap-1", feats)
 
-        return count, inserted
+        return count, decisions
 
-    def test_emits_for_eligible_member(self):
+    def test_non_momentum_candidate_does_not_emit_opportunity(self):
         members = [_make_member("BTC/USDT", "mean_reversion", 75)]
         feats = [_make_feat("BTC/USDT", rsi_14=25)]
-        count, opps = self._run(members, feats)
-        assert count == 1
-        opp = opps[0]
-        assert opp.symbol == "BTC/USDT"
-        assert opp.direction_bias == "long"
-        assert opp.source_agent == "universe_scanner"
-        assert opp.confidence == "high"
-        assert opp.confidence_score == 75
+        count, decisions = self._run(members, feats)
+        assert count == 0
+        assert decisions[0]["decision"] == "passed"
+        assert decisions[0]["reason_code"] == "candidate_only_no_trigger_spec"
+        assert decisions[0]["direction"] == "long"
 
-    def test_medium_confidence_below_threshold(self):
+    def test_non_momentum_candidate_score_threshold_is_not_opportunity_confidence(self):
         members = [_make_member("ETH/USDT", "mean_reversion", 55)]
         feats = [_make_feat("ETH/USDT", rsi_14=25)]
-        count, opps = self._run(members, feats)
-        assert count == 1
-        assert opps[0].confidence == "medium"
+        count, decisions = self._run(members, feats)
+        assert count == 0
+        assert decisions[0]["reason_code"] == "candidate_only_no_trigger_spec"
 
-    def test_high_confidence_at_threshold(self):
-        # 60 is the reachable "high" boundary (allocator ceiling ~68.5); a 70
-        # threshold made "high" impossible. Score exactly at threshold → high.
+    def test_high_score_candidate_still_waits_for_trigger_spec(self):
         members = [_make_member("BNB/USDT", "mean_reversion", 60)]
         feats = [_make_feat("BNB/USDT", rsi_14=25)]
-        count, opps = self._run(members, feats)
-        assert count == 1
-        assert opps[0].confidence == "high"
+        count, decisions = self._run(members, feats)
+        assert count == 0
+        assert decisions[0]["inputs"]["material_fingerprint"]
+
+    def test_momentum_candidate_persists_setup_not_opportunity(self, tmp_path, monkeypatch):
+        from tests.test_entry_logic import setup_env
+
+        setup_env(tmp_path, monkeypatch)
+        from aletheia.storage.sqlite import get_db
+
+        member = {
+            **_make_member("BTC/USDT", "momentum", 75, member_id="member-setup"),
+            "market_type": "perp",
+        }
+        feat = {
+            **_make_feat(
+                "BTC/USDT",
+                market_type="perp",
+                atr_15m_pct=1.0,
+                _closed_ohlcv_15m=_momentum_bars(),
+            ),
+        }
+        with patch(
+            "aletheia.universe.signal_emitter.lookup_factor_signal",
+            return_value={"status": "watch"},
+        ):
+            count = emit_deterministic_opportunities([member], "snap-1", [feat])
+
+        assert count == 0
+        setup = get_db().execute(
+            "SELECT member_id,state,symbol,market_type,direction FROM universe_setups"
+        ).fetchone()
+        assert dict(setup) == {
+            "member_id": "member-setup",
+            "state": "pending_authorization",
+            "symbol": "BTC/USDT",
+            "market_type": "perp",
+            "direction": "long",
+        }
+        assert get_db().execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
 
     def test_skips_low_score(self):
         members = [_make_member("LOW/USDT", "momentum", 30)]
@@ -191,8 +234,9 @@ class TestEmitDeterministicOpportunities:
         # momentum with conflicting signals → _infer_direction returns None
         members = [_make_member("AMB/USDT", "momentum", 60)]
         feats = [_make_feat("AMB/USDT", return_1h=1.0, return_4h=-3.0, rsi_14=48)]
-        count, _ = self._run(members, feats)
+        count, decisions = self._run(members, feats)
         assert count == 0
+        assert decisions[0]["reason_code"] == "direction_missing"
 
     def test_regime_rejection_seeds_exact_instrument_outcomes(self, tmp_path, monkeypatch):
         from types import SimpleNamespace
@@ -279,15 +323,7 @@ class TestEmitDeterministicOpportunities:
         )
         assert [row["direction"] for row in outcomes] == ["long"]
 
-    def test_dedup_skips_existing_opportunity(self):
-        members = [_make_member("BTC/USDT", "volatility", 75)]
-        feats = [_make_feat("BTC/USDT")]
-        existing = {"BTC/USDT": {"id": "existing-opp"}}
-        count, opps = self._run(members, feats, existing=existing)
-        assert count == 0
-        assert opps == []
-
-    def test_emits_multiple_members(self):
+    def test_multiple_non_momentum_members_stay_candidate_only(self):
         members = [
             _make_member("BTC/USDT", "volatility", 80),
             _make_member("ETH/USDT", "mean_reversion", 65),
@@ -296,55 +332,43 @@ class TestEmitDeterministicOpportunities:
             _make_feat("BTC/USDT"),
             _make_feat("ETH/USDT", rsi_14=25),
         ]
-        count, opps = self._run(members, feats)
-        assert count == 2
-        symbols = {o.symbol for o in opps}
-        assert "BTC/USDT" in symbols and "ETH/USDT" in symbols
+        count, decisions = self._run(members, feats)
+        assert count == 0
+        assert [d["reason_code"] for d in decisions] == [
+            "candidate_only_no_trigger_spec",
+            "candidate_only_no_trigger_spec",
+        ]
 
     def test_mean_reversion_direction_correct(self):
         members = [_make_member("ETH/USDT", "mean_reversion", 70)]
         feats = [_make_feat("ETH/USDT", rsi_14=25, return_4h=-3.0)]
-        count, opps = self._run(members, feats)
-        assert count == 1
-        assert opps[0].direction_bias == "long"  # oversold → long
+        count, decisions = self._run(members, feats)
+        assert count == 0
+        assert decisions[0]["direction"] == "long"  # oversold → long
 
     def test_skips_member_with_no_feature(self):
         members = [_make_member("GHOST/USDT", "momentum", 80)]
         feats = []  # no features for this symbol
-        count, _ = self._run(members, feats)
+        count, decisions = self._run(members, feats)
         assert count == 0
+        assert decisions[0]["reason_code"] == "feature_missing"
 
-    def test_valid_until_set_from_expires_at(self):
+    def test_candidate_ttl_is_not_opportunity_valid_until(self):
         members = [_make_member("BTC/USDT", "mean_reversion", 75, expires="2099-06-01T00:00:00")]
         feats = [_make_feat("BTC/USDT", rsi_14=25)]
-        count, opps = self._run(members, feats)
-        assert count == 1
-        assert opps[0].valid_until == "2099-06-01T00:00:00"
+        count, decisions = self._run(members, feats)
+        assert count == 0
+        assert decisions[0]["reason_code"] == "candidate_only_no_trigger_spec"
 
-    def test_perp_eligibility_never_uses_a_spot_snapshot(self):
+    def test_perp_candidate_does_not_check_spot_snapshot_for_execution_eligibility(self):
         members = [{**_make_member("BTC/USDT", "volatility", 75), "market_type": "perp"}]
         feats = [{**_make_feat("BTC/USDT"), "market_type": "perp"}]
-        inserted = []
 
-        def _snapshots(*, symbol, market_type, limit):
-            assert symbol == "BTC/USDT"
-            assert market_type == "perp"
-            return []
+        count, decisions = self._run(members, feats)
+        assert count == 0
+        assert decisions[0]["market_type"] == "perp"
 
-        with patch("aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot", return_value=None), \
-             patch(
-                 "aletheia.universe.signal_emitter.insert_opportunity_once_by_snapshot",
-                 side_effect=lambda opp: (inserted.append(opp) or opp.model_dump(), True),
-             ), \
-             patch("aletheia.universe.signal_emitter._record_emission_decision"), \
-             patch("aletheia.universe.snapshot_freshness.list_market_snapshots", side_effect=_snapshots):
-            count = emit_deterministic_opportunities(members, "snap-1", feats)
-
-        assert count == 1
-        assert inserted[0].market == "usdt_futures"
-        assert inserted[0].execution_eligible is False
-
-    def test_derivatives_context_stamped_on_universe_opportunity(self):
+    def test_derivatives_context_remains_candidate_evidence_not_opportunity(self):
         members = [_make_member("BTC/USDT", "derivatives", 75)]
         feats = [_make_feat(
             "BTC/USDT",
@@ -352,49 +376,18 @@ class TestEmitDeterministicOpportunities:
             open_interest=1_250_000_000.0,
             oi_delta_1h=7.5,
         )]
-        count, opps = self._run(members, feats)
-        assert count == 1
-        opp = opps[0]
-        assert opp.funding_rate == -0.012
-        assert opp.open_interest == 1_250_000_000.0
-        assert opp.oi_delta_1h == 7.5
+        count, decisions = self._run(members, feats)
+        assert count == 0
+        assert decisions[0]["reason_code"] == "candidate_only_no_trigger_spec"
 
-    def test_thesis_includes_reasons(self):
+    def test_candidate_reasons_are_not_rewritten_into_opportunity_thesis(self):
         members = [_make_member("BTC/USDT", "mean_reversion", 75)]
         feats = [_make_feat("BTC/USDT", rsi_14=25, reasons=["RSI 25 oversold"])]
-        count, opps = self._run(members, feats)
-        assert count == 1
-        assert "RSI 25 oversold" in opps[0].thesis
-        assert "mean_reversion" in opps[0].thesis
+        count, decisions = self._run(members, feats)
+        assert count == 0
+        assert decisions[0]["reason_code"] == "candidate_only_no_trigger_spec"
 
-    def test_insert_failure_is_non_fatal(self):
-        members = [
-            _make_member("BTC/USDT", "volatility", 80),
-            _make_member("ETH/USDT", "volatility", 70),
-        ]
-        feats = [_make_feat("BTC/USDT"), _make_feat("ETH/USDT")]
-        inserted = []
-        call_count = 0
-
-        def _failing_insert(opp):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("db error")
-            inserted.append(opp)
-            return opp.model_dump(), True
-
-        with patch("aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot",
-                   return_value=None), \
-             patch("aletheia.universe.signal_emitter.insert_opportunity_once_by_snapshot",
-                   side_effect=_failing_insert), \
-             patch("aletheia.universe.signal_emitter._record_emission_decision"):
-            count = emit_deterministic_opportunities(members, "snap-1", feats)
-
-        assert count == 1  # only the second one succeeded
-        assert len(inserted) == 1
-
-    def test_every_member_persists_one_terminal_emission_fact(self, tmp_path, monkeypatch):
+    def test_every_member_persists_one_terminal_candidate_fact(self, tmp_path, monkeypatch):
         from tests.test_entry_logic import setup_env
 
         setup_env(tmp_path, monkeypatch)
@@ -409,15 +402,6 @@ class TestEmitDeterministicOpportunities:
         ]
 
         with patch(
-            "aletheia.universe.signal_emitter.find_opportunity_by_symbol_snapshot",
-            return_value=None,
-        ), patch(
-            "aletheia.universe.signal_emitter.insert_opportunity_once_by_snapshot",
-            side_effect=lambda opp: (opp.model_dump(), True),
-        ), patch(
-            "aletheia.universe.signal_emitter.has_fresh_market_snapshot",
-            return_value=True,
-        ), patch(
             "aletheia.universe.signal_emitter.lookup_factor_signal",
             return_value={"status": "watch"},
         ):
@@ -433,9 +417,9 @@ class TestEmitDeterministicOpportunities:
             row["universe_member_id"]: (row["decision"], row["reason_code"])
             for row in rows
         }
-        assert count == 1
+        assert count == 0
         assert facts == {
-            "member-good": ("passed", "opportunity_emitted"),
+            "member-good": ("passed", "candidate_only_no_trigger_spec"),
             "member-low": ("rejected", "score_below_minimum"),
             "member-missing": ("rejected", "feature_missing"),
         }
@@ -461,10 +445,10 @@ class TestEmitDeterministicOpportunities:
             emit_deterministic_opportunities(members, "snap-1", feats)
 
     @pytest.mark.parametrize("caller_owns_transaction", [False, True])
-    def test_new_opportunity_rolls_back_when_emitted_evidence_fails(
+    def test_candidate_pass_rolls_back_when_evidence_fails(
         self, tmp_path, monkeypatch, caller_owns_transaction
     ):
-        """The lifecycle row and its producer fact are one durable unit."""
+        """A candidate pass without its durable fact is retryable, not success."""
         from tests.test_entry_logic import setup_env
 
         setup_env(tmp_path, monkeypatch)
@@ -485,19 +469,15 @@ class TestEmitDeterministicOpportunities:
         def fail_only_emitted_fact(fact):
             if (
                 fact.filter_name == "opportunity_emission"
-                and fact.reason_code == "opportunity_emitted"
+                and fact.reason_code == "candidate_only_no_trigger_spec"
             ):
-                raise RuntimeError("emitted evidence unavailable")
+                raise RuntimeError("candidate evidence unavailable")
             return real_insert(fact)
 
         monkeypatch.setattr(
             filter_evidence.repo,
             "insert_filter_decision",
             fail_only_emitted_fact,
-        )
-        monkeypatch.setattr(
-            "aletheia.universe.signal_emitter.has_fresh_market_snapshot",
-            lambda *_args, **_kwargs: True,
         )
         monkeypatch.setattr(
             "aletheia.universe.signal_emitter.lookup_factor_signal",
@@ -524,7 +504,7 @@ class TestEmitDeterministicOpportunities:
             ).fetchone()[0] == 0
             assert db.execute(
                 "SELECT COUNT(*) FROM filter_decisions WHERE universe_member_id=? "
-                "AND reason_code='opportunity_emitted'",
+                "AND reason_code='candidate_only_no_trigger_spec'",
                 ("member-emission-atomic",),
             ).fetchone()[0] == 0
 
@@ -554,17 +534,12 @@ def _persist_emitter_snapshot(repo, snapshot_id: str, member_id: str) -> dict:
 def test_publication_replaces_open_generation_before_snapshot_cascade(
     tmp_path, monkeypatch
 ):
-    """A real replacement leaves one active owner after old snapshot cascade."""
+    """Candidate refresh no longer creates open Opportunity generations."""
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
     from aletheia.storage import repositories as repo
-    from aletheia.storage.sqlite import get_db
 
-    monkeypatch.setattr(
-        "aletheia.universe.signal_emitter.has_fresh_market_snapshot",
-        lambda *_args, **_kwargs: True,
-    )
     monkeypatch.setattr(
         "aletheia.universe.signal_emitter.lookup_factor_signal",
         lambda *_args, **_kwargs: {"status": "watch"},
@@ -573,23 +548,15 @@ def test_publication_replaces_open_generation_before_snapshot_cascade(
     first_member = _persist_emitter_snapshot(repo, "snap-integrity-1", "member-integrity-1")
     assert emit_deterministic_opportunities(
         [first_member], "snap-integrity-1", [feature]
-    ) == 1
+    ) == 0
 
     second_member = _persist_emitter_snapshot(repo, "snap-integrity-2", "member-integrity-2")
     assert emit_deterministic_opportunities(
         [second_member], "snap-integrity-2", [feature], allow_open_replacement=True
-    ) == 1
+    ) == 0
 
     repo.expire_universe_snapshots("spot", except_id="snap-integrity-2")
-    assert repo.expire_opportunities_from_superseded_snapshots("spot") == 1
-    rows = get_db().execute(
-        "SELECT universe_snapshot_id,status FROM opportunities "
-        "WHERE symbol='BTC/USDT' AND market='spot' ORDER BY created_at,rowid"
-    ).fetchall()
-    assert [(row["universe_snapshot_id"], row["status"]) for row in rows] == [
-        ("snap-integrity-1", "expired"),
-        ("snap-integrity-2", "open"),
-    ]
+    assert repo.expire_opportunities_from_superseded_snapshots("spot") == 0
 
 
 def test_queued_material_identity_suppresses_unchanged_and_reopens_changed_setup(
@@ -599,12 +566,7 @@ def test_queued_material_identity_suppresses_unchanged_and_reopens_changed_setup
 
     setup_env(tmp_path, monkeypatch)
     from aletheia.storage import repositories as repo
-    from aletheia.storage.sqlite import get_db
 
-    monkeypatch.setattr(
-        "aletheia.universe.signal_emitter.has_fresh_market_snapshot",
-        lambda *_args, **_kwargs: True,
-    )
     monkeypatch.setattr(
         "aletheia.universe.signal_emitter.lookup_factor_signal",
         lambda *_args, **_kwargs: {"status": "watch"},
@@ -613,12 +575,7 @@ def test_queued_material_identity_suppresses_unchanged_and_reopens_changed_setup
     feature = _make_feat("BTC/USDT", market_type="spot", rsi_14=25)
     assert emit_deterministic_opportunities(
         [first_member], "snap-material-1", [feature]
-    ) == 1
-    get_db().execute(
-        "UPDATE opportunities SET status='queued' WHERE universe_snapshot_id=?",
-        ("snap-material-1",),
-    )
-    get_db().commit()
+    ) == 0
 
     unchanged_member = _persist_emitter_snapshot(repo, "snap-material-2", "member-material-2")
     assert emit_deterministic_opportunities(
@@ -629,12 +586,4 @@ def test_queued_material_identity_suppresses_unchanged_and_reopens_changed_setup
     changed = _make_feat("BTC/USDT", market_type="spot", return_4h=9.0, rsi_14=20)
     assert emit_deterministic_opportunities(
         [changed_member], "snap-material-3", [changed]
-    ) == 1
-    rows = get_db().execute(
-        "SELECT universe_snapshot_id,status FROM opportunities "
-        "WHERE symbol='BTC/USDT' AND market='spot' ORDER BY created_at,rowid"
-    ).fetchall()
-    assert [(row["universe_snapshot_id"], row["status"]) for row in rows] == [
-        ("snap-material-1", "queued"),
-        ("snap-material-3", "open"),
-    ]
+    ) == 0

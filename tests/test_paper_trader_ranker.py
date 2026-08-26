@@ -926,6 +926,131 @@ def test_open_trade_rotation_queries_use_matching_indexes_at_scale(
     assert not failures, f"{'; '.join(failures)}; plans={plan_details!r}"
 
 
+def test_open_trade_workset_excludes_legacy_universe_but_keeps_triggered_generation(
+    tmp_path, monkeypatch
+):
+    from tests.test_entry_logic import setup_env
+
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import OpportunityGenerationV2
+
+    generation = {
+        "instrument_identity": {
+            "venue": "bitget",
+            "symbol": "ETH/USDT",
+            "market_type": "perp",
+        },
+        "family": "momentum",
+        "archetype": "breakout",
+        "direction": "long",
+        "detected_at": "2026-08-26T00:00:00+00:00",
+        "signal_mark": 100.2,
+        "motive_evidence": {"reason": "test"},
+        "entry_trigger": {"trigger": "test"},
+        "entry_zone": [100.0, 100.5],
+        "invalidation": {"price": 98.0},
+        "horizon_hours": 4,
+        "cost_snapshot": {
+            "cost_model_version": "test",
+            "spread_bps": 5.0,
+            "estimated_slippage_bps": 1.0,
+            "funding": {"status": "not_applicable"},
+            "depth_10bps_usd": 50_000,
+            "target_notional_usd": 100.0,
+            "capacity_ratio": 0.01,
+        },
+        "material_fingerprint": "f" * 64,
+        "valid_until": "2099-01-01T00:00:00+00:00",
+    }
+    payload, digest = repo.canonical_opportunity_generation(
+        OpportunityGenerationV2.model_validate(generation)
+    )
+    with repo.transaction():
+        repo.get_db().executemany(
+            "INSERT INTO opportunities "
+            "(id,symbol,market,direction_bias,confidence,status,asset_class,"
+            "source_agent,execution_eligible,generation_version,generation_json,"
+            "generation_hash,setup_id,created_at,last_ranked_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [
+                (
+                    "legacy-universe",
+                    "BTC/USDT",
+                    "spot",
+                    "long",
+                    "high",
+                    "open",
+                    "crypto",
+                    "universe_scanner",
+                    1,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "2026-08-26T00:00:00+00:00",
+                    None,
+                ),
+                (
+                    "triggered-v2",
+                    "ETH/USDT",
+                    "usdt_futures",
+                    "long",
+                    "high",
+                    "open",
+                    "crypto",
+                    "fast_trigger",
+                    1,
+                    "opportunity-generation/v2",
+                    payload,
+                    digest,
+                    "setup-1",
+                    "2026-08-26T00:01:00+00:00",
+                    None,
+                ),
+                (
+                    "v2-without-setup",
+                    "XRP/USDT",
+                    "usdt_futures",
+                    "long",
+                    "high",
+                    "open",
+                    "crypto",
+                    "universe_scanner",
+                    1,
+                    "opportunity-generation/v2",
+                    payload,
+                    digest,
+                    None,
+                    "2026-08-26T00:01:30+00:00",
+                    None,
+                ),
+                (
+                    "legacy-unknown-source",
+                    "SOL/USDT",
+                    "spot",
+                    "long",
+                    "high",
+                    "open",
+                    "crypto",
+                    None,
+                    1,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "2026-08-26T00:02:00+00:00",
+                    None,
+                ),
+            ],
+        )
+
+    ids = {row["id"] for row in repo.list_open_trade_opportunities(limit=10)}
+    assert "legacy-universe" not in ids
+    assert "v2-without-setup" not in ids
+    assert {"triggered-v2", "legacy-unknown-source"} <= ids
+
+
 def test_accepted_candidate_evidence_failure_prevents_queue_transition(
     tmp_path, monkeypatch
 ):

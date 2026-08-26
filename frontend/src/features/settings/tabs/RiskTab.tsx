@@ -369,7 +369,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       )}
       <p className="hint">
         When enabled, the Universe Generator scans all exchange USDT pairs every {refreshMin} min, scores them by momentum/mean-reversion/volatility/derivatives,
-        and feeds the top {maxCandidates} to agents. Explore ratio ({(parseFloat(exploreRatio) * 100).toFixed(0)}%) adds random diversity.
+        and keeps the top {maxCandidates} as Candidates. Explore ratio ({(parseFloat(exploreRatio) * 100).toFixed(0)}%) adds random diversity.
         Interval and TTL changes take effect after gateway restart.
       </p>
     </div>
@@ -417,6 +417,7 @@ function FastTriggerConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   return (
     <div className="card mt-3 mb-0">
       <h3>Momentum Fast Trigger</h3>
+      <p className="hint">Turns authorized Momentum setups into triggered Opportunities; other Universe families remain Candidate-only.</p>
       <div className="settings-field-grid">
         <label className="settings-field">
           <span>Mode</span>

@@ -27,15 +27,19 @@ conditional authorization for one exact setup; a deterministic, no-LLM fast
 trigger then uses fresh same-venue public market data to materialize one
 immutable Opportunity and TradeProposal at the actual entry instant. The
 existing Risk Engine and Execution Gateway remain the only order authority.
+The Candidate persistence table is still physically named `universe_members`;
+that name is compatibility, not Opportunity semantics.
 
-## Current fact
+## Current repository behavior
 
-`UniverseService.refresh()` currently publishes selected members and calls
-`emit_deterministic_opportunities()` in the same SQLite publication unit.
-Momentum members therefore become Opportunities before a pullback/reclaim
-entry exists. The current Proposal, RiskDecision, Order, Fill, and Position
-causal chain remains authoritative, and `execute_existing_proposal()` already
-keeps Risk and broker I/O outside its short execution-claim transaction.
+`UniverseService.refresh()` publishes selected Candidates and any derived
+Momentum setup facts in one SQLite publication unit. It does not create
+executable Opportunities. Historical `source_agent='universe_scanner'`
+Opportunity rows remain audit/observation history and are excluded from the new
+Ranker/API executable path unless they carry setup-linked V2 trigger evidence.
+The current Proposal, RiskDecision, Order, Fill, and Position causal chain
+remains authoritative, and `execute_existing_proposal()` already keeps Risk and
+broker I/O outside its short execution-claim transaction.
 
 ## Goals and non-goals
 

@@ -263,7 +263,7 @@ async def _persist_relative_rank_shadow_nonfatal(*args, **kwargs) -> int:
 
 @contextmanager
 def _atomic_universe_publication():
-    """Publish snapshot, members and emitted Opportunities as one unit.
+    """Publish snapshot, Candidates, and derived setup facts as one unit.
 
     A refresh may be called while its thread already owns a SQLite transaction.
     Repository transactions intentionally join that caller, so use a nested
@@ -1094,7 +1094,7 @@ class UniverseService:
                         cascaded,
                     )
 
-            # Selection is evidence only after the snapshot and Opportunity handoff
+            # Selection is evidence only after the snapshot and Candidate/Setup handoff
             # commit. A failed publication must not look like an applied paper arm.
             inserted_experiment_outcomes = _register_experiment_candidate_outcomes(
                 pre_scored,
@@ -1134,9 +1134,8 @@ class UniverseService:
                 completed_at=datetime.now(timezone.utc).isoformat(),
                 snapshot_id=snap.id,
             )
-            # Nudge paper_trader ranker to evaluate the newly-emitted carriers
-            # instead of waiting for its 3-min interval tick. Debounced,
-            # fire-and-forget, respects scheduler pause / kill switch.
+            # Candidate refresh may arm Momentum setups; the ranker nudge is
+            # harmless for families that remain Candidate-only.
             try:
                 from aletheia.agent_runtime.scheduler import notify_paper_trader
                 notify_paper_trader(source="universe_refresh_new_snapshot")

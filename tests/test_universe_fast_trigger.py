@@ -972,10 +972,6 @@ def test_momentum_emitter_persists_setup_not_opportunity(tmp_path, monkeypatch):
         "atr_15m_pct": 1.0, "_closed_ohlcv_15m": _bars("long"), "reasons": [],
     }
     monkeypatch.setattr(
-        "aletheia.universe.signal_emitter.has_fresh_market_snapshot",
-        lambda *args, **kwargs: True,
-    )
-    monkeypatch.setattr(
         "aletheia.universe.signal_emitter.lookup_factor_signal",
         lambda *args, **kwargs: {"status": "watch"},
     )
