@@ -363,7 +363,7 @@ def test_export_passes_mode_before_limit_to_repository(monkeypatch):
     response = data.export_trades(limit=1, execution_mode="okx_demo")
 
     assert seen == {"status": "closed", "execution_mode": "okx_demo", "limit": 1}
-    assert response.headers["content-disposition"].endswith("trades_export_okx_demo.csv\"")
+    assert response.headers["content-disposition"].endswith("trades_export_okx_demo.csv")
 
 
 def test_system_operator_layer2_resolves_and_threads_one_mode(monkeypatch):
