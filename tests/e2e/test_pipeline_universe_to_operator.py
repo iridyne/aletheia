@@ -122,7 +122,7 @@ class _FixtureCCXTProvider:
             change_pct_24h=3.5,
             high_24h=latest * 1.01,
             low_24h=latest * 0.99,
-            provider="fixture",
+            provider=instrument.exchange,
         )
 
     async def close(self):
@@ -146,11 +146,11 @@ async def test_real_universe_refresh_reaches_one_operator_defer(
     from aletheia.universe.service import UniverseService
 
     # The E2E database is session-scoped, but configuration is a file. Keep this
-    # scenario's fixture venue from leaking into whichever E2E test runs next.
+    # scenario's known venue from leaking into whichever E2E test runs next.
     monkeypatch.setattr(config_loader, "CONFIG_PATH", tmp_path / "config.yaml")
     cfg = load_config()
-    cfg.market_data.ccxt_exchange = "fixture"
-    cfg.market_data.ccxt_fallback = "fixture"
+    cfg.market_data.ccxt_exchange = "binance"
+    cfg.market_data.ccxt_fallback = "binance"
     cfg.market_data.enable_crypto_fallback = False
     cfg.market_data.observed_instruments = []
     cfg.market_data.observed_symbols = ["SOL/USDT"]
@@ -217,7 +217,7 @@ async def test_real_universe_refresh_reaches_one_operator_defer(
     # no MarketSnapshot or Opportunity is hand-inserted by the test.
     collected = await collect_market_snapshots()
     assert collected["errors"] == []
-    assert collected["collected"] == ["fixture:SOL/USDT:spot"]
+    assert collected["collected"] == ["binance:SOL/USDT:spot"]
 
     snapshot_id = await UniverseService().refresh()
     assert snapshot_id is not None
