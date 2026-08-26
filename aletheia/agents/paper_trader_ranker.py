@@ -531,9 +531,10 @@ def _evaluate_candidate(
     # okx_demo. Use opp market_type so swap-only symbols don't pass a perp candidate.
     if global_venue == "okx_demo":
         try:
-            from aletheia.execution.okx_broker import _get_demo_symbols
+            from aletheia.execution.venue_capabilities import get_supported_symbols
+
             _opp_market_type = (opp.get("market") or "usdt_futures").lower()
-            _okx_supported = _get_demo_symbols(_opp_market_type)
+            _okx_supported = get_supported_symbols(global_venue, _opp_market_type)
             if _okx_supported is not None and to_canonical(symbol) not in _okx_supported:
                 _filter_step(
                     filter_trace, "venue_symbol_capability", "rejected",
