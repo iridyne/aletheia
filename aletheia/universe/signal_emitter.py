@@ -218,6 +218,9 @@ def _build_setup(
         "total_score": member.get("total_score"),
         "reasons": [str(reason)[:160] for reason in (feature.get("reasons") or [])[:5]],
         "regime": regime_tag,
+        "funding_rate": feature.get("funding_rate"),
+        "open_interest": feature.get("open_interest"),
+        "oi_delta_1h": feature.get("oi_delta_1h"),
     }
     try:
         compatibility_price = float(feature.get("last_price") or member.get("entry_price_usd") or 1.0)
