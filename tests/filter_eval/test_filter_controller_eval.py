@@ -266,20 +266,23 @@ def _fake_recommendations_db(monkeypatch, rows: list[dict]):
         " id TEXT PRIMARY KEY, run_id TEXT, created_at TEXT, "
         " filter_name TEXT, scanner_family TEXT, direction TEXT, "
         " market_type TEXT, horizon TEXT, filter_version TEXT, "
+        " cost_model_version TEXT, "
         " evidence_verdict TEXT, verdict TEXT, error_signal REAL, reasoning TEXT)"
     )
     for i, row in enumerate(rows):
         conn.execute(
             "INSERT INTO controller_recommendations "
             "(id, run_id, created_at, filter_name, scanner_family, direction, "
-            " market_type, horizon, filter_version, evidence_verdict, verdict, "
+            " market_type, horizon, filter_version, cost_model_version, "
+            " evidence_verdict, verdict, "
             " error_signal, reasoning) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 row.get("id") or f"row-{i}",
                 row["run_id"], row["created_at"], row["filter_name"],
                 row["scanner_family"], row.get("direction"), row.get("market_type"),
                 row.get("horizon"), row.get("filter_version"),
+                row.get("cost_model_version"),
                 row.get("evidence_verdict"),
                 # verdict is CHECK-constrained in production; the legacy coercion
                 # never emits overrestrictive_suspect. Default to insufficient_data
@@ -294,12 +297,14 @@ def _fake_recommendations_db(monkeypatch, rows: list[dict]):
 
 
 def _mk_row(*, run_id, created_at, cell="momentum", filter_name="family_ttl",
-            verdict="overrestrictive_suspect", error=0.12, reasoning=""):
+            verdict="overrestrictive_suspect", error=0.12, reasoning="",
+            cost_model_version="v1"):
     return {
         "run_id": run_id, "created_at": created_at,
         "filter_name": filter_name, "scanner_family": cell,
         "direction": "long", "market_type": "perp", "horizon": "4h",
-        "filter_version": "v1", "evidence_verdict": verdict,
+        "filter_version": "v1", "cost_model_version": cost_model_version,
+        "evidence_verdict": verdict,
         "error_signal": error, "reasoning": reasoning,
     }
 
@@ -337,6 +342,17 @@ def test_persistent_full_streak(monkeypatch):
     assert p.latest_error_signal == 0.13
     assert p.latest_run_id == "run-c"
     assert "rejected mean" in p.latest_reasoning
+    assert p.cost_model_version == "v1"
+
+
+def test_persistent_cost_model_change_breaks_streak(monkeypatch):
+    _fake_recommendations_db(monkeypatch, [
+        _mk_row(run_id="run-a", created_at="2026-07-19T00:00:00+00:00", cost_model_version="v1"),
+        _mk_row(run_id="run-b", created_at="2026-07-19T06:00:00+00:00", cost_model_version="v1"),
+        _mk_row(run_id="run-c", created_at="2026-07-19T12:00:00+00:00", cost_model_version="v2"),
+    ])
+
+    assert fc.compute_persistent_recommendations(min_consecutive_runs=3) == []
 
 
 def test_persistent_broken_streak_by_hold_verdict(monkeypatch):
@@ -416,6 +432,7 @@ def test_build_report_includes_persistent_field(monkeypatch):
         fc.PersistentRecommendation(
             filter_name="family_ttl", scanner_family="momentum",
             direction="long", market_type="perp", horizon="4h", filter_version="v1",
+            cost_model_version="v1",
             consecutive_suspect_runs=4, runs_analyzed=6,
             first_suspect_at="2026-07-18T00:00:00+00:00",
             last_suspect_at="2026-07-19T12:00:00+00:00",
@@ -448,6 +465,7 @@ def test_render_report_shows_persistent_section(monkeypatch):
         fc.PersistentRecommendation(
             filter_name="family_ttl", scanner_family="momentum",
             direction="long", market_type="perp", horizon="4h", filter_version="v1",
+            cost_model_version="v1",
             consecutive_suspect_runs=4, runs_analyzed=6,
             first_suspect_at="2026-07-18T00:00:00+00:00",
             last_suspect_at="2026-07-19T12:00:00+00:00",

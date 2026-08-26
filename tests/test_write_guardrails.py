@@ -105,6 +105,7 @@ def test_filter_controller_skips_both_insufficient(monkeypatch):
             self.direction = None
             self.market_type = None
             self.horizon = None
+            self.cost_model_version = None
             self.passed_n = None
             self.rejected_n = None
             self.passed_shrunk_avg_net = None

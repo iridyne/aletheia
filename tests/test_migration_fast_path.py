@@ -259,9 +259,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 42)
+        f"aletheia-sqlite-v{version}" for version in range(2, 43)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v41"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v42"
     connection.close()
 
 

@@ -856,13 +856,14 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
         if row["filter_name"] == "ranker_confidence_gate"
         and row["decision"] == "rejected"
         and row["horizon"] == "4h"
+        and row["cost_model_version"] == "v1"
     )
     assert rejected["blocked_avoided_loss_count"] == 1
     assert rejected["blocked_missed_alpha_count"] == 1
     assert rejected["blocked_net_sum"] == pytest.approx(0.2)
-    assert rejected["n_total"] == 15
+    assert rejected["n_total"] == 10
     assert rejected["n_net"] == 3
-    assert rejected["outcome_coverage"] == 0.2
+    assert rejected["outcome_coverage"] == 0.3
 
 
 def test_filter_snapshot_drops_sensitive_keys_and_truncates_text():
@@ -1100,6 +1101,7 @@ def test_batch_controller_reads_only_referenced_outcome_keys():
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import FilterCandidateOutcome
     from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
     now = datetime.now(timezone.utc)
     relevant_key = "universe:controller-relevant"
@@ -1140,7 +1142,7 @@ def test_batch_controller_reads_only_referenced_outcome_keys():
             min_tradable_edge_pct=0.05,
             settlement_price_source="horizon_ohlcv",
             settlement_lag_sec=0,
-            cost_model_version="test-v1",
+            cost_model_version=COST_MODEL_VERSION,
         ))
     repo.insert_filter_candidate_outcomes_batch(outcomes)
 
@@ -1158,11 +1160,62 @@ def test_batch_controller_reads_only_referenced_outcome_keys():
         if "FROM filter_candidate_outcomes" in statement
     ]
     assert outcome_selects
-    assert all("WHERE outcome_candidate_key IN" in sql for sql in outcome_selects)
+    assert all("outcome_candidate_key IN" in sql for sql in outcome_selects)
     scoped = [row for row in rows if row["horizon"] == "1h"]
     assert len(scoped) == 1
     assert scoped[0]["n_total"] == 1
     assert scoped[0]["n_net"] == 1
+
+
+def test_filter_feedback_stats_ignores_legacy_cost_model_outcomes():
+    from aletheia.analytics.filter_evidence import (
+        filter_feedback_stats,
+        record_filter_decision,
+    )
+    from aletheia.storage.sqlite import get_db
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    common = dict(
+        candidate_kind="opportunity",
+        filter_name="ranker_confidence_gate",
+        stage="paper_ranker",
+        reason_code="test",
+        symbol="BTC/USDT",
+        venue="okx",
+        market_type="perp",
+        direction="long",
+        scanner_family="momentum",
+        entry_price_usd=100.0,
+        parameters={"minimum_confidence": "medium"},
+    )
+    for suffix, decision, cost_model in (
+        ("current", "passed", COST_MODEL_VERSION),
+        ("legacy", "rejected", "legacy-cost-v0"),
+    ):
+        key = f"opportunity:cost-model:{suffix}"
+        record_filter_decision(candidate_key=key, decision=decision, **common)
+        get_db().execute(
+            "UPDATE filter_candidate_outcomes SET status='settled', "
+            "directional_return_pct=0.4, exit_price_usd=100.4, "
+            "estimated_fee_pct=0.1, estimated_spread_slippage_pct=0.1, "
+            "estimated_funding_pct=0, net_return_pct=0.2, "
+            "min_tradable_edge_pct=0.05, "
+            "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
+            "cost_model_version=? "
+            "WHERE outcome_candidate_key=? AND horizon='4h'",
+            (cost_model, key),
+        )
+
+    rows = [
+        row for row in filter_feedback_stats()
+        if row["filter_name"] == "ranker_confidence_gate" and row["horizon"] == "4h"
+    ]
+
+    by_decision = {row["decision"]: row for row in rows}
+    assert by_decision["passed"]["cost_model_version"] == COST_MODEL_VERSION
+    assert by_decision["passed"]["n_net"] == 1
+    assert by_decision["rejected"]["cost_model_version"] == "legacy-cost-v0"
+    assert by_decision["rejected"]["n_net"] == 0
 
 
 def test_ranker_trace_stops_at_first_rejection(monkeypatch):

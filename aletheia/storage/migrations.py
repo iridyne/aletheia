@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v41"
+SCHEMA_VERSION = "aletheia-sqlite-v42"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -3464,6 +3464,16 @@ ALTER TABLE paper_account_events_v41 RENAME TO paper_account_events;
 CREATE INDEX idx_paper_account_events_created
     ON paper_account_events(created_at DESC);
 """
+
+_CONTROLLER_RECOMMENDATION_COST_MODEL_COLUMNS = (
+    ("cost_model_version", "controller_recommendations", "TEXT"),
+)
+_CONTROLLER_RECOMMENDATION_COST_MODEL_CHECKSUM = hashlib.sha256(
+    (
+        repr(_CONTROLLER_RECOMMENDATION_COST_MODEL_COLUMNS)
+        + "\ncontroller_recommendation_cost_model_v1"
+    ).encode("utf-8")
+).hexdigest()
 _PAPER_ACCOUNT_DERIVED_INVALIDATION_COLUMNS = (
     ("invalidated_at", "shadow_trades", "TEXT"),
     ("invalidation_reason", "shadow_trades", "TEXT"),
@@ -5052,6 +5062,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260826_0040_paper_account_invalidation_v41": (
         "append-only paper-account economics invalidation"
     ),
+    "20260826_0041_controller_recommendation_cost_model_v42": (
+        "controller recommendation cost-model evidence identity"
+    ),
 }
 
 
@@ -5240,6 +5253,17 @@ def _apply_paper_account_invalidation_v41(db: sqlite3.Connection) -> None:
     except Exception:
         db.rollback()
         raise
+
+
+def _apply_controller_recommendation_cost_model_v42(db: sqlite3.Connection) -> None:
+    """Persist the cost-model identity behind each controller evidence row."""
+
+    for column, table, column_type in _CONTROLLER_RECOMMENDATION_COST_MODEL_COLUMNS:
+        existing = {
+            str(row[1]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
 def _apply_lesson_reviewer_attempts_v21(db: sqlite3.Connection) -> None:
@@ -6030,6 +6054,12 @@ _MIGRATIONS = (
         checksum=_PAPER_ACCOUNT_INVALIDATION_CHECKSUM,
         schema_version="aletheia-sqlite-v41",
         apply=_apply_paper_account_invalidation_v41,
+    ),
+    MigrationStep(
+        migration_id="20260826_0041_controller_recommendation_cost_model_v42",
+        checksum=_CONTROLLER_RECOMMENDATION_COST_MODEL_CHECKSUM,
+        schema_version="aletheia-sqlite-v42",
+        apply=_apply_controller_recommendation_cost_model_v42,
     ),
 )
 
