@@ -22,10 +22,11 @@ export default function AccountSnapshot() {
 
   // total_value_usdt already prefers UTA unified > exchange_equity > local notional
   const syncStatus: string = p?.exchange_sync_status ?? 'unconfigured'
+  const utaStatus: string | undefined = p?.uta_state?.sync_status
   const displayValue = fmtNum(p?.total_value_usdt)
   const syncCaveat =
     p?.uta_state != null
-      ? 'unified · live'
+      ? utaStatus === 'ok' ? 'unified · live' : utaStatus === 'stale' ? 'unified · data stale' : utaStatus === 'error' ? 'unified · sync error' : 'unified · not configured'
       : p?.exchange_equity_usdt != null
         ? syncStatus === 'stale' ? 'exchange · data stale' : 'exchange · live'
       : syncStatus === 'not_applicable' ? 'local paper · no exchange'

@@ -153,6 +153,8 @@ def status_for(state: Optional[dict], max_age_sec: int = _DEFAULT_MAX_AGE_SEC) -
     age = state.get("age_seconds")
     if age is None or age > max_age_sec:
         return "stale"
+    if state.get("sync_status") in {"error", "unconfigured"}:
+        return str(state["sync_status"])
     return "ok"
 
 
@@ -204,7 +206,26 @@ def get_unified_cached_state() -> Optional[dict]:
     if raw is None:
         return None
     raw["age_seconds"] = _age_seconds(raw.get("fetched_at", ""))
+    raw["connected_brokers"] = list(
+        raw.get("connected_brokers")
+        or [account.get("broker_id") for account in raw.get("accounts", []) if account.get("broker_id")]
+    )
+    raw["sync_status"] = _unified_sync_status(raw)
+    raw["sync_complete"] = raw["sync_status"] == "ok"
     return raw
+
+
+def _unified_sync_status(state: dict, max_age_sec: int = 600) -> str:
+    age = state.get("age_seconds")
+    if age is None:
+        age = _age_seconds(state.get("fetched_at", ""))
+    if age is None or age > max_age_sec:
+        return "stale"
+    if state.get("errors"):
+        return "error"
+    if not state.get("connected_brokers") and not state.get("accounts"):
+        return "unconfigured"
+    return "ok"
 
 
 def active_broker_view_complete(cfg=None) -> tuple[bool, str]:
@@ -448,8 +469,11 @@ def sync_all_exchanges() -> Optional[dict]:
             "accounts": unified.accounts,
             "positions": unified.positions,
             "errors": unified.errors,
+            "connected_brokers": unified.connected_brokers,
             "fetched_at": unified.fetched_at,
         }
+        payload["sync_status"] = _unified_sync_status(payload)
+        payload["sync_complete"] = payload["sync_status"] == "ok"
         _store_unified(payload)
 
         # Auto-record initial deposit for newly-seen brokers.

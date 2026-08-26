@@ -1513,9 +1513,9 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
 
             unified = exchange_sync.get_unified_cached_state()
             if unified is not None:
+                uta_state = unified
                 uta_age = unified.get("age_seconds")
-                if uta_age is not None and uta_age < 600:
-                    uta_state = unified
+                if uta_age is not None and uta_age < 600 and unified.get("sync_status") == "ok":
                     # When unified state is available and has data, use as hero number
                     uta_equity = unified.get("total_equity_usdt")
                     if uta_equity and uta_equity > 0:

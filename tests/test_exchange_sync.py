@@ -9,6 +9,7 @@ Governance under test:
 
 import sqlite3
 from datetime import datetime, timezone, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -195,6 +196,47 @@ def test_compute_portfolio_carries_exchange_fields(tmp_path, monkeypatch):
     # view is live — not the locally-managed notional. With no local positions
     # the notional is 0, so this proves the override (not just a fallthrough).
     assert out["total_value_usdt"] == 10000.0
+
+
+def test_unified_cache_carries_sync_metadata(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.portfolio import exchange_sync as es
+    import aletheia.portfolio.uta.manager as manager
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "okx_demo"
+    save_config(cfg)
+    monkeypatch.setattr(es, "sync_exchange_account", lambda: None)
+    monkeypatch.setattr(
+        manager,
+        "get_unified_state_sync",
+        lambda: SimpleNamespace(
+            total_equity_usdt=123.45,
+            total_available_usdt=120.0,
+            total_unrealized_pnl=3.45,
+            accounts=[{"broker_id": "okx_demo", "equity_usdt": 123.45, "available_usdt": 120.0}],
+            positions=[],
+            errors=[],
+            connected_brokers=["okx_demo"],
+            fetched_at=datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+
+    payload = es.sync_all_exchanges()
+    cached = es.get_unified_cached_state()
+
+    assert payload is not None
+    assert cached is not None
+    assert cached["connected_brokers"] == ["okx_demo"]
+    assert cached["sync_status"] == "ok"
+    assert cached["sync_complete"] is True
+
+    from aletheia.portfolio.pnl import compute_portfolio
+    out = compute_portfolio()
+    assert out["uta_state"]["connected_brokers"] == ["okx_demo"]
+    assert out["uta_state"]["sync_status"] == "ok"
+    assert out["total_value_usdt"] == 123.45
 
 
 def test_compute_portfolio_unconfigured_keeps_local_view(tmp_path, monkeypatch):
