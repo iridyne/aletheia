@@ -53,6 +53,51 @@ def test_match_entries_exact_stem():
     assert hits[0][0] == "groq/llama-4-maverick"
 
 
+def test_match_entries_prefers_exact_over_numeric_family_suffix():
+    price_map = {
+        "vendor-a/gpt-5": {
+            "input_cost_per_token": 1e-6,
+            "output_cost_per_token": 10e-6,
+        },
+        "vendor-b/gpt-5.1": {
+            "input_cost_per_token": 5e-6,
+            "output_cost_per_token": 50e-6,
+        },
+    }
+    index = _build_price_index(price_map)
+    hits = _match_entries(index, "gpt-5")
+    rates = _representative_rates(hits)
+
+    assert [key for key, _ in hits] == ["vendor-a/gpt-5"]
+    assert rates is not None
+    assert rates["input_usd_per_million"] == pytest.approx(1.0)
+    assert rates["output_usd_per_million"] == pytest.approx(10.0)
+    assert rates["sample_count"] == 1
+
+
+def test_match_entries_exact_still_medians_across_provider_listings():
+    price_map = {
+        "vendor-a/gpt-5": {
+            "input_cost_per_token": 1e-6,
+            "output_cost_per_token": 10e-6,
+        },
+        "vendor-b/gpt-5": {
+            "input_cost_per_token": 3e-6,
+            "output_cost_per_token": 30e-6,
+        },
+        "vendor-c/gpt-5.1": {
+            "input_cost_per_token": 100e-6,
+            "output_cost_per_token": 300e-6,
+        },
+    }
+    rates = _representative_rates(_match_entries(_build_price_index(price_map), "gpt-5"))
+
+    assert rates is not None
+    assert rates["input_usd_per_million"] == pytest.approx(2.0)
+    assert rates["output_usd_per_million"] == pytest.approx(20.0)
+    assert rates["sample_count"] == 2
+
+
 def test_match_entries_prefix_runtime_shorter():
     """Runtime 'llama4maverick' matches 'llama4maverick17b128e' in the index."""
     price_map = {
