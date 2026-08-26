@@ -1411,9 +1411,13 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
 
     # Exposure by symbol
     exposure: dict[str, float] = {}
+    unrealized_by_symbol: dict[str, float] = {}
     for p in positions:
         notional = p["quantity"] * (p.get("current_price") or p["entry_price"])
         exposure[p["symbol"]] = exposure.get(p["symbol"], 0.0) + notional
+        unrealized = _finite_number(p.get("unrealized_pnl"))
+        if unrealized is not None:
+            unrealized_by_symbol[p["symbol"]] = unrealized_by_symbol.get(p["symbol"], 0.0) + unrealized
 
     # Exchange-account view (real Bitget balance/positions, cached). Never blocks
     # on a network call here — the scheduler refreshes the cache out-of-band, so
@@ -1570,9 +1574,7 @@ def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = F
         "today_pnl": round(final_today_pnl, 4),
         "positions_count": final_positions_count,
         "exposure_by_symbol": {k: round(v, 4) for k, v in final_exposure.items()},
-        "unrealized_by_symbol": {
-            p["symbol"]: round(p["unrealized_pnl"], 4) for p in positions if p.get("unrealized_pnl")
-        },
+        "unrealized_by_symbol": {k: round(v, 4) for k, v in unrealized_by_symbol.items()},
         "today_pnl_by_symbol": today_pnl_by_symbol(execution_mode),
         "positions": positions,
         "today_realized_pnl": round(total_today_realized, 4),

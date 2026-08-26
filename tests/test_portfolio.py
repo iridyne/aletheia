@@ -51,6 +51,49 @@ def test_short_position_pnl(tmp_path, monkeypatch):
     reset_db()
 
 
+def test_unrealized_by_symbol_preserves_zero_and_sums_same_symbol_legs(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    repo.insert_position(Position(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=90.0,
+        execution_mode="paper_internal",
+    ))
+    repo.insert_position(Position(
+        symbol="BTCUSDT",
+        market_type="spot",
+        direction="short",
+        quantity=1.0,
+        entry_price=90.0,
+        execution_mode="paper_internal",
+    ))
+    repo.insert_position(Position(
+        symbol="ETHUSDT",
+        market_type="spot",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        execution_mode="paper_internal",
+    ))
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda s, mt, *, venue: 100.0,
+    )
+
+    summary = compute_portfolio()
+
+    assert summary["positions_count"] == 3
+    assert summary["unrealized_pnl"] == 0.0
+    assert summary["unrealized_by_symbol"] == {
+        "BTCUSDT": 0.0,
+        "ETHUSDT": 0.0,
+    }
+    assert round(sum(summary["unrealized_by_symbol"].values()), 4) == summary["unrealized_pnl"]
+    reset_db()
+
+
 def test_mark_to_market_updates_every_open_position_beyond_display_limit(
     tmp_path, monkeypatch,
 ):
