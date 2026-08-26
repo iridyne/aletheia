@@ -7,7 +7,7 @@ import PnLZone from '../components/PnLZone'
 import AgentFeed from '../components/AgentFeed'
 import AnimatedSection from '../components/AnimatedSection'
 import CollectorHealthDetails from '../components/CollectorHealthDetails'
-import { Button, Card, Meter, StatusText } from '../components/ui'
+import { Button, Card, Meter, StatusText, type StatusTone } from '../components/ui'
 import { formatViolation, riskStateLabel } from '../lib/riskViolations'
 import { fmtTimestamp, humanize } from '../lib/format'
 import { api, type GoLiveScorecard } from '../api/client'
@@ -113,6 +113,36 @@ function RiskCard({ shell, shellError }: { shell?: ShellBootstrap; shellError?: 
 }
 
 type SystemDetail = 'collectors' | 'coverage' | 'mode' | null
+type Light = StatusTone
+
+export type SystemRow = {
+  label: string
+  tone: Light
+  value: string
+  title?: string
+  onClick?: () => void
+  expanded?: boolean
+  externalLink?: boolean
+}
+
+function commitIdentity(value?: string | null): string {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  return /^[0-9a-f]{7,40}$/i.test(trimmed) ? trimmed : ''
+}
+
+export function runtimeIdentityRow(runtime?: ShellBootstrap['runtime']): SystemRow {
+  const bootCommit = commitIdentity(runtime?.boot_commit)
+  const mode = typeof runtime?.mode === 'string' && runtime.mode.trim() ? runtime.mode.trim() : 'not available'
+  const commitValue = bootCommit ? bootCommit.slice(0, 12) : 'not available'
+  return {
+    label: 'Runtime',
+    tone: bootCommit ? 'muted' : 'yellow',
+    value: mode === 'not available' ? commitValue : `${commitValue} · ${mode}`,
+    title: bootCommit
+      ? `Running backend commit: ${bootCommit}. Runtime mode: ${mode}.`
+      : `Running commit is not available. Runtime mode: ${mode}.`,
+  }
+}
 
 function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap; coverage?: MarketDataCoverageReport; coverageError?: boolean }) {
   const navigate = useNavigate()
@@ -165,26 +195,27 @@ function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap
     ? `${coverageReport.fresh_count}/${coverageReport.domain_count} current`
     : coverageError ? 'not available' : 'deferred'
   const modelProvider = shell?.operator?.model_provider || 'not available'
-  const bootCommit = runtime?.boot_commit || ''
-  const currentCommit = runtime?.current_commit || ''
+  const bootCommit = commitIdentity(runtime?.boot_commit)
+  const currentCommit = commitIdentity(runtime?.current_commit)
   const codeDrift = !!bootCommit && !!currentCommit && bootCommit !== currentCommit
+  const runtimeRow = runtimeIdentityRow(runtime)
   const healthIssues = sortedIssues(parseAllIssues(shell?.health?.issues || []))
   const toggle = (detail: Exclude<SystemDetail, null>) => setExpanded(value => value === detail ? null : detail)
   return (
     <Card className="rail-card system-panel">
       <div className="mb-2"><h3>System</h3></div>
       <table className="status-board"><tbody>
-        <StatusRow label="Gateway" light={shell?.gateway?.running ? (shell.gateway.paused ? 'yellow' : 'green') : !shell ? 'muted' : 'red'} value={shell ? (shell.gateway?.paused ? 'paused' : 'running') : 'not available'} />
-        <StatusRow label="Scheduler" light={scheduler?.running ? 'green' : scheduler ? 'yellow' : 'muted'} value={scheduler?.state || 'not available'} />
-        <StatusRow label="Connectivity" light={connectivityTone(shell?.connectivity?.state)} value={shell?.connectivity?.state || 'deferred'} title={shell?.connectivity?.reason} />
-        <StatusRow label="Exchange" light={exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted'} value={exchangeLabel} onClick={() => navigate('/settings?tab=execution')} title={exchangeDiverged ? 'Execution and market-data exchanges are intentionally split.' : exchangeLabel} externalLink />
-        <StatusRow label="Collectors" light={collectorLight} value={collectorValue} onClick={() => toggle('collectors')} expanded={expanded === 'collectors'} />
+        <StatusRow label="Gateway" tone={shell?.gateway?.running ? (shell.gateway.paused ? 'yellow' : 'green') : !shell ? 'muted' : 'red'} value={shell ? (shell.gateway?.paused ? 'paused' : 'running') : 'not available'} />
+        <StatusRow label="Scheduler" tone={scheduler?.running ? 'green' : scheduler ? 'yellow' : 'muted'} value={scheduler?.state || 'not available'} />
+        <StatusRow label="Connectivity" tone={connectivityTone(shell?.connectivity?.state)} value={shell?.connectivity?.state || 'deferred'} title={shell?.connectivity?.reason} />
+        <StatusRow label="Exchange" tone={exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted'} value={exchangeLabel} onClick={() => navigate('/settings?tab=execution')} title={exchangeDiverged ? 'Execution and market-data exchanges are intentionally split.' : exchangeLabel} externalLink />
+        <StatusRow label="Collectors" tone={collectorLight} value={collectorValue} onClick={() => toggle('collectors')} expanded={expanded === 'collectors'} />
         {collectorHealth && <tr className="status-detail-row"><td colSpan={2}><div className="system-inline-detail"><CollectorHealthDetails health={collectorHealth} mode="compact" /></div></td></tr>}
-        <StatusRow label="Data coverage" light={coverageLight} value={coverageValue} onClick={() => toggle('coverage')} expanded={expanded === 'coverage'} />
-        <StatusRow label="Model" light="muted" value={modelProvider} onClick={() => navigate('/settings?tab=agent')} externalLink />
-        <StatusRow label="Mode" light={shell?.kill_switch?.active ? 'red' : shell?.live?.enabled ? 'yellow' : 'muted'} value={`Live: ${humanize(shell?.live?.state || 'not available')} · ${humanize(shell?.permission?.mode || 'not available')}${shell?.kill_switch?.active ? ' · KILL' : ''}`} onClick={() => toggle('mode')} expanded={expanded === 'mode'} />
-        <StatusRow label="Code" light={!bootCommit ? 'muted' : codeDrift ? 'yellow' : 'green'} value={bootCommit ? bootCommit.slice(0, 12) : 'not available'} title={bootCommit ? (codeDrift ? `Running commit: ${bootCommit}. Checked-out commit: ${currentCommit}.` : `Running backend commit: ${bootCommit}`) : 'Running commit is not available.'} onClick={() => navigate('/settings?tab=runtime')} externalLink />
-        <StatusRow label="Runtime" light="muted" value={runtime?.mode || 'not available'} onClick={() => navigate('/settings?tab=runtime')} externalLink />
+        <StatusRow label="Data coverage" tone={coverageLight} value={coverageValue} onClick={() => toggle('coverage')} expanded={expanded === 'coverage'} />
+        <StatusRow label="Model" tone="muted" value={modelProvider} onClick={() => navigate('/settings?tab=agent')} externalLink />
+        <StatusRow label="Mode" tone={shell?.kill_switch?.active ? 'red' : shell?.live?.enabled ? 'yellow' : 'muted'} value={`Live: ${humanize(shell?.live?.state || 'not available')} · ${humanize(shell?.permission?.mode || 'not available')}${shell?.kill_switch?.active ? ' · KILL' : ''}`} onClick={() => toggle('mode')} expanded={expanded === 'mode'} />
+        <StatusRow label="Code" tone={!bootCommit ? 'muted' : !currentCommit ? 'muted' : codeDrift ? 'yellow' : 'green'} value={bootCommit ? bootCommit.slice(0, 12) : 'not available'} title={bootCommit ? (codeDrift ? `Running commit: ${bootCommit}. Checked-out commit: ${currentCommit}.` : currentCommit ? `Running backend commit: ${bootCommit}` : `Running backend commit: ${bootCommit}. Checked-out commit is not available.`) : 'Running commit is not available.'} onClick={() => navigate('/settings?tab=runtime')} externalLink />
+        <StatusRow {...runtimeRow} onClick={() => navigate('/settings?tab=runtime')} externalLink />
       </tbody></table>
       <AnimatedSection open={expanded === 'collectors'}>
         {collectorHealth?.domains?.length ? <CollectorHealthDetails health={collectorHealth} mode="full" /> : <p className="text-muted text-sm" role="status">Collector diagnostics not available.</p>}
@@ -200,11 +231,9 @@ function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap
   )
 }
 
-type Light = 'green' | 'red' | 'yellow' | 'blue' | 'muted'
-
 function StatusRow({
-  label, light, value, title, onClick, expanded, externalLink,
-}: { label: string; light: Light; value: string; title?: string; onClick?: () => void; expanded?: boolean; externalLink?: boolean }) {
+  label, tone, value, title, onClick, expanded, externalLink,
+}: SystemRow) {
   const clickable = Boolean(onClick)
   return (
     <tr
@@ -217,7 +246,7 @@ function StatusRow({
     >
       <th>{label}</th>
       <td className="status-cell">
-        <span className={`status-light light-${light}`} />
+        <span className={`status-light light-${tone}`} />
         <span className="status-value" title={title ?? value}>{value}</span>
         {clickable && <span className="status-row-chevron" aria-hidden="true">{externalLink ? '→' : expanded ? '▼' : '▶'}</span>}
       </td>

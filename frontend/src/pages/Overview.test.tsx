@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest'
-import { isGoLiveScorecard, operatorMutationError } from './Overview'
+import { describe, expect, expectTypeOf, it } from 'vitest'
+import { isGoLiveScorecard, operatorMutationError, runtimeIdentityRow, type SystemRow } from './Overview'
+import type { StatusTone } from '../components/ui'
 import { semanticTone } from '../lib/systemState'
 import SRC from './Overview.tsx?raw'
+import BOOT_SRC from '../api/boot.ts?raw'
 import CSS from '../index.css?raw'
 import STATUS_SRC from '../components/StatusCluster.tsx?raw'
 import APP_SRC from '../App.tsx?raw'
@@ -100,6 +102,40 @@ describe('Overview semantic honesty', () => {
 })
 
 describe('Overview issue repairs', () => {
+  it('renders runtime boot commit as identity instead of a status-light token', () => {
+    const row = runtimeIdentityRow({
+      boot_commit: 'c86e554cfe0ae6e6311d63a93479420770dcd595',
+      mode: 'development',
+    })
+
+    expect(row).toMatchObject({
+      label: 'Runtime',
+      tone: 'muted',
+      value: 'c86e554cfe0a · development',
+    })
+    expect(['green', 'red', 'yellow', 'blue', 'muted']).toContain(row.tone)
+  })
+
+  it('renders missing or malformed runtime commit identity as unavailable', () => {
+    expect(runtimeIdentityRow({ boot_commit: null, mode: 'packaged' })).toMatchObject({
+      label: 'Runtime',
+      tone: 'yellow',
+      value: 'not available · packaged',
+    })
+    expect(runtimeIdentityRow({ boot_commit: 'not-a-commit', mode: 'development' }).value)
+      .toBe('not available · development')
+  })
+
+  it('types System rows so arbitrary commit strings cannot occupy the tone slot', () => {
+    expectTypeOf<SystemRow['tone']>().toEqualTypeOf<StatusTone>()
+  })
+
+  it('keeps shell bootstrap runtime commit and mode as separate DTO fields', () => {
+    expect(BOOT_SRC).toContain('boot_commit?: string | null')
+    expect(BOOT_SRC).toContain('mode?: string')
+    expect(SRC).toContain('runtimeIdentityRow(runtime)')
+  })
+
   it('validates the scorecard response before treating it as qualification evidence', () => {
     const valid = {
       composite_score: 82,
