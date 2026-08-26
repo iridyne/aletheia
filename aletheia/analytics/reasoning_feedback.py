@@ -329,7 +329,9 @@ def render_feedback_for_pi(fb: dict) -> str:
 def _persist_feedback(fb: dict) -> None:
     """Persist feedback as a knowledge item (rate-limited to 6h)."""
     try:
-        existing = get_latest_reasoning_feedback()
+        existing = get_latest_reasoning_feedback(
+            execution_mode=fb.get("execution_mode"),
+        )
         if existing:
             gen = datetime.fromisoformat(existing.get("generated_at", "2000-01-01"))
             if gen.tzinfo is None:

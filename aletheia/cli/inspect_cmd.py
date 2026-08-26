@@ -927,7 +927,7 @@ def status(
             closed_after=(datetime.now(timezone.utc) - timedelta(days=days)).isoformat(),
             execution_mode=mode,
         ),
-        "historical_accounting": historical_accounting_summary(),
+        "historical_accounting": historical_accounting_summary(execution_mode=mode),
         **{k: rolling[k] for k in (
             "days", "total_trades", "wins", "losses", "win_rate",
             "total_pnl", "avg_pnl", "best_win", "worst_loss",
@@ -935,7 +935,7 @@ def status(
     }
 
     # Orders
-    order_section = compute_order_stats(days=days)
+    order_section = compute_order_stats(days=days, execution_mode=mode)
 
     # Universe
     snap = get_active_universe_snapshot()
@@ -1098,7 +1098,7 @@ def pnl(
             closed_after=(datetime.now(timezone.utc) - timedelta(days=days)).isoformat(),
             execution_mode=mode,
         ),
-        "historical_accounting": historical_accounting_summary(),
+        "historical_accounting": historical_accounting_summary(execution_mode=mode),
         "open_positions": positions_out,
     }
 

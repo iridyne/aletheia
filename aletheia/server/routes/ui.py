@@ -227,6 +227,22 @@ def overview_bootstrap(response: Response):
     # `execution_mode` we then attach to the account payload.
     from aletheia.analytics.execution_mode import resolve_selected_execution_mode
     _selected_mode = resolve_selected_execution_mode()
+    if not _selected_mode:
+        payload = {
+            "schema_version": "ui-overview-v1",
+            "generated_at": _now(),
+            "freshness": {"state": "fresh", "max_age_sec": 15},
+            "availability": "unavailable",
+            "reason": "execution_mode_unresolved",
+            "account": {
+                "execution_mode": None,
+                "execution_mode_status": "unavailable",
+            },
+            "errors": {"execution_mode": "execution_mode_unresolved"},
+        }
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Server-Timing"] = f"local;dur={(time.perf_counter() - started) * 1000:.1f}"
+        return payload
     portfolio = _safe("portfolio", lambda: __import__("aletheia.portfolio.pnl", fromlist=["compute_portfolio"]).compute_portfolio(execution_mode=_selected_mode), {})
     summary = _safe("summary", _count_summary, {"pending_proposals": 0, "open_opportunities": 0, "runs_24h": 0})
     activity = _safe("activity", _compact_activity, [])
@@ -242,9 +258,10 @@ def overview_bootstrap(response: Response):
     )}
     account["exposure_by_symbol"] = dict(list((p.get("exposure_by_symbol") or {}).items())[:8])
     account["exchange_asset_breakdown"] = list((p.get("exchange_asset_breakdown") or [])[:8])
+    account["execution_mode"] = _selected_mode
+    account["execution_mode_status"] = "resolved"
     if cfg["value"] is not None:
         account["exchange_mode"] = str(cfg["value"].exchange.mode)
-        account["execution_mode"] = str(cfg["value"].exchange.paper_execution_mode)
     payload = {
         "schema_version": "ui-overview-v1",
         "generated_at": _now(),

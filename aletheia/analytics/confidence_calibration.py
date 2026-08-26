@@ -256,7 +256,9 @@ def compute_calibration_score() -> float | None:
 def _persist_report(report: dict) -> None:
     """Persist report as a knowledge item (rate-limited to 6h)."""
     try:
-        existing = get_latest_calibration_report()
+        existing = get_latest_calibration_report(
+            execution_mode=report.get("execution_mode"),
+        )
         if existing:
             gen = datetime.fromisoformat(existing.get("generated_at", "2000-01-01"))
             if gen.tzinfo is None:

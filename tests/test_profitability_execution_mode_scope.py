@@ -158,6 +158,24 @@ def test_family_scorecard_isolates_by_execution_mode(tmp_path, monkeypatch):
     assert okx_family["execution_mode"] == "okx_demo"
 
 
+def test_order_stats_isolates_by_execution_mode(tmp_path, monkeypatch):
+    _setup_env(tmp_path, monkeypatch)
+    _seed_two_mode_ledger()
+
+    from aletheia.analytics.trade_stats import compute_order_stats
+
+    paper = compute_order_stats(days=30, execution_mode="paper_internal")
+    okx = compute_order_stats(days=30, execution_mode="okx_demo")
+    mixed = compute_order_stats(days=30)
+
+    assert paper["total"] == 2
+    assert okx["total"] == 2
+    assert mixed["total"] == 4
+    assert paper["execution_mode"] == "paper_internal"
+    assert okx["execution_mode"] == "okx_demo"
+    assert mixed["execution_mode_status"] == "unavailable"
+
+
 # ---------------------------------------------------------------------------
 # REST-level: every profitability endpoint must resolve + return one cohort.
 # ---------------------------------------------------------------------------
@@ -303,3 +321,114 @@ def test_learning_builders_fail_closed_without_mode(monkeypatch):
 
     assert build_calibration_report() is None
     assert build_reasoning_feedback() is None
+
+
+def test_learning_persistence_rate_limits_against_artifact_mode(monkeypatch):
+    from aletheia.analytics import confidence_calibration as calibration
+    from aletheia.analytics import reasoning_feedback as feedback
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    calibration_seen: dict = {}
+    feedback_seen: dict = {}
+    recent = {"generated_at": generated_at}
+
+    monkeypatch.setattr(
+        calibration,
+        "get_latest_calibration_report",
+        lambda **kwargs: calibration_seen.update(kwargs) or recent,
+    )
+    monkeypatch.setattr(
+        feedback,
+        "get_latest_reasoning_feedback",
+        lambda **kwargs: feedback_seen.update(kwargs) or recent,
+    )
+
+    calibration._persist_report({"execution_mode": "okx_demo"})
+    feedback._persist_feedback({"execution_mode": "okx_demo"})
+
+    assert calibration_seen["execution_mode"] == "okx_demo"
+    assert feedback_seen["execution_mode"] == "okx_demo"
+
+
+def test_export_passes_mode_before_limit_to_repository(monkeypatch):
+    import aletheia.server.routes.data as data
+
+    seen: dict = {}
+
+    def list_positions(**kwargs):
+        seen.update(kwargs)
+        return []
+
+    monkeypatch.setattr(data.repo, "list_positions", list_positions)
+    response = data.export_trades(limit=1, execution_mode="okx_demo")
+
+    assert seen == {"status": "closed", "execution_mode": "okx_demo", "limit": 1}
+    assert response.headers["content-disposition"].endswith("trades_export_okx_demo.csv\"")
+
+
+def test_system_operator_layer2_resolves_and_threads_one_mode(monkeypatch):
+    import aletheia.agent_shell.trading_context as context
+    import aletheia.analytics.confidence_calibration as calibration
+    import aletheia.analytics.execution_mode as execution_mode
+    import aletheia.analytics.insight_synthesizer as insight
+    import aletheia.analytics.reasoning_feedback as feedback
+    import aletheia.analytics.trade_stats as trade_stats
+    import aletheia.agents.paper_trader_ranker as ranker
+    import aletheia.agent_shell.reflection as reflection
+    import aletheia.storage.repositories as repo
+
+    calls: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        execution_mode,
+        "resolve_selected_execution_mode",
+        lambda: calls.append(("resolve", None)) or "okx_demo",
+    )
+    monkeypatch.setattr(
+        context,
+        "eligible_strategy_outcomes",
+        lambda **kwargs: calls.append(("outcomes", kwargs.get("execution_mode"))) or [],
+    )
+    monkeypatch.setattr(reflection, "get_last_reflection", lambda: None)
+    monkeypatch.setattr(repo, "list_strategies", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        trade_stats,
+        "build_strategy_kpis",
+        lambda **kwargs: calls.append(("kpis", kwargs.get("execution_mode"))) or {},
+    )
+    monkeypatch.setattr(
+        trade_stats,
+        "build_trade_stats",
+        lambda **kwargs: calls.append(("trade_stats", kwargs.get("execution_mode"))) or {},
+    )
+    monkeypatch.setattr(
+        insight,
+        "get_latest_memo",
+        lambda **kwargs: calls.append(("memo", kwargs.get("execution_mode"))) or None,
+    )
+    monkeypatch.setattr(
+        feedback,
+        "get_latest_reasoning_feedback",
+        lambda **kwargs: calls.append(("feedback", kwargs.get("execution_mode"))) or None,
+    )
+    monkeypatch.setattr(
+        calibration,
+        "get_latest_calibration_report",
+        lambda **kwargs: calls.append(("calibration", kwargs.get("execution_mode"))) or None,
+    )
+    monkeypatch.setattr(ranker, "build_paper_candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(context, "_build_pending_signal_queue", lambda: ([], {}))
+    monkeypatch.setattr(context, "_record_candidate_supply_snapshot", lambda _layer: None)
+
+    context._build_layer2_short_term()
+
+    assert calls.count(("resolve", None)) == 1
+    assert {
+        name: mode for name, mode in calls if name != "resolve"
+    } == {
+        "outcomes": "okx_demo",
+        "kpis": "okx_demo",
+        "trade_stats": "okx_demo",
+        "memo": "okx_demo",
+        "feedback": "okx_demo",
+        "calibration": "okx_demo",
+    }

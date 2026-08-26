@@ -1171,9 +1171,12 @@ def export_trades(
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
 
-    all_closed = repo.list_positions(status="closed", limit=limit)
-    scoped = [row for row in all_closed if (row.get("execution_mode") == mode)]
-    rows = [position_realized_pnl_view(row) for row in scoped]
+    # Apply the cohort predicate before LIMIT so newer rows from another mode
+    # cannot consume the requested mode's export slots (#2181).
+    closed = repo.list_positions(
+        status="closed", execution_mode=mode, limit=limit,
+    )
+    rows = [position_realized_pnl_view(row) for row in closed]
     if not rows:
         return StreamingResponse(
             iter([f"no data for execution_mode={mode}\n"]),

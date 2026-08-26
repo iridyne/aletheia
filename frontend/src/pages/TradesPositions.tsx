@@ -352,6 +352,11 @@ export default function TradesPositions() {
 		queryKey: positionKeys.reconciliation,
 		queryFn: api.getPositionsReconciliation,
 	});
+	const { data: settings } = useQuery({
+		queryKey: ["settings"],
+		queryFn: api.getSettings,
+	});
+	const executionMode = settings?.exchange?.paper_execution_mode;
 
 	const positionsArray = positions ?? []
 	const ordersArray = orders ?? []
@@ -570,7 +575,7 @@ export default function TradesPositions() {
 						label: "Analytics",
 						render: () => (
 							<>
-								<TradeAnalyticsPanel />
+								<TradeAnalyticsPanel executionMode={executionMode} />
 								<Suspense
 									fallback={
 										<Card>
@@ -578,7 +583,7 @@ export default function TradesPositions() {
 										</Card>
 									}
 								>
-									<TradeInsightsPanel />
+									<TradeInsightsPanel executionMode={executionMode} />
 								</Suspense>
 							</>
 						),

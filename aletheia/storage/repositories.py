@@ -2973,10 +2973,25 @@ def get_position(position_id: str) -> dict | None:
     return _select_one("positions", position_id)
 
 
-def list_positions(status: str | None = None, limit: int = 50) -> list[dict]:
+def list_positions(
+    status: str | None = None,
+    limit: int = 50,
+    execution_mode: str | None = None,
+) -> list[dict]:
+    clauses: list[str] = []
+    params: list[object] = []
     if status:
-        return _select_all("positions", where="status = ?", params=(status,), limit=limit)
-    return _select_all("positions", limit=limit)
+        clauses.append("status = ?")
+        params.append(status)
+    if execution_mode is not None:
+        clauses.append("execution_mode = ?")
+        params.append(execution_mode)
+    return _select_all(
+        "positions",
+        where=" AND ".join(clauses) if clauses else None,
+        params=tuple(params),
+        limit=limit,
+    )
 
 
 def list_all_open_positions() -> list[dict]:
