@@ -1324,7 +1324,7 @@ def _observer_assessment_from_metadata(value: Any) -> dict | None:
     assessment = metadata.get("observer_assessment") if isinstance(metadata, dict) else None
     if not isinstance(assessment, dict):
         return None
-    return {
+    rendered = {
         "version": assessment.get("version"),
         "direction_bias": assessment.get("direction_bias"),
         "confidence": assessment.get("confidence"),
@@ -1337,9 +1337,12 @@ def _observer_assessment_from_metadata(value: Any) -> dict | None:
         ],
         "scanner_direction": assessment.get("scanner_direction"),
         "direction_conflict": bool(assessment.get("direction_conflict")),
-        "inference_call_id": assessment.get("inference_call_id"),
-        "technical_context": assessment.get("technical_context"),
     }
+    if assessment.get("inference_call_id") is not None:
+        rendered["inference_call_id"] = assessment.get("inference_call_id")
+    if assessment.get("technical_context") is not None:
+        rendered["technical_context"] = assessment.get("technical_context")
+    return rendered
 
 
 def _feature_context_row(snapshot: dict[str, Any]) -> dict[str, Any]:

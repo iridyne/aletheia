@@ -1770,7 +1770,7 @@ async def _analyze_symbol(
             # Observer output is a later assessment, not permission to reinterpret
             # the same lifecycle identity as the opposite trade or mix an LLM
             # confidence score into the scanner's composite ranking score.
-            existing_meta["observer_assessment"] = {
+            assessment = {
                 "version": "market-observer-assessment/v1",
                 "direction_bias": direction,
                 "confidence": confidence,
@@ -1779,9 +1779,12 @@ async def _analyze_symbol(
                 "key_observations": observations,
                 "scanner_direction": source_direction or None,
                 "direction_conflict": direction_conflict,
-                "inference_call_id": assessment_inference_call_id,
-                "technical_context": _technical_context_status(technical_source),
             }
+            if assessment_inference_call_id:
+                assessment["inference_call_id"] = assessment_inference_call_id
+            if technical_source:
+                assessment["technical_context"] = _technical_context_status(technical_source)
+            existing_meta["observer_assessment"] = assessment
             if direction_conflict:
                 record_step(
                     run_id,
