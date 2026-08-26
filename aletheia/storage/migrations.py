@@ -1511,6 +1511,10 @@ CREATE TABLE IF NOT EXISTS coingecko_top_snapshots (
     price_change_1h_pct REAL,
     price_change_24h_pct REAL,
     price_change_7d_pct REAL,
+    source_observed_at TEXT,
+    acquired_at TEXT,
+    batch_id TEXT,
+    source_age_sec INTEGER,
     observed_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_coingecko_top_obs
@@ -2057,6 +2061,12 @@ _ADDITIVE_COLUMNS = [
     ("fng_value", "macro_snapshots", "INTEGER"),
     ("fng_classification", "macro_snapshots", "TEXT"),
     ("top_movers_summary", "macro_snapshots", "TEXT"),
+    # CoinGecko provider-time provenance. observed_at remains provider source
+    # time for new rows; acquired_at records local HTTP acquisition time.
+    ("source_observed_at", "coingecko_top_snapshots", "TEXT"),
+    ("acquired_at", "coingecko_top_snapshots", "TEXT"),
+    ("batch_id", "coingecko_top_snapshots", "TEXT"),
+    ("source_age_sec", "coingecko_top_snapshots", "INTEGER"),
     # Serenity Phase 4: execution-school discriminator. NOT NULL DEFAULT 'short_term'
     # so legacy proposals/positions migrate cleanly onto the existing short-term path;
     # only Serenity-sourced rows are stamped 'serenity' by submit_decision_as_proposal.
