@@ -709,11 +709,12 @@ def test_universe_opportunity_metadata_has_bounded_exact_t0_trigger():
     ), patch(
         "aletheia.universe.signal_emitter.has_fresh_market_snapshot",
         return_value=True,
-    ), patch(
+    ) as fresh_check, patch(
         "aletheia.universe.signal_emitter.lookup_factor_signal",
         return_value={"status": "watch"},
     ):
         assert emit_deterministic_opportunities([member], "snapshot-1", [feature]) == 1
+        assert fresh_check.call_args.kwargs["exchange"] == "fixture"
 
     metadata = json.loads(inserted[0].metadata)
     manifest = metadata["evidence_manifest"]
