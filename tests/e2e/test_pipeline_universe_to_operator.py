@@ -313,7 +313,10 @@ async def test_real_universe_refresh_reaches_one_operator_defer(
         for row in evidence
     }
     assert (
-        "opportunity_emission", "signal_emitter", "passed", "opportunity_emitted"
+        "opportunity_emission",
+        "signal_emitter",
+        "passed",
+        "triggered_opportunity_created",
     ) in evidence_keys
     assert any(row["stage"] == "paper_ranker" for row in evidence)
     assert (

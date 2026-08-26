@@ -1,18 +1,30 @@
-"""Universe Candidate handoff — deterministic setup generation from candidates.
+"""Universe Candidate handoff and deterministic Trigger materialization.
 
-Universe refresh selects Candidates. Momentum candidates may become
-UniverseSetup rows awaiting bounded conditional authorization. Opportunity rows
-are reserved for actual T0 trigger materialization.
+Universe refresh selects Candidates. Each eligible family can own a durable
+UniverseSetup row. Opportunity rows are created only when that setup's
+EntryEligibility first becomes true for the exact current market facts.
 
 Called at the end of every universe refresh cycle (source_agent="universe_scanner").
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 import logging
 
 from aletheia.storage import repositories as repo
+from aletheia.storage.models import (
+    Opportunity,
+    OpportunityGenerationV2,
+    OpportunityInstrumentIdentity,
+    UniverseSetup,
+)
 from aletheia.analytics.factor_feedback import lookup_factor_signal
+from aletheia.data.symbols import MARKET_PERP, MARKET_SPOT
+from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
+from aletheia.trading.instruments import instrument_market_to_db_market
 from aletheia.universe.funding_units import (
     CROWDED_FUNDING_RATE,
     ELEVATED_FUNDING_RATE,
@@ -29,6 +41,361 @@ _HIGH_CONF_THRESHOLD = 60.0
 # Regime bias threshold: if the direction's bias < this value, skip signal
 # unless score compensates (higher score can override weak regime alignment).
 _REGIME_BIAS_THRESHOLD = 0.30
+ENTRY_ELIGIBILITY_VERSION = "universe-entry-eligibility/v1"
+ENTRY_TRIGGER_BEHAVIOR_VERSION = "universe-trigger-materializer/v1"
+_DEFAULT_HORIZON_HOURS = 4.0
+_OPPORTUNITY_EVIDENCE_VERSION = "opportunity-information-integrity-v1"
+_FAMILY_ARCHETYPE = {
+    "momentum": "continuation",
+    "mean_reversion": "reversal",
+    "volatility": "squeeze",
+    "derivatives": "convergence",
+    "event": "event",
+    "short_bias": "continuation",
+}
+
+
+def _json(data: object) -> str:
+    return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _sha(data: object) -> str:
+    return hashlib.sha256(_json(data).encode("utf-8")).hexdigest()
+
+
+def _physical_market_type(market_type: str | None) -> str | None:
+    normalized = str(market_type or "").strip().lower()
+    if normalized in {"spot", MARKET_SPOT}:
+        return MARKET_SPOT
+    if normalized in {"perp", "swap", "futures", "usdt_futures", MARKET_PERP}:
+        return MARKET_PERP
+    return None
+
+
+def _parse_time(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _latest_exact_market_fact(
+    *,
+    venue: str,
+    symbol: str,
+    market_type: str,
+    now: datetime,
+) -> dict | None:
+    physical_market = _physical_market_type(market_type)
+    if not venue or not symbol or not physical_market:
+        return None
+    rows = repo.list_market_snapshots(
+        symbol=symbol,
+        exchange=venue,
+        market_type=physical_market,
+        limit=1,
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    observed_at = _parse_time(row.get("snapshot_at"))
+    if observed_at is None or observed_at < now - timedelta(hours=2):
+        return None
+    try:
+        price = float(row.get("price"))
+    except (TypeError, ValueError):
+        return None
+    if price <= 0:
+        return None
+    return {**row, "price": price, "observed_at": observed_at.isoformat()}
+
+
+def has_fresh_market_snapshot(*args, **kwargs) -> bool:
+    from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot as check
+
+    return check(*args, **kwargs)
+
+
+def _feature_market_fact(
+    *,
+    member: dict,
+    feature: dict,
+    setup: UniverseSetup,
+    now: datetime,
+) -> dict | None:
+    try:
+        price = float(feature.get("last_price") or member.get("entry_price_usd"))
+    except (TypeError, ValueError):
+        return None
+    if price <= 0 or str(feature.get("venue") or member.get("venue") or "") != setup.venue:
+        return None
+    return {
+        "id": feature.get("feature_snapshot_id") or f"universe_feature:{setup.member_id}",
+        "price": price,
+        "observed_at": now.isoformat(),
+        "source": "universe_feature",
+    }
+
+
+def _trigger_evidence_manifest(
+    *,
+    setup: UniverseSetup,
+    member: dict,
+    feature: dict,
+    market_fact: dict,
+    total_score: float,
+) -> dict:
+    reasons = [str(reason)[:160] for reason in (feature.get("reasons") or [])[:5]]
+    return {
+        "version": _OPPORTUNITY_EVIDENCE_VERSION,
+        "policy_epoch": POLICY_EPOCH_LABEL,
+        "t0": {
+            "status": "available",
+            "trigger_type": "universe_scanner",
+            "entry_trigger_type": "entry_eligibility_transition",
+            "setup_id": setup.id,
+            "universe_snapshot_id": setup.snapshot_id,
+            "universe_member_id": setup.member_id,
+            "feature_snapshot_id": feature.get("feature_snapshot_id"),
+            "market_snapshot_id": market_fact.get("id"),
+            "market_observed_at": market_fact.get("observed_at"),
+            "venue": setup.venue,
+            "symbol": setup.symbol,
+            "market_type": setup.market_type,
+            "scanner_family": setup.scanner_family,
+            "direction": setup.direction,
+            "material_fingerprint": setup.material_fingerprint,
+            "total_score": total_score,
+            "entry_price_usd": market_fact.get("price"),
+            "valid_until": setup.valid_until,
+            "reasons": reasons,
+        },
+        "t1": {"status": "unavailable"},
+    }
+
+
+def _build_setup(
+    *,
+    member: dict,
+    feature: dict,
+    snapshot_id: str,
+    member_index: int,
+    symbol: str,
+    market_type: str,
+    family: str,
+    direction: str,
+    material_fingerprint: str,
+    regime_tag: str | None,
+) -> UniverseSetup:
+    venue = str(feature.get("venue") or member.get("venue") or "")
+    valid_until = _parse_time(member.get("expires_at"))
+    if valid_until is None:
+        raise ValueError("candidate_valid_until_missing")
+    motive = {
+        "universe_snapshot_id": snapshot_id,
+        "universe_member_id": member.get("id"),
+        "feature_snapshot_id": feature.get("feature_snapshot_id"),
+        "total_score": member.get("total_score"),
+        "reasons": [str(reason)[:160] for reason in (feature.get("reasons") or [])[:5]],
+        "regime": regime_tag,
+    }
+    try:
+        compatibility_price = float(feature.get("last_price") or member.get("entry_price_usd") or 1.0)
+    except (TypeError, ValueError):
+        compatibility_price = 1.0
+    compatibility_price = compatibility_price if compatibility_price > 0 else 1.0
+    return UniverseSetup(
+        snapshot_id=snapshot_id,
+        member_id=str(member.get("id") or ""),
+        asset_id=str(feature.get("asset_id") or member.get("asset_id") or ""),
+        venue=venue,
+        symbol=symbol,
+        market_type=_physical_market_type(market_type) or market_type,
+        direction=direction,
+        rank=int(member.get("rank") or member_index + 1),
+        material_fingerprint=material_fingerprint,
+        trigger_spec_hash=_sha({
+            "version": ENTRY_ELIGIBILITY_VERSION,
+            "family": family,
+            "direction": direction,
+        }),
+        trigger_spec_version=ENTRY_ELIGIBILITY_VERSION,
+        scanner_family=family,
+        motive_evidence=_json(motive),
+        funding_rate=feature.get("funding_rate"),
+        funding_observed_at=datetime.now(timezone.utc).isoformat()
+        if feature.get("funding_rate") is not None else None,
+        regime_tag=regime_tag,
+        breakout_level=compatibility_price,
+        atr=1.0,
+        pullback_band="[]",
+        entry_zone="[]",
+        invalidation_price=compatibility_price,
+        state="armed",
+        valid_until=valid_until.isoformat(),
+    )
+
+
+def _materialize_trigger_opportunity(
+    *,
+    setup: UniverseSetup,
+    member: dict,
+    feature: dict,
+    market_fact: dict,
+    linked_strategy_id: str | None,
+    total_score: float,
+) -> Opportunity:
+    from aletheia.universe.features import persist_feature_snapshot_for_emission
+
+    persist_feature_snapshot_for_emission(feature)
+    price = float(market_fact["price"])
+    entry_zone = (price, price)
+    detected_at = datetime.now(timezone.utc).isoformat()
+    valid_until = setup.valid_until
+    physical_market = _physical_market_type(setup.market_type) or setup.market_type
+    db_market = instrument_market_to_db_market(physical_market)
+    family = setup.scanner_family
+    reasons: list[str] = feature.get("reasons") or []
+    thesis = (
+        f"[{family}] {'; '.join(reasons)}" if reasons
+        else f"[{family}] score={total_score:.0f}"
+    )
+    confidence = "high" if total_score >= _HIGH_CONF_THRESHOLD else "medium"
+    if family == "derivatives" and feature.get("is_proxy"):
+        confidence = "medium"
+    generation = OpportunityGenerationV2(
+        instrument_identity=OpportunityInstrumentIdentity(
+            venue=setup.venue,
+            symbol=setup.symbol,
+            market_type=physical_market,
+        ),
+        family=family,
+        archetype=_FAMILY_ARCHETYPE.get(family, "continuation"),
+        direction=setup.direction,
+        detected_at=detected_at,
+        signal_mark=price,
+        motive_evidence=json.loads(setup.motive_evidence or "{}"),
+        entry_trigger={
+            "type": "entry_eligibility_transition",
+            "from": "false",
+            "to": "true",
+            "behavior_version": ENTRY_TRIGGER_BEHAVIOR_VERSION,
+            "market_snapshot_id": market_fact.get("id"),
+            "market_observed_at": market_fact.get("observed_at"),
+            "idempotency_key": _sha({
+                "setup_id": setup.id,
+                "behavior_version": ENTRY_TRIGGER_BEHAVIOR_VERSION,
+                "market_snapshot_id": market_fact.get("id"),
+            }),
+        },
+        entry_zone=entry_zone,
+        invalidation={
+            "type": "market_validity",
+            "conditions": [
+                "valid_until_elapsed",
+                "material_fingerprint_superseded",
+                "exact_market_fact_unavailable",
+            ],
+        },
+        horizon_hours=_DEFAULT_HORIZON_HOURS,
+        cost_snapshot={
+            "cost_model_version": "universe-entry-eligibility/v1",
+            "spread_bps": feature.get("spread_bps") or member.get("spread_bps"),
+            "estimated_slippage_bps": feature.get("estimated_cost")
+            or member.get("estimated_cost"),
+            "funding": (
+                {"status": "not_applicable"}
+                if physical_market == MARKET_SPOT
+                else {"status": "observed", "rate": feature.get("funding_rate")}
+                if feature.get("funding_rate") is not None
+                else {"status": "unavailable"}
+            ),
+            "depth_10bps_usd": feature.get("depth_10bps_usd"),
+            "target_notional_usd": None,
+            "capacity_ratio": None,
+        },
+        material_fingerprint=setup.material_fingerprint,
+        valid_until=valid_until,
+    )
+    evidence_manifest = _trigger_evidence_manifest(
+        setup=setup,
+        member=member,
+        feature=feature,
+        market_fact=market_fact,
+        total_score=total_score,
+    )
+    opportunity = Opportunity(
+        symbol=setup.symbol,
+        market=db_market,
+        direction_bias=setup.direction,
+        thesis=thesis,
+        confidence=confidence,
+        confidence_score=int(round(total_score)),
+        source_agent="universe_scanner",
+        linked_strategy_id=linked_strategy_id,
+        asset_class="crypto",
+        metadata=_json({
+            "universe_snapshot_id": setup.snapshot_id,
+            "universe_member_id": setup.member_id,
+            "feature_snapshot_id": feature.get("feature_snapshot_id"),
+            "material_fingerprint": setup.material_fingerprint,
+            "trigger_behavior_version": ENTRY_TRIGGER_BEHAVIOR_VERSION,
+            "market_snapshot_id": market_fact.get("id"),
+            "evidence_manifest": evidence_manifest,
+        }),
+        execution_eligible=True,
+        universe_snapshot_id=setup.snapshot_id,
+        universe_member_id=setup.member_id,
+        scanner_family=family,
+        valid_until=valid_until,
+        entry_zone=json.dumps(list(entry_zone), separators=(",", ":")),
+        regime_tag=setup.regime_tag,
+        funding_rate=feature.get("funding_rate"),
+        open_interest=feature.get("open_interest"),
+        oi_delta_1h=feature.get("oi_delta_1h"),
+        setup_id=setup.id,
+        signal_mark=str(price),
+        trigger_behavior_version=ENTRY_TRIGGER_BEHAVIOR_VERSION,
+    )
+    return repo.insert_opportunity_generation(opportunity, generation)
+
+
+def _active_defer_suppresses(
+    *,
+    symbol: str,
+    direction: str,
+    market_type: str,
+    material_fingerprint: str,
+) -> dict | None:
+    prior_skip = repo.latest_direct_skip_defer_for_setup(
+        symbol,
+        direction,
+        instrument_market_to_db_market(_physical_market_type(market_type) or market_type),
+    )
+    if prior_skip and prior_skip.get("material_fingerprint") == material_fingerprint:
+        return prior_skip
+    return None
+
+
+def _opportunity_material_fingerprint(opportunity: dict) -> str | None:
+    try:
+        metadata = json.loads(opportunity.get("metadata") or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        metadata = {}
+    value = metadata.get("material_fingerprint") if isinstance(metadata, dict) else None
+    if value:
+        return str(value)
+    try:
+        generation = json.loads(opportunity.get("generation_json") or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    value = generation.get("material_fingerprint") if isinstance(generation, dict) else None
+    return str(value) if value else None
 
 
 class EmissionEvidenceError(RuntimeError):
@@ -147,9 +514,9 @@ def emit_deterministic_opportunities(
                 cross-snapshot anti-flood guard.
 
     Returns:
-        Number of Opportunity rows created. Universe refresh no longer creates
-        Opportunities directly; Momentum writes Setup rows and other families
-        remain Candidate-only until they have a TriggerSpec.
+        Number of Opportunity rows created from canonical setup EntryEligibility
+        transitions. Candidate rows can still publish only an armed Setup when
+        exact current market facts are missing.
     """
     from aletheia.learning.opportunity_information_policy import (
         ensure_opportunity_information_policy_epoch,
@@ -333,60 +700,83 @@ def emit_deterministic_opportunities(
             regime=regime.state if regime else None,
         )
 
-        # Momentum candidates are structures, not entry instants. Persist an
-        # expiring Setup and let the conditional-authorization/fast-trigger path
-        # create the Opportunity only after an actual pullback reclaim.
-        if family == "momentum":
-            from aletheia.universe.fast_trigger import (
-                build_momentum_setup,
-                persist_momentum_setup,
+        try:
+            setup = _build_setup(
+                member=m,
+                feature=feat,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                family=family,
+                direction=direction,
+                material_fingerprint=current_material_fingerprint,
+                regime_tag=regime.state if regime else None,
             )
+        except ValueError as exc:
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=total_score,
+                short_enabled=short_enabled,
+                decision="rejected",
+                reason_code=str(exc)[:160] or "setup_unavailable",
+                direction=direction,
+                regime_tag=regime.state if regime else None,
+            )
+            continue
+        current = datetime.now(timezone.utc)
+        market_fact = _latest_exact_market_fact(
+            venue=setup.venue,
+            symbol=symbol,
+            market_type=market_type,
+            now=current,
+        )
+        if market_fact is None and has_fresh_market_snapshot(
+            symbol, market_type, now=current
+        ):
+            market_fact = _feature_market_fact(
+                member=m,
+                feature=feat,
+                setup=setup,
+                now=current,
+            )
+        entry_eligible = bool(m.get("execution_eligible", True)) and market_fact is not None
+        defer = _active_defer_suppresses(
+            symbol=symbol,
+            direction=direction,
+            market_type=market_type,
+            material_fingerprint=current_material_fingerprint,
+        )
+        opportunity_market = instrument_market_to_db_market(
+            _physical_market_type(market_type) or market_type
+        )
+        existing_snapshot_owner = repo.find_opportunity_by_symbol_snapshot(
+            symbol, snapshot_id, market=opportunity_market,
+        )
+        live_dup = repo.find_live_opportunity_by_symbol_direction(
+            symbol, direction, market=opportunity_market,
+        )
+        live_material = (
+            _opportunity_material_fingerprint(live_dup) if live_dup else None
+        )
+        live_duplicate_suppressed = bool(
+            live_dup
+            and (not live_material or live_material == current_material_fingerprint)
+            and not (
+                live_dup.get("status") == "open" and allow_open_replacement
+            )
+        )
 
-            try:
-                setup = build_momentum_setup(
-                    snapshot_id=snapshot_id,
-                    member_id=str(member_id),
-                    asset_id=str(feat.get("asset_id") or m.get("asset_id") or ""),
-                    venue=str(feat.get("venue") or m.get("venue") or ""),
-                    symbol=symbol,
-                    market_type=market_type,
-                    direction=direction,
-                    regime_tag=regime.state if regime else None,
-                    rank=int(m.get("rank") or member_index + 1),
-                    material_fingerprint=current_material_fingerprint,
-                    atr_15m_pct=float(feat.get("atr_15m_pct")),
-                    candles=list(feat.get("_closed_ohlcv_15m") or ()),
-                    motive_evidence={
-                        "universe_snapshot_id": snapshot_id,
-                        "universe_member_id": member_id,
-                        "feature_snapshot_id": feat.get("feature_snapshot_id"),
-                        "total_score": total_score,
-                        "reasons": [
-                            str(reason)[:160]
-                            for reason in (feat.get("reasons") or [])[:5]
-                        ],
-                        "regime": regime.state if regime else None,
-                    },
-                    funding_rate=feat.get("funding_rate"),
-                )
-            except (TypeError, ValueError) as exc:
-                _record_emission_decision(
-                    member=m,
-                    snapshot_id=snapshot_id,
-                    member_index=member_index,
-                    symbol=symbol,
-                    market_type=market_type,
-                    total_score=total_score,
-                    short_enabled=short_enabled,
-                    decision="rejected",
-                    reason_code=str(exc)[:160] or "momentum_setup_unavailable",
-                    direction=direction,
-                    regime_tag=regime.state if regime else None,
-                )
-                continue
-            with repo.transaction(immediate=True):
-                owner = persist_momentum_setup(setup)
-                setup_created = owner["id"] == setup.id
+        with repo.transaction(immediate=True):
+            owner = repo.insert_universe_setup(setup)
+            owner_state = str(owner.get("state") or "")
+            setup_id = str(owner["id"])
+            setup_model = UniverseSetup.model_validate(owner)
+            if existing_snapshot_owner:
                 _record_emission_decision(
                     member=m,
                     snapshot_id=snapshot_id,
@@ -396,31 +786,148 @@ def emit_deterministic_opportunities(
                     total_score=total_score,
                     short_enabled=short_enabled,
                     decision="passed",
-                    reason_code=(
-                        "momentum_setup_created"
-                        if setup_created
-                        else "momentum_setup_reused"
-                    ),
+                    reason_code="existing_opportunity_reused",
+                    direction=direction,
+                    opportunity_id=existing_snapshot_owner.get("id"),
+                    regime_tag=regime.state if regime else None,
+                    inputs={"setup_id": setup_id, "existing_status": existing_snapshot_owner.get("status")},
+                )
+                continue
+            if defer:
+                _record_emission_decision(
+                    member=m,
+                    snapshot_id=snapshot_id,
+                    member_index=member_index,
+                    symbol=symbol,
+                    market_type=market_type,
+                    total_score=total_score,
+                    short_enabled=short_enabled,
+                    decision="rejected",
+                    reason_code="active_defer_suppressed",
                     direction=direction,
                     regime_tag=regime.state if regime else None,
-                    inputs={"setup_id": owner["id"], "setup_state": owner["state"]},
+                    inputs={
+                        "setup_id": setup_id,
+                        "material_fingerprint": current_material_fingerprint,
+                        "prior_defer_opportunity_id": defer.get("opportunity_id"),
+                    },
                 )
-            continue
-
-        _record_emission_decision(
-            member=m,
-            snapshot_id=snapshot_id,
-            member_index=member_index,
-            symbol=symbol,
-            market_type=market_type,
-            total_score=total_score,
-            short_enabled=short_enabled,
-            decision="passed",
-            reason_code="candidate_only_no_trigger_spec",
-            direction=direction,
-            regime_tag=regime.state if regime else None,
-            inputs={"material_fingerprint": current_material_fingerprint},
-        )
+                continue
+            if live_duplicate_suppressed:
+                _record_emission_decision(
+                    member=m,
+                    snapshot_id=snapshot_id,
+                    member_index=member_index,
+                    symbol=symbol,
+                    market_type=market_type,
+                    total_score=total_score,
+                    short_enabled=short_enabled,
+                    decision="rejected",
+                    reason_code="live_duplicate_suppressed",
+                    direction=direction,
+                    regime_tag=regime.state if regime else None,
+                    inputs={
+                        "setup_id": setup_id,
+                        "live_opportunity_id": live_dup.get("id") if live_dup else None,
+                        "live_material_fingerprint": live_material,
+                        "material_fingerprint": current_material_fingerprint,
+                    },
+                )
+                continue
+            if not entry_eligible:
+                _record_emission_decision(
+                    member=m,
+                    snapshot_id=snapshot_id,
+                    member_index=member_index,
+                    symbol=symbol,
+                    market_type=market_type,
+                    total_score=total_score,
+                    short_enabled=short_enabled,
+                    decision="passed",
+                    reason_code="setup_armed_entry_not_eligible",
+                    direction=direction,
+                    regime_tag=regime.state if regime else None,
+                    inputs={
+                        "setup_id": setup_id,
+                        "setup_state": owner_state,
+                        "has_exact_market_fact": market_fact is not None,
+                        "execution_eligible": bool(m.get("execution_eligible", True)),
+                    },
+                )
+                continue
+            existing_for_setup = repo.get_opportunity_by_setup(setup_id)
+            if existing_for_setup:
+                _record_emission_decision(
+                    member=m,
+                    snapshot_id=snapshot_id,
+                    member_index=member_index,
+                    symbol=symbol,
+                    market_type=market_type,
+                    total_score=total_score,
+                    short_enabled=short_enabled,
+                    decision="passed",
+                    reason_code="triggered_opportunity_reused",
+                    direction=direction,
+                    opportunity_id=existing_for_setup.get("id"),
+                    regime_tag=regime.state if regime else None,
+                    inputs={"setup_id": setup_id, "setup_state": owner_state},
+                )
+                continue
+            if not repo.transition_universe_setup(
+                setup_id,
+                expected_states=("armed",),
+                state="triggering",
+            ):
+                _record_emission_decision(
+                    member=m,
+                    snapshot_id=snapshot_id,
+                    member_index=member_index,
+                    symbol=symbol,
+                    market_type=market_type,
+                    total_score=total_score,
+                    short_enabled=short_enabled,
+                    decision="passed",
+                    reason_code="trigger_transition_reused",
+                    direction=direction,
+                    regime_tag=regime.state if regime else None,
+                    inputs={"setup_id": setup_id, "setup_state": owner_state},
+                )
+                continue
+            opportunity = _materialize_trigger_opportunity(
+                setup=setup_model.model_copy(update={"state": "triggering"}),
+                member=m,
+                feature=feat,
+                market_fact=market_fact,
+                linked_strategy_id=linked_strategy_id,
+                total_score=total_score,
+            )
+            if not repo.transition_universe_setup(
+                setup_id,
+                expected_states=("triggering",),
+                state="executed",
+                opportunity_id=opportunity.id,
+            ):
+                raise RuntimeError("universe_trigger_setup_projection_conflict")
+            created += 1
+            _record_emission_decision(
+                member=m,
+                snapshot_id=snapshot_id,
+                member_index=member_index,
+                symbol=symbol,
+                market_type=market_type,
+                total_score=total_score,
+                short_enabled=short_enabled,
+                decision="passed",
+                reason_code="triggered_opportunity_created",
+                direction=direction,
+                opportunity_id=opportunity.id,
+                regime_tag=regime.state if regime else None,
+                inputs={
+                    "setup_id": setup_id,
+                    "trigger_behavior_version": ENTRY_TRIGGER_BEHAVIOR_VERSION,
+                    "market_snapshot_id": market_fact.get("id"),
+                },
+            )
 
     if created:
         logger.info(

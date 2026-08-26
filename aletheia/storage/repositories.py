@@ -540,7 +540,7 @@ def insert_opportunity(opp: Opportunity) -> None:
     if (
         opp.asset_class == "crypto"
         and opp.execution_eligible
-        and opp.source_agent in {"fast_trigger", "universe_scanner", "divergence_scanner"}
+        and opp.source_agent in {"fast_trigger", "universe_scanner"}
         and opp.generation_version != "opportunity-generation/v2"
     ):
         raise ValueError("execution-eligible Crypto producer requires OpportunityGenerationV2")
@@ -652,7 +652,7 @@ def get_opportunity_by_setup(setup_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-# --- Universe Momentum setups / conditional entry authority ---
+# --- Universe setups / conditional entry authority ---
 
 
 def insert_universe_setup(setup: UniverseSetup) -> dict:
@@ -693,7 +693,10 @@ def list_watchable_universe_setups(limit: int = 10) -> list[dict]:
     now = datetime.now(timezone.utc).isoformat()
     return _select_all(
         "universe_setups",
-        where="state IN ('armed','pullback_seen') AND valid_until>?",
+        where=(
+            "state IN ('armed','pullback_seen') AND valid_until>? "
+            "AND trigger_spec_version='momentum-retrace-reclaim/v1'"
+        ),
         params=(now,),
         order="rank ASC, created_at ASC",
         limit=limit,
@@ -848,7 +851,7 @@ COALESCE(NULLIF(asset_class, ''), 'crypto') IN ('crypto', 'equity')
 AND COALESCE(execution_eligible, 1)=1
 AND NOT (
     COALESCE(NULLIF(asset_class, ''), 'crypto')='crypto'
-    AND COALESCE(source_agent, '') IN ('fast_trigger', 'universe_scanner', 'divergence_scanner')
+    AND COALESCE(source_agent, '') IN ('fast_trigger', 'universe_scanner')
     AND (
         COALESCE(generation_version, '')!='opportunity-generation/v2'
         OR setup_id IS NULL

@@ -142,16 +142,19 @@ class OpportunityGenerationV2(BaseModel):
         if low <= 0 or high < low or not low <= self.signal_mark <= high:
             raise ValueError("Opportunity generation entry geometry is invalid")
         invalidation_price = self.invalidation.get("price")
-        try:
-            invalidation_price = float(invalidation_price)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("Opportunity generation invalidation is invalid") from exc
-        if invalidation_price <= 0 or (
-            self.direction == "long" and invalidation_price >= self.signal_mark
-        ) or (
-            self.direction == "short" and invalidation_price <= self.signal_mark
-        ):
-            raise ValueError("Opportunity generation invalidation is invalid")
+        if invalidation_price is not None:
+            try:
+                invalidation_price = float(invalidation_price)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Opportunity generation invalidation is invalid") from exc
+            if invalidation_price <= 0 or (
+                self.direction == "long" and invalidation_price >= self.signal_mark
+            ) or (
+                self.direction == "short" and invalidation_price <= self.signal_mark
+            ):
+                raise ValueError("Opportunity generation invalidation is invalid")
+        if not self.invalidation:
+            raise ValueError("Opportunity generation invalidation is required")
         if not self.motive_evidence or not self.entry_trigger:
             raise ValueError("Opportunity generation motive and trigger are required")
         if any(character not in "0123456789abcdef" for character in self.material_fingerprint):
@@ -1511,7 +1514,7 @@ Candidate = UniverseMember
 
 
 class UniverseSetup(_Provenanced):
-    """One exact Momentum structure waiting for bounded Operator authority."""
+    """One exact family setup generation waiting for EntryEligibility."""
 
     id: str = Field(default_factory=new_id)
     snapshot_id: str
@@ -1524,17 +1527,17 @@ class UniverseSetup(_Provenanced):
     rank: int = Field(ge=1)
     material_fingerprint: str
     trigger_spec_hash: str
-    trigger_spec_version: str = "momentum-retrace-reclaim/v1"
+    trigger_spec_version: str = "universe-entry-eligibility/v1"
     scanner_family: str = "momentum"
     motive_evidence: str = "{}"
     funding_rate: float | None = None
     funding_observed_at: str | None = None
     regime_tag: str | None = None
-    breakout_level: float = Field(gt=0)
-    atr: float = Field(gt=0)
-    pullback_band: str
-    entry_zone: str
-    invalidation_price: float = Field(gt=0)
+    breakout_level: float | None = Field(default=None, gt=0)
+    atr: float | None = Field(default=None, gt=0)
+    pullback_band: str | None = None
+    entry_zone: str | None = None
+    invalidation_price: float | None = Field(default=None, gt=0)
     state: Literal[
         "pending_authorization",
         "armed",

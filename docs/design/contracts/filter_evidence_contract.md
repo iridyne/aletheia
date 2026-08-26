@@ -109,22 +109,19 @@ administrative exclusion，不得进入 candidate skip、trace/seed 缺口或效
 
 生产者在拒绝输入时，该原因是唯一解释事实：Universe emitter、Divergence scanner
 若无法写入终态记录，必须返回可重试错误，不能以“零 Opportunity、零原因”的成功结束。
-生产者放行并新建 Opportunity 时也必须留下精确的 `opportunity_emitted` 事实。Universe emitter
-现在只发布 Candidate/Setup handoff 事实，不直接新建 Opportunity；历史 `universe_scanner`
+生产者放行并新建 Opportunity 时也必须留下精确的 entry-trigger 事实。Universe emitter
+现在发布 Candidate/Setup handoff，并且只在 canonical EntryEligibility false→true 时新建
+setup-linked V2 Opportunity；历史缺少 `setup_id`/V2 generation 的 `universe_scanner`
 Opportunity 只保留为 legacy/observation carrier，默认不得进入新 Ranker/API 可执行路径。
 Market Observer 不是 Universe Opportunity producer；其 pre-filter 或 assessment
 事实不能替代 emitter 的 producer pass。Universe emitter 的该类失败不是可忽略分析错误：
 当前没有 snapshot/member 级独立重试队列，因此 `UniverseService.refresh` 必须把 scanner run 标为
 failed 并返回失败，禁止继续发布 completed。
-Momentum family 不在 emitter 阶段创建 Opportunity：它必须把 `UniverseSetup` 与
-`opportunity_emission/signal_emitter/passed/reason_code=momentum_setup_created|momentum_setup_reused`
-放在同一回滚边界。
-该 passed 事实只证明 Setup 结构已发布，不代表入场、Operator 授权、Opportunity 或 Proposal；后续
-`conditional_entry_authorized` 与 exact-venue T0 materialization 由 setup/authorization/market snapshot
-因果链独立审计，禁止把 setup pass 混入普通 `opportunity_emitted` cohort。
-其他 family 在拥有各自冻结的 entry trigger、entry zone、structural invalidation、same-venue
-cost snapshot 与 material fingerprint 之前，只能保留 Candidate；不得用统一 ATR 区间替不同策略
-伪造完整 Opportunity。
+所有 Universe family 共用 Candidate→Setup/Armed→EntryEligibility Trigger→Opportunity 生命周期。
+`setup_armed_entry_not_eligible` 只证明 Setup 已发布但 exact current market fact 不满足入场；
+`triggered_opportunity_created` 才进入普通 Ranker cohort。V1 不引入新的 pullback、ATR、SMC/ICT
+或 order-flow threshold；entry trigger、entry zone、market-validity invalidation、same-venue cost
+snapshot 与 material fingerprint 必须来自当前已授权的 scanner/tradability/freshness 事实。
 进入队列后的 immutable producer admission 拒绝属于 queue lifecycle：写入唯一的 producer
 eligibility rejection，转为 `signal_queue_evicted` 并终结该 Opportunity。它不是 System Operator
 判断，不得创建 `operator_action_assessment`、outcome seed 或 B2 cohort 成员；暂时无法取得

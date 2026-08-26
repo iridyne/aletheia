@@ -13,6 +13,9 @@ supersedes: []
 
 > Proposal status: implemented in this worktree, not a deployment or
 > economic-qualification claim.
+> #2207 is the canonical production lifecycle authority. This document remains
+> the momentum-specific fast watcher design; it is not the V1 all-family
+> EntryEligibility contract.
 
 Repository implementation includes Opportunity Generation V2, terminal entry
 validity evidence, and observation-only market-structure assessments. Exact-commit
