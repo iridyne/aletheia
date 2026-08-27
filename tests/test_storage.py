@@ -248,7 +248,10 @@ def test_serenity_repo_crud(tmp_path):
 
 
 def test_jsonl_roundtrip(tmp_path):
-    with patch("aletheia.files.jsonl._log_dir", return_value=tmp_path):
+    with (
+        patch("aletheia.files.jsonl._log_dir", return_value=tmp_path),
+        patch("aletheia.files.jsonl._max_bytes", return_value=50 * 1024 * 1024),
+    ):
         append_jsonl("test.jsonl", {"event": "test", "value": 42})
         append_jsonl("test.jsonl", {"event": "test2", "value": 99})
         records = read_jsonl("test.jsonl")
