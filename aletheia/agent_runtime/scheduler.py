@@ -1147,9 +1147,13 @@ def _initial_learning_evaluator_run_time(
 
 
 def _run_pricing_reference_refresh() -> None:
-    from aletheia.economics.pricing_sync import start_pricing_refresh
+    try:
+        from aletheia.economics.pricing_sync import start_pricing_refresh
 
-    start_pricing_refresh(trigger="periodic")
+        start_pricing_refresh(trigger="periodic")
+    except Exception as exc:
+        logger.warning("pricing_reference_refresh job failed: %s", exc)
+        _record_job_failure("pricing_reference_refresh", str(exc))
 
 
 def init_scheduler() -> BackgroundScheduler | None:
